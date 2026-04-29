@@ -1,0 +1,177 @@
+{
+  "name": "@horang-labs/tessera",
+  "version": "0.1.0-beta.0",
+  "description": "Tessera — multi-CLI coding agent desktop app",
+  "private": false,
+  "license": "MIT",
+  "author": {
+    "name": "Horang Labs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Horang-Labs/tessera.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Horang-Labs/tessera/issues"
+  },
+  "homepage": "https://github.com/Horang-Labs/tessera",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "coding-agent",
+    "claude-code",
+    "codex",
+    "electron",
+    "nextjs",
+    "websocket"
+  ],
+  "main": "dist-electron/electron/main.js",
+  "bin": {
+    "tessera": "bin/tessera.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist-electron/",
+    "!dist-electron/**/*.map",
+    ".next/",
+    "!.next/cache/",
+    "!.next/cache/**",
+    "!.next/trace",
+    "!.next/trace-build",
+    "!.next/turbopack",
+    "!.next/types/",
+    "!.next/types/**",
+    "!.next/**/*.map",
+    "public/sounds/",
+    "assets/",
+    "next.config.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "cross-env NODE_ENV=production next build",
+    "start": "cross-env NODE_ENV=production tsx server.ts",
+    "lint": "eslint .",
+    "electron:compile": "tsc -p electron/tsconfig.json",
+    "electron:prepare-runtime": "node scripts/prepare-electron-runtime.mjs",
+    "electron:dev": "concurrently -k -n SERVER,ELECTRON -c cyan,yellow \"cross-env NODE_ENV=development PORT=3100 TESSERA_ELECTRON_AUTH_BYPASS=1 npx tsx server.ts\" \"wait-on http://localhost:3100 && cross-env TESSERA_DEV_PORT=3100 electron .\"",
+    "electron:prebuild": "npm run build && npm run electron:compile && npm run electron:prepare-runtime",
+    "electron:build:win": "npm run electron:prebuild && electron-builder --win portable --x64",
+    "electron:build:mac-x64": "npm run electron:prebuild && electron-builder --mac --x64",
+    "electron:build:mac-arm64": "npm run electron:prebuild && electron-builder --mac --arm64",
+    "electron:build:all": "npm run electron:prebuild && electron-builder build",
+    "npm:prepack": "npm run build && npm run electron:compile",
+    "prepack": "npm run npm:prepack",
+    "postinstall": "node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@tanstack/react-virtual": "^3.13.24",
+    "agentation": "^3.0.2",
+    "bcryptjs": "^3.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "framer-motion": "^12.34.0",
+    "i18next": "^25.8.13",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.563.0",
+    "next": "^16.2.3",
+    "pino": "^8.18.0",
+    "pino-pretty": "^10.3.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-i18next": "^16.5.4",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^3.22.0",
+    "sql.js": "^1.14.1",
+    "tailwind-merge": "^3.4.0",
+    "tinykeys": "^3.0.0",
+    "uuid": "^9.0.1",
+    "ws": "^8.16.0",
+    "zod": "^3.22.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "20.19.35",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/uuid": "^9.0.8",
+    "@types/ws": "^8.5.10",
+    "@vercel/nft": "^1.5.0",
+    "autoprefixer": "^10.4.0",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.3",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "5.9.3",
+    "wait-on": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "build": {
+    "appId": "app.tessera.desktop",
+    "productName": "Tessera",
+    "copyright": "Open Source",
+    "npmRebuild": false,
+    "asar": true,
+    "asarUnpack": [
+      "**/sql.js/**",
+      "**/node_modules/sql.js/**"
+    ],
+    "files": [
+      "**/*",
+      "!**/.next/cache{,/**/*}",
+      "!**/node_modules/electron{,/**/*}",
+      "!**/node_modules/typescript{,/**/*}",
+      "!**/node_modules/sharp{,/**/*}",
+      "!**/node_modules/@img{,/**/*}"
+    ],
+    "directories": {
+      "app": ".electron-runtime",
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "assets/icon.png"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns"
+    },
+    "portable": {
+      "artifactName": "Tessera.exe"
+    }
+  }
+}

@@ -1,0 +1,718 @@
+@import "tailwindcss";
+
+/* Tailwind v4: Theme configuration */
+@theme {
+  --color-primary: oklch(53% 0.19 27);
+  --color-primary-foreground: oklch(98% 0.01 264);
+
+  --color-secondary: oklch(91% 0.01 264);
+  --color-secondary-foreground: oklch(14.5% 0.025 264);
+
+  --color-muted: oklch(91% 0.01 264);
+  --color-muted-foreground: oklch(46% 0.02 264);
+
+  --color-accent: oklch(40% 0.18 260);
+  --color-accent-foreground: oklch(98% 0.01 264);
+
+  --color-destructive: oklch(53% 0.22 27);
+  --color-destructive-foreground: oklch(98% 0.01 264);
+
+  --color-border: oklch(91% 0.01 264);
+  --color-ring: oklch(14.5% 0.025 264);
+
+  --color-card: oklch(100% 0 0);
+  --color-card-foreground: oklch(14.5% 0.025 264);
+
+  --color-ring-offset: oklch(100% 0 0);
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  @keyframes slide-in {
+    from {
+      transform: translateY(-0.5rem);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slide-out {
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(-0.5rem);
+      opacity: 0;
+    }
+  }
+
+  @keyframes typing {
+    0%, 60%, 100% {
+      opacity: 0.4;
+      transform: translateY(0);
+    }
+    30% {
+      opacity: 1;
+      transform: translateY(-8px);
+    }
+  }
+
+  --animate-fade-in: fade-in 0.2s ease-out;
+  --animate-fade-out: fade-out 0.2s ease-in;
+  --animate-slide-in: slide-in 0.3s ease-out;
+  --animate-slide-out: slide-out 0.3s ease-in;
+  --animate-typing: typing 1.4s infinite;
+}
+
+/* Dark mode variant - v4 way with @custom-variant */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Dark mode theme overrides */
+.dark {
+  --color-primary: oklch(98% 0.01 264);
+  --color-primary-foreground: oklch(14.5% 0.025 264);
+
+  --color-secondary: oklch(22% 0.02 264);
+  --color-secondary-foreground: oklch(98% 0.01 264);
+
+  --color-muted: oklch(22% 0.02 264);
+  --color-muted-foreground: oklch(65% 0.02 264);
+
+  --color-accent: oklch(70% 0.15 260);
+  --color-accent-foreground: oklch(14.5% 0.025 264);
+
+  --color-destructive: oklch(42% 0.15 27);
+  --color-destructive-foreground: oklch(98% 0.01 264);
+
+  --color-border: oklch(22% 0.02 264);
+  --color-ring: oklch(83% 0.02 264);
+
+  --color-card: oklch(14.5% 0.025 264);
+  --color-card-foreground: oklch(98% 0.01 264);
+
+  --color-ring-offset: oklch(14.5% 0.025 264);
+}
+
+/* ============================================
+   Light Theme (default) - Tailwind v4 CSS Variables
+   "Graphite Light" — Neutral warm-gray + steel-blue accent
+   ============================================ */
+:root {
+  color-scheme: light;
+
+  /* UI Layer Colors */
+  --sidebar-bg: #f5f5f3;
+  --sidebar-hover: #eaeae7;
+  --sidebar-active: #e0e0dc;
+  --sidebar-text: #6b6b68;
+  --sidebar-text-active: #1a1a1a;
+  --bg-secondary: #f2f2f0;
+
+  /* Chat Layer */
+  --chat-bg: #fafaf9;
+  --chat-header-bg: #f5f5f3;
+  --chat-header-border: #d9d9d5;
+
+  /* Electron Window Chrome */
+  --electron-titlebar-bg: #f2f2f0;
+  --electron-titlebar-border: #d9d9d5;
+  --electron-titlebar-text: #1a1a1a;
+  --electron-titlebar-muted: #6b6b68;
+  --electron-titlebar-hover: rgba(26, 26, 26, 0.06);
+
+  /* Form Controls */
+  --input-bg: #ffffff;
+  --input-border: #d2d2ce;
+  --input-text: #1a1a1a;
+  --input-placeholder: #8a8a87;
+
+  /* Accent Palette */
+  --accent: #5a7d94;
+  --accent-hover: #4a6d84;
+  --accent-light: #7a9eb8;
+  --accent-dim: #9db4c6;
+
+  /* Status Colors */
+  --success: #059669;
+  --error: #dc2626;
+  --warning: #d97706;
+
+  /* Message Types */
+  --msg-user-bg: #eef3f6;
+  --msg-user-text: #1a1a1a;
+  --msg-user-bubble: #ebf0f4;
+  --msg-user-bubble-border: #c5d2db;
+  --msg-assistant-bg: #f4f4f2;
+  --msg-assistant-text: #2a2a2a;
+  --msg-system-bg: #f4f4f2;
+  --msg-system-text: #6b6b68;
+
+  /* Text Hierarchy */
+  --text-primary: #1a1a1a;
+  --text-secondary: #4a4a48;
+  --text-muted: #8a8a87;
+
+  /* Structural */
+  --divider: #d9d9d5;
+  --scrollbar-thumb: #b0b0ac;
+  --scrollbar-track: transparent;
+
+  /* Floating Toasts */
+  --toast-bg: #ffffff;
+  --toast-bg-hover: #f7f7f4;
+  --toast-border: #c4c4be;
+  --toast-icon-bg: #eef3f6;
+  --toast-icon-border: #c5d2db;
+  --toast-muted: #686864;
+  --toast-shadow: 0 18px 44px rgba(26, 26, 26, 0.16), 0 3px 10px rgba(26, 26, 26, 0.08);
+
+  /* Tool Components */
+  --tool-bg: #f2f2f0;
+  --tool-border: #e4e4e0;
+  --tool-header-hover: #eaeae7;
+  --tool-param-bg: #f8f8f6;
+  --tool-output-bg: #f8f8f6;
+  --tool-detail-bg: #fafaf9;
+  --tool-detail-header-bg: #f2f2f0;
+
+  /* Aliases (deprecated — use status-* or semantic variables) */
+  --tooltip-bg: #1a1a1a;
+  --code-inline-bg: #f2f2f0;
+  --destructive-hover: #dc2626;
+  --session-processing-pulse: #10b981;
+
+  /* Semantic Status Badges */
+  --status-error-text: #dc2626;
+  --status-error-bg: rgba(220, 38, 38, 0.08);
+  --status-error-border: rgba(220, 38, 38, 0.18);
+  --status-warning-text: #b45309;
+  --status-warning-bg: rgba(180, 83, 9, 0.08);
+  --status-warning-border: rgba(180, 83, 9, 0.18);
+  --status-success-text: #047857;
+  --status-success-bg: rgba(4, 120, 87, 0.08);
+  --status-success-border: rgba(4, 120, 87, 0.18);
+  --status-info-text: #1d5fa0;
+  --status-info-bg: rgba(29, 95, 160, 0.08);
+  --status-info-border: rgba(29, 95, 160, 0.18);
+  --pr-merged-text: #8250df;
+
+  /* Git Workflow Status Colors */
+  --workflow-todo: #6b7280;
+  --workflow-doing: #b45309;
+  --workflow-review: #2563eb;
+  --workflow-done: #7c3aed;
+
+  /* Worktree Status Icon Colors */
+  --worktree-review: var(--workflow-review);
+  --worktree-done: var(--workflow-done);
+
+  /* Kanban Board */
+  --board-bg: #f3f3f1;
+  --board-column-bg: #ffffff;
+  --board-column-border: #ddddd9;
+  --board-column-header-border: #d0d0cc;
+  --board-card-bg: #ffffff;
+  --board-card-border: rgba(0, 0, 0, 0.06);
+  --board-card-hover-bg: #f7f7f5;
+  --board-card-hover-border: rgba(0, 0, 0, 0.12);
+  --board-card-active-bg: #2d3a46;
+  --board-card-active-border: #2d3a46;
+  --board-card-active-pill-bg: rgba(255, 255, 255, 0.1);
+  --board-card-active-pill-border: rgba(255, 255, 255, 0.18);
+  --board-count-bg: rgba(0, 0, 0, 0.06);
+  --board-count-text: #4a4a48;
+}
+
+/* ============================================
+   Dark Theme - Tailwind v4 CSS Variables
+   "Graphite" — Neutral gray + muted steel-blue accent
+   ============================================ */
+.dark {
+  color-scheme: dark;
+
+  /* UI Layer Colors */
+  --sidebar-bg: #151515;
+  --sidebar-hover: #1e1e1e;
+  --sidebar-active: #242424;
+  --sidebar-text: #737373;
+  --sidebar-text-active: #c8c8c8;
+  --bg-secondary: #1e1e1e;
+
+  /* Chat Layer */
+  --chat-bg: #1a1a1a;
+  --chat-header-bg: #171717;
+  --chat-header-border: #252525;
+
+  /* Electron Window Chrome */
+  --electron-titlebar-bg: #17191c;
+  --electron-titlebar-border: #24292e;
+  --electron-titlebar-text: #d8d8d8;
+  --electron-titlebar-muted: #8a949e;
+  --electron-titlebar-hover: rgba(255, 255, 255, 0.06);
+
+  /* Form Controls */
+  --input-bg: #1e1e1e;
+  --input-border: #2a2a2a;
+  --input-text: #c8c8c8;
+  --input-placeholder: #4a4a4a;
+
+  /* Accent Palette */
+  --accent: #7a9eb8;
+  --accent-hover: #6889a5;
+  --accent-light: #9db4c6;
+  --accent-dim: #567890;
+
+  /* Status Colors */
+  --success: #34d399;
+  --error: #f87171;
+  --warning: #fbbf24;
+
+  /* Message Types */
+  --msg-user-bg: #232323;
+  --msg-user-text: #d8d8d8;
+  --msg-user-bubble: #202020;
+  --msg-user-bubble-border: #2e2e2e;
+  --msg-assistant-bg: #1e1e1e;
+  --msg-assistant-text: #b5b5b5;
+  --msg-system-bg: #1e1e1e;
+  --msg-system-text: #737373;
+
+  /* Text Hierarchy */
+  --text-primary: #d8d8d8;
+  --text-secondary: #909090;
+  --text-muted: #606060;
+
+  /* Structural */
+  --divider: #252525;
+  --scrollbar-thumb: #2a2a2a;
+  --scrollbar-track: transparent;
+
+  /* Floating Toasts */
+  --toast-bg: #303030;
+  --toast-bg-hover: #383838;
+  --toast-border: #666666;
+  --toast-icon-bg: #3c3c3c;
+  --toast-icon-border: #666666;
+  --toast-muted: #a8a8a8;
+  --toast-shadow: 0 18px 46px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.02);
+
+  /* Tool Components */
+  --tool-bg: #171717;
+  --tool-border: #262626;
+  --tool-header-hover: #1e1e1e;
+  --tool-param-bg: #141414;
+  --tool-output-bg: #141414;
+  --tool-detail-bg: #1a1a1a;
+  --tool-detail-header-bg: #171717;
+
+  /* Aliases (deprecated — use status-* or semantic variables) */
+  --tooltip-bg: #111111;
+  --code-inline-bg: #151515;
+  --destructive-hover: #d83639;
+  --session-processing-pulse: #4ade80;
+
+  /* Semantic Status Badges */
+  --status-error-text: #f87171;
+  --status-error-bg: rgba(239, 68, 68, 0.15);
+  --status-error-border: rgba(239, 68, 68, 0.3);
+  --status-warning-text: #fbbf24;
+  --status-warning-bg: rgba(251, 191, 36, 0.1);
+  --status-warning-border: rgba(251, 191, 36, 0.2);
+  --status-success-text: #34d399;
+  --status-success-bg: rgba(52, 211, 153, 0.1);
+  --status-success-border: rgba(52, 211, 153, 0.2);
+  --status-info-text: #60a5fa;
+  --status-info-bg: rgba(96, 165, 250, 0.1);
+  --status-info-border: rgba(96, 165, 250, 0.2);
+  --pr-merged-text: #a371f7;
+
+  /* Git Workflow Status Colors */
+  --workflow-todo: #9ca3af;
+  --workflow-doing: #f59e0b;
+  --workflow-review: #60a5fa;
+  --workflow-done: #a78bfa;
+
+  /* Worktree Status Icon Colors */
+  --worktree-review: var(--workflow-review);
+  --worktree-done: var(--workflow-done);
+
+  /* Kanban Board */
+  --board-bg: #121212;
+  --board-column-bg: #171717;
+  --board-column-border: #252525;
+  --board-column-header-border: #121212;
+  --board-card-bg: #212121;
+  --board-card-border: #2a2a2a;
+  --board-card-hover-bg: #262626;
+  --board-card-hover-border: #333333;
+  --board-card-active-bg: #e8e8e5;
+  --board-card-active-border: #e8e8e5;
+  --board-card-active-pill-bg: rgba(0, 0, 0, 0.06);
+  --board-card-active-pill-border: rgba(0, 0, 0, 0.12);
+  --board-count-bg: #1e1e1e;
+  --board-count-text: #606060;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+html {
+  font-size: calc(16px * var(--font-scale, 1));
+}
+
+body {
+  color: var(--text-primary);
+  background: var(--chat-bg);
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.electron-drag {
+  -webkit-app-region: drag;
+}
+
+.electron-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Typing animation for loading indicator */
+@keyframes typing-bounce {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+.typing-dot {
+  animation: typing-bounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) { animation-delay: 0ms; }
+.typing-dot:nth-child(2) { animation-delay: 160ms; }
+.typing-dot:nth-child(3) { animation-delay: 320ms; }
+
+/* Smooth transitions */
+.transition-sidebar {
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+/* Shiki code block styling */
+.shiki-code-block {
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.shiki-code-block pre {
+  background: transparent !important;
+  margin: 0;
+  padding: 0;
+}
+
+.shiki-code-block code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Consolas', monospace;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* Message enter animation */
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-enter {
+  animation: message-in 0.15s ease-out;
+}
+
+/* Pulse animation for running tool */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* Session running indicator: color shift + scale + glow */
+@keyframes session-processing {
+  0%, 100% {
+    transform: scale(1);
+    background-color: var(--success);
+    box-shadow: 0 0 3px var(--success);
+  }
+  50% {
+    transform: scale(1.5);
+    background-color: var(--session-processing-pulse);
+    box-shadow: 0 0 8px var(--session-processing-pulse);
+  }
+}
+
+.session-processing {
+  animation: session-processing 1.5s ease-in-out infinite;
+}
+
+/* Tab carousel slide animations */
+@keyframes carousel-from-left {
+  from { transform: translateX(-40px); opacity: 0.3; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes carousel-from-right {
+  from { transform: translateX(40px); opacity: 0.3; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.carousel-slide-left {
+  animation: carousel-from-right 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.carousel-slide-right {
+  animation: carousel-from-left 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* MCP status transition pulse */
+@keyframes status-pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+.status-pulse {
+  animation: status-pulse 0.6s ease-in-out;
+}
+
+/* Error shake */
+@keyframes error-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+.error-shake {
+  animation: error-shake 0.4s ease-out;
+}
+
+/* Thinking complete fade */
+@keyframes thinking-complete {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
+
+.thinking-complete {
+  animation: thinking-complete 0.3s ease-out;
+}
+
+/* Progress bar shimmer */
+@keyframes progress-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.progress-shimmer {
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) 50%, var(--accent) 100%);
+  background-size: 200% 100%;
+  animation: progress-shimmer 2s infinite linear;
+}
+
+/* Fade-in animation for floating prompts */
+@keyframes prompt-appear {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: prompt-appear 0.1s ease-out;
+}
+
+/* ===== Auto-title generation animations ===== */
+@keyframes title-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.title-generating {
+  background: linear-gradient(
+    90deg,
+    var(--text-muted) 0%,
+    var(--accent) 25%,
+    var(--text-muted) 50%,
+    var(--accent) 75%,
+    var(--text-muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: title-shimmer 1.2s ease-in-out infinite;
+  font-style: normal !important;
+}
+
+@keyframes title-fade-in {
+  0% { opacity: 0; transform: translateY(3px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.title-fade-in {
+  animation: title-fade-in 200ms ease-out forwards;
+}
+
+/* Drop flash — brief highlight after DnD reorder */
+@keyframes drop-flash {
+  0% {
+    box-shadow: 0 0 0 2px var(--accent), 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
+    transform: scale(1.02);
+  }
+  100% {
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    transform: scale(1);
+  }
+}
+
+.drop-flash {
+  animation: drop-flash 1000ms ease-out forwards;
+}
+
+
+/* ============================================
+   Collection List View — Workflow Dot Pulse
+   ============================================ */
+@keyframes workflow-dot-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--workflow-doing) 40%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--workflow-doing) 0%, transparent);
+  }
+}
+
+.workflow-dot-pulse {
+  animation: workflow-dot-pulse 2s ease-in-out infinite;
+}
+
+@keyframes attention-dot-blink {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.5);
+  }
+  50% {
+    opacity: 0.42;
+    transform: scale(0.78);
+    box-shadow: 0 0 0 4px rgba(250, 204, 21, 0);
+  }
+}
+
+.attention-dot-blink {
+  animation: attention-dot-blink 720ms ease-in-out infinite;
+}
+
+
+/* ============================================
+   Task Card Status Stripe — Jira-style left border
+   Uses the card's own border-left so the card's
+   rounded-lg corners clip the stroke naturally.
+   ============================================ */
+.task-stripe {
+  border-left-width: 3px !important;
+  /* Color is set via cascaded `.task-stripe-*` variants below. Keeping it
+     non-!important so the `task-stripe-processing` animation can override. */
+  border-left-color: var(--stripe-color, transparent);
+}
+
+/* Beat Tailwind's `border-(--board-card-border)` (which carries !important
+   weight via source order) for the steady states. */
+.task-stripe-unread,
+.task-stripe-running {
+  border-left-color: var(--stripe-color) !important;
+}
+
+.task-stripe-processing {
+  --stripe-color: var(--success);
+  animation: task-stripe-flow 1.6s ease-in-out infinite;
+}
+
+.task-stripe-attention {
+  --stripe-color: #facc15;
+  animation: task-stripe-attention-flow 720ms ease-in-out infinite;
+}
+
+.task-stripe-unread {
+  --stripe-color: #facc15;
+}
+
+.task-stripe-running {
+  --stripe-color: var(--success);
+}
+
+@keyframes task-stripe-flow {
+  0%, 100% {
+    border-left-color: color-mix(in srgb, var(--success) 20%, transparent);
+    border-left-width: 2px;
+  }
+  50% {
+    border-left-color: var(--success);
+    border-left-width: 4px;
+  }
+}
+
+@keyframes task-stripe-attention-flow {
+  0%, 100% {
+    border-left-color: rgba(250, 204, 21, 0.28);
+    border-left-width: 2px;
+  }
+  50% {
+    border-left-color: #facc15;
+    border-left-width: 4px;
+  }
+}
