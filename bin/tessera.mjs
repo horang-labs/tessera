@@ -131,6 +131,7 @@ process.env.NODE_ENV = 'production';
 process.env.PORT = String(port);
 process.env.TESSERA_HOST = options.host;
 process.env.TESSERA_CLI = '1';
+process.env.TESSERA_APP_ROOT = root;
 
 console.log(`Starting Tessera on http://${displayHost(options.host)}:${port} ...`);
 

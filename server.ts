@@ -18,6 +18,7 @@ import logger from './src/lib/logger';
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
 const port = parseInt(process.env.PORT || '3000', 10);
+const dir = process.env.TESSERA_APP_ROOT || process.cwd();
 
 async function startServer() {
   await initDatabase();
@@ -41,7 +42,7 @@ async function startServer() {
   // to handle _next/webpack-hmr WebSocket upgrades for HMR.
   const server = createServer();
 
-  const app = next({ dev, hostname, port, httpServer: server } as Parameters<typeof next>[0]);
+  const app = next({ dev, hostname, port, dir, httpServer: server } as Parameters<typeof next>[0]);
   const handle = app.getRequestHandler();
 
   await app.prepare();
