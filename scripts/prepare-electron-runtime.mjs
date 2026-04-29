@@ -54,10 +54,6 @@ function shouldSkip(relativePath) {
     relativePath === 'pr-assets' ||
     relativePath.startsWith('prototypes/') ||
     relativePath === 'prototypes' ||
-    relativePath.startsWith('qa-docs/') ||
-    relativePath === 'qa-docs' ||
-    relativePath.startsWith('qa-screenshots/') ||
-    relativePath === 'qa-screenshots' ||
     relativePath.startsWith('release/') ||
     relativePath === 'release' ||
     relativePath.startsWith('reviews/') ||
