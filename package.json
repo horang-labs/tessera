@@ -75,7 +75,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.34.0",
-    "i18next": "^25.8.13",
+    "i18next": "^26.0.8",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.563.0",
     "next": "^16.2.3",
