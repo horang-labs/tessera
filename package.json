@@ -26,14 +26,14 @@
     "nextjs",
     "websocket"
   ],
-  "main": "dist-electron/electron/main.js",
+  "main": "dist-server/server.js",
   "bin": {
     "tessera": "bin/tessera.mjs"
   },
   "files": [
     "bin/",
-    "dist-electron/",
-    "!dist-electron/**/*.map",
+    "dist-server/",
+    "!dist-server/**/*.map",
     ".next/",
     "!.next/cache/",
     "!.next/cache/**",
@@ -54,20 +54,20 @@
     "build": "cross-env TURBOPACK= __NEXT_DEV_SERVER= __NEXT_PROCESSED_ENV= NODE_ENV=production next build --webpack",
     "start": "cross-env NODE_ENV=production tsx server.ts",
     "lint": "eslint .",
-    "electron:compile": "tsc -p electron/tsconfig.json",
+    "server:compile": "node -e \"require('fs').rmSync('dist-server',{recursive:true,force:true})\" && tsc -p tsconfig.server.json",
+    "electron:compile": "node -e \"require('fs').rmSync('dist-electron',{recursive:true,force:true})\" && tsc -p electron/tsconfig.json",
     "electron:prepare-runtime": "node scripts/prepare-electron-runtime.mjs",
-    "electron:dev": "concurrently -k -n SERVER,ELECTRON -c cyan,yellow \"cross-env NODE_ENV=development PORT=3100 TESSERA_ELECTRON_AUTH_BYPASS=1 npx tsx server.ts\" \"wait-on http://localhost:3100 && cross-env TESSERA_DEV_PORT=3100 electron .\"",
+    "electron:dev": "npm run electron:compile && concurrently -k -n SERVER,ELECTRON -c cyan,yellow \"cross-env NODE_ENV=development PORT=3100 TESSERA_ELECTRON_AUTH_BYPASS=1 npx tsx server.ts\" \"wait-on http://localhost:3100 && cross-env TESSERA_DEV_PORT=3100 electron dist-electron/electron/main.js\"",
     "electron:prebuild": "npm run build && npm run electron:compile && npm run electron:prepare-runtime",
     "electron:build:win": "npm run electron:prebuild && electron-builder --win portable --x64",
     "electron:build:mac-x64": "npm run electron:prebuild && electron-builder --mac --x64",
     "electron:build:mac-arm64": "npm run electron:prebuild && electron-builder --mac --arm64",
     "electron:build:all": "npm run electron:prebuild && electron-builder build",
-    "npm:prepack": "npm run build && npm run electron:compile",
+    "npm:prepack": "npm run build && npm run server:compile",
     "prepack": "npm run npm:prepack",
     "postinstall": "node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
   },
   "dependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
     "@tanstack/react-virtual": "^3.13.24",
     "agentation": "^3.0.2",
     "bcryptjs": "^3.0.3",
@@ -80,7 +80,6 @@
     "lucide-react": "^0.563.0",
     "next": "^16.2.3",
     "pino": "^8.18.0",
-    "pino-pretty": "^10.3.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-i18next": "^16.5.4",
@@ -96,6 +95,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "20.19.35",
@@ -112,6 +112,7 @@
     "electron-builder": "^25.0.0",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.3",
+    "pino-pretty": "^10.3.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.7.0",

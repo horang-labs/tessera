@@ -12,6 +12,7 @@ node_modules
 
 # Production
 /build
+/dist-server/
 
 # Electron
 /dist-electron/

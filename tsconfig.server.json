@@ -5,9 +5,9 @@
     "moduleResolution": "node",
     "esModuleInterop": true,
     "strict": true,
-    "outDir": "../dist-electron",
-    "rootDir": "..",
-    "baseUrl": "..",
+    "outDir": "dist-server",
+    "rootDir": ".",
+    "baseUrl": ".",
     "paths": {
       "@/*": [
         "src/*"
@@ -18,17 +18,18 @@
     "resolveJsonModule": true
   },
   "include": [
-    "./**/*.ts",
-    "../runtime/**/*.ts",
-    "../src/lib/**/*.ts",
-    "../src/types/**/*.ts"
+    "runtime/**/*.ts",
+    "src/lib/**/*.ts",
+    "src/types/**/*.ts",
+    "server.ts"
   ],
   "exclude": [
     "node_modules",
-    "../node_modules",
-    "../src/app/**",
-    "../src/components/**",
-    "../src/hooks/**",
-    "../src/stores/**"
+    "src/app/**",
+    "src/components/**",
+    "src/hooks/**",
+    "src/stores/**",
+    "**/*.spec.ts",
+    "**/*.test.ts"
   ]
 }

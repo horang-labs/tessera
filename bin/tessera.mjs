@@ -121,7 +121,7 @@ function displayHost(host) {
 const root = packageRoot();
 const options = parseArgs(process.argv.slice(2));
 const port = await findPort(options.port, options.host);
-const serverEntry = path.join(root, 'dist-electron', 'server.js');
+const serverEntry = path.join(root, 'dist-server', 'server.js');
 
 if (!fs.existsSync(serverEntry)) {
   fail('production server build is missing. Reinstall @horang-labs/tessera or publish with npm run npm:prepack first.');

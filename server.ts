@@ -1,4 +1,4 @@
-import './electron/register-runtime-aliases';
+import './runtime/register-runtime-aliases';
 import next from 'next';
 import { createServer } from 'http';
 import { initDatabase } from './src/lib/db/database';

@@ -250,7 +250,7 @@ async function writeRuntimePackageJson() {
     private: sourcePackageJson.private,
     author: sourcePackageJson.author,
     homepage: sourcePackageJson.homepage,
-    main: sourcePackageJson.main,
+    main: 'dist-electron/electron/main.js',
     dependencies: runtimeDependencies,
   };
 

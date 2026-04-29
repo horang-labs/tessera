@@ -3,7 +3,7 @@
  * Mirrors server.ts with IPC signaling for Electron main process coordination.
  * This file runs in a forked child process — NOT in the Electron main process.
  */
-import './register-runtime-aliases';
+import '../runtime/register-runtime-aliases';
 import next from 'next';
 import { createServer } from 'http';
 import { initDatabase } from '../src/lib/db/database';
