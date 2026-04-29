@@ -77,7 +77,7 @@
     "framer-motion": "^12.34.0",
     "i18next": "^25.8.13",
     "jsonwebtoken": "^9.0.2",
-    "lucide-react": "^0.563.0",
+    "lucide-react": "^1.14.0",
     "next": "^16.2.3",
     "pino": "^8.18.0",
     "react": "^19.2.5",
