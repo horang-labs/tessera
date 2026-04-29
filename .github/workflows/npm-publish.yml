@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   publish:
@@ -33,6 +32,6 @@ jobs:
         run: npm pack --dry-run
 
       - name: Publish package
-        run: npm publish --access public --provenance
+        run: npm publish --access public --tag beta
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
