@@ -1,6 +1,6 @@
 {
   "name": "@horang-labs/tessera",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Tessera — multi-CLI coding agent desktop app",
   "private": false,
   "license": "MIT",
@@ -51,7 +51,7 @@
   ],
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "cross-env NODE_ENV=production next build",
+    "build": "cross-env TURBOPACK= __NEXT_DEV_SERVER= __NEXT_PROCESSED_ENV= NODE_ENV=production next build --webpack",
     "start": "cross-env NODE_ENV=production tsx server.ts",
     "lint": "eslint .",
     "electron:compile": "tsc -p electron/tsconfig.json",
