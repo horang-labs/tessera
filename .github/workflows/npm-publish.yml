@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      dist_tag_version:
+        description: Existing package version to mark as latest without publishing
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -25,13 +30,29 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
+      - name: Read package metadata
+        run: |
+          echo "PACKAGE_NAME=$(node -p "require('./package.json').name")" >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
       - name: Install dependencies
+        if: ${{ github.event.inputs.dist_tag_version == '' }}
         run: npm ci
 
       - name: Verify package
+        if: ${{ github.event.inputs.dist_tag_version == '' }}
         run: npm pack --dry-run
 
       - name: Publish package
+        if: ${{ github.event.inputs.dist_tag_version == '' }}
         run: npm publish --access public --tag beta
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Mark package as latest
+        run: |
+          version="${DIST_TAG_VERSION:-$PACKAGE_VERSION}"
+          npm dist-tag add "$PACKAGE_NAME@$version" latest
+        env:
+          DIST_TAG_VERSION: ${{ github.event.inputs.dist_tag_version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
