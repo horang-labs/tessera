@@ -1,4 +1,5 @@
 import * as dbSessions from '@/lib/db/sessions';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import logger from '@/lib/logger';
 import { syncTaskPr } from '@/lib/github/task-pr-sync';
 import { flushGitPanelRecompute } from './git-panel-cache';
@@ -46,7 +47,8 @@ export async function refreshSessionDiffState(
   await runOperation('git_panel_state', flushGitPanelRecompute(sessionId, userId));
 
   if (session.task_id) {
-    await runOperation('task_pr_status', syncTaskPr(session.task_id));
+    const agentEnvironment = await getAgentEnvironment(userId);
+    await runOperation('task_pr_status', syncTaskPr(session.task_id, { agentEnvironment }));
   }
 }
 

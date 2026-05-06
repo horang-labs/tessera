@@ -81,6 +81,7 @@ export const ja: I18nMessages = {
       loadingProviders: 'プロバイダーを読み込み中…',
       empty: '登録されているCLIプロバイダがありません。',
       disconnected: 'WebSocketが切断されています。ページを再度開くか接続を確認してください。',
+      active: '使用中',
       refresh: '更新',
       refreshProviders: 'プロバイダーを再確認',
       providerNeedsLoginTooltip: '{{provider}} はログインが必要です。ターミナルでログインしてから更新してください。',
@@ -530,6 +531,10 @@ export const ja: I18nMessages = {
       startSession: 'このフォルダを追加',
       showHidden: '隠しフォルダを表示',
       hideHidden: '隠しフォルダを非表示',
+      wslEnvironment: 'WSL',
+      windowsEnvironment: 'Windows',
+      wslDisabled: 'WSL フォルダを追加するには Agent Environment を WSL に変更してください。',
+      windowsDisabled: 'Windows フォルダを追加するには Agent Environment を Windows Native に変更してください。',
     },
   },
   panel: {

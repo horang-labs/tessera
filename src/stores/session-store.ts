@@ -272,6 +272,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           encodedDir: p.encodedDir,
           displayName: p.displayName,
           decodedPath: p.decodedPath,
+          displayPath: p.displayPath,
           isCurrent: p.isCurrent,
           sessions,
           totalSessions: p.totalSessions,

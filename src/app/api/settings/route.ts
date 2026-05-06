@@ -78,7 +78,7 @@ export async function PUT(request: NextRequest) {
       invalidateProviderSessionOptionsCache(userId);
     }
     if (shouldPruneArchivedWorktreesForSettingsUpdate(previousSettings, settings)) {
-      await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays);
+      await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, userId);
     }
 
     return NextResponse.json({ success: true, settings });

@@ -1,6 +1,6 @@
 {
   "name": "@horang-labs/tessera",
-  "version": "0.1.1",
+  "version": "0.1.0-beta.13",
   "description": "Open-source web and desktop workspace for AI coding agents",
   "private": false,
   "license": "Apache-2.0",
@@ -61,6 +61,7 @@
     "electron:dev": "npm run electron:compile && concurrently -k -n SERVER,ELECTRON -c cyan,yellow \"cross-env NODE_ENV=development PORT=3100 TESSERA_ELECTRON_AUTH_BYPASS=1 npx tsx server.ts\" \"wait-on http://localhost:3100 && cross-env TESSERA_DEV_PORT=3100 electron dist-electron/electron/main.js\"",
     "electron:prebuild": "npm run build && npm run electron:compile && npm run electron:prepare-runtime",
     "electron:build:win": "npm run electron:prebuild && electron-builder --win portable --x64 --publish never",
+    "electron:build:linux": "npm run electron:prebuild && electron-builder --linux AppImage deb --x64 --publish never",
     "electron:build:mac-x64": "npm run electron:prebuild && electron-builder --mac --x64 --publish never",
     "electron:build:mac-arm64": "npm run electron:prebuild && electron-builder --mac --arm64 --publish never",
     "electron:build:mac-x64:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --x64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64",
@@ -161,7 +162,9 @@
         "deb"
       ],
       "category": "Development",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "maintainer": "Horang Labs, Inc. <faggomsa@gmail.com>",
+      "executableName": "tessera"
     },
     "win": {
       "target": "portable",
@@ -181,6 +184,10 @@
     },
     "portable": {
       "artifactName": "Tessera-${version}-windows-${arch}.${ext}"
+    },
+    "deb": {
+      "packageName": "tessera",
+      "artifactName": "Tessera-${version}-linux-${arch}.${ext}"
     }
   }
 }

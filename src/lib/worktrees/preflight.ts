@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import type { GitRunner, GitRunResult } from './git-runner';
 
 export type ManagedWorktreePreflightCode =
   | 'GIT_NOT_INSTALLED'
@@ -19,13 +20,6 @@ export interface ManagedWorktreePreflightSuccess {
 export type ManagedWorktreePreflightResult =
   | ManagedWorktreePreflightSuccess
   | ManagedWorktreePreflightFailure;
-
-interface GitRunResult {
-  stdout: string;
-  stderr: string;
-}
-
-type GitRunner = (args: string[]) => Promise<GitRunResult>;
 
 export const GIT_INSTALL_URL = 'https://git-scm.com/downloads';
 

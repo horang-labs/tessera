@@ -8,6 +8,12 @@ import {
   normalizeManagedWorktreeSlug,
 } from './naming';
 import { getTesseraDataPath } from '../tessera-data-dir';
+import {
+  getWindowsHostedWslRootFilesystemPath,
+  isWindowsHostedWslFilesystemPath,
+} from '../filesystem/path-environment';
+import type { AgentEnvironment } from '../settings/types';
+import { createGitRunner, type GitRunner } from './git-runner';
 
 export const MANAGED_WORKTREE_ROOT = getTesseraDataPath('worktrees');
 
@@ -31,9 +37,11 @@ export async function allocateManagedWorktree(
   projectDir: string,
   branchPrefix?: string | null,
   branchSlug?: string | null,
-  options: { allowCollisionSuffix?: boolean } = {}
+  options: { allowCollisionSuffix?: boolean; rootDir?: string; runGit?: GitRunner } = {}
 ): Promise<ManagedWorktreeAllocation> {
-  await fs.mkdir(MANAGED_WORKTREE_ROOT, { recursive: true, mode: 0o700 });
+  const rootDir = options.rootDir ?? MANAGED_WORKTREE_ROOT;
+  const pathModule = getPathModule(rootDir);
+  await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
 
   const now = new Date();
   const baseSlug = normalizeManagedWorktreeSlug(branchSlug) || buildManagedWorktreeSlug(now);
@@ -42,19 +50,19 @@ export async function allocateManagedWorktree(
   let firstCollision: ManagedWorktreeAllocation | null = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const branchName = buildManagedWorktreeName(projectDir, attempt, now, branchPrefix, baseSlug);
-    const worktreePath = path.join(
-      MANAGED_WORKTREE_ROOT,
+    const worktreePath = pathModule.join(
+      rootDir,
       ...buildManagedWorktreeRelativePath(projectDir, branchName).split('/')
     );
 
-    const branchExists = await localBranchExists(projectDir, branchName);
+    const branchExists = await localBranchExists(projectDir, branchName, options.runGit);
     const worktreePathExists = await pathExists(worktreePath);
     if (branchExists || worktreePathExists) {
       firstCollision ??= { branchName, worktreePath };
       continue;
     }
 
-    await fs.mkdir(path.dirname(worktreePath), { recursive: true, mode: 0o700 });
+    await fs.mkdir(pathModule.dirname(worktreePath), { recursive: true, mode: 0o700 });
     return { branchName, worktreePath };
   }
 
@@ -74,34 +82,64 @@ export async function allocateManagedWorktree(
 }
 
 export function isManagedWorktreePath(candidate: string): boolean {
-  const root = path.resolve(MANAGED_WORKTREE_ROOT);
-  const resolved = path.resolve(candidate);
-  return resolved.startsWith(`${root}${path.sep}`);
+  return getManagedWorktreeRelativeDisplayPath(candidate) !== null;
 }
 
-export async function removeManagedWorktree(projectDir: string, worktreePath: string): Promise<void> {
-  await runGitCommand(
+export function getManagedWorktreeRelativeDisplayPath(candidate: string): string | null {
+  const defaultRelative = getRelativePathIfInside(MANAGED_WORKTREE_ROOT, candidate);
+  if (defaultRelative) return defaultRelative.replace(/[\\/]+/g, '/');
+
+  const wslHomeRoot = resolveWslHomeManagedWorktreeRoot(candidate);
+  if (wslHomeRoot) {
+    const wslRelative = getRelativePathIfInside(wslHomeRoot, candidate);
+    if (wslRelative) return wslRelative.replace(/[\\/]+/g, '/');
+  }
+
+  const wslFallbackRoot = resolveWslFallbackManagedWorktreeRoot(candidate);
+  if (!wslFallbackRoot) return null;
+
+  const wslFallbackRelative = getRelativePathIfInside(wslFallbackRoot, candidate);
+  return wslFallbackRelative ? wslFallbackRelative.replace(/[\\/]+/g, '/') : null;
+}
+
+export function resolveManagedWorktreeRoot(
+  projectDir: string,
+  agentEnvironment: AgentEnvironment,
+): string {
+  if (agentEnvironment === 'wsl') {
+    return (
+      resolveWslHomeManagedWorktreeRoot(projectDir)
+      ?? resolveWslFallbackManagedWorktreeRoot(projectDir)
+      ?? MANAGED_WORKTREE_ROOT
+    );
+  }
+
+  return MANAGED_WORKTREE_ROOT;
+}
+
+export async function removeManagedWorktree(
+  projectDir: string,
+  worktreePath: string,
+  runGit: GitRunner = createGitRunner(inferManagedGitEnvironment(projectDir, worktreePath)),
+): Promise<void> {
+  await runGit(
     ['-C', projectDir, 'worktree', 'remove', '--force', worktreePath],
-    'git worktree remove'
   );
 
   await fs.rm(worktreePath, { recursive: true, force: true });
 }
 
-async function localBranchExists(projectDir: string, branchName: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const child = spawn('git', ['-C', projectDir, 'show-ref', '--verify', '--quiet', `refs/heads/${branchName}`], {
-      stdio: ['ignore', 'ignore', 'ignore'],
-    });
-
-    child.on('close', (code) => {
-      resolve(code === 0);
-    });
-
-    child.on('error', () => {
-      resolve(false);
-    });
-  });
+async function localBranchExists(
+  projectDir: string,
+  branchName: string,
+  runGit: GitRunner = runGitCommand,
+): Promise<boolean> {
+  try {
+    await runGit(['-C', projectDir, 'show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function pathExists(candidate: string): Promise<boolean> {
@@ -113,28 +151,86 @@ async function pathExists(candidate: string): Promise<boolean> {
   }
 }
 
-function runGitCommand(args: string[], label: string): Promise<void> {
+function runGitCommand(args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
 
+    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
     child.on('close', (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trim();
+      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
+
       if (code === 0) {
-        resolve();
+        resolve({ stdout, stderr });
         return;
       }
 
-      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-      reject(new Error(stderr || `${label} exited with code ${code}`));
+      reject(new Error(stderr || `git exited with code ${code}`));
     });
 
     child.on('error', (error) => {
       reject(error);
     });
   });
+}
+
+function resolveWslHomeManagedWorktreeRoot(candidate: string): string | null {
+  const normalized = candidate.replace(/\//g, '\\');
+  const match = normalized.match(/^(\\\\(?:wsl\.localhost|wsl\$)\\[^\\]+)\\home\\([^\\]+)(?:\\|$)/i);
+  if (!match) return null;
+
+  return path.win32.join(match[1], 'home', match[2], '.tessera', 'worktrees');
+}
+
+function resolveWslFallbackManagedWorktreeRoot(candidate: string): string | null {
+  const rootFilesystemPath = getWindowsHostedWslRootFilesystemPath(candidate);
+  if (!rootFilesystemPath) return null;
+
+  return path.win32.join(rootFilesystemPath, 'var', 'tmp', 'tessera-worktrees');
+}
+
+function inferManagedGitEnvironment(
+  projectDir: string,
+  worktreePath: string,
+): AgentEnvironment {
+  return isWindowsHostedWslFilesystemPath(projectDir) || isWindowsHostedWslFilesystemPath(worktreePath)
+    ? 'wsl'
+    : 'native';
+}
+
+function getRelativePathIfInside(rootDir: string, candidate: string): string | null {
+  if (isWindowsStylePath(rootDir) !== isWindowsStylePath(candidate)) {
+    return null;
+  }
+
+  const pathModule = getPathModule(rootDir);
+  const resolvedRoot = pathModule.resolve(rootDir);
+  const resolvedCandidate = pathModule.resolve(candidate);
+  const relative = pathModule.relative(resolvedRoot, resolvedCandidate);
+
+  if (!relative || relative.startsWith('..') || pathModule.isAbsolute(relative)) {
+    return null;
+  }
+
+  return relative;
+}
+
+function getPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {
+  return isWindowsStylePath(filesystemPath) ? path.win32 : path.posix;
+}
+
+function isWindowsStylePath(filesystemPath: string): boolean {
+  return (
+    /^[a-zA-Z]:[\\/]/.test(filesystemPath)
+    || /^[a-zA-Z]:$/.test(filesystemPath)
+    || filesystemPath.startsWith('\\\\')
+    || filesystemPath.startsWith('//')
+  );
 }

@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { computeWorktreeDiffStats } from './worktree-diff-stats';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
@@ -41,7 +42,7 @@ function getState(): CacheState {
 }
 
 function normalize(workDir: string): string {
-  return path.resolve(workDir);
+  return getPathModule(workDir).resolve(workDir);
 }
 
 export function getCachedDiffStats(workDir: string): WorktreeDiffStats | null | undefined {
@@ -87,7 +88,8 @@ async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeD
 
   const promise = (async () => {
     try {
-      const stats = await computeWorktreeDiffStats(workDir);
+      const agentEnvironment = userIds[0] ? await getAgentEnvironment(userIds[0]) : undefined;
+      const stats = await computeWorktreeDiffStats(workDir, agentEnvironment);
       const previousStats = state.entries.get(workDir)?.stats;
       state.entries.set(workDir, { stats, computedAt: Date.now() });
       notifyListeners(workDir, stats, userIds, previousStats);
@@ -148,6 +150,19 @@ export function flushRecompute(workDir: string, userId?: string): Promise<Worktr
   const userIds = accumulated ? Array.from(accumulated) : [];
   if (userId && !userIds.includes(userId)) userIds.push(userId);
   return runCompute(key, userIds);
+}
+
+function getPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {
+  return isWindowsStylePath(filesystemPath) ? path.win32 : path.posix;
+}
+
+function isWindowsStylePath(filesystemPath: string): boolean {
+  return (
+    /^[a-zA-Z]:[\\/]/.test(filesystemPath)
+    || /^[a-zA-Z]:$/.test(filesystemPath)
+    || filesystemPath.startsWith('\\\\')
+    || filesystemPath.startsWith('//')
+  );
 }
 
 /**

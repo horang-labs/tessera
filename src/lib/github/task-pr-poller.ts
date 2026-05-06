@@ -6,8 +6,11 @@
  */
 
 import logger from '@/lib/logger';
+import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
+import { getElectronAuthUserId } from '@/lib/auth/electron-user';
+import { SettingsManager } from '@/lib/settings/manager';
+import type { AgentEnvironment } from '@/lib/settings/types';
 import { syncAllEligibleTaskPrs } from './task-pr-sync';
-import { isGhCliAvailable } from './pr-status-provider';
 
 const POLL_INTERVAL_MS = 600_000; // 10 minutes
 
@@ -20,14 +23,6 @@ class TaskPrPoller {
 
     if (process.env.DISABLE_TASK_PR_POLLER === '1') {
       logger.info('Task PR poller: disabled via DISABLE_TASK_PR_POLLER env');
-      return;
-    }
-
-    // gh missing is not a hard error — syncTaskPr will still mark each task
-    // as unsupported once, then subsequent polls short-circuit on the flag.
-    const hasGh = await isGhCliAvailable();
-    if (!hasGh) {
-      logger.info('Task PR poller: gh CLI unavailable, skipping');
       return;
     }
 
@@ -55,7 +50,7 @@ class TaskPrPoller {
     this.running = true;
     try {
       const startedAt = Date.now();
-      await syncAllEligibleTaskPrs();
+      await syncAllEligibleTaskPrs({ agentEnvironment: await resolvePollerAgentEnvironment() });
       logger.debug({ reason, durationMs: Date.now() - startedAt }, 'Task PR poll complete');
     } catch (err) {
       logger.error({ err, reason }, 'Task PR poll error');
@@ -66,3 +61,15 @@ class TaskPrPoller {
 }
 
 export const taskPrPoller = new TaskPrPoller();
+
+async function resolvePollerAgentEnvironment(): Promise<AgentEnvironment | undefined> {
+  if (!isElectronAuthBypassEnabled()) return undefined;
+
+  try {
+    const userId = await getElectronAuthUserId();
+    const settings = await SettingsManager.load(userId, { silent: true });
+    return settings.agentEnvironment;
+  } catch {
+    return undefined;
+  }
+}

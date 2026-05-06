@@ -81,6 +81,7 @@ export const ko: I18nMessages = {
       loadingProviders: '프로바이더를 불러오는 중…',
       empty: '등록된 CLI 프로바이더가 없습니다.',
       disconnected: 'WebSocket 연결이 끊어졌습니다. 페이지를 새로 열거나 연결 상태를 확인하세요.',
+      active: '사용 중',
       refresh: '새로고침',
       refreshProviders: '프로바이더 다시 확인',
       providerNeedsLoginTooltip: '{{provider}}는 로그인이 필요합니다. 터미널에서 로그인 후 새로고침하세요.',
@@ -537,6 +538,10 @@ export const ko: I18nMessages = {
       startSession: '이 폴더 추가',
       showHidden: '숨김 폴더 표시',
       hideHidden: '숨김 폴더 숨기기',
+      wslEnvironment: 'WSL',
+      windowsEnvironment: 'Windows',
+      wslDisabled: 'WSL 폴더를 추가하려면 설정에서 Agent Environment를 WSL로 변경하세요.',
+      windowsDisabled: 'Windows 폴더를 추가하려면 설정에서 Agent Environment를 Windows Native로 변경하세요.',
     },
   },
   panel: {

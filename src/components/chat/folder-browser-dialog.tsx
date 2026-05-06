@@ -10,6 +10,8 @@ import {
   FolderPlus,
   Eye,
   EyeOff,
+  Monitor,
+  Terminal,
 } from 'lucide-react';
 import {
   Dialog,
@@ -20,15 +22,20 @@ import { DialogHero } from '@/components/ui/dialog-hero';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { useElectronPlatform } from '@/hooks/use-electron-platform';
+import { useSettingsStore } from '@/stores/settings-store';
+import type { AgentEnvironment } from '@/lib/settings/types';
 
 interface DirectoryEntry {
   name: string;
   path: string;
+  filesystemPath: string;
   isGitRepo: boolean;
 }
 
 interface BrowseResponse {
   currentPath: string;
+  filesystemPath: string;
   parentPath: string | null;
   entries: DirectoryEntry[];
   isGitRepo: boolean;
@@ -46,7 +53,11 @@ export function FolderBrowserDialog({
   onSelect,
 }: FolderBrowserDialogProps) {
   const { t } = useI18n();
+  const electronPlatform = useElectronPlatform();
+  const agentEnvironment = useSettingsStore((state) => state.settings.agentEnvironment);
+  const serverPlatform = useSettingsStore((state) => state.serverHostInfo?.platform ?? null);
   const [currentPath, setCurrentPath] = useState<string>('');
+  const [currentFilesystemPath, setCurrentFilesystemPath] = useState<string>('');
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<DirectoryEntry[]>([]);
   const [isGitRepo, setIsGitRepo] = useState(false);
@@ -55,10 +66,34 @@ export function FolderBrowserDialog({
   const [error, setError] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState('');
   const [showHidden, setShowHidden] = useState(false);
+  const [browseEnvironment, setBrowseEnvironment] = useState<AgentEnvironment>('native');
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const canBrowseWsl = serverPlatform === 'win32' || electronPlatform === 'win32';
+  const isEnvironmentAllowed = useCallback(
+    (environment: AgentEnvironment) => environment === agentEnvironment,
+    [agentEnvironment],
+  );
 
-  const fetchDirectory = useCallback(async (path?: string, hidden?: boolean) => {
+  const getInitialBrowseEnvironment = useCallback((): AgentEnvironment => {
+    return canBrowseWsl && agentEnvironment === 'wsl' ? 'wsl' : 'native';
+  }, [agentEnvironment, canBrowseWsl]);
+
+  const resetDirectoryState = useCallback(() => {
+    setCurrentPath('');
+    setCurrentFilesystemPath('');
+    setParentPath(null);
+    setEntries([]);
+    setIsGitRepo(false);
+    setPathInput('');
+    setError(null);
+  }, []);
+
+  const fetchDirectory = useCallback(async (
+    path?: string,
+    hidden?: boolean,
+    environment: AgentEnvironment = 'native',
+  ) => {
     setIsLoading(true);
     setError(null);
 
@@ -66,6 +101,7 @@ export function FolderBrowserDialog({
       const query = new URLSearchParams();
       if (path) query.set('path', path);
       if (hidden) query.set('showHidden', 'true');
+      query.set('environment', environment);
       const qs = query.toString();
       const response = await fetch(`/api/filesystem/browse${qs ? `?${qs}` : ''}`);
 
@@ -76,6 +112,7 @@ export function FolderBrowserDialog({
 
       const data: BrowseResponse = await response.json();
       setCurrentPath(data.currentPath);
+      setCurrentFilesystemPath(data.filesystemPath);
       setParentPath(data.parentPath);
       setEntries(data.entries);
       setIsGitRepo(data.isGitRepo);
@@ -92,13 +129,16 @@ export function FolderBrowserDialog({
   // Load home directory on open (reset showHidden)
   useEffect(() => {
     if (isOpen) {
+      const initialEnvironment = getInitialBrowseEnvironment();
+      setBrowseEnvironment(initialEnvironment);
+      resetDirectoryState();
       setShowHidden(false);
-      fetchDirectory();
+      fetchDirectory(undefined, false, initialEnvironment);
     }
-  }, [isOpen, fetchDirectory]);
+  }, [fetchDirectory, getInitialBrowseEnvironment, isOpen, resetDirectoryState]);
 
   const handleNavigate = (path: string) => {
-    fetchDirectory(path, showHidden);
+    fetchDirectory(path, showHidden, browseEnvironment);
   };
 
   const handleEntryClick = (entry: DirectoryEntry) => {
@@ -107,16 +147,25 @@ export function FolderBrowserDialog({
 
   const handlePathInputKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && pathInput.trim()) {
-      fetchDirectory(pathInput.trim(), showHidden);
+      fetchDirectory(pathInput.trim(), showHidden, browseEnvironment);
     }
   };
 
+  const handleEnvironmentChange = (environment: AgentEnvironment) => {
+    if (environment === browseEnvironment) return;
+    if (!isEnvironmentAllowed(environment)) return;
+    setBrowseEnvironment(environment);
+    resetDirectoryState();
+    setShowHidden(false);
+    fetchDirectory(undefined, false, environment);
+  };
+
   const handleSelect = async () => {
-    if (!currentPath) return;
+    if (!currentFilesystemPath && !currentPath) return;
 
     setIsCreating(true);
     try {
-      await onSelect(currentPath);
+      await onSelect(currentFilesystemPath || currentPath);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create session');
@@ -126,12 +175,7 @@ export function FolderBrowserDialog({
   };
 
   // Parse current path into breadcrumb segments
-  const breadcrumbs = currentPath
-    ? currentPath.split('/').filter(Boolean).map((segment, index, arr) => ({
-        name: segment,
-        path: '/' + arr.slice(0, index + 1).join('/'),
-      }))
-    : [];
+  const { breadcrumbs, rootPath } = buildBreadcrumbs(currentPath);
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -153,6 +197,56 @@ export function FolderBrowserDialog({
           />
         </DialogHeader>
 
+        {canBrowseWsl && (
+          <div
+            className="mt-2 flex w-fit shrink-0 rounded-md border border-(--divider) bg-(--sidebar-hover) p-0.5"
+            data-testid="folder-browser-environment"
+          >
+            <button
+              type="button"
+              onClick={() => handleEnvironmentChange('wsl')}
+              disabled={!isEnvironmentAllowed('wsl')}
+              className={cn(
+                'flex h-7 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition-colors',
+                browseEnvironment === 'wsl'
+                  ? 'bg-(--input-bg) text-(--text-primary) shadow-sm'
+                  : 'text-(--text-muted) hover:text-(--text-primary)',
+                !isEnvironmentAllowed('wsl') && 'cursor-not-allowed opacity-45 hover:text-(--text-muted)'
+              )}
+              data-testid="folder-browser-environment-wsl"
+              title={
+                isEnvironmentAllowed('wsl')
+                  ? t('dialog.folderBrowser.wslEnvironment')
+                  : t('dialog.folderBrowser.wslDisabled')
+              }
+            >
+              <Terminal className="h-3.5 w-3.5" />
+              {t('dialog.folderBrowser.wslEnvironment')}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleEnvironmentChange('native')}
+              disabled={!isEnvironmentAllowed('native')}
+              className={cn(
+                'flex h-7 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition-colors',
+                browseEnvironment === 'native'
+                  ? 'bg-(--input-bg) text-(--text-primary) shadow-sm'
+                  : 'text-(--text-muted) hover:text-(--text-primary)',
+                !isEnvironmentAllowed('native') && 'cursor-not-allowed opacity-45 hover:text-(--text-muted)'
+              )}
+              data-testid="folder-browser-environment-native"
+              title={
+                isEnvironmentAllowed('native')
+                  ? t('dialog.folderBrowser.windowsEnvironment')
+                  : t('dialog.folderBrowser.windowsDisabled')
+              }
+            >
+              <Monitor className="h-3.5 w-3.5" />
+              {t('dialog.folderBrowser.windowsEnvironment')}
+            </button>
+          </div>
+        )}
+
         {/* Path input */}
         <div className="mt-2 shrink-0">
           <div className="flex gap-2">
@@ -172,7 +266,7 @@ export function FolderBrowserDialog({
               variant="outline"
               size="sm"
               className="shrink-0 h-[38px]"
-              onClick={() => fetchDirectory(pathInput.trim(), showHidden)}
+              onClick={() => fetchDirectory(pathInput.trim(), showHidden, browseEnvironment)}
               disabled={isLoading}
               title={t('dialog.folderBrowser.go')}
             >
@@ -184,7 +278,7 @@ export function FolderBrowserDialog({
         {/* Breadcrumb navigation */}
         <div className="flex shrink-0 items-center gap-0.5 mt-3 text-xs overflow-x-auto pb-1 scrollbar-thin">
           <button
-            onClick={() => handleNavigate('/')}
+            onClick={() => handleNavigate(rootPath)}
             className="p-1 rounded hover:bg-(--sidebar-hover) text-(--text-muted) hover:text-(--accent) transition-colors shrink-0"
             title={t('dialog.folderBrowser.root')}
           >
@@ -216,7 +310,7 @@ export function FolderBrowserDialog({
             onClick={() => {
               const next = !showHidden;
               setShowHidden(next);
-              fetchDirectory(currentPath, next);
+              fetchDirectory(currentPath, next, browseEnvironment);
             }}
             className={cn(
               'ml-auto p-1 rounded transition-colors shrink-0',
@@ -249,7 +343,7 @@ export function FolderBrowserDialog({
                 variant="ghost"
                 size="sm"
                 className="mt-2"
-                onClick={() => fetchDirectory()}
+                onClick={() => fetchDirectory(undefined, false, browseEnvironment)}
               >
                 {t('dialog.folderBrowser.goHome')}
               </Button>
@@ -324,7 +418,7 @@ export function FolderBrowserDialog({
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={isCreating || isLoading || !currentPath}
+            disabled={isCreating || isLoading || (!currentFilesystemPath && !currentPath)}
             data-testid="folder-browser-confirm"
           >
             {isCreating ? (
@@ -340,4 +434,37 @@ export function FolderBrowserDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function buildBreadcrumbs(currentPath: string): {
+  breadcrumbs: Array<{ name: string; path: string }>;
+  rootPath: string;
+} {
+  if (!currentPath) return { breadcrumbs: [], rootPath: '/' };
+
+  const driveMatch = currentPath.match(/^([a-zA-Z]:)[\\/]*(.*)$/);
+  if (driveMatch) {
+    const rootPath = `${driveMatch[1]}\\`;
+    const segments = driveMatch[2].split(/[\\/]+/).filter(Boolean);
+    return {
+      rootPath,
+      breadcrumbs: segments.map((segment, index) => ({
+        name: segment,
+        path: `${rootPath}${segments.slice(0, index + 1).join('\\')}`,
+      })),
+    };
+  }
+
+  if (currentPath.startsWith('\\\\')) {
+    return { breadcrumbs: [{ name: currentPath, path: currentPath }], rootPath: currentPath };
+  }
+
+  const segments = currentPath.split('/').filter(Boolean);
+  return {
+    rootPath: '/',
+    breadcrumbs: segments.map((segment, index) => ({
+      name: segment,
+      path: `/${segments.slice(0, index + 1).join('/')}`,
+    })),
+  };
 }

@@ -532,6 +532,7 @@ async function stopServer(): Promise<void> {
 // ── Window ─────────────────────────────────────────────────────────────────
 function createWindow(port: number): BrowserWindow {
   const isWindows = process.platform === 'win32';
+  const isMac = process.platform === 'darwin';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 
   const win = new BrowserWindow({
@@ -548,13 +549,13 @@ function createWindow(port: number): BrowserWindow {
       nodeIntegration: false,
       webSecurity: true,
     },
-    autoHideMenuBar: isWindows,
+    autoHideMenuBar: !isMac,
     backgroundColor: isWindows ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
+    titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
 
-  if (isWindows) {
+  if (!isMac) {
     win.removeMenu();
   }
 

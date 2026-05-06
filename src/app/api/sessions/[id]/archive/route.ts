@@ -56,7 +56,7 @@ export async function PATCH(
     if (archived) {
       const settings = await SettingsManager.load(auth.userId);
       if (settings.autoDeleteArchivedWorktrees) {
-        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays);
+        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, auth.userId);
       }
     }
 

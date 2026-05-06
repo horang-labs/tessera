@@ -7,12 +7,14 @@
  * — callers should mark the task accordingly so the UI stops asking for sync.
  */
 
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import type { SpawnOptions } from 'child_process';
 import logger from '@/lib/logger';
+import { spawnCli } from '@/lib/cli/spawn-cli';
+import { isWindowsHostedWslFilesystemPath } from '@/lib/filesystem/path-environment';
+import { createGitRunner } from '@/lib/worktrees/git-runner';
+import type { AgentEnvironment } from '@/lib/settings/types';
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
 
-const execFileAsync = promisify(execFile);
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 
 type ProbeUnsupportedReason =
@@ -38,50 +40,54 @@ export type PrProbeResult =
       resolvedBranch: string | null;
     };
 
-let ghAvailableCache: boolean | null = null;
+const ghAvailableCache = new Map<AgentEnvironment, boolean>();
 
-async function execInDir(cmd: string, args: string[], cwd: string): Promise<{ stdout: string; stderr: string } | null> {
+async function execGitInDir(
+  args: string[],
+  cwd: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<{ stdout: string; stderr: string } | null> {
   try {
-    const { stdout, stderr } = await execFileAsync(cmd, args, {
-      cwd,
-      maxBuffer: EXEC_MAX_BUFFER,
-      encoding: 'utf8',
-    });
+    const runGit = createGitRunner(agentEnvironment);
+    const { stdout, stderr } = await runGit(['-C', cwd, ...args]);
     return { stdout, stderr };
-  } catch (err: any) {
+  } catch {
     return null;
   }
 }
 
-async function execInDirCapturingStderr(cmd: string, args: string[], cwd: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+async function execGhInDir(
+  args: string[],
+  cwd: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   try {
-    const { stdout, stderr } = await execFileAsync(cmd, args, {
-      cwd,
-      maxBuffer: EXEC_MAX_BUFFER,
-      encoding: 'utf8',
-    });
-    return { ok: true, stdout, stderr };
-  } catch (err: any) {
-    const stdout = String(err?.stdout ?? '');
-    const stderr = String(err?.stderr ?? err?.message ?? '');
-    return { ok: false, stdout, stderr };
+    const result = await runCliCommand('gh', args, cwd, agentEnvironment);
+    return { ok: true, ...result };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, stdout: '', stderr: message };
   }
 }
 
-export async function isGhCliAvailable(): Promise<boolean> {
-  if (ghAvailableCache !== null) return ghAvailableCache;
+export async function isGhCliAvailable(
+  agentEnvironment: AgentEnvironment = 'native',
+): Promise<boolean> {
+  const cached = ghAvailableCache.get(agentEnvironment);
+  if (cached !== undefined) return cached;
+
   try {
-    await execFileAsync('gh', ['--version'], { encoding: 'utf8' });
-    ghAvailableCache = true;
+    await runCliCommand('gh', ['--version'], undefined, agentEnvironment);
+    ghAvailableCache.set(agentEnvironment, true);
   } catch {
-    ghAvailableCache = false;
+    ghAvailableCache.set(agentEnvironment, false);
   }
-  return ghAvailableCache;
+  return ghAvailableCache.get(agentEnvironment) ?? false;
 }
 
 /** Exposed for tests / dev: reset the gh detection cache. */
 export function resetGhAvailabilityCache(): void {
-  ghAvailableCache = null;
+  ghAvailableCache.clear();
 }
 
 function normalizeGithubOwnerRepo(remoteUrl: string | null): string | null {
@@ -121,23 +127,25 @@ interface GhPrListItem {
 export async function probeTaskPrStatus(params: {
   workDir: string;
   branch: string;
+  agentEnvironment?: AgentEnvironment;
 }): Promise<PrProbeResult> {
   const { workDir, branch } = params;
+  const agentEnvironment = params.agentEnvironment ?? inferGitHubToolEnvironment(workDir);
 
   if (!workDir) return { kind: 'unsupported', reason: 'workdir_missing' };
   if (!branch) return { kind: 'unsupported', reason: 'branch_missing' };
 
-  const isRepo = await execInDir('git', ['rev-parse', '--is-inside-work-tree'], workDir);
+  const isRepo = await execGitInDir(['rev-parse', '--is-inside-work-tree'], workDir, agentEnvironment);
   if (!isRepo || isRepo.stdout.trim() !== 'true') {
     return { kind: 'unsupported', reason: 'not_git_repo' };
   }
 
-  const remote = await execInDir('git', ['remote', 'get-url', 'origin'], workDir);
+  const remote = await execGitInDir(['remote', 'get-url', 'origin'], workDir, agentEnvironment);
   const ownerRepo = normalizeGithubOwnerRepo(remote?.stdout ?? null);
   if (!remote) return { kind: 'unsupported', reason: 'no_origin' };
   if (!ownerRepo) return { kind: 'unsupported', reason: 'origin_not_github' };
 
-  if (!(await isGhCliAvailable())) {
+  if (!(await isGhCliAvailable(agentEnvironment))) {
     return { kind: 'unsupported', reason: 'gh_missing' };
   }
 
@@ -147,25 +155,24 @@ export async function probeTaskPrStatus(params: {
   // probe needs to track wherever HEAD actually points — matching the Git
   // panel's behavior. Falls back to the caller-provided `branch` when HEAD
   // is detached or we can't resolve it.
-  const headBranchResult = await execInDir(
-    'git',
+  const headBranchResult = await execGitInDir(
     ['rev-parse', '--abbrev-ref', 'HEAD'],
     workDir,
+    agentEnvironment,
   );
   const headBranch = headBranchResult?.stdout.trim();
   const resolvedBranch =
     headBranch && headBranch !== 'HEAD' ? headBranch : null;
   const probeBranch = resolvedBranch ?? branch;
 
-  const lsRemote = await execInDir(
-    'git',
+  const lsRemote = await execGitInDir(
     ['ls-remote', '--heads', 'origin', probeBranch],
     workDir,
+    agentEnvironment,
   );
   const remoteBranchExists = !!lsRemote && lsRemote.stdout.trim().length > 0;
 
-  const run = await execInDirCapturingStderr(
-    'gh',
+  const run = await execGhInDir(
     [
       'pr', 'list',
       '--repo', ownerRepo,
@@ -175,6 +182,7 @@ export async function probeTaskPrStatus(params: {
       '--limit', '5',
     ],
     workDir,
+    agentEnvironment,
   );
 
   if (!run.ok) {
@@ -218,4 +226,54 @@ export async function probeTaskPrStatus(params: {
   };
 
   return { kind: 'ok', prStatus, remoteBranchExists, resolvedBranch };
+}
+
+function runCliCommand(
+  command: string,
+  args: string[],
+  cwd: string | undefined,
+  agentEnvironment: AgentEnvironment,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const options: SpawnOptions = {
+      ...(cwd ? { cwd } : {}),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    };
+    const child = spawnCli(command, args, options, agentEnvironment);
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let stdoutLength = 0;
+    let stderrLength = 0;
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutLength += chunk.length;
+      if (stdoutLength <= EXEC_MAX_BUFFER) stdoutChunks.push(chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrLength += chunk.length;
+      if (stderrLength <= EXEC_MAX_BUFFER) stderrChunks.push(chunk);
+    });
+
+    child.on('close', (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trimEnd();
+      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
+
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+
+      reject(new Error(stderr || `${command} exited with code ${code}`));
+    });
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+  });
+}
+
+function inferGitHubToolEnvironment(workDir: string): AgentEnvironment {
+  return isWindowsHostedWslFilesystemPath(workDir) ? 'wsl' : 'native';
 }

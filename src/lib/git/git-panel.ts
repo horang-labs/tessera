@@ -1,12 +1,18 @@
-import { execFile } from "child_process";
+import type { SpawnOptions } from "child_process";
 import { readFile } from "fs/promises";
 import path from "path";
-import { promisify } from "util";
+import {
+  getFilesystemPathBasename,
+  isWindowsHostedWslFilesystemPath,
+  resolveWslDisplayPathAgainstWindowsHostedPath,
+} from "@/lib/filesystem/path-environment";
 import * as dbSessions from "@/lib/db/sessions";
 import * as dbTasks from "@/lib/db/tasks";
 import { computeWorktreeFileDiffStats } from "@/lib/git/worktree-diff-stats";
 import { getCachedDiffStats } from "@/lib/git/worktree-diff-stats-cache";
-import { MANAGED_WORKTREE_ROOT } from "@/lib/worktrees/managed";
+import { getAgentEnvironment, spawnCli } from "@/lib/cli/spawn-cli";
+import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
+import type { AgentEnvironment } from "@/lib/settings/types";
 import type {
   GitChangedFile,
   GitChangedFilesData,
@@ -17,7 +23,6 @@ import type {
   GitPanelData,
 } from "@/types/git";
 
-const execFileAsync = promisify(execFile);
 const COMMAND_MAX_BUFFER = 4 * 1024 * 1024;
 const MAX_SYNTHETIC_DIFF_BYTES = 64 * 1024;
 
@@ -41,28 +46,56 @@ async function runCommand(
   command: string,
   args: string[],
   cwd: string,
+  agentEnvironment: AgentEnvironment,
 ): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(command, args, {
+  return new Promise((resolve, reject) => {
+    const options: SpawnOptions = {
       cwd,
-      maxBuffer: COMMAND_MAX_BUFFER,
-      encoding: "utf8",
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    };
+    const child = spawnCli(command, args, options, agentEnvironment);
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let stdoutLength = 0;
+    let stderrLength = 0;
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutLength += chunk.length;
+      if (stdoutLength <= COMMAND_MAX_BUFFER) stdoutChunks.push(chunk);
     });
-    return stdout.trimEnd();
-  } catch (error: any) {
-    const stderr = String(error?.stderr ?? "").trim();
-    const message = stderr || error?.message || `Failed to run ${command}`;
-    throw new GitPanelError("command_failed", message, 500);
-  }
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrLength += chunk.length;
+      if (stderrLength <= COMMAND_MAX_BUFFER) stderrChunks.push(chunk);
+    });
+
+    child.on("close", (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8").trimEnd();
+      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+
+      reject(new GitPanelError("command_failed", stderr || `Failed to run ${command}`, 500));
+    });
+
+    child.on("error", (error) => {
+      reject(new GitPanelError("command_failed", error.message || `Failed to run ${command}`, 500));
+    });
+  });
 }
 
 async function runOptionalCommand(
   command: string,
   args: string[],
   cwd: string,
+  agentEnvironment: AgentEnvironment,
 ): Promise<string | null> {
   try {
-    return await runCommand(command, args, cwd);
+    return await runCommand(command, args, cwd, agentEnvironment);
   } catch {
     return null;
   }
@@ -96,11 +129,15 @@ async function resolveSessionWorkDir(sessionId: string): Promise<string> {
   return context.workDir;
 }
 
-async function resolveRepoRoot(workDir: string): Promise<string> {
+async function resolveRepoRoot(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<string> {
   const isRepo = await runOptionalCommand(
     "git",
     ["rev-parse", "--is-inside-work-tree"],
     workDir,
+    agentEnvironment,
   );
   if (isRepo !== "true") {
     throw new GitPanelError(
@@ -109,19 +146,17 @@ async function resolveRepoRoot(workDir: string): Promise<string> {
       422,
     );
   }
-  return runCommand("git", ["rev-parse", "--show-toplevel"], workDir);
+  return runCommand("git", ["rev-parse", "--show-toplevel"], workDir, agentEnvironment);
 }
 
 export function getWorktreeDisplayName(workDir: string): string {
-  const root = path.resolve(MANAGED_WORKTREE_ROOT);
-  const resolvedWorkDir = path.resolve(workDir);
-  const relative = path.relative(root, resolvedWorkDir);
-
-  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
-    return relative.replace(/[\\/]+/g, "/");
+  const managedRelative = getManagedWorktreeRelativeDisplayPath(workDir);
+  if (managedRelative) {
+    return managedRelative;
   }
 
-  return path.basename(resolvedWorkDir);
+  const pathModule = getPathModule(workDir);
+  return pathModule.basename(pathModule.resolve(workDir));
 }
 
 function parseAheadBehind(raw: string | null): {
@@ -268,6 +303,7 @@ async function resolveGitHubPanelState(
   workDir: string,
   remoteUrl: string | null,
   prContext: dbTasks.TaskPrSyncContext | null,
+  agentEnvironment: AgentEnvironment,
 ): Promise<GitPanelData["github"]> {
   if (!normalizeGithubUrl(remoteUrl)) {
     return {
@@ -279,7 +315,7 @@ async function resolveGitHubPanelState(
   }
 
   try {
-    await runCommand("gh", ["--version"], workDir);
+    await runCommand("gh", ["--version"], workDir, agentEnvironment);
   } catch {
     return {
       available: false,
@@ -290,7 +326,7 @@ async function resolveGitHubPanelState(
   }
 
   try {
-    await runCommand("gh", ["auth", "status"], workDir);
+    await runCommand("gh", ["auth", "status"], workDir, agentEnvironment);
   } catch {
     return {
       available: false,
@@ -325,14 +361,18 @@ function getDefaultBranchName(raw: string | null): string | null {
   return match?.[1] ?? null;
 }
 
-async function getChangedFiles(workDir: string): Promise<GitChangedFile[]> {
+async function getChangedFiles(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<GitChangedFile[]> {
   const [statusRaw, fileDiffStats] = await Promise.all([
     runOptionalCommand(
       "git",
       ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
       workDir,
+      agentEnvironment,
     ),
-    computeWorktreeFileDiffStats(workDir),
+    computeWorktreeFileDiffStats(workDir, agentEnvironment),
   ]);
   const statsByPath = fileDiffStats ?? new Map();
   return parseGitStatus(statusRaw ?? "").map((file) => {
@@ -345,11 +385,12 @@ function ensurePathInsideRepo(repoRoot: string, relativePath: string): string {
   if (!relativePath)
     throw new GitPanelError("invalid_file_path", "File path is required", 400);
 
-  const resolved = path.resolve(repoRoot, relativePath);
-  const normalizedRoot = path.resolve(repoRoot);
-  const rootPrefix = normalizedRoot.endsWith(path.sep)
+  const pathModule = getPathModule(repoRoot);
+  const resolved = pathModule.resolve(repoRoot, relativePath);
+  const normalizedRoot = pathModule.resolve(repoRoot);
+  const rootPrefix = normalizedRoot.endsWith(pathModule.sep)
     ? normalizedRoot
-    : `${normalizedRoot}${path.sep}`;
+    : `${normalizedRoot}${pathModule.sep}`;
 
   if (resolved !== normalizedRoot && !resolved.startsWith(rootPrefix)) {
     throw new GitPanelError(
@@ -365,8 +406,10 @@ function ensurePathInsideRepo(repoRoot: string, relativePath: string): string {
 async function buildSyntheticUntrackedDiff(
   repoRoot: string,
   relativePath: string,
+  referenceFilesystemPath: string,
 ): Promise<string> {
-  const absolutePath = ensurePathInsideRepo(repoRoot, relativePath);
+  const filesystemRepoRoot = resolveNodeFilesystemPath(repoRoot, referenceFilesystemPath);
+  const absolutePath = ensurePathInsideRepo(filesystemRepoRoot, relativePath);
   const buffer = await readFile(absolutePath);
 
   if (buffer.includes(0)) {
@@ -391,10 +434,12 @@ async function buildSyntheticUntrackedDiff(
 
 export async function getGitPanelData(
   sessionId: string,
+  userId?: string,
 ): Promise<GitPanelData> {
   const sessionContext = await resolveSessionContext(sessionId);
   const { workDir } = sessionContext;
-  const repoRoot = await resolveRepoRoot(workDir);
+  const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
+  const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
   const prContext = sessionContext.taskId
     ? dbTasks.getTaskPrSyncContext(sessionContext.taskId)
     : null;
@@ -409,49 +454,54 @@ export async function getGitPanelData(
     changedFiles,
     recentCommitsRaw,
   ] = await Promise.all([
-    runOptionalCommand("git", ["branch", "--show-current"], workDir),
+    runOptionalCommand("git", ["branch", "--show-current"], workDir, agentEnvironment),
     runOptionalCommand(
       "git",
       ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
       workDir,
+      agentEnvironment,
     ),
     runOptionalCommand(
       "git",
       ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
       workDir,
+      agentEnvironment,
     ),
-    runOptionalCommand("git", ["remote", "get-url", "origin"], workDir),
+    runOptionalCommand("git", ["remote", "get-url", "origin"], workDir, agentEnvironment),
     runOptionalCommand(
       "git",
       ["symbolic-ref", "refs/remotes/origin/HEAD"],
       workDir,
+      agentEnvironment,
     ),
     runOptionalCommand(
       "git",
       ["branch", "-a", "--format=%(refname:short)"],
       workDir,
+      agentEnvironment,
     ),
-    getChangedFiles(workDir),
+    getChangedFiles(workDir, agentEnvironment),
     runOptionalCommand(
       "git",
       ["log", "--format=%h%x09%s%x09%cr", "-n", "5"],
       workDir,
+      agentEnvironment,
     ),
   ]);
 
   const [detachedHead, headShaRaw] = await Promise.all([
-    runOptionalCommand("git", ["rev-parse", "--short", "HEAD"], workDir),
-    runOptionalCommand("git", ["rev-parse", "HEAD"], workDir),
+    runOptionalCommand("git", ["rev-parse", "--short", "HEAD"], workDir, agentEnvironment),
+    runOptionalCommand("git", ["rev-parse", "HEAD"], workDir, agentEnvironment),
   ]);
   const { ahead, behind } = parseAheadBehind(aheadBehindRaw);
-  const github = await resolveGitHubPanelState(workDir, remoteUrl, prContext);
+  const github = await resolveGitHubPanelState(workDir, remoteUrl, prContext, agentEnvironment);
 
   return {
     sessionId,
     ...(sessionContext.taskId ? { taskId: sessionContext.taskId } : {}),
     workDir,
     repoRoot,
-    repoName: path.basename(repoRoot),
+    repoName: getFilesystemPathBasename(repoRoot),
     worktreeName: getWorktreeDisplayName(workDir),
     worktreePath: workDir,
     branch:
@@ -481,23 +531,27 @@ export async function getGitPanelData(
 
 export async function getGitChangedFilesData(
   sessionId: string,
+  userId?: string,
 ): Promise<GitChangedFilesData> {
   const workDir = await resolveSessionWorkDir(sessionId);
-  await resolveRepoRoot(workDir);
+  const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
+  await resolveRepoRoot(workDir, agentEnvironment);
 
   return {
     sessionId,
-    changedFiles: await getChangedFiles(workDir),
+    changedFiles: await getChangedFiles(workDir, agentEnvironment),
   };
 }
 
 export async function getGitDiffData(
   sessionId: string,
   relativePath: string,
+  userId?: string,
 ): Promise<GitDiffData> {
   const workDir = await resolveSessionWorkDir(sessionId);
-  const repoRoot = await resolveRepoRoot(workDir);
-  const changedFiles = await getChangedFiles(workDir);
+  const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
+  const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
+  const changedFiles = await getChangedFiles(workDir, agentEnvironment);
   const fileEntry = changedFiles.find((file) => file.path === relativePath);
 
   if (!fileEntry) {
@@ -509,7 +563,7 @@ export async function getGitDiffData(
   }
 
   if (fileEntry.state === "untracked") {
-    const diff = await buildSyntheticUntrackedDiff(repoRoot, relativePath);
+    const diff = await buildSyntheticUntrackedDiff(repoRoot, relativePath, workDir);
     return {
       sessionId,
       path: relativePath,
@@ -530,6 +584,7 @@ export async function getGitDiffData(
       relativePath,
     ],
     repoRoot,
+    agentEnvironment,
   );
 
   return {
@@ -538,4 +593,35 @@ export async function getGitDiffData(
     diff: diff || `No textual diff available for ${relativePath}.`,
     truncated: false,
   };
+}
+
+async function resolveCommandEnvironment(
+  workDir: string,
+  userId?: string,
+): Promise<AgentEnvironment> {
+  if (userId) {
+    return getAgentEnvironment(userId);
+  }
+
+  return isWindowsHostedWslFilesystemPath(workDir) ? "wsl" : "native";
+}
+
+function resolveNodeFilesystemPath(
+  gitPath: string,
+  referenceFilesystemPath: string,
+): string {
+  return resolveWslDisplayPathAgainstWindowsHostedPath(gitPath, referenceFilesystemPath) ?? gitPath;
+}
+
+function getPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {
+  return isWindowsStylePath(filesystemPath) ? path.win32 : path.posix;
+}
+
+function isWindowsStylePath(filesystemPath: string): boolean {
+  return (
+    /^[a-zA-Z]:[\\/]/.test(filesystemPath)
+    || /^[a-zA-Z]:$/.test(filesystemPath)
+    || filesystemPath.startsWith("\\\\")
+    || filesystemPath.startsWith("//")
+  );
 }

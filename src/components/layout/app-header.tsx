@@ -35,7 +35,7 @@ export const AppHeader = memo(function AppHeader() {
     : selectedProject?.displayName ?? '';
   const projectTitle = isAllProjects
     ? t('projectStrip.allProjects')
-    : selectedProject?.decodedPath ?? projectDisplayName;
+    : selectedProject?.displayPath ?? selectedProject?.decodedPath ?? projectDisplayName;
   const projectInitial = projectDisplayName.trim().charAt(0).toUpperCase() || '?';
   const shouldShowProjectContext = isAllProjects || selectedProject !== null;
 

@@ -16,7 +16,7 @@ export async function DELETE(
   }
 
   try {
-    await removeArchivedTaskWorktree(id);
+    await removeArchivedTaskWorktree(id, auth.userId);
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete worktree';

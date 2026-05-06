@@ -12,6 +12,7 @@
 
 import * as dbTasks from '@/lib/db/tasks';
 import logger from '@/lib/logger';
+import type { AgentEnvironment } from '@/lib/settings/types';
 import type { TaskPrStatus } from '@/types/task-pr-status';
 import { probeTaskPrStatus } from './pr-status-provider';
 
@@ -76,7 +77,10 @@ function prStatusesEqual(a: TaskPrStatus | undefined, b: TaskPrStatus | undefine
  * broadcasts the update to subscribers. Concurrent calls for the same taskId
  * coalesce on a shared promise.
  */
-export function syncTaskPr(taskId: string): Promise<void> {
+export function syncTaskPr(
+  taskId: string,
+  options: { agentEnvironment?: AgentEnvironment } = {},
+): Promise<void> {
   const state = getState();
   const existing = state.inFlight.get(taskId);
   if (existing) return existing;
@@ -97,6 +101,7 @@ export function syncTaskPr(taskId: string): Promise<void> {
       const probe = await probeTaskPrStatus({
         workDir: row.workDir,
         branch: row.branch,
+        agentEnvironment: options.agentEnvironment,
       });
 
       if (probe.kind === 'unsupported') {
@@ -148,7 +153,9 @@ export function syncTaskPr(taskId: string): Promise<void> {
  * Sweep every branch-bound task. We serialize per-task syncs with a small
  * concurrency cap to avoid stampeding gh/GitHub.
  */
-export async function syncAllEligibleTaskPrs(): Promise<void> {
+export async function syncAllEligibleTaskPrs(
+  options: { agentEnvironment?: AgentEnvironment } = {},
+): Promise<void> {
   const rows = dbTasks.getTasksEligibleForPrSync();
   const CONCURRENCY = 3;
   let cursor = 0;
@@ -158,7 +165,7 @@ export async function syncAllEligibleTaskPrs(): Promise<void> {
       const idx = cursor++;
       const row = rows[idx];
       if (!row) break;
-      await syncTaskPr(row.id);
+      await syncTaskPr(row.id, options);
     }
   };
 

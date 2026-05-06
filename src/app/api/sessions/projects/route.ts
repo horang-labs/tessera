@@ -1,9 +1,11 @@
 import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { processManager } from '@/lib/cli/process-manager';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
+import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
 import {
   isElectronAppRuntimeProjectPath,
   shouldAutoRegisterCurrentProject,
@@ -24,6 +26,7 @@ export async function GET(req: NextRequest) {
   if ('response' in auth) {
     return auth.response;
   }
+  const { userId } = auth;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -33,6 +36,7 @@ export async function GET(req: NextRequest) {
     const activeSessionIds = processManager.getActiveSessionIds();
     const generatingSessionIds = processManager.getGeneratingSessionIds();
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
+    const agentEnvironment = await getAgentEnvironment(userId);
 
     // Current project directory (matches projects.id which is now the absolute path)
     const currentProjectId = process.cwd();
@@ -70,6 +74,7 @@ export async function GET(req: NextRequest) {
         encodedDir: project.id,
         displayName: project.display_name,
         decodedPath: project.decoded_path,
+        displayPath: formatPathForAgentDisplay(project.decoded_path, agentEnvironment),
         isCurrent: shouldRegisterCurrentProject && project.id === currentProjectId,
         sessions,
         totalSessions: result.totalCount,

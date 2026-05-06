@@ -79,6 +79,7 @@ export interface I18nMessages {
       loadingProviders: string;
       empty: string;
       disconnected: string;
+      active: string;
       refresh: string;
       refreshProviders: string;
       providerNeedsLoginTooltip: string;
@@ -535,6 +536,10 @@ export interface I18nMessages {
       startSession: string;
       showHidden: string;
       hideHidden: string;
+      wslEnvironment: string;
+      windowsEnvironment: string;
+      wslDisabled: string;
+      windowsDisabled: string;
     };
   };
   panel: {

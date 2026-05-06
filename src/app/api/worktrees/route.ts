@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { spawn } from 'child_process';
 import path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import logger from '@/lib/logger';
+import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { SettingsManager } from '@/lib/settings/manager';
-import { allocateManagedWorktree, ManagedWorktreeAllocationError } from '@/lib/worktrees/managed';
+import {
+  allocateManagedWorktree,
+  ManagedWorktreeAllocationError,
+  resolveManagedWorktreeRoot,
+} from '@/lib/worktrees/managed';
 import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
+import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
 
 /**
  * POST /api/worktrees
@@ -24,7 +29,7 @@ import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
  *
  * This endpoint:
  * 1. Validates all inputs
- * 2. Allocates a managed temp branch/path pair under ~/.tessera/worktrees
+ * 2. Allocates a managed temp branch/path pair under the active tool filesystem
  * 3. Runs: git -C projectDir worktree add <worktreePath> -b <branchName>
  */
 export async function POST(req: NextRequest) {
@@ -67,11 +72,27 @@ export async function POST(req: NextRequest) {
   }
 
   // Ensure projectDir is absolute and has no path traversal
-  if (!path.isAbsolute(projectDir) || projectDir.includes('..')) {
+  if (!isAbsoluteFilesystemPath(projectDir) || projectDir.includes('..')) {
     return NextResponse.json({ error: 'Invalid projectDir' }, { status: 400 });
   }
 
-  const preflight = await checkManagedWorktreePreflight(projectDir);
+  const settings = await SettingsManager.load(userId);
+  const environmentValidation = validateProjectEnvironment(projectDir, settings.agentEnvironment);
+  if (!environmentValidation.ok) {
+    return NextResponse.json(
+      {
+        code: 'PROJECT_ENVIRONMENT_MISMATCH',
+        error: environmentValidation.error,
+        filesystemKind: environmentValidation.filesystemKind,
+        agentEnvironment: settings.agentEnvironment,
+      },
+      { status: 400 },
+    );
+  }
+
+  const runGit = createGitRunner(settings.agentEnvironment);
+  const worktreeRoot = resolveManagedWorktreeRoot(projectDir, settings.agentEnvironment);
+  const preflight = await checkManagedWorktreePreflight(projectDir, runGit);
   if (!preflight.ok) {
     return NextResponse.json(
       {
@@ -83,7 +104,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const settings = await SettingsManager.load(userId);
   let branchName: string;
   let worktreePath: string;
   try {
@@ -91,7 +111,11 @@ export async function POST(req: NextRequest) {
       projectDir,
       branchPrefix ?? settings.gitConfig.branchPrefix,
       branchSlug,
-      { allowCollisionSuffix: allowBranchSlugSuffix !== false }
+      {
+        allowCollisionSuffix: allowBranchSlugSuffix !== false,
+        rootDir: worktreeRoot,
+        runGit,
+      }
     );
     branchName = allocation.branchName;
     worktreePath = allocation.worktreePath;
@@ -111,11 +135,11 @@ export async function POST(req: NextRequest) {
     throw error;
   }
 
-  logger.info({ branchName, projectDir, worktreePath }, 'Creating git worktree');
+  logger.info({ branchName, projectDir, worktreePath, worktreeRoot }, 'Creating git worktree');
 
   // --- Run git worktree add ---
   try {
-    await runGitWorktreeAdd(projectDir, worktreePath, branchName);
+    await runGitWorktreeAdd(projectDir, worktreePath, branchName, runGit);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ branchName, projectDir, error: msg }, 'git worktree add failed');
@@ -158,32 +182,13 @@ export async function POST(req: NextRequest) {
 function runGitWorktreeAdd(
   cwd: string,
   worktreePath: string,
-  branchName: string
+  branchName: string,
+  runGit: GitRunner,
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const args = ['-C', cwd, 'worktree', 'add', worktreePath, '-b', branchName];
+  return runGit(['-C', cwd, 'worktree', 'add', worktreePath, '-b', branchName])
+    .then(() => undefined);
+}
 
-    const child = spawn('git', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-
-    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-        reject(new Error(stderr || `git exited with code ${code}`));
-      }
-    });
-
-    child.on('error', (err) => {
-      reject(err);
-    });
-  });
+function isAbsoluteFilesystemPath(candidate: string): boolean {
+  return path.isAbsolute(candidate) || path.win32.isAbsolute(candidate);
 }

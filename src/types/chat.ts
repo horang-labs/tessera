@@ -205,6 +205,8 @@ export interface ProjectGroup {
   displayName: string;
   /** Decoded filesystem path (e.g., "/path/to/tessera") */
   decodedPath: string;
+  /** Human-readable path formatted for the active agent environment. */
+  displayPath?: string;
   /** Whether this is the current project (matches process.cwd()) */
   isCurrent: boolean;
   /** Sessions in this project, sorted by lastModified desc */

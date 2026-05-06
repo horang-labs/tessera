@@ -162,7 +162,7 @@ function ProjectRow({
           )}
         </div>
         <span className="text-[11px] text-(--text-muted) truncate block">
-          {project.decodedPath}
+          {project.displayPath ?? project.decodedPath}
         </span>
       </div>
       {isSelected && (

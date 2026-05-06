@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const settings = await SettingsManager.load(auth.userId);
-    const result = await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays);
+    const result = await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, auth.userId);
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     logger.error({ error }, 'Failed to prune archived worktrees');

@@ -66,7 +66,7 @@ async function runCompute(
     try {
       let data: GitPanelData | null = null;
       try {
-        data = await getGitPanelData(sessionId);
+        data = await getGitPanelData(sessionId, userIds[0]);
       } catch (error) {
         // Sessions without a work_dir, non-git directories, etc. all throw
         // GitPanelError. Treat as "nothing to broadcast" — the live UI keeps

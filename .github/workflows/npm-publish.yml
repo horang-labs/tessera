@@ -7,10 +7,6 @@ on:
         description: Existing package version to mark as latest without publishing
         required: false
         type: string
-      unpublish_versions:
-        description: Comma or space separated old versions to unpublish after publishing
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -63,16 +59,3 @@ jobs:
         env:
           DIST_TAG_VERSION: ${{ github.event.inputs.dist_tag_version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Unpublish old package versions
-        if: ${{ github.event.inputs.unpublish_versions != '' }}
-        run: |
-          set -euo pipefail
-
-          versions="${UNPUBLISH_VERSIONS//,/ }"
-          for version in $versions; do
-            npm unpublish "$PACKAGE_NAME@$version" --force
-          done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          UNPUBLISH_VERSIONS: ${{ github.event.inputs.unpublish_versions }}

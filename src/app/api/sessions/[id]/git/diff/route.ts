@@ -17,7 +17,7 @@ export async function GET(
     if ("response" in auth) return auth.response;
 
     const filePath = request.nextUrl.searchParams.get("path") ?? "";
-    const payload = await getGitDiffData(id, filePath);
+    const payload = await getGitDiffData(id, filePath, auth.userId);
     return NextResponse.json(payload);
   } catch (error) {
     if (error instanceof GitPanelError) {

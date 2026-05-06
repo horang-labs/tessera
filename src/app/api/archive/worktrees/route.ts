@@ -12,7 +12,7 @@ export async function DELETE(req: NextRequest) {
     const result = await removeArchivedWorktrees({
       projectId: params.get('projectId') ?? undefined,
       query: params.get('query') ?? undefined,
-    });
+    }, auth.userId);
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete archived worktrees';

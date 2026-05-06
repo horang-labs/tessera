@@ -17,6 +17,16 @@ on:
         required: true
         type: boolean
         default: false
+      build_linux:
+        description: Build and upload Linux AppImage and .deb assets
+        required: true
+        type: boolean
+        default: false
+      upload_release:
+        description: Upload successful desktop assets to the GitHub Release
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -32,7 +42,7 @@ jobs:
     steps:
       - name: Require at least one desktop target
         run: |
-          if [[ "${{ inputs.build_windows }}" != "true" && "${{ inputs.build_macos }}" != "true" ]]; then
+          if [[ "${{ inputs.build_windows }}" != "true" && "${{ inputs.build_macos }}" != "true" && "${{ inputs.build_linux }}" != "true" ]]; then
             echo "At least one desktop target must be enabled."
             exit 1
           fi
@@ -167,6 +177,115 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-linux:
+    name: Build Linux x64
+    needs: validate
+    if: ${{ inputs.build_linux }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install Linux smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libatspi2.0-0 \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libsecret-1-0 \
+            libxss1 \
+            libxtst6 \
+            libuuid1 \
+            xdg-utils \
+            xvfb
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build desktop package
+        run: npm run electron:build:linux
+        env:
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+
+      - name: Verify Linux artifacts
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          appimage="release/Tessera-${version}.AppImage"
+          deb="release/Tessera-${version}-linux-amd64.deb"
+
+          test -f "$appimage"
+          test -f "$deb"
+          file "$appimage" "$deb"
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | grep -F '/usr/share/applications/tessera.desktop'
+
+      - name: Smoke test AppImage startup
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          appimage="release/Tessera-${version}.AppImage"
+          smoke_dir="$RUNNER_TEMP/tessera-linux-smoke"
+          stdout_log="$RUNNER_TEMP/tessera-appimage-smoke.out"
+          devtools_json="$RUNNER_TEMP/tessera-devtools.json"
+
+          rm -rf "$smoke_dir"
+          xvfb-run -a env \
+            TESSERA_DATA_DIR="$smoke_dir" \
+            TESSERA_ELECTRON_LOG_LEVEL=debug \
+            TESSERA_DISABLE_GPU=1 \
+            "$appimage" \
+            --appimage-extract-and-run \
+            --no-sandbox \
+            --disable-gpu \
+            --remote-debugging-port=9333 \
+            >"$stdout_log" 2>&1 &
+          app_pid=$!
+
+          cleanup() {
+            kill "$app_pid" 2>/dev/null || true
+            wait "$app_pid" 2>/dev/null || true
+            cat "$smoke_dir/tessera-main.log" 2>/dev/null || true
+            cat "$smoke_dir/startup.log" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for _ in {1..60}; do
+            if curl -fsS http://127.0.0.1:9333/json/list > "$devtools_json" 2>/dev/null && grep -q '"title": "Tessera"' "$devtools_json"; then
+              break
+            fi
+            sleep 1
+          done
+
+          grep -q '"title": "Tessera"' "$devtools_json"
+          app_url="$(node -e "const fs=require('fs'); const pages=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(pages[0]?.url || '')" "$devtools_json")"
+          echo "Loaded URL: $app_url"
+          port="$(printf '%s\n' "$app_url" | sed -n 's#^http://localhost:\([0-9][0-9]*\)/.*#\1#p')"
+          test -n "$port"
+          curl -fsS "http://127.0.0.1:${port}/api/setup/status" | grep -q '"canUseCoreFeatures"'
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessera-linux-x64
+          path: |
+            release/Tessera-*.AppImage
+            release/Tessera-*-linux-amd64.deb
+            release/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 1
+
   release:
     name: Upload GitHub Release assets
     runs-on: ubuntu-latest
@@ -174,15 +293,23 @@ jobs:
       - validate
       - build-windows
       - build-macos
+      - build-linux
     if: >-
       ${{
         always() &&
+        inputs.upload_release &&
         needs.validate.result == 'success' &&
         needs.build-windows.result != 'failure' &&
         needs.build-windows.result != 'cancelled' &&
         needs.build-macos.result != 'failure' &&
         needs.build-macos.result != 'cancelled' &&
-        (needs.build-windows.result == 'success' || needs.build-macos.result == 'success')
+        needs.build-linux.result != 'failure' &&
+        needs.build-linux.result != 'cancelled' &&
+        (
+          needs.build-windows.result == 'success' ||
+          needs.build-macos.result == 'success' ||
+          needs.build-linux.result == 'success'
+        )
       }}
 
     env:

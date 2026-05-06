@@ -81,6 +81,7 @@ export const zh: I18nMessages = {
       loadingProviders: '正在加载提供者…',
       empty: '未注册 CLI 提供程序。',
       disconnected: 'WebSocket 未连接。请重新打开页面或检查连接。',
+      active: '使用中',
       refresh: '刷新',
       refreshProviders: '重新检查提供者',
       providerNeedsLoginTooltip: '{{provider}} 需要登录。请在终端登录后刷新。',
@@ -530,6 +531,10 @@ export const zh: I18nMessages = {
       startSession: '添加此文件夹',
       showHidden: '显示隐藏文件夹',
       hideHidden: '隐藏隐藏文件夹',
+      wslEnvironment: 'WSL',
+      windowsEnvironment: 'Windows',
+      wslDisabled: '要添加 WSL 文件夹，请将 Agent Environment 切换为 WSL。',
+      windowsDisabled: '要添加 Windows 文件夹，请将 Agent Environment 切换为 Windows Native。',
     },
   },
   panel: {

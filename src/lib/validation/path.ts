@@ -9,8 +9,15 @@
  */
 export function validateEncodedPath(value: string): boolean {
   if (!value || typeof value !== 'string') return false;
-  if (value.includes('..')) return false;
-  if (value.includes('\\')) return false;
+  if (value.includes('\0')) return false;
+
+  const pathSegments = value
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean);
+
+  if (pathSegments.some((segment) => segment === '..')) return false;
+
   return true;
 }
 

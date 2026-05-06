@@ -1,16 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readdir, stat, access, constants } from 'fs/promises';
-import { resolve, dirname, basename } from 'path';
-import { homedir } from 'os';
+import path from 'path';
+import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
+import {
+  formatBrowsePathForDisplay,
+  getBrowseParentPath,
+  normalizeFilesystemBrowseEnvironment,
+  resolveBrowsePath,
+} from '@/lib/filesystem/path-environment';
+import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
+import { SettingsManager } from '@/lib/settings/manager';
 
 interface DirectoryEntry {
   name: string;
   path: string;
+  filesystemPath: string;
   isGitRepo: boolean;
 }
 
 interface BrowseResponse {
   currentPath: string;
+  filesystemPath: string;
   parentPath: string | null;
   entries: DirectoryEntry[];
   isGitRepo: boolean;
@@ -23,12 +33,44 @@ interface BrowseResponse {
  * Only returns directories (not files) for project folder selection.
  */
 export async function GET(request: NextRequest) {
+  const auth = await requireAuthenticatedUserId(request);
+  if ('response' in auth) return auth.response;
+
   const searchParams = request.nextUrl.searchParams;
-  const rawPath = searchParams.get('path') || homedir();
+  const rawPath = searchParams.get('path');
   const showHidden = searchParams.get('showHidden') === 'true';
+  const environment = normalizeFilesystemBrowseEnvironment(searchParams.get('environment'));
 
   try {
-    const targetPath = resolve(rawPath);
+    const settings = await SettingsManager.load(auth.userId);
+    if (environment !== settings.agentEnvironment) {
+      const expected = settings.agentEnvironment === 'wsl' ? 'WSL' : 'Windows Native';
+      return NextResponse.json(
+        {
+          code: 'PROJECT_ENVIRONMENT_MISMATCH',
+          error: `Current Agent Environment is ${expected}. Switch Agent Environment to browse this filesystem.`,
+        },
+        { status: 400 },
+      );
+    }
+
+    const resolvedPath = await resolveBrowsePath(rawPath, environment);
+    const targetPath = resolvedPath.filesystemPath;
+    const environmentValidation = validateProjectEnvironment(
+      targetPath,
+      settings.agentEnvironment,
+    );
+    if (!environmentValidation.ok) {
+      return NextResponse.json(
+        {
+          code: 'PROJECT_ENVIRONMENT_MISMATCH',
+          error: environmentValidation.error,
+          filesystemKind: environmentValidation.filesystemKind,
+          agentEnvironment: settings.agentEnvironment,
+        },
+        { status: 400 },
+      );
+    }
 
     // Verify directory exists and is accessible
     await access(targetPath, constants.R_OK);
@@ -57,18 +99,19 @@ export async function GET(request: NextRequest) {
           return true;
         })
         .map(async (entry) => {
-          const entryPath = resolve(targetPath, entry.name);
+          const entryPath = path.resolve(targetPath, entry.name);
           // Check if directory contains .git (is a git repo)
           let isGitRepo = false;
           try {
-            await access(resolve(entryPath, '.git'), constants.F_OK);
+            await access(path.resolve(entryPath, '.git'), constants.F_OK);
             isGitRepo = true;
           } catch {
             // Not a git repo
           }
           entries.push({
             name: entry.name,
-            path: entryPath,
+            path: await formatBrowsePathForDisplay(entryPath, environment),
+            filesystemPath: entryPath,
             isGitRepo,
           });
         })
@@ -83,17 +126,18 @@ export async function GET(request: NextRequest) {
     // Check if current directory is a git repo
     let isGitRepo = false;
     try {
-      await access(resolve(targetPath, '.git'), constants.F_OK);
+      await access(path.resolve(targetPath, '.git'), constants.F_OK);
       isGitRepo = true;
     } catch {
       // Not a git repo
     }
 
     // Parent path (null if at root)
-    const parentPath = targetPath === '/' ? null : dirname(targetPath);
+    const parentPath = getBrowseParentPath(resolvedPath.displayPath, targetPath, environment);
 
     const response: BrowseResponse = {
-      currentPath: targetPath,
+      currentPath: resolvedPath.displayPath,
+      filesystemPath: targetPath,
       parentPath,
       entries,
       isGitRepo,

@@ -15,6 +15,7 @@ import AppearanceSettings from './appearance-settings';
 import AgentEnvironmentSettings from './agent-environment-settings';
 import WorktreeSettings from './worktree-settings';
 import CliStatusList from './cli-status-list';
+import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -126,6 +127,9 @@ export default function SettingsPanel() {
               </h3>
               <div className="mt-2">
                 <CliStatusList />
+              </div>
+              <div className="mt-4 border-t border-(--divider) pt-4">
+                <ToolStatusList />
               </div>
               <p className="mt-2 text-xs text-(--text-muted)">
                 {t('settings.cliStatus.description')}

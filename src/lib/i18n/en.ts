@@ -81,6 +81,7 @@ export const en: I18nMessages = {
       loadingProviders: 'Loading providers…',
       empty: 'No CLI providers registered.',
       disconnected: 'WebSocket is not connected. Reopen the page or check your connection.',
+      active: 'Active',
       refresh: 'Refresh',
       refreshProviders: 'Check providers again',
       providerNeedsLoginTooltip: '{{provider}} needs login. Log in from a terminal, then refresh.',
@@ -530,6 +531,10 @@ export const en: I18nMessages = {
       startSession: 'Add this folder',
       showHidden: 'Show hidden folders',
       hideHidden: 'Hide hidden folders',
+      wslEnvironment: 'WSL',
+      windowsEnvironment: 'Windows',
+      wslDisabled: 'Switch Agent Environment to WSL to add WSL folders.',
+      windowsDisabled: 'Switch Agent Environment to Windows Native to add Windows folders.',
     },
   },
   panel: {

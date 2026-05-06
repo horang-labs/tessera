@@ -16,7 +16,7 @@ export async function GET(
     });
     if ("response" in auth) return auth.response;
 
-    const payload = await getGitPanelData(id);
+    const payload = await getGitPanelData(id, auth.userId);
     return NextResponse.json(payload);
   } catch (error) {
     if (error instanceof GitPanelError) {

@@ -38,12 +38,15 @@ export function LeftPanel({ width }: LeftPanelProps) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ folderPath }),
     });
-    await useSessionStore.getState().loadProjects();
-    if (res.ok) {
-      const { projectId } = await res.json() as { projectId: string };
-      useBoardStore.getState().setSelectedProjectDir(projectId);
-      useTabStore.getState().switchProject(projectId);
+    if (!res.ok) {
+      const data = await res.json().catch(() => null) as { error?: string } | null;
+      throw new Error(data?.error || 'Failed to add project');
     }
+
+    await useSessionStore.getState().loadProjects();
+    const { projectId } = await res.json() as { projectId: string };
+    useBoardStore.getState().setSelectedProjectDir(projectId);
+    useTabStore.getState().switchProject(projectId);
   }, []);
 
   return (

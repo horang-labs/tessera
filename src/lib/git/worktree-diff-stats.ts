@@ -1,32 +1,35 @@
-import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { promisify } from 'util';
 import logger from '@/lib/logger';
+import { isWindowsHostedWslFilesystemPath } from '@/lib/filesystem/path-environment';
+import { createGitRunner } from '@/lib/worktrees/git-runner';
+import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
   WorktreeDiffStats,
   WorktreeFileDiffStats,
 } from '@/types/worktree-diff-stats';
 
-const execFileAsync = promisify(execFile);
-const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 const UNTRACKED_MAX_BYTES = 512 * 1024;
 
-async function runGit(workDir: string, args: string[]): Promise<string | null> {
+async function runGit(
+  workDir: string,
+  args: string[],
+  agentEnvironment: AgentEnvironment,
+): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', args, {
-      cwd: workDir,
-      maxBuffer: EXEC_MAX_BUFFER,
-      encoding: 'utf8',
-    });
+    const runGitCommand = createGitRunner(agentEnvironment);
+    const { stdout } = await runGitCommand(['-C', workDir, ...args]);
     return stdout;
   } catch {
     return null;
   }
 }
 
-async function isGitWorkTree(workDir: string): Promise<boolean> {
-  const out = await runGit(workDir, ['rev-parse', '--is-inside-work-tree']);
+async function isGitWorkTree(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<boolean> {
+  const out = await runGit(workDir, ['rev-parse', '--is-inside-work-tree'], agentEnvironment);
   return out !== null && out.trim() === 'true';
 }
 
@@ -64,8 +67,11 @@ interface NumstatAggregate {
   files: Map<string, WorktreeFileDiffStats>;
 }
 
-async function collectNumstat(workDir: string): Promise<NumstatAggregate | null> {
-  const stdout = await runGit(workDir, ['diff', '--numstat', 'HEAD', '--']);
+async function collectNumstat(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<NumstatAggregate | null> {
+  const stdout = await runGit(workDir, ['diff', '--numstat', 'HEAD', '--'], agentEnvironment);
   if (stdout === null) return null;
 
   let added = 0;
@@ -110,8 +116,11 @@ async function collectNumstat(workDir: string): Promise<NumstatAggregate | null>
   return { added, removed, changedFiles, deletedFiles, files };
 }
 
-async function collectNameStatus(workDir: string): Promise<{ deletedFiles: number } | null> {
-  const stdout = await runGit(workDir, ['diff', '--name-status', 'HEAD', '--']);
+async function collectNameStatus(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<{ deletedFiles: number } | null> {
+  const stdout = await runGit(workDir, ['diff', '--name-status', 'HEAD', '--'], agentEnvironment);
   if (stdout === null) return null;
 
   let deletedFiles = 0;
@@ -124,13 +133,16 @@ async function collectNameStatus(workDir: string): Promise<{ deletedFiles: numbe
   return { deletedFiles };
 }
 
-async function collectUntracked(workDir: string): Promise<{ paths: string[] } | null> {
+async function collectUntracked(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<{ paths: string[] } | null> {
   const stdout = await runGit(workDir, [
     'ls-files',
     '--others',
     '--exclude-standard',
     '-z',
-  ]);
+  ], agentEnvironment);
   if (stdout === null) return null;
 
   const paths: string[] = [];
@@ -151,15 +163,17 @@ async function collectUntracked(workDir: string): Promise<{ paths: string[] } | 
  */
 export async function computeWorktreeDiffStats(
   workDir: string,
+  agentEnvironment: AgentEnvironment = inferGitEnvironment(workDir),
 ): Promise<WorktreeDiffStats | null> {
   try {
-    const resolved = path.resolve(workDir);
-    if (!(await isGitWorkTree(resolved))) return null;
+    const resolved = resolveFilesystemPath(workDir);
+    const pathModule = getPathModule(resolved);
+    if (!(await isGitWorkTree(resolved, agentEnvironment))) return null;
 
     const [numstat, nameStatus, untracked] = await Promise.all([
-      collectNumstat(resolved),
-      collectNameStatus(resolved),
-      collectUntracked(resolved),
+      collectNumstat(resolved, agentEnvironment),
+      collectNameStatus(resolved, agentEnvironment),
+      collectUntracked(resolved, agentEnvironment),
     ]);
 
     if (!numstat || !nameStatus || !untracked) return null;
@@ -171,7 +185,7 @@ export async function computeWorktreeDiffStats(
 
     const untrackedCounts = await Promise.all(
       untracked.paths.map((relPath) =>
-        countFileNewlinesCapped(path.join(resolved, relPath)),
+        countFileNewlinesCapped(pathModule.join(resolved, relPath)),
       ),
     );
 
@@ -200,14 +214,16 @@ export async function computeWorktreeDiffStats(
 
 export async function computeWorktreeFileDiffStats(
   workDir: string,
+  agentEnvironment: AgentEnvironment = inferGitEnvironment(workDir),
 ): Promise<Map<string, WorktreeFileDiffStats> | null> {
   try {
-    const resolved = path.resolve(workDir);
-    if (!(await isGitWorkTree(resolved))) return null;
+    const resolved = resolveFilesystemPath(workDir);
+    const pathModule = getPathModule(resolved);
+    if (!(await isGitWorkTree(resolved, agentEnvironment))) return null;
 
     const [numstat, untracked] = await Promise.all([
-      collectNumstat(resolved),
-      collectUntracked(resolved),
+      collectNumstat(resolved, agentEnvironment),
+      collectUntracked(resolved, agentEnvironment),
     ]);
 
     if (!numstat || !untracked) return null;
@@ -216,7 +232,7 @@ export async function computeWorktreeFileDiffStats(
     const untrackedCounts = await Promise.all(
       untracked.paths.map(async (relPath) => ({
         relPath,
-        count: await countFileNewlinesCapped(path.join(resolved, relPath)),
+        count: await countFileNewlinesCapped(pathModule.join(resolved, relPath)),
       })),
     );
 
@@ -229,4 +245,25 @@ export async function computeWorktreeFileDiffStats(
     logger.warn({ error, workDir }, 'computeWorktreeFileDiffStats failed');
     return null;
   }
+}
+
+function inferGitEnvironment(workDir: string): AgentEnvironment {
+  return isWindowsHostedWslFilesystemPath(workDir) ? 'wsl' : 'native';
+}
+
+function resolveFilesystemPath(filesystemPath: string): string {
+  return getPathModule(filesystemPath).resolve(filesystemPath);
+}
+
+function getPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {
+  return isWindowsStylePath(filesystemPath) ? path.win32 : path.posix;
+}
+
+function isWindowsStylePath(filesystemPath: string): boolean {
+  return (
+    /^[a-zA-Z]:[\\/]/.test(filesystemPath)
+    || /^[a-zA-Z]:$/.test(filesystemPath)
+    || filesystemPath.startsWith('\\\\')
+    || filesystemPath.startsWith('//')
+  );
 }

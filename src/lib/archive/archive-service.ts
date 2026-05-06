@@ -4,8 +4,10 @@ import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import * as dbTasks from '@/lib/db/tasks';
 import { processManager } from '@/lib/cli/process-manager';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { isManagedWorktreePath, removeManagedWorktree } from '@/lib/worktrees/managed';
+import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
 import logger from '@/lib/logger';
 import type { SessionRow } from '@/lib/db/sessions';
 import type { TaskEntity } from '@/types/task-entity';
@@ -297,7 +299,7 @@ export async function permanentlyDeleteArchivedTask(userId: string, taskId: stri
   dbTasks.deleteTask(taskId);
 }
 
-export async function removeArchivedTaskWorktree(taskId: string): Promise<void> {
+export async function removeArchivedTaskWorktree(taskId: string, userId?: string): Promise<void> {
   const { items } = await listArchiveItems();
   const item = items.find((entry) => entry.kind === 'task' && entry.id === taskId);
   if (!item) {
@@ -319,19 +321,23 @@ export async function removeArchivedTaskWorktree(taskId: string): Promise<void> 
   if (item.sessions.some((session) => activeIds.has(session.id))) {
     throw new Error('Cannot delete worktree while sessions are running');
   }
-  const removed = await removeArchivedWorktree(item);
+  const removed = await removeArchivedWorktree(item, await createArchiveGitRunner(userId));
   if (!removed) {
     throw new Error('Failed to remove worktree');
   }
 }
 
-export async function removeArchivedWorktrees(options: Pick<ArchiveListOptions, 'projectId' | 'query'> = {}): Promise<RetentionResult> {
+export async function removeArchivedWorktrees(
+  options: Pick<ArchiveListOptions, 'projectId' | 'query'> = {},
+  userId?: string,
+): Promise<RetentionResult> {
   const result: RetentionResult = { removed: 0, skipped: 0, errors: [] };
   const { items } = await listArchiveItems({
     projectId: options.projectId,
     query: options.query,
   });
   const activeIds = processManager.getActiveSessionIds();
+  const runGit = await createArchiveGitRunner(userId);
 
   for (const item of items) {
     if (
@@ -345,7 +351,7 @@ export async function removeArchivedWorktrees(options: Pick<ArchiveListOptions, 
     }
 
     try {
-      const removed = await removeArchivedWorktree(item);
+      const removed = await removeArchivedWorktree(item, runGit);
       if (removed) {
         result.removed += 1;
       } else {
@@ -361,7 +367,10 @@ export async function removeArchivedWorktrees(options: Pick<ArchiveListOptions, 
   return result;
 }
 
-async function removeArchivedWorktree(item: ArchiveItem): Promise<boolean> {
+async function removeArchivedWorktree(
+  item: ArchiveItem,
+  runGit?: GitRunner,
+): Promise<boolean> {
   if (!item.workDir || !item.archivedAt || item.worktreeDeletedAt) return false;
   if (!isManagedWorktreePath(item.workDir)) return false;
   if (item.worktreeStatus === 'deleted') return false;
@@ -378,7 +387,11 @@ async function removeArchivedWorktree(item: ArchiveItem): Promise<boolean> {
       throw new Error('Failed to resolve source project for managed worktree cleanup');
     }
     try {
-      await removeManagedWorktree(sourceProjectDir, item.workDir);
+      if (runGit) {
+        await removeManagedWorktree(sourceProjectDir, item.workDir, runGit);
+      } else {
+        await removeManagedWorktree(sourceProjectDir, item.workDir);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const worktreeStillExists = await pathExists(item.workDir);
@@ -399,9 +412,13 @@ async function removeArchivedWorktree(item: ArchiveItem): Promise<boolean> {
   return true;
 }
 
-export async function pruneExpiredArchivedWorktrees(retentionDays: number): Promise<RetentionResult> {
+export async function pruneExpiredArchivedWorktrees(
+  retentionDays: number,
+  userId?: string,
+): Promise<RetentionResult> {
   const result: RetentionResult = { removed: 0, skipped: 0, errors: [] };
   const { items } = await listArchiveItems();
+  const runGit = await createArchiveGitRunner(userId);
 
   for (const item of items) {
     if (!item.workDir || !isExpired(item.archivedAt, retentionDays)) {
@@ -410,7 +427,7 @@ export async function pruneExpiredArchivedWorktrees(retentionDays: number): Prom
     }
 
     try {
-      const removed = await removeArchivedWorktree(item);
+      const removed = await removeArchivedWorktree(item, runGit);
       if (removed) {
         result.removed += 1;
       } else {
@@ -424,4 +441,9 @@ export async function pruneExpiredArchivedWorktrees(retentionDays: number): Prom
   }
 
   return result;
+}
+
+async function createArchiveGitRunner(userId?: string): Promise<GitRunner | undefined> {
+  if (!userId) return undefined;
+  return createGitRunner(await getAgentEnvironment(userId));
 }
