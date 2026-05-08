@@ -275,6 +275,8 @@ macOS release DMGs are signed and notarized with Apple Developer ID, so download
 
 Windows release builds are portable `.exe` files and are not code-signed yet. SmartScreen may show an unknown-publisher warning; choose **More info** and then **Run anyway** to start Tessera.
 
+Packaged macOS desktop builds can download future updates from Settings without manually revisiting the release page, as long as the GitHub Release includes the generated Electron Builder update metadata. Windows keeps the release-page fallback until signed installer releases are available.
+
 If Gatekeeper still blocks a macOS release DMG, please report it as a release-signing issue.
 
 See [macOS Distribution](docs/MACOS_DISTRIBUTION.md) for local and CI setup.

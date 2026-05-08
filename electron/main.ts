@@ -14,6 +14,7 @@ import * as net from 'net';
 import * as path from 'path';
 import * as fs from 'fs';
 import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
+import { setupDesktopUpdater } from './updater';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
@@ -838,6 +839,7 @@ app.whenReady().then(async () => {
       closeBehavior: windowsCloseBehavior,
       onCloseBehaviorChange: handleTrayCloseBehaviorChange,
     });
+    setupDesktopUpdater(mainWindow, log);
   } catch (err) {
     dialog.showErrorBox('Tessera', `Failed to start server: ${err}`);
     requestAppQuit();
