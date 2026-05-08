@@ -66,6 +66,11 @@ export interface UserSettings {
   telemetry: TelemetrySettings;
   autoDeleteArchivedWorktrees: boolean;
   archivedWorktreeRetentionDays: number;
+  /**
+   * Optional absolute worktree path template. Empty string keeps the automatic
+   * environment-aware Tessera managed root.
+   */
+  managedWorktreePathTemplate: string;
   /** User-customized keyboard shortcuts. Empty string = disabled. Missing key = use default. */
   shortcutOverrides: Partial<Record<ShortcutId, string>>;
   gitConfig: GitConfig;

@@ -7,6 +7,7 @@ import {
   buildManagedWorktreeSlug,
   normalizeManagedWorktreeSlug,
 } from './naming';
+import { resolveManagedWorktreePathTemplate } from './path-template-server';
 import { getTesseraDataPath } from '../tessera-data-dir';
 import {
   getWslHostedWindowsHomeMountPath,
@@ -40,11 +41,21 @@ export async function allocateManagedWorktree(
   projectDir: string,
   branchPrefix?: string | null,
   branchSlug?: string | null,
-  options: { allowCollisionSuffix?: boolean; rootDir?: string; runGit?: GitRunner } = {}
+  options: {
+    allowCollisionSuffix?: boolean;
+    rootDir?: string;
+    runGit?: GitRunner;
+    pathTemplate?: string | null;
+    agentEnvironment?: AgentEnvironment;
+  } = {}
 ): Promise<ManagedWorktreeAllocation> {
   const rootDir = options.rootDir ?? MANAGED_WORKTREE_ROOT;
+  const pathTemplate = options.pathTemplate?.trim() ?? '';
+  const usesPathTemplate = pathTemplate.length > 0;
   const pathModule = getPathModule(rootDir);
-  await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
+  if (!usesPathTemplate) {
+    await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
+  }
 
   const now = new Date();
   const baseSlug = normalizeManagedWorktreeSlug(branchSlug) || buildManagedWorktreeSlug(now);
@@ -53,10 +64,17 @@ export async function allocateManagedWorktree(
   let firstCollision: ManagedWorktreeAllocation | null = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const branchName = buildManagedWorktreeName(projectDir, attempt, now, branchPrefix, baseSlug);
-    const worktreePath = pathModule.join(
-      rootDir,
-      ...buildManagedWorktreeRelativePath(projectDir, branchName).split('/')
-    );
+    const worktreePath = usesPathTemplate
+      ? resolveManagedWorktreePathTemplate(pathTemplate, {
+          agentEnvironment: options.agentEnvironment,
+          projectDir,
+          branchName,
+        })
+      : pathModule.join(
+          rootDir,
+          ...buildManagedWorktreeRelativePath(projectDir, branchName).split('/')
+        );
+    const worktreePathModule = getPathModule(worktreePath);
 
     const branchExists = await localBranchExists(projectDir, branchName, options.runGit);
     const worktreePathExists = await pathExists(worktreePath);
@@ -65,7 +83,7 @@ export async function allocateManagedWorktree(
       continue;
     }
 
-    await fs.mkdir(pathModule.dirname(worktreePath), { recursive: true, mode: 0o700 });
+    await fs.mkdir(worktreePathModule.dirname(worktreePath), { recursive: true, mode: 0o700 });
     return { branchName, worktreePath };
   }
 

@@ -512,6 +512,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     },
     autoDeleteArchivedWorktrees: true,
     archivedWorktreeRetentionDays: 7,
+    managedWorktreePathTemplate: '',
     shortcutOverrides: {},
     gitConfig: {
       branchPrefix: '',
@@ -582,6 +583,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     fontSize: normalizeFontScale(raw?.fontSize),
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
+    managedWorktreePathTemplate: normalizeManagedWorktreePathTemplate(raw?.managedWorktreePathTemplate),
     windowsCloseBehavior: normalizeWindowsCloseBehavior(raw?.windowsCloseBehavior),
     profile: normalizeProfileSettings(raw?.profile, defaults.profile),
     notifications: {
@@ -602,6 +604,13 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     gitConfig: normalizeGitConfig(rawGitConfig, defaults.gitConfig),
     lastModified: raw?.lastModified || defaults.lastModified,
   };
+}
+
+function normalizeManagedWorktreePathTemplate(rawTemplate: unknown): string {
+  if (typeof rawTemplate !== 'string') {
+    return '';
+  }
+  return rawTemplate.trim().slice(0, 1024);
 }
 
 function normalizeProfileSettings(

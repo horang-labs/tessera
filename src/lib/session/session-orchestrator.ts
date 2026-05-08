@@ -156,7 +156,7 @@ export class SessionOrchestrator {
         session.work_dir &&
         !session.worktree_deleted_at &&
         sourceProjectDir &&
-        isManagedWorktreePath(session.work_dir)
+        (session.worktree_managed === 1 || isManagedWorktreePath(session.work_dir))
       ) {
         // Only remove the physical worktree if no other sessions share the same work_dir
         const otherCount = dbSessions.countOtherSessionsByWorkDir(session.work_dir, sessionId);

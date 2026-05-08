@@ -69,6 +69,7 @@ export function CollectionQuickCreateSheet({
   const { createSession } = useSessionCrud();
   const { createWorktreeSession } = useWorktreeSession();
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
+  const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const [selectedProvider, setSelectedProvider] = useState('');
   const [isTaskExpanded, setIsTaskExpanded] = useState(initialMode === 'task');
   const [taskTitle, setTaskTitle] = useState('');
@@ -191,8 +192,8 @@ export function CollectionQuickCreateSheet({
     [branchPrefix]
   );
   const worktreePathPreview = useMemo(
-    () => buildManagedWorktreePreviewPath(projectDir, branchPrefix, branchSlug),
-    [branchPrefix, branchSlug, projectDir]
+    () => buildManagedWorktreePreviewPath(projectDir, branchPrefix, branchSlug, pathTemplate),
+    [branchPrefix, branchSlug, pathTemplate, projectDir]
   );
 
   const handleCreateChat = useCallback(async () => {
