@@ -63,6 +63,8 @@ export interface SessionResumeResult {
   status: 'running' | 'read_only';
   model?: string;
   reasoningEffort?: string | null;
+  sessionMode?: ProviderRuntimeControls['sessionMode'];
+  accessMode?: ProviderRuntimeControls['accessMode'];
   usage?: PersistedUsage | null;
   contextUsage?: PersistedContextUsage | null;
   activeInteractivePrompt?: ActiveInteractivePrompt | null;

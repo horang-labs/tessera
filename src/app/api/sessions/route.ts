@@ -115,6 +115,8 @@ export async function POST(req: NextRequest) {
         provider: resolvedProviderId,
         model,
         reasoningEffort,
+        sessionMode,
+        accessMode,
       }, { status: 201 });
     } catch (err: any) {
       if (err.message.includes('Maximum session limit')) {

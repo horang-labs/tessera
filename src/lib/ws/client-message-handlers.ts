@@ -49,6 +49,8 @@ export function handleIncomingServerMessage({
       sessionStore.markSessionRunning(msg.sessionId, msg.sessionId, {
         model: msg.model,
         reasoningEffort: msg.reasoningEffort,
+        sessionMode: msg.sessionMode,
+        accessMode: msg.accessMode,
       });
       return { wasReconnect };
 
@@ -267,6 +269,8 @@ function addCreatedSession(
     provider: msg.provider,
     model: msg.model,
     reasoningEffort: msg.reasoningEffort,
+    sessionMode: msg.sessionMode,
+    accessMode: msg.accessMode,
     sortOrder: 0,
   });
 }

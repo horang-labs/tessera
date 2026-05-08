@@ -40,6 +40,7 @@ export function useSessionResume() {
         const runtimeConfig = applyProviderSessionRuntimeOverrides(
           getProviderSessionRuntimeConfig(settings, providerId),
           sessionStore.getSession(sessionId),
+          providerId,
         );
         const response = await fetch(`/api/sessions/${sessionId}/resume`, {
           method: 'POST',
@@ -79,6 +80,8 @@ export function useSessionResume() {
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
+          sessionMode: runtimeConfig.sessionMode,
+          accessMode: runtimeConfig.accessMode,
         });
         sessionStore.setActiveSession(sessionId);
 
@@ -110,6 +113,7 @@ export function useSessionResume() {
         const runtimeConfig = applyProviderSessionRuntimeOverrides(
           getProviderSessionRuntimeConfig(settings, providerId),
           sessionStore.getSession(sessionId),
+          providerId,
         );
         const response = await fetch(`/api/sessions/${sessionId}/resume`, {
           method: 'POST',
@@ -135,6 +139,8 @@ export function useSessionResume() {
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
+          sessionMode: runtimeConfig.sessionMode,
+          accessMode: runtimeConfig.accessMode,
         });
 
         // Remove optimistic messages (will be replaced by WebSocket messages)

@@ -4,6 +4,10 @@ import type { ToolCallKind } from './tool-call-kind';
 import type { ToolDisplayMetadata } from './tool-display';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { WorkflowStatus } from './task-entity';
+import type {
+  ProviderSessionAccessMode,
+  ProviderSessionMode,
+} from '@/lib/session/session-control-types';
 
 // New message types for protocol adapter → frontend
 // Base message fields
@@ -177,6 +181,8 @@ export interface UnifiedSession {
    */
   model?: string;
   reasoningEffort?: string | null;
+  sessionMode?: ProviderSessionMode;
+  accessMode?: ProviderSessionAccessMode;
 
   /**
    * Task entity ID this session belongs to.

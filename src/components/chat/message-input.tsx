@@ -487,6 +487,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         ? applyProviderSessionRuntimeOverrides(
             getProviderSessionRuntimeConfig(settings, providerId),
             session,
+            providerId,
           )
         : undefined;
       sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig);
@@ -517,6 +518,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         ? applyProviderSessionRuntimeOverrides(
             getProviderSessionRuntimeConfig(settings, providerId),
             targetSession,
+            providerId,
           )
         : undefined;
       const referenceContent = formatContinueConversationPrompt(exportPath);

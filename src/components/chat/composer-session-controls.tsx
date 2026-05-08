@@ -426,6 +426,10 @@ function getDefaultActiveSessionMode(providerId: string): ProviderSessionMode {
   return isOpenCodeProvider(providerId) ? 'build' : 'work';
 }
 
+function shouldPersistControlDefaults(session: UnifiedSession): boolean {
+  return !session.isRunning && session.status === 'starting';
+}
+
 function getAccessOptions(
   providerId: string,
   sessionOptions: ProviderSessionOptions | null,
@@ -523,40 +527,47 @@ function ComposerSessionControlsInner({
     requestedReasoningEffort,
   );
 
-  const persistSessionControls = useCallback((
+  const applySessionControls = useCallback((
     nextSessionMode: ProviderSessionMode,
     nextAccessMode: ProviderSessionAccessMode,
   ) => {
     const runtimeControls = buildRuntimeControls(providerIdForSticky, nextSessionMode, nextAccessMode);
 
-    void updateSettings({
-      ...buildProviderSessionDefaultsUpdate(
-        useSettingsStore.getState().settings,
-        providerIdForSticky,
-        { sessionMode: nextSessionMode, accessMode: nextAccessMode },
-      ),
-      ...(runtimeControls.permissionMode && providerIdForSticky === 'claude-code'
-        ? { defaultPermissionMode: runtimeControls.permissionMode }
-        : {}),
-    });
+    if (shouldPersistControlDefaults(session)) {
+      void updateSettings({
+        ...buildProviderSessionDefaultsUpdate(
+          useSettingsStore.getState().settings,
+          providerIdForSticky,
+          { sessionMode: nextSessionMode, accessMode: nextAccessMode },
+        ),
+        ...(runtimeControls.permissionMode && providerIdForSticky === 'claude-code'
+          ? { defaultPermissionMode: runtimeControls.permissionMode }
+          : {}),
+      });
+    } else {
+      updateSessionRuntimeConfig(sessionId, {
+        sessionMode: nextSessionMode,
+        accessMode: nextAccessMode,
+      });
+    }
 
     if (session.isRunning) {
       wsClient.setPermissionMode(sessionId, runtimeControls.permissionMode, runtimeControls);
     }
-  }, [providerIdForSticky, session.isRunning, sessionId, updateSettings]);
+  }, [providerIdForSticky, session, sessionId, updateSessionRuntimeConfig, updateSettings]);
 
   const handlePlanToggle = useCallback(() => {
     const nextSessionMode: ProviderSessionMode = sessionMode === 'plan'
       ? getDefaultActiveSessionMode(providerIdForSticky)
       : 'plan';
     setSessionMode(nextSessionMode);
-    persistSessionControls(nextSessionMode, accessMode);
+    applySessionControls(nextSessionMode, accessMode);
     focusSessionInput(sessionId);
-  }, [accessMode, persistSessionControls, providerIdForSticky, sessionId, sessionMode]);
+  }, [accessMode, applySessionControls, providerIdForSticky, sessionId, sessionMode]);
 
   const handleAccessModeChange = (nextAccessMode: ProviderSessionAccessMode) => {
     setAccessMode(nextAccessMode);
-    persistSessionControls(sessionMode, nextAccessMode);
+    applySessionControls(sessionMode, nextAccessMode);
     focusSessionInput(sessionId);
   };
 
@@ -571,12 +582,8 @@ function ComposerSessionControlsInner({
 
     setModel(nextModel);
     setRequestedReasoningEffort(nextReasoningEffort);
-    updateSessionRuntimeConfig(sessionId, {
-      model: nextModel,
-      reasoningEffort: nextReasoningEffort,
-    });
 
-    if (!session.isRunning) {
+    if (shouldPersistControlDefaults(session)) {
       // Sticky persistence — next new session will use this as default, and the
       // first send_message of an unspawned session will pull from here too.
       void updateSettings(
@@ -586,6 +593,11 @@ function ComposerSessionControlsInner({
           { model: nextModel, reasoningEffort: nextReasoningEffort },
         ),
       );
+    } else {
+      updateSessionRuntimeConfig(sessionId, {
+        model: nextModel,
+        reasoningEffort: nextReasoningEffort,
+      });
     }
 
     if (session?.isRunning) {
@@ -606,9 +618,8 @@ function ComposerSessionControlsInner({
 
   const handleReasoningEffortChange = (nextReasoningEffort: string) => {
     setRequestedReasoningEffort(nextReasoningEffort);
-    updateSessionRuntimeConfig(sessionId, { reasoningEffort: nextReasoningEffort });
 
-    if (!session.isRunning) {
+    if (shouldPersistControlDefaults(session)) {
       void updateSettings(
         buildProviderSessionDefaultsUpdate(
           useSettingsStore.getState().settings,
@@ -616,6 +627,8 @@ function ComposerSessionControlsInner({
           { reasoningEffort: nextReasoningEffort },
         ),
       );
+    } else {
+      updateSessionRuntimeConfig(sessionId, { reasoningEffort: nextReasoningEffort });
     }
 
     if (session?.isRunning) {
@@ -841,6 +854,12 @@ export function ComposerSessionControls({ sessionId, variant = 'block' }: Compos
   const initialReasoningEffort = session?.reasoningEffort !== undefined
     ? session.reasoningEffort
     : providerDefaultsWithOptions.reasoningEffort ?? null;
+  const initialSessionMode = session?.sessionMode
+    ?? providerDefaultsWithOptions.sessionMode
+    ?? getDefaultActiveSessionMode(resolvedProviderId);
+  const initialAccessMode = session?.accessMode
+    ?? providerDefaultsWithOptions.accessMode
+    ?? getDefaultWorkAccess(resolvedProviderId);
 
   useEffect(() => {
     if (
@@ -896,8 +915,8 @@ export function ComposerSessionControls({ sessionId, variant = 'block' }: Compos
   const resetKey = [
     sessionId,
     providerId,
-    providerDefaultsWithOptions.sessionMode ?? '',
-    providerDefaultsWithOptions.accessMode ?? '',
+    initialSessionMode,
+    initialAccessMode,
     initialModel,
     initialReasoningEffort ?? '',
   ].join('::');
@@ -909,8 +928,8 @@ export function ComposerSessionControls({ sessionId, variant = 'block' }: Compos
       variant={variant}
       session={sessionWithProvider}
       providerSessionOptions={providerSessionOptions}
-      initialSessionMode={providerDefaultsWithOptions.sessionMode ?? getDefaultActiveSessionMode(providerId)}
-      initialAccessMode={providerDefaultsWithOptions.accessMode ?? getDefaultWorkAccess(providerId)}
+      initialSessionMode={initialSessionMode}
+      initialAccessMode={initialAccessMode}
       initialModel={initialModel}
       initialReasoningEffort={initialReasoningEffort}
     />

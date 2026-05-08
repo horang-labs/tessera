@@ -198,6 +198,8 @@ export function useSessionCrud() {
           provider: result.provider,
           model: result.model,
           reasoningEffort: result.reasoningEffort,
+          sessionMode: result.sessionMode,
+          accessMode: result.accessMode,
           taskId: options.taskId,
           collectionId: options.collectionId,
           hasCustomTitle: options.hasCustomTitle ?? false,

@@ -221,16 +221,36 @@ export interface ProviderSessionRuntimeConfig extends ProviderRuntimeControls {
   reasoningEffort?: string | null;
 }
 
-export function applyProviderSessionRuntimeOverrides<
-  T extends { model?: string; reasoningEffort?: string | null },
->(
-  config: T,
-  overrides: { model?: string; reasoningEffort?: string | null } | null | undefined,
-): T {
+export function applyProviderSessionRuntimeOverrides(
+  config: ProviderSessionRuntimeConfig,
+  overrides: {
+    model?: string;
+    reasoningEffort?: string | null;
+    sessionMode?: ProviderSessionMode;
+    accessMode?: ProviderSessionAccessMode;
+  } | null | undefined,
+  providerId?: string,
+): ProviderSessionRuntimeConfig {
+  const sessionMode = overrides?.sessionMode ?? config.sessionMode;
+  const accessMode = overrides?.accessMode ?? config.accessMode;
+  const hasControlOverride = overrides?.sessionMode !== undefined || overrides?.accessMode !== undefined;
+  const permissionMode = providerId && sessionMode && accessMode
+    ? resolveProviderPermissionMode(providerId, { sessionMode, accessMode })
+    : undefined;
+  const controlPatch = hasControlOverride && sessionMode && accessMode
+    ? {
+        sessionMode,
+        accessMode,
+        ...(permissionMode && { permissionMode }),
+        ...(providerId ? resolveProviderRuntimeControls(providerId, { sessionMode, accessMode }) : {}),
+      }
+    : {};
+
   return {
     ...config,
     ...(overrides?.model !== undefined && { model: overrides.model }),
     ...(overrides?.reasoningEffort !== undefined && { reasoningEffort: overrides.reasoningEffort }),
+    ...controlPatch,
   };
 }
 

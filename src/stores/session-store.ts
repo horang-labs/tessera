@@ -37,12 +37,12 @@ interface SessionState {
   markSessionRunning: (
     sessionId: string,
     tesseraSessionId: string,
-    runtimeConfig?: Pick<UnifiedSession, 'model' | 'reasoningEffort'>,
+    runtimeConfig?: Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'sessionMode' | 'accessMode'>,
   ) => void;
   markSessionStopped: (sessionId: string) => void;
   updateSessionRuntimeConfig: (
     sessionId: string,
-    runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort'>>,
+    runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'sessionMode' | 'accessMode'>>,
   ) => void;
   setCreatingSession: (sessionId: string | null) => void;
   setLoadingSession: (sessionId: string | null) => void;
@@ -683,6 +683,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 ...(runtimeConfig?.reasoningEffort !== undefined && {
                   reasoningEffort: runtimeConfig.reasoningEffort,
                 }),
+                ...(runtimeConfig?.sessionMode !== undefined && {
+                  sessionMode: runtimeConfig.sessionMode,
+                }),
+                ...(runtimeConfig?.accessMode !== undefined && {
+                  accessMode: runtimeConfig.accessMode,
+                }),
               }
             : s
         ),
@@ -718,6 +724,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 ...(runtimeConfig.model !== undefined && { model: runtimeConfig.model }),
                 ...(runtimeConfig.reasoningEffort !== undefined && {
                   reasoningEffort: runtimeConfig.reasoningEffort,
+                }),
+                ...(runtimeConfig.sessionMode !== undefined && {
+                  sessionMode: runtimeConfig.sessionMode,
+                }),
+                ...(runtimeConfig.accessMode !== undefined && {
+                  accessMode: runtimeConfig.accessMode,
                 }),
               }
             : s

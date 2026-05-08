@@ -271,6 +271,8 @@ export async function resumeSessionWithLifecycle({
       status: 'running',
       model: runtimeDefaults.model,
       reasoningEffort: runtimeDefaults.reasoningEffort,
+      sessionMode: options.sessionMode,
+      accessMode: options.accessMode,
     };
   }
 
