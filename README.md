@@ -279,10 +279,6 @@ If Gatekeeper still blocks a macOS release DMG, please report it as a release-si
 
 See [macOS Distribution](docs/MACOS_DISTRIBUTION.md) for local and CI setup.
 
-## Status
-
-Tessera is currently published as a beta. Ideas, bug reports, usability feedback, feature requests, and focused pull requests are welcome through GitHub Issues and pull requests. For larger features, new provider integrations, workflow changes, or architecture changes, please open an issue first so we can align on the approach.
-
 ## Teams And Design Partners
 
 Tessera is currently focused on individual local workflows, but we are preparing team and enterprise features for companies running coding agents across multiple developers.
