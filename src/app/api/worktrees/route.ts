@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
   }
 
   const runGit = createGitRunner(settings.agentEnvironment);
-  const worktreeRoot = resolveManagedWorktreeRoot(projectDir, settings.agentEnvironment);
+  const worktreeRoot = await resolveManagedWorktreeRoot(projectDir, settings.agentEnvironment);
   const preflight = await checkManagedWorktreePreflight(projectDir, runGit);
   if (!preflight.ok) {
     return NextResponse.json(

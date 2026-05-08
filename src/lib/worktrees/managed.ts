@@ -9,11 +9,14 @@ import {
 } from './naming';
 import { getTesseraDataPath } from '../tessera-data-dir';
 import {
+  getWslHostedWindowsHomeMountPath,
   getWindowsHostedWslRootFilesystemPath,
-  isWindowsHostedWslFilesystemPath,
+  isWslFilesystemPath,
 } from '../filesystem/path-environment';
 import type { AgentEnvironment } from '../settings/types';
 import { createGitRunner, type GitRunner } from './git-runner';
+import { getRuntimePlatform } from '../system/runtime-platform';
+import { isRunningInWsl } from '../cli/cli-exec';
 
 export const MANAGED_WORKTREE_ROOT = getTesseraDataPath('worktrees');
 
@@ -96,22 +99,32 @@ export function getManagedWorktreeRelativeDisplayPath(candidate: string): string
   }
 
   const wslFallbackRoot = resolveWslFallbackManagedWorktreeRoot(candidate);
-  if (!wslFallbackRoot) return null;
+  if (wslFallbackRoot) {
+    const wslFallbackRelative = getRelativePathIfInside(wslFallbackRoot, candidate);
+    if (wslFallbackRelative) return wslFallbackRelative.replace(/[\\/]+/g, '/');
+  }
 
-  const wslFallbackRelative = getRelativePathIfInside(wslFallbackRoot, candidate);
-  return wslFallbackRelative ? wslFallbackRelative.replace(/[\\/]+/g, '/') : null;
+  const wslHostedNativeRoot = resolveWslHostedNativeManagedWorktreeRoot(candidate);
+  if (!wslHostedNativeRoot) return null;
+
+  const wslHostedNativeRelative = getRelativePathIfInside(wslHostedNativeRoot, candidate);
+  return wslHostedNativeRelative ? wslHostedNativeRelative.replace(/[\\/]+/g, '/') : null;
 }
 
-export function resolveManagedWorktreeRoot(
+export async function resolveManagedWorktreeRoot(
   projectDir: string,
   agentEnvironment: AgentEnvironment,
-): string {
+): Promise<string> {
   if (agentEnvironment === 'wsl') {
     return (
       resolveWslHomeManagedWorktreeRoot(projectDir)
       ?? resolveWslFallbackManagedWorktreeRoot(projectDir)
       ?? MANAGED_WORKTREE_ROOT
     );
+  }
+
+  if (getRuntimePlatform() === 'linux' && isRunningInWsl()) {
+    return path.posix.join(await getWslHostedWindowsHomeMountPath(), '.tessera', 'worktrees');
   }
 
   return MANAGED_WORKTREE_ROOT;
@@ -196,11 +209,18 @@ function resolveWslFallbackManagedWorktreeRoot(candidate: string): string | null
   return path.win32.join(rootFilesystemPath, 'var', 'tmp', 'tessera-worktrees');
 }
 
+function resolveWslHostedNativeManagedWorktreeRoot(candidate: string): string | null {
+  const normalized = candidate.replace(/\\/g, '/');
+  const match = normalized.match(/^(\/mnt\/[a-zA-Z]\/Users\/[^/]+)\/\.tessera\/worktrees(?:\/|$)/);
+  if (!match) return null;
+  return path.posix.join(match[1], '.tessera', 'worktrees');
+}
+
 function inferManagedGitEnvironment(
   projectDir: string,
   worktreePath: string,
 ): AgentEnvironment {
-  return isWindowsHostedWslFilesystemPath(projectDir) || isWindowsHostedWslFilesystemPath(worktreePath)
+  return isWslFilesystemPath(projectDir) || isWslFilesystemPath(worktreePath)
     ? 'wsl'
     : 'native';
 }

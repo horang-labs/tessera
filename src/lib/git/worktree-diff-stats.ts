@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import logger from '@/lib/logger';
-import { isWindowsHostedWslFilesystemPath } from '@/lib/filesystem/path-environment';
+import { isWslFilesystemPath } from '@/lib/filesystem/path-environment';
 import { createGitRunner } from '@/lib/worktrees/git-runner';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
@@ -248,7 +248,7 @@ export async function computeWorktreeFileDiffStats(
 }
 
 function inferGitEnvironment(workDir: string): AgentEnvironment {
-  return isWindowsHostedWslFilesystemPath(workDir) ? 'wsl' : 'native';
+  return isWslFilesystemPath(workDir) ? 'wsl' : 'native';
 }
 
 function resolveFilesystemPath(filesystemPath: string): string {

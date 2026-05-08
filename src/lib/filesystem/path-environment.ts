@@ -3,6 +3,7 @@ import { access, constants, readdir } from 'fs/promises';
 import { homedir } from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import { isRunningInWsl } from '@/lib/cli/cli-exec';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
@@ -22,6 +23,7 @@ interface BrowsePathResolution {
 }
 
 let wslPathInfoPromise: Promise<WslPathInfo | null> | null = null;
+let wslHostedWindowsHomeMountPathPromise: Promise<string> | null = null;
 
 export function normalizeFilesystemBrowseEnvironment(
   value: string | null | undefined,
@@ -39,6 +41,11 @@ export async function resolveBrowsePath(
       throw new Error('WSL filesystem is not available');
     }
     return resolveWindowsHostedWslBrowsePath(rawPath, wslPathInfo);
+  }
+
+  if (environment === 'native' && getRuntimePlatform() === 'linux' && isRunningInWsl()) {
+    const windowsHomeMountPath = await getWslHostedWindowsHomeMountPath();
+    return resolveWslHostedNativeBrowsePath(rawPath, windowsHomeMountPath);
   }
 
   const filesystemPath = resolveNativeFilesystemPath(rawPath?.trim() || homedir());
@@ -77,6 +84,15 @@ export function getFilesystemPathBasename(filesystemPath: string): string {
 
 export function isWindowsHostedWslFilesystemPath(filesystemPath: string): boolean {
   return getWindowsHostedWslRootFilesystemPath(filesystemPath) !== null;
+}
+
+export function isWslFilesystemPath(filesystemPath: string): boolean {
+  const trimmed = filesystemPath.trim();
+  if (isWindowsHostedWslFilesystemPath(trimmed)) return true;
+  if (getRuntimePlatform() !== 'linux' || !isRunningInWsl()) return false;
+
+  const normalized = trimmed.replace(/\\/g, '/');
+  return normalized.startsWith('/') && !isWindowsDriveMountPath(normalized);
 }
 
 export function getWindowsHostedWslRootFilesystemPath(filesystemPath: string): string | null {
@@ -189,6 +205,44 @@ export function resolveWindowsHostedWslBrowsePath(
   };
 }
 
+export function resolveWslHostedNativeBrowsePath(
+  rawPath: string | null | undefined,
+  windowsHomeMountPath: string,
+): BrowsePathResolution {
+  const homeMountPath = path.posix.resolve(windowsHomeMountPath);
+  const trimmed = rawPath?.trim();
+  if (!trimmed) {
+    return {
+      displayPath: homeMountPath,
+      filesystemPath: homeMountPath,
+    };
+  }
+
+  if (trimmed === '~' || trimmed.startsWith('~/')) {
+    const filesystemPath = path.posix.resolve(homeMountPath, trimmed.slice(2));
+    return {
+      displayPath: filesystemPath,
+      filesystemPath,
+    };
+  }
+
+  if (isWindowsDrivePath(trimmed)) {
+    const filesystemPath = windowsDrivePathToWslDisplayPath(trimmed) ?? trimmed;
+    return {
+      displayPath: filesystemPath,
+      filesystemPath,
+    };
+  }
+
+  const filesystemPath = trimmed.startsWith('/')
+    ? path.posix.resolve(trimmed)
+    : path.posix.resolve(homeMountPath, trimmed);
+  return {
+    displayPath: filesystemPath,
+    filesystemPath,
+  };
+}
+
 export function formatWindowsHostedWslDisplayPath(
   filesystemPath: string,
   wslPathInfo: WslPathInfo | null,
@@ -268,11 +322,40 @@ function isWindowsDrivePath(value: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(value) || /^[a-zA-Z]:$/.test(value);
 }
 
+function isWindowsDriveMountPath(value: string): boolean {
+  return /^\/mnt\/[a-zA-Z](?:\/|$)/.test(value.replace(/\\/g, '/'));
+}
+
 async function getWslPathInfo(): Promise<WslPathInfo | null> {
   if (!wslPathInfoPromise) {
     wslPathInfoPromise = loadWslPathInfo();
   }
   return wslPathInfoPromise;
+}
+
+export async function getWslHostedWindowsHomeMountPath(): Promise<string> {
+  if (!wslHostedWindowsHomeMountPathPromise) {
+    wslHostedWindowsHomeMountPathPromise = resolveWslHostedWindowsHomeMountPath();
+  }
+  return wslHostedWindowsHomeMountPathPromise;
+}
+
+async function resolveWslHostedWindowsHomeMountPath(): Promise<string> {
+  const { stdout } = await execFileAsync(
+    'cmd.exe',
+    ['/d', '/c', 'echo %USERPROFILE%'],
+    {
+      encoding: 'utf8',
+      timeout: 3000,
+      windowsHide: true,
+    },
+  );
+  const userProfile = stdout.replace(/\0/g, '').trim();
+  const mountPath = windowsDrivePathToWslDisplayPath(userProfile);
+  if (!mountPath || !(await directoryExists(mountPath))) {
+    throw new Error('Windows user profile filesystem is not available from WSL');
+  }
+  return mountPath;
 }
 
 async function loadWslPathInfo(): Promise<WslPathInfo | null> {

@@ -55,7 +55,9 @@ export function FolderBrowserDialog({
   const { t } = useI18n();
   const electronPlatform = useElectronPlatform();
   const agentEnvironment = useSettingsStore((state) => state.settings.agentEnvironment);
-  const serverPlatform = useSettingsStore((state) => state.serverHostInfo?.platform ?? null);
+  const serverIsWindowsEcosystem = useSettingsStore(
+    (state) => state.serverHostInfo?.isWindowsEcosystem ?? false,
+  );
   const [currentPath, setCurrentPath] = useState<string>('');
   const [currentFilesystemPath, setCurrentFilesystemPath] = useState<string>('');
   const [parentPath, setParentPath] = useState<string | null>(null);
@@ -69,7 +71,7 @@ export function FolderBrowserDialog({
   const [browseEnvironment, setBrowseEnvironment] = useState<AgentEnvironment>('native');
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const canBrowseWsl = serverPlatform === 'win32' || electronPlatform === 'win32';
+  const canBrowseWsl = serverIsWindowsEcosystem || electronPlatform === 'win32';
   const isEnvironmentAllowed = useCallback(
     (environment: AgentEnvironment) => environment === agentEnvironment,
     [agentEnvironment],
@@ -92,7 +94,7 @@ export function FolderBrowserDialog({
   const fetchDirectory = useCallback(async (
     path?: string,
     hidden?: boolean,
-    environment: AgentEnvironment = 'native',
+    environment: AgentEnvironment = agentEnvironment,
   ) => {
     setIsLoading(true);
     setError(null);
@@ -124,7 +126,7 @@ export function FolderBrowserDialog({
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [agentEnvironment]);
 
   // Load home directory on open (reset showHidden)
   useEffect(() => {
