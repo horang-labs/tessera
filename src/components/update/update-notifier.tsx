@@ -23,7 +23,9 @@ export function UpdateNotifier() {
   const { t } = useI18n();
   const showToast = useSettingsStore((state) => state.settings.notifications?.showToast ?? true);
   const checkForUpdates = useUpdateStore((state) => state.checkForUpdates);
+  const downloadUpdate = useUpdateStore((state) => state.downloadUpdate);
   const info = useUpdateStore((state) => state.info);
+  const isDesktopUpdaterAvailable = useUpdateStore((state) => state.isDesktopUpdaterAvailable);
   const toastShownVersion = useUpdateStore((state) => state.toastShownVersion);
   const markToastShown = useUpdateStore((state) => state.markToastShown);
   const visible = useUpdateStore(isUpdateVisible);
@@ -45,8 +47,17 @@ export function UpdateNotifier() {
       t('updates.toastMessage', { version: latestVersion }),
       'info',
       {
-        label: hasInstallCommand ? t('updates.copyCommand') : t('updates.openRelease'),
+        label: isDesktopUpdaterAvailable
+          ? t('updates.downloadUpdate')
+          : hasInstallCommand
+            ? t('updates.copyCommand')
+            : t('updates.openRelease'),
         onClick: () => {
+          if (isDesktopUpdaterAvailable) {
+            void downloadUpdate();
+            return;
+          }
+
           if (info.installCommand) {
             void copyText(info.installCommand).then((copied) => {
               showActionToast(
@@ -65,6 +76,8 @@ export function UpdateNotifier() {
     );
   }, [
     info,
+    downloadUpdate,
+    isDesktopUpdaterAvailable,
     markToastShown,
     showActionToast,
     showToast,

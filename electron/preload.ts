@@ -1,9 +1,25 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { DesktopUpdateEvent } from '../src/types/electron-updater';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  checkForDesktopUpdate: () => ipcRenderer.invoke('desktop-update-check'),
+  downloadDesktopUpdate: () => ipcRenderer.invoke('desktop-update-download'),
+  installDesktopUpdate: () => ipcRenderer.invoke('desktop-update-install'),
+  onDesktopUpdateEvent: (callback: (event: DesktopUpdateEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: DesktopUpdateEvent) => {
+      if (typeof payload?.type === 'string') {
+        callback(payload);
+      }
+    };
+
+    ipcRenderer.on('desktop-update-event', listener);
+    return () => {
+      ipcRenderer.removeListener('desktop-update-event', listener);
+    };
+  },
   onWindowCloseRequest: (callback: (payload: { requestId: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { requestId?: string }) => {
       if (typeof payload?.requestId === 'string') {

@@ -462,6 +462,11 @@ export interface I18nMessages {
     toastMessage: string;
     copyCommand: string;
     openRelease: string;
+    downloadUpdate: string;
+    downloading: string;
+    downloadProgress: string;
+    downloadedDescription: string;
+    restartInstall: string;
     commandCopied: string;
     checkAgain: string;
     currentVersion: string;
