@@ -11,6 +11,7 @@ import {
 } from "@/stores/settings-store";
 import { useBoardStore } from "@/stores/board-store";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { useCrossWindowUiSync } from "@/hooks/use-cross-window-ui-sync";
 import { useResize } from "@/hooks/use-resize";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -121,6 +122,7 @@ export function ChatLayout() {
   const gitPanelWidth = useGitStore((state) => state.panelWidth);
   const setGitPanelWidth = useGitStore((state) => state.setPanelWidth);
   useWebSocket(); // Initialize WebSocket connection
+  useCrossWindowUiSync(); // Mirror activeSessionId / selectedProjectDir to popouts
 
   // BR-PERSIST-001: persistLayout debounce ref (200ms)
   const persistDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);

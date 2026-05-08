@@ -52,6 +52,7 @@ import { CollectionMoveSubmenu } from './collection-move-submenu';
 import { DiffStatsBadge } from './diff-stats-badge';
 import { ProviderQuickMenu } from './provider-quick-menu';
 import { detectPrMismatch, prMismatchTooltip } from './task-pr-badge';
+import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -905,7 +906,11 @@ export function TaskItemRow({
                 'block truncate text-[0.8125rem] font-medium leading-snug text-(--sidebar-text-active)',
                 (isGeneratingTitle || isPending) && 'title-generating'
               )}
-              style={titleFadeStyle}
+              style={
+                isGeneratingTitle || isPending
+                  ? { ...titleFadeStyle, ...getTitleGeneratingStyle(task.id) }
+                  : titleFadeStyle
+              }
             >
               {task.title}
             </span>
@@ -1213,7 +1218,11 @@ export function ChatItemRow({
                 'block truncate text-[0.8125rem] font-medium leading-snug text-(--sidebar-text-active)',
                 isGeneratingTitle && 'title-generating'
               )}
-              style={titleFadeStyle}
+              style={
+                isGeneratingTitle
+                  ? { ...titleFadeStyle, ...getTitleGeneratingStyle(session.id) }
+                  : titleFadeStyle
+              }
             >
               {session.title}
             </span>

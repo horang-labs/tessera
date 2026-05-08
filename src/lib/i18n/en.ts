@@ -706,6 +706,7 @@ export const en: I18nMessages = {
   },
   projectStrip: {
     allProjects: 'All Projects',
+    allProjectsDisabledPopout: 'All Projects is unavailable while the board pop-out is open',
     addProject: 'Add Project',
   },
   gitPanel: {

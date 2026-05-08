@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { useCrossWindowUiSync } from '@/hooks/use-cross-window-ui-sync';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { ProjectStrip } from '@/components/chat/project-strip';
 import { ElectronTitlebarThemeSync } from '@/components/layout/electron-titlebar';
@@ -57,6 +58,7 @@ export function BoardPopoutLayout() {
   }
 
   useWebSocket();
+  useCrossWindowUiSync();
 
   useEffect(() => {
     (window as Window & { __TESSERA_POPOUT__?: boolean }).__TESSERA_POPOUT__ = true;

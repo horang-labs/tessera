@@ -485,7 +485,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }));
 
     try {
-      const res = await fetch(`/api/archive/tasks/${id}`, {
+      const res = await fetchWithClientId(`/api/archive/tasks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ archived }),

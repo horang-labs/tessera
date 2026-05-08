@@ -706,6 +706,7 @@ export const zh: I18nMessages = {
   },
   projectStrip: {
     allProjects: '所有项目',
+    allProjectsDisabledPopout: '板视图弹出窗口打开时，"所有项目"不可用',
     addProject: '添加项目',
   },
   gitPanel: {

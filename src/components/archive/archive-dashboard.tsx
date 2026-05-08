@@ -17,6 +17,7 @@ import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
 import { useWorktreeRetentionSettingsUpdate } from '@/hooks/use-worktree-retention-settings-update';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
+import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import type { UnifiedSession } from '@/types/chat';
 import type { ArchiveItem, ArchiveProjectOption } from '@/lib/archive/archive-service';
 
@@ -251,7 +252,7 @@ export function ArchiveDashboard() {
     const endpoint = item.kind === 'task'
       ? `/api/archive/tasks/${item.id}`
       : `/api/sessions/${item.id}/archive`;
-    const res = await fetch(endpoint, {
+    const res = await fetchWithClientId(endpoint, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ archived: false }),
@@ -274,7 +275,7 @@ export function ArchiveDashboard() {
     const endpoint = item.kind === 'task'
       ? `/api/archive/tasks/${item.id}`
       : `/api/sessions/${item.id}`;
-    const res = await fetch(endpoint, { method: 'DELETE' });
+    const res = await fetchWithClientId(endpoint, { method: 'DELETE' });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
       const message = body.error ?? t('archive.errors.deleteFailed');

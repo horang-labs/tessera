@@ -58,3 +58,4 @@ aidlc-docs/
 .tmp/
 
 .env.local
+build-win.log

@@ -59,6 +59,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('popout-open-session', listener);
     };
   },
+  uiActiveSessionChanged: (sessionId: string | null) =>
+    ipcRenderer.send('ui-active-session-changed', { sessionId }),
+  onUiActiveSessionChanged: (callback: (sessionId: string | null) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { sessionId?: string | null }
+    ) => {
+      const value = payload?.sessionId;
+      if (value !== null && typeof value !== 'string') return;
+      callback(value ?? null);
+    };
+    ipcRenderer.on('ui-active-session-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('ui-active-session-changed', listener);
+    };
+  },
+  uiSelectedProjectChanged: (projectDir: string | null) =>
+    ipcRenderer.send('ui-selected-project-changed', { projectDir }),
+  onUiSelectedProjectChanged: (callback: (projectDir: string | null) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { projectDir?: string | null }
+    ) => {
+      const value = payload?.projectDir;
+      if (value !== null && typeof value !== 'string') return;
+      callback(value ?? null);
+    };
+    ipcRenderer.on('ui-selected-project-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('ui-selected-project-changed', listener);
+    };
+  },
   onTitlebarMenuCommand: (callback: (command: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { command?: string }) => {
       if (typeof payload?.command === 'string') {

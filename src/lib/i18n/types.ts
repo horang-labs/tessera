@@ -711,6 +711,7 @@ export interface I18nMessages {
   };
   projectStrip: {
     allProjects: string;
+    allProjectsDisabledPopout: string;
     addProject: string;
   };
   gitPanel: {

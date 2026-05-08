@@ -11,6 +11,7 @@ import { useTabStore } from '@/stores/tab-store';
 import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
 import { ARCHIVE_DASHBOARD_SESSION_ID, SKILLS_DASHBOARD_SESSION_ID } from '@/lib/constants/special-sessions';
 import { useProjectStripDnd } from '@/hooks/use-project-strip-dnd';
+import { usePopoutActive } from '@/hooks/use-popout-active';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,9 @@ export function ProjectStrip({
   const electronPlatform = useElectronPlatform();
   const isElectron = electronPlatform !== null;
   const isMacElectron = electronPlatform === 'darwin';
+  // The popout window only renders one project at a time, so the All
+  // Projects sentinel doesn't make sense while it's open.
+  const { isActive: isPopoutActive } = usePopoutActive();
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; encodedDir: string; displayName: string } | null>(null);
@@ -123,18 +127,31 @@ export function ProjectStrip({
       )}
 
       {/* All Projects button */}
-      <Tooltip content={t('projectStrip.allProjects')} delay={300}>
+      <Tooltip
+        content={
+          isPopoutActive
+            ? t('projectStrip.allProjectsDisabledPopout')
+            : t('projectStrip.allProjects')
+        }
+        delay={300}
+      >
         <button
-          onClick={() => handleProjectSelect(ALL_PROJECTS_SENTINEL)}
+          onClick={() => {
+            if (isPopoutActive) return;
+            handleProjectSelect(ALL_PROJECTS_SENTINEL);
+          }}
+          disabled={isPopoutActive}
+          aria-disabled={isPopoutActive}
           className={cn(
             'relative w-11 h-11 flex items-center justify-center shrink-0 transition-colors',
             isAllMode
               ? 'text-(--accent)'
-              : 'text-(--text-muted) hover:text-(--sidebar-text-active)'
+              : 'text-(--text-muted) hover:text-(--sidebar-text-active)',
+            isPopoutActive && 'opacity-40 cursor-not-allowed hover:text-(--text-muted)',
           )}
           data-testid="project-strip-all"
         >
-          {isAllMode && (
+          {isAllMode && !isPopoutActive && (
             <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r bg-(--accent)" />
           )}
           <Home className="w-5 h-5" />

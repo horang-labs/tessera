@@ -750,6 +750,39 @@ ipcMain.on('popout-open-session', (_event, payload: unknown) => {
     action: resolvedAction,
   });
 });
+
+// Active session / selected project sync between main and popouts.
+// Sent by any window when its local UI state changes; the main process
+// re-broadcasts to every OTHER window so the popout's kanban can highlight
+// the active card and selected project stays mirrored.
+ipcMain.on('ui-active-session-changed', (event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return;
+  const { sessionId } = payload as { sessionId?: unknown };
+  if (sessionId !== null && typeof sessionId !== 'string') return;
+  const senderId = event.sender.id;
+  const targets: BrowserWindow[] = [];
+  if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
+  for (const win of popoutWindows) targets.push(win);
+  for (const win of targets) {
+    if (win.isDestroyed()) continue;
+    if (win.webContents.id === senderId) continue;
+    win.webContents.send('ui-active-session-changed', { sessionId });
+  }
+});
+ipcMain.on('ui-selected-project-changed', (event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return;
+  const { projectDir } = payload as { projectDir?: unknown };
+  if (projectDir !== null && typeof projectDir !== 'string') return;
+  const senderId = event.sender.id;
+  const targets: BrowserWindow[] = [];
+  if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
+  for (const win of popoutWindows) targets.push(win);
+  for (const win of targets) {
+    if (win.isDestroyed()) continue;
+    if (win.webContents.id === senderId) continue;
+    win.webContents.send('ui-selected-project-changed', { projectDir });
+  }
+});
 ipcMain.on(
   'window-close-response',
   (

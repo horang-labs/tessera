@@ -713,6 +713,7 @@ export const ko: I18nMessages = {
   },
   projectStrip: {
     allProjects: '전체 프로젝트',
+    allProjectsDisabledPopout: '보드 팝아웃이 열려 있는 동안에는 전체 프로젝트를 사용할 수 없습니다',
     addProject: '프로젝트 추가',
   },
   gitPanel: {

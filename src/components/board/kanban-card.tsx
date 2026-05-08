@@ -5,6 +5,7 @@ import type React from 'react';
 import { FolderGit2, MessageSquare, Plus, Tag, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { setKanbanTaskDragData, setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useCollectionStore } from '@/stores/collection-store';
@@ -324,6 +325,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                     : cn('font-medium', session.hasCustomTitle && 'title-fade-in'),
                   'text-(--text-primary)',
                 )}
+                style={isGeneratingTitle ? getTitleGeneratingStyle(session.id) : undefined}
                 data-testid="kanban-card-title"
               >
                 {isGeneratingTitle ? 'Generating title...' : session.title}
@@ -883,6 +885,11 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   (isGeneratingTitle || isPending) && 'title-generating',
                   'text-(--text-primary)',
                 )}
+                style={
+                  isGeneratingTitle || isPending
+                    ? getTitleGeneratingStyle(task.id)
+                    : undefined
+                }
               >
                 {task.title}
               </div>
@@ -1186,7 +1193,10 @@ function KanbanSubSessionItem({
             testId="kanban-sub-session-title-input"
           />
         ) : (
-          <span className={cn('flex-1 min-w-0 truncate', isGeneratingTitle && 'title-generating')}>
+          <span
+            className={cn('flex-1 min-w-0 truncate', isGeneratingTitle && 'title-generating')}
+            style={isGeneratingTitle ? getTitleGeneratingStyle(session.id) : undefined}
+          >
             {isGeneratingTitle ? 'Generating title...' : displayTitle}
           </span>
         )}

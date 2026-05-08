@@ -6,7 +6,13 @@ import {
   setTaskArchived,
 } from '@/lib/archive/archive-service';
 import { SettingsManager } from '@/lib/settings/manager';
+import * as dbTasks from '@/lib/db/tasks';
 import logger from '@/lib/logger';
+import {
+  broadcastSessionMutation,
+  broadcastTaskMutation,
+  getOriginClientIdFromRequest,
+} from '@/lib/ws/mutation-broadcast';
 
 export async function PATCH(
   req: NextRequest,
@@ -33,12 +39,19 @@ export async function PATCH(
   }
 
   try {
+    const projectId = dbTasks.getTask(id)?.projectId;
     await setTaskArchived(id, archived);
     if (archived) {
       const settings = await SettingsManager.load(auth.userId);
       if (settings.autoDeleteArchivedWorktrees) {
         await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, auth.userId);
       }
+    }
+    if (projectId) {
+      const originClientId = getOriginClientIdFromRequest(req);
+      broadcastTaskMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+      // Sessions linked to this task carry archived/isReadOnly state too.
+      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, originClientId });
     }
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -61,7 +74,13 @@ export async function DELETE(
   }
 
   try {
+    const projectId = dbTasks.getTask(id)?.projectId;
     await permanentlyDeleteArchivedTask(auth.userId, id);
+    if (projectId) {
+      const originClientId = getOriginClientIdFromRequest(req);
+      broadcastTaskMutation(auth.userId, { kind: 'deleted', projectId, originClientId });
+      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+    }
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete archived task';

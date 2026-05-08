@@ -45,13 +45,22 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
   const historyLoaded = useChatStore((state) =>
     state.isHistoryLoaded(sessionId),
   );
-  const autoLoadedRef = useRef(false);
+  // Track the last session this ChatArea instance auto-loaded for. Without
+  // this per-session reset, switching panels to a session that was never
+  // explicitly viewSession'd (e.g. opening a card forwarded from a popout
+  // window — see chat-layout's onPopoutOpenSession listener) leaves the
+  // panel stuck on ChatAreaSkeleton because the boolean ref short-circuits
+  // the autoLoad after the first session.
+  const autoLoadedSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (autoLoadedRef.current) return;
-    if (session && !historyLoaded) {
-      autoLoadedRef.current = true;
-      viewSession(session);
+    if (!session) return;
+    if (autoLoadedSessionIdRef.current === session.id) return;
+    if (historyLoaded) {
+      autoLoadedSessionIdRef.current = session.id;
+      return;
     }
+    autoLoadedSessionIdRef.current = session.id;
+    void viewSession(session);
   }, [session, historyLoaded, viewSession]);
 
   if (!sessionId) {

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useContext } from 'react';
 import { Pencil, Check, Hash, X as XIcon, MoreHorizontal, GitBranch } from 'lucide-react';
+import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/stores/panel-store';
@@ -269,6 +270,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false }: HeaderProp
                     'truncate text-[15px] font-semibold leading-none text-(--text-primary)',
                     isGeneratingTitle && 'title-generating'
                   )}
+                  style={isGeneratingTitle ? getTitleGeneratingStyle(session.id) : undefined}
                 >
                   {session.title}
                 </h2>

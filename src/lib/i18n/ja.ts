@@ -706,6 +706,7 @@ export const ja: I18nMessages = {
   },
   projectStrip: {
     allProjects: 'すべてのプロジェクト',
+    allProjectsDisabledPopout: 'ボードのポップアウトが開いている間は、すべてのプロジェクトを利用できません',
     addProject: 'プロジェクトを追加',
   },
   gitPanel: {
