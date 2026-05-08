@@ -32,6 +32,7 @@ import type {
   SkillInfo,
   CheckStatusOptions,
   CliStatusResult,
+  CliRawLogSink,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type {
@@ -164,14 +165,24 @@ function buildCodexCollaborationMode(runtimeConfig: CodexRuntimeConfig): Record<
     return null;
   }
 
+  const model = runtimeConfig.model?.trim();
+  if (!model) {
+    return null;
+  }
+
   return {
     mode: runtimeConfig.collaborationMode,
     settings: {
-      model: runtimeConfig.model ?? null,
+      model,
       reasoning_effort: runtimeConfig.reasoningEffort ?? null,
       developer_instructions: null,
     },
   };
+}
+
+function extractCodexActiveModel(response: { result?: Record<string, any> }): string | null {
+  const model = response.result?.model ?? response.result?.thread?.model;
+  return typeof model === 'string' && model.trim() ? model.trim() : null;
 }
 
 // =============================================================================
@@ -193,6 +204,29 @@ export class CodexAdapter implements CliProvider {
    */
   private _processThreadIds = new WeakMap<ChildProcess, string>();
   private _processRuntimeConfig = new WeakMap<ChildProcess, CodexRuntimeConfig>();
+  private _processRawLogs = new WeakMap<ChildProcess, CliRawLogSink>();
+
+  private _attachRawLog(
+    proc: ChildProcess,
+    rawLog: CliRawLogSink | undefined,
+    metadata: Record<string, unknown>,
+  ): void {
+    if (!rawLog) return;
+
+    this._processRawLogs.set(proc, rawLog);
+    rawLog({ direction: 'event', phase: 'spawn', data: JSON.stringify(metadata) });
+    proc.stdout?.on('data', (chunk: Buffer | string) => {
+      rawLog({ direction: 'stdout', phase: 'process', data: chunk.toString() });
+    });
+    proc.stderr?.on('data', (chunk: Buffer | string) => {
+      rawLog({ direction: 'stderr', phase: 'process', data: chunk.toString() });
+    });
+  }
+
+  private _writeStdin(proc: ChildProcess, phase: string, payload: string): boolean {
+    this._processRawLogs.get(proc)?.({ direction: 'stdin', phase, data: payload });
+    return proc.stdin?.write(payload) ?? false;
+  }
 
   // ---------------------------------------------------------------------------
   // CliProvider: getProviderId / getDisplayName
@@ -299,6 +333,14 @@ export class CodexAdapter implements CliProvider {
       detached: getRuntimePlatform() !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     }, agentEnv);
+    this._attachRawLog(cliProcess, options.rawLog, {
+      providerId: PROVIDER_ID,
+      command,
+      args,
+      cwd: cliWorkDir,
+      requestedCwd: workDir,
+      agentEnv,
+    });
 
     // Wait for spawn or error event
     const spawnResult = await new Promise<{ ok: boolean; error?: Error }>((resolve) => {
@@ -427,7 +469,7 @@ export class CodexAdapter implements CliProvider {
       }
     }
 
-    const ok = proc.stdin?.write(JSON.stringify(request) + '\n') ?? false;
+    const ok = this._writeStdin(proc, 'send_message', `${JSON.stringify(request)}\n`);
     logger.debug('CodexAdapter: sent turn/start', { inputItemCount: inputItems.length, threadId });
     return ok;
   }
@@ -441,7 +483,7 @@ export class CodexAdapter implements CliProvider {
     };
 
     codexProtocolParser.trackPendingRequest(sessionId, requestId, 'account/rateLimits/read');
-    const ok = proc.stdin?.write(JSON.stringify(request) + '\n') ?? false;
+    const ok = this._writeStdin(proc, 'on_session_ready', `${JSON.stringify(request)}\n`);
     logger.debug('CodexAdapter: requested initial rate limits', { sessionId, requestId, ok });
     return ok;
   }
@@ -513,7 +555,7 @@ export class CodexAdapter implements CliProvider {
       result,
     };
 
-    proc.stdin?.write(JSON.stringify(response) + '\n');
+    this._writeStdin(proc, 'send_json_rpc_response', `${JSON.stringify(response)}\n`);
     logger.debug('CodexAdapter: sent JSON-RPC response', { requestId });
   }
 
@@ -534,7 +576,7 @@ export class CodexAdapter implements CliProvider {
       error,
     };
 
-    proc.stdin?.write(JSON.stringify(response) + '\n');
+    this._writeStdin(proc, 'send_json_rpc_error', `${JSON.stringify(response)}\n`);
     logger.debug('CodexAdapter: sent JSON-RPC error response', {
       requestId,
       code: error.code,
@@ -573,7 +615,7 @@ export class CodexAdapter implements CliProvider {
     };
 
     codexProtocolParser.trackPendingRequest(sessionId, requestId, 'turn/interrupt');
-    proc.stdin?.write(JSON.stringify(request) + '\n');
+    this._writeStdin(proc, 'send_interrupt', `${JSON.stringify(request)}\n`);
     logger.info('CodexAdapter: sent turn/interrupt', { sessionId, threadId, turnId });
     return true;
   }
@@ -652,7 +694,7 @@ export class CodexAdapter implements CliProvider {
         };
 
         codexProtocolParser.trackPendingRequest(sessionId, requestId, 'skills/list');
-        proc.stdin.write(JSON.stringify(request) + '\n');
+        this._writeStdin(proc, 'skills_list', `${JSON.stringify(request)}\n`);
         logger.debug('CodexAdapter: sent skills/list request', { sessionId, requestId, threadId });
 
         let response: { id: number; result?: Record<string, any>; error?: any };
@@ -760,11 +802,12 @@ export class CodexAdapter implements CliProvider {
     };
 
     codexProtocolParser.trackPendingRequest(sessionId, initId, 'initialize');
-    proc.stdin?.write(JSON.stringify(initRequest) + '\n');
+    this._writeStdin(proc, 'handshake_initialize', `${JSON.stringify(initRequest)}\n`);
     logger.info('CodexAdapter: sent initialize request', { sessionId, id: initId });
 
     // Step 2: Await initialize response
-    await this._awaitResponse(proc, initId, 'initialize');
+    const startupTimeoutMs = options?.startupTimeoutMs ?? CLI_TIMEOUT_MS;
+    await this._awaitResponse(proc, initId, 'initialize', startupTimeoutMs);
     logger.info('CodexAdapter: initialize handshake complete', { sessionId });
 
     // Step 3: Determine whether to resume an existing thread or start a new one
@@ -802,11 +845,19 @@ export class CodexAdapter implements CliProvider {
     };
 
     codexProtocolParser.trackPendingRequest(sessionId, threadReqId, threadMethod);
-    proc.stdin?.write(JSON.stringify(threadRequest) + '\n');
+    this._writeStdin(proc, `handshake_${threadMethod}`, `${JSON.stringify(threadRequest)}\n`);
     logger.info(`CodexAdapter: sent ${threadMethod} request`, { sessionId, id: threadReqId });
 
     // Step 5: Await thread response and extract threadId
-    const threadResponse = await this._awaitResponse(proc, threadReqId, threadMethod);
+    const threadResponse = await this._awaitResponse(proc, threadReqId, threadMethod, startupTimeoutMs);
+    const activeModel = extractCodexActiveModel(threadResponse);
+    if (activeModel) {
+      const currentConfig = this._processRuntimeConfig.get(proc);
+      if (currentConfig) {
+        this._processRuntimeConfig.set(proc, { ...currentConfig, model: activeModel });
+      }
+      codexProtocolParser.setSessionModel(sessionId, activeModel);
+    }
 
     // Step 6: Store threadId returned by server (at result.thread.id or result.threadId)
     const serverThreadId = threadResponse?.result?.thread?.id ?? threadResponse?.result?.threadId;
@@ -839,6 +890,7 @@ export class CodexAdapter implements CliProvider {
     proc: ChildProcess,
     expectedId: number,
     method: string,
+    timeoutMs = CLI_TIMEOUT_MS,
   ): Promise<{ id: number; result?: Record<string, any>; error?: any }> {
     return new Promise((resolve, reject) => {
       let buffer = '';
@@ -852,7 +904,7 @@ export class CodexAdapter implements CliProvider {
             `CodexAdapter: timed out waiting for JSON-RPC response id=${expectedId} (${method})`
           ));
         }
-      }, CLI_TIMEOUT_MS);
+      }, timeoutMs);
 
       const onData = (chunk: Buffer | string) => {
         if (settled) return;

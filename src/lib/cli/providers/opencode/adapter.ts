@@ -7,6 +7,7 @@ import type {
   ParsedMessage,
   SpawnOptions,
   SpawnResult,
+  CliRawLogSink,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
@@ -69,6 +70,29 @@ export class OpenCodeAdapter implements CliProvider {
   private _processRuntimeConfig = new WeakMap<ChildProcess, OpenCodeRuntimeConfig>();
   private _initialConfigSent = new WeakSet<ChildProcess>();
   private _startupReaders = new WeakMap<ChildProcess, OpenCodeStartupReader>();
+  private _processRawLogs = new WeakMap<ChildProcess, CliRawLogSink>();
+
+  private _attachRawLog(
+    proc: ChildProcess,
+    rawLog: CliRawLogSink | undefined,
+    metadata: Record<string, unknown>,
+  ): void {
+    if (!rawLog) return;
+
+    this._processRawLogs.set(proc, rawLog);
+    rawLog({ direction: 'event', phase: 'spawn', data: JSON.stringify(metadata) });
+    proc.stdout?.on('data', (chunk: Buffer | string) => {
+      rawLog({ direction: 'stdout', phase: 'process', data: chunk.toString() });
+    });
+    proc.stderr?.on('data', (chunk: Buffer | string) => {
+      rawLog({ direction: 'stderr', phase: 'process', data: chunk.toString() });
+    });
+  }
+
+  private _writeStdin(proc: ChildProcess, phase: string, payload: string): boolean {
+    this._processRawLogs.get(proc)?.({ direction: 'stdin', phase, data: payload });
+    return proc.stdin?.write(payload) ?? false;
+  }
 
   getProviderId(): string {
     return PROVIDER_ID;
@@ -132,6 +156,14 @@ export class OpenCodeAdapter implements CliProvider {
       detached: getRuntimePlatform() !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     }, agentEnv);
+    this._attachRawLog(cliProcess, options.rawLog, {
+      providerId: PROVIDER_ID,
+      command,
+      args,
+      cwd: cliWorkDir,
+      requestedCwd: workDir,
+      agentEnv,
+    });
 
     const spawnResult = await new Promise<{ ok: boolean; error?: Error }>((resolve) => {
       const onError = (err: Error) => {
@@ -247,7 +279,7 @@ export class OpenCodeAdapter implements CliProvider {
     };
 
     opencodeProtocolParser.trackPendingRequest(runtimeConfig.sessionId, requestId, 'session/prompt');
-    const ok = proc.stdin?.write(JSON.stringify(request) + '\n') ?? false;
+    const ok = this._writeStdin(proc, 'send_message', `${JSON.stringify(request)}\n`);
     logger.debug('OpenCodeAdapter: sent session/prompt', {
       sessionId: runtimeConfig.sessionId,
       opencodeSessionId,
@@ -323,7 +355,7 @@ export class OpenCodeAdapter implements CliProvider {
       },
     };
 
-    proc.stdin?.write(JSON.stringify(response) + '\n');
+    this._writeStdin(proc, 'send_approval_response', `${JSON.stringify(response)}\n`);
     logger.info('OpenCodeAdapter: sent permission response', { requestId, decision, optionId });
   }
 
@@ -339,7 +371,7 @@ export class OpenCodeAdapter implements CliProvider {
       params: { sessionId: runtimeConfig.opencodeSessionId },
     };
 
-    return proc.stdin?.write(JSON.stringify(notification) + '\n') ?? false;
+    return this._writeStdin(proc, 'send_interrupt', `${JSON.stringify(notification)}\n`);
   }
 
   async generateTitle(prompt: string, userId?: string): Promise<GeneratedTitle | null> {
@@ -376,8 +408,9 @@ export class OpenCodeAdapter implements CliProvider {
         },
       };
 
-      const initResponse = startupReader.awaitResponse(initId, 'initialize');
-      proc.stdin?.write(JSON.stringify(initRequest) + '\n');
+      const startupTimeoutMs = options.startupTimeoutMs ?? CLI_TIMEOUT_MS;
+      const initResponse = startupReader.awaitResponse(initId, 'initialize', startupTimeoutMs);
+      this._writeStdin(proc, 'handshake_initialize', `${JSON.stringify(initRequest)}\n`);
       await initResponse;
 
       const sessionId = options.resume && options.opencodeSessionId
@@ -396,8 +429,8 @@ export class OpenCodeAdapter implements CliProvider {
         },
       };
 
-      const sessionResponsePromise = startupReader.awaitResponse(sessionReqId, sessionMethod);
-      proc.stdin?.write(JSON.stringify(sessionRequest) + '\n');
+      const sessionResponsePromise = startupReader.awaitResponse(sessionReqId, sessionMethod, startupTimeoutMs);
+      this._writeStdin(proc, `handshake_${sessionMethod}`, `${JSON.stringify(sessionRequest)}\n`);
       const sessionResponse = await sessionResponsePromise;
       const opencodeSessionId = sessionResponse.result?.sessionId ?? sessionId;
       if (typeof opencodeSessionId !== 'string' || !opencodeSessionId) {
@@ -431,7 +464,7 @@ export class OpenCodeAdapter implements CliProvider {
 
     opencodeProtocolParser.setSessionModel(tesseraSessionId, model);
     opencodeProtocolParser.trackPendingRequest(tesseraSessionId, requestId, 'session/set_model');
-    return proc.stdin?.write(JSON.stringify(request) + '\n') ?? false;
+    return this._writeStdin(proc, 'set_model', `${JSON.stringify(request)}\n`);
   }
 
   private _sendSetMode(
@@ -456,7 +489,7 @@ export class OpenCodeAdapter implements CliProvider {
     };
 
     opencodeProtocolParser.trackPendingRequest(tesseraSessionId, requestId, 'session/set_mode');
-    return proc.stdin?.write(JSON.stringify(request) + '\n') ?? false;
+    return this._writeStdin(proc, 'set_mode', `${JSON.stringify(request)}\n`);
   }
 
   private async _generateTitleViaRun(
@@ -570,7 +603,11 @@ class OpenCodeStartupReader {
     this.proc.once('close', this.onClose);
   }
 
-  awaitResponse(expectedId: number, method: string): Promise<JsonRpcResponsePayload> {
+  awaitResponse(
+    expectedId: number,
+    method: string,
+    timeoutMs = CLI_TIMEOUT_MS,
+  ): Promise<JsonRpcResponsePayload> {
     if (this.isDisposed) {
       return Promise.reject(new Error(
         `OpenCodeAdapter: startup reader disposed before response id=${expectedId} (${method})`,
@@ -581,7 +618,7 @@ class OpenCodeStartupReader {
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(expectedId);
         reject(new Error(`OpenCodeAdapter: timed out waiting for response id=${expectedId} (${method})`));
-      }, CLI_TIMEOUT_MS);
+      }, timeoutMs);
 
       this.pendingResponses.set(expectedId, {
         method,

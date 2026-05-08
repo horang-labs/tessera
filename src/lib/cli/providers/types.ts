@@ -15,5 +15,12 @@ export type {
   CheckStatusOptions,
 } from './provider-contract';
 export type { ParsedMessage, ParsedMessageSideEffect } from './message-types';
-export type { GeneratedTitle, ProviderMeta, SpawnOptions, SpawnResult } from './session-types';
+export type {
+  CliRawLogEvent,
+  CliRawLogSink,
+  GeneratedTitle,
+  ProviderMeta,
+  SpawnOptions,
+  SpawnResult,
+} from './session-types';
 export type { SkillInfo, SkillSource } from './skill-types';
