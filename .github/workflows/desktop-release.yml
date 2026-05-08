@@ -82,19 +82,10 @@ jobs:
           retention-days: 7
 
   build-macos:
-    name: Build macOS ${{ matrix.arch }}
+    name: Build macOS universal
     needs: validate
     if: ${{ inputs.build_macos }}
-    runs-on: ${{ matrix.runner }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: macos-15-intel
-          - arch: arm64
-            runner: macos-latest
+    runs-on: macos-latest
 
     steps:
       - name: Checkout code
@@ -158,22 +149,34 @@ jobs:
           CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
           TESSERA_NOTARY_TIMEOUT: 90m
-        run: npm run electron:build:mac-${{ matrix.arch }}:signed
+        run: npm run electron:build:mac:signed
 
-      - name: Verify DMG
+      - name: Verify macOS artifacts
         run: |
+          set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          dmg="release/Tessera-${version}-macos-${{ matrix.arch }}.dmg"
+          dmg="release/Tessera-${version}-macos-universal.dmg"
+          zip="release/Tessera-${version}-macos-universal.zip"
+          unzip_dir="$RUNNER_TEMP/tessera-mac-update-zip"
           test -f "$dmg"
+          test -f "$zip"
           hdiutil verify "$dmg"
           xcrun stapler validate "$dmg"
           spctl --assess --type open --context context:primary-signature --verbose "$dmg"
+          rm -rf "$unzip_dir"
+          ditto -x -k "$zip" "$unzip_dir"
+          codesign --verify --deep --strict --verbose=2 "$unzip_dir/Tessera.app"
+          spctl --assess --type execute --verbose "$unzip_dir/Tessera.app"
+          test -f release/latest-mac.yml
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tessera-macos-${{ matrix.arch }}
-          path: release/Tessera-*-macos-${{ matrix.arch }}.dmg
+          name: tessera-macos
+          path: |
+            release/Tessera-*-macos-universal.dmg
+            release/Tessera-*-macos-universal.zip
+            release/latest-mac.yml
           if-no-files-found: error
           retention-days: 7
 

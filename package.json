@@ -64,9 +64,9 @@
     "electron:build:linux": "npm run electron:prebuild && electron-builder --linux AppImage deb --x64 --publish never",
     "electron:build:mac-x64": "npm run electron:prebuild && electron-builder --mac --x64 --publish never",
     "electron:build:mac-arm64": "npm run electron:prebuild && electron-builder --mac --arm64 --publish never",
-    "electron:build:mac-x64:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --x64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64",
-    "electron:build:mac-arm64:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --arm64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs arm64",
-    "electron:build:mac:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --x64 --arm64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64 arm64",
+    "electron:build:mac-x64:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg zip --x64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64",
+    "electron:build:mac-arm64:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg zip --arm64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs arm64",
+    "electron:build:mac:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg zip --universal --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs universal",
     "electron:build:all": "npm run electron:prebuild && electron-builder build --publish never",
     "npm:prepack": "npm run build && npm run server:compile",
     "prepack": "npm run npm:prepack",
@@ -79,6 +79,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "electron-updater": "^6.8.3",
     "framer-motion": "^12.34.0",
     "i18next": "^25.8.13",
     "jsonwebtoken": "^9.0.2",
@@ -171,7 +172,10 @@
       "icon": "assets/icon.ico"
     },
     "mac": {
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.icns",
       "hardenedRuntime": true,
@@ -182,12 +186,22 @@
       "artifactName": "Tessera-${version}-macos-${arch}.${ext}",
       "sign": true
     },
+    "zip": {
+      "artifactName": "Tessera-${version}-macos-${arch}.${ext}"
+    },
     "portable": {
       "artifactName": "Tessera-${version}-windows-${arch}.${ext}"
     },
     "deb": {
       "packageName": "tessera",
       "artifactName": "Tessera-${version}-linux-${arch}.${ext}"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "horang-labs",
+        "repo": "tessera"
+      }
+    ]
   }
 }

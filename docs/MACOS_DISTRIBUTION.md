@@ -1,6 +1,6 @@
 # macOS Distribution
 
-Use this path for macOS DMGs that people can download and open under Gatekeeper without the unsigned-developer approval flow.
+Use this path for macOS DMGs that people can download and open under Gatekeeper without the unsigned-developer approval flow. Release builds also produce a signed ZIP and `latest-mac.yml` for in-app updates.
 
 ## Requirements
 
@@ -34,14 +34,14 @@ If more than one Developer ID identity is installed, pin the certificate:
 export CSC_NAME="Developer ID Application: Your Name (TEAMID1234)"
 ```
 
-Build signed and notarized DMGs:
+Build signed and notarized DMGs plus signed ZIP update artifacts:
 
 ```bash
 npm run electron:build:mac-arm64:signed
 npm run electron:build:mac-x64:signed
 ```
 
-Or build both architectures:
+Or build the universal release artifacts used by the desktop release workflow:
 
 ```bash
 npm run electron:build:mac:signed
@@ -49,7 +49,7 @@ npm run electron:build:mac:signed
 
 The notarization helper streams `notarytool` output so CI logs show the upload progress, submission ID, and `In Progress` polling status. It defaults to a `45m` notary wait timeout; override with `TESSERA_NOTARY_TIMEOUT=90m` if Apple notarization is slow. It also disables S3 transfer acceleration by default for more predictable CI uploads; set `TESSERA_NOTARY_DISABLE_S3_ACCELERATION=0` to use Apple's default upload path.
 
-The final DMG is signed with the Developer ID Application identity before notarization. The helper fails early if the DMG has no usable code signature, then validates the stapled ticket and Gatekeeper assessment after notarization.
+The final DMG is signed with the Developer ID Application identity before notarization. The helper fails early if the DMG has no usable code signature, then validates the stapled ticket and Gatekeeper assessment after notarization. The ZIP update artifact is generated from the same signed app bundle and is referenced by `latest-mac.yml` for Electron auto-update.
 
 ## GitHub Actions Secrets
 
@@ -73,13 +73,13 @@ Apple ID notarization also works if the API key secrets are not set:
 
 ## Verification
 
-After a signed build, verify each DMG:
+After a signed build, verify release artifacts:
 
 ```bash
-xcrun stapler validate release/Tessera-*-macos-arm64.dmg
-xcrun stapler validate release/Tessera-*-macos-x64.dmg
-spctl --assess --type open --context context:primary-signature --verbose release/Tessera-*-macos-arm64.dmg
-spctl --assess --type open --context context:primary-signature --verbose release/Tessera-*-macos-x64.dmg
+xcrun stapler validate release/Tessera-*-macos-universal.dmg
+spctl --assess --type open --context context:primary-signature --verbose release/Tessera-*-macos-universal.dmg
+test -f release/Tessera-*-macos-universal.zip
+test -f release/latest-mac.yml
 ```
 
 The unsigned scripts remain available for local packaging tests only:
