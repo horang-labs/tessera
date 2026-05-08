@@ -114,6 +114,11 @@ export function buildManagedWorktreeSlug(
   return `${formatManagedWorktreeSlugDate(date)}-${normalizeManagedWorktreeSlug(randomSuffix)}`;
 }
 
+export function buildManagedWorktreeCollisionSlug(slug: string, collisionIndex = 0): string {
+  const normalizedSlug = normalizeManagedWorktreeSlug(slug);
+  return collisionIndex > 0 ? `${normalizedSlug}-${collisionIndex + 1}` : normalizedSlug;
+}
+
 export function buildManagedWorktreeBranchName(
   slug: string,
   branchPrefix?: string | null
@@ -131,8 +136,7 @@ export function buildManagedWorktreeName(
   baseSlug = buildManagedWorktreeSlug(date)
 ): string {
   void projectDir;
-  const slug = normalizeManagedWorktreeSlug(baseSlug);
-  const collisionSlug = collisionIndex > 0 ? `${slug}-${collisionIndex + 1}` : slug;
+  const collisionSlug = buildManagedWorktreeCollisionSlug(baseSlug, collisionIndex);
 
   return buildManagedWorktreeBranchName(collisionSlug, branchPrefix);
 }
@@ -164,8 +168,50 @@ export function buildManagedWorktreeRelativePath(
 export function buildManagedWorktreePreviewPath(
   projectDir?: string | null,
   branchPrefix?: string | null,
-  slug = MANAGED_WORKTREE_SLUG_PREVIEW
+  slug = MANAGED_WORKTREE_SLUG_PREVIEW,
+  pathTemplate?: string | null
 ): string {
   const branchName = buildManagedWorktreeNamePreview(projectDir, branchPrefix, slug);
+  const normalizedTemplate = pathTemplate?.trim();
+  if (normalizedTemplate) {
+    return expandManagedWorktreePreviewTemplate(normalizedTemplate, projectDir, branchName, slug);
+  }
   return `${MANAGED_WORKTREE_DISPLAY_ROOT}/${buildManagedWorktreeRelativePath(projectDir, branchName)}`;
+}
+
+function expandManagedWorktreePreviewTemplate(
+  template: string,
+  projectDir: string | null | undefined,
+  branchName: string,
+  branchSlug: string,
+): string {
+  const normalizedProjectDir = (projectDir ?? '').replace(/[\\/]+$/g, '');
+  const projectParent = dirnameForDisplayPath(normalizedProjectDir);
+  const projectName = basenameForDisplayPath(normalizedProjectDir);
+  const values: Record<string, string> = {
+    projectPath: normalizedProjectDir,
+    projectParent,
+    projectName,
+    projectSlug: buildManagedWorktreeProjectSlug(projectDir),
+    branchName,
+    branchSlug: normalizeManagedWorktreeSlug(branchName),
+  };
+
+  return template.replace(/\{([^{}]+)\}/g, (match, token: string) => values[token] ?? match);
+}
+
+function dirnameForDisplayPath(displayPath: string): string {
+  if (!displayPath) return '';
+  const normalized = displayPath.replace(/\\/g, '/').replace(/\/+$/g, '');
+  const index = normalized.lastIndexOf('/');
+  if (index <= 0) return index === 0 ? '/' : '';
+  const dirname = normalized.slice(0, index);
+  return displayPath.includes('\\') ? dirname.replace(/\//g, '\\') : dirname;
+}
+
+function basenameForDisplayPath(displayPath: string): string {
+  if (!displayPath) return '';
+  const normalized = displayPath.replace(/\\/g, '/').replace(/\/+$/g, '');
+  const segments = normalized.split('/').filter(Boolean);
+  return segments[segments.length - 1] ?? '';
 }

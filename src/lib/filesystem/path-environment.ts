@@ -183,7 +183,7 @@ export function resolveWindowsHostedWslBrowsePath(
   if (isWindowsDrivePath(trimmed)) {
     const filesystemPath = path.win32.normalize(trimmed);
     return {
-      displayPath: windowsDrivePathToWslDisplayPath(filesystemPath) ?? filesystemPath,
+      displayPath: windowsDrivePathToWslMountPath(filesystemPath) ?? filesystemPath,
       filesystemPath,
     };
   }
@@ -227,7 +227,7 @@ export function resolveWslHostedNativeBrowsePath(
   }
 
   if (isWindowsDrivePath(trimmed)) {
-    const filesystemPath = windowsDrivePathToWslDisplayPath(trimmed) ?? trimmed;
+    const filesystemPath = windowsDrivePathToWslMountPath(trimmed) ?? trimmed;
     return {
       displayPath: filesystemPath,
       filesystemPath,
@@ -248,7 +248,7 @@ export function formatWindowsHostedWslDisplayPath(
   wslPathInfo: WslPathInfo | null,
 ): string {
   return (
-    windowsDrivePathToWslDisplayPath(filesystemPath)
+    windowsDrivePathToWslMountPath(filesystemPath)
     ?? wslUncPathToDisplayPath(filesystemPath)
     ?? (wslPathInfo ? stripWslRoot(filesystemPath, wslPathInfo.rootFilesystemPath) : null)
     ?? filesystemPath
@@ -265,12 +265,8 @@ function wslDisplayPathToWindowsFilesystemPath(
   wslPathInfo: WslPathInfo,
 ): string {
   const normalizedDisplayPath = normalizeWslDisplayPath(displayPath);
-  const mountedDriveMatch = normalizedDisplayPath.match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
-  if (mountedDriveMatch) {
-    const drive = mountedDriveMatch[1].toUpperCase();
-    const rest = mountedDriveMatch[2]?.replace(/\//g, '\\') ?? '';
-    return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
-  }
+  const windowsDrivePath = wslMountPathToWindowsDrivePath(normalizedDisplayPath);
+  if (windowsDrivePath) return windowsDrivePath;
 
   if (normalizedDisplayPath === '/') {
     return wslPathInfo.rootFilesystemPath;
@@ -282,13 +278,23 @@ function wslDisplayPathToWindowsFilesystemPath(
   );
 }
 
-function windowsDrivePathToWslDisplayPath(value: string): string | null {
+export function windowsDrivePathToWslMountPath(value: string): string | null {
   const driveMatch = value.match(/^([a-zA-Z]):[\\/]*(.*)$/);
   if (!driveMatch) return null;
 
   const drive = driveMatch[1].toLowerCase();
   const rest = driveMatch[2].replace(/[\\/]+/g, '/').replace(/^\/+/, '');
   return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
+}
+
+export function wslMountPathToWindowsDrivePath(value: string): string | null {
+  const normalized = path.posix.normalize(value.replace(/\\/g, '/'));
+  const mountedDriveMatch = normalized.match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
+  if (!mountedDriveMatch) return null;
+
+  const drive = mountedDriveMatch[1].toUpperCase();
+  const rest = mountedDriveMatch[2]?.replace(/\//g, '\\') ?? '';
+  return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
 }
 
 function wslUncPathToDisplayPath(value: string): string | null {
@@ -351,7 +357,7 @@ async function resolveWslHostedWindowsHomeMountPath(): Promise<string> {
     },
   );
   const userProfile = stdout.replace(/\0/g, '').trim();
-  const mountPath = windowsDrivePathToWslDisplayPath(userProfile);
+  const mountPath = windowsDrivePathToWslMountPath(userProfile);
   if (!mountPath || !(await directoryExists(mountPath))) {
     throw new Error('Windows user profile filesystem is not available from WSL');
   }

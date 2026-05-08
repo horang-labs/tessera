@@ -24,8 +24,9 @@ export function ManagedWorktreePreview({
   errorTestId,
 }: ManagedWorktreePreviewProps) {
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
+  const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const branchPreview = buildManagedWorktreeNamePreview(projectDir, branchPrefix);
-  const pathPreview = buildManagedWorktreePreviewPath(projectDir, branchPrefix);
+  const pathPreview = buildManagedWorktreePreviewPath(projectDir, branchPrefix, undefined, pathTemplate);
 
   return (
     <div className="space-y-3">

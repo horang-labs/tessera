@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
         collectionId: typeof collectionId === 'string' && collectionId.trim().length > 0 ? collectionId.trim() : undefined,
         hasCustomTitle: hasCustomTitle === true,
         worktreeBranch: normalizedWorktreeBranch,
+        worktreeManaged: Boolean(normalizedWorktreeBranch),
       });
 
       broadcastSessionMutation(userId, {

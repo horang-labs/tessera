@@ -185,6 +185,7 @@ export async function initDatabase(): Promise<void> {
     wrapper.prepare('UPDATE _meta SET value = ? WHERE key = ?').run(String(SCHEMA_VERSION), 'schema_version');
   }
 
+  ensureLatestSchema(wrapper);
   wrapper.exec(CREATE_INDEXES);
 
   _g[DB_KEY] = wrapper;
@@ -194,6 +195,25 @@ export async function initDatabase(): Promise<void> {
     path: dbLocation.dbPath,
     source: dbLocation.source,
   }, 'SQLite database initialized (sql.js WASM)');
+}
+
+function addColumnIfMissing(
+  db: DatabaseWrapper,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((col) => col.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function ensureLatestSchema(db: DatabaseWrapper): void {
+  // Some dev databases can be shared across worktrees and already have the
+  // latest schema version marker without every latest column. Keep startup
+  // idempotent so runtime queries do not depend solely on the version marker.
+  addColumnIfMissing(db, 'sessions', 'worktree_managed', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 /**
@@ -921,6 +941,14 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
       db.exec(`ALTER TABLE tasks ADD COLUMN pr_head_ref_oid TEXT`);
     }
     logger.info('Migration v24 applied: tasks.pr_head_ref_oid column added');
+  }
+
+  if (fromVersion < 25) {
+    const cols = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
+    if (!cols.some((col) => col.name === 'worktree_managed')) {
+      db.exec(`ALTER TABLE sessions ADD COLUMN worktree_managed INTEGER NOT NULL DEFAULT 0`);
+    }
+    logger.info('Migration v25 applied: sessions.worktree_managed column added');
   }
 }
 

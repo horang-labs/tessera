@@ -42,6 +42,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const panelCount = usePanelStore((state) => Object.keys(state.tabPanels[tabId]?.panels ?? EMPTY_PANELS).length);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
+  const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const providers = useProvidersStore((state) => state.providers);
   const { createSession, isCreating } = useSessionCrud();
   const { createWorktreeSession } = useWorktreeSession();
@@ -215,7 +216,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     ? buildManagedWorktreeBranchName(branchSlug, branchPrefix)
     : '';
   const worktreePathPreview = activeProject
-    ? buildManagedWorktreePreviewPath(activeProject.decodedPath, branchPrefix, branchSlug)
+    ? buildManagedWorktreePreviewPath(activeProject.decodedPath, branchPrefix, branchSlug, pathTemplate)
     : '';
   const normalizedBranchPrefix = normalizeManagedWorktreeBranchPrefix(branchPrefix);
   const panelControls = panelCount >= 2 ? (

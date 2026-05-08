@@ -9,6 +9,7 @@ import {
   ManagedWorktreeAllocationError,
   resolveManagedWorktreeRoot,
 } from '@/lib/worktrees/managed';
+import { ManagedWorktreePathTemplateError } from '@/lib/worktrees/path-template-server';
 import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
 
@@ -29,7 +30,7 @@ import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
  *
  * This endpoint:
  * 1. Validates all inputs
- * 2. Allocates a managed temp branch/path pair under the active tool filesystem
+ * 2. Allocates a managed temp branch/path pair under the configured location
  * 3. Runs: git -C projectDir worktree add <worktreePath> -b <branchName>
  */
 export async function POST(req: NextRequest) {
@@ -114,6 +115,8 @@ export async function POST(req: NextRequest) {
       {
         allowCollisionSuffix: allowBranchSlugSuffix !== false,
         rootDir: worktreeRoot,
+        pathTemplate: settings.managedWorktreePathTemplate,
+        agentEnvironment: settings.agentEnvironment,
         runGit,
       }
     );
@@ -130,6 +133,15 @@ export async function POST(req: NextRequest) {
           worktreePath: error.worktreePath,
         },
         { status }
+      );
+    }
+    if (error instanceof ManagedWorktreePathTemplateError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: 'invalid_worktree_path_template',
+        },
+        { status: 400 },
       );
     }
     throw error;

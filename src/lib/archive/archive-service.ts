@@ -28,6 +28,7 @@ export interface ArchiveItem {
   createdAt: string;
   workDir?: string;
   worktreeBranch?: string;
+  worktreeManaged: boolean;
   worktreeDeletedAt?: string;
   worktreeStatus: WorktreeArchiveStatus;
   canRestore: boolean;
@@ -141,9 +142,18 @@ function isStaleManagedWorktreeRemovalError(message: string): boolean {
     || (normalized.includes('.git') && normalized.includes('does not exist'));
 }
 
+function isRecordedManagedWorktree(
+  workDir: string | null | undefined,
+  worktreeManaged: boolean | number | null | undefined,
+): boolean {
+  if (!workDir) return false;
+  return worktreeManaged === true || worktreeManaged === 1 || isManagedWorktreePath(workDir);
+}
+
 async function mapChat(row: SessionRow): Promise<ArchiveItem> {
   const worktreeStatus = await getWorktreeStatus(row.work_dir, row.worktree_deleted_at);
   const hasWorktreeDependency = Boolean(row.work_dir);
+  const worktreeManaged = isRecordedManagedWorktree(row.work_dir, row.worktree_managed);
   return {
     id: row.id,
     kind: 'chat',
@@ -157,6 +167,7 @@ async function mapChat(row: SessionRow): Promise<ArchiveItem> {
     createdAt: row.created_at,
     workDir: row.work_dir ?? undefined,
     worktreeBranch: row.worktree_branch ?? undefined,
+    worktreeManaged,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
     worktreeStatus,
     canRestore: hasWorktreeDependency ? worktreeStatus === 'present' : true,
@@ -172,6 +183,7 @@ async function mapChat(row: SessionRow): Promise<ArchiveItem> {
 
 async function mapTask(task: TaskEntity): Promise<ArchiveItem> {
   const worktreeStatus = await getWorktreeStatus(task.workDir, task.worktreeDeletedAt);
+  const worktreeManaged = isRecordedManagedWorktree(task.workDir, task.worktreeManaged);
   return {
     id: task.id,
     kind: 'task',
@@ -185,6 +197,7 @@ async function mapTask(task: TaskEntity): Promise<ArchiveItem> {
     createdAt: task.createdAt,
     workDir: task.workDir,
     worktreeBranch: task.worktreeBranch,
+    worktreeManaged,
     worktreeDeletedAt: task.worktreeDeletedAt,
     worktreeStatus,
     canRestore: Boolean(task.workDir) && worktreeStatus === 'present',
@@ -314,7 +327,7 @@ export async function removeArchivedTaskWorktree(taskId: string, userId?: string
   if (item.worktreeDeletedAt || item.worktreeStatus === 'deleted') {
     throw new Error('Worktree already deleted');
   }
-  if (!isManagedWorktreePath(item.workDir)) {
+  if (!item.worktreeManaged) {
     throw new Error('Worktree is not managed by this app');
   }
   const activeIds = processManager.getActiveSessionIds();
@@ -343,7 +356,7 @@ export async function removeArchivedWorktrees(
     if (
       !item.workDir
       || item.worktreeStatus !== 'present'
-      || !isManagedWorktreePath(item.workDir)
+      || !item.worktreeManaged
       || item.sessions.some((session) => activeIds.has(session.id))
     ) {
       result.skipped += 1;
@@ -372,7 +385,7 @@ async function removeArchivedWorktree(
   runGit?: GitRunner,
 ): Promise<boolean> {
   if (!item.workDir || !item.archivedAt || item.worktreeDeletedAt) return false;
-  if (!isManagedWorktreePath(item.workDir)) return false;
+  if (!item.worktreeManaged) return false;
   if (item.worktreeStatus === 'deleted') return false;
 
   const activeIds = processManager.getActiveSessionIds();

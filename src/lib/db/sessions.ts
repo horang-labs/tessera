@@ -14,6 +14,7 @@ export interface SessionRow {
   workflow_status?: string | null;
   work_dir: string | null;
   worktree_branch: string | null;
+  worktree_managed?: number;
   archived: number; // 0 | 1
   archived_at: string | null;
   worktree_deleted_at: string | null;
@@ -111,6 +112,7 @@ export function createSession(
   provider: string,
   options: {
     workDir?: string;
+    worktreeManaged?: boolean;
     taskId?: string;
     collectionId?: string;
   } = {}
@@ -123,14 +125,18 @@ export function createSession(
     WHERE project_id = ? AND deleted = 0
   `).run(projectId);
   db.prepare(`
-    INSERT INTO sessions (id, project_id, title, provider, work_dir, task_id, collection_id, sort_order, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    INSERT INTO sessions (
+      id, project_id, title, provider, work_dir, worktree_managed,
+      task_id, collection_id, sort_order, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     id,
     projectId,
     title,
     provider,
     options.workDir ?? null,
+    options.worktreeManaged ? 1 : 0,
     options.taskId ?? null,
     options.collectionId ?? null,
     now,
@@ -206,7 +212,7 @@ export function getSessionsEligibleForBareSessionPrSync(): Array<Pick<SessionRow
 export function clearWorktreeMetadataByWorkDir(workDir: string): void {
   getDb().prepare(`
     UPDATE sessions
-    SET work_dir = NULL, worktree_branch = NULL, updated_at = ?
+    SET work_dir = NULL, worktree_branch = NULL, worktree_managed = 0, updated_at = ?
     WHERE work_dir = ?
   `).run(new Date().toISOString(), workDir);
 }
@@ -224,7 +230,7 @@ export function softDeleteSession(id: string): void {
  */
 export function updateSession(
   id: string,
-  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'work_dir' | 'worktree_branch' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'collection_id'>>,
+  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'collection_id'>>,
   options?: { skipTimestamp?: boolean }
 ): void {
   const db = getDb();
@@ -235,6 +241,7 @@ export function updateSession(
   if (patch.has_custom_title !== undefined) { sets.push('has_custom_title = ?'); values.push(patch.has_custom_title); }
   if (patch.work_dir !== undefined) { sets.push('work_dir = ?'); values.push(patch.work_dir); }
   if (patch.worktree_branch !== undefined) { sets.push('worktree_branch = ?'); values.push(patch.worktree_branch); }
+  if (patch.worktree_managed !== undefined) { sets.push('worktree_managed = ?'); values.push(patch.worktree_managed); }
   if (patch.archived !== undefined) { sets.push('archived = ?'); values.push(patch.archived); }
   if (patch.archived_at !== undefined) { sets.push('archived_at = ?'); values.push(patch.archived_at); }
   if (patch.worktree_deleted_at !== undefined) { sets.push('worktree_deleted_at = ?'); values.push(patch.worktree_deleted_at); }

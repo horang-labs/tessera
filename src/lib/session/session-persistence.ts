@@ -12,6 +12,7 @@ interface PersistCreatedSessionRecordOptions {
   taskId?: string;
   title: string;
   worktreeBranch?: string;
+  worktreeManaged?: boolean;
 }
 
 interface PersistedSessionProject {
@@ -54,6 +55,7 @@ export function persistCreatedSessionRecord(
     options.providerId,
     {
       workDir: options.resolvedWorkDir,
+      worktreeManaged: options.worktreeManaged,
       taskId: options.taskId,
       collectionId: options.collectionId,
     },
@@ -70,6 +72,7 @@ export function persistCreatedSessionRecord(
   if (options.taskId && options.worktreeBranch) {
     dbSessions.updateSession(options.sessionId, {
       worktree_branch: options.worktreeBranch,
+      worktree_managed: options.worktreeManaged ? 1 : 0,
     });
   }
 

@@ -871,7 +871,7 @@ function TaskArchiveTable({
                         {t('archive.actions.restore')}
                       </ActionButton>
                     )}
-                    {item.worktreeStatus === 'present' && (
+                    {item.worktreeStatus === 'present' && item.worktreeManaged && (
                       <ActionButton tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')}>
                         <FolderX className="h-3 w-3" />
                         {t('archive.actions.deleteWorktree')}

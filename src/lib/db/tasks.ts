@@ -105,7 +105,7 @@ function archivedTaskWhere(
  */
 function mapRowToEntity(
   row: TaskRow,
-  sessionData: { sessions: TaskSession[]; workDir?: string }
+  sessionData: { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean }
 ): TaskEntity {
   return {
     id: row.id,
@@ -115,6 +115,7 @@ function mapRowToEntity(
     workflowStatus: row.workflow_status as WorkflowStatus,
     worktreeBranch: row.worktree_branch ?? undefined,
     workDir: sessionData.workDir,
+    worktreeManaged: sessionData.worktreeManaged,
     archived: !!row.archived,
     archivedAt: row.archived_at ?? undefined,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
@@ -138,14 +139,14 @@ function mapRowToEntity(
 function loadTaskSessions(
   taskId: string,
   activeSessionIds: Set<string>
-): { sessions: TaskSession[]; workDir?: string } {
+): { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean } {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT id, title, provider, updated_at, work_dir
+    SELECT id, title, provider, updated_at, work_dir, worktree_managed
     FROM sessions
     WHERE task_id = ? AND deleted = 0
     ORDER BY updated_at DESC
-  `).all(taskId) as (SessionForTask & { work_dir?: string | null })[];
+  `).all(taskId) as (SessionForTask & { work_dir?: string | null; worktree_managed?: number | null })[];
 
   const sessions = rows.map((r) => ({
     id: r.id,
@@ -156,9 +157,13 @@ function loadTaskSessions(
   }));
 
   // Derive workDir from the first session that has one
-  const workDir = rows.find(r => r.work_dir)?.work_dir ?? undefined;
+  const worktreeRow = rows.find(r => r.work_dir);
+  const workDir = worktreeRow?.work_dir ?? undefined;
+  const worktreeManaged = workDir
+    ? rows.some((r) => r.work_dir === workDir && r.worktree_managed === 1)
+    : undefined;
 
-  return { sessions, workDir };
+  return { sessions, workDir, worktreeManaged };
 }
 
 /**
