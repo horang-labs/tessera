@@ -23,8 +23,19 @@ Open source | Claude Code + Codex + OpenCode | Full CLI workflows in UI | From i
 | [npm package](https://www.npmjs.com/package/@horang-labs/tessera) | Install the browser runtime |
 | [Product Hunt launch][product-hunt] | Support Tessera on Product Hunt |
 | [Team design partner waitlist][design-partner-waitlist] | Help shape team workspaces, permissions, and enterprise adoption |
-| [Contributing][contributing] | Report issues, discuss larger changes, and send focused PRs |
 | [GitHub Issues](https://github.com/horang-labs/tessera/issues) | Report bugs, rough edges, and feature ideas |
+| [Good first issues][good-first-issues] | Pick up starter-sized docs, QA, and polish work when available |
+| [Help wanted][help-wanted] | Find community-friendly areas where maintainer context is useful |
+| [Discussions][discussions] | Ask questions, propose workflows, and shape larger ideas |
+| [Contributing][contributing] | Set up the project and send focused pull requests |
+
+## Community And Contributions
+
+Tessera is early, local-first infrastructure for developers who run coding agents every day. We welcome focused issues and pull requests from real usage: desktop QA on Windows, macOS, and Linux; Claude Code, Codex, and OpenCode provider edge cases; documentation fixes; UI polish; and workflow reliability improvements.
+
+Start with [good first issues][good-first-issues] or [help wanted][help-wanted] when they are available. If your change is larger than a focused fix, open a [discussion][discussions] or issue first so we can align on the approach.
+
+Thanks to [@jakedev796](https://github.com/jakedev796), Tessera's first external contributor, for helping exercise real Windows and Electron workflows and landing practical fixes in v0.1.4.
 
 | Use Tessera to | Instead of |
 |----------------|------------|
@@ -328,3 +339,6 @@ Claude Code is a trademark of Anthropic. Codex and OpenAI are trademarks of Open
 [design-partner-waitlist]: https://docs.google.com/forms/d/e/1FAIpQLSdbo5haZdekBrQNwt_F-UlloQu-s4SkUV4tZCU0cONwKJX8Tw/viewform
 [product-hunt]: https://www.producthunt.com/posts/tessera-6
 [contributing]: CONTRIBUTING.md
+[good-first-issues]: https://github.com/horang-labs/tessera/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22
+[help-wanted]: https://github.com/horang-labs/tessera/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22
+[discussions]: https://github.com/horang-labs/tessera/discussions
