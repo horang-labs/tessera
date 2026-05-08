@@ -20,6 +20,7 @@ import type {
   SpawnResult,
   ParsedMessage,
   GeneratedTitle,
+  CliRawLogSink,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import { claudeCodeProtocolParser } from './protocol-parser';
@@ -40,6 +41,30 @@ const DEFAULT_COMMAND = 'claude';
 // =============================================================================
 
 export class ClaudeCodeAdapter implements CliProvider {
+  private _processRawLogs = new WeakMap<ChildProcess, CliRawLogSink>();
+
+  private _attachRawLog(
+    proc: ChildProcess,
+    rawLog: CliRawLogSink | undefined,
+    metadata: Record<string, unknown>,
+  ): void {
+    if (!rawLog) return;
+
+    this._processRawLogs.set(proc, rawLog);
+    rawLog({ direction: 'event', phase: 'spawn', data: JSON.stringify(metadata) });
+    proc.stdout?.on('data', (chunk: Buffer | string) => {
+      rawLog({ direction: 'stdout', phase: 'process', data: chunk.toString() });
+    });
+    proc.stderr?.on('data', (chunk: Buffer | string) => {
+      rawLog({ direction: 'stderr', phase: 'process', data: chunk.toString() });
+    });
+  }
+
+  private _writeStdin(proc: ChildProcess, phase: string, payload: string): boolean {
+    this._processRawLogs.get(proc)?.({ direction: 'stdin', phase, data: payload });
+    return proc.stdin?.write(payload) ?? false;
+  }
+
   /**
    * Returns the unique machine-readable identifier for this provider.
    */
@@ -176,6 +201,13 @@ export class ClaudeCodeAdapter implements CliProvider {
       env: spawnEnv as NodeJS.ProcessEnv,
       detached: getRuntimePlatform() !== 'win32',
     }, agentEnv);
+    this._attachRawLog(cliProcess, options.rawLog, {
+      providerId: PROVIDER_ID,
+      command,
+      args,
+      cwd: workDir,
+      agentEnv,
+    });
 
     const spawnResult = await new Promise<{ ok: boolean; error?: Error }>((resolve) => {
       const onError = (err: Error) => {
@@ -202,7 +234,7 @@ export class ClaudeCodeAdapter implements CliProvider {
       type: 'user',
       message: { role: 'user', content },
     });
-    return proc.stdin?.write(jsonMessage + '\n') ?? false;
+    return this._writeStdin(proc, 'send_message', `${jsonMessage}\n`);
   }
 
   /**
@@ -217,7 +249,7 @@ export class ClaudeCodeAdapter implements CliProvider {
       request: { subtype: 'initialize' },
     };
 
-    const ok = proc.stdin?.write(JSON.stringify(initializeRequest) + '\n') ?? false;
+    const ok = this._writeStdin(proc, 'on_session_ready', `${JSON.stringify(initializeRequest)}\n`);
     logger.debug('ClaudeCodeAdapter: sent initialize request', { sessionId, ok });
     return ok;
   }

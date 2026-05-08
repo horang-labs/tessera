@@ -101,6 +101,29 @@ export interface I18nMessages {
         not_installed: string;
       };
     };
+    cliDiagnostics: {
+      title: string;
+      run: string;
+      running: string;
+      export: string;
+      exporting: string;
+      exported: string;
+      runFailed: string;
+      exportFailed: string;
+      lastRun: string;
+      passed: string;
+      failed: string;
+      timeout: string;
+      skipped: string;
+      ok: string;
+      rawLog: string;
+      outcome: {
+        passed: string;
+        failed: string;
+        skipped: string;
+        timeout: string;
+      };
+    };
     cliOverrides: {
       title: string;
       description: string;

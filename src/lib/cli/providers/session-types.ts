@@ -1,6 +1,16 @@
 import type { ChildProcess } from 'child_process';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 
+export type CliRawLogDirection = 'stdin' | 'stdout' | 'stderr' | 'event';
+
+export interface CliRawLogEvent {
+  direction: CliRawLogDirection;
+  phase: string;
+  data: string;
+}
+
+export type CliRawLogSink = (event: CliRawLogEvent) => void;
+
 /**
  * Options passed to the provider when creating or resuming a CLI session.
  */
@@ -38,6 +48,17 @@ export interface SpawnOptions extends ProviderRuntimeControls {
    * as {"opencodeSessionId": "..."}.
    */
   opencodeSessionId?: string;
+  /**
+   * Optional provider startup/handshake timeout override. Regular sessions use
+   * provider defaults; diagnostics pass a shorter timeout so settings checks do
+   * not hang for minutes.
+   */
+  startupTimeoutMs?: number;
+  /**
+   * Optional raw CLI I/O sink. Used by diagnostics to persist provider-level
+   * stdin/stdout/stderr without changing normal session behavior.
+   */
+  rawLog?: CliRawLogSink;
 }
 
 /**

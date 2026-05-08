@@ -16,6 +16,7 @@ import AgentEnvironmentSettings from './agent-environment-settings';
 import CliCommandOverrideSettings from './cli-command-override-settings';
 import WorktreeSettings from './worktree-settings';
 import CliStatusList from './cli-status-list';
+import CliDiagnosticsPanel from './cli-diagnostics-panel';
 import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
@@ -135,6 +136,9 @@ export default function SettingsPanel() {
               <p className="mt-2 text-xs text-(--text-muted)">
                 {t('settings.cliStatus.description')}
               </p>
+              <div className="mt-4 border-t border-(--divider) pt-4">
+                <CliDiagnosticsPanel />
+              </div>
             </SettingsCard>
             {isWindowsServer && (
               <SettingsCard testId="settings-section-development-environment">
