@@ -160,6 +160,7 @@ export function GitPanel({
               onSetMergeSource={controller.setMergeSource}
               onSetPrBaseBranch={controller.setPrBaseBranch}
               onCommit={controller.handleCommit}
+              onFetch={controller.handleFetch}
               onMerge={controller.handleMerge}
               onCreatePr={controller.handleCreatePr}
               onMergePr={controller.handleMergePr}
@@ -170,6 +171,7 @@ export function GitPanel({
               onPush={controller.handlePush}
               onPull={controller.handlePull}
               onOpenExternal={controller.openExternal}
+              fetching={controller.fetching}
             />
           ) : null}
         </>
