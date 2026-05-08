@@ -53,7 +53,7 @@ export function useSkillPicker(
     }
 
     const task = (async () => {
-      if (providerId === 'claude-code') {
+      if (providerId === 'claude-code' || providerId === 'opencode') {
         if (isSessionRunning !== false) {
           wsClient.getCommands(sessionId);
         }

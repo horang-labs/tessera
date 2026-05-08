@@ -44,6 +44,12 @@ interface JsonRpcNotification {
   params?: Record<string, unknown>;
 }
 
+interface JsonRpcResponsePayload {
+  id: number | string;
+  result?: Record<string, any>;
+  error?: { code?: number | string; message?: string };
+}
+
 interface OpenCodeRuntimeConfig {
   sessionId: string;
   cwd: string;
@@ -62,6 +68,7 @@ export class OpenCodeAdapter implements CliProvider {
   private _nextRequestId = 3;
   private _processRuntimeConfig = new WeakMap<ChildProcess, OpenCodeRuntimeConfig>();
   private _initialConfigSent = new WeakSet<ChildProcess>();
+  private _startupReaders = new WeakMap<ChildProcess, OpenCodeStartupReader>();
 
   getProviderId(): string {
     return PROVIDER_ID;
@@ -187,6 +194,16 @@ export class OpenCodeAdapter implements CliProvider {
     }
 
     return { process: cliProcess, ok: true };
+  }
+
+  consumeStartupMessages(proc: ChildProcess, _sessionId: string): ParsedMessage[] {
+    const startupReader = this._startupReaders.get(proc);
+    if (!startupReader) {
+      return [];
+    }
+
+    this._startupReaders.delete(proc);
+    return startupReader.drain();
   }
 
   onSessionReady(proc: ChildProcess, sessionId: string): boolean {
@@ -341,46 +358,58 @@ export class OpenCodeAdapter implements CliProvider {
     cwd: string,
     options: SpawnOptions,
   ): Promise<string> {
+    const tesseraSessionId = options.sessionId ?? '__provider__';
+    const startupReader = new OpenCodeStartupReader(proc, tesseraSessionId);
+    this._startupReaders.set(proc, startupReader);
+
     let nextId = 1;
-    const initId = nextId++;
-    const initRequest: JsonRpcRequest = {
-      jsonrpc: '2.0',
-      id: initId,
-      method: 'initialize',
-      params: {
-        protocolVersion: 1,
-        clientCapabilities: {},
-        clientInfo: { name: 'tessera', version: '1.0.0' },
-      },
-    };
+    try {
+      const initId = nextId++;
+      const initRequest: JsonRpcRequest = {
+        jsonrpc: '2.0',
+        id: initId,
+        method: 'initialize',
+        params: {
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name: 'tessera', version: '1.0.0' },
+        },
+      };
 
-    proc.stdin?.write(JSON.stringify(initRequest) + '\n');
-    await this._awaitResponse(proc, initId, 'initialize');
+      const initResponse = startupReader.awaitResponse(initId, 'initialize');
+      proc.stdin?.write(JSON.stringify(initRequest) + '\n');
+      await initResponse;
 
-    const sessionId = options.resume && options.opencodeSessionId
-      ? options.opencodeSessionId
-      : undefined;
-    const sessionMethod = sessionId ? 'session/resume' : 'session/new';
-    const sessionReqId = nextId++;
-    const sessionRequest: JsonRpcRequest = {
-      jsonrpc: '2.0',
-      id: sessionReqId,
-      method: sessionMethod,
-      params: {
-        ...(sessionId ? { sessionId } : {}),
-        cwd,
-        mcpServers: [],
-      },
-    };
+      const sessionId = options.resume && options.opencodeSessionId
+        ? options.opencodeSessionId
+        : undefined;
+      const sessionMethod = sessionId ? 'session/resume' : 'session/new';
+      const sessionReqId = nextId++;
+      const sessionRequest: JsonRpcRequest = {
+        jsonrpc: '2.0',
+        id: sessionReqId,
+        method: sessionMethod,
+        params: {
+          ...(sessionId ? { sessionId } : {}),
+          cwd,
+          mcpServers: [],
+        },
+      };
 
-    proc.stdin?.write(JSON.stringify(sessionRequest) + '\n');
-    const sessionResponse = await this._awaitResponse(proc, sessionReqId, sessionMethod);
-    const opencodeSessionId = sessionResponse.result?.sessionId ?? sessionId;
-    if (typeof opencodeSessionId !== 'string' || !opencodeSessionId) {
-      throw new Error(`OpenCodeAdapter: ${sessionMethod} response missing sessionId`);
+      const sessionResponsePromise = startupReader.awaitResponse(sessionReqId, sessionMethod);
+      proc.stdin?.write(JSON.stringify(sessionRequest) + '\n');
+      const sessionResponse = await sessionResponsePromise;
+      const opencodeSessionId = sessionResponse.result?.sessionId ?? sessionId;
+      if (typeof opencodeSessionId !== 'string' || !opencodeSessionId) {
+        throw new Error(`OpenCodeAdapter: ${sessionMethod} response missing sessionId`);
+      }
+
+      return opencodeSessionId;
+    } catch (err) {
+      this._startupReaders.delete(proc);
+      startupReader.dispose();
+      throw err;
     }
-
-    return opencodeSessionId;
   }
 
   private _sendSetModel(proc: ChildProcess, tesseraSessionId: string, model: string): boolean {
@@ -428,84 +457,6 @@ export class OpenCodeAdapter implements CliProvider {
 
     opencodeProtocolParser.trackPendingRequest(tesseraSessionId, requestId, 'session/set_mode');
     return proc.stdin?.write(JSON.stringify(request) + '\n') ?? false;
-  }
-
-  private _awaitResponse(
-    proc: ChildProcess,
-    expectedId: number,
-    method: string,
-  ): Promise<{ id: number; result?: Record<string, any>; error?: any }> {
-    return new Promise((resolve, reject) => {
-      let buffer = '';
-      let settled = false;
-
-      const timeout = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error(`OpenCodeAdapter: timed out waiting for response id=${expectedId} (${method})`));
-      }, CLI_TIMEOUT_MS);
-
-      const cleanup = () => {
-        clearTimeout(timeout);
-        proc.stdout?.removeListener('data', onData);
-        proc.removeListener('error', onError);
-        proc.removeListener('close', onClose);
-      };
-
-      const finish = (callback: () => void) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        callback();
-      };
-
-      const onData = (chunk: Buffer | string) => {
-        buffer += chunk.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          let parsed: any;
-          try {
-            parsed = JSON.parse(trimmed);
-          } catch {
-            continue;
-          }
-
-          if (parsed.id !== expectedId) {
-            continue;
-          }
-
-          finish(() => {
-            if (parsed.error) {
-              reject(new Error(
-                `OpenCodeAdapter: JSON-RPC error for id=${expectedId} (${method}): ` +
-                `${parsed.error.message} (code ${parsed.error.code})`,
-              ));
-            } else {
-              resolve(parsed);
-            }
-          });
-          return;
-        }
-      };
-
-      const onError = (err: Error) => {
-        finish(() => reject(new Error(`OpenCodeAdapter: process error during handshake: ${err.message}`)));
-      };
-
-      const onClose = (code: number | null) => {
-        finish(() => reject(new Error(`OpenCodeAdapter: process closed (code=${code}) before response id=${expectedId}`)));
-      };
-
-      proc.stdout?.on('data', onData);
-      proc.once('error', onError);
-      proc.once('close', onClose);
-    });
   }
 
   private async _generateTitleViaRun(
@@ -595,6 +546,138 @@ export class OpenCodeAdapter implements CliProvider {
       child.stdin?.end();
     });
   }
+}
+
+interface PendingStartupResponse {
+  method: string;
+  timeout: NodeJS.Timeout;
+  resolve: (response: JsonRpcResponsePayload) => void;
+  reject: (error: Error) => void;
+}
+
+class OpenCodeStartupReader {
+  private buffer = '';
+  private readonly messages: ParsedMessage[] = [];
+  private readonly pendingResponses = new Map<number | string, PendingStartupResponse>();
+  private isDisposed = false;
+
+  constructor(
+    private readonly proc: ChildProcess,
+    private readonly sessionId: string,
+  ) {
+    this.proc.stdout?.on('data', this.onData);
+    this.proc.once('error', this.onError);
+    this.proc.once('close', this.onClose);
+  }
+
+  awaitResponse(expectedId: number, method: string): Promise<JsonRpcResponsePayload> {
+    if (this.isDisposed) {
+      return Promise.reject(new Error(
+        `OpenCodeAdapter: startup reader disposed before response id=${expectedId} (${method})`,
+      ));
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingResponses.delete(expectedId);
+        reject(new Error(`OpenCodeAdapter: timed out waiting for response id=${expectedId} (${method})`));
+      }, CLI_TIMEOUT_MS);
+
+      this.pendingResponses.set(expectedId, {
+        method,
+        timeout,
+        resolve,
+        reject,
+      });
+    });
+  }
+
+  drain(): ParsedMessage[] {
+    const messages = [...this.messages];
+    this.messages.length = 0;
+    this.dispose();
+    return messages;
+  }
+
+  dispose(error = new Error('OpenCodeAdapter: startup reader disposed')): void {
+    if (this.isDisposed) {
+      return;
+    }
+
+    this.isDisposed = true;
+    this.proc.stdout?.removeListener('data', this.onData);
+    this.proc.removeListener('error', this.onError);
+    this.proc.removeListener('close', this.onClose);
+
+    for (const pending of this.pendingResponses.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    this.pendingResponses.clear();
+  }
+
+  private readonly onData = (chunk: Buffer | string): void => {
+    this.buffer += chunk.toString();
+    const lines = this.buffer.split('\n');
+    this.buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      this.handleLine(line);
+    }
+  };
+
+  private readonly onError = (err: Error): void => {
+    this.dispose(new Error(`OpenCodeAdapter: process error during handshake: ${err.message}`));
+  };
+
+  private readonly onClose = (code: number | null): void => {
+    this.dispose(new Error(`OpenCodeAdapter: process closed (code=${code}) during handshake`));
+  };
+
+  private handleLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+
+    if (isJsonRpcId(parsed.id)) {
+      const pending = this.pendingResponses.get(parsed.id);
+      if (pending) {
+        this.pendingResponses.delete(parsed.id);
+        clearTimeout(pending.timeout);
+
+        if (parsed.error) {
+          pending.reject(buildJsonRpcResponseError(parsed.id, pending.method, parsed.error));
+        } else {
+          pending.resolve(parsed);
+        }
+        return;
+      }
+    }
+
+    this.messages.push(...opencodeProtocolParser.parseStdout(this.sessionId, trimmed));
+  }
+}
+
+function isJsonRpcId(value: unknown): value is number | string {
+  return typeof value === 'number' || typeof value === 'string';
+}
+
+function buildJsonRpcResponseError(
+  id: number | string,
+  method: string,
+  error: { code?: number | string; message?: string },
+): Error {
+  const message = typeof error.message === 'string' ? error.message : 'Unknown error';
+  const code = error.code ?? 'unknown';
+  return new Error(`OpenCodeAdapter: JSON-RPC error for id=${id} (${method}): ${message} (code ${code})`);
 }
 
 function buildPromptParts(content: string | ContentBlock[]): OpenCodePromptPart[] {

@@ -76,6 +76,13 @@ export class ProcessManager {
     }
   }
 
+  private consumeProviderStartupMessages(processInfo: ProcessInfo): ParsedMessage[] {
+    return processInfo.provider.consumeStartupMessages?.(
+      processInfo.process,
+      processInfo.sessionId,
+    ) ?? [];
+  }
+
   private registerRunningProcess(
     sessionId: string,
     userId: string,
@@ -89,7 +96,9 @@ export class ProcessManager {
     this.attachSkillSource(processInfo);
 
     this.processes.set(sessionId, processInfo);
+    const startupMessages = this.consumeProviderStartupMessages(processInfo);
     this.setupProcessHandlers(sessionId, userId, cliProcess);
+    this.dispatchParsedMessages(sessionId, userId, startupMessages);
     provider.onSessionReady?.(cliProcess, sessionId);
 
     logger.info({

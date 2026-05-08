@@ -158,6 +158,12 @@ export interface CliProvider {
   createSkillSource?(sessionId: string, proc: ChildProcess): SkillSource | null;
 
   /**
+   * Optional: drain provider-owned messages captured before ProcessManager
+   * attaches its stdout handler.
+   */
+  consumeStartupMessages?(proc: ChildProcess, sessionId: string): ParsedMessage[];
+
+  /**
    * Optional: run provider-specific startup requests after the process has
    * been registered and stdout/stderr handlers are attached.
    */
