@@ -490,6 +490,7 @@ export const ko: I18nMessages = {
     toggleView: '리스트/보드 뷰 전환',
     splitRight: '우측 분할',
     splitDown: '아래 분할',
+    toggleTerminal: '터미널 열기',
     focusPanelLeft: '왼쪽 패널로 이동',
     focusPanelRight: '오른쪽 패널로 이동',
     focusPanelUp: '위 패널로 이동',

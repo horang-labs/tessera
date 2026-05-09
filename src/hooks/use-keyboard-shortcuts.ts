@@ -21,6 +21,7 @@ import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
 import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface UseKeyboardShortcutsOptions {
   /** Reserved for future use (help toggle). Currently unused. */
@@ -136,6 +137,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   const panels = usePanelStore((state) => selectActiveTab(state)?.panels ?? EMPTY_PANELS);
   const activePanelId = usePanelStore((state) => selectActiveTab(state)?.activePanelId ?? '');
   const splitPanel = usePanelStore((state) => state.splitPanel);
+  const createTerminalPanel = usePanelStore((state) => state.createTerminalPanel);
   const setActivePanelId = usePanelStore((state) => state.setActivePanelId);
 
   const tabs = useTabStore((state) => state.tabs);
@@ -209,6 +211,21 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     }
   }, [panels, activePanelId, splitPanel]);
 
+  const handleToggleTerminal = useCallback(() => {
+    if (!panels[activePanelId]) return;
+    const size = getActivePanelSize(activePanelId);
+    if (size && size.height / 2 < MIN_PANEL_HEIGHT) {
+      toast.warning(i18n.t('panel.tooSmallToSplit'));
+      return;
+    }
+
+    const terminalPanelId = createTerminalPanel(activePanelId, uuidv4(), 'vertical');
+    if (terminalPanelId) {
+      const tabStore = useTabStore.getState();
+      tabStore.pinTab(tabStore.activeTabId);
+    }
+  }, [panels, activePanelId, createTerminalPanel]);
+
   const handleFocusPanel = useCallback((direction: PanelFocusDirection) => {
     if (!panels[activePanelId]) return;
     const nextPanelId = getDirectionalPanelId(activePanelId, direction);
@@ -225,6 +242,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     'toggle-view':    handleToggleView,
     'split-right':    handleSplitRight,
     'split-down':     handleSplitDown,
+    'toggle-terminal': handleToggleTerminal,
     'focus-panel-left':  () => handleFocusPanel('left'),
     'focus-panel-right': () => handleFocusPanel('right'),
     'focus-panel-up':    () => handleFocusPanel('up'),
@@ -247,6 +265,6 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     overrides,
     handleNewTab, handleCloseTab, handleNextTab, handlePrevTab,
     handleToggleSidebar, handleToggleView, handleSplitRight, handleSplitDown,
-    handleFocusPanel,
+    handleToggleTerminal, handleFocusPanel,
   ]);
 }

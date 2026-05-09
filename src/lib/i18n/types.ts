@@ -488,6 +488,7 @@ export interface I18nMessages {
     toggleView: string;
     splitRight: string;
     splitDown: string;
+    toggleTerminal: string;
     focusPanelLeft: string;
     focusPanelRight: string;
     focusPanelUp: string;

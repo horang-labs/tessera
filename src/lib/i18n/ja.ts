@@ -488,6 +488,7 @@ export const ja: I18nMessages = {
     toggleView: 'リスト/ボード表示切替',
     splitRight: '右に分割',
     splitDown: '下に分割',
+    toggleTerminal: 'ターミナルを開く',
     focusPanelLeft: '左のパネルへ移動',
     focusPanelRight: '右のパネルへ移動',
     focusPanelUp: '上のパネルへ移動',

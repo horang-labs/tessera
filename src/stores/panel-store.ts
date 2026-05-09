@@ -86,7 +86,11 @@ function cloneTabPanelTree(tabData: TabPanelData): TabPanelData | null {
     const newPanelId = panelIdMap.get(oldPanelId);
     const oldPanel = tabData.panels[oldPanelId];
     if (!newPanelId || !oldPanel) return null;
-    panels[newPanelId] = { id: newPanelId, sessionId: oldPanel.sessionId };
+    panels[newPanelId] = {
+      id: newPanelId,
+      sessionId: oldPanel.sessionId,
+      terminalId: oldPanel.terminalId ?? null,
+    };
   }
 
   const activePanelId = panelIdMap.get(tabData.activePanelId) ?? findFirstLeafId(layout);
@@ -252,6 +256,24 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     return newPanelId;
   },
 
+  createTerminalPanel: (panelId, terminalId, direction = 'vertical') => {
+    const state = get();
+    const tabData = state.tabPanels[state.activeTabId];
+    if (!tabData) return null;
+    const activePanel = tabData.panels[panelId];
+    if (!activePanel) return null;
+
+    if (activePanel.sessionId === null && !activePanel.terminalId) {
+      get().assignTerminal(panelId, terminalId);
+      return panelId;
+    }
+
+    const newPanelId = get().splitPanel(panelId, direction, null);
+    if (!newPanelId) return null;
+    get().assignTerminal(newPanelId, terminalId);
+    return newPanelId;
+  },
+
   graftTabIntoActiveTab: (sourceTabId, targetPanelId, edge) => {
     const state = get();
     const targetTabId = state.activeTabId;
@@ -392,7 +414,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
 
     const nextPanels = {
       ...tabData.panels,
-      [panelId]: { ...tabData.panels[panelId], sessionId },
+      [panelId]: { ...tabData.panels[panelId], sessionId, terminalId: null },
     };
     const fallbackActivePanelId =
       sessionId === null && panelId === tabData.activePanelId
@@ -416,6 +438,33 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     if (tabId === state.activeTabId && panelId === tabData.activePanelId) {
       useSessionStore.getState().setActiveSession(nextPanels[nextActivePanelId]?.sessionId ?? null);
     }
+  },
+
+  assignTerminal: (panelId, terminalId) => {
+    const state = get();
+    const tabData = state.tabPanels[state.activeTabId];
+    if (!tabData) return;
+    const panel = tabData.panels[panelId];
+    if (!panel) return;
+
+    const nextPanels = {
+      ...tabData.panels,
+      [panelId]: { ...panel, sessionId: null, terminalId },
+    };
+    const nextTabData: TabPanelData = {
+      ...tabData,
+      panels: nextPanels,
+      activePanelId: panelId,
+    };
+
+    set({
+      tabPanels: {
+        ...state.tabPanels,
+        [state.activeTabId]: nextTabData,
+      },
+    });
+
+    useSessionStore.getState().setActiveSession(null);
   },
 
   resizeSplit: (leftAnchor, rightAnchor, ratio) => {

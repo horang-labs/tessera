@@ -281,6 +281,29 @@ export class WebSocketClient {
     }
   }
 
+  createTerminal(args: {
+    terminalId: string;
+    cwd?: string | null;
+    sessionId?: string | null;
+    shellKind?: 'default' | 'cmd' | 'powershell' | 'wsl';
+    cols?: number;
+    rows?: number;
+  }) {
+    this.sendRequest('terminal_create', args);
+  }
+
+  sendTerminalInput(terminalId: string, data: string) {
+    this.sendRequest('terminal_input', { terminalId, data });
+  }
+
+  resizeTerminal(terminalId: string, cols: number, rows: number) {
+    this.sendRequest('terminal_resize', { terminalId, cols, rows });
+  }
+
+  closeTerminal(terminalId: string) {
+    this.sendRequest('terminal_close', { terminalId });
+  }
+
   private sendRequest<T extends ClientMessage['type']>(
     type: T,
     payload: Omit<Extract<ClientMessage, { type: T }>, 'type' | 'requestId'>,
