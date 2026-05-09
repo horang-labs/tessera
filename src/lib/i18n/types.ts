@@ -845,7 +845,10 @@ export interface I18nMessages {
       baseRefLabel: string;
       baseRefLoading: string;
       baseRefUnavailable: string;
-      baseRefHelp: string;
+      baseRefCurrentSuffix: string;
+      baseRefCurrentHead: string;
+      baseRefLocalGroup: string;
+      baseRefRemoteGroup: string;
     };
     contextMenu: {
       setStatus: string;

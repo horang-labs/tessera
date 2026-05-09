@@ -194,7 +194,7 @@ function clientHookSource() {
   return fs.readFileSync(clientHookPath, 'utf8');
 }
 
-test('client hook loads worktree base refs with fetchWithClientId and defaults to current ref', () => {
+test('client hook loads worktree base refs, defaults to current ref, and only submits explicit overrides', () => {
   const source = clientHookSource();
 
   assert.match(source, /export function useWorktreeBaseRefs/);
@@ -203,6 +203,10 @@ test('client hook loads worktree base refs with fetchWithClientId and defaults t
   assert.match(source, /URLSearchParams/);
   assert.match(source, /currentRef/);
   assert.match(source, /setSelectedBaseRef\(currentRef\?\.name/);
+  assert.match(source, /hasUserSelectedBaseRef/);
+  assert.match(source, /currentBaseRefName/);
+  assert.match(source, /selectedBaseRefForCreate/);
+  assert.match(source, /effectiveSelectedBaseRef !== currentBaseRefName/);
   assert.doesNotMatch(source, /[^A-Za-z]fetch\(`/);
 });
 
@@ -235,9 +239,11 @@ test('collection quick create sheet renders and submits a base ref selector', ()
   const source = quickCreateSource();
 
   assert.match(source, /useWorktreeBaseRefs/);
+  assert.match(source, /WorktreeStartFromControl/);
   assert.match(source, /collection-task-base-ref/);
-  assert.match(source, /selectedBaseRef/);
-  assert.match(source, /baseRef: selectedBaseRef/);
+  assert.match(source, /selectedBaseRefForCreate/);
+  assert.match(source, /baseRef: selectedBaseRefForCreate/);
+  assert.doesNotMatch(source, /isLoadingBaseRefs \|\| !selectedBaseRef/);
 });
 
 test('English i18n includes worktree base ref selector copy', () => {
@@ -246,6 +252,9 @@ test('English i18n includes worktree base ref selector copy', () => {
   assert.match(source, /baseRefLabel/);
   assert.match(source, /baseRefLoading/);
   assert.match(source, /baseRefUnavailable/);
+  assert.match(source, /baseRefLocalGroup/);
+  assert.match(source, /baseRefRemoteGroup/);
+  assert.match(source, /Start from/);
 });
 
 const emptyPanelPath = new URL('../src/components/panel/empty-panel-state.tsx', import.meta.url);
@@ -258,7 +267,9 @@ test('empty panel task creation renders and submits a base ref selector', () => 
   const source = emptyPanelSource();
 
   assert.match(source, /useWorktreeBaseRefs/);
+  assert.match(source, /WorktreeStartFromControl/);
   assert.match(source, /empty-panel-base-ref/);
-  assert.match(source, /selectedBaseRef/);
-  assert.match(source, /baseRef: selectedBaseRef/);
+  assert.match(source, /selectedBaseRefForCreate/);
+  assert.match(source, /baseRef: selectedBaseRefForCreate/);
+  assert.doesNotMatch(source, /isLoadingBaseRefs \|\| !selectedBaseRef/);
 });
