@@ -210,10 +210,16 @@ export const useSettingsStore = create<SettingsState>()(
           && (
             (partial.agentEnvironment && partial.agentEnvironment !== prior.agentEnvironment)
             || partial.cliCommandOverrides
+            || partial.providerCustomModels
           )
         ) {
           const { useProvidersStore } = await import('@/stores/providers-store');
           useProvidersStore.getState().refresh();
+        }
+
+        if (saved && partial.providerCustomModels) {
+          const { invalidateProviderSessionOptionsClientCache } = await import('@/hooks/use-provider-session-options');
+          invalidateProviderSessionOptionsClientCache();
         }
       },
 

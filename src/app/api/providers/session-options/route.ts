@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { getProviderSessionOptions } from '@/lib/cli/provider-session-options';
+import {
+  getProviderSessionOptions,
+  invalidateProviderSessionOptionsCache,
+} from '@/lib/cli/provider-session-options';
 import logger from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
@@ -23,6 +26,10 @@ export async function GET(request: NextRequest) {
 
     if (agentEnvironmentParam && !agentEnvironment) {
       return NextResponse.json({ error: 'agentEnvironment must be native or wsl' }, { status: 400 });
+    }
+
+    if (request.nextUrl.searchParams.get('refresh') === '1') {
+      invalidateProviderSessionOptionsCache(auth.userId);
     }
 
     const options = await getProviderSessionOptions(providerId, auth.userId, agentEnvironment);

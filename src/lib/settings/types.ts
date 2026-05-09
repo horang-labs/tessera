@@ -55,6 +55,7 @@ export interface UserSettings {
   /** Legacy Claude-only default model, kept for backward compatibility. */
   defaultModel: string;
   providerDefaults: Record<string, ProviderSessionDefaults>;
+  providerCustomModels: Record<string, string[]>;
   inactivePanelDimming: number;
   showProviderIcons: boolean;
   sttEngine: SttEngine;
