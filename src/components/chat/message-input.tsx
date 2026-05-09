@@ -38,6 +38,10 @@ import { useSessionRefs } from '@/hooks/use-session-refs';
 import { MessageRowShell } from './message-row-shell';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 import { SESSION_DRAG_MIME } from '@/types/panel';
+import {
+  getWorkspaceFileDragPath,
+  hasWorkspaceFileDragData,
+} from '@/lib/dnd/panel-session-drag';
 import { PanelSplitPicker } from './panel-split-picker';
 import { ComposerSessionControls } from './composer-session-controls';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
@@ -45,6 +49,7 @@ import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { exportSessionReference, formatContinueConversationPrompt } from '@/lib/session/session-reference';
 import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import type { Collection } from '@/types/collection';
+import { insertWorkspaceFileReferenceAtCursor } from '@/lib/chat/workspace-file-reference';
 import {
   MessageInputAttachmentStrip,
   MessageInputSessionRefStrip,
@@ -386,27 +391,88 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       !e.dataTransfer.types.includes(SESSION_DRAG_MIME);
   }, []);
 
+  const isWorkspaceFileDrag = useCallback((e: React.DragEvent) => {
+    return hasWorkspaceFileDragData(e.dataTransfer);
+  }, []);
+
+  const insertWorkspaceFileReference = useCallback((filePath: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setInputValue((prev) => {
+        const { nextValue } = insertWorkspaceFileReferenceAtCursor(prev, prev.length, filePath);
+        setDraftInput(sessionId, nextValue);
+        return nextValue;
+      });
+      filePicker.close();
+      return;
+    }
+
+    const cursorPos = textarea.selectionStart;
+    const currentValue = textarea.value;
+    const { nextCursorPos, nextValue } = insertWorkspaceFileReferenceAtCursor(
+      currentValue,
+      cursorPos,
+      filePath,
+    );
+
+    setInputValue(nextValue);
+    setDraftInput(sessionId, nextValue);
+    filePicker.close();
+    requestAnimationFrame(() => {
+      textarea.setSelectionRange(nextCursorPos, nextCursorPos);
+      textarea.focus();
+    });
+  }, [filePicker, sessionId, setDraftInput]);
+
   const handleWrapperDragEnter = useCallback((e: React.DragEvent) => {
+    if (isWorkspaceFileDrag(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      setFileDragDepth((depth) => depth + 1);
+      return;
+    }
     handleSessionRefDragEnter(e);
     if (!isNativeFileDrag(e)) return;
     e.preventDefault();
     setFileDragDepth((depth) => depth + 1);
-  }, [handleSessionRefDragEnter, isNativeFileDrag]);
+  }, [handleSessionRefDragEnter, isNativeFileDrag, isWorkspaceFileDrag]);
 
   const handleWrapperDragOver = useCallback((e: React.DragEvent) => {
+    if (isWorkspaceFileDrag(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      return;
+    }
     handleSessionRefDragOver(e);
     if (!isNativeFileDrag(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
-  }, [handleSessionRefDragOver, isNativeFileDrag]);
+  }, [handleSessionRefDragOver, isNativeFileDrag, isWorkspaceFileDrag]);
 
   const handleWrapperDragLeave = useCallback((e: React.DragEvent) => {
+    if (isWorkspaceFileDrag(e)) {
+      e.stopPropagation();
+      setFileDragDepth((depth) => Math.max(0, depth - 1));
+      return;
+    }
     handleSessionRefDragLeave(e);
     if (!isNativeFileDrag(e)) return;
     setFileDragDepth((depth) => Math.max(0, depth - 1));
-  }, [handleSessionRefDragLeave, isNativeFileDrag]);
+  }, [handleSessionRefDragLeave, isNativeFileDrag, isWorkspaceFileDrag]);
 
   const handleWrapperDrop = useCallback((e: React.DragEvent) => {
+    if (isWorkspaceFileDrag(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      setFileDragDepth(0);
+      const filePath = getWorkspaceFileDragPath(e.dataTransfer);
+      if (filePath) {
+        insertWorkspaceFileReference(filePath);
+      }
+      return;
+    }
+
     // Let session ref handler try first
     handleSessionRefDrop(e);
 
@@ -419,7 +485,13 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     if (files.length === 0) return;
 
     void handleFileDrop(files);
-  }, [handleFileDrop, handleSessionRefDrop, isNativeFileDrag]);
+  }, [
+    handleFileDrop,
+    handleSessionRefDrop,
+    insertWorkspaceFileReference,
+    isNativeFileDrag,
+    isWorkspaceFileDrag,
+  ]);
 
   const handleSend = () => {
     const trimmed = inputValue.trim();
