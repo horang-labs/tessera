@@ -8,11 +8,16 @@ import type {
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 
 type SendToUser = (userId: string, message: ServerTransportMessage) => void;
+const MAX_REPLAY_BUFFER_CHARS = 200_000;
 
 interface TerminalRuntime {
   terminalId: string;
   userId: string;
+  cwd: string;
+  shell: string;
   process: TerminalProcessHandle;
+  outputBuffer: string[];
+  outputBufferSize: number;
 }
 
 async function loadNodePty(): Promise<TerminalPtyFactory> {
@@ -36,7 +41,14 @@ export class TerminalManager {
   ) {}
 
   async create(options: TerminalCreateOptions): Promise<void> {
-    this.close(options.terminalId, options.userId);
+    const key = this.getKey(options.userId, options.terminalId);
+    const existing = this.terminals.get(key);
+    if (existing) {
+      this.resize(options.terminalId, options.userId, options.cols ?? 80, options.rows ?? 24);
+      this.sendStarted(existing);
+      this.replayBufferedOutput(existing);
+      return;
+    }
 
     try {
       const ptyFactory = await this.ptyFactoryLoader();
@@ -59,14 +71,19 @@ export class TerminalManager {
         env: process.env,
       });
 
-      const key = this.getKey(options.userId, options.terminalId);
-      this.terminals.set(key, {
+      const runtime: TerminalRuntime = {
         terminalId: options.terminalId,
         userId: options.userId,
+        cwd: shell.cwd,
+        shell: shell.command,
         process: terminalProcess,
-      });
+        outputBuffer: [],
+        outputBufferSize: 0,
+      };
+      this.terminals.set(key, runtime);
 
       terminalProcess.onData((data) => {
+        this.appendBufferedOutput(runtime, data);
         this.sendToUser(options.userId, {
           type: 'terminal_output',
           terminalId: options.terminalId,
@@ -84,12 +101,7 @@ export class TerminalManager {
         });
       });
 
-      this.sendToUser(options.userId, {
-        type: 'terminal_started',
-        terminalId: options.terminalId,
-        cwd: shell.cwd,
-        shell: shell.command,
-      });
+      this.sendStarted(runtime);
     } catch (error) {
       logger.error({ error, terminalId: options.terminalId }, 'Failed to create terminal');
       this.sendToUser(options.userId, {
@@ -117,15 +129,16 @@ export class TerminalManager {
   close(terminalId: string, userId: string): void {
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime) return;
-    this.terminals.delete(terminalId);
+    this.terminals.delete(this.getKey(userId, terminalId));
     runtime.process.kill();
   }
 
   closeAllForUser(userId: string): void {
-    for (const runtime of this.terminals.values()) {
-      if (runtime.userId === userId) {
-        this.close(runtime.terminalId, userId);
-      }
+    const ownedTerminalIds = [...this.terminals.values()]
+      .filter((runtime) => runtime.userId === userId)
+      .map((runtime) => runtime.terminalId);
+    for (const terminalId of ownedTerminalIds) {
+      this.close(terminalId, userId);
     }
   }
 
@@ -146,5 +159,40 @@ export class TerminalManager {
 
   private getKey(userId: string, terminalId: string): string {
     return `${userId}:${terminalId}`;
+  }
+
+  private sendStarted(runtime: TerminalRuntime): void {
+    this.sendToUser(runtime.userId, {
+      type: 'terminal_started',
+      terminalId: runtime.terminalId,
+      cwd: runtime.cwd,
+      shell: runtime.shell,
+    });
+  }
+
+  private replayBufferedOutput(runtime: TerminalRuntime): void {
+    if (runtime.outputBuffer.length === 0) return;
+    this.sendToUser(runtime.userId, {
+      type: 'terminal_output',
+      terminalId: runtime.terminalId,
+      data: runtime.outputBuffer.join(''),
+    });
+  }
+
+  private appendBufferedOutput(runtime: TerminalRuntime, data: string): void {
+    runtime.outputBuffer.push(data);
+    runtime.outputBufferSize += data.length;
+
+    while (runtime.outputBufferSize > MAX_REPLAY_BUFFER_CHARS && runtime.outputBuffer.length > 0) {
+      const first = runtime.outputBuffer[0];
+      const overflow = runtime.outputBufferSize - MAX_REPLAY_BUFFER_CHARS;
+      if (first.length <= overflow) {
+        runtime.outputBuffer.shift();
+        runtime.outputBufferSize -= first.length;
+      } else {
+        runtime.outputBuffer[0] = first.slice(overflow);
+        runtime.outputBufferSize -= overflow;
+      }
+    }
   }
 }

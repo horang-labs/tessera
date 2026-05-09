@@ -9,6 +9,8 @@ const wsServerSource = fs.readFileSync(new URL('../src/lib/ws/server.ts', import
 const terminalManagerSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-manager.ts', import.meta.url), 'utf8');
 const terminalResolverSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-resolver.ts', import.meta.url), 'utf8');
 const terminalPanelSource = fs.readFileSync(new URL('../src/components/terminal/terminal-panel.tsx', import.meta.url), 'utf8');
+const panelWrapperSource = fs.readFileSync(new URL('../src/components/panel/panel-wrapper.tsx', import.meta.url), 'utf8');
+const panelStoreSource = fs.readFileSync(new URL('../src/stores/panel-store.ts', import.meta.url), 'utf8');
 const panelTypesSource = fs.readFileSync(new URL('../src/types/panel.ts', import.meta.url), 'utf8');
 
 test('terminal feature declares browser UI and server PTY dependencies', () => {
@@ -58,6 +60,7 @@ test('terminal cwd is server validated before spawning a PTY', () => {
 test('terminal ownership keys include user id and terminal id', () => {
   assert.match(terminalManagerSource, /getKey\(userId: string, terminalId: string\)/);
   assert.match(terminalManagerSource, /`\$\{userId\}:\$\{terminalId\}`/);
+  assert.match(terminalManagerSource, /this\.terminals\.delete\(this\.getKey\(userId, terminalId\)\)/);
 });
 
 test('terminal client subscribes before creating the server process', () => {
@@ -65,6 +68,32 @@ test('terminal client subscribes before creating the server process', () => {
     terminalPanelSource.indexOf('subscribeServerMessages') <
       terminalPanelSource.indexOf('wsClient.createTerminal'),
   );
+});
+
+test('terminal creation is not tied to active panel focus changes', () => {
+  assert.doesNotMatch(terminalPanelSource, /useSessionStore\(\(state\) => state\.activeSessionId\)/);
+  assert.match(terminalPanelSource, /getSessionSelectionId\(useSessionStore\.getState\(\)\.activeSessionId\)/);
+  assert.match(terminalPanelSource, /\}, \[terminalId\]\);/);
+});
+
+test('terminal panels expose a panel drag handle', () => {
+  assert.match(terminalPanelSource, /setPanelNodeDragData/);
+  assert.match(terminalPanelSource, /data-testid="terminal-panel-drag-handle"/);
+  assert.match(terminalPanelSource, /draggable/);
+});
+
+test('terminal remount attaches to the existing server process', () => {
+  assert.match(terminalManagerSource, /const existing = this\.terminals\.get\(key\)/);
+  assert.match(terminalManagerSource, /this\.sendStarted\(existing\)/);
+  assert.match(terminalManagerSource, /this\.replayBufferedOutput\(existing\)/);
+  assert.doesNotMatch(terminalManagerSource, /this\.close\(options\.terminalId, options\.userId\);\n\n    try/);
+});
+
+test('panel node drag preserves terminal panel identity', () => {
+  assert.match(panelWrapperSource, /movePanelNode/);
+  assert.match(panelStoreSource, /movePanelNode:/);
+  assert.match(panelStoreSource, /terminalId: sourcePanel\.terminalId \?\? null/);
+  assert.match(panelStoreSource, /terminalId: targetPanel\.terminalId \?\? null/);
 });
 
 test('wsl terminal profiles are blocked until path conversion is implemented', () => {
