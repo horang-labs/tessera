@@ -840,8 +840,15 @@ export function ComposerSessionControls({ sessionId, variant = 'block' }: Compos
   const settings = useSettingsStore((state) => state.settings);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
   const providerId = session?.provider?.trim();
-  const providerSessionOptions = useProviderSessionOptions(providerId, settings.agentEnvironment);
   const resolvedProviderId = providerId ?? '';
+  const providerCustomModelVersion = resolvedProviderId
+    ? (settings.providerCustomModels[resolvedProviderId] ?? []).join('\n')
+    : '';
+  const providerSessionOptions = useProviderSessionOptions(
+    providerId,
+    settings.agentEnvironment,
+    { cacheKeySuffix: providerCustomModelVersion },
+  );
   const providerDefaults = getProviderSessionDefaults(settings, resolvedProviderId);
   const providerDefaultsWithOptions = getProviderSessionDefaultsWithOptions(
     settings,

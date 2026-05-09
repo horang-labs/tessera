@@ -81,6 +81,49 @@ export function normalizeClaudeModel(model?: string): string | undefined {
   }
 }
 
+export function normalizeProviderCustomModelList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== 'string') {
+      continue;
+    }
+
+    const modelId = value.trim();
+    if (!modelId || seen.has(modelId)) {
+      continue;
+    }
+
+    seen.add(modelId);
+    result.push(modelId);
+  }
+
+  return result;
+}
+
+function normalizeProviderCustomModels(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+
+  const result: Record<string, string[]> = {};
+  for (const [providerId, modelIds] of Object.entries(raw)) {
+    const normalizedProviderId = providerId.trim();
+    const normalizedModels = normalizeProviderCustomModelList(modelIds);
+    if (!normalizedProviderId || normalizedModels.length === 0) {
+      continue;
+    }
+
+    result[normalizedProviderId] = normalizedModels;
+  }
+
+  return result;
+}
+
 export function getProviderSessionDefaults(
   settings: Pick<UserSettings, 'providerDefaults' | 'defaultModel' | 'defaultPermissionMode'>,
   providerId: string,
@@ -496,6 +539,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
         accessMode: 'opencodeDefault',
       },
     },
+    providerCustomModels: {},
     inactivePanelDimming: 30,
     sttEngine: 'webSpeech',
     geminiApiKey: '',
@@ -591,6 +635,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       ...(raw?.notifications ?? {}),
     },
     providerDefaults,
+    providerCustomModels: normalizeProviderCustomModels(raw?.providerCustomModels),
     setup: {
       ...defaults.setup,
       ...(raw?.setup ?? {}),
