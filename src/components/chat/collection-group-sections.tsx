@@ -50,6 +50,7 @@ import {
 } from './work-item-primitives';
 import { CollectionMoveSubmenu } from './collection-move-submenu';
 import { DiffStatsBadge } from './diff-stats-badge';
+import { ProviderLogoMark } from './provider-brand';
 import { ProviderQuickMenu } from './provider-quick-menu';
 import { detectPrMismatch, prMismatchTooltip } from './task-pr-badge';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
@@ -67,6 +68,9 @@ const TASK_TITLE_ACTION_MASK =
   'linear-gradient(to right, #000 0%, #000 calc(100% - 4.75rem), rgba(0,0,0,0.35) calc(100% - 3.25rem), transparent calc(100% - 2.75rem), transparent 100%)';
 const TASK_TITLE_ACTION_MASK_WITH_STOP =
   'linear-gradient(to right, #000 0%, #000 calc(100% - 5.75rem), rgba(0,0,0,0.35) calc(100% - 4.25rem), transparent calc(100% - 3rem), transparent 100%)';
+
+const COLLECTION_PROVIDER_MARK_CLASS = 'h-3.5 w-3.5 rounded-[3px]';
+const COLLECTION_PROVIDER_ICON_CLASS = 'h-2 w-2';
 
 function getSidebarActionSurface({
   isActive,
@@ -567,14 +571,24 @@ function SubSessionRow({
       {isActive && (
         <div className="absolute -left-3 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)" />
       )}
-      <ItemStatusIndicator
-        isProcessing={isProcessing}
-        isAwaitingUser={isAwaitingUser}
-        hasUnread={hasUnread}
-        isRunning={liveIsRunning}
-        placement="leading"
-        surface="sidebar"
-      />
+      <span className="flex shrink-0 items-center gap-1">
+        <span className="relative flex w-1.5 shrink-0 items-center">
+          <ItemStatusIndicator
+            isProcessing={isProcessing}
+            isAwaitingUser={isAwaitingUser}
+            hasUnread={hasUnread}
+            isRunning={liveIsRunning}
+            placement="leading"
+            surface="sidebar"
+          />
+        </span>
+        <ProviderLogoMark
+          providerId={sess.provider}
+          className={COLLECTION_PROVIDER_MARK_CLASS}
+          iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
+          data-testid={`collection-subsession-agent-icon-${sess.id}`}
+        />
+      </span>
 
       {isRenaming ? (
         <InlineRenameInput
@@ -827,68 +841,76 @@ export function TaskItemRow({
         data-session-id={task.sessions[0]?.id}
         data-testid={`collection-task-${task.id}`}
       >
-        {task.worktreeBranch ? (
-          <span
-            title={task.worktreeMissing ? t('task.worktree.missing', { branch: task.worktreeBranch }) : task.worktreeBranch}
-            className="relative flex shrink-0 items-center"
-          >
-            <FolderGit2
-              className={cn(
-                'h-3.5 w-3.5',
-                task.worktreeMissing
-                  ? 'text-(--status-error-text) opacity-70'
-                  : getWorktreeIconClass(task.workflowStatus),
-              )}
-            />
-            <ItemStatusIndicator
-              isProcessing={hasProcessingSession}
-              isAwaitingUser={hasAwaitingUserSession}
-              hasUnread={hasUnreadSession}
-              isRunning={hasRunningSession}
-              placement="corner"
-              surface="sidebar"
-            />
-            {(() => {
-              // Skip mismatch badge when PR sync is unsupported — we have no
-              // reliable prStatus to compare against the column.
-              const mismatch = task.prUnsupported
-                ? null
-                : detectPrMismatch(task.workflowStatus, task.prStatus);
-              if (!mismatch) return null;
-              const reason = prMismatchTooltip(mismatch, task.prStatus?.number, t);
-              return (
-                <span
-                  title={reason}
-                  aria-label={reason}
-                  className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--sidebar-bg) cursor-help"
-                  data-testid="task-pr-mismatch-badge"
-                >
-                  <TriangleAlert
-                    className="h-full w-full text-(--status-warning-text)"
-                    strokeWidth={2.5}
-                  />
-                </span>
-              );
-            })()}
-            {task.worktreeMissing && (
-              <span
-                aria-hidden
-                className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--sidebar-bg)"
+        <span className="flex shrink-0 items-center gap-1">
+          {task.worktreeBranch ? (
+            <span
+              title={task.worktreeMissing ? t('task.worktree.missing', { branch: task.worktreeBranch }) : task.worktreeBranch}
+              className="relative flex shrink-0 items-center"
+            >
+              <FolderGit2
+                className={cn(
+                  'h-3.5 w-3.5',
+                  task.worktreeMissing
+                    ? 'text-(--status-error-text) opacity-70'
+                    : getWorktreeIconClass(task.workflowStatus),
+                )}
               />
-            )}
-          </span>
-        ) : (
-          <span className="relative flex w-3.5 shrink-0 items-center justify-center">
-            <ItemStatusIndicator
-              isProcessing={hasProcessingSession}
-              isAwaitingUser={hasAwaitingUserSession}
-              hasUnread={hasUnreadSession}
-              isRunning={hasRunningSession}
-              placement="inline"
-              surface="sidebar"
-            />
-          </span>
-        )}
+              <ItemStatusIndicator
+                isProcessing={hasProcessingSession}
+                isAwaitingUser={hasAwaitingUserSession}
+                hasUnread={hasUnreadSession}
+                isRunning={hasRunningSession}
+                placement="corner"
+                surface="sidebar"
+              />
+              {(() => {
+                // Skip mismatch badge when PR sync is unsupported — we have no
+                // reliable prStatus to compare against the column.
+                const mismatch = task.prUnsupported
+                  ? null
+                  : detectPrMismatch(task.workflowStatus, task.prStatus);
+                if (!mismatch) return null;
+                const reason = prMismatchTooltip(mismatch, task.prStatus?.number, t);
+                return (
+                  <span
+                    title={reason}
+                    aria-label={reason}
+                    className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--sidebar-bg) cursor-help"
+                    data-testid="task-pr-mismatch-badge"
+                  >
+                    <TriangleAlert
+                      className="h-full w-full text-(--status-warning-text)"
+                      strokeWidth={2.5}
+                    />
+                  </span>
+                );
+              })()}
+              {task.worktreeMissing && (
+                <span
+                  aria-hidden
+                  className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--sidebar-bg)"
+                />
+              )}
+            </span>
+          ) : (
+            <span className="relative flex w-3.5 shrink-0 items-center justify-center">
+              <ItemStatusIndicator
+                isProcessing={hasProcessingSession}
+                isAwaitingUser={hasAwaitingUserSession}
+                hasUnread={hasUnreadSession}
+                isRunning={hasRunningSession}
+                placement="inline"
+                surface="sidebar"
+              />
+            </span>
+          )}
+          <ProviderLogoMark
+            providerId={task.sessions[0]?.provider}
+            className={COLLECTION_PROVIDER_MARK_CLASS}
+            iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
+            data-testid={`collection-task-agent-icon-${task.id}`}
+          />
+        </span>
 
         <div className="min-w-0 flex-1">
           {isRenaming ? (
@@ -1190,15 +1212,26 @@ export function ChatItemRow({
         data-item-id={session.id}
         data-testid={`collection-chat-${session.id}`}
       >
-        <span className="relative flex shrink-0 items-center">
-          <MessageSquare className="h-3.5 w-3.5 text-(--text-muted) opacity-45" />
-          <ItemStatusIndicator
-            isProcessing={isProcessing}
-            isAwaitingUser={isAwaitingUser}
-            hasUnread={hasUnread}
-            isRunning={liveIsRunning}
-            placement="corner"
-            surface="sidebar"
+        <span className="flex shrink-0 items-center gap-1">
+          <span className="relative flex shrink-0 items-center">
+            <MessageSquare
+              className="h-3.5 w-3.5 text-(--text-muted) opacity-45"
+              data-testid={`collection-chat-bubble-${session.id}`}
+            />
+            <ItemStatusIndicator
+              isProcessing={isProcessing}
+              isAwaitingUser={isAwaitingUser}
+              hasUnread={hasUnread}
+              isRunning={liveIsRunning}
+              placement="corner"
+              surface="sidebar"
+            />
+          </span>
+          <ProviderLogoMark
+            providerId={session.provider}
+            className={COLLECTION_PROVIDER_MARK_CLASS}
+            iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
+            data-testid={`collection-chat-agent-icon-${session.id}`}
           />
         </span>
 

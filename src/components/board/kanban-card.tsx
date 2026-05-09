@@ -36,9 +36,13 @@ import {
   StopProcessButton,
 } from '@/components/chat/work-item-primitives';
 import { DiffStatsBadge } from '@/components/chat/diff-stats-badge';
+import { ProviderLogoMark } from '@/components/chat/provider-brand';
 import { TaskPrBadge, detectPrMismatch, prMismatchTooltip } from '@/components/chat/task-pr-badge';
 
 // --- Helpers ---
+
+const KANBAN_PROVIDER_MARK_CLASS = 'h-3.5 w-3.5 rounded-[3px]';
+const KANBAN_PROVIDER_ICON_CLASS = 'h-2 w-2';
 
 function formatRelativeTime(
   timestamp: string | undefined,
@@ -286,19 +290,30 @@ export const KanbanChatCard = memo(function KanbanChatCard({
       >
         {/* Main row: icon + content */}
         <div className="flex items-start gap-2.5">
-          {/* Chat icon with Discord-style status overlay */}
-          <span className="shrink-0 flex items-center relative mt-[3px]">
-            <MessageSquare className={cn(
-              'w-3.5 h-3.5',
-              isActive && !isSelected ? 'text-(--text-primary) opacity-45' : 'text-(--text-muted) opacity-35',
-            )} />
-            <ItemStatusIndicator
-              isProcessing={isProcessing}
-              isAwaitingUser={isAwaitingUser}
-              hasUnread={hasUnread}
-              isRunning={session.isRunning}
-              placement="corner"
-              surface="board"
+          {/* Chat icon with provider mark and Discord-style status overlay */}
+          <span className="mt-[3px] flex shrink-0 items-center gap-1">
+            <span className="relative flex shrink-0 items-center">
+              <MessageSquare
+                className={cn(
+                  'w-3.5 h-3.5',
+                  isActive && !isSelected ? 'text-(--text-primary) opacity-45' : 'text-(--text-muted) opacity-35',
+                )}
+                data-testid={`kanban-chat-bubble-${session.id}`}
+              />
+              <ItemStatusIndicator
+                isProcessing={isProcessing}
+                isAwaitingUser={isAwaitingUser}
+                hasUnread={hasUnread}
+                isRunning={session.isRunning}
+                placement="corner"
+                surface="board"
+              />
+            </span>
+            <ProviderLogoMark
+              providerId={session.provider}
+              className={KANBAN_PROVIDER_MARK_CLASS}
+              iconClassName={KANBAN_PROVIDER_ICON_CLASS}
+              data-testid={`kanban-chat-agent-icon-${session.id}`}
             />
           </span>
 
@@ -801,48 +816,81 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       >
         {/* Main row: icon + content */}
         <div className="flex items-start gap-2.5">
-          {/* Worktree icon with Discord-style status overlay (like list view TaskItemRow) */}
-          {task.worktreeBranch ? (
-            <span
-              title={
-                task.worktreeDeletedAt
-                  ? t('task.worktree.deletedWithDate', {
-                      branch: task.worktreeBranch,
-                      date: new Date(task.worktreeDeletedAt).toLocaleDateString(language),
-                    })
-                  : task.worktreeMissing
-                    ? t('task.worktree.missing', { branch: task.worktreeBranch })
-                  : task.worktreeBranch
-              }
-              className="shrink-0 flex items-center relative mt-[3px]"
-            >
-              <FolderGit2
-                className={cn(
-                  'w-3.5 h-3.5',
-                  task.worktreeDeletedAt || task.worktreeMissing
-                    ? 'text-(--status-error-text) opacity-70'
-                    : getWorktreeIconClass(task.workflowStatus),
-                )}
-              />
-              {(task.worktreeDeletedAt || task.worktreeMissing) && (
-                <span
-                  aria-hidden
-                  className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg)"
+          {/* Worktree icon with provider mark and Discord-style status overlay (like list view TaskItemRow) */}
+          <span className="mt-[3px] flex shrink-0 items-center gap-1">
+            {task.worktreeBranch ? (
+              <span
+                title={
+                  task.worktreeDeletedAt
+                    ? t('task.worktree.deletedWithDate', {
+                        branch: task.worktreeBranch,
+                        date: new Date(task.worktreeDeletedAt).toLocaleDateString(language),
+                      })
+                    : task.worktreeMissing
+                      ? t('task.worktree.missing', { branch: task.worktreeBranch })
+                    : task.worktreeBranch
+                }
+                className="relative flex shrink-0 items-center"
+              >
+                <FolderGit2
+                  className={cn(
+                    'w-3.5 h-3.5',
+                    task.worktreeDeletedAt || task.worktreeMissing
+                      ? 'text-(--status-error-text) opacity-70'
+                      : getWorktreeIconClass(task.workflowStatus),
+                  )}
                 />
-              )}
-              <ItemStatusIndicator
-                isProcessing={hasProcessingSession}
-                isAwaitingUser={hasAwaitingUserSession}
-                hasUnread={hasUnreadSession}
-                isRunning={hasRunningSession}
-                placement="corner"
-                surface="board"
-              />
-              {prMismatch && (
+                {(task.worktreeDeletedAt || task.worktreeMissing) && (
+                  <span
+                    aria-hidden
+                    className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg)"
+                  />
+                )}
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="corner"
+                  surface="board"
+                />
+                {prMismatch && (
+                  <span
+                    title={prMismatchReason ?? undefined}
+                    aria-label={prMismatchReason ?? undefined}
+                    className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--board-card-bg) cursor-help"
+                    data-testid="task-pr-mismatch-badge"
+                  >
+                    <TriangleAlert
+                      className="h-full w-full text-(--status-warning-text)"
+                      strokeWidth={2.5}
+                    />
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="w-3.5 shrink-0 relative flex items-center justify-center">
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="inline"
+                  surface="board"
+                />
+              </span>
+            )}
+            <ProviderLogoMark
+              providerId={task.sessions[0]?.provider}
+              className={KANBAN_PROVIDER_MARK_CLASS}
+              iconClassName={KANBAN_PROVIDER_ICON_CLASS}
+              data-testid={`kanban-task-agent-icon-${task.id}`}
+            />
+            {prMismatch && !task.worktreeBranch && (
                 <span
                   title={prMismatchReason ?? undefined}
                   aria-label={prMismatchReason ?? undefined}
-                  className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--board-card-bg) cursor-help"
+                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-(--board-card-bg) cursor-help"
                   data-testid="task-pr-mismatch-badge"
                 >
                   <TriangleAlert
@@ -850,20 +898,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     strokeWidth={2.5}
                   />
                 </span>
-              )}
-            </span>
-          ) : (
-            <span className="w-3.5 shrink-0 relative flex items-center justify-center mt-[3px]">
-              <ItemStatusIndicator
-                isProcessing={hasProcessingSession}
-                isAwaitingUser={hasAwaitingUserSession}
-                hasUnread={hasUnreadSession}
-                isRunning={hasRunningSession}
-                placement="inline"
-                surface="board"
-              />
-            </span>
-          )}
+            )}
+          </span>
 
           {/* Content */}
           <div className="flex-1 min-w-0">
@@ -1172,15 +1208,25 @@ function KanbanSubSessionItem({
         <div className="absolute -left-3 top-1/2 w-[10px] h-px bg-(--divider)" />
         {isActive && <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-(--accent)" />}
 
-        {/* Status dot overlay — at the end of the horizontal connector */}
-        <ItemStatusIndicator
-          isProcessing={isProcessing}
-          isAwaitingUser={isAwaitingUser}
-          hasUnread={hasLiveUnread}
-          isRunning={liveIsRunning}
-          placement="leading"
-          surface="board"
-        />
+        <span className="flex shrink-0 items-center gap-1">
+          {/* Status dot overlay — at the end of the horizontal connector */}
+          <span className="relative flex w-1.5 shrink-0 items-center">
+            <ItemStatusIndicator
+              isProcessing={isProcessing}
+              isAwaitingUser={isAwaitingUser}
+              hasUnread={hasLiveUnread}
+              isRunning={liveIsRunning}
+              placement="leading"
+              surface="board"
+            />
+          </span>
+          <ProviderLogoMark
+            providerId={session.provider}
+            className={KANBAN_PROVIDER_MARK_CLASS}
+            iconClassName={KANBAN_PROVIDER_ICON_CLASS}
+            data-testid={`kanban-subsession-agent-icon-${session.id}`}
+          />
+        </span>
 
         {isRenaming ? (
           <InlineRenameInput
