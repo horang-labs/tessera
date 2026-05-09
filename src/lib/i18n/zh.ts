@@ -488,6 +488,7 @@ export const zh: I18nMessages = {
     toggleView: '切换列表/看板视图',
     splitRight: '向右分割',
     splitDown: '向下分割',
+    toggleTerminal: '打开终端',
     focusPanelLeft: '切换到左侧面板',
     focusPanelRight: '切换到右侧面板',
     focusPanelUp: '切换到上方面板',

@@ -5,6 +5,7 @@ import { processManager } from '../cli/process-manager';
 import * as dbSessions from '../db/sessions';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
+import { bindTerminalSender } from '../terminal/shared-terminal-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { ProviderMeta } from '../cli/providers/types';
 import {
@@ -270,6 +271,30 @@ export async function routeClientTransportMessage({
 
     case 'check_cli_status':
       await checkCliStatusForWebSocketUser(userId, message.requestId, sendToUser);
+      return;
+
+    case 'terminal_create':
+      await bindTerminalSender(sendToUser).create({
+        userId,
+        terminalId: message.terminalId,
+        cwd: message.cwd,
+        sessionId: message.sessionId,
+        shellKind: message.shellKind,
+        cols: message.cols,
+        rows: message.rows,
+      });
+      return;
+
+    case 'terminal_input':
+      bindTerminalSender(sendToUser).write(message.terminalId, userId, message.data);
+      return;
+
+    case 'terminal_resize':
+      bindTerminalSender(sendToUser).resize(message.terminalId, userId, message.cols, message.rows);
+      return;
+
+    case 'terminal_close':
+      bindTerminalSender(sendToUser).close(message.terminalId, userId);
       return;
 
     default:

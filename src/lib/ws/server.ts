@@ -14,6 +14,7 @@ import logger from '../logger';
 import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
+import { terminalManager } from '../terminal/shared-terminal-manager';
 import {
   logReceivedClientTransportMessage,
   parseClientTransportMessage,
@@ -181,6 +182,7 @@ export class WebSocketServer {
 
         if (wsSet.size === 0) {
           this.connections.delete(userId);
+          terminalManager.closeAllForUser(userId);
         }
       }
     });

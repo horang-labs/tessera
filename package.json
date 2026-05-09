@@ -74,6 +74,8 @@
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "agentation": "^3.0.2",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
@@ -84,6 +86,7 @@
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.563.0",
     "next": "^16.2.3",
+    "node-pty": "^1.1.0",
     "pino": "^8.18.0",
     "posthog-js": "^1.372.6",
     "react": "^19.2.5",

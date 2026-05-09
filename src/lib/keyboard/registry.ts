@@ -17,6 +17,7 @@ export const SHORTCUT_REGISTRY = {
   'toggle-view':    { default: '$mod+Alt+k',          category: 'view',  descKey: 'shortcut.toggleView' },
   'split-right':    { default: '$mod+Alt+\\',         category: 'panel', descKey: 'shortcut.splitRight' },
   'split-down':     { default: '$mod+Alt+-',          category: 'panel', descKey: 'shortcut.splitDown' },
+  'toggle-terminal': { default: 'Control+`',          category: 'panel', descKey: 'shortcut.toggleTerminal' },
   'focus-panel-left':  { default: '$mod+Alt+Shift+ArrowLeft',  category: 'panel', descKey: 'shortcut.focusPanelLeft' },
   'focus-panel-right': { default: '$mod+Alt+Shift+ArrowRight', category: 'panel', descKey: 'shortcut.focusPanelRight' },
   'focus-panel-up':    { default: '$mod+Alt+Shift+ArrowUp',    category: 'panel', descKey: 'shortcut.focusPanelUp' },

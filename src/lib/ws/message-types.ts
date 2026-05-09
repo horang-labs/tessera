@@ -6,6 +6,7 @@ import type { SessionReplayEvent } from '@/lib/session-replay-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { TerminalShellKind } from '@/lib/terminal/types';
 
 // ========== ContentBlock 타입 정의 (클립보드 이미지 붙여넣기) ==========
 
@@ -70,7 +71,11 @@ export type ClientMessage =
   | { type: 'get_commands'; requestId: string; sessionId: string }
   | { type: 'list_providers'; requestId: string }
   | { type: 'refresh_providers'; requestId: string }
-  | { type: 'check_cli_status'; requestId: string };
+  | { type: 'check_cli_status'; requestId: string }
+  | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number }
+  | { type: 'terminal_input'; requestId: string; terminalId: string; data: string }
+  | { type: 'terminal_resize'; requestId: string; terminalId: string; cols: number; rows: number }
+  | { type: 'terminal_close'; requestId: string; terminalId: string };
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions';
 
@@ -200,6 +205,10 @@ export type AppServerMessage =
       };
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
+  | { type: 'terminal_started'; terminalId: string; cwd: string; shell: string }
+  | { type: 'terminal_output'; terminalId: string; data: string }
+  | { type: 'terminal_exit'; terminalId: string; exitCode: number; signal?: number }
+  | { type: 'terminal_error'; terminalId: string; message: string }
   | {
       type: 'interactive_prompt';
       sessionId: string;

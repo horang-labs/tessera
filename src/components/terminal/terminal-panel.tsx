@@ -1,0 +1,143 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { Terminal as TerminalIcon, X } from 'lucide-react';
+import { wsClient } from '@/lib/ws/client';
+import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import { Button } from '@/components/ui/button';
+import { usePanelStore } from '@/stores/panel-store';
+import { useSessionStore } from '@/stores/session-store';
+import { getSessionSelectionId } from '@/lib/constants/special-sessions';
+import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
+
+interface TerminalPanelProps {
+  panelId: string;
+  terminalId: string;
+}
+
+export function TerminalPanel({ panelId, terminalId }: TerminalPanelProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<any>(null);
+  const fitAddonRef = useRef<any>(null);
+  const [status, setStatus] = useState<'starting' | 'running' | 'exited' | 'error'>('starting');
+  const [subtitle, setSubtitle] = useState('Starting terminal...');
+  const assignTerminal = usePanelStore((state) => state.assignTerminal);
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+
+  useEffect(() => {
+    let disposed = false;
+    let resizeObserver: ResizeObserver | null = null;
+    const unsubscribe = wsClient.subscribeServerMessages((message: ServerTransportMessage) => {
+      if (!('terminalId' in message) || message.terminalId !== terminalId) return;
+
+      if (message.type === 'terminal_started') {
+        setStatus('running');
+        setSubtitle(`${message.shell} - ${message.cwd}`);
+        return;
+      }
+
+      if (message.type === 'terminal_output') {
+        terminalRef.current?.write(message.data);
+        return;
+      }
+
+      if (message.type === 'terminal_exit') {
+        setStatus('exited');
+        setSubtitle(`Terminal exited with code ${message.exitCode}`);
+        return;
+      }
+
+      if (message.type === 'terminal_error') {
+        setStatus('error');
+        setSubtitle(message.message);
+      }
+    });
+
+    async function mountTerminal() {
+      try {
+        const [{ Terminal }, { FitAddon }] = await Promise.all([
+          import('@xterm/xterm'),
+          import('@xterm/addon-fit'),
+        ]);
+        if (disposed || !containerRef.current) return;
+
+        const terminal = new Terminal({
+          cursorBlink: true,
+          convertEol: true,
+          fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+          fontSize: 12,
+          theme: {
+            background: '#0f1115',
+            foreground: '#d7dde3',
+            cursor: '#d7dde3',
+          },
+        });
+        const fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
+        terminal.open(containerRef.current);
+        fitAddon.fit();
+        terminal.focus();
+
+        terminal.onData((data: string) => {
+          wsClient.sendTerminalInput(terminalId, data);
+        });
+
+        terminalRef.current = terminal;
+        fitAddonRef.current = fitAddon;
+
+        const dimensions = fitAddon.proposeDimensions();
+        wsClient.createTerminal({
+          terminalId,
+          cwd: getInitialTerminalCwd(),
+          sessionId: getSessionSelectionId(activeSessionId),
+          cols: dimensions?.cols,
+          rows: dimensions?.rows,
+        });
+
+        resizeObserver = new ResizeObserver(() => {
+          if (!fitAddonRef.current) return;
+          fitAddonRef.current.fit();
+          const next = fitAddonRef.current.proposeDimensions();
+          if (next) {
+            wsClient.resizeTerminal(terminalId, next.cols, next.rows);
+          }
+        });
+        resizeObserver.observe(containerRef.current);
+      } catch (error) {
+        setStatus('error');
+        setSubtitle(error instanceof Error ? error.message : 'Terminal failed to load.');
+      }
+    }
+
+    void mountTerminal();
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+      resizeObserver?.disconnect();
+      wsClient.closeTerminal(terminalId);
+      terminalRef.current?.dispose?.();
+    };
+  }, [activeSessionId, terminalId]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[#0f1115] text-[#d7dde3]" data-testid="terminal-panel">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-white/10 px-2 text-xs">
+        <TerminalIcon className="h-4 w-4 text-(--accent)" />
+        <span className="font-medium">Terminal</span>
+        <span className="min-w-0 flex-1 truncate text-white/55">{subtitle}</span>
+        <span className="text-white/45">{status}</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-white/60 hover:bg-white/10 hover:text-white"
+          onClick={() => assignTerminal(panelId, null)}
+          aria-label="Close terminal"
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div ref={containerRef} className="min-h-0 flex-1 p-2" />
+    </div>
+  );
+}

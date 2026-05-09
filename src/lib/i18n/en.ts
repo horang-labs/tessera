@@ -488,6 +488,7 @@ export const en: I18nMessages = {
     toggleView: 'Toggle List / Board View',
     splitRight: 'Split Right',
     splitDown: 'Split Down',
+    toggleTerminal: 'Open Terminal',
     focusPanelLeft: 'Focus Panel Left',
     focusPanelRight: 'Focus Panel Right',
     focusPanelUp: 'Focus Panel Above',
