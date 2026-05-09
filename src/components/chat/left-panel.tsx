@@ -18,12 +18,14 @@ import { useFolderBrowserStore } from '@/stores/folder-browser-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { usePopoutActive } from '@/hooks/use-popout-active';
 import { ExternalLink } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface LeftPanelProps {
-  width: number;
+  width: number | string;
+  className?: string;
 }
 
-export function LeftPanel({ width }: LeftPanelProps) {
+export function LeftPanel({ width, className }: LeftPanelProps) {
   const isFolderBrowserOpen = useFolderBrowserStore((state) => state.isOpen);
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
   const closeFolderBrowser = useFolderBrowserStore((state) => state.close);
@@ -54,8 +56,8 @@ export function LeftPanel({ width }: LeftPanelProps) {
 
   return (
     <div
-      className="shrink-0 flex border-r border-(--divider) overflow-hidden"
-      style={{ width: `${width}px` }}
+      className={cn("shrink-0 flex border-r border-(--divider) overflow-hidden", className)}
+      style={{ width: typeof width === 'number' ? `${width}px` : width }}
       data-testid="left-panel-container"
     >
       <ProjectStrip onAddProject={handleAddProject} onRemoveProject={setRemoveTarget} />
