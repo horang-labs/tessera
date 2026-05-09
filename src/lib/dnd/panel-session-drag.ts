@@ -1,4 +1,9 @@
-import { PANEL_NODE_DRAG_MIME, PANEL_SESSION_DRAG_MIME, SESSION_DRAG_MIME } from '@/types/panel';
+import {
+  PANEL_NODE_DRAG_MIME,
+  PANEL_SESSION_DRAG_MIME,
+  SESSION_DRAG_MIME,
+  WORKSPACE_FILE_DRAG_MIME,
+} from '@/types/panel';
 import { TASK_DND_MIME, TASK_ENTITY_DND_MIME } from '@/types/task';
 import {
   buildWorkspaceFileSessionId,
@@ -14,6 +19,21 @@ export interface PanelSessionDragPayload {
 export interface PanelNodeDragPayload {
   tabId: string;
   panelId: string;
+}
+
+export interface WorkspaceFileDragPayload {
+  sourceSessionId: string;
+  kind: WorkspaceFileTabKind;
+  path: string;
+}
+
+export function hasWorkspaceFileDragData(dataTransfer: Pick<DataTransfer, 'types'>): boolean {
+  return dataTransfer.types.includes(WORKSPACE_FILE_DRAG_MIME);
+}
+
+export function isSessionReferenceDragData(dataTransfer: Pick<DataTransfer, 'types'>): boolean {
+  return dataTransfer.types.includes(SESSION_DRAG_MIME) &&
+    !hasWorkspaceFileDragData(dataTransfer);
 }
 
 /**
@@ -101,6 +121,43 @@ export function parsePanelTitleDragData(
   }
 }
 
+export function parseWorkspaceFileDragData(
+  dataTransfer: Pick<DataTransfer, 'getData'>,
+): WorkspaceFileDragPayload | null {
+  try {
+    const raw = dataTransfer.getData(WORKSPACE_FILE_DRAG_MIME);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<WorkspaceFileDragPayload>;
+    if (
+      typeof parsed.sourceSessionId !== 'string' ||
+      typeof parsed.kind !== 'string' ||
+      typeof parsed.path !== 'string' ||
+      parsed.sourceSessionId.length === 0 ||
+      (parsed.kind !== 'file' && parsed.kind !== 'diff') ||
+      parsed.path.length === 0
+    ) {
+      return null;
+    }
+    return {
+      sourceSessionId: parsed.sourceSessionId,
+      kind: parsed.kind,
+      path: parsed.path,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getWorkspaceFileDragPath(
+  dataTransfer: Pick<DataTransfer, 'getData'>,
+): string | null {
+  const payload = parseWorkspaceFileDragData(dataTransfer);
+  if (payload) return payload.path;
+
+  const textPath = dataTransfer.getData('text/plain');
+  return textPath.length > 0 ? textPath : null;
+}
+
 /**
  * Workspace file/diff views are represented as special session IDs, so they
  * can reuse the existing panel split/replace drop behavior.
@@ -112,9 +169,15 @@ export function setWorkspaceFileDragData(
   filePath: string,
 ): void {
   const specialSessionId = buildWorkspaceFileSessionId(sourceSessionId, kind, filePath);
+  const workspaceFilePayload: WorkspaceFileDragPayload = {
+    sourceSessionId,
+    kind,
+    path: filePath,
+  };
   setPanelSessionDragData(dataTransfer, specialSessionId);
+  dataTransfer.setData(WORKSPACE_FILE_DRAG_MIME, JSON.stringify(workspaceFilePayload));
   dataTransfer.setData('text/plain', filePath);
-  dataTransfer.effectAllowed = 'move';
+  dataTransfer.effectAllowed = 'copyMove';
 }
 
 /**
