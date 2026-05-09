@@ -121,6 +121,7 @@ export function ChatLayout() {
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const gitPanelWidth = useGitStore((state) => state.panelWidth);
   const setGitPanelWidth = useGitStore((state) => state.setPanelWidth);
+  const closeGitPanel = useGitStore((state) => state.close);
   useWebSocket(); // Initialize WebSocket connection
   useCrossWindowUiSync(); // Mirror activeSessionId / selectedProjectDir to popouts
 
@@ -131,6 +132,7 @@ export function ChatLayout() {
   const initiallyHasProjects = projects.length > 0;
   const projectsLoadedRef = useRef(initiallyHasProjects);
   const [projectsLoaded, setProjectsLoaded] = useState(initiallyHasProjects);
+  const isCompactViewport = viewportWidth < COMPACT_VIEWPORT_BREAKPOINT;
 
   const sidebarBaseMinWidth =
     viewMode === "board" ? BOARD_SIDEBAR_MIN_WIDTH : LIST_SIDEBAR_MIN_WIDTH;
@@ -468,23 +470,31 @@ export function ChatLayout() {
           {/* Left panel — project strip + header + content (list/kanban) */}
           {!sidebarCollapsed && (
             <>
-              <LeftPanel width={effectiveSidebarWidth} />
-              {/* Resize handle */}
-              <div
+              <LeftPanel
+                width={isCompactViewport ? "100vw" : effectiveSidebarWidth}
                 className={cn(
-                  "relative z-10 shrink-0 w-px h-full bg-transparent cursor-col-resize transition-all duration-150",
-                  isSidebarDragging
-                    ? "bg-(--accent) shadow-[0_0_6px_var(--accent)]"
-                    : "hover:bg-(--accent) hover:shadow-[0_0_4px_var(--accent)]",
+                  isCompactViewport
+                    && "fixed inset-0 z-50 h-[100dvh] border-r-0 shadow-2xl",
                 )}
-                onMouseDown={handleSidebarResizeMouseDown}
-                onDoubleClick={handleSidebarResizeDoubleClick}
-                role="separator"
-                aria-label={t("sidebar.resizeHandle")}
-                data-testid="sidebar-resize-handle"
-              >
-                <div className="absolute inset-y-0 -left-[11px] w-[24px] cursor-col-resize" />
-              </div>
+              />
+              {/* Resize handle */}
+              {!isCompactViewport && (
+                <div
+                  className={cn(
+                    "relative z-10 shrink-0 w-px h-full bg-transparent cursor-col-resize transition-all duration-150",
+                    isSidebarDragging
+                      ? "bg-(--accent) shadow-[0_0_6px_var(--accent)]"
+                      : "hover:bg-(--accent) hover:shadow-[0_0_4px_var(--accent)]",
+                  )}
+                  onMouseDown={handleSidebarResizeMouseDown}
+                  onDoubleClick={handleSidebarResizeDoubleClick}
+                  role="separator"
+                  aria-label={t("sidebar.resizeHandle")}
+                  data-testid="sidebar-resize-handle"
+                >
+                  <div className="absolute inset-y-0 -left-[11px] w-[24px] cursor-col-resize" />
+                </div>
+              )}
             </>
           )}
 
@@ -501,22 +511,33 @@ export function ChatLayout() {
           {/* Git Panel + Resize Handle */}
           {gitPanelOpen && (
             <>
-              <div
+              {!isCompactViewport && (
+                <div
+                  className={cn(
+                    "relative z-10 shrink-0 w-1 h-full cursor-col-resize flex items-center justify-center transition-all duration-150",
+                    isGitDragging
+                      ? "[&>div]:bg-(--accent) [&>div]:shadow-[0_0_6px_var(--accent)]"
+                      : "hover:[&>div]:bg-(--accent) hover:[&>div]:shadow-[0_0_4px_var(--accent)]",
+                  )}
+                  onMouseDown={handleGitMouseDown}
+                  onDoubleClick={handleGitDoubleClick}
+                  role="separator"
+                  aria-label="Git panel resize handle"
+                  data-testid="git-panel-resize-handle"
+                >
+                  <div className="pointer-events-none transition-all duration-150 bg-(--divider) w-px h-full" />
+                </div>
+              )}
+              <GitPanel
+                sessionId={activeGitSessionId}
+                width={isCompactViewport ? "100vw" : gitPanelWidth}
                 className={cn(
-                  "relative z-10 shrink-0 w-1 h-full cursor-col-resize flex items-center justify-center transition-all duration-150",
-                  isGitDragging
-                    ? "[&>div]:bg-(--accent) [&>div]:shadow-[0_0_6px_var(--accent)]"
-                    : "hover:[&>div]:bg-(--accent) hover:[&>div]:shadow-[0_0_4px_var(--accent)]",
+                  isCompactViewport
+                    && "fixed inset-0 z-50 h-[100dvh] border-l-0 shadow-2xl",
                 )}
-                onMouseDown={handleGitMouseDown}
-                onDoubleClick={handleGitDoubleClick}
-                role="separator"
-                aria-label="Git panel resize handle"
-                data-testid="git-panel-resize-handle"
-              >
-                <div className="pointer-events-none transition-all duration-150 bg-(--divider) w-px h-full" />
-              </div>
-              <GitPanel sessionId={activeGitSessionId} width={gitPanelWidth} />
+                closeLabel={t("chat.closeGitPanel")}
+                onClose={isCompactViewport ? closeGitPanel : undefined}
+              />
             </>
           )}
         </div>
