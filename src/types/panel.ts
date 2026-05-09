@@ -47,6 +47,7 @@ export interface PanelStoreActions {
   // 기존 액션 (시그니처 동일)
   splitPanel(panelId: string, direction: 'horizontal' | 'vertical', newSessionId?: string | null, position?: 'before' | 'after'): string | null;
   createTerminalPanel(panelId: string, terminalId: string, direction?: 'horizontal' | 'vertical'): string | null;
+  movePanelNode(sourcePanelId: string, targetPanelId: string, edge: PanelDropEdge): string | null;
   graftTabIntoActiveTab(sourceTabId: string, targetPanelId: string, edge: PanelDropEdge): string | null;
   closePanel(panelId: string): void;
   assignSession(panelId: string, sessionId: string | null): void;

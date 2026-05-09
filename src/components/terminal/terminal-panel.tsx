@@ -1,32 +1,55 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Terminal as TerminalIcon, X } from 'lucide-react';
+import { useCallback, useContext, useEffect, useRef, useState, type DragEvent } from 'react';
+import { GripVertical, Terminal as TerminalIcon, X } from 'lucide-react';
 import { wsClient } from '@/lib/ws/client';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { Button } from '@/components/ui/button';
-import { usePanelStore } from '@/stores/panel-store';
+import { TabIdContext, usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
+import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 
 interface TerminalPanelProps {
   panelId: string;
   terminalId: string;
 }
 
+function isTerminalAssignedToAnyPanel(terminalId: string): boolean {
+  const { tabPanels } = usePanelStore.getState();
+  return Object.values(tabPanels).some((tabData) =>
+    Object.values(tabData.panels).some((panel) => panel.terminalId === terminalId),
+  );
+}
+
 export function TerminalPanel({ panelId, terminalId }: TerminalPanelProps) {
+  const tabId = useContext(TabIdContext);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<any>(null);
   const fitAddonRef = useRef<any>(null);
+  const closeRequestedRef = useRef(false);
   const [status, setStatus] = useState<'starting' | 'running' | 'exited' | 'error'>('starting');
   const [subtitle, setSubtitle] = useState('Starting terminal...');
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
-  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+
+  const handlePanelDragStart = useCallback((event: DragEvent<HTMLButtonElement>) => {
+    const didSet = setPanelNodeDragData(event.dataTransfer, { tabId, panelId });
+    if (!didSet) {
+      event.preventDefault();
+    }
+  }, [panelId, tabId]);
+
+  const handleCloseTerminal = useCallback(() => {
+    closeRequestedRef.current = true;
+    wsClient.closeTerminal(terminalId);
+    assignTerminal(panelId, null);
+  }, [assignTerminal, panelId, terminalId]);
 
   useEffect(() => {
     let disposed = false;
     let resizeObserver: ResizeObserver | null = null;
+    closeRequestedRef.current = false;
     const unsubscribe = wsClient.subscribeServerMessages((message: ServerTransportMessage) => {
       if (!('terminalId' in message) || message.terminalId !== terminalId) return;
 
@@ -89,7 +112,7 @@ export function TerminalPanel({ panelId, terminalId }: TerminalPanelProps) {
         wsClient.createTerminal({
           terminalId,
           cwd: getInitialTerminalCwd(),
-          sessionId: getSessionSelectionId(activeSessionId),
+          sessionId: getSessionSelectionId(useSessionStore.getState().activeSessionId),
           cols: dimensions?.cols,
           rows: dimensions?.rows,
         });
@@ -115,14 +138,29 @@ export function TerminalPanel({ panelId, terminalId }: TerminalPanelProps) {
       disposed = true;
       unsubscribe();
       resizeObserver?.disconnect();
-      wsClient.closeTerminal(terminalId);
       terminalRef.current?.dispose?.();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+      if (!closeRequestedRef.current && !isTerminalAssignedToAnyPanel(terminalId)) {
+        wsClient.closeTerminal(terminalId);
+      }
     };
-  }, [activeSessionId, terminalId]);
+  }, [terminalId]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#0f1115] text-[#d7dde3]" data-testid="terminal-panel">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-white/10 px-2 text-xs">
+        <button
+          type="button"
+          draggable
+          onDragStart={handlePanelDragStart}
+          title="Move terminal panel"
+          aria-label="Move terminal panel"
+          data-testid="terminal-panel-drag-handle"
+          className="cursor-grab rounded p-1 text-white/45 transition-colors hover:bg-white/10 hover:text-white active:cursor-grabbing"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
         <TerminalIcon className="h-4 w-4 text-(--accent)" />
         <span className="font-medium">Terminal</span>
         <span className="min-w-0 flex-1 truncate text-white/55">{subtitle}</span>
@@ -131,7 +169,7 @@ export function TerminalPanel({ panelId, terminalId }: TerminalPanelProps) {
           variant="ghost"
           size="icon"
           className="h-7 w-7 text-white/60 hover:bg-white/10 hover:text-white"
-          onClick={() => assignTerminal(panelId, null)}
+          onClick={handleCloseTerminal}
           aria-label="Close terminal"
         >
           <X className="h-3.5 w-3.5" />
