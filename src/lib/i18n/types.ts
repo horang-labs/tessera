@@ -52,6 +52,8 @@ export interface I18nMessages {
       xlarge: string;
     };
     inactivePanelDimming: string;
+    showProviderIcons: string;
+    showProviderIconsDesc: string;
     enterKey: {
       label: string;
       send: string;
