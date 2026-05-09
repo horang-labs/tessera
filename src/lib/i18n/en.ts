@@ -389,6 +389,16 @@ export const en: I18nMessages = {
     closeTabsToLeft: 'Close Tabs to the Left',
     closeTabsToRight: 'Close Tabs to the Right',
     closeAllTabs: 'Close All Tabs',
+    search: {
+      open: 'Search messages',
+      close: 'Close search',
+      placeholder: 'Search messages',
+      previous: 'Previous match',
+      next: 'Next match',
+      noMatches: 'No matches',
+      count: '{{current}}/{{total}}',
+      loadedOnlyHint: 'Older messages may need loading first.',
+    },
     connectionStatus: {
       connected: 'Connected',
       reconnecting: 'Reconnecting',

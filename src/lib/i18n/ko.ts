@@ -391,6 +391,16 @@ export const ko: I18nMessages = {
     closeTabsToLeft: '왼쪽 탭 모두 닫기',
     closeTabsToRight: '오른쪽 탭 모두 닫기',
     closeAllTabs: '모든 탭 닫기',
+    search: {
+      open: '메시지 검색',
+      close: '검색 닫기',
+      placeholder: '메시지 검색',
+      previous: '이전 일치',
+      next: '다음 일치',
+      noMatches: '일치 없음',
+      count: '{{current}}/{{total}}',
+      loadedOnlyHint: '이전 메시지는 먼저 불러와야 할 수 있습니다.',
+    },
     connectionStatus: {
       connected: '연결됨',
       reconnecting: '재연결 중',

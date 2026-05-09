@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback, useRef } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import type { EnhancedMessage, ToolCallMessage } from '@/types/chat';
 import { MessageBubble } from './message-bubble';
 import { LoadingIndicator } from './loading-indicator';
@@ -33,6 +33,10 @@ interface MessageListProps {
   isSinglePanel?: boolean;
   isTabActive?: boolean;
   isTurnInFlight?: boolean;
+  search?: {
+    activeMatchMessageId: string | null;
+    activeGroupedRowIndex: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +102,7 @@ function MessageListSessionView({
   isSinglePanel = false,
   isTabActive = true,
   isTurnInFlight = false,
+  search,
 }: MessageListProps) {
   'use no memo'; // React Compiler caches virtualizer.getVirtualItems() on the stable instance ref — but the virtualizer is mutable, so we must opt out.
   const { t } = useI18n();
@@ -131,6 +136,14 @@ function MessageListSessionView({
     isTabActive,
     isTurnInFlight,
   });
+
+  useEffect(() => {
+    if (!search || search.activeGroupedRowIndex < 0) return;
+    virtualizer.scrollToIndex(search.activeGroupedRowIndex, {
+      align: 'center',
+      behavior: 'smooth',
+    });
+  }, [search?.activeGroupedRowIndex, search?.activeMatchMessageId, virtualizer]);
 
   // 선택된 도구호출을 groupedMessages에서 찾기
   const selectedToolCall = useMemo(() => {
@@ -258,12 +271,20 @@ function MessageListSessionView({
                 {virtualItems.map((virtualRow) => {
                   const item = groupedMessages[virtualRow.index];
                   const key = virtualRow.key as string;
+                  const isActiveSearchRow =
+                    search?.activeGroupedRowIndex === virtualRow.index &&
+                    search.activeMatchMessageId != null;
                   return (
                     <div
                       key={key}
                       data-index={virtualRow.index}
                       data-item-key={key}
+                      data-search-active-match={isActiveSearchRow ? 'true' : undefined}
                       ref={virtualizer.measureElement}
+                      className={cn(
+                        'rounded-md transition-colors',
+                        isActiveSearchRow && 'bg-(--accent)/10 ring-1 ring-(--accent)/30',
+                      )}
                       style={{
                         position: 'absolute',
                         top: 0,

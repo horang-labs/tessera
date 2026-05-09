@@ -389,6 +389,16 @@ export const zh: I18nMessages = {
     closeTabsToLeft: '关闭左侧标签',
     closeTabsToRight: '关闭右侧标签',
     closeAllTabs: '关闭所有标签',
+    search: {
+      open: '搜索消息',
+      close: '关闭搜索',
+      placeholder: '搜索消息',
+      previous: '上一个匹配',
+      next: '下一个匹配',
+      noMatches: '无匹配',
+      count: '{{current}}/{{total}}',
+      loadedOnlyHint: '较早的消息可能需要先加载。',
+    },
     connectionStatus: {
       connected: '已连接',
       reconnecting: '重新连接中',

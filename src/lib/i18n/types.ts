@@ -389,6 +389,16 @@ export interface I18nMessages {
     closeTabsToLeft: string;
     closeTabsToRight: string;
     closeAllTabs: string;
+    search: {
+      open: string;
+      close: string;
+      placeholder: string;
+      previous: string;
+      next: string;
+      noMatches: string;
+      count: string;
+      loadedOnlyHint: string;
+    };
     connectionStatus: {
       connected: string;
       reconnecting: string;

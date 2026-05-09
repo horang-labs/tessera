@@ -389,6 +389,16 @@ export const ja: I18nMessages = {
     closeTabsToLeft: '左側のタブをすべて閉じる',
     closeTabsToRight: '右側のタブをすべて閉じる',
     closeAllTabs: 'すべてのタブを閉じる',
+    search: {
+      open: 'メッセージを検索',
+      close: '検索を閉じる',
+      placeholder: 'メッセージを検索',
+      previous: '前の一致',
+      next: '次の一致',
+      noMatches: '一致なし',
+      count: '{{current}}/{{total}}',
+      loadedOnlyHint: '古いメッセージは先に読み込む必要があります。',
+    },
     connectionStatus: {
       connected: '接続済み',
       reconnecting: '再接続中',
