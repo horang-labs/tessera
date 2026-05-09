@@ -95,6 +95,20 @@ function updateDesktopInfoFromResult(result: DesktopUpdateResult): Partial<Updat
   };
 }
 
+function buildDesktopInfoFromEvent(
+  event: DesktopUpdateEvent,
+  currentInfo: UpdateCheckResponse | null,
+): UpdateCheckResponse {
+  const latestVersion = event.info?.version ?? currentInfo?.latestVersion ?? null;
+  return buildDesktopInfo({
+    status: event.type === 'downloaded' ? 'downloaded' : 'available',
+    currentVersion: currentInfo?.currentVersion ?? '',
+    updateAvailable: true,
+    latestVersion,
+    error: null,
+  });
+}
+
 let desktopEventUnsubscribe: (() => void) | null = null;
 
 function ensureDesktopEventSubscription(
@@ -111,20 +125,11 @@ function ensureDesktopEventSubscription(
       return;
     }
     if (event.type === 'available') {
-      const latestVersion = event.info?.version ?? null;
       const currentInfo = getState().info;
       set({
         desktopStatus: 'available',
         status: 'available',
-        info: latestVersion && currentInfo
-          ? buildDesktopInfo({
-            status: 'available',
-            currentVersion: currentInfo.currentVersion,
-            updateAvailable: true,
-            latestVersion,
-            error: null,
-          })
-          : undefined,
+        info: buildDesktopInfoFromEvent(event, currentInfo),
         error: null,
       });
       return;
@@ -138,8 +143,11 @@ function ensureDesktopEventSubscription(
       return;
     }
     if (event.type === 'downloaded') {
+      const currentInfo = getState().info;
       set({
         desktopStatus: 'downloaded',
+        status: 'available',
+        info: buildDesktopInfoFromEvent(event, currentInfo),
         isDownloading: false,
         desktopProgress: null,
         error: null,

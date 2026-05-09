@@ -50,9 +50,16 @@ test('preload exposes the desktop updater bridge', () => {
 });
 
 test('desktop updater result handling follows electron-updater support contracts', () => {
-  assert.match(updaterSource, /result\?\.isUpdateAvailable === true/);
-  assert.doesNotMatch(updaterSource, /updateInfo\?\.version && result\.updateInfo\.version !== app\.getVersion/);
+  assert.doesNotMatch(updaterSource, /isUpdateAvailable/);
+  assert.match(updaterSource, /isNewerVersion\(info\.version, app\.getVersion\(\)\)/);
   assert.match(updaterSource, /process\.platform === 'darwin'/);
   assert.match(updateStoreSource, /desktopStatus: 'unsupported'[\s\S]*isDesktopUpdaterAvailable: false/);
   assert.match(updateStoreSource, /isDesktopUpdaterAvailable: false[\s\S]*dismissedVersion: readDismissedVersion\(\)/);
+});
+
+test('desktop available events can build visible update info before a check result returns', () => {
+  assert.match(updateStoreSource, /function buildDesktopInfoFromEvent/);
+  assert.doesNotMatch(updateStoreSource, /latestVersion && currentInfo\s*\?/);
+  assert.match(updateStoreSource, /updateAvailable: true/);
+  assert.match(updateStoreSource, /currentVersion: currentInfo\?\.currentVersion \?\? ''/);
 });

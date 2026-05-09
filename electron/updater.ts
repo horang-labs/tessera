@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
+import { isNewerVersion } from '../src/lib/update/version';
 import type { DesktopUpdateEvent, DesktopUpdateInfo, DesktopUpdateResult } from '../src/types/electron-updater';
 
 type ElectronLogger = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
@@ -115,7 +116,7 @@ export function setupDesktopUpdater(win: BrowserWindow, log: ElectronLogger): vo
       const result = await autoUpdater.checkForUpdates();
       const info = toDesktopUpdateInfo(result?.updateInfo);
       latestInfo = info;
-      const updateAvailable = result?.isUpdateAvailable === true;
+      const updateAvailable = isNewerVersion(info.version, app.getVersion());
       return {
         status: updateAvailable ? 'available' : 'current',
         currentVersion: app.getVersion(),
