@@ -54,6 +54,8 @@ export const en: I18nMessages = {
       xlarge: 'Extra Large',
     },
     inactivePanelDimming: 'Inactive Panel Dimming',
+    showProviderIcons: 'Show provider icons',
+    showProviderIconsDesc: 'Show the CLI provider mark in list and kanban items.',
     enterKey: {
       label: 'Enter Key Behavior',
       send: 'Enter = Send',

@@ -54,6 +54,8 @@ export const ko: I18nMessages = {
       xlarge: '아주 크게',
     },
     inactivePanelDimming: '비활성 패널 흐리기',
+    showProviderIcons: '프로바이더 아이콘 표시',
+    showProviderIconsDesc: '리스트와 칸반 항목에 CLI 프로바이더 마크를 표시합니다.',
     enterKey: {
       label: 'Enter 키 동작',
       send: 'Enter = 전송',

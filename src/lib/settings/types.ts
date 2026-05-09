@@ -56,6 +56,7 @@ export interface UserSettings {
   defaultModel: string;
   providerDefaults: Record<string, ProviderSessionDefaults>;
   inactivePanelDimming: number;
+  showProviderIcons: boolean;
   sttEngine: SttEngine;
   geminiApiKey: string;
   favoriteSkills: string[];

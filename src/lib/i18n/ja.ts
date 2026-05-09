@@ -54,6 +54,8 @@ export const ja: I18nMessages = {
       xlarge: '特大',
     },
     inactivePanelDimming: '非アクティブパネルの暗さ',
+    showProviderIcons: 'プロバイダーアイコンを表示',
+    showProviderIconsDesc: 'リストとカンバンの項目に CLI プロバイダーのマークを表示します。',
     enterKey: {
       label: 'Enter キーの動作',
       send: 'Enter = 送信',

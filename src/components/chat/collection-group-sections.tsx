@@ -34,6 +34,7 @@ import {
 import { useCollectionStore } from '@/stores/collection-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSelectionStore } from '@/stores/selection-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
@@ -477,6 +478,7 @@ function SubSessionRow({
   const moreRef = useRef<HTMLButtonElement>(null);
   const isActive = sess.id === activeSessionId;
   const isSelected = useSelectionStore((state) => state.selectedIds.has(sess.id));
+  const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useChatStore(selectIsTurnInFlight(sess.id));
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(sess.id));
   const liveIsRunning = useSessionStore((state) => {
@@ -571,7 +573,24 @@ function SubSessionRow({
       {isActive && (
         <div className="absolute -left-3 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)" />
       )}
-      <span className="flex shrink-0 items-center gap-1">
+      {showProviderIcons ? (
+        <span className="relative flex shrink-0 items-center">
+          <ProviderLogoMark
+            providerId={sess.provider}
+            className={COLLECTION_PROVIDER_MARK_CLASS}
+            iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
+            data-testid={`collection-subsession-agent-icon-${sess.id}`}
+          />
+          <ItemStatusIndicator
+            isProcessing={isProcessing}
+            isAwaitingUser={isAwaitingUser}
+            hasUnread={hasUnread}
+            isRunning={liveIsRunning}
+            placement="corner"
+            surface="sidebar"
+          />
+        </span>
+      ) : (
         <span className="relative flex w-1.5 shrink-0 items-center">
           <ItemStatusIndicator
             isProcessing={isProcessing}
@@ -582,13 +601,7 @@ function SubSessionRow({
             surface="sidebar"
           />
         </span>
-        <ProviderLogoMark
-          providerId={sess.provider}
-          className={COLLECTION_PROVIDER_MARK_CLASS}
-          iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
-          data-testid={`collection-subsession-agent-icon-${sess.id}`}
-        />
-      </span>
+      )}
 
       {isRenaming ? (
         <InlineRenameInput
@@ -677,6 +690,7 @@ export function TaskItemRow({
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<DOMRect | null>(null);
+  const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isMultiSession = task.sessions.length > 1;
   const isTaskActive = !isMultiSession && task.sessions.length === 1 && task.sessions[0].id === activeSessionId;
   const isPending = task.isPending === true;
@@ -713,6 +727,7 @@ export function TaskItemRow({
       return false;
     }),
   );
+  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasRunningSession;
   const {
     inputRef: renameInputRef,
     isRenaming,
@@ -892,7 +907,27 @@ export function TaskItemRow({
                 />
               )}
             </span>
-          ) : (
+          ) : null}
+          {showProviderIcons ? (
+            <span className="relative flex shrink-0 items-center">
+              <ProviderLogoMark
+                providerId={task.sessions[0]?.provider}
+                className={COLLECTION_PROVIDER_MARK_CLASS}
+                iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
+                data-testid={`collection-task-agent-icon-${task.id}`}
+              />
+              {!task.worktreeBranch && (
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="corner"
+                  surface="sidebar"
+                />
+              )}
+            </span>
+          ) : !task.worktreeBranch && hasTaskStatus ? (
             <span className="relative flex w-3.5 shrink-0 items-center justify-center">
               <ItemStatusIndicator
                 isProcessing={hasProcessingSession}
@@ -903,13 +938,7 @@ export function TaskItemRow({
                 surface="sidebar"
               />
             </span>
-          )}
-          <ProviderLogoMark
-            providerId={task.sessions[0]?.provider}
-            className={COLLECTION_PROVIDER_MARK_CLASS}
-            iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
-            data-testid={`collection-task-agent-icon-${task.id}`}
-          />
+          ) : null}
         </span>
 
         <div className="min-w-0 flex-1">
@@ -1116,6 +1145,7 @@ export function ChatItemRow({
 }) {
   const isActive = session.id === activeSessionId;
   const isSelected = useSelectionStore((state) => state.selectedIds.has(session.id));
+  const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
@@ -1212,26 +1242,27 @@ export function ChatItemRow({
         data-item-id={session.id}
         data-testid={`collection-chat-${session.id}`}
       >
-        <span className="flex shrink-0 items-center gap-1">
-          <span className="relative flex shrink-0 items-center">
+        <span className="relative flex shrink-0 items-center">
+          {showProviderIcons ? (
+            <ProviderLogoMark
+              providerId={session.provider}
+              className={COLLECTION_PROVIDER_MARK_CLASS}
+              iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
+              data-testid={`collection-chat-agent-icon-${session.id}`}
+            />
+          ) : (
             <MessageSquare
-              className="h-3.5 w-3.5 text-(--text-muted) opacity-45"
+              className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
               data-testid={`collection-chat-bubble-${session.id}`}
             />
-            <ItemStatusIndicator
-              isProcessing={isProcessing}
-              isAwaitingUser={isAwaitingUser}
-              hasUnread={hasUnread}
-              isRunning={liveIsRunning}
-              placement="corner"
-              surface="sidebar"
-            />
-          </span>
-          <ProviderLogoMark
-            providerId={session.provider}
-            className={COLLECTION_PROVIDER_MARK_CLASS}
-            iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
-            data-testid={`collection-chat-agent-icon-${session.id}`}
+          )}
+          <ItemStatusIndicator
+            isProcessing={isProcessing}
+            isAwaitingUser={isAwaitingUser}
+            hasUnread={hasUnread}
+            isRunning={liveIsRunning}
+            placement="corner"
+            surface="sidebar"
           />
         </span>
 
