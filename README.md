@@ -92,6 +92,7 @@ Choose the runtime that fits your setup:
 | Windows desktop | Download the portable `.exe` from [GitHub Releases](https://github.com/horang-labs/tessera/releases) |
 | macOS desktop | Download the `.dmg` from [GitHub Releases](https://github.com/horang-labs/tessera/releases) |
 | Browser | Install the npm CLI and open the printed local URL |
+| Docker Compose | Build and run the local browser runtime in a container |
 
 macOS release DMGs are Developer ID signed and notarized. Windows portable `.exe` builds are not code-signed yet, so Windows SmartScreen may show an unknown-publisher warning. See [Desktop Releases](#desktop-releases).
 
@@ -117,6 +118,29 @@ To request a specific port:
 
 ```bash
 tessera --port 3100
+```
+
+For Docker Compose:
+
+```bash
+mkdir -p data/config data/local data/ssh data/codex data/tessera workspaces
+touch data/gitconfig
+docker compose up --build -d
+```
+
+Create the mounted `./data/` and `./workspaces/` paths before starting the container so Docker does not create them as root-owned paths. The image runs Tessera as the `tessera` user with UID/GID `1000`, so the bind-mounted paths must be writable by that user. On most Linux developer machines, creating the paths with your normal user is enough. If your host UID/GID differs from `1000:1000`, or Docker already created root-owned paths, fix ownership before starting:
+
+```bash
+sudo chown -R 1000:1000 data workspaces
+```
+
+Open `http://127.0.0.1:32123` after the container starts. The Compose setup builds the image from the local `Dockerfile`, exposes Tessera on port `32123`, stores app and CLI state under `./data/`, and mounts local workspaces under `./workspaces/`.
+
+Useful Compose commands:
+
+```bash
+docker compose logs -f tessera
+docker compose down
 ```
 
 ## Core Features

@@ -1,0 +1,24 @@
+services:
+  tessera:
+    container_name: tessera
+    build:
+      context: .
+      dockerfile: Dockerfile
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    ports:
+      - "32123:32123"
+    environment:
+      TESSERA_HOST: 0.0.0.0
+    volumes:
+      - ./data/config:/home/tessera/.config
+      - ./data/local:/home/tessera/.local
+      - ./data/gitconfig:/home/tessera/.gitconfig
+      - ./data/ssh:/home/tessera/.ssh
+      - ./data/codex:/home/tessera/.codex
+      - ./data/tessera:/home/tessera/.tessera
+      - ./workspaces:/home/tessera/workspaces
+    restart: unless-stopped
