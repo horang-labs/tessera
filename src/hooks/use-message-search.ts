@@ -23,6 +23,11 @@ export interface UseMessageSearchResult {
   goToPreviousMatch: () => void;
 }
 
+function clampMatchIndex(index: number, matchCount: number): number {
+  if (matchCount === 0) return 0;
+  return Math.min(index, matchCount - 1);
+}
+
 export function useMessageSearch(
   messages: EnhancedMessage[],
   groupedMessages: GroupedItem[],
@@ -33,24 +38,28 @@ export function useMessageSearch(
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
 
   const matches = useMemo(
-    () => findMessageSearchMatches(messages, query),
-    [messages, query],
+    () =>
+      findMessageSearchMatches(messages, query).filter(
+        (match) =>
+          findGroupedRowIndexForMessage(groupedMessages, match.messageId) >= 0,
+      ),
+    [messages, groupedMessages, query],
   );
 
+  // Reset ephemeral search UI when the panel switches to a different session.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setQuery('');
     setActiveMatchIndex(0);
     setIsSearchOpen(false);
   }, [sessionId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  useEffect(() => {
-    setActiveMatchIndex((current) => {
-      if (matches.length === 0) return 0;
-      return Math.min(current, matches.length - 1);
-    });
-  }, [matches.length]);
-
-  const activeMatch = matches[activeMatchIndex] ?? null;
+  const safeActiveMatchIndex = clampMatchIndex(
+    activeMatchIndex,
+    matches.length,
+  );
+  const activeMatch = matches[safeActiveMatchIndex] ?? null;
   const activeGroupedRowIndex = activeMatch
     ? findGroupedRowIndexForMessage(groupedMessages, activeMatch.messageId)
     : -1;
@@ -67,15 +76,19 @@ export function useMessageSearch(
 
   const goToNextMatch = useCallback(() => {
     setActiveMatchIndex((current) => {
-      if (matches.length === 0) return 0;
-      return (current + 1) % matches.length;
+      if (matches.length === 0) {
+        return 0;
+      }
+      return (clampMatchIndex(current, matches.length) + 1) % matches.length;
     });
   }, [matches.length]);
 
   const goToPreviousMatch = useCallback(() => {
     setActiveMatchIndex((current) => {
-      if (matches.length === 0) return 0;
-      return (current - 1 + matches.length) % matches.length;
+      if (matches.length === 0) {
+        return 0;
+      }
+      return (clampMatchIndex(current, matches.length) - 1 + matches.length) % matches.length;
     });
   }, [matches.length]);
 
@@ -88,7 +101,7 @@ export function useMessageSearch(
     isSearchOpen,
     query,
     matches,
-    activeMatchIndex,
+    activeMatchIndex: safeActiveMatchIndex,
     activeMatch,
     activeGroupedRowIndex,
     openSearch,

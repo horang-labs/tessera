@@ -137,13 +137,16 @@ function MessageListSessionView({
     isTurnInFlight,
   });
 
+  const activeSearchGroupedRowIndex = search?.activeGroupedRowIndex ?? -1;
+  const activeSearchMatchMessageId = search?.activeMatchMessageId ?? null;
+
   useEffect(() => {
-    if (!search || search.activeGroupedRowIndex < 0) return;
-    virtualizer.scrollToIndex(search.activeGroupedRowIndex, {
+    if (activeSearchGroupedRowIndex < 0 || !activeSearchMatchMessageId) return;
+    virtualizer.scrollToIndex(activeSearchGroupedRowIndex, {
       align: 'center',
       behavior: 'smooth',
     });
-  }, [search?.activeGroupedRowIndex, search?.activeMatchMessageId, virtualizer]);
+  }, [activeSearchGroupedRowIndex, activeSearchMatchMessageId, virtualizer]);
 
   // 선택된 도구호출을 groupedMessages에서 찾기
   const selectedToolCall = useMemo(() => {
@@ -272,8 +275,8 @@ function MessageListSessionView({
                   const item = groupedMessages[virtualRow.index];
                   const key = virtualRow.key as string;
                   const isActiveSearchRow =
-                    search?.activeGroupedRowIndex === virtualRow.index &&
-                    search.activeMatchMessageId != null;
+                    activeSearchGroupedRowIndex === virtualRow.index &&
+                    activeSearchMatchMessageId != null;
                   return (
                     <div
                       key={key}
