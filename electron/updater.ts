@@ -3,7 +3,7 @@ import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-update
 import type { DesktopUpdateEvent, DesktopUpdateInfo, DesktopUpdateResult } from '../src/types/electron-updater';
 
 type ElectronLogger = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
-type PrepareForUpdateInstall = () => void;
+type PrepareForUpdateInstall = () => Promise<void>;
 
 let mainWindow: BrowserWindow | null = null;
 let initialized = false;
@@ -70,7 +70,7 @@ function sendUpdateEvent(event: DesktopUpdateEvent): void {
 export function setupDesktopUpdater(
   win: BrowserWindow,
   log: ElectronLogger,
-  prepareForUpdateInstall: PrepareForUpdateInstall = () => {},
+  prepareForUpdateInstall: PrepareForUpdateInstall = async () => {},
 ): void {
   mainWindow = win;
   if (initialized) return;
@@ -146,9 +146,9 @@ export function setupDesktopUpdater(
     }
   });
 
-  ipcMain.handle('desktop-update-install', () => {
+  ipcMain.handle('desktop-update-install', async () => {
     if (!isDesktopAutoUpdateSupported()) return;
-    prepareForUpdateInstall();
+    await prepareForUpdateInstall();
     autoUpdater.quitAndInstall(false, true);
   });
 }

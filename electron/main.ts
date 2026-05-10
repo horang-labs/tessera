@@ -273,6 +273,8 @@ let serverPort = 0;
 let isQuitting = false;
 let isQuitRequested = false;
 let isQuitCleanupStarted = false;
+let isInstallingUpdate = false;
+let updateInstallPreparation: Promise<void> | null = null;
 let closeRequestSequence = 0;
 let activeCloseRequest: Promise<void> | null = null;
 
@@ -302,7 +304,9 @@ function requestAppQuit(): void {
   app.quit();
 }
 
-function prepareForUpdateInstall(): void {
+async function prepareForUpdateInstall(): Promise<void> {
+  if (updateInstallPreparation) return updateInstallPreparation;
+  isInstallingUpdate = true;
   isQuitRequested = true;
   isQuitting = true;
   activeCloseRequest = null;
@@ -311,6 +315,8 @@ function prepareForUpdateInstall(): void {
     pendingCloseRequests.delete(requestId);
   }
   destroyTray();
+  updateInstallPreparation = stopServer();
+  return updateInstallPreparation;
 }
 
 function getWindowsCloseAction(win: BrowserWindow): WindowCloseAction {
@@ -880,6 +886,7 @@ app.on('before-quit', () => {
 app.on('before-quit-for-update', prepareForUpdateInstall);
 
 app.on('will-quit', async (event) => {
+  if (isInstallingUpdate) return;
   if (isQuitCleanupStarted) return;
 
   isQuitCleanupStarted = true;

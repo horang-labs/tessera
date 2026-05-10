@@ -59,9 +59,15 @@ test('desktop updater result handling follows electron-updater support contracts
 });
 
 test('desktop update installs bypass close-to-tray handling', () => {
-  assert.match(mainSource, /function prepareForUpdateInstall\(\): void/);
+  assert.match(mainSource, /let isInstallingUpdate = false/);
+  assert.match(mainSource, /let updateInstallPreparation: Promise<void> \| null = null/);
+  assert.match(mainSource, /async function prepareForUpdateInstall\(\): Promise<void>/);
+  assert.match(mainSource, /if \(updateInstallPreparation\) return updateInstallPreparation/);
+  assert.match(mainSource, /updateInstallPreparation = stopServer\(\)/);
   assert.match(mainSource, /app\.on\('before-quit-for-update', prepareForUpdateInstall\)/);
-  assert.match(updaterSource, /prepareForUpdateInstall\(\);[\s\S]*autoUpdater\.quitAndInstall\(false, true\)/);
+  assert.match(mainSource, /if \(isInstallingUpdate\) return;[\s\S]*event\.preventDefault\(\)/);
+  assert.match(updaterSource, /prepareForUpdateInstall: PrepareForUpdateInstall = async \(\) => \{\}/);
+  assert.match(updaterSource, /await prepareForUpdateInstall\(\);[\s\S]*autoUpdater\.quitAndInstall\(false, true\)/);
 });
 
 test('desktop available events can build visible update info before a check result returns', () => {
