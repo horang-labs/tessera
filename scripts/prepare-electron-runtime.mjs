@@ -46,6 +46,8 @@ function shouldSkip(relativePath) {
     relativePath === 'node_modules/sharp' ||
     relativePath.startsWith('node_modules/@img/') ||
     relativePath === 'node_modules/@img' ||
+    (relativePath.startsWith('node_modules/node-pty/prebuilds/') &&
+      relativePath.endsWith('.pdb')) ||
     relativePath.startsWith('artifacts/') ||
     relativePath === 'artifacts' ||
     relativePath.startsWith('docs/') ||
@@ -281,6 +283,10 @@ async function main() {
   await addDirectory('node_modules/next', files);
   await addDirectory('node_modules/@next/env', files);
   await addDirectory('node_modules/sql.js', files);
+  await addDirectory('node_modules/node-pty/lib/worker', files);
+  await addDirectory('node_modules/node-pty/prebuilds', files);
+  await addDirectory('node_modules/node-pty/build/Release', files);
+  await addDirectory('node_modules/node-pty/build/Debug', files);
   await addNextTraceFiles(files);
   await addTracedEntrypointFiles(files);
 

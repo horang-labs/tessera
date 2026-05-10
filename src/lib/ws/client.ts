@@ -288,8 +288,8 @@ export class WebSocketClient {
     shellKind?: 'default' | 'cmd' | 'powershell' | 'wsl';
     cols?: number;
     rows?: number;
-  }) {
-    this.sendRequest('terminal_create', args);
+  }): boolean {
+    return this.sendRequest('terminal_create', args);
   }
 
   sendTerminalInput(terminalId: string, data: string) {

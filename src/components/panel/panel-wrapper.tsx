@@ -171,7 +171,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
     const sourceTabData = droppedTabTreeId ? freshPs.tabPanels[droppedTabTreeId] : undefined;
     if (droppedTabTreeId === freshPs.activeTabId) return;
-    if (droppedTabTreeId && sourceTabData && Object.keys(sourceTabData.panels).length > 1) {
+    if (droppedTabTreeId && sourceTabData) {
       const isEdgeSplit = currentEdge !== 'center';
       if (isEdgeSplit) {
         const rect = wrapperRef.current?.getBoundingClientRect();
