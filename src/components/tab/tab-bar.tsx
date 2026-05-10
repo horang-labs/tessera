@@ -9,12 +9,12 @@ import { usePanelStore } from '@/stores/panel-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import { TAB_MIN_WIDTH, TAB_MAX_WIDTH } from '@/types/tab';
-import { PANEL_SESSION_DRAG_MIME } from '@/types/panel';
+import { PANEL_NODE_DRAG_MIME, PANEL_SESSION_DRAG_MIME } from '@/types/panel';
 import { useGitStore } from '@/stores/git-store';
 import { TabItem } from './tab-item';
 import { TabContextMenu } from './tab-context-menu';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
-import { parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
+import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 
 const TAB_SCROLL_MIN_STEP = 180;
 const TAB_SCROLL_EDGE_EPSILON = 1;
@@ -161,6 +161,10 @@ export const TabBar = memo(function TabBar() {
     return e.dataTransfer.types.includes(PANEL_SESSION_DRAG_MIME);
   }, []);
 
+  const hasPanelNodeDrag = useCallback(function hasPanelNodeDrag(e: React.DragEvent) {
+    return e.dataTransfer.types.includes(PANEL_NODE_DRAG_MIME);
+  }, []);
+
   const handlePanelTitleDropToNewTab = useCallback(function handlePanelTitleDropToNewTab(
     e: React.DragEvent,
   ): boolean {
@@ -183,25 +187,58 @@ export const TabBar = memo(function TabBar() {
     return true;
   }, []);
 
+  const handlePanelNodeDropToNewTab = useCallback(function handlePanelNodeDropToNewTab(
+    e: React.DragEvent,
+  ): boolean {
+    const payload = parsePanelNodeDragData(e.dataTransfer);
+    if (!payload) return false;
+
+    const panelStore = usePanelStore.getState();
+    const tabStore = useTabStore.getState();
+    const previousActiveTabId = tabStore.activeTabId;
+    const sourceTabData = panelStore.tabPanels[payload.tabId];
+    const sourcePanel = sourceTabData?.panels[payload.panelId];
+    const terminalId = sourcePanel?.terminalId ?? null;
+    const terminalSessionId = sourcePanel?.terminalSessionId ?? null;
+    if (!sourceTabData || !terminalId || payload.tabId !== previousActiveTabId) return false;
+
+    if (Object.keys(sourceTabData.panels).length > 1) {
+      panelStore.closePanel(payload.panelId);
+    } else {
+      panelStore.assignTerminal(payload.panelId, null);
+    }
+
+    const newTabId = tabStore.createTab(null, { insertAfterTabId: payload.tabId });
+    const newTabData = usePanelStore.getState().tabPanels[newTabId];
+    const newPanelId = newTabData?.activePanelId;
+    if (!newPanelId) return false;
+    usePanelStore.getState().assignTerminal(newPanelId, terminalId, terminalSessionId);
+
+    if (previousActiveTabId && previousActiveTabId !== newTabId) {
+      useTabStore.getState().setActiveTab(previousActiveTabId);
+    }
+    return true;
+  }, []);
+
   const handleCreateTabDragOver = useCallback(function handleCreateTabDragOver(e: React.DragEvent) {
-    if (!hasPanelTitleDrag(e)) return;
+    if (!hasPanelTitleDrag(e) && !hasPanelNodeDrag(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setIsCreateTabDragOver(true);
-  }, [hasPanelTitleDrag]);
+  }, [hasPanelNodeDrag, hasPanelTitleDrag]);
 
   const handleCreateTabDragLeave = useCallback(function handleCreateTabDragLeave() {
     setIsCreateTabDragOver(false);
   }, []);
 
   const handleCreateTabDrop = useCallback(function handleCreateTabDrop(e: React.DragEvent) {
-    if (!hasPanelTitleDrag(e)) return;
+    if (!hasPanelTitleDrag(e) && !hasPanelNodeDrag(e)) return;
     e.preventDefault();
     setIsCreateTabDragOver(false);
-    if (handlePanelTitleDropToNewTab(e)) {
+    if (handlePanelTitleDropToNewTab(e) || handlePanelNodeDropToNewTab(e)) {
       clearTabDragState();
     }
-  }, [clearTabDragState, handlePanelTitleDropToNewTab, hasPanelTitleDrag]);
+  }, [clearTabDragState, handlePanelNodeDropToNewTab, handlePanelTitleDropToNewTab, hasPanelNodeDrag, hasPanelTitleDrag]);
 
   const handleScrollTabs = useCallback(function handleScrollTabs(direction: 'left' | 'right') {
     const container = containerRef.current;
@@ -307,11 +344,11 @@ export const TabBar = memo(function TabBar() {
   const [isEndZoneDragOver, setIsEndZoneDragOver] = useState(false);
 
   const handleEndZoneDragOver = useCallback(function handleEndZoneDragOver(e: React.DragEvent) {
-    if (!dragTabIdRef.current && !hasPanelTitleDrag(e)) return;
+    if (!dragTabIdRef.current && !hasPanelTitleDrag(e) && !hasPanelNodeDrag(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setIsEndZoneDragOver(true);
-  }, [hasPanelTitleDrag]);
+  }, [hasPanelNodeDrag, hasPanelTitleDrag]);
 
   const handleEndZoneDragLeave = useCallback(function handleEndZoneDragLeave() {
     setIsEndZoneDragOver(false);
@@ -321,7 +358,7 @@ export const TabBar = memo(function TabBar() {
     e.preventDefault();
     setIsEndZoneDragOver(false);
 
-    if (handlePanelTitleDropToNewTab(e)) {
+    if (handlePanelTitleDropToNewTab(e) || handlePanelNodeDropToNewTab(e)) {
       clearTabDragState();
       return;
     }
@@ -339,7 +376,7 @@ export const TabBar = memo(function TabBar() {
       newTabs.push(draggedTab);
       return { tabs: newTabs };
     });
-  }, [clearTabDragState, handlePanelTitleDropToNewTab]);
+  }, [clearTabDragState, handlePanelNodeDropToNewTab, handlePanelTitleDropToNewTab]);
 
   // ---------------------------------------------------------------------------
   // Render

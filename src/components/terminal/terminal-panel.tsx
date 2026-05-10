@@ -6,6 +6,7 @@ import { wsClient } from '@/lib/ws/client';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { Button } from '@/components/ui/button';
 import { TabIdContext, usePanelStore } from '@/stores/panel-store';
+import { useChatStore } from '@/stores/chat-store';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
@@ -32,8 +33,9 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
   const [status, setStatus] = useState<'starting' | 'running' | 'exited' | 'error'>('starting');
   const [subtitle, setSubtitle] = useState('Starting terminal...');
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
+  const connectionStatus = useChatStore((state) => state.connectionStatus);
 
-  const handlePanelDragStart = useCallback((event: DragEvent<HTMLButtonElement>) => {
+  const handlePanelDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     const didSet = setPanelNodeDragData(event.dataTransfer, { tabId, panelId });
     if (!didSet) {
       event.preventDefault();
@@ -108,14 +110,25 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
         terminalRef.current = terminal;
         fitAddonRef.current = fitAddon;
 
+        if (connectionStatus !== 'connected') {
+          setStatus('starting');
+          setSubtitle('Waiting for server connection...');
+          return;
+        }
+
         const dimensions = fitAddon.proposeDimensions();
-        wsClient.createTerminal({
+        const didCreateTerminal = wsClient.createTerminal({
           terminalId,
           cwd: getInitialTerminalCwd(terminalSessionId),
           sessionId: getSessionSelectionId(terminalSessionId),
           cols: dimensions?.cols,
           rows: dimensions?.rows,
         });
+        if (!didCreateTerminal) {
+          setStatus('starting');
+          setSubtitle('Waiting for server connection...');
+          return;
+        }
 
         resizeObserver = new ResizeObserver(() => {
           if (!fitAddonRef.current) return;
@@ -145,7 +158,7 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
         wsClient.closeTerminal(terminalId);
       }
     };
-  }, [terminalId, terminalSessionId]);
+  }, [connectionStatus, terminalId, terminalSessionId]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#0f1115] text-[#d7dde3]" data-testid="terminal-panel">
@@ -162,8 +175,18 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
           <GripVertical className="h-3.5 w-3.5" />
         </button>
         <TerminalIcon className="h-4 w-4 text-(--accent)" />
-        <span className="font-medium">Terminal</span>
-        <span className="min-w-0 flex-1 truncate text-white/55">{subtitle}</span>
+        <div className="flex min-w-0 shrink items-center gap-2 select-text">
+          <span className="font-medium">Terminal</span>
+          <span className="min-w-0 truncate text-white/55">{subtitle}</span>
+        </div>
+        <div
+          draggable
+          onDragStart={handlePanelDragStart}
+          title="Move terminal panel"
+          aria-label="Move terminal panel"
+          data-testid="terminal-panel-empty-drag-region"
+          className="h-full min-w-8 flex-1 cursor-grab active:cursor-grabbing"
+        />
         <span className="text-white/45">{status}</span>
         <Button
           variant="ghost"
@@ -175,7 +198,9 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <div ref={containerRef} className="min-h-0 flex-1 p-2" />
+      <div className="min-h-0 flex-1 overflow-hidden p-2">
+        <div ref={containerRef} className="h-full min-h-0 overflow-hidden" />
+      </div>
     </div>
   );
 }

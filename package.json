@@ -144,7 +144,10 @@
     "asar": true,
     "asarUnpack": [
       "**/sql.js/**",
-      "**/node_modules/sql.js/**"
+      "**/node_modules/sql.js/**",
+      "**/node_modules/node-pty/prebuilds/**",
+      "**/node_modules/node-pty/build/Release/*.node",
+      "**/node_modules/node-pty/build/Debug/*.node"
     ],
     "files": [
       "**/*",

@@ -1,14 +1,20 @@
+import fs from 'fs';
 import logger from '@/lib/logger';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import { getRuntimePlatform } from '@/lib/system/runtime-platform';
+import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { resolveAllowedTerminalCwd, resolveTerminalShell } from './terminal-resolver';
 import type {
   TerminalCreateOptions,
   TerminalProcessHandle,
   TerminalPtyFactory,
+  TerminalShellKind,
 } from './types';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 
 type SendToUser = (userId: string, message: ServerTransportMessage) => void;
 const MAX_REPLAY_BUFFER_CHARS = 200_000;
+const TERMINAL_TRACE_PATH = getTesseraDataPath('terminal-debug.log');
 
 interface TerminalRuntime {
   terminalId: string;
@@ -32,6 +38,23 @@ async function loadNodePty(): Promise<TerminalPtyFactory> {
   }
 }
 
+function traceTerminalStage(stage: string, metadata: Record<string, unknown> = {}): void {
+  if (process.env.TESSERA_TERMINAL_DEBUG !== '1') return;
+
+  try {
+    fs.appendFileSync(
+      TERMINAL_TRACE_PATH,
+      `${JSON.stringify({
+        time: new Date().toISOString(),
+        stage,
+        ...metadata,
+      })}\n`,
+    );
+  } catch {
+    // Best-effort debug trace only.
+  }
+}
+
 export class TerminalManager {
   private readonly terminals = new Map<string, TerminalRuntime>();
 
@@ -42,6 +65,21 @@ export class TerminalManager {
 
   async create(options: TerminalCreateOptions): Promise<void> {
     const key = this.getKey(options.userId, options.terminalId);
+    traceTerminalStage('create:enter', {
+      terminalId: options.terminalId,
+      userId: options.userId,
+      cwd: options.cwd,
+      sessionId: options.sessionId,
+      shellKind: options.shellKind,
+    });
+    logger.debug({
+      terminalId: options.terminalId,
+      userId: options.userId,
+      cwd: options.cwd,
+      sessionId: options.sessionId,
+      cols: options.cols,
+      rows: options.rows,
+    }, 'Terminal create requested');
     const existing = this.terminals.get(key);
     if (existing) {
       this.resize(options.terminalId, options.userId, options.cols ?? 80, options.rows ?? 24);
@@ -51,30 +89,61 @@ export class TerminalManager {
     }
 
     try {
+      traceTerminalStage('load-node-pty:before', { terminalId: options.terminalId });
+      logger.debug({ terminalId: options.terminalId }, 'Terminal loading node-pty');
       const ptyFactory = await this.ptyFactoryLoader();
+      traceTerminalStage('load-node-pty:after', { terminalId: options.terminalId });
+      logger.debug({ terminalId: options.terminalId }, 'Terminal loaded node-pty');
+      traceTerminalStage('resolve-cwd:before', { terminalId: options.terminalId });
       const cwdResolution = resolveAllowedTerminalCwd({
         cwd: options.cwd,
         sessionId: options.sessionId,
       });
+      traceTerminalStage('resolve-cwd:after', { terminalId: options.terminalId, cwdResolution });
+      logger.debug({ terminalId: options.terminalId, cwdResolution }, 'Terminal cwd resolved');
       if (!cwdResolution.ok) {
         throw new Error(cwdResolution.message);
       }
+      traceTerminalStage('resolve-shell-kind:before', { terminalId: options.terminalId });
+      const shellKind = await this.resolveShellKind(options);
+      traceTerminalStage('resolve-shell-kind:after', { terminalId: options.terminalId, shellKind });
+      logger.debug({ terminalId: options.terminalId, shellKind }, 'Terminal shell kind resolved');
+      traceTerminalStage('resolve-shell:before', { terminalId: options.terminalId });
       const shell = resolveTerminalShell({
         cwd: cwdResolution.cwd,
-        shellKind: options.shellKind,
+        shellKind,
       });
+      traceTerminalStage('resolve-shell:after', {
+        terminalId: options.terminalId,
+        command: shell.command,
+        args: shell.args,
+        cwd: shell.cwd,
+        displayCwd: shell.displayCwd,
+      });
+      logger.debug({
+        terminalId: options.terminalId,
+        command: shell.command,
+        args: shell.args,
+        cwd: shell.cwd,
+        displayCwd: shell.displayCwd,
+      }, 'Terminal shell resolved');
+      traceTerminalStage('spawn:before', { terminalId: options.terminalId });
+      logger.debug({ terminalId: options.terminalId }, 'Terminal spawning PTY');
       const terminalProcess = ptyFactory.spawn(shell.command, shell.args, {
         name: 'xterm-256color',
         cols: options.cols ?? 80,
         rows: options.rows ?? 24,
         cwd: shell.cwd,
         env: process.env,
+        ...(getRuntimePlatform() === 'win32' ? { useConpty: false } : {}),
       });
+      traceTerminalStage('spawn:after', { terminalId: options.terminalId });
+      logger.debug({ terminalId: options.terminalId }, 'Terminal PTY spawned');
 
       const runtime: TerminalRuntime = {
         terminalId: options.terminalId,
         userId: options.userId,
-        cwd: shell.cwd,
+        cwd: shell.displayCwd ?? shell.cwd,
         shell: shell.command,
         process: terminalProcess,
         outputBuffer: [],
@@ -159,6 +228,17 @@ export class TerminalManager {
 
   private getKey(userId: string, terminalId: string): string {
     return `${userId}:${terminalId}`;
+  }
+
+  private async resolveShellKind(
+    options: TerminalCreateOptions,
+  ): Promise<TerminalShellKind | undefined> {
+    if (options.shellKind && options.shellKind !== 'default') {
+      return options.shellKind;
+    }
+
+    const agentEnvironment = await getAgentEnvironment(options.userId);
+    return agentEnvironment === 'wsl' ? 'wsl' : options.shellKind;
   }
 
   private sendStarted(runtime: TerminalRuntime): void {

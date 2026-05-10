@@ -43,6 +43,83 @@ function isSameOrChildPath(candidate: string, allowedRoot: string): boolean {
   return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
+function isWindowsDrivePath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || /^[a-zA-Z]:$/.test(value);
+}
+
+function isWindowsHostedWslPath(value: string): boolean {
+  return /^\\\\(?:wsl\.localhost|wsl\$)\\/i.test(value)
+    || /^\/\/(?:wsl\.localhost|wsl\$)\//i.test(value);
+}
+
+function toWslPath(value: string): string | null {
+  const driveMatch = value.match(/^([a-zA-Z]):[\\/]*(.*)$/);
+  if (driveMatch) {
+    const drive = driveMatch[1].toLowerCase();
+    const rest = driveMatch[2].replace(/[\\/]+/g, '/').replace(/^\/+/, '');
+    return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
+  }
+
+  const uncMatch = value.match(/^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)\\?(.*)$/i);
+  if (uncMatch) {
+    const rest = uncMatch[2].replace(/\\/g, '/').replace(/^\/+/, '');
+    return rest ? `/${rest}` : '/';
+  }
+
+  const slashUncMatch = value.match(/^\/\/(?:wsl\.localhost|wsl\$)\/([^/]+)\/?(.*)$/i);
+  if (slashUncMatch) {
+    const rest = slashUncMatch[2].replace(/^\/+/, '');
+    return rest ? `/${rest}` : '/';
+  }
+
+  if (value.startsWith('/')) {
+    return path.posix.normalize(value);
+  }
+
+  return null;
+}
+
+function resolveWindowsProcessCwd(env: NodeJS.ProcessEnv): string {
+  const userProfile = env.USERPROFILE?.trim();
+  if (userProfile && isWindowsDrivePath(userProfile)) {
+    return path.win32.normalize(userProfile);
+  }
+
+  const home = os.homedir();
+  if (isWindowsDrivePath(home)) {
+    return path.win32.normalize(home);
+  }
+
+  const windowsRoot = env.SystemRoot?.trim() || env.windir?.trim();
+  if (windowsRoot && isWindowsDrivePath(windowsRoot)) {
+    return path.win32.join(windowsRoot, 'System32');
+  }
+
+  return 'C:\\';
+}
+
+function resolveWindowsNativeTerminalCwd(cwd: string, env: NodeJS.ProcessEnv): string {
+  if (isWindowsHostedWslPath(cwd)) {
+    return resolveWindowsProcessCwd(env);
+  }
+
+  return cwd;
+}
+
+function quoteBashArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildWslTerminalScript(cwd: string): string {
+  return [
+    `cd -- ${quoteBashArg(cwd)} 2>/dev/null || cd ~`,
+    'shell="${SHELL:-}"',
+    'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
+    'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(command -v bash 2>/dev/null || command -v sh)"; fi',
+    'exec "$shell" -i',
+  ].join('; ');
+}
+
 export function resolveAllowedTerminalCwd(options: {
   cwd?: string | null;
   sessionId?: string | null;
@@ -104,13 +181,20 @@ export function resolveTerminalShell(options: {
   const shellKind = options.shellKind ?? 'default';
   const cwd = resolveTerminalCwd(options.cwd);
 
-  if (shellKind === 'wsl') {
-    throw new Error('WSL terminal profiles are not supported yet.');
+  if (shellKind === 'wsl' && platform === 'win32') {
+    const wslCwd = toWslPath(cwd) ?? '~';
+    return {
+      command: 'wsl.exe',
+      args: ['-e', 'sh', '-c', buildWslTerminalScript(wslCwd)],
+      cwd: resolveWindowsProcessCwd(env),
+      displayCwd: wslCwd,
+    };
   }
 
   if (platform === 'win32') {
+    const windowsCwd = resolveWindowsNativeTerminalCwd(cwd, env);
     if (shellKind === 'cmd') {
-      return { command: 'cmd.exe', args: [], cwd };
+      return { command: 'cmd.exe', args: [], cwd: windowsCwd };
     }
 
     return {
@@ -118,7 +202,7 @@ export function resolveTerminalShell(options: {
         ? env.ComSpec
         : 'powershell.exe',
       args: ['-NoLogo'],
-      cwd,
+      cwd: windowsCwd,
     };
   }
 

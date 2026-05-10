@@ -14,6 +14,7 @@ export interface TerminalResolvedShell {
   command: string;
   args: string[];
   cwd: string;
+  displayCwd?: string;
 }
 
 export type TerminalCwdResolution =
@@ -36,6 +37,8 @@ export interface TerminalPtyFactory {
       rows: number;
       cwd: string;
       env: NodeJS.ProcessEnv;
+      useConpty?: boolean;
+      useConptyDll?: boolean;
     },
   ): TerminalProcessHandle & {
     onData(callback: (data: string) => void): void;
