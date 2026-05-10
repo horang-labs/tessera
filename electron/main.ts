@@ -302,6 +302,17 @@ function requestAppQuit(): void {
   app.quit();
 }
 
+function prepareForUpdateInstall(): void {
+  isQuitRequested = true;
+  isQuitting = true;
+  activeCloseRequest = null;
+  for (const [requestId, pending] of pendingCloseRequests) {
+    pending.resolve('cancel');
+    pendingCloseRequests.delete(requestId);
+  }
+  destroyTray();
+}
+
 function getWindowsCloseAction(win: BrowserWindow): WindowCloseAction {
   const response = dialog.showMessageBoxSync(win, {
     type: 'question',
@@ -839,7 +850,7 @@ app.whenReady().then(async () => {
       closeBehavior: windowsCloseBehavior,
       onCloseBehaviorChange: handleTrayCloseBehaviorChange,
     });
-    setupDesktopUpdater(mainWindow, log);
+    setupDesktopUpdater(mainWindow, log, prepareForUpdateInstall);
   } catch (err) {
     dialog.showErrorBox('Tessera', `Failed to start server: ${err}`);
     requestAppQuit();
@@ -865,6 +876,8 @@ app.on('before-quit', () => {
   isQuitting = true;
   destroyTray();
 });
+
+app.on('before-quit-for-update', prepareForUpdateInstall);
 
 app.on('will-quit', async (event) => {
   if (isQuitCleanupStarted) return;

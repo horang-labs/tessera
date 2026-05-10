@@ -6,6 +6,7 @@ const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import
 const packageSource = fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8');
 const preloadSource = fs.readFileSync(new URL('../electron/preload.ts', import.meta.url), 'utf8');
 const updaterSource = fs.readFileSync(new URL('../electron/updater.ts', import.meta.url), 'utf8');
+const mainSource = fs.readFileSync(new URL('../electron/main.ts', import.meta.url), 'utf8');
 const updateStoreSource = fs.readFileSync(new URL('../src/stores/update-store.ts', import.meta.url), 'utf8');
 
 test('desktop builds are configured for electron-updater release metadata', () => {
@@ -50,11 +51,17 @@ test('preload exposes the desktop updater bridge', () => {
 });
 
 test('desktop updater result handling follows electron-updater support contracts', () => {
-  assert.doesNotMatch(updaterSource, /isUpdateAvailable/);
-  assert.match(updaterSource, /isNewerVersion\(info\.version, app\.getVersion\(\)\)/);
+  assert.match(updaterSource, /result\?\.isUpdateAvailable === true/);
+  assert.doesNotMatch(updaterSource, /isNewerVersion\(info\.version, app\.getVersion\(\)\)/);
   assert.match(updaterSource, /process\.platform === 'darwin'/);
   assert.match(updateStoreSource, /desktopStatus: 'unsupported'[\s\S]*isDesktopUpdaterAvailable: false/);
   assert.match(updateStoreSource, /isDesktopUpdaterAvailable: false[\s\S]*dismissedVersion: readDismissedVersion\(\)/);
+});
+
+test('desktop update installs bypass close-to-tray handling', () => {
+  assert.match(mainSource, /function prepareForUpdateInstall\(\): void/);
+  assert.match(mainSource, /app\.on\('before-quit-for-update', prepareForUpdateInstall\)/);
+  assert.match(updaterSource, /prepareForUpdateInstall\(\);[\s\S]*autoUpdater\.quitAndInstall\(false, true\)/);
 });
 
 test('desktop available events can build visible update info before a check result returns', () => {

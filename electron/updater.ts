@@ -1,9 +1,9 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
-import { isNewerVersion } from '../src/lib/update/version';
 import type { DesktopUpdateEvent, DesktopUpdateInfo, DesktopUpdateResult } from '../src/types/electron-updater';
 
 type ElectronLogger = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
+type PrepareForUpdateInstall = () => void;
 
 let mainWindow: BrowserWindow | null = null;
 let initialized = false;
@@ -67,7 +67,11 @@ function sendUpdateEvent(event: DesktopUpdateEvent): void {
   mainWindow.webContents.send('desktop-update-event', event);
 }
 
-export function setupDesktopUpdater(win: BrowserWindow, log: ElectronLogger): void {
+export function setupDesktopUpdater(
+  win: BrowserWindow,
+  log: ElectronLogger,
+  prepareForUpdateInstall: PrepareForUpdateInstall = () => {},
+): void {
   mainWindow = win;
   if (initialized) return;
   initialized = true;
@@ -116,7 +120,7 @@ export function setupDesktopUpdater(win: BrowserWindow, log: ElectronLogger): vo
       const result = await autoUpdater.checkForUpdates();
       const info = toDesktopUpdateInfo(result?.updateInfo);
       latestInfo = info;
-      const updateAvailable = isNewerVersion(info.version, app.getVersion());
+      const updateAvailable = result?.isUpdateAvailable === true;
       return {
         status: updateAvailable ? 'available' : 'current',
         currentVersion: app.getVersion(),
@@ -144,6 +148,7 @@ export function setupDesktopUpdater(win: BrowserWindow, log: ElectronLogger): vo
 
   ipcMain.handle('desktop-update-install', () => {
     if (!isDesktopAutoUpdateSupported()) return;
+    prepareForUpdateInstall();
     autoUpdater.quitAndInstall(false, true);
   });
 }
