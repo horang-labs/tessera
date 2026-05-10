@@ -883,8 +883,6 @@ app.on('before-quit', () => {
   destroyTray();
 });
 
-app.on('before-quit-for-update', prepareForUpdateInstall);
-
 app.on('will-quit', async (event) => {
   if (isInstallingUpdate) return;
   if (isQuitCleanupStarted) return;

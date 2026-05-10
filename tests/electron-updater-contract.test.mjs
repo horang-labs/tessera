@@ -64,7 +64,7 @@ test('desktop update installs bypass close-to-tray handling', () => {
   assert.match(mainSource, /async function prepareForUpdateInstall\(\): Promise<void>/);
   assert.match(mainSource, /if \(updateInstallPreparation\) return updateInstallPreparation/);
   assert.match(mainSource, /updateInstallPreparation = stopServer\(\)/);
-  assert.match(mainSource, /app\.on\('before-quit-for-update', prepareForUpdateInstall\)/);
+  assert.doesNotMatch(mainSource, /app\.on\('before-quit-for-update'/);
   assert.match(mainSource, /if \(isInstallingUpdate\) return;[\s\S]*event\.preventDefault\(\)/);
   assert.match(updaterSource, /prepareForUpdateInstall: PrepareForUpdateInstall = async \(\) => \{\}/);
   assert.match(updaterSource, /await prepareForUpdateInstall\(\);[\s\S]*autoUpdater\.quitAndInstall\(false, true\)/);
