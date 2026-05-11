@@ -37,12 +37,12 @@ interface SessionState {
   markSessionRunning: (
     sessionId: string,
     tesseraSessionId: string,
-    runtimeConfig?: Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'sessionMode' | 'accessMode'>,
+    runtimeConfig?: Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'sessionMode' | 'accessMode'>,
   ) => void;
   markSessionStopped: (sessionId: string) => void;
   updateSessionRuntimeConfig: (
     sessionId: string,
-    runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'sessionMode' | 'accessMode'>>,
+    runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'sessionMode' | 'accessMode'>>,
   ) => void;
   setCreatingSession: (sessionId: string | null) => void;
   setLoadingSession: (sessionId: string | null) => void;
@@ -115,6 +115,7 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     provider: s.provider,
     model: s.model ?? undefined,
     reasoningEffort: 'reasoningEffort' in s ? s.reasoningEffort : undefined,
+    serviceTier: 'serviceTier' in s ? s.serviceTier : undefined,
     taskId: s.taskId ?? undefined,
     collectionId: s.collectionId ?? undefined,
     diffStats: s.diffStats ?? undefined,
@@ -683,6 +684,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 ...(runtimeConfig?.reasoningEffort !== undefined && {
                   reasoningEffort: runtimeConfig.reasoningEffort,
                 }),
+                ...(runtimeConfig?.serviceTier !== undefined && {
+                  serviceTier: runtimeConfig.serviceTier,
+                }),
                 ...(runtimeConfig?.sessionMode !== undefined && {
                   sessionMode: runtimeConfig.sessionMode,
                 }),
@@ -724,6 +728,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 ...(runtimeConfig.model !== undefined && { model: runtimeConfig.model }),
                 ...(runtimeConfig.reasoningEffort !== undefined && {
                   reasoningEffort: runtimeConfig.reasoningEffort,
+                }),
+                ...(runtimeConfig.serviceTier !== undefined && {
+                  serviceTier: runtimeConfig.serviceTier,
                 }),
                 ...(runtimeConfig.sessionMode !== undefined && {
                   sessionMode: runtimeConfig.sessionMode,

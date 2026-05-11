@@ -117,6 +117,7 @@ export async function createSessionFromWebSocket({
   workDir,
   model,
   reasoningEffort,
+  serviceTier,
   sessionMode,
   accessMode,
   collaborationMode,
@@ -140,6 +141,7 @@ export async function createSessionFromWebSocket({
       providerId: resolvedProviderId,
       model,
       reasoningEffort,
+      serviceTier,
       sessionMode,
       accessMode,
       collaborationMode,
@@ -164,6 +166,7 @@ export async function createSessionFromWebSocket({
       ...(permissionMode && { permissionMode: permissionMode as any }),
       ...(model && { model }),
       ...(reasoningEffort !== undefined && { reasoningEffort }),
+      ...(serviceTier !== undefined && { serviceTier }),
       ...(sessionMode && { sessionMode }),
       ...(accessMode && { accessMode }),
       ...(collaborationMode && { collaborationMode }),
@@ -333,6 +336,7 @@ async function ensureSessionProcess({
     permissionMode: spawnConfig?.permissionMode,
     model: spawnConfig?.model,
     reasoningEffort: spawnConfig?.reasoningEffort,
+    serviceTier: spawnConfig?.serviceTier,
     sessionMode: spawnConfig?.sessionMode,
     accessMode: spawnConfig?.accessMode,
     collaborationMode: spawnConfig?.collaborationMode,
@@ -363,6 +367,9 @@ async function ensureSessionProcess({
   const startedReasoningEffort = result.reasoningEffort !== undefined
     ? result.reasoningEffort
     : spawnConfig?.reasoningEffort;
+  const startedServiceTier = result.serviceTier !== undefined
+    ? result.serviceTier
+    : spawnConfig?.serviceTier;
 
   sendToUser(userId, {
     type: 'session_started',
@@ -372,6 +379,7 @@ async function ensureSessionProcess({
     ...(spawnConfig?.permissionMode && { permissionMode: spawnConfig.permissionMode as any }),
     ...(startedModel && { model: startedModel }),
     ...(startedReasoningEffort !== undefined && { reasoningEffort: startedReasoningEffort }),
+    ...(startedServiceTier !== undefined && { serviceTier: startedServiceTier }),
     ...(spawnConfig?.sessionMode && { sessionMode: spawnConfig.sessionMode }),
     ...(spawnConfig?.accessMode && { accessMode: spawnConfig.accessMode }),
     ...(spawnConfig?.collaborationMode && { collaborationMode: spawnConfig.collaborationMode }),
@@ -388,6 +396,7 @@ export async function resumeSessionFromWebSocket({
   collaborationMode,
   approvalPolicy,
   sandboxMode,
+  serviceTier,
   sendToUser,
   sessionId,
   userId,
@@ -402,6 +411,7 @@ export async function resumeSessionFromWebSocket({
       collaborationMode,
       approvalPolicy,
       sandboxMode,
+      serviceTier,
     });
 
     if (result.status === 'read_only') {

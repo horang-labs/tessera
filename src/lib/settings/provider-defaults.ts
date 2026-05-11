@@ -226,6 +226,7 @@ export function applyProviderSessionRuntimeOverrides(
   overrides: {
     model?: string;
     reasoningEffort?: string | null;
+    serviceTier?: string | null;
     sessionMode?: ProviderSessionMode;
     accessMode?: ProviderSessionAccessMode;
   } | null | undefined,
@@ -250,6 +251,7 @@ export function applyProviderSessionRuntimeOverrides(
     ...config,
     ...(overrides?.model !== undefined && { model: overrides.model }),
     ...(overrides?.reasoningEffort !== undefined && { reasoningEffort: overrides.reasoningEffort }),
+    ...(overrides?.serviceTier !== undefined && { serviceTier: overrides.serviceTier }),
     ...controlPatch,
   };
 }

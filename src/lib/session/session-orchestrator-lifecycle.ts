@@ -204,6 +204,7 @@ export async function resumeSessionWithLifecycle({
       collaborationMode: options.collaborationMode,
       approvalPolicy: options.approvalPolicy,
       sandboxMode: options.sandboxMode,
+      serviceTier: options.serviceTier,
     },
   );
 
@@ -233,6 +234,7 @@ export async function resumeSessionWithLifecycle({
         collaborationMode: options.collaborationMode,
         approvalPolicy: options.approvalPolicy,
         sandboxMode: options.sandboxMode,
+        serviceTier: options.serviceTier,
       },
     );
   }
@@ -259,6 +261,7 @@ export async function resumeSessionWithLifecycle({
         collaborationMode: options.collaborationMode,
         approvalPolicy: options.approvalPolicy,
         sandboxMode: options.sandboxMode,
+        serviceTier: options.serviceTier,
       },
     );
   }
@@ -271,6 +274,7 @@ export async function resumeSessionWithLifecycle({
       status: 'running',
       model: runtimeDefaults.model,
       reasoningEffort: runtimeDefaults.reasoningEffort,
+      serviceTier: options.serviceTier,
       sessionMode: options.sessionMode,
       accessMode: options.accessMode,
     };

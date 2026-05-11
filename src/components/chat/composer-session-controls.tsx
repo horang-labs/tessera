@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Shield, Cpu, Gauge, Square, ChevronDown, Workflow } from 'lucide-react';
+import { Shield, Cpu, Gauge, Square, ChevronDown, Workflow, Zap } from 'lucide-react';
 import { tinykeys } from 'tinykeys';
 import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -31,6 +31,7 @@ import {
   resolveProviderRuntimeControls,
 } from '@/lib/settings/provider-defaults';
 import { composeOpenCodeModelId } from '@/lib/cli/providers/opencode/session-config';
+import { CODEX_FAST_SERVICE_TIER } from '@/lib/chat/codex-fast-command';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
@@ -154,6 +155,23 @@ function ComposerToggleButton({
   return shortcutId && shortcutLabel
     ? <ShortcutTooltip id={shortcutId} label={shortcutLabel}>{button}</ShortcutTooltip>
     : button;
+}
+
+function ComposerFastModeIndicator({ compact = false }: { compact?: boolean }) {
+  return (
+    <div
+      data-testid="fast-mode-indicator"
+      data-composer-control="service-tier"
+      title="Codex fast mode is on"
+      className={cn(
+        'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-(--status-warning-border) bg-(--status-warning-bg) px-2.5 text-[11px] font-medium text-(--status-warning-text)',
+        compact && 'px-2',
+      )}
+    >
+      <Zap className="h-3 w-3 shrink-0 fill-current" />
+      <span className="composer-quick-access-label whitespace-nowrap">Fast</span>
+    </div>
+  );
 }
 
 function ComposerControlDropdown({
@@ -673,6 +691,8 @@ function ComposerSessionControlsInner({
     t('settings.model.reasoningEffortLabel'),
   );
   const isInline = variant === 'inline';
+  const isFastModeEnabled = isCodexProvider(providerIdForSticky)
+    && session.serviceTier === CODEX_FAST_SERVICE_TIER;
   const canOpenReasoningSelector = Boolean(
     sessionOptions?.supportsReasoningEffort
     && reasoningOptions.length > 0
@@ -737,6 +757,10 @@ function ComposerSessionControlsInner({
       </div>
 
       <div className={cn('flex items-center gap-1.5', !isInline && 'flex-wrap', isInline && 'contents')}>
+        {isFastModeEnabled && (
+          <ComposerFastModeIndicator compact={isInline} />
+        )}
+
         <ComposerToggleButton
           icon={Workflow}
           label={modeToggleLabel}

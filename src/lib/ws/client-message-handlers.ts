@@ -49,6 +49,7 @@ export function handleIncomingServerMessage({
       sessionStore.markSessionRunning(msg.sessionId, msg.sessionId, {
         model: msg.model,
         reasoningEffort: msg.reasoningEffort,
+        serviceTier: msg.serviceTier,
         sessionMode: msg.sessionMode,
         accessMode: msg.accessMode,
       });
@@ -269,6 +270,7 @@ function addCreatedSession(
     provider: msg.provider,
     model: msg.model,
     reasoningEffort: msg.reasoningEffort,
+    serviceTier: msg.serviceTier,
     sessionMode: msg.sessionMode,
     accessMode: msg.accessMode,
     sortOrder: 0,

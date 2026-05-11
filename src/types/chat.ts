@@ -181,6 +181,7 @@ export interface UnifiedSession {
    */
   model?: string;
   reasoningEffort?: string | null;
+  serviceTier?: string | null;
   sessionMode?: ProviderSessionMode;
   accessMode?: ProviderSessionAccessMode;
 

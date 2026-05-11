@@ -157,6 +157,7 @@ export class WebSocketClient {
       ...(payload.collaborationMode && { collaborationMode: payload.collaborationMode }),
       ...(payload.approvalPolicy && { approvalPolicy: payload.approvalPolicy }),
       ...(payload.sandboxMode && { sandboxMode: payload.sandboxMode }),
+      ...(payload.serviceTier !== undefined && { serviceTier: payload.serviceTier }),
     });
   }
 
@@ -173,6 +174,7 @@ export class WebSocketClient {
       ...(controls?.collaborationMode && { collaborationMode: controls.collaborationMode }),
       ...(controls?.approvalPolicy && { approvalPolicy: controls.approvalPolicy }),
       ...(controls?.sandboxMode && { sandboxMode: controls.sandboxMode }),
+      ...(controls?.serviceTier !== undefined && { serviceTier: controls.serviceTier }),
     });
   }
 
@@ -230,6 +232,7 @@ export class WebSocketClient {
       ...(controls?.collaborationMode && { collaborationMode: controls.collaborationMode }),
       ...(controls?.approvalPolicy && { approvalPolicy: controls.approvalPolicy }),
       ...(controls?.sandboxMode && { sandboxMode: controls.sandboxMode }),
+      ...(controls?.serviceTier !== undefined && { serviceTier: controls.serviceTier }),
     });
   }
 
@@ -239,6 +242,10 @@ export class WebSocketClient {
 
   setReasoningEffort(sessionId: string, reasoningEffort: string | null) {
     this.sendRequest('set_reasoning_effort', { sessionId, reasoningEffort });
+  }
+
+  setServiceTier(sessionId: string, serviceTier: string | null) {
+    this.sendRequest('set_service_tier', { sessionId, serviceTier });
   }
 
   getCommands(sessionId: string) {

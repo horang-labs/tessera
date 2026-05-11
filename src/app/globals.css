@@ -536,6 +536,18 @@
   .composer-quick-access-controls [data-composer-control="mode"].composer-quick-access-button .composer-quick-access-label {
     display: none;
   }
+
+  .composer-quick-access-controls [data-composer-control="service-tier"] {
+    width: 1.75rem;
+    min-width: 1.75rem;
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+
+  .composer-quick-access-controls [data-composer-control="service-tier"] .composer-quick-access-label {
+    display: none;
+  }
 }
 
 @container (max-width: 27rem) {

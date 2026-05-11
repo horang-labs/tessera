@@ -107,6 +107,7 @@ export async function routeClientTransportMessage({
         providerId: message.providerId,
         model: message.model,
         reasoningEffort: message.reasoningEffort,
+        serviceTier: message.serviceTier,
         sessionMode: message.sessionMode,
         accessMode: message.accessMode,
         collaborationMode: message.collaborationMode,
@@ -147,6 +148,7 @@ export async function routeClientTransportMessage({
         collaborationMode: message.collaborationMode,
         approvalPolicy: message.approvalPolicy,
         sandboxMode: message.sandboxMode,
+        serviceTier: message.serviceTier,
       });
       return;
 
@@ -204,6 +206,7 @@ export async function routeClientTransportMessage({
           collaborationMode: message.collaborationMode,
           approvalPolicy: message.approvalPolicy,
           sandboxMode: message.sandboxMode,
+          serviceTier: message.serviceTier,
         }),
         errorCode: 'set_permission_mode_failed',
         errorMessage: 'Failed to set permission mode',
@@ -240,6 +243,20 @@ export async function routeClientTransportMessage({
         errorMessage: 'Failed to set reasoning effort',
         logMessage: 'Set reasoning effort requested',
         logMetadata: { reasoningEffort: message.reasoningEffort },
+      });
+      return;
+
+    case 'set_service_tier':
+      runProcessManagerControlAction({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        action: (sessionId) =>
+          processManager.sendSetServiceTier(sessionId, message.serviceTier),
+        errorCode: 'set_service_tier_failed',
+        errorMessage: 'Failed to set service tier',
+        logMessage: 'Set service tier requested',
+        logMetadata: { serviceTier: message.serviceTier },
       });
       return;
 

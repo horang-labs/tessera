@@ -80,6 +80,7 @@ export function useSessionResume() {
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
+          serviceTier: result.serviceTier ?? runtimeConfig.serviceTier,
           sessionMode: runtimeConfig.sessionMode,
           accessMode: runtimeConfig.accessMode,
         });
@@ -139,6 +140,7 @@ export function useSessionResume() {
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
+          serviceTier: result.serviceTier ?? runtimeConfig.serviceTier,
           sessionMode: runtimeConfig.sessionMode,
           accessMode: runtimeConfig.accessMode,
         });

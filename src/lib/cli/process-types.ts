@@ -47,4 +47,5 @@ export interface ProcessInfo {
   /** Runtime model controls currently attached to this live process. */
   model?: string;
   reasoningEffort?: string | null;
+  serviceTier?: string | null;
 }

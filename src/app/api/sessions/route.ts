@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       permissionMode,
       model,
       reasoningEffort,
+      serviceTier,
       sessionMode,
       accessMode,
       collaborationMode,
@@ -82,6 +83,7 @@ export async function POST(req: NextRequest) {
         permissionMode,
         model,
         reasoningEffort,
+        serviceTier,
         sessionMode,
         accessMode,
         collaborationMode,
@@ -116,6 +118,7 @@ export async function POST(req: NextRequest) {
         provider: resolvedProviderId,
         model,
         reasoningEffort,
+        serviceTier,
         sessionMode,
         accessMode,
       }, { status: 201 });

@@ -90,6 +90,7 @@ async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) 
       provider: sessionData.provider,
       model: sessionData.model,
       reasoningEffort: sessionData.reasoningEffort,
+      serviceTier: sessionData.serviceTier,
     };
 
     useSessionStore.getState().addSession(newSession);

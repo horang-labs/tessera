@@ -129,6 +129,7 @@ interface CodexRuntimeConfig {
   permissionMode?: string;
   model?: string;
   reasoningEffort?: string | null;
+  serviceTier?: string | null;
   collaborationMode?: CodexCollaborationMode;
   approvalPolicy?: CodexApprovalPolicy;
   sandboxMode?: CodexSandboxMode;
@@ -366,6 +367,7 @@ export class CodexAdapter implements CliProvider {
       permissionMode: options.permissionMode,
       model: options.model,
       reasoningEffort: options.reasoningEffort ?? null,
+      serviceTier: options.serviceTier,
       collaborationMode: options.collaborationMode as CodexCollaborationMode | undefined,
       approvalPolicy: options.approvalPolicy as CodexApprovalPolicy | undefined,
       sandboxMode: options.sandboxMode as CodexSandboxMode | undefined,
@@ -453,6 +455,9 @@ export class CodexAdapter implements CliProvider {
     }
     if (runtimeConfig?.reasoningEffort) {
       request.params = { ...request.params, effort: runtimeConfig.reasoningEffort };
+    }
+    if (runtimeConfig?.serviceTier !== undefined) {
+      request.params = { ...request.params, serviceTier: runtimeConfig.serviceTier };
     }
     const accessConfig = resolveCodexAccessConfig(runtimeConfig);
     if (accessConfig) {
@@ -640,6 +645,10 @@ export class CodexAdapter implements CliProvider {
         patch.reasoningEffort !== undefined
           ? patch.reasoningEffort
           : current.reasoningEffort,
+      serviceTier:
+        patch.serviceTier !== undefined
+          ? patch.serviceTier
+          : current.serviceTier,
     });
 
     if (patch.model) {
@@ -828,6 +837,9 @@ export class CodexAdapter implements CliProvider {
 
     if (runtimeConfig?.model) {
       threadParams.model = runtimeConfig.model;
+    }
+    if (runtimeConfig?.serviceTier !== undefined) {
+      threadParams.serviceTier = runtimeConfig.serviceTier;
     }
     const accessConfig = resolveCodexAccessConfig(runtimeConfig);
     if (accessConfig) {
