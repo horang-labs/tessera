@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 import { useSessionStore } from '@/stores/session-store';
 import { useNotificationStore } from '@/stores/notification-store';
-import { SESSION_DRAG_MIME } from '@/types/panel';
 import type { SessionRefItem } from '@/types/session-ref';
 import { SESSION_REF_PLACEHOLDER_REGEX, MAX_SESSION_REFS } from '@/types/session-ref';
 import { useI18n } from '@/lib/i18n';
 import { exportSessionReference, formatSessionReference } from '@/lib/session/session-reference';
+import { isSessionReferenceDragData } from '@/lib/dnd/panel-session-drag';
+import { SESSION_DRAG_MIME } from '@/types/panel';
 
 interface UseSessionRefsOptions {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -68,7 +69,7 @@ export function useSessionRefs({
   }, [refs]);
 
   const isSessionRefDragEvent = useCallback((event: React.DragEvent) => {
-    return event.dataTransfer.types.includes(SESSION_DRAG_MIME);
+    return isSessionReferenceDragData(event.dataTransfer);
   }, []);
 
   const clearDragState = useCallback(() => {
