@@ -2,7 +2,9 @@ FROM archlinux:latest AS runtime-base
 
 RUN pacman -Syu --noconfirm \
   ca-certificates \
+  github-cli \
   git \
+  openssh \
   python \
   nodejs \
   npm  \
