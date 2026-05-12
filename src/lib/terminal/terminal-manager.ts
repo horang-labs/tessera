@@ -1,6 +1,8 @@
 import fs from 'fs';
+import path from 'path';
+import { createRequire } from 'module';
 import logger from '@/lib/logger';
-import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import { buildSpawnEnv, getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { resolveAllowedTerminalCwd, resolveTerminalShell } from './terminal-resolver';
@@ -15,13 +17,18 @@ import type { ServerTransportMessage } from '@/lib/ws/message-types';
 type SendToUser = (userId: string, message: ServerTransportMessage) => void;
 const MAX_REPLAY_BUFFER_CHARS = 200_000;
 const TERMINAL_TRACE_PATH = getTesseraDataPath('terminal-debug.log');
+const require = createRequire(import.meta.url);
 
 function hasUtf8Locale(value: string | undefined): boolean {
   return /\butf-?8\b/i.test(value ?? '');
 }
 
 function buildTerminalEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const nextEnv = { ...env };
+  // Merge the login-shell PATH (and on macOS, the full login-shell environment)
+  // so that globally installed CLIs (npm, pnpm, volta, etc.) remain discoverable.
+  // Finder/Dock-launched Electron apps inherit a minimal system PATH that omits
+  // user-local bin directories; buildSpawnEnv resolves those from the login shell.
+  const nextEnv = buildSpawnEnv(env);
 
   if (
     getRuntimePlatform() === 'darwin'
@@ -47,13 +54,37 @@ interface TerminalRuntime {
 
 async function loadNodePty(): Promise<TerminalPtyFactory> {
   try {
-    return await import('node-pty') as TerminalPtyFactory;
+    const ptyFactory = await import('node-pty') as TerminalPtyFactory;
+    ensureNodePtySpawnHelperExecutable();
+    return ptyFactory;
   } catch (error) {
     throw new Error(
       `Terminal support requires node-pty to be installed and built: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
+  }
+}
+
+function ensureNodePtySpawnHelperExecutable(): void {
+  if (getRuntimePlatform() !== 'darwin') return;
+
+  try {
+    const packageJsonPath = require.resolve('node-pty/package.json');
+    const packageDir = path.dirname(packageJsonPath);
+    const archDir = process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
+    const helperPath = path.join(packageDir, 'prebuilds', archDir, 'spawn-helper');
+    const stat = fs.statSync(helperPath);
+
+    if (!stat.isFile() || (stat.mode & 0o111) === 0o111) {
+      return;
+    }
+
+    fs.chmodSync(helperPath, stat.mode | 0o755);
+  } catch (error) {
+    logger.warn({
+      error,
+    }, 'Unable to ensure node-pty spawn-helper is executable');
   }
 }
 
@@ -148,12 +179,23 @@ export class TerminalManager {
       }, 'Terminal shell resolved');
       traceTerminalStage('spawn:before', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal spawning PTY');
+      const terminalEnv = buildTerminalEnv(process.env);
+      logger.debug({
+        terminalId: options.terminalId,
+        shellCommand: shell.command,
+        shellArgs: shell.args,
+        shellCwd: shell.cwd,
+        envPath: terminalEnv.PATH,
+        envPathLength: typeof terminalEnv.PATH === 'string' ? terminalEnv.PATH.length : 'undefined',
+        envKeys: Object.keys(terminalEnv).length,
+        envHasUndefinedValues: Object.entries(terminalEnv).filter(([, v]) => v === undefined).map(([k]) => k),
+      }, 'Terminal env before PTY spawn');
       const terminalProcess = ptyFactory.spawn(shell.command, shell.args, {
         name: 'xterm-256color',
         cols: options.cols ?? 80,
         rows: options.rows ?? 24,
         cwd: shell.cwd,
-        env: buildTerminalEnv(process.env),
+        env: terminalEnv,
         ...(getRuntimePlatform() === 'win32' ? { useConpty: false } : {}),
       });
       traceTerminalStage('spawn:after', { terminalId: options.terminalId });
