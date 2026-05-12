@@ -6,17 +6,31 @@ import type { AgentEnvironment } from '@/lib/settings/types';
 
 const cache = new Map<string, ProviderSessionOptions>();
 
+export function invalidateProviderSessionOptionsClientCache(): void {
+  cache.clear();
+}
+
 interface UseProviderSessionOptionsResult {
   data: ProviderSessionOptions | null;
   isLoading: boolean;
   error: string | null;
 }
 
+interface UseProviderSessionOptionsConfig {
+  cacheKeySuffix?: string | number;
+  refresh?: boolean;
+}
+
 export function useProviderSessionOptions(
   providerId?: string,
   agentEnvironment?: AgentEnvironment,
+  config: UseProviderSessionOptionsConfig | string | number = {},
 ): UseProviderSessionOptionsResult {
-  const cacheKey = providerId ? `${providerId}:${agentEnvironment ?? 'default'}` : null;
+  const cacheKeySuffix = typeof config === 'object'
+    ? config.cacheKeySuffix ?? 0
+    : config;
+  const forceRefresh = typeof config === 'object' ? config.refresh === true : false;
+  const cacheKey = providerId ? `${providerId}:${agentEnvironment ?? 'default'}:${cacheKeySuffix}` : null;
   const cached = cacheKey ? cache.get(cacheKey) ?? null : null;
   const [state, setState] = useState<{
     cacheKey: string | null;
@@ -37,6 +51,9 @@ export function useProviderSessionOptions(
     const params = new URLSearchParams({ providerId });
     if (agentEnvironment) {
       params.set('agentEnvironment', agentEnvironment);
+    }
+    if (forceRefresh) {
+      params.set('refresh', '1');
     }
 
     fetch(`/api/providers/session-options?${params.toString()}`, { cache: 'no-store' })
@@ -74,7 +91,7 @@ export function useProviderSessionOptions(
     return () => {
       cancelled = true;
     };
-  }, [providerId, agentEnvironment, cacheKey, cached]);
+  }, [providerId, agentEnvironment, cacheKey, cached, forceRefresh]);
 
   const isCurrentState = state.cacheKey === cacheKey;
   const data = cached ?? (isCurrentState ? state.data : null);

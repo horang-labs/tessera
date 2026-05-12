@@ -74,7 +74,10 @@ export async function PUT(request: NextRequest) {
     // Settings changes can flip which providers are reachable; the next
     // list_providers/check_cli_status should probe fresh.
     invalidateCliStatusSnapshot();
-    if (previousSettings.agentEnvironment !== settings.agentEnvironment) {
+    if (
+      previousSettings.agentEnvironment !== settings.agentEnvironment
+      || JSON.stringify(previousSettings.providerCustomModels) !== JSON.stringify(settings.providerCustomModels)
+    ) {
       invalidateProviderSessionOptionsCache(userId);
     }
     if (shouldPruneArchivedWorktreesForSettingsUpdate(previousSettings, settings)) {

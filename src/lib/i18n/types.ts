@@ -6,6 +6,8 @@ export interface I18nMessages {
       generalDesc: string;
       appearance: string;
       appearanceDesc: string;
+      models: string;
+      modelsDesc: string;
       development: string;
       developmentDesc: string;
       git: string;
@@ -148,6 +150,19 @@ export interface I18nMessages {
       label: string;
       reasoningEffortLabel: string;
       loadingOptions: string;
+    };
+    models: {
+      title: string;
+      description: string;
+      refresh: string;
+      defaultModel: string;
+      noDefault: string;
+      availableModels: string;
+      customModels: string;
+      customModelPlaceholder: string;
+      addCustomModel: string;
+      removeCustomModel: string;
+      noCustomModels: string;
     };
     effort: {
       readOnlyTooltip: string;
