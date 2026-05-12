@@ -1,5 +1,6 @@
 import { buildToolDisplay } from '../tool-display';
 import type { SessionReplayEvent } from '../session-replay-types';
+import { buildToolAgentContextEvents } from '../agent-context-events';
 import { normalizeToolResult } from '../tool-results/normalize-tool-result';
 import {
   extractTodoSnapshot,
@@ -53,6 +54,14 @@ export function buildProtocolToolCallStart({
   const syntheticToolUseResult = synthesizeClaudeToolResult(toolKind, toolParams, {
     previousTodos,
   });
+  const agentContext = buildToolAgentContextEvents({
+    toolName,
+    toolKind,
+    toolParams,
+    toolDisplay,
+    status: 'running',
+    toolUseResult: syntheticToolUseResult,
+  });
 
   return {
     toolUseId,
@@ -72,6 +81,7 @@ export function buildProtocolToolCallStart({
       ...(toolDisplay !== undefined ? { toolDisplay } : {}),
       status: 'running',
       ...(syntheticToolUseResult !== undefined ? { toolUseResult: syntheticToolUseResult } : {}),
+      ...(agentContext.length > 0 ? { agentContext } : {}),
       toolUseId,
     },
   };
@@ -104,6 +114,16 @@ export function buildProtocolToolCallCompletion({
         isError,
         previousTodos,
       });
+  const agentContext = buildToolAgentContextEvents({
+    toolName: pendingTool.toolName,
+    toolKind: pendingTool.toolKind,
+    toolParams: pendingTool.toolParams,
+    toolDisplay: pendingTool.toolDisplay,
+    status: isError ? 'error' : 'completed',
+    output: isError ? undefined : output,
+    error: isError ? output : undefined,
+    toolUseResult,
+  });
 
   return {
     nextTodos: extractTodoSnapshot(pendingTool.toolKind, pendingTool.toolParams),
@@ -119,6 +139,7 @@ export function buildProtocolToolCallCompletion({
       output: isError ? undefined : output,
       error: isError ? output : undefined,
       ...(toolUseResult !== undefined ? { toolUseResult } : {}),
+      ...(agentContext.length > 0 ? { agentContext } : {}),
       toolUseId,
     },
   };

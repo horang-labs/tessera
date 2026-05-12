@@ -1,4 +1,5 @@
 import type { ToolCallKind } from '@/types/tool-call-kind';
+import type { AgentContextEvent } from '@/types/agent-context';
 import type { CanonicalToolResultValue } from '@/types/tool-result';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
 import type { ToolUseResult } from '@/types/cli-jsonl-schemas';
@@ -99,6 +100,7 @@ export type ReplaySourceServerMessage =
       output?: string;
       error?: string;
       toolUseResult?: ToolUseResult | CanonicalToolResultValue;
+      agentContext?: AgentContextEvent[];
       toolUseId?: string;
       timestamp: string;
     }

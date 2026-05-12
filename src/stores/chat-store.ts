@@ -1,5 +1,9 @@
 import { create } from 'zustand';
+import type { AgentPromptHistoryItem } from '@/lib/agent-context-summary';
 import type { EnhancedMessage, ConnectionStatus, ActiveInteractivePrompt } from '@/types/chat';
+import type { AgentContextEvent } from '@/types/agent-context';
+import type { ToolCallKind } from '@/types/tool-call-kind';
+import type { ToolDisplayMetadata } from '@/types/tool-display';
 
 const STREAM_FLUSH_BASE_MS = 60;
 const STREAM_FLUSH_MEDIUM_MS = 110;
@@ -127,6 +131,9 @@ export interface ChatState {
   // Active interactive prompts (floating bar/panel, separate from message stream)
   activeInteractivePrompt: Map<string, ActiveInteractivePrompt>;
 
+  // Prompt history used by the live Agent Context right panel.
+  promptHistory: Map<string, AgentPromptHistoryItem[]>;
+
   // Tracks sessions whose JSONL history has been fully loaded via loadHistory().
   // Prevents race condition where WebSocket streaming messages create entries in
   // the messages Map before JSONL history is fetched, causing viewSession() to
@@ -146,6 +153,8 @@ export interface ChatState {
   setScrollPosition: (sessionId: string, position: number | ScrollPositionSnapshot) => void;
   getScrollPosition: (sessionId: string) => ScrollPositionSnapshot | undefined;
   setActiveInteractivePrompt: (sessionId: string, prompt: ActiveInteractivePrompt | null) => void;
+  recordPromptHistoryItem: (sessionId: string, item: AgentPromptHistoryItem) => void;
+  resolvePromptHistoryItem: (sessionId: string, promptId: string) => void;
   setTurnInFlight: (sessionId: string, inFlight: boolean) => void;
   setTurnsInFlight: (sessionIds: readonly string[]) => void;
   setError: (sessionId: string, message: string) => void;
@@ -161,7 +170,18 @@ export interface ChatState {
   clearSessionMessages: (sessionId: string) => void;
   resetForReload: (sessionId: string) => void;
   setLoading: (loading: boolean) => void;
-  updateToolCall: (sessionId: string, messageId: string, update: { status: 'running' | 'completed' | 'error'; output?: string; error?: string; toolUseResult?: any; hasOutput?: boolean; toolKind?: import('@/types/tool-call-kind').ToolCallKind }) => void;
+  updateToolCall: (sessionId: string, messageId: string, update: {
+    status: 'running' | 'completed' | 'error';
+    toolName?: string;
+    toolKind?: ToolCallKind;
+    toolParams?: Record<string, any>;
+    toolDisplay?: ToolDisplayMetadata;
+    output?: string;
+    error?: string;
+    toolUseResult?: any;
+    agentContext?: AgentContextEvent[];
+    hasOutput?: boolean;
+  }) => void;
   setReadOnlyPagination: (sessionId: string, pagination: {
     projectDir: string;
     hasMore: boolean;
@@ -248,6 +268,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   errors: new Map(),
   toolOutputCache: new Map(),
   activeInteractivePrompt: new Map(),
+  promptHistory: new Map(),
   historyLoaded: new Set(),
   draftInputs: new Map(),
   scrollPositions: new Map(),
@@ -288,6 +309,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updated.set(sessionId, prompt);
       }
       return { activeInteractivePrompt: updated };
+    }),
+
+  recordPromptHistoryItem: (sessionId, item) =>
+    set((state) => {
+      const sessionItems = state.promptHistory.get(sessionId) || [];
+      const existingIndex = sessionItems.findIndex((current) => current.id === item.id);
+      const nextItems = existingIndex === -1
+        ? [...sessionItems, item]
+        : sessionItems.map((current, index) => index === existingIndex ? { ...current, ...item } : current);
+      const updated = new Map(state.promptHistory);
+      updated.set(sessionId, nextItems);
+      return { promptHistory: updated };
+    }),
+
+  resolvePromptHistoryItem: (sessionId, promptId) =>
+    set((state) => {
+      const sessionItems = state.promptHistory.get(sessionId);
+      if (!sessionItems?.some((item) => item.id === promptId && item.status === 'active')) {
+        return state;
+      }
+
+      const updated = new Map(state.promptHistory);
+      updated.set(
+        sessionId,
+        sessionItems.map((item) =>
+          item.id === promptId ? { ...item, status: 'resolved' as const } : item,
+        ),
+      );
+      return { promptHistory: updated };
     }),
 
   setTurnInFlight: (sessionId, inFlight) => {
@@ -552,10 +602,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updatedHistoryLoaded.delete(sessionId);
       const updatedPagination = new Map(state.readOnlyPagination);
       updatedPagination.delete(sessionId);
+      const updatedPromptHistory = new Map(state.promptHistory);
+      updatedPromptHistory.delete(sessionId);
       return {
         messages: updatedMessages,
         historyLoaded: updatedHistoryLoaded,
         readOnlyPagination: updatedPagination,
+        promptHistory: updatedPromptHistory,
       };
     }),
 
@@ -582,6 +635,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const clearedPrompts = new Map(state.activeInteractivePrompt);
       clearedPrompts.delete(sessionId);
+      const clearedPromptHistory = new Map(state.promptHistory);
+      clearedPromptHistory.delete(sessionId);
 
       const clearedHistoryLoaded = new Set(state.historyLoaded);
       clearedHistoryLoaded.delete(sessionId);
@@ -609,6 +664,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
         readOnlyPagination: clearedPagination,
         activeInteractivePrompt: clearedPrompts,
+        promptHistory: clearedPromptHistory,
         draftInputs: clearedDrafts,
         scrollPositions: clearedScrollPositions,
       };

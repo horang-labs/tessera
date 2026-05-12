@@ -2,9 +2,10 @@
 
 import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
-import { FileText, GitCommitHorizontal, X } from "lucide-react";
+import { Bot, FileText, GitCommitHorizontal, X } from "lucide-react";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
 import type { GitChangedFile } from "@/types/git";
+import { AgentContextPanel } from "./agent-context-panel";
 import {
   GitPanelCommitsSection,
   GitPanelContentSection,
@@ -19,7 +20,7 @@ import {
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
 import { cn } from "@/lib/utils";
 
-type GitPanelTab = "git" | "files";
+type GitPanelTab = "git" | "files" | "agent";
 
 function GitPanelTabButton({
   active,
@@ -115,6 +116,13 @@ export function GitPanel({
           >
             Files
           </GitPanelTabButton>
+          <GitPanelTabButton
+            active={activePanelTab === "agent"}
+            icon={<Bot className="h-3.5 w-3.5" />}
+            onClick={() => setActivePanelTab("agent")}
+          >
+            Agent
+          </GitPanelTabButton>
         </div>
         {onClose ? (
           <button
@@ -144,6 +152,10 @@ export function GitPanel({
       {activePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
           <WorkspaceFilePanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+        </div>
+      ) : activePanelTab === "agent" ? (
+        <div className="min-h-0 flex-1">
+          <AgentContextPanel sessionId={sessionId} />
         </div>
       ) : (
         <>

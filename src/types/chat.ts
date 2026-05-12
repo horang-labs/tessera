@@ -1,4 +1,5 @@
 import type { ToolUseResult, AskUserQuestionItem } from './cli-jsonl-schemas';
+import type { AgentContextEvent } from './agent-context';
 import type { CanonicalToolResultValue } from './tool-result';
 import type { ToolCallKind } from './tool-call-kind';
 import type { ToolDisplayMetadata } from './tool-display';
@@ -41,6 +42,7 @@ export interface ToolCallMessage extends BaseEnhancedMessage {
   output?: string;
   error?: string;
   toolUseResult?: ToolUseResult | CanonicalToolResultValue;
+  agentContext?: AgentContextEvent[];
   /** True when output/toolUseResult were stripped for lazy loading (read-only sessions) */
   hasOutput?: boolean;
 }

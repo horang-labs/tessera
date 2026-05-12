@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { buildAgentPromptHistoryItem } from '@/lib/agent-context-summary';
 import { useChatStore } from '@/stores/chat-store';
 import { useUsageStore } from '@/stores/usage-store';
 import {
@@ -245,11 +246,15 @@ function projectReplayStateTransition(
 
         if (existingToolCall) {
           chatStore.updateToolCall(sessionId, existingToolCall.id, {
+            toolName: nextTool.toolName,
             toolKind: nextTool.toolKind,
+            toolParams: nextTool.toolParams,
+            toolDisplay: nextTool.toolDisplay,
             status: nextTool.status,
             output: nextTool.output,
             error: nextTool.error,
             toolUseResult: nextTool.toolUseResult,
+            agentContext: nextTool.agentContext,
             hasOutput: nextTool.hasOutput,
           });
           return;
@@ -261,8 +266,19 @@ function projectReplayStateTransition(
     }
 
     case 'interactive_prompt':
+      chatStore.recordPromptHistoryItem(sessionId, buildAgentPromptHistoryItem(event));
+      syncPromptProjection(sessionId, nextState);
+      return;
+
     case 'interactive_prompt_response':
+      chatStore.resolvePromptHistoryItem(sessionId, `prompt-${event.toolUseId}`);
+      syncPromptProjection(sessionId, nextState);
+      return;
+
     case 'interactive_prompt_cleared':
+      if (event.toolUseId) {
+        chatStore.resolvePromptHistoryItem(sessionId, `prompt-${event.toolUseId}`);
+      }
       syncPromptProjection(sessionId, nextState);
       return;
 

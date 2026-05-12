@@ -1,5 +1,6 @@
 import type { ContentBlock, ModelUsageEntry } from './ws/message-types';
 import type { ToolCallKind } from '@/types/tool-call-kind';
+import type { AgentContextEvent } from '@/types/agent-context';
 import type { CanonicalToolResultValue } from '@/types/tool-result';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
 import type { ToolUseResult } from '@/types/cli-jsonl-schemas';
@@ -59,6 +60,7 @@ export type SessionHistoryEvent =
       output?: string;
       error?: string;
       toolUseResult?: ToolUseResult | CanonicalToolResultValue;
+      agentContext?: AgentContextEvent[];
       toolUseId?: string;
     }
   | {
