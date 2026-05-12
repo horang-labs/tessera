@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { AlertTriangle, CheckCircle, Copy, ExternalLink, EyeOff, RefreshCw, RotateCcw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Copy, Download, ExternalLink, EyeOff, RefreshCw, RotateCcw, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -35,9 +35,15 @@ export default function UpdateSettings() {
   const status = useUpdateStore((state) => state.status);
   const info = useUpdateStore((state) => state.info);
   const error = useUpdateStore((state) => state.error);
+  const desktopStatus = useUpdateStore((state) => state.desktopStatus);
+  const desktopProgress = useUpdateStore((state) => state.desktopProgress);
+  const isDesktopUpdaterAvailable = useUpdateStore((state) => state.isDesktopUpdaterAvailable);
   const dismissedVersion = useUpdateStore((state) => state.dismissedVersion);
   const isChecking = useUpdateStore((state) => state.isChecking);
+  const isDownloading = useUpdateStore((state) => state.isDownloading);
   const checkForUpdates = useUpdateStore((state) => state.checkForUpdates);
+  const downloadUpdate = useUpdateStore((state) => state.downloadUpdate);
+  const installUpdate = useUpdateStore((state) => state.installUpdate);
   const dismissVersion = useUpdateStore((state) => state.dismissVersion);
   const clearDismissedVersion = useUpdateStore((state) => state.clearDismissedVersion);
   const showToast = useNotificationStore((state) => state.showToast);
@@ -47,6 +53,9 @@ export default function UpdateSettings() {
   const isUpdateAvailable = info?.updateAvailable ?? false;
   const isDismissed = Boolean(latestVersion && dismissedVersion === latestVersion);
   const checkedAt = formatCheckedAt(info?.checkedAt, language);
+  const isDownloaded = desktopStatus === 'downloaded';
+  const canDownloadInApp = isDesktopUpdaterAvailable && isUpdateAvailable && !isDownloaded;
+  const downloadPercent = Math.max(0, Math.min(100, Math.round(desktopProgress?.percent ?? 0)));
 
   useEffect(() => {
     if (status === 'idle') {
@@ -172,7 +181,19 @@ export default function UpdateSettings() {
                 {t('updates.copyCommand')}
               </Button>
             )}
-            {info?.releaseUrl && (
+            {canDownloadInApp && (
+              <Button type="button" size="sm" onClick={() => void downloadUpdate()} disabled={isDownloading}>
+                <Download className="h-3.5 w-3.5" />
+                {isDownloading ? t('updates.downloading') : t('updates.downloadUpdate')}
+              </Button>
+            )}
+            {isDownloaded && (
+              <Button type="button" size="sm" onClick={() => void installUpdate()}>
+                <RotateCw className="h-3.5 w-3.5" />
+                {t('updates.restartInstall')}
+              </Button>
+            )}
+            {info?.releaseUrl && !isDesktopUpdaterAvailable && (
               <Button type="button" variant={info.installCommand ? 'outline' : 'default'} size="sm" onClick={handleOpenRelease}>
                 <ExternalLink className="h-3.5 w-3.5" />
                 {t('updates.openRelease')}
@@ -190,6 +211,23 @@ export default function UpdateSettings() {
               </Button>
             )}
           </div>
+
+          {isDownloading && (
+            <div className="space-y-1.5">
+              <div className="h-2 overflow-hidden rounded-full bg-(--input-bg)">
+                <div className="h-full rounded-full bg-(--accent)" style={{ width: `${downloadPercent}%` }} />
+              </div>
+              <p className="text-xs text-(--status-info-text)">
+                {t('updates.downloadProgress', { percent: downloadPercent })}
+              </p>
+            </div>
+          )}
+
+          {isDownloaded && (
+            <p className="text-xs text-(--status-info-text)">
+              {t('updates.downloadedDescription')}
+            </p>
+          )}
 
           {info?.installCommand && (
             <code className="block rounded-md border border-(--input-border) bg-(--input-bg) px-2.5 py-2 text-xs text-(--text-secondary)">

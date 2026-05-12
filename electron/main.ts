@@ -14,6 +14,7 @@ import * as net from 'net';
 import * as path from 'path';
 import * as fs from 'fs';
 import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
+import { setupDesktopUpdater } from './updater';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
@@ -272,6 +273,8 @@ let serverPort = 0;
 let isQuitting = false;
 let isQuitRequested = false;
 let isQuitCleanupStarted = false;
+let isInstallingUpdate = false;
+let updateInstallPreparation: Promise<void> | null = null;
 let closeRequestSequence = 0;
 let activeCloseRequest: Promise<void> | null = null;
 
@@ -299,6 +302,21 @@ function requestAppQuit(): void {
   }
   destroyTray();
   app.quit();
+}
+
+async function prepareForUpdateInstall(): Promise<void> {
+  if (updateInstallPreparation) return updateInstallPreparation;
+  isInstallingUpdate = true;
+  isQuitRequested = true;
+  isQuitting = true;
+  activeCloseRequest = null;
+  for (const [requestId, pending] of pendingCloseRequests) {
+    pending.resolve('cancel');
+    pendingCloseRequests.delete(requestId);
+  }
+  destroyTray();
+  updateInstallPreparation = stopServer();
+  return updateInstallPreparation;
 }
 
 function getWindowsCloseAction(win: BrowserWindow): WindowCloseAction {
@@ -838,6 +856,7 @@ app.whenReady().then(async () => {
       closeBehavior: windowsCloseBehavior,
       onCloseBehaviorChange: handleTrayCloseBehaviorChange,
     });
+    setupDesktopUpdater(mainWindow, log, prepareForUpdateInstall);
   } catch (err) {
     dialog.showErrorBox('Tessera', `Failed to start server: ${err}`);
     requestAppQuit();
@@ -865,6 +884,7 @@ app.on('before-quit', () => {
 });
 
 app.on('will-quit', async (event) => {
+  if (isInstallingUpdate) return;
   if (isQuitCleanupStarted) return;
 
   isQuitCleanupStarted = true;
