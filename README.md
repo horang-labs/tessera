@@ -92,6 +92,20 @@ Choose the runtime that fits your setup:
 
 macOS release DMGs are Developer ID signed and notarized. Windows portable `.exe` builds are not code-signed yet, so Windows SmartScreen may show an unknown-publisher warning. See [Desktop Releases](#desktop-releases).
 
+### Release Downloads
+
+GitHub Release installer downloads only, excluding npm installs, as of May 12, 2026 KST:
+
+| Version | Downloads |
+|---------|----------:|
+| 0.1.0 | 14 |
+| 0.1.1 | 27 |
+| 0.1.2 | 16 |
+| 0.1.3 | 50 |
+| 0.1.4 | 59 |
+| 0.1.5 | 10 |
+| **Total** | **176** |
+
 For the browser runtime:
 
 ```bash
