@@ -1,4 +1,10 @@
-import type { CliConnectionStatus } from './providers/provider-contract';
+import type {
+  CliCommandShape,
+  CliCommandSource,
+  CliConnectionStatus,
+  CliDetectionReason,
+  CliProbeSummary,
+} from './providers/provider-contract';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
 export type CliDiagnosticStepStatus = 'passed' | 'failed' | 'skipped' | 'timeout';
@@ -16,6 +22,11 @@ export interface CliDiagnosticProviderResult {
   environment: AgentEnvironment;
   connectionStatus: CliConnectionStatus;
   version?: string;
+  detectionReason?: CliDetectionReason;
+  commandSource?: CliCommandSource;
+  commandShape?: CliCommandShape;
+  versionProbe?: CliProbeSummary;
+  authProbe?: CliProbeSummary;
   outcome: CliDiagnosticOutcome;
   steps: {
     statusCheck: CliDiagnosticStep;
@@ -26,7 +37,14 @@ export interface CliDiagnosticProviderResult {
   };
   durationMs: number;
   assistantPreview?: string;
+  spawnErrorMessage?: string;
+  smokeTraceJsonl?: string;
+  smokeTraceEventCount?: number;
   rawLogPath?: string;
+  rawLogJsonl?: string;
+  rawLogBytes?: number;
+  rawLogEventCount?: number;
+  rawLogTruncated?: boolean;
 }
 
 export interface CliDiagnosticReport {
@@ -35,7 +53,7 @@ export interface CliDiagnosticReport {
   generatedAt: string;
   environment: AgentEnvironment;
   prompt: string;
-  rawLogDir: string;
+  rawLogDir?: string;
   summary: {
     passed: number;
     failed: number;

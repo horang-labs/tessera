@@ -13,6 +13,37 @@ import type { SkillSource } from './skill-types';
  */
 export type CliConnectionStatus = 'connected' | 'needs_login' | 'not_installed';
 
+export type CliDetectionReason =
+  | 'connected'
+  | 'auth_failed'
+  | 'auth_timeout'
+  | 'binary_missing'
+  | 'permission_denied'
+  | 'version_timeout'
+  | 'version_nonzero'
+  | 'override_failed'
+  | 'wrong_environment'
+  | 'unknown';
+
+export type CliProbeFailureKind = 'ok' | 'spawn_error' | 'timeout' | 'nonzero_exit' | 'unknown';
+
+export type CliCommandSource = 'default' | 'override';
+export type CliCommandShape = 'bare_command' | 'absolute_path' | 'relative_path' | 'other';
+
+export interface CliProbeSummary {
+  ok: boolean;
+  failureKind: CliProbeFailureKind;
+  exitCode: number | null;
+  timedOut: boolean;
+  durationMs: number;
+  spawnErrorCode?: string;
+}
+
+export interface CliCommandTelemetry {
+  commandSource: CliCommandSource;
+  commandShape: CliCommandShape;
+}
+
 /**
  * Result of a single connection check for one CLI × environment.
  */
@@ -20,6 +51,11 @@ export interface CliStatusResult {
   status: CliConnectionStatus;
   /** CLI version string when available (omitted when not_installed). */
   version?: string;
+  detectionReason?: CliDetectionReason;
+  commandSource?: CliCommandSource;
+  commandShape?: CliCommandShape;
+  versionProbe?: CliProbeSummary;
+  authProbe?: CliProbeSummary;
 }
 
 /**

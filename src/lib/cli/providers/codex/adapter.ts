@@ -46,7 +46,15 @@ import { buildCodexSandboxPolicy, getCodexPermissionMapping } from './session-co
 import { isBinaryAvailable } from '../registry';
 import { getAgentEnvironment, normalizeCwdForCliEnvironment, spawnCli } from '../../spawn-cli';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
-import { resolveProviderCliCommand } from '../../provider-command';
+import {
+  resolveProviderCliCommand,
+  resolveProviderCliCommandWithMetadata,
+} from '../../provider-command';
+import {
+  classifyAuthFailure,
+  classifyVersionFailure,
+  summarizeExecProbe,
+} from '../../status-detection';
 import { updateProviderStateWithRetry } from '../../process-manager-side-effects';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
@@ -258,12 +266,13 @@ export class CodexAdapter implements CliProvider {
    * by serial CLI startup costs on Windows.
    */
   async checkStatus(options: CheckStatusOptions): Promise<CliStatusResult> {
-    const command = await resolveProviderCliCommand(
+    const commandMetadata = await resolveProviderCliCommandWithMetadata(
       PROVIDER_ID,
       DEFAULT_COMMAND,
       options.environment,
       options.userId,
     );
+    const command = commandMetadata.command;
     const [versionResult, loginResult] = await Promise.all([
       execCli(
         command,
@@ -278,16 +287,31 @@ export class CodexAdapter implements CliProvider {
         STATUS_CHECK_TIMEOUT_MS,
       ),
     ]);
+    const versionProbe = summarizeExecProbe(versionResult);
+    const authProbe = summarizeExecProbe(loginResult);
+    const baseTelemetry = {
+      commandSource: commandMetadata.commandSource,
+      commandShape: commandMetadata.commandShape,
+      versionProbe,
+      authProbe,
+    };
 
     if (!versionResult.ok) {
-      return { status: 'not_installed' };
+      return {
+        status: 'not_installed',
+        detectionReason: classifyVersionFailure(versionResult, commandMetadata.commandSource),
+        ...baseTelemetry,
+      };
     }
 
     const version = parseVersion(versionResult.stdout);
+    const connected = loginResult.ok;
 
     return {
-      status: loginResult.ok ? 'connected' : 'needs_login',
+      status: connected ? 'connected' : 'needs_login',
+      detectionReason: connected ? 'connected' : classifyAuthFailure(loginResult),
       ...(version ? { version } : {}),
+      ...baseTelemetry,
     };
   }
 

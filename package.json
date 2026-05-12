@@ -53,6 +53,7 @@
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx server.ts",
     "build": "cross-env TURBOPACK= __NEXT_DEV_SERVER= __NEXT_PROCESSED_ENV= NODE_ENV=production next build --webpack",
+    "build:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run build",
     "start": "cross-env NODE_ENV=production tsx server.ts",
     "lint": "eslint .",
     "server:compile": "node -e \"require('fs').rmSync('dist-server',{recursive:true,force:true})\" && tsc -p tsconfig.server.json",
@@ -60,7 +61,9 @@
     "electron:prepare-runtime": "node scripts/prepare-electron-runtime.mjs",
     "electron:dev": "npm run electron:compile && concurrently -k -n SERVER,ELECTRON -c cyan,yellow \"cross-env NODE_ENV=development PORT=3100 TESSERA_ELECTRON_AUTH_BYPASS=1 npx tsx server.ts\" \"wait-on http://localhost:3100 && cross-env TESSERA_DEV_PORT=3100 electron dist-electron/electron/main.js\"",
     "electron:prebuild": "npm run build && npm run electron:compile && npm run electron:prepare-runtime",
+    "electron:prebuild:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run electron:prebuild",
     "electron:build:win": "npm run electron:prebuild && electron-builder --win portable --x64 --publish never",
+    "electron:build:win:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run electron:build:win",
     "electron:build:linux": "npm run electron:prebuild && electron-builder --linux AppImage deb --x64 --publish never",
     "electron:build:mac-x64": "npm run electron:prebuild && electron-builder --mac --x64 --publish never",
     "electron:build:mac-arm64": "npm run electron:prebuild && electron-builder --mac --arm64 --publish never",

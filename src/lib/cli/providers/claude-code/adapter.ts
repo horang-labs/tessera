@@ -27,7 +27,15 @@ import { claudeCodeProtocolParser } from './protocol-parser';
 import { isBinaryAvailable } from '../registry';
 import { getAgentEnvironment, spawnCli } from '../../spawn-cli';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
-import { resolveProviderCliCommand } from '../../provider-command';
+import {
+  resolveProviderCliCommand,
+  resolveProviderCliCommandWithMetadata,
+} from '../../provider-command';
+import {
+  classifyAuthFailure,
+  classifyVersionFailure,
+  summarizeExecProbe,
+} from '../../status-detection';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 
@@ -97,12 +105,13 @@ export class ClaudeCodeAdapter implements CliProvider {
    * does not make provider pickers wait for both commands serially.
    */
   async checkStatus(options: CheckStatusOptions): Promise<CliStatusResult> {
-    const command = await resolveProviderCliCommand(
+    const commandMetadata = await resolveProviderCliCommandWithMetadata(
       PROVIDER_ID,
       DEFAULT_COMMAND,
       options.environment,
       options.userId,
     );
+    const command = commandMetadata.command;
     const [versionResult, authResult] = await Promise.all([
       execCli(
         command,
@@ -117,16 +126,31 @@ export class ClaudeCodeAdapter implements CliProvider {
         STATUS_CHECK_TIMEOUT_MS,
       ),
     ]);
+    const versionProbe = summarizeExecProbe(versionResult);
+    const authProbe = summarizeExecProbe(authResult);
+    const baseTelemetry = {
+      commandSource: commandMetadata.commandSource,
+      commandShape: commandMetadata.commandShape,
+      versionProbe,
+      authProbe,
+    };
 
     if (!versionResult.ok) {
-      return { status: 'not_installed' };
+      return {
+        status: 'not_installed',
+        detectionReason: classifyVersionFailure(versionResult, commandMetadata.commandSource),
+        ...baseTelemetry,
+      };
     }
 
     const version = parseVersion(versionResult.stdout);
+    const connected = authResult.ok;
 
     return {
-      status: authResult.ok ? 'connected' : 'needs_login',
+      status: connected ? 'connected' : 'needs_login',
+      detectionReason: connected ? 'connected' : classifyAuthFailure(authResult),
       ...(version ? { version } : {}),
+      ...baseTelemetry,
     };
   }
 
