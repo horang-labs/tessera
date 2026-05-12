@@ -46,6 +46,8 @@ function shouldSkip(relativePath) {
     relativePath === 'node_modules/sharp' ||
     relativePath.startsWith('node_modules/@img/') ||
     relativePath === 'node_modules/@img' ||
+    (relativePath.startsWith('node_modules/node-pty/prebuilds/') &&
+      relativePath.endsWith('.pdb')) ||
     relativePath.startsWith('artifacts/') ||
     relativePath === 'artifacts' ||
     relativePath.startsWith('docs/') ||
@@ -261,6 +263,20 @@ async function writeRuntimePackageJson() {
   );
 }
 
+async function ensureExecutableRuntimeFiles() {
+  const executableFiles = [
+    'node_modules/node-pty/prebuilds/darwin-x64/spawn-helper',
+    'node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper',
+  ];
+
+  for (const relPath of executableFiles) {
+    const filePath = path.join(runtimeDir, relPath);
+    if (await pathExists(filePath)) {
+      await fs.chmod(filePath, 0o755);
+    }
+  }
+}
+
 async function main() {
   if (!(await pathExists(requiredServerFilesPath))) {
     throw new Error('Missing .next/required-server-files.json. Run `npm run build` first.');
@@ -281,6 +297,10 @@ async function main() {
   await addDirectory('node_modules/next', files);
   await addDirectory('node_modules/@next/env', files);
   await addDirectory('node_modules/sql.js', files);
+  await addDirectory('node_modules/node-pty/lib/worker', files);
+  await addDirectory('node_modules/node-pty/prebuilds', files);
+  await addDirectory('node_modules/node-pty/build/Release', files);
+  await addDirectory('node_modules/node-pty/build/Debug', files);
   await addNextTraceFiles(files);
   await addTracedEntrypointFiles(files);
 
@@ -289,6 +309,8 @@ async function main() {
     await copyFileToRuntime(relPath);
   }
   await copyTurbopackExternalAliases();
+
+  await ensureExecutableRuntimeFiles();
 
   await writeRuntimePackageJson();
 

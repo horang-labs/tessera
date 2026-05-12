@@ -648,6 +648,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
         provider: data.provider,
         model: data.model,
         reasoningEffort: data.reasoningEffort,
+        serviceTier: data.serviceTier,
       };
 
       useSessionStore.getState().addSession(newSession);

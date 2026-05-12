@@ -52,6 +52,8 @@ export interface I18nMessages {
       xlarge: string;
     };
     inactivePanelDimming: string;
+    showProviderIcons: string;
+    showProviderIconsDesc: string;
     enterKey: {
       label: string;
       send: string;
@@ -389,6 +391,16 @@ export interface I18nMessages {
     closeTabsToLeft: string;
     closeTabsToRight: string;
     closeAllTabs: string;
+    search: {
+      open: string;
+      close: string;
+      placeholder: string;
+      previous: string;
+      next: string;
+      noMatches: string;
+      count: string;
+      loadedOnlyHint: string;
+    };
     connectionStatus: {
       connected: string;
       reconnecting: string;
@@ -488,6 +500,7 @@ export interface I18nMessages {
     toggleView: string;
     splitRight: string;
     splitDown: string;
+    toggleTerminal: string;
     focusPanelLeft: string;
     focusPanelRight: string;
     focusPanelUp: string;
@@ -831,6 +844,13 @@ export interface I18nMessages {
       chatInstantHint: string;
       taskWorktreeHint: string;
       taskWorktreeDescription: string;
+      baseRefLabel: string;
+      baseRefLoading: string;
+      baseRefUnavailable: string;
+      baseRefCurrentSuffix: string;
+      baseRefCurrentHead: string;
+      baseRefLocalGroup: string;
+      baseRefRemoteGroup: string;
     };
     contextMenu: {
       setStatus: string;

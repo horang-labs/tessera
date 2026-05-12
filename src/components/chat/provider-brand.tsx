@@ -1,6 +1,6 @@
 'use client';
 
-import type { CSSProperties, ReactElement, SVGProps } from 'react';
+import type { CSSProperties, HTMLAttributes, ReactElement, SVGProps } from 'react';
 import { Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -166,17 +166,19 @@ export function ProviderLogoMark({
   className,
   iconClassName,
   style,
+  ...spanProps
 }: {
   providerId?: string;
   className?: string;
   iconClassName?: string;
   style?: CSSProperties;
-}) {
+} & HTMLAttributes<HTMLSpanElement>) {
   const brand = getProviderBrand(providerId);
   const isCodex = brand.id === 'codex';
 
   return (
     <span
+      {...spanProps}
       className={cn(
         'inline-flex shrink-0 items-center justify-center rounded-md',
         isCodex && 'bg-[#111111] text-white dark:bg-white dark:text-[#111111]',

@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useCallback, useContext, useEffect, useMemo, useRef, type DragEvent, type MouseEvent } from 'react';
-import { X as XIcon, KeyboardIcon, FolderGit2, ListTodo, MessageSquare, AlertCircle, GripVertical, Plus } from 'lucide-react';
+import { X as XIcon, KeyboardIcon, FolderGit2, ListTodo, MessageSquare, AlertCircle, GripVertical, Plus, Terminal } from 'lucide-react';
 import { usePanelStore, TabIdContext, EMPTY_PANELS } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
+import { useWorktreeBaseRefs } from '@/hooks/use-worktree-base-refs';
 import { useWorktreeSession } from '@/hooks/use-worktree-session';
+import { WorktreeStartFromControl } from '@/components/task/worktree-start-from-control';
 import { useI18n } from '@/lib/i18n';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
@@ -26,6 +28,7 @@ import { useProvidersStore } from '@/stores/providers-store';
 import { useFolderBrowserStore } from '@/stores/folder-browser-store';
 import type { Collection } from '@/types/collection';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
+import { v4 as uuidv4 } from 'uuid';
 
 interface EmptyPanelStateProps {
   panelId: string;
@@ -38,6 +41,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const tabId = useContext(TabIdContext);
   const setActivePanelId = usePanelStore((state) => state.setActivePanelId);
   const closePanel = usePanelStore((state) => state.closePanel);
+  const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const isActivePanel = usePanelStore((state) => state.tabPanels[tabId]?.activePanelId === panelId);
   const panelCount = usePanelStore((state) => Object.keys(state.tabPanels[tabId]?.panels ?? EMPTY_PANELS).length);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
@@ -92,6 +96,15 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     rawSelectedCollectionId !== null && collections.some((c) => c.id === rawSelectedCollectionId)
       ? rawSelectedCollectionId
       : null;
+  const {
+    refs: baseRefs,
+    selectedBaseRef,
+    selectedBaseRefForCreate,
+    selectedRef,
+    setSelectedBaseRef,
+    isLoading: isLoadingBaseRefs,
+    error: baseRefError,
+  } = useWorktreeBaseRefs(mode === 'task' ? activeProject?.decodedPath : null);
 
   const handleSetModeTask = useCallback((_e: MouseEvent) => {
     setMode('task');
@@ -152,6 +165,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
         branchSlug: normalizedBranchSlug,
+        baseRef: selectedBaseRefForCreate,
         allowBranchSlugSuffix: !branchSlugEdited,
         suppressErrorToast: true,
         collectionId: selectedCollectionId ?? undefined,
@@ -177,6 +191,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     mode,
     panelId,
     selectedCollectionId,
+    selectedBaseRefForCreate,
     selectedProvider,
     setActivePanelId,
     t,
@@ -184,6 +199,12 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     branchSlugEdited,
     taskTitle,
   ]);
+
+  const handleOpenTerminal = useCallback(() => {
+    setError(null);
+    setActivePanelId(panelId);
+    assignTerminal(panelId, uuidv4());
+  }, [assignTerminal, panelId, setActivePanelId]);
 
   useEffect(() => {
     if (!isActivePanel) return;
@@ -307,7 +328,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               {t('task.creation.startAsLabel')}
             </span>
 
-            <div className="mt-3 grid max-w-md grid-cols-2 gap-2">
+            <div className="mt-3 grid max-w-md grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setMode('chat')}
@@ -345,6 +366,21 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 </span>
                 <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
                   {t('task.creation.taskWorktreeHint')}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenTerminal}
+                className="rounded-2xl border border-(--divider) bg-transparent px-4 py-3 text-left transition-colors hover:border-(--accent)/16 hover:bg-[color-mix(in_srgb,var(--accent)_4%,transparent)]"
+                data-testid="empty-panel-mode-terminal"
+              >
+                <Terminal className="h-4 w-4 text-(--accent-hover)" />
+                <span className="mt-2 block text-sm font-semibold text-(--text-primary)">
+                  Terminal
+                </span>
+                <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
+                  Open a shell here.
                 </span>
               </button>
             </div>
@@ -423,6 +459,20 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                         </p>
                       ) : null}
                     </div>
+                  )}
+
+                  {activeProject && (
+                    <WorktreeStartFromControl
+                      id={`empty-panel-base-ref-${panelId}`}
+                      testId="empty-panel-base-ref"
+                      refs={baseRefs}
+                      selectedBaseRef={selectedBaseRef}
+                      selectedRef={selectedRef}
+                      isLoading={isLoadingBaseRefs}
+                      error={baseRefError}
+                      disabled={isSubmitting}
+                      onSelectedBaseRefChange={setSelectedBaseRef}
+                    />
                   )}
                 </>
               )}

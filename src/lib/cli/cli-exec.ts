@@ -10,6 +10,9 @@ export interface ExecResult {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  timedOut: boolean;
+  durationMs: number;
+  spawnErrorCode?: string;
 }
 
 export type CliEnvironment = 'native' | 'wsl';
@@ -62,6 +65,7 @@ export async function execCli(
   timeoutMs: number,
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
+    const startedAt = Date.now();
     const proc = spawnCliProcess(command, args, {
       windowsHide: true,
       env: process.env,
@@ -80,11 +84,19 @@ export async function execCli(
       try { proc.kill('SIGTERM'); } catch { /* ignore */ }
     }, timeoutMs);
 
-    const finish = (exitCode: number | null, ok: boolean) => {
+    const finish = (exitCode: number | null, ok: boolean, spawnErrorCode?: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ ok, exitCode, stdout, stderr });
+      resolve({
+        ok,
+        exitCode,
+        stdout,
+        stderr,
+        timedOut,
+        durationMs: Date.now() - startedAt,
+        ...(spawnErrorCode ? { spawnErrorCode } : {}),
+      });
     };
 
     proc.stdout?.on('data', (chunk: Buffer | string) => {
@@ -94,9 +106,9 @@ export async function execCli(
       stderr += chunk.toString();
     });
 
-    proc.on('error', (err) => {
+    proc.on('error', (err: NodeJS.ErrnoException) => {
       stderr += `\n[execCli] spawn error: ${err.message}`;
-      finish(null, false);
+      finish(null, false, err.code);
     });
 
     proc.on('close', (code) => {

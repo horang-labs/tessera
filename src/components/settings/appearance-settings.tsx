@@ -15,6 +15,7 @@ export default function AppearanceSettings() {
   const theme = useSettingsStore((state) => state.settings.theme);
   const fontSize = useSettingsStore((state) => state.settings.fontSize);
   const inactivePanelDimming = useSettingsStore((state) => state.settings.inactivePanelDimming);
+  const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
 
   // Theme and font scale are applied globally by ThemeInitializer.
@@ -78,6 +79,23 @@ export default function AppearanceSettings() {
           className="w-full accent-(--accent)"
         />
       </div>
+
+      <label className="flex items-start gap-3 rounded-md border border-(--divider) bg-(--sidebar-bg) px-3 py-2.5">
+        <input
+          type="checkbox"
+          checked={showProviderIcons}
+          onChange={(e) => updateSettings({ showProviderIcons: e.target.checked })}
+          className="mt-0.5 h-4 w-4 accent-(--accent)"
+        />
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-(--text-secondary)">
+            {t('settings.showProviderIcons')}
+          </span>
+          <span className="mt-0.5 block text-xs leading-5 text-(--text-muted)">
+            {t('settings.showProviderIconsDesc')}
+          </span>
+        </span>
+      </label>
     </div>
   );
 }

@@ -171,7 +171,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
     const sourceTabData = droppedTabTreeId ? freshPs.tabPanels[droppedTabTreeId] : undefined;
     if (droppedTabTreeId === freshPs.activeTabId) return;
-    if (droppedTabTreeId && sourceTabData && Object.keys(sourceTabData.panels).length > 1) {
+    if (droppedTabTreeId && sourceTabData) {
       const isEdgeSplit = currentEdge !== 'center';
       if (isEdgeSplit) {
         const rect = wrapperRef.current?.getBoundingClientRect();
@@ -283,42 +283,14 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       const panelStore = usePanelStore.getState();
       const sourcePanelId = panelNodeDrag.panelId;
       const sourceTabData = panelStore.tabPanels[currentTabId];
-      const sourcePanel = sourceTabData?.panels[sourcePanelId];
-      if (!sourceTabData || !sourcePanel) return;
+      if (!sourceTabData?.panels[sourcePanelId]) return;
 
-      const sourceSessionId = sourcePanel.sessionId;
-      if (currentEdge === 'center') {
-        panelStore.assignSession(sourcePanelId, currentSessionId);
-        panelStore.assignSession(panelId, sourceSessionId);
-        usePanelStore.getState().setActivePanelId(panelId);
+      const movedPanelId = panelStore.movePanelNode(sourcePanelId, panelId, currentEdge);
+      if (movedPanelId) {
         useTabStore.getState().pinTab(currentTabId);
-
-        if (sourceSessionId) {
-          const session = useSessionStore.getState().getSession(sourceSessionId);
-          if (session) {
-            viewSession(session, { forceReload: true });
-          }
-        }
-        return;
-      }
-
-      if (Object.keys(sourceTabData.panels).length > 1) {
-        panelStore.closePanel(sourcePanelId);
-      } else {
-        panelStore.assignSession(sourcePanelId, null);
-      }
-
-      const direction: 'horizontal' | 'vertical' =
-        currentEdge === 'left' || currentEdge === 'right' ? 'horizontal' : 'vertical';
-      const position: 'before' | 'after' =
-        currentEdge === 'left' || currentEdge === 'top' ? 'before' : 'after';
-      const newPanelId = usePanelStore.getState().splitPanel(panelId, direction, sourceSessionId, position);
-      if (newPanelId) {
-        useTabStore.getState().pinTab(currentTabId);
-      }
-
-      if (sourceSessionId) {
-        const session = useSessionStore.getState().getSession(sourceSessionId);
+        const nextTabData = usePanelStore.getState().tabPanels[currentTabId];
+        const movedSessionId = nextTabData?.panels[movedPanelId]?.sessionId ?? null;
+        const session = movedSessionId ? useSessionStore.getState().getSession(movedSessionId) : null;
         if (session) {
           viewSession(session, { forceReload: true });
         }

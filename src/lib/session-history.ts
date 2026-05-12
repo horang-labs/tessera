@@ -201,6 +201,7 @@ class SessionHistoryStore {
           output: message.output,
           error: message.error,
           toolUseResult: message.toolUseResult,
+          agentContext: message.agentContext,
           toolUseId: message.toolUseId,
         });
         return;

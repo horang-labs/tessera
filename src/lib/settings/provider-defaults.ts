@@ -226,6 +226,7 @@ export function applyProviderSessionRuntimeOverrides(
   overrides: {
     model?: string;
     reasoningEffort?: string | null;
+    serviceTier?: string | null;
     sessionMode?: ProviderSessionMode;
     accessMode?: ProviderSessionAccessMode;
   } | null | undefined,
@@ -250,6 +251,7 @@ export function applyProviderSessionRuntimeOverrides(
     ...config,
     ...(overrides?.model !== undefined && { model: overrides.model }),
     ...(overrides?.reasoningEffort !== undefined && { reasoningEffort: overrides.reasoningEffort }),
+    ...(overrides?.serviceTier !== undefined && { serviceTier: overrides.serviceTier }),
     ...controlPatch,
   };
 }
@@ -497,6 +499,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       },
     },
     inactivePanelDimming: 30,
+    showProviderIcons: true,
     sttEngine: 'webSpeech',
     geminiApiKey: '',
     favoriteSkills: [],
@@ -581,6 +584,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     ...raw,
     defaultModel: normalizedClaudeModel,
     fontSize: normalizeFontScale(raw?.fontSize),
+    showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
     managedWorktreePathTemplate: normalizeManagedWorktreePathTemplate(raw?.managedWorktreePathTemplate),

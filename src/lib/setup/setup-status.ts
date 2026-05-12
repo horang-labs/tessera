@@ -2,6 +2,12 @@ import '@/lib/cli/providers/bootstrap';
 import { checkAllCliStatuses, type CliStatusEntry } from '@/lib/cli/connection-checker';
 import { execCli, isRunningInWsl, type CliEnvironment, type ExecResult } from '@/lib/cli/cli-exec';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
+import type {
+  CliCommandShape,
+  CliCommandSource,
+  CliDetectionReason,
+  CliProbeSummary,
+} from '@/lib/cli/providers/provider-contract';
 import type { AgentEnvironment, UserSettings } from '@/lib/settings/types';
 
 export type SetupToolStatus = 'ready' | 'missing' | 'needs_login' | 'needs_config';
@@ -19,6 +25,11 @@ export interface SetupProviderState {
   displayName: string;
   status: 'connected' | 'needs_login' | 'not_installed';
   version?: string;
+  detectionReason?: CliDetectionReason;
+  commandSource?: CliCommandSource;
+  commandShape?: CliCommandShape;
+  versionProbe?: CliProbeSummary;
+  authProbe?: CliProbeSummary;
 }
 
 export interface SetupToolState {
@@ -158,6 +169,11 @@ function buildProviderStates(
         ?? entry.providerId,
       status: entry.status,
       ...(entry.version ? { version: entry.version } : {}),
+      ...(entry.detectionReason ? { detectionReason: entry.detectionReason } : {}),
+      ...(entry.commandSource ? { commandSource: entry.commandSource } : {}),
+      ...(entry.commandShape ? { commandShape: entry.commandShape } : {}),
+      ...(entry.versionProbe ? { versionProbe: entry.versionProbe } : {}),
+      ...(entry.authProbe ? { authProbe: entry.authProbe } : {}),
     }));
 }
 

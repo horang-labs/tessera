@@ -2,6 +2,8 @@
 export interface Panel {
   readonly id: string;
   sessionId: string | null;
+  terminalId?: string | null;
+  terminalSessionId?: string | null;
 }
 
 // 레이아웃 트리 노드 유니온
@@ -45,10 +47,13 @@ export interface PanelStoreState {
 export interface PanelStoreActions {
   // 기존 액션 (시그니처 동일)
   splitPanel(panelId: string, direction: 'horizontal' | 'vertical', newSessionId?: string | null, position?: 'before' | 'after'): string | null;
+  createTerminalPanel(panelId: string, terminalId: string, direction?: 'horizontal' | 'vertical'): string | null;
+  movePanelNode(sourcePanelId: string, targetPanelId: string, edge: PanelDropEdge): string | null;
   graftTabIntoActiveTab(sourceTabId: string, targetPanelId: string, edge: PanelDropEdge): string | null;
   closePanel(panelId: string): void;
   assignSession(panelId: string, sessionId: string | null): void;
   assignSessionInTab(tabId: string, panelId: string, sessionId: string | null): void;
+  assignTerminal(panelId: string, terminalId: string | null, terminalSessionId?: string | null): void;
   setActivePanelId(panelId: string): void;
   resizeSplit(leftAnchor: string, rightAnchor: string, ratio: number): void;
   initializeWithSession(sessionId: string | null): void;

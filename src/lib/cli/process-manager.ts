@@ -62,6 +62,7 @@ export class ProcessManager {
       lastActivityAt: now,
       model: spawnOptions.model,
       reasoningEffort: spawnOptions.reasoningEffort,
+      serviceTier: spawnOptions.serviceTier,
     };
   }
 
@@ -161,6 +162,9 @@ export class ProcessManager {
       }
       if (patch.reasoningEffort !== undefined) {
         info.reasoningEffort = patch.reasoningEffort;
+      }
+      if (patch.serviceTier !== undefined) {
+        info.serviceTier = patch.serviceTier;
       }
       logger.info(
         { sessionId, provider: info.provider.getDisplayName(), ...logFields },
@@ -406,6 +410,15 @@ export class ProcessManager {
   }
 
   /**
+   * Update provider-side service tier override for future turns.
+   */
+  sendSetServiceTier(sessionId: string, serviceTier: string | null): boolean {
+    return this.tryUpdateProviderSessionConfig(
+      sessionId, { serviceTier }, 'service tier', { serviceTier },
+    );
+  }
+
+  /**
    * Send control_response success payload to CLI.
    */
   sendControlResponseSuccess(
@@ -522,12 +535,13 @@ export class ProcessManager {
     return ids;
   }
 
-  getSessionRuntimeConfigs(): Map<string, Pick<ProcessInfo, 'model' | 'reasoningEffort'>> {
-    const configs = new Map<string, Pick<ProcessInfo, 'model' | 'reasoningEffort'>>();
+  getSessionRuntimeConfigs(): Map<string, Pick<ProcessInfo, 'model' | 'reasoningEffort' | 'serviceTier'>> {
+    const configs = new Map<string, Pick<ProcessInfo, 'model' | 'reasoningEffort' | 'serviceTier'>>();
     for (const [sessionId, info] of this.processes.entries()) {
       configs.set(sessionId, {
         model: info.model,
         reasoningEffort: info.reasoningEffort,
+        serviceTier: info.serviceTier,
       });
     }
     return configs;

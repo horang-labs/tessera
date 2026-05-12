@@ -157,6 +157,7 @@ export class WebSocketClient {
       ...(payload.collaborationMode && { collaborationMode: payload.collaborationMode }),
       ...(payload.approvalPolicy && { approvalPolicy: payload.approvalPolicy }),
       ...(payload.sandboxMode && { sandboxMode: payload.sandboxMode }),
+      ...(payload.serviceTier !== undefined && { serviceTier: payload.serviceTier }),
     });
   }
 
@@ -173,6 +174,7 @@ export class WebSocketClient {
       ...(controls?.collaborationMode && { collaborationMode: controls.collaborationMode }),
       ...(controls?.approvalPolicy && { approvalPolicy: controls.approvalPolicy }),
       ...(controls?.sandboxMode && { sandboxMode: controls.sandboxMode }),
+      ...(controls?.serviceTier !== undefined && { serviceTier: controls.serviceTier }),
     });
   }
 
@@ -230,6 +232,7 @@ export class WebSocketClient {
       ...(controls?.collaborationMode && { collaborationMode: controls.collaborationMode }),
       ...(controls?.approvalPolicy && { approvalPolicy: controls.approvalPolicy }),
       ...(controls?.sandboxMode && { sandboxMode: controls.sandboxMode }),
+      ...(controls?.serviceTier !== undefined && { serviceTier: controls.serviceTier }),
     });
   }
 
@@ -239,6 +242,10 @@ export class WebSocketClient {
 
   setReasoningEffort(sessionId: string, reasoningEffort: string | null) {
     this.sendRequest('set_reasoning_effort', { sessionId, reasoningEffort });
+  }
+
+  setServiceTier(sessionId: string, serviceTier: string | null) {
+    this.sendRequest('set_service_tier', { sessionId, serviceTier });
   }
 
   getCommands(sessionId: string) {
@@ -279,6 +286,29 @@ export class WebSocketClient {
     } else {
       callback(null);
     }
+  }
+
+  createTerminal(args: {
+    terminalId: string;
+    cwd?: string | null;
+    sessionId?: string | null;
+    shellKind?: 'default' | 'cmd' | 'powershell' | 'wsl';
+    cols?: number;
+    rows?: number;
+  }): boolean {
+    return this.sendRequest('terminal_create', args);
+  }
+
+  sendTerminalInput(terminalId: string, data: string) {
+    this.sendRequest('terminal_input', { terminalId, data });
+  }
+
+  resizeTerminal(terminalId: string, cols: number, rows: number) {
+    this.sendRequest('terminal_resize', { terminalId, cols, rows });
+  }
+
+  closeTerminal(terminalId: string) {
+    this.sendRequest('terminal_close', { terminalId });
   }
 
   private sendRequest<T extends ClientMessage['type']>(

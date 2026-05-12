@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useContext } from 'react';
-import { Pencil, Check, Hash, X as XIcon, MoreHorizontal, GitBranch } from 'lucide-react';
+import { Pencil, Check, Hash, X as XIcon, MoreHorizontal, GitBranch, Search } from 'lucide-react';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
@@ -15,14 +15,27 @@ import { wsClient } from '@/lib/ws/client';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 import { ProviderBadge } from './provider-brand';
 import { setPanelTitleDragData } from '@/lib/dnd/panel-session-drag';
+import { MessageSearchBar } from './message-search-bar';
 
 interface HeaderProps {
   sessionId: string;
   panelId: string;
   isSinglePanel?: boolean;
+  search?: {
+    isOpen: boolean;
+    query: string;
+    matchCount: number;
+    activeMatchIndex: number;
+    hasMore: boolean;
+    onOpen: () => void;
+    onClose: () => void;
+    onQueryChange: (query: string) => void;
+    onNext: () => void;
+    onPrevious: () => void;
+  };
 }
 
-export function Header({ sessionId, panelId, isSinglePanel = false }: HeaderProps) {
+export function Header({ sessionId, panelId, isSinglePanel = false, search }: HeaderProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
   const session = useSessionStore((state) =>
@@ -310,6 +323,35 @@ export function Header({ sessionId, panelId, isSinglePanel = false }: HeaderProp
 
         {/* Right: actions */}
         <div className="flex shrink-0 items-center gap-2">
+          {search?.isOpen ? (
+            <MessageSearchBar
+              query={search.query}
+              matchCount={search.matchCount}
+              activeMatchIndex={search.activeMatchIndex}
+              hasMore={search.hasMore}
+              onQueryChange={search.onQueryChange}
+              onNext={search.onNext}
+              onPrevious={search.onPrevious}
+              onClose={search.onClose}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={search?.onOpen}
+              title={t('chat.search.open')}
+              aria-label={t('chat.search.open')}
+              className={cn(
+                'rounded p-0.5 transition-all duration-150',
+                'text-(--text-muted) hover:text-(--sidebar-text-active)',
+                'hover:bg-(--sidebar-hover)',
+                !search && 'pointer-events-none opacity-40',
+              )}
+              data-testid="message-search-open-button"
+            >
+              <Search className="h-3.5 w-3.5" />
+            </button>
+          )}
+
           {/* More actions button — hover only */}
           <button
             ref={moreButtonRef}

@@ -35,6 +35,7 @@ interface GitPanelSessionCacheEntry {
 }
 
 const PANEL_CACHE_LIMIT = 20;
+const GIT_PANEL_POLL_INTERVAL_MS = 5000;
 const gitPanelSessionCache = new Map<string, GitPanelSessionCacheEntry>();
 
 async function writeClipboardText(value: string | null | undefined) {
@@ -92,6 +93,7 @@ export function useGitPanelController(sessionId: string | null) {
   );
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [fetching, setFetching] = useState(false);
 
   const [activeAction, setActiveAction] = useState<ActiveGitAction>(null);
   const [actionInput, setActionInput] = useState("");
@@ -256,6 +258,19 @@ export function useGitPanelController(sessionId: string | null) {
       window.removeEventListener("focus", refreshOnVisible);
     };
   }, [loadPanel, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || isTransientSessionId(sessionId)) return;
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void loadChangedFiles();
+      }
+    }, GIT_PANEL_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(timer);
+  }, [loadChangedFiles, sessionId]);
 
   const panelData = useMemo<GitPanelData | null>(() => {
     if (!data) return null;
@@ -558,6 +573,38 @@ export function useGitPanelController(sessionId: string | null) {
     sendActionPrompt("pull", { branch: data?.branch ?? "" });
   }, [data?.branch, sendActionPrompt, sessionId]);
 
+  const handleFetch = useCallback(async () => {
+    if (!sessionId || fetching) return;
+
+    setFetching(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/git/fetch`,
+        { method: "POST" },
+      );
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          extractGitPanelErrorMessage(payload, "Failed to fetch git updates."),
+        );
+      }
+
+      setDiffCache({});
+      setDiffError(null);
+      applyGitPanelData(sessionId, payload as GitPanelData);
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Failed to fetch git updates.",
+      );
+    } finally {
+      setFetching(false);
+    }
+  }, [applyGitPanelData, fetching, sessionId]);
+
   const handleMerge = useCallback(() => {
     if (!sessionId || !mergeSource) return;
     sendActionPrompt("merge", {
@@ -652,8 +699,10 @@ export function useGitPanelController(sessionId: string | null) {
     diffError,
     diffLoading,
     error,
+    fetching,
     handleCommit,
     handleCreatePr,
+    handleFetch,
     handleMerge,
     handleMergePr,
     handlePull,

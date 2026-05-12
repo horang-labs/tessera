@@ -74,7 +74,8 @@ export function getTabDragSessionId(
 }
 
 export function shouldDragTabPanelTree(tabData: TabPanelData | null | undefined): boolean {
-  return Object.keys(tabData?.panels ?? {}).length > 1;
+  const panels = tabData?.panels ?? {};
+  return Object.keys(panels).length > 1 || Object.values(panels).some((panel) => panel.terminalId);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +146,17 @@ export const TabItem = memo(function TabItem({
     ),
   );
 
+  const liveTerminalId = usePanelStore(
+    useCallback(
+      (state) => {
+        if (!isActive) return null;
+        const tabData = selectActiveTab(state);
+        return tabData?.panels[tabData.activePanelId]?.terminalId ?? null;
+      },
+      [isActive],
+    ),
+  );
+
   const liveSessionCount = usePanelStore(
     useCallback(
       (state) => {
@@ -170,8 +182,12 @@ export const TabItem = memo(function TabItem({
   const snapshotSessionId = inactiveTabData
     ? (inactiveTabData.panels[inactiveTabData.activePanelId]?.sessionId ?? null)
     : null;
+  const snapshotTerminalId = inactiveTabData
+    ? (inactiveTabData.panels[inactiveTabData.activePanelId]?.terminalId ?? null)
+    : null;
 
   const activePanelSessionId = isActive ? liveSessionId : snapshotSessionId;
+  const activePanelTerminalId = isActive ? liveTerminalId : snapshotTerminalId;
 
   // Special session handling (e.g., Skills Dashboard)
   const specialTitleKey = activePanelSessionId ? getSpecialSessionTitleKey(activePanelSessionId) : null;
@@ -197,6 +213,8 @@ export const TabItem = memo(function TabItem({
     displayTitle = getSpecialSessionTitle(activePanelSessionId) ?? displayTitle;
   } else if (tab.title !== null) {
     displayTitle = tab.title;
+  } else if (activePanelTerminalId) {
+    displayTitle = 'Terminal';
   } else if (activePanelSessionId && session) {
     displayTitle = session.title ?? session.id;
   }

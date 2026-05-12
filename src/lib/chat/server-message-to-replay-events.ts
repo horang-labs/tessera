@@ -1,5 +1,6 @@
 import type { ServerMessage } from '@/lib/ws/message-types';
 import type { SessionReplayEvent } from '@/lib/session-replay-types';
+import { buildToolAgentContextEvents } from '@/lib/agent-context-events';
 
 const LIVE_EVENT_VERSION = 1;
 
@@ -64,20 +65,34 @@ export function serverMessageToReplayEvents(msg: ServerMessage): SessionReplayEv
       }];
 
     case 'tool_call':
-      return [{
-        v: LIVE_EVENT_VERSION,
-        type: 'tool_call',
-        timestamp: msg.timestamp,
-        toolName: msg.toolName,
-        toolKind: msg.toolKind,
-        toolParams: msg.toolParams,
-        toolDisplay: msg.toolDisplay,
-        status: msg.status,
-        output: msg.output,
-        error: msg.error,
-        toolUseResult: msg.toolUseResult,
-        toolUseId: msg.toolUseId,
-      }];
+      {
+        const agentContext = msg.agentContext ?? buildToolAgentContextEvents({
+          toolName: msg.toolName,
+          toolKind: msg.toolKind,
+          toolParams: msg.toolParams,
+          toolDisplay: msg.toolDisplay,
+          status: msg.status,
+          output: msg.output,
+          error: msg.error,
+          toolUseResult: msg.toolUseResult,
+        });
+
+        return [{
+          v: LIVE_EVENT_VERSION,
+          type: 'tool_call',
+          timestamp: msg.timestamp,
+          toolName: msg.toolName,
+          toolKind: msg.toolKind,
+          toolParams: msg.toolParams,
+          toolDisplay: msg.toolDisplay,
+          status: msg.status,
+          output: msg.output,
+          error: msg.error,
+          toolUseResult: msg.toolUseResult,
+          ...(agentContext.length > 0 ? { agentContext } : {}),
+          toolUseId: msg.toolUseId,
+        }];
+      }
 
     case 'system':
       return [{

@@ -6,7 +6,9 @@ import { FolderGit2, MessageSquare, ListTodo, X as XIcon } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSessionCrud } from '@/hooks/use-session-crud';
+import { useWorktreeBaseRefs } from '@/hooks/use-worktree-base-refs';
 import { useWorktreeSession } from '@/hooks/use-worktree-session';
+import { WorktreeStartFromControl } from '@/components/task/worktree-start-from-control';
 import {
   buildManagedWorktreePreviewPath,
   buildManagedWorktreeSlug,
@@ -195,6 +197,15 @@ export function CollectionQuickCreateSheet({
     () => buildManagedWorktreePreviewPath(projectDir, branchPrefix, branchSlug, pathTemplate),
     [branchPrefix, branchSlug, pathTemplate, projectDir]
   );
+  const {
+    refs: baseRefs,
+    selectedBaseRef,
+    selectedBaseRefForCreate,
+    selectedRef,
+    setSelectedBaseRef,
+    isLoading: isLoadingBaseRefs,
+    error: baseRefError,
+  } = useWorktreeBaseRefs(canCreateTask ? projectDir : null);
 
   const handleCreateChat = useCallback(async () => {
     setError(null);
@@ -245,6 +256,7 @@ export function CollectionQuickCreateSheet({
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
         branchSlug: normalizedBranchSlug,
+        baseRef: selectedBaseRefForCreate,
         allowBranchSlugSuffix: !branchSlugEdited,
         suppressErrorToast: true,
         collectionId: selectedCollection?.id ?? undefined,
@@ -276,6 +288,7 @@ export function CollectionQuickCreateSheet({
     branchSlugEdited,
     projectDir,
     projectId,
+    selectedBaseRefForCreate,
     selectedCollection?.id,
     selectedProvider,
     t,
@@ -501,6 +514,19 @@ export function CollectionQuickCreateSheet({
                 {worktreePathPreview}
               </p>
             </div>
+
+            <WorktreeStartFromControl
+              id={`collection-task-base-ref-${resolvedScopeId}`}
+              testId={`collection-task-base-ref-${resolvedScopeId}`}
+              refs={baseRefs}
+              selectedBaseRef={selectedBaseRef}
+              selectedRef={selectedRef}
+              isLoading={isLoadingBaseRefs}
+              error={baseRefError}
+              disabled={submittingMode !== null}
+              compact
+              onSelectedBaseRefChange={setSelectedBaseRef}
+            />
 
             {error && (
               <p className="text-[11px] text-[color:var(--error)]" role="alert">

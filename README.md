@@ -1,12 +1,12 @@
 # Tessera
 
-> An open-source web and desktop workspace for AI coding agents.
+> Organize AI coding sessions across projects, collections, tabs, panes, tasks, and Git worktrees.
 
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
 [![npm](https://img.shields.io/npm/v/@horang-labs/tessera?label=npm)](https://www.npmjs.com/package/@horang-labs/tessera)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
 
-Tessera is an open-source workspace that turns AI coding agents into a visual command center for parallel software work.
+Tessera keeps Claude Code, Codex, and OpenCode sessions organized across projects, collections, tabs, panes, tasks, and Git worktrees. Run agents side by side, inspect tool logs and diffs, and move implementation work from chat to pull request without losing context.
 
 <table>
   <tr>
@@ -15,7 +15,7 @@ Tessera is an open-source workspace that turns AI coding agents into a visual co
   </tr>
 </table>
 
-Open source | Claude Code + Codex + OpenCode | Full CLI workflows in UI | From idea to pull request | Desktop + browser
+Projects + collections | Tabs + panes | Claude Code + Codex + OpenCode | Kanban board | Git worktrees | Tool logs + diffs + PRs | Windows (including WSL) + macOS + browser + linux(beta)
 
 | Link | Purpose |
 |------|---------|
@@ -23,28 +23,29 @@ Open source | Claude Code + Codex + OpenCode | Full CLI workflows in UI | From i
 | [npm package](https://www.npmjs.com/package/@horang-labs/tessera) | Install the browser runtime |
 | [Product Hunt launch][product-hunt] | Support Tessera on Product Hunt |
 | [Team design partner waitlist][design-partner-waitlist] | Help shape team workspaces, permissions, and enterprise adoption |
-| [Contributing][contributing] | Report issues, discuss larger changes, and send focused PRs |
 | [GitHub Issues](https://github.com/horang-labs/tessera/issues) | Report bugs, rough edges, and feature ideas |
-
-| Use Tessera to | Instead of |
-|----------------|------------|
-| Run Claude Code, Codex, OpenCode, and their model options side by side in one workspace | Switching between separate CLIs for every agent or model |
-| Move from chat exploration to isolated worktree tasks | Restarting context when work becomes real |
-| Watch output, reasoning, tool calls, approvals, and workflow events | Treating agent work as a black box |
-| Review files, diffs, branches, and PR state from the same UI | Jumping between terminal, editor, and browser |
-| Use macOS, Windows, or browser-based npm installs | Being locked into one runtime shape |
+| [Good first issues][good-first-issues] | Pick up starter-sized docs, QA, and polish work when available |
+| [Help wanted][help-wanted] | Find community-friendly areas where maintainer context is useful |
+| [Discussions][discussions] | Ask questions, propose workflows, and shape larger ideas |
+| [Contributing][contributing] | Set up the project and send focused pull requests |
 
 ## Product Demos
 
-### Parallel agent workspace
+### Projects, collections, sessions, tabs, and panes
 
-Run Claude Code, Codex, and OpenCode agents in parallel while keeping each task, worktree file, and diff visible in a multi-panel workspace.
+Organize AI coding work by project and collection, then open sessions across persistent tabs and split panes.
 
 ![Drag-and-drop multi-panel workspace](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/dnd-multipanel.gif)
 
+### Terminal and file tabs
+
+Open agent sessions, terminals, and files as movable tabs so you can reshape the workspace around the work instead of switching tools.
+
+![Terminal and file tabs](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/terminal-agent-tabs.png)
+
 ### Kanban board workflow
 
-Move work across the board with drag-and-drop, create new work with AI-generated titles, and organize tasks by collection.
+Move implementation work through Todo, Doing, Review, and Done while keeping each task tied to sessions, collections, and worktrees.
 
 ![Kanban board drag-and-drop workflow](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/kanban-board-dnd.gif)
 
@@ -66,11 +67,17 @@ Use the same multi-agent workspace in the browser, on macOS, or on Windows while
 
 ![Cross-platform agent workspace](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/multi-model-workspace.gif)
 
-### Skills dashboard
+### Agent state, tool logs, and diffs
 
-Browse locally discovered Claude Code skills by category, review plugin and skill counts, search available skills, favorite frequently used skills for quick access, and generate an analysis from the selected model.
+Keep each agent session tied to its task and worktree while tracking tool calls, failures, file changes, diffs, and branch state in real time.
 
-![Skills dashboard grouped by category](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/skills-dashboard.png)
+![Agent state, tool logs, and diffs](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/agent-panel.png)
+
+### Custom worktree paths
+
+Choose where Tessera creates managed worktrees so agent tasks fit into your existing local development workflow.
+
+![Custom worktree path settings](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/worktree-path.png)
 
 ## Install
 
@@ -81,6 +88,7 @@ Choose the runtime that fits your setup:
 | Windows desktop | Download the portable `.exe` from [GitHub Releases](https://github.com/horang-labs/tessera/releases) |
 | macOS desktop | Download the `.dmg` from [GitHub Releases](https://github.com/horang-labs/tessera/releases) |
 | Browser | Install the npm CLI and open the printed local URL |
+| Docker Compose | Build and run the local browser runtime in a container |
 
 macOS release DMGs are Developer ID signed and notarized. Windows portable `.exe` builds are not code-signed yet, so Windows SmartScreen may show an unknown-publisher warning. See [Desktop Releases](#desktop-releases).
 
@@ -108,16 +116,40 @@ To request a specific port:
 tessera --port 3100
 ```
 
+For Docker Compose:
+
+```bash
+mkdir -p data/config data/local data/ssh data/codex data/tessera workspaces
+touch data/gitconfig
+docker compose up --build -d
+```
+
+Create the mounted `./data/` and `./workspaces/` paths before starting the container so Docker does not create them as root-owned paths. The image runs Tessera as the `tessera` user with UID/GID `1000`, so the bind-mounted paths must be writable by that user. On most Linux developer machines, creating the paths with your normal user is enough. If your host UID/GID differs from `1000:1000`, or Docker already created root-owned paths, fix ownership before starting:
+
+```bash
+sudo chown -R 1000:1000 data workspaces
+```
+
+Open `http://127.0.0.1:32123` after the container starts. The Compose setup builds the image from the local `Dockerfile`, exposes Tessera on port `32123`, stores app and CLI state under `./data/`, and mounts local workspaces under `./workspaces/`.
+
+Useful Compose commands:
+
+```bash
+docker compose logs -f tessera
+docker compose down
+```
+
 ## Core Features
 
 Tessera is designed for developers who run multiple AI coding sessions and need more structure than terminal tabs:
 
 | Feature | Details |
 |---------|---------|
+| Session organization | Structure AI coding work by project, collection, chat session, task, tab, pane, and worktree |
 | Parallel workspace | Run many chats and implementation tasks side by side without losing status, context, or ownership |
-| Multi-panel UI | Split panels, tabbed workspaces, session movement, and long-running workspace layouts |
+| Multi-panel UI | Persistent tabs, split panes, draggable sessions, and long-running workspace layouts |
 | Chat-to-task flow | Start with research or ideation, then continue the conversation into a managed git worktree |
-| Observable session timeline | Agent output, reasoning, tool calls, permissions, plans, user prompts, files, diffs, branches, and PR state in one place |
+| Observable session timeline | Agent output, reasoning, tool calls, failed tool context, permissions, plans, user prompts, files, diffs, branches, and PR state in one place |
 | List and Kanban views | Use list view for high-volume exploration and Kanban view when implementation status matters |
 | Git and PR workflow | Commit, push, create PRs, merge PRs, inspect diffs, and track branch/PR state from the Git panel |
 | Context-rich composer | `@` file references, chat/task references, pasted images, and local file attachments |
@@ -268,10 +300,6 @@ If Gatekeeper still blocks a macOS release DMG, please report it as a release-si
 
 See [macOS Distribution](docs/MACOS_DISTRIBUTION.md) for local and CI setup.
 
-## Status
-
-Tessera is currently published as a beta. Ideas, bug reports, usability feedback, feature requests, and focused pull requests are welcome through GitHub Issues and pull requests. For larger features, new provider integrations, workflow changes, or architecture changes, please open an issue first so we can align on the approach.
-
 ## Teams And Design Partners
 
 Tessera is currently focused on individual local workflows, but we are preparing team and enterprise features for companies running coding agents across multiple developers.
@@ -279,6 +307,14 @@ Tessera is currently focused on individual local workflows, but we are preparing
 The team product is being shaped around three areas: shared workspaces for parallel agent work, governance for permissions and tool use, and operational visibility into agent usage, cost, and review state.
 
 If your team wants to use Tessera in production, [join the design partner waitlist][design-partner-waitlist].
+
+## Community And Contributions
+
+Tessera is for developers who run coding agents every day. We welcome focused issues and pull requests from real usage: desktop QA on Windows, macOS, and Linux; Claude Code, Codex, and OpenCode provider edge cases; documentation fixes; UI polish; and workflow reliability improvements.
+
+Start with [good first issues][good-first-issues] or [help wanted][help-wanted] when they are available. If your change is larger than a focused fix, open a [discussion][discussions] or issue first so we can align on the approach.
+
+Thanks to [@jakedev796](https://github.com/jakedev796), Tessera's first external contributor, for helping exercise real Windows and Electron workflows and landing practical fixes in v0.1.4.
 
 ## Roadmap
 
@@ -328,3 +364,6 @@ Claude Code is a trademark of Anthropic. Codex and OpenAI are trademarks of Open
 [design-partner-waitlist]: https://docs.google.com/forms/d/e/1FAIpQLSdbo5haZdekBrQNwt_F-UlloQu-s4SkUV4tZCU0cONwKJX8Tw/viewform
 [product-hunt]: https://www.producthunt.com/posts/tessera-6
 [contributing]: CONTRIBUTING.md
+[good-first-issues]: https://github.com/horang-labs/tessera/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22
+[help-wanted]: https://github.com/horang-labs/tessera/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22
+[discussions]: https://github.com/horang-labs/tessera/discussions

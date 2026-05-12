@@ -12,6 +12,11 @@ import {
 import { ManagedWorktreePathTemplateError } from '@/lib/worktrees/path-template-server';
 import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
+import {
+  buildGitWorktreeAddArgs,
+  listWorktreeBaseRefs,
+  validateWorktreeBaseRef,
+} from '@/lib/worktrees/base-refs';
 
 /**
  * POST /api/worktrees
@@ -19,7 +24,7 @@ import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
  * Creates a git worktree for a given session.
  *
  * Request body:
- *   { projectDir: string, branchPrefix?: string, branchSlug?: string, allowBranchSlugSuffix?: boolean }
+ *   { projectDir: string, branchPrefix?: string, branchSlug?: string, allowBranchSlugSuffix?: boolean, baseRef?: string }
  *
  * Response (200):
  *   { worktreePath: string, branchName: string }
@@ -31,7 +36,7 @@ import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
  * This endpoint:
  * 1. Validates all inputs
  * 2. Allocates a managed temp branch/path pair under the configured location
- * 3. Runs: git -C projectDir worktree add <worktreePath> -b <branchName>
+ * 3. Runs: git -C projectDir worktree add <worktreePath> -b <branchName> [baseRef]
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuthenticatedUserId(req);
@@ -47,11 +52,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { projectDir, branchPrefix, branchSlug, allowBranchSlugSuffix } = body as {
+  const { projectDir, branchPrefix, branchSlug, allowBranchSlugSuffix, baseRef } = body as {
     projectDir?: unknown;
     branchPrefix?: unknown;
     branchSlug?: unknown;
     allowBranchSlugSuffix?: unknown;
+    baseRef?: unknown;
   };
 
   // --- Input validation ---
@@ -70,6 +76,10 @@ export async function POST(req: NextRequest) {
 
   if (allowBranchSlugSuffix !== undefined && typeof allowBranchSlugSuffix !== 'boolean') {
     return NextResponse.json({ error: 'allowBranchSlugSuffix must be a boolean' }, { status: 400 });
+  }
+
+  if (baseRef !== undefined && typeof baseRef !== 'string') {
+    return NextResponse.json({ error: 'baseRef must be a string' }, { status: 400 });
   }
 
   // Ensure projectDir is absolute and has no path traversal
@@ -103,6 +113,29 @@ export async function POST(req: NextRequest) {
       },
       { status: preflight.status },
     );
+  }
+
+  const selectedBaseRef = typeof baseRef === 'string' && baseRef.trim()
+    ? baseRef.trim()
+    : null;
+
+  if (selectedBaseRef) {
+    const availableBaseRefs = await listWorktreeBaseRefs(projectDir, runGit);
+    const baseRefExists = await validateWorktreeBaseRef(
+      projectDir,
+      selectedBaseRef,
+      availableBaseRefs,
+      runGit,
+    );
+    if (!baseRefExists) {
+      return NextResponse.json(
+        {
+          code: 'INVALID_BASE_REF',
+          error: `Base ref '${selectedBaseRef}' does not exist or does not point to a commit.`,
+        },
+        { status: 422 },
+      );
+    }
   }
 
   let branchName: string;
@@ -151,7 +184,7 @@ export async function POST(req: NextRequest) {
 
   // --- Run git worktree add ---
   try {
-    await runGitWorktreeAdd(projectDir, worktreePath, branchName, runGit);
+    await runGitWorktreeAdd(projectDir, worktreePath, branchName, selectedBaseRef, runGit);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ branchName, projectDir, error: msg }, 'git worktree add failed');
@@ -195,9 +228,10 @@ function runGitWorktreeAdd(
   cwd: string,
   worktreePath: string,
   branchName: string,
+  baseRef: string | null,
   runGit: GitRunner,
 ): Promise<void> {
-  return runGit(['-C', cwd, 'worktree', 'add', worktreePath, '-b', branchName])
+  return runGit(buildGitWorktreeAddArgs(cwd, worktreePath, branchName, baseRef))
     .then(() => undefined);
 }
 

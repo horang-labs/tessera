@@ -24,4 +24,5 @@ export interface ProviderRuntimeControls {
   collaborationMode?: CodexCollaborationMode;
   approvalPolicy?: CodexApprovalPolicy;
   sandboxMode?: CodexSandboxMode;
+  serviceTier?: string | null;
 }

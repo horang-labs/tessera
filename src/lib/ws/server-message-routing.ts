@@ -5,6 +5,7 @@ import { processManager } from '../cli/process-manager';
 import * as dbSessions from '../db/sessions';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
+import { bindTerminalSender } from '../terminal/shared-terminal-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { ProviderMeta } from '../cli/providers/types';
 import {
@@ -106,6 +107,7 @@ export async function routeClientTransportMessage({
         providerId: message.providerId,
         model: message.model,
         reasoningEffort: message.reasoningEffort,
+        serviceTier: message.serviceTier,
         sessionMode: message.sessionMode,
         accessMode: message.accessMode,
         collaborationMode: message.collaborationMode,
@@ -146,6 +148,7 @@ export async function routeClientTransportMessage({
         collaborationMode: message.collaborationMode,
         approvalPolicy: message.approvalPolicy,
         sandboxMode: message.sandboxMode,
+        serviceTier: message.serviceTier,
       });
       return;
 
@@ -203,6 +206,7 @@ export async function routeClientTransportMessage({
           collaborationMode: message.collaborationMode,
           approvalPolicy: message.approvalPolicy,
           sandboxMode: message.sandboxMode,
+          serviceTier: message.serviceTier,
         }),
         errorCode: 'set_permission_mode_failed',
         errorMessage: 'Failed to set permission mode',
@@ -242,6 +246,20 @@ export async function routeClientTransportMessage({
       });
       return;
 
+    case 'set_service_tier':
+      runProcessManagerControlAction({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        action: (sessionId) =>
+          processManager.sendSetServiceTier(sessionId, message.serviceTier),
+        errorCode: 'set_service_tier_failed',
+        errorMessage: 'Failed to set service tier',
+        logMessage: 'Set service tier requested',
+        logMetadata: { serviceTier: message.serviceTier },
+      });
+      return;
+
     case 'stop_session':
       await closeSessionFromWebSocket({
         userId,
@@ -270,6 +288,30 @@ export async function routeClientTransportMessage({
 
     case 'check_cli_status':
       await checkCliStatusForWebSocketUser(userId, message.requestId, sendToUser);
+      return;
+
+    case 'terminal_create':
+      await bindTerminalSender(sendToUser).create({
+        userId,
+        terminalId: message.terminalId,
+        cwd: message.cwd,
+        sessionId: message.sessionId,
+        shellKind: message.shellKind,
+        cols: message.cols,
+        rows: message.rows,
+      });
+      return;
+
+    case 'terminal_input':
+      bindTerminalSender(sendToUser).write(message.terminalId, userId, message.data);
+      return;
+
+    case 'terminal_resize':
+      bindTerminalSender(sendToUser).resize(message.terminalId, userId, message.cols, message.rows);
+      return;
+
+    case 'terminal_close':
+      bindTerminalSender(sendToUser).close(message.terminalId, userId);
       return;
 
     default:

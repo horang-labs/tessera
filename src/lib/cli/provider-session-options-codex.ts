@@ -11,10 +11,12 @@ import type {
   CodexModelResponse,
   ProviderModelOption,
   ProviderReasoningEffortOption,
+  ProviderServiceTierOption,
   ProviderSessionOptions,
 } from './provider-session-option-types';
 
 type CodexReasoningEffortEntry = CodexModelEntry['supportedReasoningEfforts'];
+type CodexServiceTierEntry = CodexModelEntry['serviceTiers'];
 
 export async function loadCodexSessionOptions(
   userId?: string,
@@ -48,6 +50,7 @@ export function buildCodexModelOptions(result: CodexModelResponse): ProviderMode
     }
 
     const reasoningEfforts = buildCodexReasoningEfforts(model.supportedReasoningEfforts);
+    const serviceTiers = buildCodexServiceTiers(model.serviceTiers);
     modelOptions.push({
       value,
       label: String(model.displayName ?? value),
@@ -55,6 +58,7 @@ export function buildCodexModelOptions(result: CodexModelResponse): ProviderMode
       isDefault: Boolean(model.isDefault),
       defaultReasoningEffort: model.defaultReasoningEffort ?? reasoningEfforts[0]?.value ?? null,
       supportedReasoningEfforts: reasoningEfforts,
+      ...(serviceTiers.length > 0 && { serviceTiers }),
     });
   }
 
@@ -84,6 +88,27 @@ function buildCodexReasoningEfforts(
   }
 
   return reasoningEfforts;
+}
+
+function buildCodexServiceTiers(
+  tiers: CodexServiceTierEntry,
+): ProviderServiceTierOption[] {
+  const serviceTiers: ProviderServiceTierOption[] = [];
+
+  for (const tier of tiers ?? []) {
+    const value = String(tier.id ?? '').trim();
+    if (!value) {
+      continue;
+    }
+
+    serviceTiers.push({
+      value,
+      label: String(tier.name ?? value),
+      description: String(tier.description ?? '').trim(),
+    });
+  }
+
+  return serviceTiers;
 }
 
 async function probeCodexModels(

@@ -7,6 +7,12 @@ export interface ProviderReasoningEffortOption {
   description: string;
 }
 
+export interface ProviderServiceTierOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
 export interface ProviderModelOption {
   value: string;
   label: string;
@@ -14,6 +20,7 @@ export interface ProviderModelOption {
   isDefault: boolean;
   defaultReasoningEffort?: string | null;
   supportedReasoningEfforts: ProviderReasoningEffortOption[];
+  serviceTiers?: ProviderServiceTierOption[];
 }
 
 export interface ProviderPermissionMapping {
@@ -71,6 +78,11 @@ export interface CodexModelEntry {
   defaultReasoningEffort?: string | null;
   supportedReasoningEfforts?: Array<{
     reasoningEffort?: string;
+    description?: string;
+  }>;
+  serviceTiers?: Array<{
+    id?: string;
+    name?: string;
     description?: string;
   }>;
 }

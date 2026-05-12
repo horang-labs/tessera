@@ -17,5 +17,15 @@ export function formatSessionReference(title: string, exportPath: string): strin
 }
 
 export function formatContinueConversationPrompt(exportPath: string): string {
-  return `[${exportPath}]\n\nContinue the conversation from the session above.`;
+  return [
+    `[${exportPath}]`,
+    '',
+    'Continue the conversation from the session export above.',
+    '',
+    'Read the export from the end first so the latest user request is not missed:',
+    '- Start with the last 200-300 lines and identify the latest user request, current task state, recent decisions, changed files, verification status, blockers, and next action.',
+    '- Treat the latest user request as the source of truth for what to do next.',
+    '- Read earlier sections only when the recent tail depends on missing context or prior decisions.',
+    '- Do not rely only on the beginning of the file; the end contains the most recent conversation.',
+  ].join('\n');
 }

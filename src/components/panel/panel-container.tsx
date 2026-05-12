@@ -12,6 +12,7 @@ import { SkillDashboard } from '@/components/skills/skill-dashboard';
 import { ArchiveDashboard } from '@/components/archive/archive-dashboard';
 import { WorkspaceExplorerTab } from '@/components/workspace/workspace-explorer-tab';
 import { WorkspaceFileTab } from '@/components/workspace/workspace-file-tab';
+import { TerminalPanel } from '@/components/terminal/terminal-panel';
 import {
   parseWorkspaceExplorerSessionId,
   parseWorkspaceFileSessionId,
@@ -30,8 +31,23 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
   const sessionId = usePanelStore(
     (state) => state.tabPanels[tabId]?.panels[panelId]?.sessionId ?? null,
   );
+  const terminalId = usePanelStore(
+    (state) => state.tabPanels[tabId]?.panels[panelId]?.terminalId ?? null,
+  );
+  const terminalSessionId = usePanelStore(
+    (state) => state.tabPanels[tabId]?.panels[panelId]?.terminalSessionId ?? null,
+  );
 
   const content = (() => {
+    if (terminalId) {
+      return (
+        <TerminalPanel
+          panelId={panelId}
+          terminalId={terminalId}
+          terminalSessionId={terminalSessionId}
+        />
+      );
+    }
     if (sessionId === SKILLS_DASHBOARD_SESSION_ID) return <SkillDashboard />;
     if (sessionId === ARCHIVE_DASHBOARD_SESSION_ID) return <ArchiveDashboard />;
     if (sessionId) {

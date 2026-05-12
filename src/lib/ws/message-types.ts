@@ -1,4 +1,5 @@
 import type { ToolCallKind } from '@/types/tool-call-kind';
+import type { AgentContextEvent } from '@/types/agent-context';
 import type { CanonicalToolResultValue } from '@/types/tool-result';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
 import type { ToolUseResult } from '@/types/cli-jsonl-schemas';
@@ -6,6 +7,7 @@ import type { SessionReplayEvent } from '@/lib/session-replay-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { TerminalShellKind } from '@/lib/terminal/types';
 
 // ========== ContentBlock 타입 정의 (클립보드 이미지 붙여넣기) ==========
 
@@ -66,11 +68,16 @@ export type ClientMessage =
   | ({ type: 'set_permission_mode'; requestId: string; sessionId: string; mode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'set_model'; requestId: string; sessionId: string; model: string }
   | { type: 'set_reasoning_effort'; requestId: string; sessionId: string; reasoningEffort: string | null }
+  | { type: 'set_service_tier'; requestId: string; sessionId: string; serviceTier: string | null }
   | { type: 'stop_session'; requestId: string; sessionId: string }
   | { type: 'get_commands'; requestId: string; sessionId: string }
   | { type: 'list_providers'; requestId: string }
   | { type: 'refresh_providers'; requestId: string }
-  | { type: 'check_cli_status'; requestId: string };
+  | { type: 'check_cli_status'; requestId: string }
+  | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number }
+  | { type: 'terminal_input'; requestId: string; terminalId: string; data: string }
+  | { type: 'terminal_resize'; requestId: string; terminalId: string; cols: number; rows: number }
+  | { type: 'terminal_close'; requestId: string; terminalId: string };
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions';
 
@@ -93,6 +100,7 @@ export type ReplaySourceServerMessage =
       output?: string;
       error?: string;
       toolUseResult?: ToolUseResult | CanonicalToolResultValue;
+      agentContext?: AgentContextEvent[];
       toolUseId?: string;
       timestamp: string;
     }
@@ -200,6 +208,10 @@ export type AppServerMessage =
       };
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
+  | { type: 'terminal_started'; terminalId: string; cwd: string; shell: string }
+  | { type: 'terminal_output'; terminalId: string; data: string }
+  | { type: 'terminal_exit'; terminalId: string; exitCode: number; signal?: number }
+  | { type: 'terminal_error'; terminalId: string; message: string }
   | {
       type: 'interactive_prompt';
       sessionId: string;

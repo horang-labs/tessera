@@ -100,11 +100,18 @@ function upsertToolCallMessage(
 
     if (existingIdx !== -1) {
       const prev = state.messages[existingIdx] as ToolCallMessage;
+      const mergedToolParams = {
+        ...prev.toolParams,
+        ...event.toolParams,
+      };
       state.messages[existingIdx] = {
         ...prev,
         ...(event.toolUseId !== undefined ? { toolUseId: event.toolUseId } : {}),
+        toolName: event.toolName || prev.toolName,
         ...(event.toolKind !== undefined ? { toolKind: event.toolKind } : {}),
+        toolParams: mergedToolParams,
         ...(event.toolDisplay !== undefined ? { toolDisplay: event.toolDisplay } : {}),
+        ...(event.agentContext !== undefined ? { agentContext: event.agentContext } : {}),
         status: event.status,
         ...(output !== undefined ? { output } : {}),
         ...(error !== undefined ? { error } : {}),
@@ -125,6 +132,7 @@ function upsertToolCallMessage(
     ...(event.toolKind !== undefined ? { toolKind: event.toolKind } : {}),
     toolParams: event.toolParams,
     ...(event.toolDisplay !== undefined ? { toolDisplay: event.toolDisplay } : {}),
+    ...(event.agentContext !== undefined ? { agentContext: event.agentContext } : {}),
     status: event.status,
     ...(output !== undefined ? { output } : {}),
     ...(error !== undefined ? { error } : {}),

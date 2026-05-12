@@ -71,6 +71,10 @@ export function useWebSocket() {
     wsClient.stopSession(sessionId);
   }, []);
 
+  const setServiceTier = useCallback((sessionId: string, serviceTier: string | null) => {
+    wsClient.setServiceTier(sessionId, serviceTier);
+  }, []);
+
   return {
     sendMessage,
     createSession,
@@ -80,5 +84,6 @@ export function useWebSocket() {
     sendInteractiveResponse,
     cancelGeneration,
     stopSession,
+    setServiceTier,
   };
 }

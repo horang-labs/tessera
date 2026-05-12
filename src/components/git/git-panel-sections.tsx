@@ -18,6 +18,7 @@ import {
   GitMerge,
   GitPullRequest,
   LoaderCircle,
+  RefreshCw,
   RotateCcw,
   X,
 } from "lucide-react";
@@ -743,8 +744,10 @@ export function GitPanelFooterSection({
   mergePrPromptDraft,
   mergePrPromptPreview,
   mergeSource,
+  fetching,
   onActionInputChange,
   onCreatePr,
+  onFetch,
   onMerge,
   onMergePr,
   onMergePrPromptChange,
@@ -767,10 +770,12 @@ export function GitPanelFooterSection({
   mergePrPromptDraft: string;
   mergePrPromptPreview: string;
   mergeSource: string;
+  fetching: boolean;
   onActionInputChange: (value: string) => void;
   onCloseAction: () => void;
   onCommit: () => void;
   onCreatePr: () => void;
+  onFetch: () => void;
   onMerge: () => void;
   onMergePr: () => void;
   onMergePrPromptChange: (value: string) => void;
@@ -796,6 +801,7 @@ export function GitPanelFooterSection({
     createPrDisabled,
     mergePrDisabled,
   } = computeGitFooterButtonStates(data, isSessionBusy, activeAction);
+  const fetchDisabled = isSessionBusy || activeAction !== null || fetching;
 
   return (
     <div className="border-t border-(--chat-header-border) px-3 py-3 space-y-2">
@@ -961,6 +967,17 @@ export function GitPanelFooterSection({
             aria-label="Push"
           >
             <ArrowUp className="h-4 w-4" />
+          </Button>
+        </Tooltip>
+        <Tooltip content="Fetch" side="top">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={onFetch}
+            disabled={fetchDisabled}
+            aria-label="Fetch"
+          >
+            <RefreshCw className={cn("h-4 w-4", fetching && "animate-spin")} />
           </Button>
         </Tooltip>
         {showMergePr ? (

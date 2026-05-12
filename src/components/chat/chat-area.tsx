@@ -1,10 +1,12 @@
 "use client";
 
-import { memo, useContext, useEffect, useRef } from "react";
+import { memo, useContext, useEffect, useMemo, useRef } from "react";
 import { selectIsTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionNavigation } from "@/hooks/use-session-navigation";
 import { useWindowedMessages } from "@/hooks/use-windowed-messages";
+import { useMessageSearch } from "@/hooks/use-message-search";
+import { groupMessages } from "@/lib/chat/group-messages";
 import { Header } from "./header";
 import { MessageList } from "./message-list";
 import { MessageInput } from "./message-input";
@@ -63,6 +65,15 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
     autoLoadedSessionIdRef.current = session.id;
     void viewSession(session);
   }, [session, historyLoaded, viewSession]);
+  const groupedMessagesForSearch = useMemo(
+    () => groupMessages(windowedMessages),
+    [windowedMessages],
+  );
+  const messageSearch = useMessageSearch(
+    windowedMessages,
+    groupedMessagesForSearch,
+    sessionId,
+  );
 
   if (!sessionId) {
     return (
@@ -120,7 +131,23 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
 
   return (
     <div className="flex-1 flex flex-col h-full bg-(--chat-bg)">
-      <Header sessionId={sessionId} panelId={panelId} isSinglePanel={isSinglePanel} />
+      <Header
+        sessionId={sessionId}
+        panelId={panelId}
+        isSinglePanel={isSinglePanel}
+        search={{
+          isOpen: messageSearch.isSearchOpen,
+          query: messageSearch.query,
+          matchCount: messageSearch.matches.length,
+          activeMatchIndex: messageSearch.activeMatchIndex,
+          hasMore,
+          onOpen: messageSearch.openSearch,
+          onClose: messageSearch.closeSearch,
+          onQueryChange: messageSearch.setQuery,
+          onNext: messageSearch.goToNextMatch,
+          onPrevious: messageSearch.goToPreviousMatch,
+        }}
+      />
 
       <div className="flex-1 overflow-hidden">
         <MessageList
@@ -133,6 +160,10 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
           isSinglePanel={isSinglePanel}
           isTabActive={isViewActive}
           isTurnInFlight={isTurnInFlight}
+          search={{
+            activeMatchMessageId: messageSearch.activeMatch?.messageId ?? null,
+            activeGroupedRowIndex: messageSearch.activeGroupedRowIndex,
+          }}
         />
       </div>
 

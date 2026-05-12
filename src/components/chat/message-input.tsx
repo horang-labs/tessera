@@ -51,6 +51,11 @@ import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import type { Collection } from '@/types/collection';
 import { insertWorkspaceFileReferenceAtCursor } from '@/lib/chat/workspace-file-reference';
 import {
+  CODEX_FAST_COMMAND,
+  CODEX_FAST_SERVICE_TIER,
+  isCodexFastCommandSkill,
+} from '@/lib/chat/codex-fast-command';
+import {
   MessageInputAttachmentStrip,
   MessageInputSessionRefStrip,
   MessageInputSkillChip,
@@ -109,9 +114,10 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   );
   const addMessage = useChatStore((state) => state.addMessage);
   const session = useSessionStore((state) => state.getSession(sessionId));
+  const updateSessionRuntimeConfig = useSessionStore((state) => state.updateSessionRuntimeConfig);
   const projects = useSessionStore((state) => state.projects);
   const sessionStatus = session && 'status' in session ? session.status : 'running';
-  const { sendMessage, cancelGeneration } = useWebSocket();
+  const { sendMessage, cancelGeneration, setServiceTier } = useWebSocket();
   const { resumeAndSend } = useSessionResume();
   const enterKeyBehavior = useSettingsStore(
     (state) => state.settings.enterKeyBehavior ?? 'send'
@@ -493,13 +499,57 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     isWorkspaceFileDrag,
   ]);
 
+  const executeCodexFastCommand = useCallback((): boolean => {
+    if (session?.provider?.trim() !== 'codex') {
+      return false;
+    }
+
+    const nextServiceTier = session.serviceTier === CODEX_FAST_SERVICE_TIER
+      ? null
+      : CODEX_FAST_SERVICE_TIER;
+    updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
+    if (sessionIsRunning) {
+      setServiceTier(sessionId, nextServiceTier);
+    }
+    clearInput();
+    clearAttachments();
+    clearSessionRefs();
+    skillPicker.clearSkill();
+    toast.info(
+      nextServiceTier
+        ? 'Codex fast mode enabled'
+        : 'Codex fast mode disabled',
+    );
+    return true;
+  }, [
+    clearAttachments,
+    clearInput,
+    clearSessionRefs,
+    session?.provider,
+    session?.serviceTier,
+    sessionId,
+    sessionIsRunning,
+    setServiceTier,
+    skillPicker,
+    updateSessionRuntimeConfig,
+  ]);
+
   const handleSend = () => {
     const trimmed = inputValue.trim();
     const hasSelectedSkill = !!skillPicker.selectedSkill;
+    const hasSelectedFastCommand = isCodexFastCommandSkill(skillPicker.selectedSkill);
     const hasAttachments = attachments.length > 0;
     // Block send only when text, skill, attachments, and refs are all absent, or when disabled
     if (!trimmed && !hasSelectedSkill && !hasAttachments && !hasSessionRefs) return;
     if (isDisabled) return;
+    if (isReadOnly) return;
+
+    if (
+      hasSelectedFastCommand
+      || (trimmed === CODEX_FAST_COMMAND && !hasSelectedSkill)
+    ) {
+      if (executeCodexFastCommand()) return;
+    }
 
     // Use chip-selected skill or fallback to manual /skillname parsing
     const parsed = skillPicker.parseForSend(trimmed);
@@ -518,8 +568,6 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     // Build two versions: send (paths for CLI) and display (filenames for UI)
     const sendContent = buildSendContent(textContent, attachments);
     const displayContent = buildDisplayContent(textContent, attachments);
-
-    if (isReadOnly) return;
     const shouldResumeSession = shouldResumeBeforeSend({
       hasExistingConversation,
       isStopped,
@@ -606,11 +654,17 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
   const handleSkillSelect = useCallback(
     (skill: { name: string; description: string }) => {
+      if (isCodexFastCommandSkill(skill)) {
+        executeCodexFastCommand();
+        textareaRef.current?.focus();
+        return;
+      }
+
       skillPicker.selectSkill(skill);
       setInputValue('');
       textareaRef.current?.focus();
     },
-    [skillPicker],
+    [executeCodexFastCommand, skillPicker],
   );
 
   const applyFilePick = useCallback(
@@ -660,7 +714,12 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        if (skillPicker.confirm()) {
+        const confirmedSkill = skillPicker.confirm();
+        if (confirmedSkill && isCodexFastCommandSkill(confirmedSkill)) {
+          executeCodexFastCommand();
+          return;
+        }
+        if (confirmedSkill) {
           setInputValue('');
         }
         return;
@@ -744,6 +803,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         e.preventDefault();
         stopVoiceRecording();
         return;
+      }
+
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey && inputValue.trim() === CODEX_FAST_COMMAND) {
+        e.preventDefault();
+        if (executeCodexFastCommand()) return;
       }
 
       if (enterKeyBehavior === 'send') {

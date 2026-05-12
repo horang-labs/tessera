@@ -1,8 +1,15 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useCommandStore, type CommandInfo } from '@/stores/command-store';
 import { wsClient } from '@/lib/ws/client';
+import {
+  CODEX_FAST_BUILTIN_COMMAND,
+  CODEX_FAST_COMMAND_DESCRIPTION,
+  CODEX_FAST_COMMAND_NAME,
+} from '@/lib/chat/codex-fast-command';
 
-export type SkillInfo = CommandInfo;
+export type SkillInfo = CommandInfo & {
+  builtinCommand?: typeof CODEX_FAST_BUILTIN_COMMAND;
+};
 
 interface UseSkillPickerReturn {
   isOpen: boolean;
@@ -12,8 +19,8 @@ interface UseSkillPickerReturn {
   selectedIndex: number;
   selectedSkill: SkillInfo | null;
   onInputChange: (value: string) => void;
-  /** Confirm the currently highlighted skill. Returns true if a skill was selected. */
-  confirm: () => boolean;
+  /** Confirm the currently highlighted skill. Returns the selected skill when one was selected. */
+  confirm: () => SkillInfo | null;
   /** Programmatically select a skill (e.g. on click). */
   selectSkill: (skill: SkillInfo) => void;
   clearSkill: () => void;
@@ -39,9 +46,30 @@ export function useSkillPicker(
   const commands = useCommandStore(
     (s) => (sessionId ? s.commands[sessionId] : undefined),
   );
+  const builtInCommands = useMemo<SkillInfo[]>(
+    () => providerId === 'codex'
+      ? [{
+          name: CODEX_FAST_COMMAND_NAME,
+          description: CODEX_FAST_COMMAND_DESCRIPTION,
+          builtinCommand: CODEX_FAST_BUILTIN_COMMAND,
+        }]
+      : [],
+    [providerId],
+  );
+  const availableCommands = useMemo<SkillInfo[]>(() => {
+    const merged = [...builtInCommands];
+    for (const command of commands ?? []) {
+      if (merged.some((candidate) => candidate.name === command.name)) {
+        continue;
+      }
+      merged.push(command);
+    }
+    return merged;
+  }, [builtInCommands, commands]);
   const hasLoadedCommands = commands !== undefined;
-  const isInactive = isOpen && !hasLoadedCommands && isSessionRunning === false;
-  const isLoading = isOpen && !hasLoadedCommands && !isInactive;
+  const hasBuiltInCommands = builtInCommands.length > 0;
+  const isInactive = isOpen && !hasLoadedCommands && !hasBuiltInCommands && isSessionRunning === false;
+  const isLoading = isOpen && !hasLoadedCommands && !hasBuiltInCommands && !isInactive;
 
   // Track the last input value so we can re-filter when commands arrive
   const lastInputRef = useRef('');
@@ -142,12 +170,12 @@ export function useSkillPicker(
     prevCommandsRef.current = commands;
     // Only trigger on transition from empty → populated
     if (!wasEmpty) return;
-    if (!commands || commands.length === 0) return;
+    if (!commands || availableCommands.length === 0) return;
     const input = lastInputRef.current;
     if (!input.startsWith('/') || input.indexOf(' ') !== -1) return;
     if (selectedSkill) return;
-    filterAndShow(input, commands);
-  }, [commands, selectedSkill, filterAndShow]);
+    filterAndShow(input, availableCommands);
+  }, [availableCommands, commands, selectedSkill, filterAndShow]);
 
   const selectSkill = useCallback((skill: SkillInfo) => {
     setSelectedSkill(skill);
@@ -172,9 +200,8 @@ export function useSkillPicker(
         return;
       }
 
-      const list = commands;
-      if (!list) {
-        // Commands not yet received — show loading state
+      if (!commands && availableCommands.length === 0) {
+        // Commands not yet received and there are no built-ins — show loading state
         setFilteredSkills([]);
         setSelectedIndex(0);
         setIsOpen(true);
@@ -182,25 +209,29 @@ export function useSkillPicker(
         return;
       }
 
-      if (list.length === 0) {
+      if (!commands) {
+        void loadProviderSkills();
+      }
+
+      if (availableCommands.length === 0) {
         setFilteredSkills([]);
         setSelectedIndex(0);
         setIsOpen(false);
         return;
       }
 
-      filterAndShow(value, list);
+      filterAndShow(value, availableCommands);
     },
-    [selectedSkill, commands, filterAndShow, loadProviderSkills],
+    [selectedSkill, commands, availableCommands, filterAndShow, loadProviderSkills],
   );
 
-  const confirm = useCallback((): boolean => {
-    if (!isOpen || filteredSkills.length === 0) return false;
+  const confirm = useCallback((): SkillInfo | null => {
+    if (!isOpen || filteredSkills.length === 0) return null;
     const skill = filteredSkills[selectedIndex];
-    if (!skill) return false;
+    if (!skill) return null;
     setSelectedSkill(skill);
     setIsOpen(false);
-    return true;
+    return skill;
   }, [isOpen, filteredSkills, selectedIndex]);
 
   const navigateUp = useCallback(() => {
@@ -225,7 +256,7 @@ export function useSkillPicker(
 
       if (!input.startsWith('/')) return null;
 
-      const skills = commands ?? [];
+      const skills = availableCommands;
       const spaceIdx = input.indexOf(' ');
       if (spaceIdx === -1) {
         const name = input.slice(1);
@@ -241,7 +272,7 @@ export function useSkillPicker(
       const content = input.slice(spaceIdx + 1).trim();
       return { skillName: match.name, content };
     },
-    [selectedSkill, commands],
+    [selectedSkill, availableCommands],
   );
 
   return {

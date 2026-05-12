@@ -36,6 +36,12 @@ const TOOL_ORDER = ['git', 'gh'] as const;
 type ToolKey = typeof TOOL_ORDER[number];
 type SetupSuggestionTool = SetupStatusResponse['suggestions'][number]['tool'];
 type ProviderStatus = SetupProviderState['status'];
+type SetupTelemetryTrigger =
+  | 'initial'
+  | 'manual_refresh'
+  | 'environment_switch'
+  | 'command_override_saved'
+  | 'account_created';
 
 const SUPPORTED_PROVIDERS = [
   {
@@ -79,12 +85,40 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
   const [accountError, setAccountError] = useState<string | null>(null);
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
   const [switchingEnvironment, setSwitchingEnvironment] = useState<AgentEnvironment | null>(null);
+  const diagnosticsRunKeysRef = useRef<Set<string>>(new Set());
 
-  const refreshStatus = useCallback(async () => {
+  const startSetupDiagnostics = useCallback((
+    trigger: SetupTelemetryTrigger,
+    activeEnvironment: AgentEnvironment,
+  ) => {
+    if (telemetryDisabledByEnv) return;
+
+    const runKey = `${trigger}:${activeEnvironment}`;
+    if (diagnosticsRunKeysRef.current.has(runKey)) return;
+    diagnosticsRunKeysRef.current.add(runKey);
+
+    const params = new URLSearchParams({
+      telemetry_source: 'setup',
+      telemetry_trigger: trigger,
+    });
+
+    void fetch(`/api/diagnostics/cli?${params.toString()}`, {
+      method: 'POST',
+      cache: 'no-store',
+    }).catch(() => {
+      diagnosticsRunKeysRef.current.delete(runKey);
+    });
+  }, [telemetryDisabledByEnv]);
+
+  const refreshStatus = useCallback(async (trigger: SetupTelemetryTrigger = 'manual_refresh') => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/setup/status');
+      const params = new URLSearchParams({
+        telemetry_source: 'setup',
+        telemetry_trigger: trigger,
+      });
+      const response = await fetch(`/api/setup/status?${params.toString()}`);
       if (response.status === 401) {
         router.replace('/login');
         return;
@@ -92,13 +126,15 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
       if (!response.ok) {
         throw new Error('Could not check setup status.');
       }
-      setStatus(await response.json() as SetupStatusResponse);
+      const nextStatus = await response.json() as SetupStatusResponse;
+      setStatus(nextStatus);
+      startSetupDiagnostics(trigger, nextStatus.activeEnvironment);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Could not check setup status.');
     } finally {
       setIsLoading(false);
     }
-  }, [router]);
+  }, [router, startSetupDiagnostics]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,7 +171,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
           setIsLoading(false);
           return;
         }
-        await refreshStatus();
+        await refreshStatus('initial');
       } catch (nextError) {
         if (cancelled) return;
         setError(nextError instanceof Error ? nextError.message : 'Could not check setup status.');
@@ -207,7 +243,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
       setAccountPassword('');
       await checkAuth();
       await loadSettings();
-      await refreshStatus();
+      await refreshStatus('account_created');
       setNeedsAccountSetup(false);
     } catch (nextError) {
       setAccountError(nextError instanceof Error ? nextError.message : 'Could not create account.');
@@ -228,7 +264,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
       setError(null);
       try {
         await updateSettings({ agentEnvironment });
-        await refreshStatus();
+        await refreshStatus('environment_switch');
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : 'Could not change setup environment.');
         setIsLoading(false);
@@ -353,7 +389,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
               <div className="rounded-lg border border-(--divider) bg-(--sidebar-bg) px-4 py-3">
                 <CliCommandOverrideSettings
                   environments={status.availableEnvironments}
-                  onSaved={refreshStatus}
+                  onSaved={() => void refreshStatus('command_override_saved')}
                 />
               </div>
 
@@ -374,7 +410,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={refreshStatus}
+                  onClick={() => void refreshStatus('manual_refresh')}
                   disabled={isLoading}
                 >
                   <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />

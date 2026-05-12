@@ -362,6 +362,16 @@ function getDefaultBranchName(raw: string | null): string | null {
   return match?.[1] ?? null;
 }
 
+function getRecentCommitArgs(hasUpstream: boolean): string[] {
+  const baseArgs = ["log", "--format=%h%x09%s%x09%cr", "--date-order", "-n", "5"];
+  return hasUpstream ? [...baseArgs, "HEAD", "@{upstream}"] : baseArgs;
+}
+
+function getFetchRemoteName(upstream: string | null): string {
+  const remote = upstream?.split("/", 1)[0]?.trim();
+  return remote || "origin";
+}
+
 async function getChangedFiles(
   workDir: string,
   agentEnvironment: AgentEnvironment,
@@ -461,6 +471,21 @@ export async function getGitPanelData(
     }
   }
 
+  const upstreamPromise = runOptionalCommand(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    workDir,
+    agentEnvironment,
+  );
+  const recentCommitsPromise = upstreamPromise.then((currentUpstream) =>
+    runOptionalCommand(
+      "git",
+      getRecentCommitArgs(Boolean(currentUpstream)),
+      workDir,
+      agentEnvironment,
+    ),
+  );
+
   const [
     branchRaw,
     upstream,
@@ -472,12 +497,7 @@ export async function getGitPanelData(
     recentCommitsRaw,
   ] = await Promise.all([
     runOptionalCommand("git", ["branch", "--show-current"], workDir, agentEnvironment),
-    runOptionalCommand(
-      "git",
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-      workDir,
-      agentEnvironment,
-    ),
+    upstreamPromise,
     runOptionalCommand(
       "git",
       ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
@@ -498,12 +518,7 @@ export async function getGitPanelData(
       agentEnvironment,
     ),
     getChangedFiles(workDir, agentEnvironment),
-    runOptionalCommand(
-      "git",
-      ["log", "--format=%h%x09%s%x09%cr", "-n", "5"],
-      workDir,
-      agentEnvironment,
-    ),
+    recentCommitsPromise,
   ]);
 
   const [detachedHead, headShaRaw] = await Promise.all([
@@ -565,6 +580,25 @@ export async function getGitChangedFilesData(
     sessionId,
     changedFiles: await getChangedFiles(workDir, agentEnvironment),
   };
+}
+
+export async function fetchGitPanelData(
+  sessionId: string,
+  userId?: string,
+): Promise<GitPanelData> {
+  const sessionContext = await resolveSessionContext(sessionId);
+  const { workDir } = sessionContext;
+  const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
+  await resolveRepoRoot(workDir, agentEnvironment);
+  const upstream = await runOptionalCommand(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    workDir,
+    agentEnvironment,
+  );
+  const remoteName = getFetchRemoteName(upstream);
+  await runCommand("git", ["fetch", "--prune", remoteName], workDir, agentEnvironment);
+  return getGitPanelData(sessionId, userId);
 }
 
 export async function getGitDiffData(

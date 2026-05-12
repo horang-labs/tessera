@@ -20,7 +20,7 @@ export function getWorktreeIconClass(status: WorkflowStatus): string {
       return 'text-(--worktree-done)';
     case 'todo':
     default:
-      return 'text-(--text-muted) opacity-50';
+      return 'text-(--text-secondary) opacity-80';
   }
 }
 

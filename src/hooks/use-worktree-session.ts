@@ -28,6 +28,8 @@ interface CreateWorktreeSessionOptions {
   workflowStatus?: WorkflowStatus;
   /** Editable slug appended after the configured branch prefix. */
   branchSlug?: string;
+  /** Branch/ref used as the starting commit for the new worktree branch. */
+  baseRef?: string;
   /** Allow server-side suffixes like -2 when the requested slug collides. */
   allowBranchSlugSuffix?: boolean;
   /** Let the caller render inline errors instead of only showing a toast. */
@@ -59,6 +61,7 @@ export function useWorktreeSession() {
       collectionId,
       workflowStatus,
       branchSlug,
+      baseRef,
       allowBranchSlugSuffix,
       suppressErrorToast = false,
     }: CreateWorktreeSessionOptions): Promise<CreateWorktreeSessionResult> => {
@@ -124,6 +127,7 @@ export function useWorktreeSession() {
             projectDir,
             branchPrefix,
             branchSlug,
+            baseRef,
             allowBranchSlugSuffix,
           }),
         });
