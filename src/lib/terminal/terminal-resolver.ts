@@ -207,6 +207,7 @@ export function resolveTerminalShell(options: {
   }
 
   const command = env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
+  const args = platform === 'darwin' ? ['-l'] : [];
 
-  return { command, args: [], cwd };
+  return { command, args, cwd };
 }

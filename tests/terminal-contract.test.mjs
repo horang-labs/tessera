@@ -146,6 +146,15 @@ test('terminal shell selection follows the configured agent environment', () => 
   assert.doesNotMatch(terminalResolverSource, /WSL terminal profiles are not supported yet/);
 });
 
+test('macOS terminal startup preserves user login PATH and executable node-pty helper', () => {
+  assert.match(terminalManagerSource, /ensureNodePtySpawnHelperExecutable/);
+  assert.match(terminalManagerSource, /require\.resolve\('node-pty\/package\.json'\)/);
+  assert.match(terminalManagerSource, /spawn-helper/);
+  assert.match(terminalManagerSource, /fs\.chmodSync\(helperPath, stat\.mode \| 0o755\)/);
+  assert.match(terminalManagerSource, /buildSpawnEnv\(env\)/);
+  assert.match(terminalResolverSource, /platform === 'darwin' \? \['-l'\] : \[\]/);
+});
+
 test('electron packages node-pty native runtime assets outside the asar', () => {
   assert.ok(packageJson.build.asarUnpack.includes('**/node_modules/node-pty/prebuilds/**'));
   assert.ok(packageJson.build.asarUnpack.includes('**/node_modules/node-pty/build/Release/*.node'));
