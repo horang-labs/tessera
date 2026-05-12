@@ -104,7 +104,7 @@ const READ_LIKE_COMMANDS = new Set([
 ]);
 
 const WRITE_LIKE_SHELL_PATTERNS = [
-  /\bsed\b[\s\S]*?(?:^|\s)-i(?:\s|$|[A-Za-z0-9._=-])/,
+  /\bsed\b[\s\S]*?\s-i(?:\s|$|[A-Za-z0-9._=-])/,
   /(^|[^>])>>?($|[^>])/,
   /(^|[\s|;&])tee(\s|$)/,
 ];
