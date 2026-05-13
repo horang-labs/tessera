@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { MessageSquarePlus, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useProvidersStore } from '@/stores/providers-store';
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import { useI18n } from '@/lib/i18n';
 import { ProviderLogoMark } from './provider-brand';
+import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
 interface CliProviderChipSelectorProps {
   value: string;
@@ -195,6 +196,7 @@ function EmptyState({
   onRefresh: () => void;
 }) {
   const { t } = useI18n();
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
   if (variant === 'needs-login') {
     const names = providers.map((p) => p.displayName).join(', ');
@@ -212,6 +214,10 @@ function EmptyState({
           </button>
           {t('settings.cliStatus.loginInstructionSuffix')}
         </div>
+        <FeedbackButton onClick={() => setIsFeedbackOpen(true)} />
+        {isFeedbackOpen && (
+          <FeedbackDialog source="cli_error" onClose={() => setIsFeedbackOpen(false)} />
+        )}
       </div>
     );
   }
@@ -230,6 +236,25 @@ function EmptyState({
         </button>
         {t('settings.cliStatus.installInstructionSuffix')}
       </div>
+      <FeedbackButton onClick={() => setIsFeedbackOpen(true)} />
+      {isFeedbackOpen && (
+        <FeedbackDialog source="cli_error" onClose={() => setIsFeedbackOpen(false)} />
+      )}
     </div>
+  );
+}
+
+function FeedbackButton({ onClick }: { onClick: () => void }) {
+  const { t } = useI18n();
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mt-1.5 inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-(--accent-hover) hover:bg-(--sidebar-hover)"
+    >
+      <MessageSquarePlus className="h-3 w-3" />
+      {t('feedback.providerCta')}
+    </button>
   );
 }

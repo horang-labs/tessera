@@ -1,3 +1,5 @@
+import path from 'path';
+
 /** @type {import('next').NextConfig} */
 const localTelemetryEnabled = process.env.TESSERA_TELEMETRY_LOCAL === '1';
 const shouldEmbedPosthogToken =
@@ -21,6 +23,13 @@ const nextConfig = {
     NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: posthogProjectToken,
     NEXT_PUBLIC_POSTHOG_API_HOST: posthogApiHost,
     NEXT_PUBLIC_POSTHOG_UI_HOST: posthogUiHost,
+  },
+  webpack(config) {
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      '@': path.resolve(process.cwd(), 'src'),
+    };
+    return config;
   },
   async rewrites() {
     return [

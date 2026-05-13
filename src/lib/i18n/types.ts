@@ -257,6 +257,22 @@ export interface I18nMessages {
     or: string;
     undo: string;
   };
+  feedback: {
+    title: string;
+    tooltip: string;
+    messageLabel: string;
+    messagePlaceholder: string;
+    emailLabel: string;
+    emailPlaceholder: string;
+    send: string;
+    sending: string;
+    sent: string;
+    required: string;
+    sendFailed: string;
+    settingsCta: string;
+    providerCta: string;
+    projectImportCta: string;
+  };
   auth: {
     title: string;
     subtitle: string;
