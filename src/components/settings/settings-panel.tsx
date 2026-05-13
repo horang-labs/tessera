@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useCallback, useState, type ReactNode } from 'react';
-import { GitBranch, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
+import { GitBranch, MessageSquarePlus, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import ProfileSettings from './profile-settings';
@@ -23,6 +23,7 @@ import GitSettings from './git-settings';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
+import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
 type SettingsSectionId = 'general' | 'appearance' | 'development' | 'git';
 
@@ -56,6 +57,7 @@ export default function SettingsPanel() {
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === 'win32';
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('general');
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -186,67 +188,68 @@ export default function SettingsPanel() {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4"
-      onClick={closeSettings}
-      data-testid="settings-overlay"
-    >
+    <>
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-title"
-        className="mx-1 flex h-[min(90vh,860px)] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-(--divider) bg-(--sidebar-bg) shadow-[0_20px_54px_rgba(15,23,42,0.24)] md:mx-4 md:flex-row"
-        onClick={(e) => e.stopPropagation()}
-        data-testid="settings-modal"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4"
+        onClick={closeSettings}
+        data-testid="settings-overlay"
       >
-        <aside className="shrink-0 border-b border-(--divider) bg-[linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.03))] md:w-64 md:border-b-0 md:border-r">
-          <div className="px-4 pb-3 pt-4 md:px-5 md:pb-4 md:pt-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-(--text-muted)">
-              {t('settings.title')}
-            </p>
-          </div>
-          <ScrollArea className="md:h-[calc(90vh-96px)]">
-            <nav
-              className="flex gap-2 px-3 pb-4 md:flex-col md:px-4 md:pb-6"
-              aria-label="Settings sections"
-            >
-              {sections.map((section) => {
-                const Icon = section.icon;
-                const isActive = currentSection.id === section.id;
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-title"
+          className="mx-1 flex h-[min(90vh,860px)] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-(--divider) bg-(--sidebar-bg) shadow-[0_20px_54px_rgba(15,23,42,0.24)] md:mx-4 md:flex-row"
+          onClick={(e) => e.stopPropagation()}
+          data-testid="settings-modal"
+        >
+          <aside className="shrink-0 border-b border-(--divider) bg-[linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.03))] md:w-64 md:border-b-0 md:border-r">
+            <div className="px-4 pb-3 pt-4 md:px-5 md:pb-4 md:pt-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-(--text-muted)">
+                {t('settings.title')}
+              </p>
+            </div>
+            <ScrollArea className="md:h-[calc(90vh-96px)]">
+              <nav
+                className="flex gap-2 px-3 pb-4 md:flex-col md:px-4 md:pb-6"
+                aria-label="Settings sections"
+              >
+                {sections.map((section) => {
+                  const Icon = section.icon;
+                  const isActive = currentSection.id === section.id;
 
-                return (
-                  <button
-                    key={section.id}
-                    type="button"
-                    onClick={() => setActiveSection(section.id)}
-                    className={cn(
-                      'flex min-w-[140px] items-center gap-3 rounded-2xl px-3 py-3 text-left transition-all md:min-w-0',
-                      isActive
-                        ? 'bg-(--sidebar-active) text-(--sidebar-text-active) shadow-[inset_0_0_0_1px_rgba(255,255,255,0.4)]'
-                        : 'text-(--sidebar-text) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)'
-                    )}
-                    aria-pressed={isActive}
-                    data-testid={`settings-nav-${section.id}`}
-                  >
-                    <span
+                  return (
+                    <button
+                      key={section.id}
+                      type="button"
+                      onClick={() => setActiveSection(section.id)}
                       className={cn(
-                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border',
+                        'flex min-w-[140px] items-center gap-3 rounded-2xl px-3 py-3 text-left transition-all md:min-w-0',
                         isActive
-                          ? 'border-(--divider) bg-(--input-bg)/75 text-(--text-primary)'
-                          : 'border-transparent bg-(--chat-bg)/70 text-(--text-muted)'
+                          ? 'bg-(--sidebar-active) text-(--sidebar-text-active) shadow-[inset_0_0_0_1px_rgba(255,255,255,0.4)]'
+                          : 'text-(--sidebar-text) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)'
                       )}
+                      aria-pressed={isActive}
+                      data-testid={`settings-nav-${section.id}`}
                     >
-                      <Icon className="h-4 w-4" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium">{section.label}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </nav>
-          </ScrollArea>
-        </aside>
+                      <span
+                        className={cn(
+                          'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border',
+                          isActive
+                            ? 'border-(--divider) bg-(--input-bg)/75 text-(--text-primary)'
+                            : 'border-transparent bg-(--chat-bg)/70 text-(--text-muted)'
+                        )}
+                      >
+                        <Icon className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{section.label}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </ScrollArea>
+          </aside>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex items-start justify-between gap-4 border-b border-(--divider) bg-(--input-bg)/45 px-5 py-5 md:px-7 md:py-6">
@@ -261,14 +264,25 @@ export default function SettingsPanel() {
                 {currentSection.description}
               </p>
             </div>
-            <button
-              onClick={closeSettings}
-              aria-label="Close settings"
-              className="rounded-xl p-2 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-              data-testid="settings-close"
-            >
-              <X className="h-5 w-5" />
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsFeedbackOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-(--divider) px-3 py-2 text-xs font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+                data-testid="settings-feedback"
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+                {t('feedback.settingsCta')}
+              </button>
+              <button
+                onClick={closeSettings}
+                aria-label="Close settings"
+                className="rounded-xl p-2 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+                data-testid="settings-close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           <ScrollArea className="min-h-0 flex-1 px-5 py-5 md:px-7 md:py-6" data-testid="settings-content">
@@ -278,6 +292,10 @@ export default function SettingsPanel() {
           </ScrollArea>
         </div>
       </div>
-    </div>
+      </div>
+      {isFeedbackOpen && (
+        <FeedbackDialog source="settings" onClose={() => setIsFeedbackOpen(false)} />
+      )}
+    </>
   );
 }
