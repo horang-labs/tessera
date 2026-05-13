@@ -1,12 +1,12 @@
 # Tessera
 
-> Organize AI coding sessions across projects, collections, tabs, panes, tasks, and Git worktrees.
+> Keep parallel AI coding work organized.
 
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
 [![npm](https://img.shields.io/npm/v/@horang-labs/tessera?label=npm)](https://www.npmjs.com/package/@horang-labs/tessera)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
 
-Tessera keeps Claude Code, Codex, and OpenCode sessions organized across projects, collections, tabs, panes, tasks, and Git worktrees. Run agents side by side, inspect tool logs and diffs, and move implementation work from chat to pull request without losing context.
+Tessera helps you run Claude Code, Codex, and OpenCode side by side without losing track of sessions, files, branches, diffs, or pull requests.
 
 <table>
   <tr>
@@ -14,20 +14,6 @@ Tessera keeps Claude Code, Codex, and OpenCode sessions organized across project
     <td width="50%"><img src="https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/kanban-board.png" alt="Tessera Kanban board"></td>
   </tr>
 </table>
-
-Projects + collections | Tabs + panes | Claude Code + Codex + OpenCode | Kanban board | Git worktrees | Tool logs + diffs + PRs | Windows (including WSL) + macOS + browser + linux(beta)
-
-| Link | Purpose |
-|------|---------|
-| [Download Latest Release](https://github.com/horang-labs/tessera/releases) | Get the Windows or macOS desktop beta |
-| [npm package](https://www.npmjs.com/package/@horang-labs/tessera) | Install the browser runtime |
-| [Product Hunt launch][product-hunt] | Support Tessera on Product Hunt |
-| [Team design partner waitlist][design-partner-waitlist] | Help shape team workspaces, permissions, and enterprise adoption |
-| [GitHub Issues](https://github.com/horang-labs/tessera/issues) | Report bugs, rough edges, and feature ideas |
-| [Good first issues][good-first-issues] | Pick up starter-sized docs, QA, and polish work when available |
-| [Help wanted][help-wanted] | Find community-friendly areas where maintainer context is useful |
-| [Discussions][discussions] | Ask questions, propose workflows, and shape larger ideas |
-| [Contributing][contributing] | Set up the project and send focused pull requests |
 
 ## Product Demos
 
@@ -79,58 +65,44 @@ Choose where Tessera creates managed worktrees so agent tasks fit into your exis
 
 ![Custom worktree path settings](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/worktree-path.png)
 
+## Product Tour
+
+| Link | Purpose |
+|------|---------|
+| [Download Latest Release](https://github.com/horang-labs/tessera/releases) | Get the Windows or macOS desktop beta |
+| [npm package](https://www.npmjs.com/package/@horang-labs/tessera) | Install the browser runtime |
+| [Product Hunt launch][product-hunt] | Support Tessera on Product Hunt |
+| [Team design partner waitlist][design-partner-waitlist] | Help shape team workspaces, permissions, and enterprise adoption |
+| [GitHub Issues](https://github.com/horang-labs/tessera/issues) | Report bugs, rough edges, and feature ideas |
+| [Good first issues][good-first-issues] | Pick up starter-sized docs, QA, and polish work when available |
+| [Help wanted][help-wanted] | Find community-friendly areas where maintainer context is useful |
+| [Discussions][discussions] | Ask questions, propose workflows, and shape larger ideas |
+| [Contributing][contributing] | Set up the project and send focused pull requests |
+
 ## Install
 
-Choose the runtime that fits your setup:
+### Desktop app
 
-| Runtime | How to run |
-|---------|------------|
-| Windows desktop | Download the portable `.exe` from [GitHub Releases](https://github.com/horang-labs/tessera/releases) |
-| macOS desktop | Download the `.dmg` from [GitHub Releases](https://github.com/horang-labs/tessera/releases) |
-| Browser | Install the npm CLI and open the printed local URL |
-| Docker Compose | Build and run the local browser runtime in a container |
+Download from [GitHub Releases](https://github.com/horang-labs/tessera/releases).
 
-macOS release DMGs are Developer ID signed and notarized. Windows portable `.exe` builds are not code-signed yet, so Windows SmartScreen may show an unknown-publisher warning. See [Desktop Releases](#desktop-releases).
+| Platform | Asset |
+|----------|-------|
+| Windows | Portable `.exe` |
+| macOS | `.dmg` for Apple Silicon or Intel |
+| Linux beta | `.deb` or `.AppImage` |
 
-### Release Downloads
+### Browser runtime
 
-GitHub Release installer downloads only, excluding npm installs, as of May 12, 2026 KST:
-
-| Version | Downloads |
-|---------|----------:|
-| 0.1.0 | 14 |
-| 0.1.1 | 27 |
-| 0.1.2 | 16 |
-| 0.1.3 | 50 |
-| 0.1.4 | 59 |
-| 0.1.5 | 10 |
-| **Total** | **176** |
-
-For the browser runtime:
+Requires Node.js 20 or later and npm 10 or later.
 
 ```bash
 npm install -g @horang-labs/tessera
 tessera
 ```
 
-Tessera prints the local browser URL after startup:
+Open the printed local URL.
 
-```text
-Tessera is running at:
-  http://127.0.0.1:32123
-
-Press Ctrl+C to stop.
-```
-
-The default port is `32123`. If that port is already in use, Tessera scans upward and prints the actual URL it selected.
-
-To request a specific port:
-
-```bash
-tessera --port 3100
-```
-
-For Docker Compose:
+### Docker Compose
 
 ```bash
 mkdir -p data/config data/local data/ssh data/codex data/tessera workspaces
@@ -138,20 +110,22 @@ touch data/gitconfig
 docker compose up --build -d
 ```
 
-Create the mounted `./data/` and `./workspaces/` paths before starting the container so Docker does not create them as root-owned paths. The image runs Tessera as the `tessera` user with UID/GID `1000`, so the bind-mounted paths must be writable by that user. On most Linux developer machines, creating the paths with your normal user is enough. If your host UID/GID differs from `1000:1000`, or Docker already created root-owned paths, fix ownership before starting:
+Open `http://127.0.0.1:32123`. If bind mounts are not writable:
 
 ```bash
 sudo chown -R 1000:1000 data workspaces
 ```
 
-Open `http://127.0.0.1:32123` after the container starts. The Compose setup builds the image from the local `Dockerfile`, exposes Tessera on port `32123`, stores app and CLI state under `./data/`, and mounts local workspaces under `./workspaces/`.
+## First Run
 
-Useful Compose commands:
+On first run, Tessera guides you through:
 
-```bash
-docker compose logs -f tessera
-docker compose down
-```
+1. Creating a local account for the browser runtime.
+2. Checking that a supported CLI is installed and authenticated.
+3. Selecting a project folder.
+4. Starting a chat or worktree-backed task.
+
+Authenticate provider CLIs first, for example with `claude login`, `codex login`, or OpenCode's configured provider credentials.
 
 ## Core Features
 
@@ -185,19 +159,6 @@ Tessera is built around a local runtime and provider-based CLI layer:
 - **OpenCode model bridge**: Tessera reads OpenCode's model catalog and exposes configured models, providers, and reasoning variants in the workspace.
 - **Shared local runtime**: desktop and browser runtimes share the same local server, provider layer, and configurable app-data directory.
 
-## First Run
-
-On first run, Tessera opens a setup flow.
-
-1. If you are using the npm browser runtime, create the first local account. No default password is created. The desktop app does not require this step.
-2. Confirm that at least one supported provider CLI is installed and authenticated.
-3. Add or select a project folder.
-4. Start a chat for exploration or create a task for worktree-backed implementation.
-
-For provider login, use the provider's own CLI first, for example `claude login`, `codex login`, or OpenCode's configured provider credentials.
-
-## Supported CLIs
-
 | Provider | Local command | Status | Notes |
 |----------|---------------|--------|-------|
 | Claude Code | `claude` | Supported | Uses streaming JSON mode, permission modes, plan approval, `AskUserQuestion` prompts, and installed skill discovery |
@@ -206,28 +167,11 @@ For provider login, use the provider's own CLI first, for example `claude login`
 
 Provider-specific implementation lives under `src/lib/cli/providers/`. The rest of the app talks to the shared provider contract instead of CLI-specific internals.
 
-## Requirements
-
-- Node.js 20 or later
-- npm 10 or later
-- At least one supported CLI installed and authenticated:
-  - [Claude Code CLI](https://code.claude.com/docs/en/overview)
-  - [Codex CLI](https://developers.openai.com/codex/cli)
-  - [OpenCode CLI](https://opencode.ai/docs/)
-
-You can check your local tools with:
-
-```bash
-node -v
-npm -v
-claude --version
-codex --version
-opencode --version
-```
-
 ## Build From Source
 
 For development, clone the repository and install dependencies:
+
+Source development requires Node.js 20 or later and npm 10 or later.
 
 ```bash
 git clone https://github.com/horang-labs/tessera.git
@@ -235,13 +179,11 @@ cd tessera
 npm install
 ```
 
-Tessera uses a custom Node.js server for the Next.js app, WebSocket transport, database initialization, provider bootstrapping, and background pollers. Run `server.ts` instead of starting Next.js directly:
+Tessera uses a custom Node.js server for the Next.js app, WebSocket transport, database initialization, provider bootstrapping, and background pollers. The dev script starts that server:
 
 ```bash
 npm run dev
 ```
-
-The development server uses port `3100` by default. To run on a different port, set `PORT`, for example `PORT=32124 npm run dev`.
 
 Supported environment variables:
 
@@ -301,18 +243,21 @@ Provider requests are handled by the provider CLIs installed on your machine. Te
 
 ## Desktop Releases
 
-Desktop release assets are built by GitHub Actions for `v*` tags and attached to GitHub Releases:
+Windows builds are not code-signed yet, so SmartScreen may show an unknown-publisher warning. macOS builds are signed and notarized with Apple Developer ID.
 
-- Windows portable `.exe` (not code-signed yet)
-- macOS `.dmg` for Apple Silicon and Intel, Developer ID signed and notarized
+### Release Downloads
 
-macOS release DMGs are signed and notarized with Apple Developer ID, so downloaded releases should open normally on macOS.
+GitHub Release installer downloads only, excluding npm installs, as of May 13, 2026 KST:
 
-Windows release builds are portable `.exe` files and are not code-signed yet. SmartScreen may show an unknown-publisher warning; choose **More info** and then **Run anyway** to start Tessera.
-
-If Gatekeeper still blocks a macOS release DMG, please report it as a release-signing issue.
-
-See [macOS Distribution](docs/MACOS_DISTRIBUTION.md) for local and CI setup.
+| Version | Downloads |
+|---------|----------:|
+| 0.1.0 | 14 |
+| 0.1.1 | 27 |
+| 0.1.2 | 16 |
+| 0.1.3 | 50 |
+| 0.1.4 | 59 |
+| 0.1.5 | 50 |
+| **Total** | **216** |
 
 ## Teams And Design Partners
 
@@ -346,24 +291,17 @@ Planned areas include:
 
 ## Troubleshooting
 
-**`claude`, `codex`, or `opencode` is not found**
+**CLI is not detected**
 
-Install the CLI you want to use, authenticate it, and make sure the command works in the same terminal where you run `tessera`.
+Install and authenticate Claude Code, Codex, or OpenCode. If Tessera still cannot find it, open Settings and set the CLI path manually.
 
-**Provider status says `needs_login`**
+**Provider stays logged out**
 
-Run the provider's login or setup command, then refresh Tessera's provider status.
+Run the provider login command, for example `claude login`, `codex login`, or your OpenCode provider setup, then refresh provider status.
 
-**Reset local login keys**
+**Still stuck?**
 
-If login tokens become invalid after moving files between machines, stop Tessera and remove the generated auth keys:
-
-```bash
-rm -rf ~/.tessera/auth
-tessera
-```
-
-If you start Tessera with `TESSERA_DATA_DIR`, remove the `auth/` directory under that custom data directory instead.
+Please open a [GitHub Issue](https://github.com/horang-labs/tessera/issues) with your OS, Tessera version, runtime, provider CLI, and the error you see.
 
 ## License
 
