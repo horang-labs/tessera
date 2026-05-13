@@ -65,18 +65,18 @@ Choose where Tessera creates managed worktrees so agent tasks fit into your exis
 
 ![Custom worktree path settings](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/worktree-path.png)
 
-## Product Tour
+## Resources
 
 | Link | Purpose |
 |------|---------|
-| [Download Latest Release](https://github.com/horang-labs/tessera/releases) | Get the Windows or macOS desktop beta |
-| [npm package](https://www.npmjs.com/package/@horang-labs/tessera) | Install the browser runtime |
-| [Product Hunt launch][product-hunt] | Support Tessera on Product Hunt |
-| [Team design partner waitlist][design-partner-waitlist] | Help shape team workspaces, permissions, and enterprise adoption |
-| [GitHub Issues](https://github.com/horang-labs/tessera/issues) | Report bugs, rough edges, and feature ideas |
-| [Good first issues][good-first-issues] | Pick up starter-sized docs, QA, and polish work when available |
-| [Help wanted][help-wanted] | Find community-friendly areas where maintainer context is useful |
-| [Discussions][discussions] | Ask questions, propose workflows, and shape larger ideas |
+| [Download Latest Release](https://github.com/horang-labs/tessera/releases) | Download the desktop app for Windows, macOS, or Linux |
+| [npm package](https://www.npmjs.com/package/@horang-labs/tessera) | Run Tessera in the browser |
+| [Product Hunt launch][product-hunt] | Support the launch on Product Hunt |
+| [Team design partner waitlist][design-partner-waitlist] | Help shape team workspaces and enterprise workflows |
+| [GitHub Issues](https://github.com/horang-labs/tessera/issues) | Report bugs and feature requests |
+| [Good first issues][good-first-issues] | Find starter-sized docs, QA, and polish tasks |
+| [Help wanted][help-wanted] | Find community-friendly areas where maintainer context helps |
+| [Discussions][discussions] | Ask questions and propose workflows |
 | [Contributing][contributing] | Set up the project and send focused pull requests |
 
 ## Install
@@ -87,9 +87,23 @@ Download from [GitHub Releases](https://github.com/horang-labs/tessera/releases)
 
 | Platform | Asset |
 |----------|-------|
-| Windows | Portable `.exe` |
+| Windows, including WSL | Portable `.exe` |
 | macOS | `.dmg` for Apple Silicon or Intel |
 | Linux beta | `.deb` or `.AppImage` |
+
+Windows builds are not code-signed yet, so SmartScreen may show an unknown-publisher warning. macOS builds are signed and notarized with Apple Developer ID.
+
+Release downloads, excluding npm installs, as of 2026-05-13 07:52 UTC:
+
+| Version | Windows | macOS | Linux | Total |
+|---------|--------:|------:|------:|------:|
+| 0.1.0 | 8 | 6 | 0 | 14 |
+| 0.1.1 | 14 | 13 | 0 | 27 |
+| 0.1.2 | 6 | 9 | 1 | 16 |
+| 0.1.3 | 24 | 21 | 5 | 50 |
+| 0.1.4 | 30 | 27 | 2 | 59 |
+| 0.1.5 | 17 | 31 | 2 | 50 |
+| **Total** | **99** | **107** | **10** | **216** |
 
 ### Browser runtime
 
@@ -208,26 +222,11 @@ Electron build outputs are written under `release/`.
 
 Tessera runs locally and stores app data under `~/.tessera/` by default.
 
-Tessera includes anonymous telemetry in published npm and desktop builds to measure minimal usage. Telemetry is collected with PostHog and stored in the US region.
+Published npm and desktop builds include anonymous PostHog telemetry for minimal usage measurement, stored in the US region. You can disable telemetry during onboarding or later in Settings.
 
-Tessera does not collect sensitive data such as IP addresses, prompts, messages, file paths, command output, repository names, or account details. You can disable telemetry during onboarding or later in Settings. Local source development runs do not send telemetry unless `TESSERA_TELEMETRY_LOCAL=1` is set.
+Telemetry is limited to basic app usage duration. Tessera does not collect click data, detailed usage patterns, prompts, messages, file paths, command output, repository names, or account details.
 
-Common default paths:
-
-| Path | Purpose |
-|------|---------|
-| `~/.tessera/tessera.db` | SQLite app database |
-| `~/.tessera/users.json` | Local user account records |
-| `~/.tessera/auth/` | Auto-generated RSA keys for login sessions |
-| `~/.tessera/settings/` | User settings |
-| `~/.tessera/worktrees/` | Managed temporary git worktrees, when used |
-| `~/.tessera/attachments/` | Local attachment files, when used |
-| `~/.tessera/session-history/` | Session event history, when used |
-| `~/.tessera/session-exports/` | Exported session files, when used |
-
-Back up the data directory if you want to preserve Tessera's local state.
-
-Provider requests are handled by the provider CLIs installed on your machine. Tessera does not replace the provider's authentication, billing, model access, or network behavior.
+Provider requests are handled by the Claude Code, Codex, or OpenCode CLIs installed on your machine. Tessera does not replace their authentication, billing, model access, or network behavior.
 
 ## Tech Stack
 
@@ -240,24 +239,6 @@ Provider requests are handled by the provider CLIs installed on your machine. Te
 | Auth | `bcryptjs`, RS256 JWT cookies |
 | Desktop shell | Electron |
 | Packaging | npm global CLI, Electron builds via `electron-builder` |
-
-## Desktop Releases
-
-Windows builds are not code-signed yet, so SmartScreen may show an unknown-publisher warning. macOS builds are signed and notarized with Apple Developer ID.
-
-### Release Downloads
-
-GitHub Release installer downloads only, excluding npm installs, as of May 13, 2026 KST:
-
-| Version | Downloads |
-|---------|----------:|
-| 0.1.0 | 14 |
-| 0.1.1 | 27 |
-| 0.1.2 | 16 |
-| 0.1.3 | 50 |
-| 0.1.4 | 59 |
-| 0.1.5 | 50 |
-| **Total** | **216** |
 
 ## Teams And Design Partners
 
