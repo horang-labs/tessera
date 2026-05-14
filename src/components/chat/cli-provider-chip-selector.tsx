@@ -1,11 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquarePlus, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useProvidersStore } from '@/stores/providers-store';
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import { useI18n } from '@/lib/i18n';
+import {
+  captureTelemetryEvent,
+  normalizeTelemetryProviderSetupIssueStatus,
+} from '@/lib/telemetry/client';
 import { ProviderLogoMark } from './provider-brand';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
@@ -28,6 +32,7 @@ export function CliProviderChipSelector({
   const loading = useProvidersStore((s) => s.loading);
   const fetchProviders = useProvidersStore((s) => s.fetch);
   const refreshProviders = useProvidersStore((s) => s.refresh);
+  const reportedIssueKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     // Populate on first mount if the WS onopen hook hasn't fired yet
@@ -40,12 +45,44 @@ export function CliProviderChipSelector({
   const list = useMemo(() => providers ?? [], [providers]);
   const selectable = useMemo(() => list.filter((p) => p.status === 'connected'), [list]);
   const needsLogin = useMemo(() => list.filter((p) => p.status === 'needs_login'), [list]);
+  const isEmpty = selectable.length === 0;
+  const hasOnlyNeedsLogin = isEmpty && needsLogin.length > 0;
 
   useEffect(() => {
     if (selectable.length === 0) return;
     if (selectable.some((p) => p.id === value)) return;
     onChange(selectable[0].id);
   }, [selectable, onChange, value]);
+
+  useEffect(() => {
+    if (providers === null || loading || !initialized || !isEmpty) return;
+
+    if (list.length === 0) {
+      const key = 'new_session:all:missing';
+      if (!reportedIssueKeysRef.current.has(key)) {
+        reportedIssueKeysRef.current.add(key);
+        void captureTelemetryEvent('provider_setup_issue_seen', {
+          source: 'new_session',
+          status: 'missing',
+        });
+      }
+      return;
+    }
+
+    for (const provider of list) {
+      const issueStatus = normalizeTelemetryProviderSetupIssueStatus(provider.status);
+      if (!issueStatus) continue;
+
+      const key = `new_session:${provider.id}:${issueStatus}`;
+      if (reportedIssueKeysRef.current.has(key)) continue;
+      reportedIssueKeysRef.current.add(key);
+      void captureTelemetryEvent('provider_setup_issue_seen', {
+        source: 'new_session',
+        provider_id: provider.id,
+        status: issueStatus,
+      });
+    }
+  }, [initialized, isEmpty, list, loading, providers]);
 
   if (providers === null) {
     if (loading || !initialized) {
@@ -69,9 +106,6 @@ export function CliProviderChipSelector({
       </div>
     );
   }
-
-  const isEmpty = selectable.length === 0;
-  const hasOnlyNeedsLogin = isEmpty && needsLogin.length > 0;
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>

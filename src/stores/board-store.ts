@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 export type ViewMode = 'list' | 'board';
 
@@ -143,6 +144,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   setViewMode: (mode) => {
     // All Projects mode only supports list view — block board switch
     if (mode === 'board' && get().selectedProjectDir === ALL_PROJECTS_SENTINEL) return;
+    if (get().viewMode === mode) return;
     set((state) => {
       const nextProjectViewModes =
         state.selectedProjectDir && state.selectedProjectDir !== ALL_PROJECTS_SENTINEL
@@ -161,6 +163,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         viewMode: mode,
         projectViewModes: nextProjectViewModes,
       };
+    });
+    void captureTelemetryEvent('workspace_view_changed', {
+      view: mode === 'board' ? 'kanban' : 'list',
     });
   },
 

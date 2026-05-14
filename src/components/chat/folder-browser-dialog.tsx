@@ -27,6 +27,7 @@ import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 interface DirectoryEntry {
   name: string;
@@ -171,8 +172,21 @@ export function FolderBrowserDialog({
     setIsCreating(true);
     try {
       await onSelect(currentFilesystemPath || currentPath);
+      void captureTelemetryEvent('project_import_result', {
+        source: 'project_import',
+        result: 'success',
+        environment: browseEnvironment,
+        is_git_repo: isGitRepo,
+      });
       onClose();
     } catch (err) {
+      void captureTelemetryEvent('project_import_result', {
+        source: 'project_import',
+        result: 'failed',
+        environment: browseEnvironment,
+        is_git_repo: isGitRepo,
+        error_code: normalizeProjectImportErrorCode(err),
+      });
       setError(err instanceof Error ? err.message : 'Failed to create session');
     } finally {
       setIsCreating(false);
@@ -451,6 +465,22 @@ export function FolderBrowserDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function normalizeProjectImportErrorCode(error: unknown): string {
+  const candidate = error as { code?: unknown; status?: unknown; message?: unknown };
+  const code = typeof candidate.code === 'string' ? candidate.code : '';
+  if (code === 'PROJECT_ENVIRONMENT_MISMATCH') return 'environment_mismatch';
+
+  const status = typeof candidate.status === 'number' ? candidate.status : null;
+  if (status === 403) return 'permission_denied';
+
+  const message = typeof candidate.message === 'string' ? candidate.message.toLowerCase() : '';
+  if (message.includes('does not exist')) return 'missing_folder';
+  if (message.includes('permission') || message.includes('eacces')) return 'permission_denied';
+  if (message.includes('folderpath')) return 'invalid_folder';
+
+  return 'unknown';
 }
 
 function buildBreadcrumbs(currentPath: string): {

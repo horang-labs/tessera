@@ -7,7 +7,10 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { toast } from '@/stores/notification-store';
 import logger from '@/lib/logger';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
+
+type TaskCreatedTelemetrySource = 'kanban' | 'list' | 'new_session';
 
 interface CreateWorktreeSessionOptions {
   projectDir: string;
@@ -32,6 +35,8 @@ interface CreateWorktreeSessionOptions {
   baseRef?: string;
   /** Allow server-side suffixes like -2 when the requested slug collides. */
   allowBranchSlugSuffix?: boolean;
+  /** Product surface that initiated task creation. */
+  source?: TaskCreatedTelemetrySource;
   /** Let the caller render inline errors instead of only showing a toast. */
   suppressErrorToast?: boolean;
 }
@@ -63,6 +68,7 @@ export function useWorktreeSession() {
       branchSlug,
       baseRef,
       allowBranchSlugSuffix,
+      source = 'new_session',
       suppressErrorToast = false,
     }: CreateWorktreeSessionOptions): Promise<CreateWorktreeSessionResult> => {
       const projectId = parentProjectId ?? projectDir;
@@ -183,6 +189,12 @@ export function useWorktreeSession() {
               const realTask: TaskEntity = taskData.task;
               useTaskStore.getState().finalizePendingTask(tempId, realTask);
               createdTaskId = realTask.id;
+              void captureTelemetryEvent('task_created', {
+                source,
+                provider_id: resolvedProviderId,
+                has_worktree: Boolean(result.branchName),
+                has_collection: Boolean(collectionId),
+              });
             } else {
               removePlaceholder();
               logger.warn('Task creation returned non-ok — aborting worktree session creation');

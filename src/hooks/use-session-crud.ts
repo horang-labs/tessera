@@ -238,6 +238,7 @@ export function useSessionCrud() {
           provider_id: result.provider || resolvedProviderId,
           has_task: Boolean(options.taskId),
           has_worktree: Boolean(worktreeBranch),
+          has_collection: Boolean(options.collectionId),
         });
 
         return result.sessionId;
