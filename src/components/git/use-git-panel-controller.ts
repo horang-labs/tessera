@@ -8,6 +8,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
+import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import type {
   GitChangedFilesData,
   GitDiffData,
@@ -443,16 +444,62 @@ export function useGitPanelController(sessionId: string | null) {
 
   const copyBranch = useCallback(async () => {
     await writeClipboardText(data?.branch);
-  }, [data?.branch]);
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "copy_branch",
+      target: "branch",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+    });
+  }, [
+    data?.branch,
+    data?.worktreePath,
+    panelData?.changedFiles.length,
+    panelData?.github.pullRequest,
+    panelData?.prStatus,
+  ]);
 
   const copyWorktreePath = useCallback(async () => {
     await writeClipboardText(data?.worktreePath);
-  }, [data?.worktreePath]);
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "copy_worktree_path",
+      target: "worktree_path",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+    });
+  }, [
+    data?.worktreePath,
+    panelData?.changedFiles.length,
+    panelData?.github.pullRequest,
+    panelData?.prStatus,
+  ]);
 
   const openExternal = useCallback((url: string | null | undefined) => {
     if (!url || typeof window === "undefined") return;
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "open_external",
+      target: resolveGitExternalTarget(url, {
+        repoUrl: data?.repoUrl,
+        pullRequestUrl: panelData?.prStatus?.url ?? panelData?.github.pullRequest?.url,
+        checksUrl,
+      }),
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+    });
     window.open(url, "_blank", "noopener,noreferrer");
-  }, []);
+  }, [
+    checksUrl,
+    data?.repoUrl,
+    data?.worktreePath,
+    panelData?.changedFiles.length,
+    panelData?.github.pullRequest,
+    panelData?.prStatus,
+  ]);
 
   const moveSelection = useCallback(
     (direction: -1 | 1) => {
@@ -560,21 +607,75 @@ export function useGitPanelController(sessionId: string | null) {
   const handleCommit = useCallback(() => {
     if (!sessionId) return;
     sendActionPrompt("commit", {}, actionInput);
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "commit",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+    });
     closeAction();
-  }, [actionInput, closeAction, sendActionPrompt, sessionId]);
+  }, [
+    actionInput,
+    closeAction,
+    data?.worktreePath,
+    panelData?.changedFiles.length,
+    panelData?.github.pullRequest,
+    panelData?.prStatus,
+    sendActionPrompt,
+    sessionId,
+  ]);
 
   const handlePush = useCallback(() => {
     if (!sessionId) return;
     sendActionPrompt("push", { branch: data?.branch ?? "" });
-  }, [data?.branch, sendActionPrompt, sessionId]);
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "push",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+    });
+  }, [
+    data?.branch,
+    data?.worktreePath,
+    panelData?.changedFiles.length,
+    panelData?.github.pullRequest,
+    panelData?.prStatus,
+    sendActionPrompt,
+    sessionId,
+  ]);
 
   const handlePull = useCallback(() => {
     if (!sessionId) return;
     sendActionPrompt("pull", { branch: data?.branch ?? "" });
-  }, [data?.branch, sendActionPrompt, sessionId]);
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "pull",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+    });
+  }, [
+    data?.branch,
+    data?.worktreePath,
+    panelData?.changedFiles.length,
+    panelData?.github.pullRequest,
+    panelData?.prStatus,
+    sendActionPrompt,
+    sessionId,
+  ]);
 
   const handleFetch = useCallback(async () => {
     if (!sessionId || fetching) return;
+
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "fetch",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+    });
 
     setFetching(true);
     setError(null);
@@ -603,7 +704,15 @@ export function useGitPanelController(sessionId: string | null) {
     } finally {
       setFetching(false);
     }
-  }, [applyGitPanelData, fetching, sessionId]);
+  }, [
+    applyGitPanelData,
+    data?.worktreePath,
+    fetching,
+    panelData?.changedFiles.length,
+    panelData?.github.pullRequest,
+    panelData?.prStatus,
+    sessionId,
+  ]);
 
   const handleMerge = useCallback(() => {
     if (!sessionId || !mergeSource) return;
@@ -611,8 +720,25 @@ export function useGitPanelController(sessionId: string | null) {
       source: mergeSource,
       current: data?.branch ?? "",
     });
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "merge",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+    });
     closeAction();
-  }, [closeAction, data?.branch, mergeSource, sendActionPrompt, sessionId]);
+  }, [
+    closeAction,
+    data?.branch,
+    data?.worktreePath,
+    mergeSource,
+    panelData?.changedFiles.length,
+    panelData?.github.pullRequest,
+    panelData?.prStatus,
+    sendActionPrompt,
+    sessionId,
+  ]);
 
   const handleCreatePr = useCallback(() => {
     if (!sessionId) return;
@@ -629,6 +755,14 @@ export function useGitPanelController(sessionId: string | null) {
       { branch, base },
       actionInput,
     );
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "create_pr",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+      github_available: Boolean(panelData?.github.available),
+    });
     updateCurrentTaskWorkflowStatus("in_review");
     closeAction();
   }, [
@@ -636,6 +770,8 @@ export function useGitPanelController(sessionId: string | null) {
     closeAction,
     data?.branch,
     data?.defaultBranch,
+    data?.worktreePath,
+    panelData?.changedFiles.length,
     panelData?.github,
     prBaseBranch,
     sendActionPrompt,
@@ -655,11 +791,21 @@ export function useGitPanelController(sessionId: string | null) {
     if (!prompt) return;
 
     wsClient.sendMessage(sessionId, prompt);
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "merge_pr",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+      github_available: Boolean(panelData?.github.available),
+    });
     updateCurrentTaskWorkflowStatus("done");
     closeAction();
   }, [
     closeAction,
+    data?.worktreePath,
     mergePrPromptDraft,
+    panelData?.changedFiles.length,
     panelData?.github,
     panelData?.prStatus?.number,
     sessionId,
@@ -726,4 +872,18 @@ export function useGitPanelController(sessionId: string | null) {
     setSelectedPath,
     resetMergePrPromptDraft,
   };
+}
+
+function resolveGitExternalTarget(
+  url: string,
+  urls: {
+    repoUrl?: string | null;
+    pullRequestUrl?: string | null;
+    checksUrl?: string | null;
+  },
+): string {
+  if (url === urls.repoUrl) return "repository";
+  if (url === urls.pullRequestUrl) return "pull_request";
+  if (url === urls.checksUrl) return "checks";
+  return "unknown";
 }

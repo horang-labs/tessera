@@ -19,7 +19,11 @@ import CliCommandOverrideSettings from '@/components/settings/cli-command-overri
 import { useAuthStore } from '@/stores/auth-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
-import { captureTelemetryOptOut } from '@/lib/telemetry/client';
+import {
+  captureTelemetryEvent,
+  captureTelemetryOptOut,
+  normalizeTelemetryProviderSetupIssueStatus,
+} from '@/lib/telemetry/client';
 import { cn } from '@/lib/utils';
 import { hasHandledSetup } from '@/lib/setup/setup-routing';
 import type {
@@ -86,6 +90,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
   const [switchingEnvironment, setSwitchingEnvironment] = useState<AgentEnvironment | null>(null);
   const diagnosticsRunKeysRef = useRef<Set<string>>(new Set());
+  const providerIssueKeysRef = useRef<Set<string>>(new Set());
 
   const startSetupDiagnostics = useCallback((
     trigger: SetupTelemetryTrigger,
@@ -191,6 +196,24 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
       router.replace('/login');
     }
   }, [isAuthenticated, isLoading, needsAccountSetup, router]);
+
+  useEffect(() => {
+    if (!status) return;
+
+    for (const provider of getSupportedProviders(status.summary.providers)) {
+      const issueStatus = normalizeTelemetryProviderSetupIssueStatus(provider.status);
+      if (!issueStatus) continue;
+
+      const key = `setup:${provider.providerId}:${status.activeEnvironment}:${issueStatus}`;
+      if (providerIssueKeysRef.current.has(key)) continue;
+      providerIssueKeysRef.current.add(key);
+      void captureTelemetryEvent('provider_setup_issue_seen', {
+        source: 'setup',
+        provider_id: provider.providerId,
+        status: issueStatus,
+      });
+    }
+  }, [status]);
 
   const environmentCopy = useMemo(() => {
     if (!status) return '';

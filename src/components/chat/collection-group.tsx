@@ -11,6 +11,7 @@ import {
 } from '@/lib/chat/collection-status-indicator';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { useBoardStore } from '@/stores/board-store';
 import {
   selectAnyAwaitingUserPrompt,
@@ -105,6 +106,13 @@ async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) 
 
     await useTaskStore.getState().loadTasks(task.projectId);
     await useSessionStore.getState().loadProjects();
+
+    void captureTelemetryEvent('session_created', {
+      provider_id: sessionData.provider || providerId,
+      has_task: true,
+      has_worktree: Boolean(task.worktreeBranch),
+      has_collection: Boolean(task.collectionId),
+    });
   } catch (error) {
     console.error('Failed to add session to task:', error);
   }

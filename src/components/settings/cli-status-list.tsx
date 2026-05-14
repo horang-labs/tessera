@@ -1,9 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { wsClient } from '@/lib/ws/client';
 import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
+import {
+  captureTelemetryEvent,
+  normalizeTelemetryProviderSetupIssueStatus,
+} from '@/lib/telemetry/client';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
@@ -25,6 +29,7 @@ export default function CliStatusList() {
   ));
   // null = loading, [] = no providers registered, undefined = disconnected / server error
   const [entries, setEntries] = useState<CliStatusEntry[] | null | undefined>(null);
+  const reportedIssueKeysRef = useRef<Set<string>>(new Set());
 
   const fetchStatus = useCallback(() => {
     setEntries(null);
@@ -66,6 +71,24 @@ export default function CliStatusList() {
     native: t('settings.cliStatus.env.native'),
     wsl: t('settings.cliStatus.env.wsl'),
   };
+
+  useEffect(() => {
+    if (!Array.isArray(entries)) return;
+
+    for (const entry of entries) {
+      const issueStatus = normalizeTelemetryProviderSetupIssueStatus(entry.status);
+      if (!issueStatus) continue;
+
+      const key = `settings:${entry.providerId}:${entry.environment}:${issueStatus}`;
+      if (reportedIssueKeysRef.current.has(key)) continue;
+      reportedIssueKeysRef.current.add(key);
+      void captureTelemetryEvent('provider_setup_issue_seen', {
+        source: 'settings',
+        provider_id: entry.providerId,
+        status: issueStatus,
+      });
+    }
+  }, [entries]);
 
   return (
     <div className="space-y-2">
