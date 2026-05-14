@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, MessageSquarePlus } from 'lucide-react';
 import type { AgentMessageGroup as AgentMessageGroupModel, AgentSubGroup } from '@/lib/chat/group-messages';
 import type { ToolCallMessage } from '@/types/chat';
 import type { AgentProgressData, McpProgressData } from '@/types/cli-jsonl-schemas';
@@ -12,7 +12,7 @@ import { ThinkingBlock } from './thinking-block';
 import { AgentProgress } from './progress/agent-progress';
 import { McpProgress } from './progress/mcp-progress';
 import { ToolCallGrid } from './tool-call-grid';
-import { AssistantTextBody, extractAssistantText } from './message-bubble-content';
+import { AssistantTextBody, extractAssistantText, type ForkFromMessageHandler } from './message-bubble-content';
 import { MessageRowShell } from './message-row-shell';
 
 function formatMessageTime(timestamp: string) {
@@ -41,6 +41,7 @@ interface AgentMessageGroupProps {
   onSelectToolCall: (toolCall: ToolCallMessage | null) => void;
   selectedToolCallId: string | null;
   disableAnimation?: boolean;
+  onForkFromMessage?: ForkFromMessageHandler;
 }
 
 interface AgentSubGroupViewProps {
@@ -49,10 +50,17 @@ interface AgentSubGroupViewProps {
   onSelectToolCall: (toolCall: ToolCallMessage | null) => void;
   selectedToolCallId: string | null;
   disableAnimation?: boolean;
+  onForkFromMessage?: ForkFromMessageHandler;
 }
 
-const MESSAGE_COPY_BUTTON_CLASS =
-  'ml-auto inline-flex w-[4.75rem] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] text-(--text-muted) opacity-0 pointer-events-none transition-[color,background-color,opacity] hover:bg-(--sidebar-hover) hover:text-(--text-primary) group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
+const MESSAGE_ACTIONS_CLASS =
+  'ml-auto inline-flex shrink-0 items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
+
+const MESSAGE_ACTION_BUTTON_CLASS =
+  'inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
+
+const MESSAGE_COPY_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[4.75rem]`;
+const MESSAGE_FORK_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[6.25rem]`;
 
 function AgentSubGroupView({
   subgroup,
@@ -60,6 +68,7 @@ function AgentSubGroupView({
   onSelectToolCall,
   selectedToolCallId,
   disableAnimation,
+  onForkFromMessage,
 }: AgentSubGroupViewProps) {
   const { t } = useI18n();
   const providerBrand = getProviderBrand(providerId);
@@ -86,6 +95,8 @@ function AgentSubGroupView({
       console.error('Failed to copy:', err);
     }
   }, [combinedText]);
+
+  const forkTargetMessage = subgroup.messages[subgroup.messages.length - 1];
 
   return (
     <MessageRowShell
@@ -114,22 +125,36 @@ function AgentSubGroupView({
             </span>
           </Tooltip>
           {combinedText && (
-            <button
-              onClick={handleCopy}
-              className={MESSAGE_COPY_BUTTON_CLASS}
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3 h-3" />
-                  <span>{t('chat.copied')}</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3" />
-                  <span>{t('chat.copy')}</span>
-                </>
+            <div className={MESSAGE_ACTIONS_CLASS}>
+              <button
+                type="button"
+                onClick={handleCopy}
+                className={MESSAGE_COPY_BUTTON_CLASS}
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3 h-3" />
+                    <span>{t('chat.copied')}</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>{t('chat.copy')}</span>
+                  </>
+                )}
+              </button>
+              {onForkFromMessage && forkTargetMessage && (
+                <button
+                  type="button"
+                  onClick={(event) => onForkFromMessage(forkTargetMessage, event.currentTarget)}
+                  className={MESSAGE_FORK_BUTTON_CLASS}
+                  title={t('chat.forkFromHereTooltip')}
+                >
+                  <MessageSquarePlus className="w-3 h-3" />
+                  <span>{t('chat.forkFromHere')}</span>
+                </button>
               )}
-            </button>
+            </div>
           )}
         </div>
 
@@ -201,6 +226,7 @@ export const AgentMessageGroup = memo(function AgentMessageGroup({
   onSelectToolCall,
   selectedToolCallId,
   disableAnimation,
+  onForkFromMessage,
 }: AgentMessageGroupProps) {
   return (
     <>
@@ -212,6 +238,7 @@ export const AgentMessageGroup = memo(function AgentMessageGroup({
           onSelectToolCall={onSelectToolCall}
           selectedToolCallId={selectedToolCallId}
           disableAnimation={disableAnimation}
+          onForkFromMessage={onForkFromMessage}
         />
       ))}
     </>

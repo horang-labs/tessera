@@ -3,7 +3,7 @@
 import { memo } from 'react';
 import type { EnhancedMessage } from '@/types/chat';
 import { MessageErrorBoundary } from './message-error-boundary';
-import { renderEnhancedContent } from './message-bubble-content';
+import { renderEnhancedContent, type ForkFromMessageHandler } from './message-bubble-content';
 
 interface MessageBubbleProps {
   message: EnhancedMessage;
@@ -11,6 +11,7 @@ interface MessageBubbleProps {
   providerId?: string;
   /** When true, suppress the CSS enter animation (e.g. items scrolling into a virtual viewport). */
   disableAnimation?: boolean;
+  onForkFromMessage?: ForkFromMessageHandler;
 }
 
 export const MessageBubble = memo(
@@ -19,12 +20,13 @@ export const MessageBubble = memo(
     sessionId,
     providerId,
     disableAnimation,
+    onForkFromMessage,
   }: MessageBubbleProps) {
 
   return (
     <MessageErrorBoundary>
       <div className={`py-1${disableAnimation ? '' : ' message-enter'}`}>
-        {renderEnhancedContent(message, providerId)}
+        {renderEnhancedContent(message, providerId, onForkFromMessage)}
       </div>
     </MessageErrorBoundary>
   );
@@ -46,6 +48,7 @@ export const MessageBubble = memo(
 
     // Animation 상태 비교
     if (prevProps.disableAnimation !== nextProps.disableAnimation) return false;
+    if (prevProps.onForkFromMessage !== nextProps.onForkFromMessage) return false;
 
     // 메시지 내용 비교 (타입별)
     if (prevMsg.type !== nextMsg.type) return false;

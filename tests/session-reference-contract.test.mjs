@@ -12,3 +12,10 @@ test('continue conversation prompt tells agents to recover the latest context fr
   assert.match(source, /source of truth/);
   assert.match(source, /Do not rely only on the beginning of the file/);
 });
+
+test('fork conversation prompt makes the selected message the boundary', () => {
+  assert.match(source, /formatForkConversationPrompt/);
+  assert.match(source, /selected point/);
+  assert.match(source, /intentionally truncated at the fork point/);
+  assert.match(source, /do not assume later messages/);
+});
