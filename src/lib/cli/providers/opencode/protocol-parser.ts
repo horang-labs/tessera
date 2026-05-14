@@ -52,6 +52,16 @@ interface SessionState {
 }
 
 const MAX_ACCUMULATED_TEXT_LENGTH = 100;
+const DISPLAY_ONLY_OPENCODE_SESSION_UPDATES = new Set([
+  'agent_message_chunk',
+  'agent_thought_chunk',
+  'current_mode_update',
+  'plan',
+  'plan_update',
+  'session_info_update',
+  'usage_update',
+  'user_message_chunk',
+]);
 
 export class OpenCodeProtocolParser {
   private sessionStates = new Map<string, SessionState>();
@@ -91,7 +101,12 @@ export class OpenCodeProtocolParser {
       return this.handleNotification(sessionId, parsed as JsonRpcNotification);
     }
 
-    return [];
+    return [buildOpenCodeSystemWarning(
+      sessionId,
+      'opencode_unknown_stdout',
+      'OpenCode emitted a JSON line without method or id.',
+      { rawPreview: stringifyPreview(parsed) },
+    )];
   }
 
   trackPendingRequest(sessionId: string, requestId: number | string, method: string): void {
@@ -128,7 +143,16 @@ export class OpenCodeProtocolParser {
       sessionId,
       method: msg.method,
     });
-    return [];
+    return [buildOpenCodeSystemWarning(
+      sessionId,
+      'opencode_unknown_server_request',
+      `Unhandled OpenCode server request: ${msg.method}`,
+      {
+        method: msg.method,
+        requestId: String(msg.id),
+        rawPreview: stringifyPreview(msg.params ?? {}),
+      },
+    )];
   }
 
   private handleResponse(sessionId: string, msg: JsonRpcResponse): ParsedMessage[] {
@@ -165,17 +189,34 @@ export class OpenCodeProtocolParser {
       }
     }
 
+    if (pending) {
+      return [buildOpenCodeSystemInfo(sessionId, 'opencode_response', `OpenCode response received for ${pending.method}.`, {
+        method: pending.method,
+        result: msg.result ?? null,
+      })];
+    }
+
     return [];
   }
 
   private handleNotification(sessionId: string, msg: JsonRpcNotification): ParsedMessage[] {
     if (msg.method !== 'session/update') {
-      return [];
+      return [buildOpenCodeSystemWarning(
+        sessionId,
+        'opencode_unknown_notification',
+        `Unhandled OpenCode notification: ${msg.method}`,
+        { method: msg.method, rawPreview: stringifyPreview(msg.params ?? {}) },
+      )];
     }
 
     const update = msg.params?.update;
     if (!update || typeof update !== 'object') {
-      return [];
+      return [buildOpenCodeSystemWarning(
+        sessionId,
+        'opencode_malformed_session_update',
+        'OpenCode session/update notification did not include an update object.',
+        { rawPreview: stringifyPreview(msg.params ?? {}) },
+      )];
     }
 
     switch (update.sessionUpdate) {
@@ -206,7 +247,7 @@ export class OpenCodeProtocolParser {
           sessionId,
           sessionUpdate: update.sessionUpdate,
         });
-        return [];
+        return this.handleUnsupportedSessionUpdate(sessionId, update);
     }
   }
 
@@ -333,7 +374,9 @@ export class OpenCodeProtocolParser {
   private handleToolCallUpdate(sessionId: string, update: Record<string, any>): ParsedMessage[] {
     const state = this.getOrCreateState(sessionId);
     const toolUseId = String(update.toolCallId ?? '');
-    if (!toolUseId) return [];
+    if (!toolUseId) {
+      return [this.buildGenericOpenCodeToolCall(sessionId, update, 'opencode_tool_call_missing_id')];
+    }
 
     const nextToolName = normalizeToolName(update.title ?? update.kind ?? 'Tool');
     const nextToolKind = inferOpenCodeToolKind(nextToolName, update.kind);
@@ -567,6 +610,59 @@ export class OpenCodeProtocolParser {
         },
       },
     ];
+  }
+
+  private handleUnsupportedSessionUpdate(sessionId: string, update: Record<string, any>): ParsedMessage[] {
+    if (looksLikeOpenCodeToolUpdate(update)) {
+      return [this.buildGenericOpenCodeToolCall(sessionId, update, 'opencode_unsupported_tool_update')];
+    }
+
+    if (DISPLAY_ONLY_OPENCODE_SESSION_UPDATES.has(String(update.sessionUpdate ?? ''))) {
+      return [];
+    }
+
+    return [
+      ...this.completeActiveThinking(sessionId),
+      buildOpenCodeSystemWarning(
+        sessionId,
+        'opencode_unsupported_session_update',
+        `Unhandled OpenCode session update: ${String(update.sessionUpdate ?? 'unknown')}`,
+        { rawPreview: stringifyPreview(update) },
+      ),
+    ];
+  }
+
+  private buildGenericOpenCodeToolCall(
+    sessionId: string,
+    update: Record<string, any>,
+    reason: string,
+  ): ParsedMessage {
+    const toolUseId = typeof update.toolCallId === 'string' && update.toolCallId.trim()
+      ? update.toolCallId.trim()
+      : `opencode-tool-${randomUUID()}`;
+    const toolName = normalizeToolName(update.title ?? update.kind ?? update.sessionUpdate ?? 'Tool');
+    const status = normalizeToolStatus(update.status);
+    const rawToolParams = isRecord(update.rawInput) ? update.rawInput : {};
+    const output = extractToolOutput(update) ?? stringifyOpenCodeOutput(update.rawOutput);
+
+    return {
+      serverMessage: {
+        type: 'tool_call',
+        sessionId,
+        toolName,
+        toolParams: {
+          reason,
+          sessionUpdate: update.sessionUpdate,
+          kind: update.kind,
+          ...rawToolParams,
+        },
+        status,
+        output: status === 'error' ? undefined : output,
+        error: status === 'error' ? output || `${toolName} failed` : undefined,
+        toolUseId,
+        timestamp: new Date().toISOString(),
+      },
+    };
   }
 
   private handlePromptCompleted(
@@ -854,6 +950,34 @@ function buildOpenCodeSystemInfo(
   };
 }
 
+function buildOpenCodeSystemWarning(
+  sessionId: string,
+  subtype: string,
+  message: string,
+  metadata: Record<string, any>,
+): ParsedMessage {
+  return {
+    serverMessage: {
+      type: 'system',
+      sessionId,
+      message,
+      severity: 'warning',
+      subtype,
+      metadata,
+      timestamp: new Date().toISOString(),
+    },
+  };
+}
+
+function looksLikeOpenCodeToolUpdate(update: Record<string, any>): boolean {
+  return update.toolCallId !== undefined ||
+    update.rawInput !== undefined ||
+    update.rawOutput !== undefined ||
+    update.kind !== undefined ||
+    update.title !== undefined ||
+    update.status !== undefined;
+}
+
 function extractToolOutput(update: Record<string, any>): string | undefined {
   if (typeof update.rawOutput === 'string') return update.rawOutput;
   if (isRecord(update.rawOutput)) {
@@ -874,6 +998,25 @@ function extractToolOutput(update: Record<string, any>): string | undefined {
     if (parts.length > 0) return parts.join('\n');
   }
   return undefined;
+}
+
+function stringifyOpenCodeOutput(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') return value;
+  return stringifyPreview(value);
+}
+
+function stringifyPreview(value: unknown, maxLength = 500): string {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    serialized = String(value);
+  }
+
+  return serialized.length > maxLength
+    ? `${serialized.slice(0, maxLength)}...`
+    : serialized;
 }
 
 function synthesizeOpenCodeToolResult(
