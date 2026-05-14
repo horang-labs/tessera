@@ -346,6 +346,9 @@ export interface I18nMessages {
     logout: string;
     copied: string;
     copy: string;
+    forkFromHere: string;
+    forkFromHereTooltip: string;
+    forkPointLabel: string;
     submit: string;
     select: string;
     responseSent: string;

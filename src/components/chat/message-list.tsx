@@ -7,13 +7,28 @@ import { LoadingIndicator } from './loading-indicator';
 import { WaitingIndicator } from './waiting-indicator';
 import { useChatStore } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useCollectionStore } from '@/stores/collection-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { groupMessages, type GroupedItem } from '@/lib/chat/group-messages';
 import { ToolCallGrid } from './tool-call-grid';
 import { AgentMessageGroup } from './agent-message-group';
 import { useShowWaitingIndicator } from '@/hooks/use-show-waiting-indicator';
 import { useVirtualMessageList } from '@/hooks/use-virtual-message-list';
+import { useWebSocket } from '@/hooks/use-websocket';
 import { useI18n } from '@/lib/i18n';
+import {
+  applyProviderSessionRuntimeOverrides,
+  getProviderSessionRuntimeConfig,
+} from '@/lib/settings/provider-defaults';
+import {
+  exportSessionReference,
+  formatForkConversationPrompt,
+} from '@/lib/session/session-reference';
 import { cn } from '@/lib/utils';
+import { toast } from '@/stores/notification-store';
+import type { Collection } from '@/types/collection';
+import type { ForkFromMessageHandler } from './message-bubble-content';
+import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 import {
   MessageListEmptyState,
@@ -22,6 +37,8 @@ import {
   MessageListScrollToBottomButton,
   MessageListToolCallOverlay,
 } from './message-list-sections';
+
+const EMPTY_COLLECTIONS: Collection[] = [];
 
 interface MessageListProps {
   messages: EnhancedMessage[];
@@ -50,6 +67,7 @@ function VirtualRow({
   providerId,
   onSelectToolCall,
   selectedToolCallId,
+  onForkFromMessage,
 }: {
   item: GroupedItem;
   isNew: boolean;
@@ -57,6 +75,7 @@ function VirtualRow({
   providerId?: string;
   onSelectToolCall: (toolCall: ToolCallMessage | null) => void;
   selectedToolCallId: string | null;
+  onForkFromMessage?: ForkFromMessageHandler;
 }) {
   if (item.kind === 'tool_call_group') {
     return (
@@ -75,6 +94,7 @@ function VirtualRow({
         onSelectToolCall={onSelectToolCall}
         selectedToolCallId={selectedToolCallId}
         disableAnimation={!isNew}
+        onForkFromMessage={onForkFromMessage}
       />
     );
   }
@@ -84,6 +104,7 @@ function VirtualRow({
       sessionId={sessionId}
       providerId={providerId}
       disableAnimation={!isNew}
+      onForkFromMessage={onForkFromMessage}
     />
   );
 }
@@ -107,9 +128,35 @@ function MessageListSessionView({
   'use no memo'; // React Compiler caches virtualizer.getVirtualItems() on the stable instance ref — but the virtualizer is mutable, so we must opt out.
   const { t } = useI18n();
   const [selectedToolCallId, setSelectedToolCallId] = useState<string | null>(null);
-  const providerId = useSessionStore((state) => state.getSession(sessionId)?.provider);
+  const [forkSource, setForkSource] = useState<{
+    message: EnhancedMessage;
+    messageIndex: number;
+  } | null>(null);
+  const [isInjectingFork, setIsInjectingFork] = useState(false);
+  const forkAnchorRef = useRef<HTMLElement | null>(null);
+  const messagesRef = useRef(messages);
+  const session = useSessionStore((state) => state.getSession(sessionId));
+  const projects = useSessionStore((state) => state.projects);
+  const providerId = session?.provider;
+  const { sendMessage } = useWebSocket();
   const showWaitingIndicator = useShowWaitingIndicator(sessionId, messages);
   const hasActivePrompt = useChatStore((state) => state.activeInteractivePrompt.has(sessionId));
+  const activeProject = useMemo(() => {
+    if (!session) return null;
+    return projects.find((project) =>
+      project.encodedDir === session.projectDir ||
+      project.decodedPath === session.projectDir ||
+      project.decodedPath === session.workDir
+    ) ?? null;
+  }, [projects, session]);
+  const activeProjectId = activeProject?.encodedDir ?? null;
+  const collections = useCollectionStore((state) =>
+    activeProjectId ? state.collectionsByProject?.[activeProjectId] ?? EMPTY_COLLECTIONS : EMPTY_COLLECTIONS
+  );
+  const activeCollection = useMemo(() => {
+    if (!session?.collectionId) return null;
+    return collections.find((collection) => collection.id === session.collectionId) ?? null;
+  }, [collections, session?.collectionId]);
 
   // Group consecutive tool_call messages for grid rendering
   const groupedMessages = useMemo(() => groupMessages(messages), [messages]);
@@ -139,6 +186,15 @@ function MessageListSessionView({
 
   const activeSearchGroupedRowIndex = search?.activeGroupedRowIndex ?? -1;
   const activeSearchMatchMessageId = search?.activeMatchMessageId ?? null;
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    void useCollectionStore.getState().loadCollections(activeProjectId);
+  }, [activeProjectId]);
 
   useEffect(() => {
     if (activeSearchGroupedRowIndex < 0 || !activeSearchMatchMessageId) return;
@@ -178,6 +234,60 @@ function MessageListSessionView({
       return prev === toolCall.id ? null : toolCall.id;
     });
   }, []);
+
+  const handleForkFromMessage = useCallback<ForkFromMessageHandler>((message, anchorElement) => {
+    if (!activeProject || isInjectingFork) {
+      return;
+    }
+
+    const messageIndex = messagesRef.current.findIndex((item) => item === message || item.id === message.id);
+    if (messageIndex < 0) {
+      toast.error(t('errors.sessionExportFailed'));
+      return;
+    }
+
+    forkAnchorRef.current = anchorElement;
+    setSelectedToolCallId(null);
+    setForkSource({ message, messageIndex });
+  }, [activeProject, isInjectingFork, t]);
+
+  const handleInjectForkSession = useCallback(async (targetSessionId: string) => {
+    if (!forkSource) return;
+
+    setIsInjectingFork(true);
+    try {
+      const exportPath = await exportSessionReference(sessionId, {
+        untilMessageId: forkSource.message.id,
+        untilMessageIndex: forkSource.messageIndex,
+      });
+      const targetSession = useSessionStore.getState().getSession(targetSessionId);
+      const { settings } = useSettingsStore.getState();
+      const targetProviderId = targetSession?.provider?.trim();
+      if (!targetProviderId) {
+        toast.error(t('errors.providerRequired'));
+        return;
+      }
+      const spawnConfig = !(targetSession?.isRunning ?? false)
+        ? applyProviderSessionRuntimeOverrides(
+            getProviderSessionRuntimeConfig(settings, targetProviderId),
+            targetSession,
+            targetProviderId,
+          )
+        : undefined;
+      const referenceContent = formatForkConversationPrompt(exportPath);
+
+      sendMessage(targetSessionId, referenceContent, undefined, referenceContent, spawnConfig);
+      setForkSource(null);
+    } catch {
+      toast.error(t('errors.sessionExportFailed'));
+    } finally {
+      setIsInjectingFork(false);
+    }
+  }, [forkSource, sendMessage, sessionId, t]);
+
+  const forkContinuationTitle = session
+    ? `${session.title} · ${t('chat.forkPointLabel')}`
+    : t('chat.forkPointLabel');
 
   // 빈 영역 mousedown 시 기존 텍스트 선택 해제 (click 시점 selection 잔존 방지)
   const handleContentAreaMouseDown = useCallback((e: React.MouseEvent) => {
@@ -303,6 +413,7 @@ function MessageListSessionView({
                         providerId={providerId}
                         onSelectToolCall={onSelectToolCall}
                         selectedToolCallId={selectedToolCallId}
+                        onForkFromMessage={activeProject ? handleForkFromMessage : undefined}
                       />
                     </div>
                   );
@@ -314,6 +425,23 @@ function MessageListSessionView({
           {messages.length > 0 && showWaitingIndicator && <WaitingIndicator providerId={providerId} />}
         </div>
       </MessageListScrollArea>
+
+      {forkSource && activeProject && (
+        <CollectionQuickCreateSheet
+          collection={activeCollection}
+          collections={collections}
+          projectDir={activeProject.decodedPath}
+          projectId={activeProject.encodedDir}
+          allowCollectionSelection
+          anchorRef={forkAnchorRef}
+          boundaryRef={forkAnchorRef}
+          anchorPlacement="side"
+          scopeId={`fork-${sessionId}`}
+          continuationSourceTitle={forkContinuationTitle}
+          onSessionCreated={handleInjectForkSession}
+          onClose={() => setForkSource(null)}
+        />
+      )}
 
       {selectedToolCall && (
         <MessageListToolCallOverlay
