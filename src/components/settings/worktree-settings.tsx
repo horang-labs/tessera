@@ -89,6 +89,11 @@ export default function WorktreeSettings() {
             <span className="text-[11px] text-(--text-tertiary)">
               {t('settings.worktree.pathTemplateDesc')}
             </span>
+            {settings.agentEnvironment === 'wsl' && (
+              <span className="text-[11px] text-(--status-warning-text)">
+                {t('settings.worktree.pathTemplateWslWarning')}
+              </span>
+            )}
           </div>
           <input
             id="managedWorktreePathTemplate"

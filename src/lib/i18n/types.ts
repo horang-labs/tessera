@@ -166,6 +166,7 @@ export interface I18nMessages {
       autoDeleteArchivedWorktreesDesc: string;
       pathTemplate: string;
       pathTemplateDesc: string;
+      pathTemplateWslWarning: string;
       pathTemplatePlaceholder: string;
       pathTemplateTokens: string;
       pathTemplateDefaultLocation: string;

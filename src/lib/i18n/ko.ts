@@ -168,6 +168,7 @@ export const ko: I18nMessages = {
       autoDeleteArchivedWorktreesDesc: '보관된 채팅/태스크 기록은 남기고 관리형 워크트리만 삭제합니다.',
       pathTemplate: '워크트리 경로 템플릿',
       pathTemplateDesc: '비워두면 아래 기본 Tessera 관리 경로를 사용합니다.',
+      pathTemplateWslWarning: 'WSL 모드에서 기본 worktree 위치가 Windows 파일시스템에 있으면 생성 속도가 크게 느려질 수 있습니다. \\\\wsl.localhost\\...\\home\\... 같은 WSL 경로를 직접 지정하는 것을 권장합니다.',
       pathTemplatePlaceholder: '{projectParent}/.worktrees/{projectSlug}/{branchName}',
       pathTemplateTokens: '사용 가능한 토큰',
       pathTemplateDefaultLocation: '기본 위치',

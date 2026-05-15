@@ -168,6 +168,7 @@ export const zh: I18nMessages = {
       autoDeleteArchivedWorktreesDesc: '保留已归档的聊天/任务记录，仅删除托管工作树。',
       pathTemplate: '工作树路径模板',
       pathTemplateDesc: '留空则使用下面的 Tessera 托管默认路径。',
+      pathTemplateWslWarning: '在 WSL 模式下，如果默认 worktree 位置位于 Windows 文件系统，创建速度可能会明显变慢。建议手动指定类似 \\\\wsl.localhost\\...\\home\\... 的 WSL 路径。',
       pathTemplatePlaceholder: '{projectParent}/.worktrees/{projectSlug}/{branchName}',
       pathTemplateTokens: '可用令牌',
       pathTemplateDefaultLocation: '默认位置',

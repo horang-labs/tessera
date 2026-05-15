@@ -168,6 +168,7 @@ export const ja: I18nMessages = {
       autoDeleteArchivedWorktreesDesc: 'アーカイブ済みのチャット/タスク記録は残し、管理対象ワークツリーだけを削除します。',
       pathTemplate: 'ワークツリーパステンプレート',
       pathTemplateDesc: '空のままにすると、下の Tessera 管理デフォルトパスを使用します。',
+      pathTemplateWslWarning: 'WSL モードでデフォルトの worktree の場所が Windows ファイルシステム上にあると、作成速度が大きく低下することがあります。\\\\wsl.localhost\\...\\home\\... のような WSL パスを直接指定することを推奨します。',
       pathTemplatePlaceholder: '{projectParent}/.worktrees/{projectSlug}/{branchName}',
       pathTemplateTokens: '使用できるトークン',
       pathTemplateDefaultLocation: 'デフォルト',

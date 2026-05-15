@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'node:fs/promises';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { processManager } from '@/lib/cli/process-manager';
 import * as dbTasks from '@/lib/db/tasks';
@@ -8,15 +7,7 @@ import { generateTaskId } from '@/types/task-entity';
 import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import { broadcastTaskMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
-
-async function pathExists(candidate: string): Promise<boolean> {
-  try {
-    await fs.access(candidate);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { pathExists } from '@/lib/filesystem/path-exists';
 
 /**
  * GET /api/tasks?projectId=xxx

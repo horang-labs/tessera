@@ -168,6 +168,7 @@ export const en: I18nMessages = {
       autoDeleteArchivedWorktreesDesc: 'Keep archived chat/task records and delete only managed worktrees.',
       pathTemplate: 'Worktree path template',
       pathTemplateDesc: 'Leave empty to use the default Tessera-managed path below.',
+      pathTemplateWslWarning: 'In WSL mode, worktree creation can be much slower if the default worktree location is on the Windows filesystem. We recommend setting a WSL path such as \\\\wsl.localhost\\...\\home\\... manually.',
       pathTemplatePlaceholder: '{projectParent}/.worktrees/{projectSlug}/{branchName}',
       pathTemplateTokens: 'Available tokens',
       pathTemplateDefaultLocation: 'Default',
