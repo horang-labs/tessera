@@ -262,6 +262,7 @@ function addCreatedSession(
     id: msg.sessionId,
     title: i18n.t('chat.sessionDefaultTitle', { count: totalSessions + 1 }),
     projectDir: msg.workDir,
+    workDir: msg.workDir,
     isRunning: false,
     status: 'starting',
     createdAt: new Date().toISOString(),

@@ -3,8 +3,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
-import * as dbProjects from '@/lib/db/projects';
 import { getDb } from '@/lib/db/database';
+import { resolveSessionWorkspaceRoot } from '@/lib/session/session-workspace-root';
 
 const MAX_FILES = 20000;
 
@@ -66,14 +66,6 @@ async function walk(root: string): Promise<WalkResult> {
   return { files: out, truncated };
 }
 
-async function resolveSessionRoot(sessionId: string): Promise<string | null> {
-  const session = dbSessions.getSession(sessionId);
-  if (!session) return null;
-  if (session.work_dir) return session.work_dir;
-  const project = dbProjects.getProject(session.project_id);
-  return project?.decoded_path ?? null;
-}
-
 function listReferenceSessions(projectId: string, currentSessionId: string): {
   chats: SessionRef[];
   tasks: SessionRef[];
@@ -116,7 +108,7 @@ export async function GET(
 
   const refs = projectId ? listReferenceSessions(projectId, id) : { chats: [], tasks: [] };
 
-  const root = await resolveSessionRoot(id);
+  const root = resolveSessionWorkspaceRoot(id);
   if (!root) {
     return NextResponse.json({
       files: [],

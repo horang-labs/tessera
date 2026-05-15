@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { requireAuthenticatedUserId } from "@/lib/auth/api-auth";
-import * as dbProjects from "@/lib/db/projects";
-import * as dbSessions from "@/lib/db/sessions";
 import { jsonError } from "@/lib/http/json-error";
 import logger from "@/lib/logger";
+import { resolveSessionWorkspaceRoot } from "@/lib/session/session-workspace-root";
 
 const MAX_TEXT_FILE_BYTES = 512 * 1024;
 const MAX_RAW_FILE_BYTES = 25 * 1024 * 1024;
@@ -18,14 +17,6 @@ class WorkspaceFileError extends Error {
   ) {
     super(message);
   }
-}
-
-async function resolveSessionRoot(sessionId: string): Promise<string | null> {
-  const session = dbSessions.getSession(sessionId);
-  if (!session) return null;
-  if (session.work_dir) return session.work_dir;
-  const project = dbProjects.getProject(session.project_id);
-  return project?.decoded_path ?? null;
 }
 
 function isInsidePath(root: string, candidate: string): boolean {
@@ -143,7 +134,7 @@ export async function GET(
     });
     if ("response" in auth) return auth.response;
 
-    const root = await resolveSessionRoot(id);
+    const root = resolveSessionWorkspaceRoot(id);
     if (!root) {
       return jsonError("missing_work_dir", "Session has no working directory", 422);
     }
