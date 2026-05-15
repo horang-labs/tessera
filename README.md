@@ -93,7 +93,7 @@ Download from [GitHub Releases](https://github.com/horang-labs/tessera/releases)
 
 Windows builds are not code-signed yet, so SmartScreen may show an unknown-publisher warning. macOS builds are signed and notarized with Apple Developer ID.
 
-Release downloads, excluding npm installs, as of 2026-05-13 07:52 UTC:
+Release downloads, excluding npm installs, as of 2026-05-15 00:28 UTC:
 
 | Version | Windows | macOS | Linux | Total |
 |---------|--------:|------:|------:|------:|
@@ -102,8 +102,8 @@ Release downloads, excluding npm installs, as of 2026-05-13 07:52 UTC:
 | 0.1.2 | 6 | 9 | 1 | 16 |
 | 0.1.3 | 24 | 21 | 5 | 50 |
 | 0.1.4 | 30 | 27 | 2 | 59 |
-| 0.1.5 | 17 | 31 | 2 | 50 |
-| **Total** | **99** | **107** | **10** | **216** |
+| 0.1.5 | 27 | 62 | 9 | 98 |
+| **Total** | **109** | **138** | **17** | **264** |
 
 ### Browser runtime
 
