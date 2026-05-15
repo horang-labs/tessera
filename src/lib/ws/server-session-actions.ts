@@ -40,6 +40,7 @@ type CodexPermissionsRequestResult = {
 const CODEX_REQUEST_USER_INPUT_TOOL_NAME = 'CodexRequestUserInput';
 const CODEX_MCP_ELICITATION_TOOL_NAME = 'CodexMcpElicitation';
 const CODEX_PERMISSIONS_REQUEST_TOOL_NAME = 'CodexPermissionsRequest';
+const LIVE_EVENT_VERSION = 1;
 
 const AUTO_TITLE_PLACEHOLDER_TITLES = new Set([
   'New Task',
@@ -506,7 +507,13 @@ export function sendInteractiveResponseFromWebSocket({
       return;
     }
 
-    sessionHistory.recordInteractivePromptResponse(sessionId, toolUseId, response);
+    sendInteractivePromptResponseReplayEvent({
+      response,
+      sendToUser,
+      sessionId,
+      toolUseId,
+      userId,
+    });
     logger.info(
       { sessionId, toolUseId, response: response.substring(0, 50) },
       'Interactive response sent (legacy)',
@@ -553,7 +560,13 @@ export function sendInteractiveResponseFromWebSocket({
   }
 
   info.pendingPermissionRequests?.delete(toolUseId);
-  sessionHistory.recordInteractivePromptResponse(sessionId, toolUseId, response);
+  sendInteractivePromptResponseReplayEvent({
+    response,
+    sendToUser,
+    sessionId,
+    toolUseId,
+    userId,
+  });
 
   logger.info({
     sessionId,
@@ -579,6 +592,26 @@ export function sendInteractiveResponseFromWebSocket({
           : 'answered'
         : response,
   }, 'Control_response sent');
+}
+
+function sendInteractivePromptResponseReplayEvent({
+  response,
+  sendToUser,
+  sessionId,
+  toolUseId,
+  userId,
+}: InteractiveResponseActionOptions): void {
+  sendToUser(userId, {
+    type: 'replay_events',
+    sessionId,
+    events: [{
+      v: LIVE_EVENT_VERSION,
+      type: 'interactive_prompt_response',
+      timestamp: new Date().toISOString(),
+      toolUseId,
+      response,
+    }],
+  });
 }
 
 export async function clearUnreadFromWebSocket({

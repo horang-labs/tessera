@@ -527,6 +527,7 @@ export const en: I18nMessages = {
     focusPanelDown: 'Focus Panel Below',
     voiceInput: 'Voice Input',
     togglePlanMode: 'Toggle Plan Mode',
+    toggleCodexFastMode: 'Toggle Codex Fast Mode',
     openModelSelector: 'Select Model',
     openReasoningSelector: 'Select Thinking Effort',
     browserConflict: 'This shortcut may not work — your browser may intercept it',

@@ -4,7 +4,15 @@ import { generateAITitle } from '@/lib/session/ai-title-generator';
 import * as dbSessions from '@/lib/db/sessions';
 import logger from '@/lib/logger';
 import { syncSingleSessionTaskTitleFromSession } from '@/lib/task-title-sync';
-import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
+import {
+  broadcastSessionMutation,
+  broadcastSessionTitleGeneration,
+  getOriginClientIdFromRequest,
+} from '@/lib/ws/mutation-broadcast';
+import {
+  beginTitleGeneration,
+  endTitleGeneration,
+} from '@/lib/ws/title-generation-state';
 
 /**
  * POST /api/sessions/[id]/generate-title
@@ -17,15 +25,21 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: sessionId } = await params;
+  let userId: string | null = null;
+  let titleGenerationTracked = false;
 
   try {
     const auth = await requireAuthenticatedUserId(req);
     if ('response' in auth) {
       return auth.response;
     }
-    const { userId } = auth;
+    userId = auth.userId;
 
     logger.info({ userId, sessionId }, 'AI title generation requested');
+    titleGenerationTracked = true;
+    if (beginTitleGeneration(userId, sessionId)) {
+      broadcastSessionTitleGeneration(userId, sessionId, true);
+    }
 
     const result = await generateAITitle(sessionId, userId);
 
@@ -69,5 +83,9 @@ export async function POST(
       { error: msg },
       { status: 500 }
     );
+  } finally {
+    if (userId && titleGenerationTracked && endTitleGeneration(userId, sessionId)) {
+      broadcastSessionTitleGeneration(userId, sessionId, false);
+    }
   }
 }

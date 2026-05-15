@@ -15,6 +15,7 @@ import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
 import { terminalManager } from '../terminal/shared-terminal-manager';
+import { getGeneratingTitleSessionIds } from './title-generation-state';
 import {
   logReceivedClientTransportMessage,
   parseClientTransportMessage,
@@ -138,6 +139,24 @@ export class WebSocketServer {
     }
   }
 
+  private sendToConnection(
+    ws: AuthenticatedWebSocket,
+    userId: string,
+    message: ServerTransportMessage,
+  ): void {
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    try {
+      ws.send(JSON.stringify(message));
+    } catch (err) {
+      logger.error({
+        userId,
+        error: err,
+        messageType: message.type,
+      }, 'Failed to send message to WebSocket connection');
+    }
+  }
+
   /**
    * Handle new WebSocket connection
    */
@@ -193,14 +212,29 @@ export class WebSocketServer {
 
     // Send initial session list (actual sessions for this user, not empty)
     const userProcesses = processManager.getUserProcesses(userId);
-    this.sendToUser(userId, {
-      type: 'session_list',
-      sessions: userProcesses.map(p => ({
+    const sessions = await Promise.all(userProcesses.map(async (p) => {
+      const replayState = await sessionHistory.readReplayState(p.sessionId, { lazyToolOutput: true })
+        .catch((err) => {
+          logger.warn({
+            userId,
+            sessionId: p.sessionId,
+            error: err,
+          }, 'Failed to read replay state for initial session list');
+          return null;
+        });
+
+      return {
         id: p.sessionId,
         status: p.status,
         isGenerating: p.isGenerating,
         createdAt: p.createdAt.toISOString(),
-      })),
+        activeInteractivePrompt: replayState?.activeInteractivePrompt ?? null,
+      };
+    }));
+    this.sendToConnection(ws, userId, {
+      type: 'session_list',
+      sessions,
+      titleGeneratingSessionIds: getGeneratingTitleSessionIds(userId),
     });
 
     // Send cached rate limit data to new connection

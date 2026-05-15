@@ -277,7 +277,9 @@ export type AppServerMessage =
         status: string;
         isGenerating: boolean;
         createdAt: string;
+        activeInteractivePrompt?: import('@/types/chat').ActiveInteractivePrompt | null;
       }>;
+      titleGeneratingSessionIds?: string[];
     }
   | {
       type: 'unread_cleared'; // NEW - for FEAT-002
@@ -321,6 +323,11 @@ export type AppServerMessage =
       sessionId: string;
       title: string;
       previousTitle: string;
+    }
+  | {
+      type: 'session_title_generation';
+      sessionId: string;
+      isGenerating: boolean;
     }
   | {
       type: 'worktree_diff_stats';

@@ -86,6 +86,7 @@ interface SessionState {
   // AI title generation tracking
   generatingTitleIds: Set<string>;
   setGeneratingTitle: (sessionId: string, generating: boolean) => void;
+  setGeneratingTitleIds: (sessionIds: readonly string[]) => void;
   isGeneratingTitle: (sessionId: string) => boolean;
 
   /** Apply updated diff stats to every session whose id is in the set. */
@@ -1158,6 +1159,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       else next.delete(sessionId);
       return { generatingTitleIds: next };
     });
+  },
+  setGeneratingTitleIds: (sessionIds) => {
+    set({ generatingTitleIds: new Set(sessionIds) });
   },
   isGeneratingTitle: (sessionId) => get().generatingTitleIds.has(sessionId),
 

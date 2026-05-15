@@ -4,12 +4,13 @@ import { memo, useCallback, useContext, useEffect, useRef, useState } from 'reac
 import { cn } from '@/lib/utils';
 import { usePanelStore, TabIdContext, EMPTY_PANELS } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
+import { toast, useNotificationStore } from '@/stores/notification-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
+import { wsClient } from '@/lib/ws/client';
 import { PanelDropZone, type DropEdge } from './panel-drop-zone';
 import { PANEL_NODE_DRAG_MIME, SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
 import { useSettingsStore } from '@/stores/settings-store';
-import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
 import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 
@@ -68,13 +69,22 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
   // REQ-5: get sessionId for unread clearing
   const sessionId = usePanelStore((s) => s.tabPanels[tabId]?.panels[panelId]?.sessionId ?? null);
+  const sessionUnreadCount = useSessionStore((state) => {
+    if (!sessionId) return 0;
+    for (const project of state.projects) {
+      const session = project.sessions.find((item) => item.id === sessionId);
+      if (session) return session.unreadCount ?? 0;
+    }
+    return 0;
+  });
 
   // REQ-5: Clear unread count when this panel becomes active
   useEffect(() => {
-    if (isActive && sessionId) {
-      useSessionStore.getState().clearUnreadCount(sessionId);
-    }
-  }, [isActive, sessionId]);
+    if (!isActive || !sessionId || sessionUnreadCount <= 0) return;
+    useSessionStore.getState().clearUnreadCount(sessionId);
+    useNotificationStore.getState().markSessionAsRead(sessionId);
+    wsClient.sendMarkAsRead(sessionId);
+  }, [isActive, sessionId, sessionUnreadCount]);
 
   // 패널 활성화 시 포커스 자동 이동
   useEffect(() => {

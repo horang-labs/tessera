@@ -783,6 +783,20 @@ ipcMain.on('ui-selected-project-changed', (event, payload: unknown) => {
     win.webContents.send('ui-selected-project-changed', { projectDir });
   }
 });
+ipcMain.on('ui-collection-filter-changed', (event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return;
+  const { collectionId } = payload as { collectionId?: unknown };
+  if (collectionId !== null && typeof collectionId !== 'string') return;
+  const senderId = event.sender.id;
+  const targets: BrowserWindow[] = [];
+  if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
+  for (const win of popoutWindows) targets.push(win);
+  for (const win of targets) {
+    if (win.isDestroyed()) continue;
+    if (win.webContents.id === senderId) continue;
+    win.webContents.send('ui-collection-filter-changed', { collectionId });
+  }
+});
 ipcMain.on(
   'window-close-response',
   (

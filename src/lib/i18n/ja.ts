@@ -527,6 +527,7 @@ export const ja: I18nMessages = {
     focusPanelDown: '下のパネルへ移動',
     voiceInput: '音声入力',
     togglePlanMode: 'Plan モード切り替え',
+    toggleCodexFastMode: 'Codex Fast モード切り替え',
     openModelSelector: 'モデルを選択',
     openReasoningSelector: '思考強度を選択',
     browserConflict: 'このショートカットはブラウザに横取りされる可能性があります',

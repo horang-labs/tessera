@@ -91,6 +91,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('ui-selected-project-changed', listener);
     };
   },
+  uiCollectionFilterChanged: (collectionId: string | null) =>
+    ipcRenderer.send('ui-collection-filter-changed', { collectionId }),
+  onUiCollectionFilterChanged: (callback: (collectionId: string | null) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { collectionId?: string | null }
+    ) => {
+      const value = payload?.collectionId;
+      if (value !== null && typeof value !== 'string') return;
+      callback(value ?? null);
+    };
+    ipcRenderer.on('ui-collection-filter-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('ui-collection-filter-changed', listener);
+    };
+  },
   onTitlebarMenuCommand: (callback: (command: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { command?: string }) => {
       if (typeof payload?.command === 'string') {

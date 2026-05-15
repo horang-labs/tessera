@@ -5,6 +5,7 @@ import { applySessionReplayEventsToStores } from '@/lib/chat/apply-session-repla
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import {
   finalizeInFlightTurn,
+  startTurnInFlight,
   stopTurnInFlight,
 } from '@/lib/chat/session-client-effects';
 import { serverMessageToReplayEvents } from '@/lib/chat/server-message-to-replay-events';
@@ -70,6 +71,9 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'replay_events':
+      if (replayEventsIndicateActiveTurn(msg.events)) {
+        startTurnInFlight(msg.sessionId);
+      }
       applySessionReplayEventsToStores(msg.sessionId, msg.events);
       return { wasReconnect };
 
@@ -142,6 +146,7 @@ export function handleIncomingServerMessage({
 
     case 'unread_cleared':
       sessionStore.clearUnreadCount(msg.sessionId);
+      useNotificationStore.getState().markSessionAsRead(msg.sessionId);
       return { wasReconnect };
 
     case 'rate_limit_update':
@@ -176,6 +181,10 @@ export function handleIncomingServerMessage({
 
     case 'session_title_updated':
       handleSessionTitleUpdatedMessage(msg);
+      return { wasReconnect };
+
+    case 'session_title_generation':
+      sessionStore.setGeneratingTitle(msg.sessionId, msg.isGenerating);
       return { wasReconnect };
 
     case 'worktree_diff_stats':
@@ -245,6 +254,29 @@ export function handleIncomingServerMessage({
     default:
       return { wasReconnect };
   }
+}
+
+function replayEventsIndicateActiveTurn(
+  events: Extract<ServerTransportMessage, { type: 'replay_events' }>['events'],
+): boolean {
+  return events.some((event) => {
+    switch (event.type) {
+      case 'user_message':
+      case 'assistant_message':
+      case 'assistant_message_chunk':
+      case 'thinking_start':
+      case 'thinking_delta':
+        return true;
+      case 'progress_hook':
+        return event.hookEvent === 'waiting_for_task' || event.progressType === 'waiting_for_task';
+      case 'tool_call':
+        return event.status === 'running';
+      case 'interactive_prompt_response':
+        return true;
+      default:
+        return false;
+    }
+  });
 }
 
 function addCreatedSession(
@@ -330,15 +362,27 @@ function handleSessionListMessage(
   wasReconnect: boolean,
 ): boolean {
   const generatingSessionIds: string[] = [];
+  const titleGeneratingSessionIds = msg.titleGeneratingSessionIds ?? [];
+  const chatStore = useChatStore.getState();
   for (const session of msg.sessions || []) {
-    if (session.isGenerating) {
+    const hasActivePrompt = Boolean(session.activeInteractivePrompt);
+    if ('activeInteractivePrompt' in session) {
+      chatStore.setActiveInteractivePrompt(session.id, session.activeInteractivePrompt ?? null);
+      if (hasActivePrompt) {
+        stopTurnInFlight(session.id);
+      }
+    }
+    if (session.isGenerating && !hasActivePrompt) {
       generatingSessionIds.push(session.id);
+    } else if (!hasActivePrompt) {
+      stopTurnInFlight(session.id);
     }
   }
 
   if (generatingSessionIds.length > 0) {
-    useChatStore.getState().setTurnsInFlight(generatingSessionIds);
+    chatStore.setTurnsInFlight(generatingSessionIds);
   }
+  useSessionStore.getState().setGeneratingTitleIds(titleGeneratingSessionIds);
 
   if (msg.sessions.length > 0 && wasReconnect) {
     useNotificationStore.getState().showToast(

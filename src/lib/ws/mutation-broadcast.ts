@@ -13,6 +13,18 @@ export function broadcastSessionMutation(userId: string, params: {
   wsServer.sendToUser(userId, { type: 'session_mutated', ...params });
 }
 
+export function broadcastSessionTitleGeneration(
+  userId: string,
+  sessionId: string,
+  isGenerating: boolean,
+): void {
+  wsServer.sendToUser(userId, {
+    type: 'session_title_generation',
+    sessionId,
+    isGenerating,
+  });
+}
+
 export function broadcastTaskMutation(userId: string, params: {
   kind: 'created' | 'updated' | 'deleted' | 'reordered';
   originClientId?: string;

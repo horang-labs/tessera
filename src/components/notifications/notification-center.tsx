@@ -8,6 +8,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
+import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 
@@ -77,6 +78,8 @@ function NotificationCenterContent({
 
   const handleNotificationClick = (notificationId: string, sessionId: string) => {
     markAsRead(notificationId);
+    useSessionStore.getState().clearUnreadCount(sessionId);
+    wsClient.sendMarkAsRead(sessionId);
 
     // Switch to the session's project if different from current
     const session = getSession(sessionId);
@@ -104,6 +107,20 @@ function NotificationCenterContent({
     }
 
     onClose();
+  };
+
+  const handleMarkAllAsRead = () => {
+    markAllAsRead();
+    const unreadSessionIds = new Set(
+      notifications
+        .filter((notification) => !notification.read)
+        .map((notification) => notification.sessionId),
+    );
+
+    for (const sessionId of unreadSessionIds) {
+      useSessionStore.getState().clearUnreadCount(sessionId);
+      wsClient.sendMarkAsRead(sessionId);
+    }
   };
 
   // Compute fixed position based on direction
@@ -134,7 +151,7 @@ function NotificationCenterContent({
           {notifications.length > 0 && (
             <>
               <button
-                onClick={markAllAsRead}
+                onClick={handleMarkAllAsRead}
                 className="text-xs text-(--accent) hover:text-(--accent-light)"
               >
                 {t('notifications.markAllAsRead')}

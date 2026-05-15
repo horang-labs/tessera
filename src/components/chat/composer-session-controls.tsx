@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Shield, Cpu, Gauge, Square, ChevronDown, Workflow, Zap } from 'lucide-react';
+import { Shield, Cpu, Gauge, ChevronDown, Workflow, Zap } from 'lucide-react';
 import { tinykeys } from 'tinykeys';
 import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -155,23 +155,6 @@ function ComposerToggleButton({
   return shortcutId && shortcutLabel
     ? <ShortcutTooltip id={shortcutId} label={shortcutLabel}>{button}</ShortcutTooltip>
     : button;
-}
-
-function ComposerFastModeIndicator({ compact = false }: { compact?: boolean }) {
-  return (
-    <div
-      data-testid="fast-mode-indicator"
-      data-composer-control="service-tier"
-      title="Codex fast mode is on"
-      className={cn(
-        'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-(--status-warning-border) bg-(--status-warning-bg) px-2.5 text-[11px] font-medium text-(--status-warning-text)',
-        compact && 'px-2',
-      )}
-    >
-      <Zap className="h-3 w-3 shrink-0 fill-current" />
-      <span className="composer-quick-access-label whitespace-nowrap">Fast</span>
-    </div>
-  );
 }
 
 function ComposerControlDropdown({
@@ -482,6 +465,12 @@ function resolveModeToggleTitle(providerId: string, sessionMode: ProviderSession
   return sessionMode === 'plan' ? 'Plan mode is on' : 'Plan before implementation';
 }
 
+function resolveFastModeToggleTitle(isEnabled: boolean): string {
+  return isEnabled
+    ? 'Codex fast mode is on'
+    : 'Use Codex fast mode for this session';
+}
+
 function buildProviderModelControlValue(
   providerId: string,
   model: string,
@@ -533,6 +522,7 @@ function ComposerSessionControlsInner({
   const modelShortcut = useEffectiveShortcut('open-model-selector');
   const reasoningShortcut = useEffectiveShortcut('open-reasoning-selector');
   const planShortcut = useEffectiveShortcut('toggle-plan-mode');
+  const fastModeShortcut = useEffectiveShortcut('toggle-codex-fast-mode');
   const providerIdForSticky = session.provider;
 
   const sessionOptions = providerSessionOptions.data;
@@ -582,6 +572,25 @@ function ComposerSessionControlsInner({
     applySessionControls(nextSessionMode, accessMode);
     focusSessionInput(sessionId);
   }, [accessMode, applySessionControls, providerIdForSticky, sessionId, sessionMode]);
+
+  const handleFastModeToggle = useCallback(() => {
+    if (!isCodexProvider(providerIdForSticky)) return;
+
+    const nextServiceTier = session.serviceTier === CODEX_FAST_SERVICE_TIER
+      ? null
+      : CODEX_FAST_SERVICE_TIER;
+    updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
+    if (session.isRunning) {
+      wsClient.setServiceTier(sessionId, nextServiceTier);
+    }
+    focusSessionInput(sessionId);
+  }, [
+    providerIdForSticky,
+    session.isRunning,
+    session.serviceTier,
+    sessionId,
+    updateSessionRuntimeConfig,
+  ]);
 
   const handleAccessModeChange = (nextAccessMode: ProviderSessionAccessMode) => {
     setAccessMode(nextAccessMode);
@@ -693,6 +702,8 @@ function ComposerSessionControlsInner({
   const isInline = variant === 'inline';
   const isFastModeEnabled = isCodexProvider(providerIdForSticky)
     && session.serviceTier === CODEX_FAST_SERVICE_TIER;
+  const canToggleFastMode = isCodexProvider(providerIdForSticky);
+  const fastModeToggleTitle = resolveFastModeToggleTitle(isFastModeEnabled);
   const canOpenReasoningSelector = Boolean(
     sessionOptions?.supportsReasoningEffort
     && reasoningOptions.length > 0
@@ -700,7 +711,7 @@ function ComposerSessionControlsInner({
   );
 
   useEffect(() => {
-    if (!modelShortcut && !reasoningShortcut && !planShortcut) return;
+    if (!modelShortcut && !reasoningShortcut && !planShortcut && !fastModeShortcut) return;
 
     const isActivePanelSession = () => {
       const panelState = usePanelStore.getState();
@@ -715,6 +726,13 @@ function ComposerSessionControlsInner({
         if (!isActivePanelSession()) return;
         event.preventDefault();
         handlePlanToggle();
+      };
+    }
+    if (fastModeShortcut) {
+      bindings[fastModeShortcut] = (event) => {
+        if (!isActivePanelSession() || !canToggleFastMode) return;
+        event.preventDefault();
+        handleFastModeToggle();
       };
     }
     if (modelShortcut) {
@@ -733,7 +751,17 @@ function ComposerSessionControlsInner({
     }
 
     return tinykeys(window, bindings);
-  }, [canOpenReasoningSelector, handlePlanToggle, modelShortcut, planShortcut, reasoningShortcut, sessionId]);
+  }, [
+    canOpenReasoningSelector,
+    canToggleFastMode,
+    fastModeShortcut,
+    handleFastModeToggle,
+    handlePlanToggle,
+    modelShortcut,
+    planShortcut,
+    reasoningShortcut,
+    sessionId,
+  ]);
 
   return (
     <div
@@ -750,15 +778,25 @@ function ComposerSessionControlsInner({
           isRunning={session.isRunning}
           isStopped={session.status === 'stopped'}
           onStop={() => wsClient.stopSession(sessionId)}
-          runningLabel={t('status.running')}
           stoppedLabel={t('status.stopped')}
           stopLabel={t('status.stopProcess')}
         />
       </div>
 
       <div className={cn('flex items-center gap-1.5', !isInline && 'flex-wrap', isInline && 'contents')}>
-        {isFastModeEnabled && (
-          <ComposerFastModeIndicator compact={isInline} />
+        {canToggleFastMode && (
+          <ComposerToggleButton
+            icon={Zap}
+            label="Fast"
+            pressed={isFastModeEnabled}
+            onClick={handleFastModeToggle}
+            testId="fast-mode-toggle"
+            compact={isInline}
+            controlId="service-tier"
+            title={fastModeToggleTitle}
+            shortcutId="toggle-codex-fast-mode"
+            shortcutLabel={t('shortcut.toggleCodexFastMode')}
+          />
         )}
 
         <ComposerToggleButton

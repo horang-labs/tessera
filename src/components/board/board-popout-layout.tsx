@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useCrossWindowUiSync } from '@/hooks/use-cross-window-ui-sync';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
@@ -42,6 +43,7 @@ export function BoardPopoutLayout() {
   const isWindowsElectron = electronPlatform === 'win32';
   const isElectronTitlebar = isMacElectron || isWindowsElectron;
   const projects = useSessionStore((s) => s.projects);
+  const loadSettings = useSettingsStore((state) => state.load);
   const [projectsLoaded, setProjectsLoaded] = useState(projects.length > 0);
   const hydrationRef = useRef<PopoutHydrationParams>({ projectDir: null, collectionFilter: null });
   const hasHydratedRef = useRef(false);
@@ -59,6 +61,10 @@ export function BoardPopoutLayout() {
 
   useWebSocket();
   useCrossWindowUiSync();
+
+  useEffect(function loadUserSettingsInPopout() {
+    void loadSettings();
+  }, [loadSettings]);
 
   useEffect(() => {
     (window as Window & { __TESSERA_POPOUT__?: boolean }).__TESSERA_POPOUT__ = true;

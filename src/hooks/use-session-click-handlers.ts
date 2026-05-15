@@ -94,8 +94,9 @@ export function useSessionClickHandlers(options?: {
       // BRANCH B — Normal click
 
       // 1. Clear unread count (BR-SIDEBAR-008: only for normal click paths)
-      if (unreadSessionIds.has(session.id)) {
+      if (unreadSessionIds.has(session.id) || (session.unreadCount ?? 0) > 0) {
         clearUnreadCount(session.id);
+        useNotificationStore.getState().markSessionAsRead(session.id);
         wsClient.sendMarkAsRead(session.id);
       }
 
