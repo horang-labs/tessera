@@ -827,32 +827,37 @@ body {
 
 
 /* ============================================
-   Task Card Status Stripe — Jira-style left border
-   Uses the card's own border-left so the card's
-   rounded-lg corners clip the stroke naturally.
+   Task Card Status Stripe — left-edge activity rail
+   Keeps border width fixed; live states animate a
+   moving highlight instead of blinking the border.
    ============================================ */
 .task-stripe {
+  --stripe-color: transparent;
+  --stripe-track-color: color-mix(in srgb, var(--stripe-color) 32%, transparent);
+  overflow: hidden;
   border-left-width: 3px !important;
-  /* Color is set via cascaded `.task-stripe-*` variants below. Keeping it
-     non-!important so the `task-stripe-processing` animation can override. */
-  border-left-color: var(--stripe-color, transparent);
+  border-left-color: var(--stripe-track-color) !important;
 }
 
-/* Beat Tailwind's `border-(--board-card-border)` (which carries !important
-   weight via source order) for the steady states. */
-.task-stripe-unread,
-.task-stripe-running {
-  border-left-color: var(--stripe-color) !important;
+.task-stripe::before {
+  content: "";
+  position: absolute;
+  top: 0.375rem;
+  bottom: 0.375rem;
+  left: -1px;
+  z-index: 1;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--stripe-color);
+  pointer-events: none;
 }
 
 .task-stripe-processing {
   --stripe-color: var(--success);
-  animation: task-stripe-flow 1.6s ease-in-out infinite;
 }
 
 .task-stripe-attention {
   --stripe-color: #facc15;
-  animation: task-stripe-attention-flow 720ms ease-in-out infinite;
 }
 
 .task-stripe-unread {
@@ -863,24 +868,47 @@ body {
   --stripe-color: var(--success);
 }
 
+.task-stripe-processing::before {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--stripe-color) 16%, transparent) 0%,
+      var(--stripe-color) 34%,
+      color-mix(in srgb, var(--stripe-color) 64%, transparent) 52%,
+      var(--stripe-color) 70%,
+      color-mix(in srgb, var(--stripe-color) 16%, transparent) 100%
+    );
+  background-size: 100% 210%;
+  animation: task-stripe-flow 1.4s linear infinite;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--stripe-color) 34%, transparent);
+}
+
+.task-stripe-attention::before {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(250, 204, 21, 0.22) 0%,
+      #facc15 42%,
+      rgba(250, 204, 21, 0.52) 58%,
+      rgba(250, 204, 21, 0.22) 100%
+    );
+  background-size: 100% 220%;
+  animation: task-stripe-flow 1s linear infinite;
+  box-shadow: 0 0 10px rgba(250, 204, 21, 0.28);
+}
+
 @keyframes task-stripe-flow {
-  0%, 100% {
-    border-left-color: color-mix(in srgb, var(--success) 20%, transparent);
-    border-left-width: 2px;
+  from {
+    background-position: 0 100%;
   }
-  50% {
-    border-left-color: var(--success);
-    border-left-width: 4px;
+  to {
+    background-position: 0 -100%;
   }
 }
 
-@keyframes task-stripe-attention-flow {
-  0%, 100% {
-    border-left-color: rgba(250, 204, 21, 0.28);
-    border-left-width: 2px;
-  }
-  50% {
-    border-left-color: #facc15;
-    border-left-width: 4px;
+@media (prefers-reduced-motion: reduce) {
+  .task-stripe-processing::before,
+  .task-stripe-attention::before {
+    animation: none;
   }
 }
