@@ -35,6 +35,7 @@ import type {
   CliRawLogSink,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
+import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
 import type {
   CodexApprovalPolicy,
   CodexCollaborationMode,
@@ -194,6 +195,32 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
   return typeof model === 'string' && model.trim() ? model.trim() : null;
 }
 
+function normalizeCodexGoal(raw: unknown): SessionGoal | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const goal = raw as Record<string, unknown>;
+  if (
+    typeof goal.threadId !== 'string' ||
+    typeof goal.objective !== 'string' ||
+    !['active', 'paused', 'budgetLimited', 'complete'].includes(String(goal.status))
+  ) {
+    return null;
+  }
+
+  return {
+    threadId: goal.threadId,
+    objective: goal.objective,
+    status: goal.status as SessionGoal['status'],
+    tokenBudget: typeof goal.tokenBudget === 'number' ? goal.tokenBudget : null,
+    tokensUsed: typeof goal.tokensUsed === 'number' ? goal.tokensUsed : 0,
+    timeUsedSeconds: typeof goal.timeUsedSeconds === 'number' ? goal.timeUsedSeconds : 0,
+    createdAt: typeof goal.createdAt === 'number' ? goal.createdAt : 0,
+    updatedAt: typeof goal.updatedAt === 'number' ? goal.updatedAt : 0,
+  };
+}
+
 // =============================================================================
 // CodexAdapter
 // =============================================================================
@@ -326,7 +353,7 @@ export class CodexAdapter implements CliProvider {
    * rather than CLI flags.
    */
   getCliArgs(_options: SpawnOptions): string[] {
-    return ['app-server'];
+    return ['app-server', '--enable', 'goals'];
   }
 
   // ---------------------------------------------------------------------------
@@ -423,10 +450,9 @@ export class CodexAdapter implements CliProvider {
   // ---------------------------------------------------------------------------
 
   /**
-   * Writes a user turn to the Codex app-server stdin as a JSON-RPC 2.0
-   * request:
-   *   { "jsonrpc": "2.0", "id": N, "method": "turn/start",
-   *     "params": { "threadId": "<id>", "input": [...] } }
+   * Writes user input to the Codex app-server stdin as JSON-RPC 2.0.
+   * Idle threads use `turn/start`; active regular turns use `turn/steer`
+   * so mid-run user messages behave like Codex CLI steering.
    *
    * Codex requires `input` to be an array of items and `threadId` from the
    * handshake. When content is an array of ContentBlock:
@@ -462,6 +488,31 @@ export class CodexAdapter implements CliProvider {
     if (!threadId) {
       logger.error('CodexAdapter: cannot send turn/start — no threadId for this process');
       return false;
+    }
+
+    const sessionId = runtimeConfig?.sessionId ?? null;
+    const activeTurnId = sessionId ? codexProtocolParser.getActiveTurnId(sessionId) : null;
+    if (sessionId && activeTurnId) {
+      const requestId = this._nextRequestId++;
+      const request: JsonRpcRequest = {
+        jsonrpc: '2.0',
+        id: requestId,
+        method: 'turn/steer',
+        params: {
+          threadId,
+          input: inputItems,
+          expectedTurnId: activeTurnId,
+        },
+      };
+
+      codexProtocolParser.trackPendingRequest(sessionId, requestId, 'turn/steer');
+      const ok = this._writeStdin(proc, 'send_message', `${JSON.stringify(request)}\n`);
+      logger.debug('CodexAdapter: sent turn/steer', {
+        inputItemCount: inputItems.length,
+        threadId,
+        turnId: activeTurnId,
+      });
+      return ok;
     }
 
     const request: JsonRpcRequest = {
@@ -504,17 +555,121 @@ export class CodexAdapter implements CliProvider {
   }
 
   onSessionReady(proc: ChildProcess, sessionId: string): boolean {
+    const rateLimitRequestId = this._nextRequestId++;
+    const rateLimitRequest: JsonRpcRequest = {
+      jsonrpc: '2.0',
+      id: rateLimitRequestId,
+      method: 'account/rateLimits/read',
+    };
+
+    codexProtocolParser.trackPendingRequest(sessionId, rateLimitRequestId, 'account/rateLimits/read');
+    const rateLimitOk = this._writeStdin(
+      proc,
+      'on_session_ready',
+      `${JSON.stringify(rateLimitRequest)}\n`,
+    );
+
+    const threadId = this._processThreadIds.get(proc);
+    if (!threadId) {
+      logger.debug('CodexAdapter: skipped initial goal read; no threadId', { sessionId });
+      return rateLimitOk;
+    }
+
+    const goalRequestId = this._nextRequestId++;
+    const goalRequest: JsonRpcRequest = {
+      jsonrpc: '2.0',
+      id: goalRequestId,
+      method: 'thread/goal/get',
+      params: { threadId },
+    };
+
+    codexProtocolParser.trackPendingRequest(sessionId, goalRequestId, 'thread/goal/get');
+    const goalOk = this._writeStdin(
+      proc,
+      'on_session_ready_goal_get',
+      `${JSON.stringify(goalRequest)}\n`,
+    );
+    logger.debug('CodexAdapter: requested initial rate limits and goal', {
+      sessionId,
+      rateLimitRequestId,
+      goalRequestId,
+      rateLimitOk,
+      goalOk,
+    });
+    return rateLimitOk || goalOk;
+  }
+
+  async setGoal(
+    proc: ChildProcess,
+    sessionId: string,
+    update: SessionGoalUpdate,
+  ): Promise<SessionGoal> {
+    const threadId = this._processThreadIds.get(proc);
+    if (!threadId) {
+      throw new Error('Codex thread is not ready');
+    }
+
     const requestId = this._nextRequestId++;
     const request: JsonRpcRequest = {
       jsonrpc: '2.0',
       id: requestId,
-      method: 'account/rateLimits/read',
+      method: 'thread/goal/set',
+      params: {
+        threadId,
+        ...(update.objective !== undefined ? { objective: update.objective } : {}),
+        ...(update.status !== undefined ? { status: update.status } : {}),
+        ...(update.tokenBudget !== undefined ? { tokenBudget: update.tokenBudget } : {}),
+      },
     };
 
-    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'account/rateLimits/read');
-    const ok = this._writeStdin(proc, 'on_session_ready', `${JSON.stringify(request)}\n`);
-    logger.debug('CodexAdapter: requested initial rate limits', { sessionId, requestId, ok });
-    return ok;
+    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/goal/set');
+    this._writeStdin(proc, 'goal_set', `${JSON.stringify(request)}\n`);
+    const response = await this._awaitResponse(proc, requestId, 'thread/goal/set');
+    const goal = normalizeCodexGoal(response.result?.goal);
+    if (!goal) {
+      throw new Error('Codex goal response was missing a valid goal');
+    }
+    return goal;
+  }
+
+  async getGoal(proc: ChildProcess, sessionId: string): Promise<SessionGoal | null> {
+    const threadId = this._processThreadIds.get(proc);
+    if (!threadId) {
+      throw new Error('Codex thread is not ready');
+    }
+
+    const requestId = this._nextRequestId++;
+    const request: JsonRpcRequest = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'thread/goal/get',
+      params: { threadId },
+    };
+
+    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/goal/get');
+    this._writeStdin(proc, 'goal_get', `${JSON.stringify(request)}\n`);
+    const response = await this._awaitResponse(proc, requestId, 'thread/goal/get');
+    return normalizeCodexGoal(response.result?.goal);
+  }
+
+  async clearGoal(proc: ChildProcess, sessionId: string): Promise<boolean> {
+    const threadId = this._processThreadIds.get(proc);
+    if (!threadId) {
+      throw new Error('Codex thread is not ready');
+    }
+
+    const requestId = this._nextRequestId++;
+    const request: JsonRpcRequest = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'thread/goal/clear',
+      params: { threadId },
+    };
+
+    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/goal/clear');
+    this._writeStdin(proc, 'goal_clear', `${JSON.stringify(request)}\n`);
+    const response = await this._awaitResponse(proc, requestId, 'thread/goal/clear');
+    return response.result?.cleared === true;
   }
 
   // ---------------------------------------------------------------------------
@@ -861,6 +1016,9 @@ export class CodexAdapter implements CliProvider {
 
     if (runtimeConfig?.model) {
       threadParams.model = runtimeConfig.model;
+    }
+    if (runtimeConfig?.reasoningEffort) {
+      threadParams.effort = runtimeConfig.reasoningEffort;
     }
     if (runtimeConfig?.serviceTier !== undefined) {
       threadParams.serviceTier = runtimeConfig.serviceTier;

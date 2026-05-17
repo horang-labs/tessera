@@ -10,14 +10,17 @@ import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { ProviderMeta } from '../cli/providers/types';
 import {
   clearUnreadFromWebSocket,
+  clearSessionGoalFromWebSocket,
   closeSessionFromWebSocket,
   createSessionFromWebSocket,
+  refreshSessionGoalFromWebSocket,
   resumeSessionFromWebSocket,
   retrySessionFromWebSocket,
   runProcessManagerControlAction,
   sendCommandsListToWebSocketUser,
   sendInteractiveResponseFromWebSocket,
   sendSessionMessageFromWebSocket,
+  setSessionGoalFromWebSocket,
 } from './server-session-actions';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
@@ -193,6 +196,34 @@ export async function routeClientTransportMessage({
         userId,
         'cancel_generation requested',
       );
+      return;
+
+    case 'set_session_goal':
+      await setSessionGoalFromWebSocket({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        spawnConfig: message.spawnConfig,
+        update: message.update,
+      });
+      return;
+
+    case 'refresh_session_goal':
+      await refreshSessionGoalFromWebSocket({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        spawnConfig: message.spawnConfig,
+      });
+      return;
+
+    case 'clear_session_goal':
+      await clearSessionGoalFromWebSocket({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        spawnConfig: message.spawnConfig,
+      });
       return;
 
     case 'set_permission_mode':

@@ -70,9 +70,18 @@ export function handleIncomingServerMessage({
       useCommandStore.getState().clearSession(msg.sessionId);
       return { wasReconnect };
 
+    case 'session_goal_updated':
+      sessionStore.updateSessionGoal(msg.sessionId, msg.goal);
+      return { wasReconnect };
+
+    case 'session_goal_cleared':
+      sessionStore.updateSessionGoal(msg.sessionId, null);
+      return { wasReconnect };
+
     case 'replay_events':
       if (replayEventsIndicateActiveTurn(msg.events)) {
         startTurnInFlight(msg.sessionId);
+        sessionStore.updateSessionStatus(msg.sessionId, 'running');
       }
       applySessionReplayEventsToStores(msg.sessionId, msg.events);
       return { wasReconnect };

@@ -16,6 +16,7 @@ import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 import { ProviderBadge } from './provider-brand';
 import { setPanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { MessageSearchBar } from './message-search-bar';
+import { SessionGoalControl } from './session-goal-control';
 
 interface HeaderProps {
   sessionId: string;
@@ -260,7 +261,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
             </button>
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 items-center">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <button
               type="button"
               draggable
@@ -316,6 +317,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
 
               <span className="min-w-4 flex-1" aria-hidden="true" />
             </button>
+            <SessionGoalControl sessionId={sessionId} variant="header" />
           </div>
         )}
 

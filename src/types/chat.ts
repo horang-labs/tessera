@@ -9,6 +9,7 @@ import type {
   ProviderSessionAccessMode,
   ProviderSessionMode,
 } from '@/lib/session/session-control-types';
+import type { SessionGoal } from './session-goal';
 
 // New message types for protocol adapter → frontend
 // Base message fields
@@ -186,6 +187,7 @@ export interface UnifiedSession {
   serviceTier?: string | null;
   sessionMode?: ProviderSessionMode;
   accessMode?: ProviderSessionAccessMode;
+  goal?: SessionGoal | null;
 
   /**
    * Task entity ID this session belongs to.

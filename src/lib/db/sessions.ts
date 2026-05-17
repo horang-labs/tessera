@@ -3,6 +3,7 @@
  */
 
 import { getDb } from './database';
+import type { SessionGoal } from '@/types/session-goal';
 
 export interface SessionRow {
   id: string;
@@ -473,6 +474,7 @@ export function mapSessionRowToApi(
     archivedAt: row.archived_at ?? undefined,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
     provider: row.provider,
+    goal: extractSessionGoal(row.provider_state) ?? undefined,
     taskId: row.task_id ?? undefined,
     collectionId: row.collection_id ?? undefined,
   };
@@ -488,6 +490,34 @@ export function extractThreadId(providerState: string | null): string | undefine
     return JSON.parse(providerState).threadId;
   } catch {
     return undefined;
+  }
+}
+
+export function extractSessionGoal(providerState: string | null): SessionGoal | null {
+  if (!providerState) return null;
+  try {
+    const value = JSON.parse(providerState).goal;
+    if (!value || typeof value !== 'object') return null;
+    if (
+      typeof value.threadId !== 'string' ||
+      typeof value.objective !== 'string' ||
+      !['active', 'paused', 'budgetLimited', 'complete'].includes(String(value.status))
+    ) {
+      return null;
+    }
+
+    return {
+      threadId: value.threadId,
+      objective: value.objective,
+      status: value.status,
+      tokenBudget: typeof value.tokenBudget === 'number' ? value.tokenBudget : null,
+      tokensUsed: typeof value.tokensUsed === 'number' ? value.tokensUsed : 0,
+      timeUsedSeconds: typeof value.timeUsedSeconds === 'number' ? value.timeUsedSeconds : 0,
+      createdAt: typeof value.createdAt === 'number' ? value.createdAt : 0,
+      updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : 0,
+    };
+  } catch {
+    return null;
   }
 }
 

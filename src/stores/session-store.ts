@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SessionStatus, ProjectGroup, UnifiedSession } from '@/types/chat';
+import type { SessionGoal } from '@/types/session-goal';
 import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
 import { useTaskStore } from './task-store';
@@ -44,6 +45,7 @@ interface SessionState {
     sessionId: string,
     runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'sessionMode' | 'accessMode'>>,
   ) => void;
+  updateSessionGoal: (sessionId: string, goal: SessionGoal | null) => void;
   setCreatingSession: (sessionId: string | null) => void;
   setLoadingSession: (sessionId: string | null) => void;
   getSession: (sessionId: string) => UnifiedSession | undefined;
@@ -117,6 +119,7 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     model: s.model ?? undefined,
     reasoningEffort: 'reasoningEffort' in s ? s.reasoningEffort : undefined,
     serviceTier: 'serviceTier' in s ? s.serviceTier : undefined,
+    goal: 'goal' in s ? s.goal : undefined,
     taskId: s.taskId ?? undefined,
     collectionId: s.collectionId ?? undefined,
     diffStats: s.diffStats ?? undefined,
@@ -740,6 +743,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                   accessMode: runtimeConfig.accessMode,
                 }),
               }
+            : s
+        ),
+      })),
+    })),
+
+  updateSessionGoal: (sessionId, goal) =>
+    set((state) => ({
+      projects: state.projects.map((project) => ({
+        ...project,
+        sessions: project.sessions.map((s) =>
+          s.id === sessionId
+            ? { ...s, goal }
             : s
         ),
       })),

@@ -435,6 +435,29 @@ export interface I18nMessages {
       maxRetriesReached: string;
     };
   };
+  goal: {
+    title: string;
+    start: string;
+    edit: string;
+    save: string;
+    pause: string;
+    resume: string;
+    clear: string;
+    complete: string;
+    refresh: string;
+    notSet: string;
+    objectiveLabel: string;
+    objectivePlaceholder: string;
+    inputPlaceholder: string;
+    steerPlaceholder: string;
+    tokensUsed: string;
+    status: {
+      active: string;
+      paused: string;
+      budgetLimited: string;
+      complete: string;
+    };
+  };
   notifications: {
     title: string;
     completed: string;

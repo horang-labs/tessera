@@ -8,6 +8,7 @@ import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { TerminalShellKind } from '@/lib/terminal/types';
+import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
 
 // ========== ContentBlock 타입 정의 (클립보드 이미지 붙여넣기) ==========
 
@@ -55,16 +56,25 @@ export type ContentBlock = TextContentBlock | ImageContentBlock | SkillContentBl
 
 // ========== END ContentBlock 타입 정의 ==========
 
+export type SessionSpawnConfig = {
+  model?: string;
+  reasoningEffort?: string | null;
+  permissionMode?: PermissionMode;
+} & ProviderRuntimeControls;
+
 // Client → Server messages
 export type ClientMessage =
   | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'close_session'; requestId: string; sessionId: string }
-  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: ({ model?: string; reasoningEffort?: string | null; permissionMode?: PermissionMode } & ProviderRuntimeControls) }
+  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig }
   | ({ type: 'resume_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'retry_session'; requestId: string; sessionId: string }
   | { type: 'interactive_response'; requestId: string; sessionId: string; toolUseId: string; response: string }
   | { type: 'mark_as_read'; requestId: string; sessionId: string } // NEW - for FEAT-002
   | { type: 'cancel_generation'; requestId: string; sessionId: string }
+  | { type: 'set_session_goal'; requestId: string; sessionId: string; update: SessionGoalUpdate; spawnConfig?: SessionSpawnConfig }
+  | { type: 'refresh_session_goal'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig }
+  | { type: 'clear_session_goal'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig }
   | ({ type: 'set_permission_mode'; requestId: string; sessionId: string; mode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'set_model'; requestId: string; sessionId: string; model: string }
   | { type: 'set_reasoning_effort'; requestId: string; sessionId: string; reasoningEffort: string | null }
@@ -288,6 +298,8 @@ export type AppServerMessage =
     }
   | { type: 'session_stopped'; sessionId: string }
   | { type: 'session_idle_closed'; sessionId: string }
+  | { type: 'session_goal_updated'; sessionId: string; goal: SessionGoal }
+  | { type: 'session_goal_cleared'; sessionId: string }
   | ({ type: 'rate_limit_update' } & ProviderRateLimitsSnapshot)
   | {
       type: 'providers_list';
