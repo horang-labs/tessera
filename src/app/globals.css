@@ -827,88 +827,56 @@ body {
 
 
 /* ============================================
-   Task Card Status Stripe — left-edge activity rail
-   Keeps border width fixed; live states animate a
-   moving highlight instead of blinking the border.
+   Task Card Status Stripe — card left border
+   Uses the card's own border-left; live states
+   animate color only so no extra rail is drawn.
    ============================================ */
-.task-stripe {
-  --stripe-color: transparent;
-  --stripe-track-color: color-mix(in srgb, var(--stripe-color) 32%, transparent);
-  overflow: hidden;
-  border-left-width: 3px !important;
-  border-left-color: var(--stripe-track-color) !important;
+@property --task-stripe-intensity {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 32%;
 }
 
-.task-stripe::before {
-  content: "";
-  position: absolute;
-  top: 0.375rem;
-  bottom: 0.375rem;
-  left: -1px;
-  z-index: 1;
-  width: 3px;
-  border-radius: 999px;
-  background: var(--stripe-color);
-  pointer-events: none;
+.task-stripe {
+  --stripe-color: transparent;
+  --task-stripe-intensity: 32%;
+  border-left-width: 3px !important;
+  border-left-color: color-mix(in srgb, var(--stripe-color) var(--task-stripe-intensity), transparent) !important;
 }
 
 .task-stripe-processing {
   --stripe-color: var(--success);
+  animation: task-stripe-border-pulse 1.4s ease-in-out infinite;
 }
 
 .task-stripe-attention {
   --stripe-color: #facc15;
+  animation: task-stripe-border-pulse 900ms ease-in-out infinite;
 }
 
 .task-stripe-unread {
   --stripe-color: #facc15;
+  --task-stripe-intensity: 78%;
 }
 
 .task-stripe-running {
   --stripe-color: var(--success);
+  --task-stripe-intensity: 78%;
 }
 
-.task-stripe-processing::before {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--stripe-color) 16%, transparent) 0%,
-      var(--stripe-color) 34%,
-      color-mix(in srgb, var(--stripe-color) 64%, transparent) 52%,
-      var(--stripe-color) 70%,
-      color-mix(in srgb, var(--stripe-color) 16%, transparent) 100%
-    );
-  background-size: 100% 210%;
-  animation: task-stripe-flow 1.4s linear infinite;
-  box-shadow: 0 0 10px color-mix(in srgb, var(--stripe-color) 34%, transparent);
-}
-
-.task-stripe-attention::before {
-  background:
-    linear-gradient(
-      180deg,
-      rgba(250, 204, 21, 0.22) 0%,
-      #facc15 42%,
-      rgba(250, 204, 21, 0.52) 58%,
-      rgba(250, 204, 21, 0.22) 100%
-    );
-  background-size: 100% 220%;
-  animation: task-stripe-flow 1s linear infinite;
-  box-shadow: 0 0 10px rgba(250, 204, 21, 0.28);
-}
-
-@keyframes task-stripe-flow {
-  from {
-    background-position: 0 100%;
+@keyframes task-stripe-border-pulse {
+  0%, 100% {
+    --task-stripe-intensity: 30%;
   }
-  to {
-    background-position: 0 -100%;
+  50% {
+    --task-stripe-intensity: 100%;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task-stripe-processing::before,
-  .task-stripe-attention::before {
+  .task-stripe-processing,
+  .task-stripe-attention {
     animation: none;
+    --task-stripe-intensity: 78%;
   }
 }
