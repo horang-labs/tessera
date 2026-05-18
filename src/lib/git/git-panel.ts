@@ -6,6 +6,7 @@ import {
   isWindowsHostedWslFilesystemPath,
   resolveWslDisplayPathAgainstWindowsHostedPath,
 } from "@/lib/filesystem/path-environment";
+import { resolvePathForHostFilesystem } from "@/lib/filesystem/host-path";
 import * as dbSessions from "@/lib/db/sessions";
 import * as dbTasks from "@/lib/db/tasks";
 import { getCachedSessionPr, syncSessionPr } from "@/lib/github/session-pr-sync";
@@ -13,6 +14,7 @@ import { computeWorktreeFileDiffStats } from "@/lib/git/worktree-diff-stats";
 import { getCachedDiffStats } from "@/lib/git/worktree-diff-stats-cache";
 import { getAgentEnvironment, spawnCli } from "@/lib/cli/spawn-cli";
 import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
+import { getRuntimePlatform } from "@/lib/system/runtime-platform";
 import type { AgentEnvironment } from "@/lib/settings/types";
 import type {
   GitChangedFile,
@@ -419,7 +421,10 @@ async function buildSyntheticUntrackedDiff(
   relativePath: string,
   referenceFilesystemPath: string,
 ): Promise<string> {
-  const filesystemRepoRoot = resolveNodeFilesystemPath(repoRoot, referenceFilesystemPath);
+  const filesystemRepoRoot = await resolveNodeFilesystemPath(
+    repoRoot,
+    referenceFilesystemPath,
+  );
   const absolutePath = ensurePathInsideRepo(filesystemRepoRoot, relativePath);
   const buffer = await readFile(absolutePath);
 
@@ -661,14 +666,19 @@ async function resolveCommandEnvironment(
     return getAgentEnvironment(userId);
   }
 
-  return isWindowsHostedWslFilesystemPath(workDir) ? "wsl" : "native";
+  if (isWindowsHostedWslFilesystemPath(workDir)) return "wsl";
+  if (getRuntimePlatform() === "win32" && workDir.trim().startsWith("/")) {
+    return "wsl";
+  }
+  return "native";
 }
 
-function resolveNodeFilesystemPath(
+async function resolveNodeFilesystemPath(
   gitPath: string,
   referenceFilesystemPath: string,
-): string {
-  return resolveWslDisplayPathAgainstWindowsHostedPath(gitPath, referenceFilesystemPath) ?? gitPath;
+): Promise<string> {
+  return resolveWslDisplayPathAgainstWindowsHostedPath(gitPath, referenceFilesystemPath)
+    ?? resolvePathForHostFilesystem(gitPath);
 }
 
 function getPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {

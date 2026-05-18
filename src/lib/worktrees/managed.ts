@@ -14,6 +14,7 @@ import {
   getWindowsHostedWslRootFilesystemPath,
   isWslFilesystemPath,
 } from '../filesystem/path-environment';
+import { resolvePathForHostFilesystem } from '../filesystem/host-path';
 import type { AgentEnvironment } from '../settings/types';
 import { createGitRunner, type GitRunner } from './git-runner';
 import { getRuntimePlatform } from '../system/runtime-platform';
@@ -54,7 +55,10 @@ export async function allocateManagedWorktree(
   const usesPathTemplate = pathTemplate.length > 0;
   const pathModule = getPathModule(rootDir);
   if (!usesPathTemplate) {
-    await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
+    await fs.mkdir(await resolvePathForHostFilesystem(rootDir), {
+      recursive: true,
+      mode: 0o700,
+    });
   }
 
   const now = new Date();
@@ -83,7 +87,10 @@ export async function allocateManagedWorktree(
       continue;
     }
 
-    await fs.mkdir(worktreePathModule.dirname(worktreePath), { recursive: true, mode: 0o700 });
+    await fs.mkdir(
+      await resolvePathForHostFilesystem(worktreePathModule.dirname(worktreePath)),
+      { recursive: true, mode: 0o700 },
+    );
     return { branchName, worktreePath };
   }
 
@@ -122,6 +129,18 @@ export function getManagedWorktreeRelativeDisplayPath(candidate: string): string
     if (wslFallbackRelative) return wslFallbackRelative.replace(/[\\/]+/g, '/');
   }
 
+  const wslPosixHomeRoot = resolveWslPosixHomeManagedWorktreeRoot(candidate);
+  if (wslPosixHomeRoot) {
+    const wslPosixHomeRelative = getRelativePathIfInside(wslPosixHomeRoot, candidate);
+    if (wslPosixHomeRelative) return wslPosixHomeRelative.replace(/[\\/]+/g, '/');
+  }
+
+  const wslPosixFallbackRoot = resolveWslPosixFallbackManagedWorktreeRoot(candidate);
+  if (wslPosixFallbackRoot) {
+    const wslPosixFallbackRelative = getRelativePathIfInside(wslPosixFallbackRoot, candidate);
+    if (wslPosixFallbackRelative) return wslPosixFallbackRelative.replace(/[\\/]+/g, '/');
+  }
+
   const wslHostedNativeRoot = resolveWslHostedNativeManagedWorktreeRoot(candidate);
   if (!wslHostedNativeRoot) return null;
 
@@ -137,6 +156,8 @@ export async function resolveManagedWorktreeRoot(
     return (
       resolveWslHomeManagedWorktreeRoot(projectDir)
       ?? resolveWslFallbackManagedWorktreeRoot(projectDir)
+      ?? resolveWslPosixHomeManagedWorktreeRoot(projectDir)
+      ?? resolveWslPosixFallbackManagedWorktreeRoot(projectDir)
       ?? MANAGED_WORKTREE_ROOT
     );
   }
@@ -157,7 +178,10 @@ export async function removeManagedWorktree(
     ['-C', projectDir, 'worktree', 'remove', '--force', worktreePath],
   );
 
-  await fs.rm(worktreePath, { recursive: true, force: true });
+  await fs.rm(await resolvePathForHostFilesystem(worktreePath), {
+    recursive: true,
+    force: true,
+  });
 }
 
 async function localBranchExists(
@@ -175,7 +199,7 @@ async function localBranchExists(
 
 async function pathExists(candidate: string): Promise<boolean> {
   try {
-    await fs.access(candidate);
+    await fs.access(await resolvePathForHostFilesystem(candidate));
     return true;
   } catch {
     return false;
@@ -232,6 +256,20 @@ function resolveWslHostedNativeManagedWorktreeRoot(candidate: string): string | 
   const match = normalized.match(/^(\/mnt\/[a-zA-Z]\/Users\/[^/]+)\/\.tessera\/worktrees(?:\/|$)/);
   if (!match) return null;
   return path.posix.join(match[1], '.tessera', 'worktrees');
+}
+
+function resolveWslPosixHomeManagedWorktreeRoot(candidate: string): string | null {
+  const normalized = candidate.replace(/\\/g, '/');
+  const match = normalized.match(/^\/home\/([^/]+)(?:\/|$)/);
+  if (!match) return null;
+  return path.posix.join('/home', match[1], '.tessera', 'worktrees');
+}
+
+function resolveWslPosixFallbackManagedWorktreeRoot(candidate: string): string | null {
+  const normalized = candidate.replace(/\\/g, '/');
+  return normalized.startsWith('/var/tmp/tessera-worktrees')
+    ? '/var/tmp/tessera-worktrees'
+    : null;
 }
 
 function inferManagedGitEnvironment(

@@ -5,7 +5,7 @@ import { useSessionStore } from '@/stores/session-store';
 
 export function getInitialTerminalCwd(sessionId?: string | null): string | null {
   const sessionState = useSessionStore.getState();
-  const selectionSessionId = getSessionSelectionId(sessionId ?? sessionState.activeSessionId);
+  const selectionSessionId = getSessionSelectionId(sessionId ?? null);
   if (selectionSessionId) {
     const activeSession = sessionState.getSession(selectionSessionId);
     if (activeSession?.workDir) {

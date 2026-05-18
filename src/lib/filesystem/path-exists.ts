@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
-import { resolveBrowsePath } from './path-environment';
-import { getRuntimePlatform } from '../system/runtime-platform';
+import { resolvePathForHostFilesystem } from './host-path';
 
 export async function pathExists(candidate: string): Promise<boolean> {
   try {
@@ -10,13 +9,13 @@ export async function pathExists(candidate: string): Promise<boolean> {
     // Fall through to WSL path handling below.
   }
 
-  if (getRuntimePlatform() !== 'win32' || !candidate.startsWith('/')) {
+  const resolvedCandidate = await resolvePathForHostFilesystem(candidate);
+  if (resolvedCandidate === candidate) {
     return false;
   }
 
   try {
-    const resolved = await resolveBrowsePath(candidate, 'wsl');
-    await fs.access(resolved.filesystemPath);
+    await fs.access(resolvedCandidate);
     return true;
   } catch {
     return false;

@@ -4,7 +4,11 @@ import * as path from "path";
 import { requireAuthenticatedUserId } from "@/lib/auth/api-auth";
 import { jsonError } from "@/lib/http/json-error";
 import logger from "@/lib/logger";
-import { resolveSessionWorkspaceRoot } from "@/lib/session/session-workspace-root";
+import {
+  getFilesystemPathModule,
+  isAbsoluteFilesystemPath,
+} from "@/lib/filesystem/host-path";
+import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 
 const MAX_TEXT_FILE_BYTES = 512 * 1024;
 const MAX_RAW_FILE_BYTES = 25 * 1024 * 1024;
@@ -19,9 +23,11 @@ class WorkspaceFileError extends Error {
   }
 }
 
-function isInsidePath(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+type PathModule = typeof path.win32 | typeof path.posix;
+
+function isInsidePath(root: string, candidate: string, pathModule: PathModule): boolean {
+  const relative = pathModule.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !pathModule.isAbsolute(relative));
 }
 
 async function resolveRequestedFile(root: string, rawPath: string): Promise<{
@@ -36,9 +42,10 @@ async function resolveRequestedFile(root: string, rawPath: string): Promise<{
   }
 
   const requestedPath = rawPath.replace(/\\/g, "/");
-  if (path.isAbsolute(requestedPath)) {
+  if (isAbsoluteFilesystemPath(requestedPath)) {
     throw new WorkspaceFileError("invalid_file_path", "File path must be relative", 400);
   }
+  const pathModule = getFilesystemPathModule(root);
 
   let rootRealPath: string;
   try {
@@ -47,8 +54,8 @@ async function resolveRequestedFile(root: string, rawPath: string): Promise<{
     throw new WorkspaceFileError("missing_work_dir", "Session working directory is unavailable", 422);
   }
 
-  const candidatePath = path.resolve(rootRealPath, requestedPath);
-  if (!isInsidePath(rootRealPath, candidatePath)) {
+  const candidatePath = pathModule.resolve(rootRealPath, requestedPath);
+  if (!isInsidePath(rootRealPath, candidatePath, pathModule)) {
     throw new WorkspaceFileError("invalid_file_path", "File path escapes the workspace", 400);
   }
 
@@ -59,13 +66,13 @@ async function resolveRequestedFile(root: string, rawPath: string): Promise<{
     throw new WorkspaceFileError("file_not_found", "File not found", 404);
   }
 
-  if (!isInsidePath(rootRealPath, absolutePath)) {
+  if (!isInsidePath(rootRealPath, absolutePath, pathModule)) {
     throw new WorkspaceFileError("invalid_file_path", "File path escapes the workspace", 400);
   }
 
   return {
     absolutePath,
-    relativePath: path.relative(rootRealPath, absolutePath).split(path.sep).join("/"),
+    relativePath: pathModule.relative(rootRealPath, absolutePath).split(/[\\/]+/).join("/"),
   };
 }
 
@@ -134,7 +141,7 @@ export async function GET(
     });
     if ("response" in auth) return auth.response;
 
-    const root = resolveSessionWorkspaceRoot(id);
+    const root = await resolveSessionWorkspaceFilesystemRoot(id);
     if (!root) {
       return jsonError("missing_work_dir", "Session has no working directory", 422);
     }

@@ -1,10 +1,9 @@
-import path from 'path';
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
-
-function isAbsoluteFilesystemPath(value: string): boolean {
-  return path.isAbsolute(value) || path.win32.isAbsolute(value);
-}
+import {
+  isAbsoluteFilesystemPath,
+  resolvePathForHostFilesystem,
+} from '@/lib/filesystem/host-path';
 
 export function resolveSessionWorkspaceRoot(sessionId: string): string | null {
   const session = dbSessions.getSession(sessionId);
@@ -20,4 +19,11 @@ export function resolveSessionWorkspaceRoot(sessionId: string): string | null {
   if (projectId && isAbsoluteFilesystemPath(projectId)) return projectId;
 
   return null;
+}
+
+export async function resolveSessionWorkspaceFilesystemRoot(
+  sessionId: string,
+): Promise<string | null> {
+  const root = resolveSessionWorkspaceRoot(sessionId);
+  return root ? resolvePathForHostFilesystem(root) : null;
 }

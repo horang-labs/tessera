@@ -4,7 +4,8 @@ import * as path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
 import { getDb } from '@/lib/db/database';
-import { resolveSessionWorkspaceRoot } from '@/lib/session/session-workspace-root';
+import { getFilesystemPathModule } from '@/lib/filesystem/host-path';
+import { resolveSessionWorkspaceFilesystemRoot } from '@/lib/session/session-workspace-root';
 
 const MAX_FILES = 20000;
 
@@ -24,6 +25,7 @@ const IGNORED_DIR_NAMES = new Set([
 ]);
 
 type WalkResult = { files: string[]; truncated: boolean };
+type PathModule = typeof path.win32 | typeof path.posix;
 
 interface SessionRef {
   sessionId: string;
@@ -33,6 +35,7 @@ interface SessionRef {
 async function walk(root: string): Promise<WalkResult> {
   const out: string[] = [];
   let truncated = false;
+  const pathModule: PathModule = getFilesystemPathModule(root);
 
   async function recurse(absDir: string, relDir: string): Promise<void> {
     if (truncated) return;
@@ -50,7 +53,7 @@ async function walk(root: string): Promise<WalkResult> {
       if (ent.isDirectory()) {
         if (IGNORED_DIR_NAMES.has(ent.name)) continue;
         const childRel = relDir ? `${relDir}/${ent.name}` : ent.name;
-        await recurse(path.join(absDir, ent.name), childRel);
+        await recurse(pathModule.join(absDir, ent.name), childRel);
       } else if (ent.isFile()) {
         const childRel = relDir ? `${relDir}/${ent.name}` : ent.name;
         out.push(childRel);
@@ -108,7 +111,7 @@ export async function GET(
 
   const refs = projectId ? listReferenceSessions(projectId, id) : { chats: [], tasks: [] };
 
-  const root = resolveSessionWorkspaceRoot(id);
+  const root = await resolveSessionWorkspaceFilesystemRoot(id);
   if (!root) {
     return NextResponse.json({
       files: [],
