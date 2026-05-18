@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import logger from '@/lib/logger';
+import { getAgentEnvironment, normalizeCwdForCliEnvironment } from '@/lib/cli/spawn-cli';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -38,10 +39,19 @@ export async function POST(request: NextRequest) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     await writeFile(destPath, buffer);
+    const agentEnvironment = await getAgentEnvironment(auth.userId);
+    const agentPath = normalizeCwdForCliEnvironment(destPath, agentEnvironment);
 
-    logger.info({ userId: auth.userId, fileName: file.name, size: file.size, path: destPath }, 'File uploaded');
+    logger.info({
+      userId: auth.userId,
+      fileName: file.name,
+      size: file.size,
+      path: destPath,
+      agentPath,
+      agentEnvironment,
+    }, 'File uploaded');
 
-    return NextResponse.json({ path: destPath, fileName: file.name });
+    return NextResponse.json({ path: agentPath, fileName: file.name });
   } catch (error) {
     logger.error({ error }, 'File upload failed');
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 });

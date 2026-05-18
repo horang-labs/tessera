@@ -36,6 +36,7 @@ import type {
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
+import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
   CodexApprovalPolicy,
   CodexCollaborationMode,
@@ -88,7 +89,11 @@ function extensionForMediaType(mediaType: string): string {
   }
 }
 
-function persistCodexImage(sessionId: string, block: Extract<ContentBlock, { type: 'image' }>): string {
+function persistCodexImage(
+  sessionId: string,
+  block: Extract<ContentBlock, { type: 'image' }>,
+  agentEnvironment: AgentEnvironment,
+): string {
   const dir = path.join(CODEX_ATTACHMENTS_DIR, sessionId);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 
@@ -97,7 +102,7 @@ function persistCodexImage(sessionId: string, block: Extract<ContentBlock, { typ
   const data = Buffer.from(block.source.data, 'base64');
 
   fs.writeFileSync(filePath, data, { mode: 0o600 });
-  return filePath;
+  return normalizeCwdForCliEnvironment(filePath, agentEnvironment);
 }
 
 /**
@@ -135,6 +140,7 @@ interface JsonRpcErrorResponse {
 interface CodexRuntimeConfig {
   sessionId: string;
   cwd: string;
+  agentEnvironment: AgentEnvironment;
   permissionMode?: string;
   model?: string;
   reasoningEffort?: string | null;
@@ -415,6 +421,7 @@ export class CodexAdapter implements CliProvider {
     this._processRuntimeConfig.set(cliProcess, {
       sessionId: options.sessionId ?? '__provider__',
       cwd: cliWorkDir,
+      agentEnvironment: agentEnv,
       permissionMode: options.permissionMode,
       model: options.model,
       reasoningEffort: options.reasoningEffort ?? null,
@@ -466,6 +473,7 @@ export class CodexAdapter implements CliProvider {
   sendMessage(proc: ChildProcess, content: string | ContentBlock[]): boolean {
     const runtimeConfig = this._processRuntimeConfig.get(proc);
     const attachmentSessionId = runtimeConfig?.sessionId ?? '__provider__';
+    const agentEnvironment = runtimeConfig?.agentEnvironment ?? 'native';
 
     const inputItems: CodexInputItem[] = typeof content === 'string'
       ? [{ type: 'text', text: content }]
@@ -478,7 +486,10 @@ export class CodexAdapter implements CliProvider {
               return { type: 'skill', name: b.name, path: b.path };
             }
             if (b.type === 'image') {
-              return { type: 'localImage', path: persistCodexImage(attachmentSessionId, b) };
+              return {
+                type: 'localImage',
+                path: persistCodexImage(attachmentSessionId, b, agentEnvironment),
+              };
             }
             return null;
           })

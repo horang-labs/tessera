@@ -11,6 +11,15 @@ const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 const SUPPORTED_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 
 type SupportedMimeType = typeof SUPPORTED_IMAGE_MIME_TYPES[number];
+
+const IMAGE_EXTENSION_MIME_TYPES: Record<string, SupportedMimeType> = {
+  gif: 'image/gif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 
 export interface ImageAttachment {
@@ -43,6 +52,16 @@ function createImageAttachmentPlaceholder(id: number): string {
 
 function createFileAttachmentPlaceholder(id: number): string {
   return `[📎 ${id}]`;
+}
+
+function getSupportedImageMimeType(file: File | Blob): SupportedMimeType | null {
+  if (SUPPORTED_IMAGE_MIME_TYPES.includes(file.type as SupportedMimeType)) {
+    return file.type as SupportedMimeType;
+  }
+
+  const fileName = 'name' in file && typeof file.name === 'string' ? file.name : '';
+  const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
+  return IMAGE_EXTENSION_MIME_TYPES[extension] ?? null;
 }
 
 function insertPlaceholderAtCursor(
@@ -229,7 +248,7 @@ export function useMessageInputAttachments({
     };
   }, []);
 
-  const handleImageAttachment = useCallback((file: File) => {
+  const handleImageAttachment = useCallback((file: File | Blob, mediaType: SupportedMimeType) => {
     if (file.size > MAX_IMAGE_SIZE_BYTES) {
       useNotificationStore.getState().showToast(
         t('validation.imageTooLarge', { size: (file.size / 1024 / 1024).toFixed(1) }),
@@ -251,7 +270,7 @@ export function useMessageInputAttachments({
         id: ++attachmentCounterRef.current,
         blob: file,
         base64: dataUrl.split(',')[1],
-        mediaType: file.type as SupportedMimeType,
+        mediaType,
         previewUrl,
       };
 
@@ -315,7 +334,8 @@ export function useMessageInputAttachments({
     let nextImageCount = attachmentsRef.current.filter((attachment) => attachment.kind === 'image').length;
 
     for (const file of files) {
-      if (SUPPORTED_IMAGE_MIME_TYPES.includes(file.type as SupportedMimeType)) {
+      const imageMimeType = getSupportedImageMimeType(file);
+      if (imageMimeType) {
         if (nextImageCount >= MAX_IMAGES) {
           useNotificationStore.getState().showToast(
             t('validation.maxImagesExceeded', { max: MAX_IMAGES }),
@@ -325,7 +345,7 @@ export function useMessageInputAttachments({
         }
 
         nextImageCount += 1;
-        handleImageAttachment(file);
+        handleImageAttachment(file, imageMimeType);
         continue;
       }
 
@@ -350,7 +370,8 @@ export function useMessageInputAttachments({
         continue;
       }
 
-      if (!SUPPORTED_IMAGE_MIME_TYPES.includes(blob.type as SupportedMimeType)) {
+      const imageMimeType = getSupportedImageMimeType(blob);
+      if (!imageMimeType) {
         useNotificationStore.getState().showToast(
           t('validation.unsupportedImageFormat', { format: blob.type }),
           'error',
@@ -367,7 +388,7 @@ export function useMessageInputAttachments({
       }
 
       nextImageCount += 1;
-      handleImageAttachment(blob);
+      handleImageAttachment(blob, imageMimeType);
     }
   }, [handleImageAttachment, t]);
 
