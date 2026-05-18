@@ -1,0 +1,267 @@
+name: Desktop Preflight Builds
+
+run-name: Desktop preflight (${{ inputs.ref || github.ref_name }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit SHA to build. Defaults to the workflow branch.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: false
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Isolate Windows user profile for build
+        shell: pwsh
+        run: |
+          $safeHome = Join-Path $env:RUNNER_TEMP 'tessera-home'
+          $safeAppData = Join-Path $safeHome 'AppData\Roaming'
+          $safeLocalAppData = Join-Path $safeHome 'AppData\Local'
+
+          New-Item -ItemType Directory -Force -Path $safeHome | Out-Null
+          New-Item -ItemType Directory -Force -Path $safeAppData | Out-Null
+          New-Item -ItemType Directory -Force -Path $safeLocalAppData | Out-Null
+
+          "HOME=$safeHome" >> $env:GITHUB_ENV
+          "USERPROFILE=$safeHome" >> $env:GITHUB_ENV
+          "APPDATA=$safeAppData" >> $env:GITHUB_ENV
+          "LOCALAPPDATA=$safeLocalAppData" >> $env:GITHUB_ENV
+
+      - name: Build desktop package
+        run: npm run electron:build:win
+        env:
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessera-preflight-windows-x64
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  build-macos:
+    name: Build macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+          - arch: arm64
+            runner: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Print runner architecture
+        run: |
+          uname -m
+          sw_vers
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID_SECRET: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${APPLE_API_KEY_BASE64:-}" ]]; then
+            echo "APPLE_API_KEY_BASE64 is not set; using Apple ID notarization credentials if present."
+            exit 0
+          fi
+
+          if [[ -z "${APPLE_API_KEY_ID_SECRET:-}" || -z "${APPLE_API_ISSUER_SECRET:-}" ]]; then
+            echo "APPLE_API_KEY_BASE64 requires APPLE_API_KEY_ID and APPLE_API_ISSUER."
+            exit 1
+          fi
+
+          key_dir="$RUNNER_TEMP/apple-notary"
+          key_path="$key_dir/AuthKey_${APPLE_API_KEY_ID_SECRET}.p8"
+          mkdir -p "$key_dir"
+
+          if ! printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$key_path" 2>/dev/null; then
+            printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$key_path"
+          fi
+
+          {
+            echo "APPLE_API_KEY=$key_path"
+            echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID_SECRET"
+            echo "APPLE_API_ISSUER=$APPLE_API_ISSUER_SECRET"
+          } >> "$GITHUB_ENV"
+
+      - name: Build desktop package
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: true
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+          TESSERA_NOTARY_TIMEOUT: 90m
+        run: npm run electron:build:mac-${{ matrix.arch }}:signed
+
+      - name: Verify DMG
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          dmg="release/Tessera-${version}-macos-${{ matrix.arch }}.dmg"
+          test -f "$dmg"
+          hdiutil verify "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose "$dmg"
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessera-preflight-macos-${{ matrix.arch }}
+          path: release/Tessera-*-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  build-linux:
+    name: Build Linux x64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install Linux smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libatspi2.0-0 \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libsecret-1-0 \
+            libxss1 \
+            libxtst6 \
+            libuuid1 \
+            xdg-utils \
+            xvfb
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build desktop package
+        run: npm run electron:build:linux
+        env:
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+
+      - name: Verify Linux artifacts
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          appimage="release/Tessera-${version}.AppImage"
+          deb="release/Tessera-${version}-linux-amd64.deb"
+
+          test -f "$appimage"
+          test -f "$deb"
+          file "$appimage" "$deb"
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | grep -F '/usr/share/applications/tessera.desktop'
+
+      - name: Smoke test AppImage startup
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          appimage="release/Tessera-${version}.AppImage"
+          smoke_dir="$RUNNER_TEMP/tessera-linux-smoke"
+          stdout_log="$RUNNER_TEMP/tessera-appimage-smoke.out"
+          devtools_json="$RUNNER_TEMP/tessera-devtools.json"
+
+          rm -rf "$smoke_dir"
+          xvfb-run -a env \
+            TESSERA_DATA_DIR="$smoke_dir" \
+            TESSERA_ELECTRON_LOG_LEVEL=debug \
+            TESSERA_DISABLE_GPU=1 \
+            "$appimage" \
+            --appimage-extract-and-run \
+            --no-sandbox \
+            --disable-gpu \
+            --remote-debugging-port=9333 \
+            >"$stdout_log" 2>&1 &
+          app_pid=$!
+
+          cleanup() {
+            kill "$app_pid" 2>/dev/null || true
+            wait "$app_pid" 2>/dev/null || true
+            cat "$smoke_dir/tessera-main.log" 2>/dev/null || true
+            cat "$smoke_dir/startup.log" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for _ in {1..60}; do
+            if curl -fsS http://127.0.0.1:9333/json/list > "$devtools_json" 2>/dev/null && grep -q '"title": "Tessera"' "$devtools_json"; then
+              break
+            fi
+            sleep 1
+          done
+
+          grep -q '"title": "Tessera"' "$devtools_json"
+          app_url="$(node -e "const fs=require('fs'); const pages=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(pages[0]?.url || '')" "$devtools_json")"
+          echo "Loaded URL: $app_url"
+          port="$(printf '%s\n' "$app_url" | sed -n 's#^http://localhost:\([0-9][0-9]*\)/.*#\1#p')"
+          test -n "$port"
+          curl -fsS "http://127.0.0.1:${port}/api/setup/status" | grep -q '"canUseCoreFeatures"'
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessera-preflight-linux-x64
+          path: |
+            release/Tessera-*.AppImage
+            release/Tessera-*-linux-amd64.deb
+            release/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 7
