@@ -30,6 +30,10 @@ const sessionStoreSource = fs.readFileSync(
   new URL('../src/stores/session-store.ts', import.meta.url),
   'utf8',
 );
+const taskStoreSource = fs.readFileSync(
+  new URL('../src/stores/task-store.ts', import.meta.url),
+  'utf8',
+);
 const crossWindowUiSyncSource = fs.readFileSync(
   new URL('../src/hooks/use-cross-window-ui-sync.ts', import.meta.url),
   'utf8',
@@ -67,7 +71,8 @@ test('live replay events mark background popout cards as processing', () => {
   assert.match(clientMessageHandlersSource, /startTurnInFlight/);
   assert.match(clientMessageHandlersSource, /function replayEventsIndicateActiveTurn/);
   assert.match(clientMessageHandlersSource, /case 'replay_events':\s*if \(replayEventsIndicateActiveTurn\(msg\.events\)\) \{\s*startTurnInFlight\(msg\.sessionId\);/);
-  assert.match(clientMessageHandlersSource, /event\.hookEvent === 'waiting_for_task' \|\| event\.progressType === 'waiting_for_task'/);
+  assert.match(clientMessageHandlersSource, /function containsTurnStartProgress/);
+  assert.match(clientMessageHandlersSource, /event\.progressType === 'waiting_for_task' \|\| event\.hookEvent === 'waiting_for_task'/);
   assert.match(clientMessageHandlersSource, /case 'tool_call':\s*return event\.status === 'running';/);
   assert.match(clientMessageHandlersSource, /case 'interactive_prompt_response':\s*return true;/);
 });
@@ -119,4 +124,12 @@ test('collection filter changes are mirrored between main and board popouts', ()
   assert.match(electronMainSource, /win\.webContents\.send\('ui-collection-filter-changed', \{ collectionId \}\);/);
   assert.match(electronPreloadSource, /uiCollectionFilterChanged: \(collectionId: string \| null\) =>/);
   assert.match(electronPreloadSource, /onUiCollectionFilterChanged/);
+});
+
+test('task reloads requested during an in-flight reload are replayed for popout creation sync', () => {
+  assert.match(taskStoreSource, /queuedProjectLoads: Record<string, QueuedProjectLoad>;/);
+  assert.match(taskStoreSource, /if \(get\(\)\.loadingProjectIds\[projectId\]\) \{/);
+  assert.match(taskStoreSource, /queuedProjectLoads:\s*\{\s*\.\.\.state\.queuedProjectLoads,\s*\[projectId\]: \{/);
+  assert.match(taskStoreSource, /const queuedLoad = get\(\)\.queuedProjectLoads\[projectId\];/);
+  assert.match(taskStoreSource, /void get\(\)\.loadTasks\(projectId, \{ setCurrent: queuedLoad\.setCurrent \}\);/);
 });
