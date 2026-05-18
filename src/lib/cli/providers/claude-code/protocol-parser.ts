@@ -42,6 +42,12 @@ interface SessionStreamState {
   hasStreamedText: boolean;
   /** Dedup: track tool_use IDs already sent to prevent duplicate tool_call messages. */
   processedToolUseIds: Set<string>;
+  activeToolUseBlock: {
+    id: string;
+    name: string;
+    initialInput: Record<string, any>;
+    inputJson: string;
+  } | null;
 }
 
 interface PendingToolCall {
@@ -200,11 +206,13 @@ export class ClaudeCodeProtocolParser {
         results = this.handleStreamEvent(sessionId, msg);
         break;
       default: {
-        const knownIgnored = ['rate_limit_event'];
-        if (!knownIgnored.includes(msg.type)) {
-          logger.warn('Unknown CLI message type', { sessionId, type: msg.type });
-        }
-        results = [];
+        logger.warn('Unknown CLI message type', { sessionId, type: msg.type });
+        results = [buildClaudeSystemWarning(
+          sessionId,
+          'claude_unknown_message',
+          `Unhandled Claude Code message type: ${msg.type}`,
+          { messageType: msg.type, rawPreview: stringifyPreview(msg) },
+        )];
         break;
       }
     }
@@ -424,7 +432,12 @@ export class ClaudeCodeProtocolParser {
   private parseToolUse(sessionId: string, toolUse: any): ParsedMessage[] {
     if (!toolUse.name || !toolUse.id) {
       logger.warn('Malformed tool_use (missing name or id)', { sessionId, toolUse });
-      return [];
+      return [buildClaudeSystemWarning(
+        sessionId,
+        'claude_malformed_tool_use',
+        'Claude Code emitted a malformed tool_use block.',
+        { rawPreview: stringifyPreview(toolUse) },
+      )];
     }
 
     const toolName = toolUse.name;
@@ -580,7 +593,12 @@ export class ClaudeCodeProtocolParser {
   private handleToolResult(sessionId: string, msg: CliMessage): ParsedMessage[] {
     if (msg.type !== 'tool_result' || !msg.tool_use_id) {
       logger.warn('tool_result without tool_use_id', { sessionId });
-      return [];
+      return [buildClaudeSystemWarning(
+        sessionId,
+        'claude_tool_result_missing_id',
+        'Claude Code emitted a tool_result without tool_use_id.',
+        { rawPreview: stringifyPreview(msg) },
+      )];
     }
 
     const toolUseId = msg.tool_use_id;
@@ -592,19 +610,26 @@ export class ClaudeCodeProtocolParser {
     const pendingTool = sessionPending?.get(toolUseId);
 
     if (!pendingTool) {
+      const unmatchedResult = buildUnmatchedClaudeToolResultMessage({
+        isError,
+        output,
+        sessionId,
+        toolUseId,
+      });
+
       if (isError && output.trim() === 'Answer questions?') {
-        return [{
-          serverMessage: {
-            type: 'system',
+        return [
+          buildClaudeSystemWarning(
             sessionId,
-            message: 'AskUserQuestion permission prompt was auto-denied in non-interactive mode.',
-            severity: 'warning',
-            timestamp: new Date().toISOString(),
-          },
-        }];
+            'claude_ask_user_question_denied',
+            'AskUserQuestion permission prompt was auto-denied in non-interactive mode.',
+            { toolUseId },
+          ),
+          unmatchedResult,
+        ];
       }
       logger.warn('tool_result for unknown tool_use_id', { sessionId, toolUseId });
-      return [];
+      return [unmatchedResult];
     }
 
     // Remove from local pending state
@@ -671,7 +696,15 @@ export class ClaudeCodeProtocolParser {
 
       const sessionPending = this.pendingToolCalls.get(sessionId);
       const pendingTool = sessionPending?.get(toolResult.toolUseId);
-      if (!pendingTool) continue;
+      if (!pendingTool) {
+        results.push(buildUnmatchedClaudeToolResultMessage({
+          isError: toolResult.isError,
+          output: toolResult.output,
+          sessionId,
+          toolUseId: toolResult.toolUseId,
+        }));
+        continue;
+      }
 
       const toolUseResult = rawToolUseResult
         ? normalizeToolResult(
@@ -1099,8 +1132,16 @@ export class ClaudeCodeProtocolParser {
         return this.handleContentBlockDelta(sessionId, event);
       case 'content_block_stop':
         return this.handleContentBlockStop(sessionId);
-      default:
+      case 'message_delta':
+      case 'message_stop':
         return [];
+      default:
+        return [buildClaudeSystemWarning(
+          sessionId,
+          'claude_unknown_stream_event',
+          `Unhandled Claude Code stream_event type: ${event.type}`,
+          { eventType: event.type, rawPreview: stringifyPreview(event) },
+        )];
     }
   }
 
@@ -1136,6 +1177,7 @@ export class ClaudeCodeProtocolParser {
         isStreamingText: false,
         hasStreamedText: false,
         processedToolUseIds: new Set(),
+        activeToolUseBlock: null,
       };
       this.streamState.set(sessionId, state);
     }
@@ -1179,8 +1221,22 @@ export class ClaudeCodeProtocolParser {
       }];
     }
 
-    // tool_use blocks are handled by handleAssistant (from the assistant snapshot).
-    return [];
+    if (block.type === 'tool_use') {
+      state.activeToolUseBlock = {
+        id: typeof block.id === 'string' ? block.id : '',
+        name: typeof block.name === 'string' ? block.name : '',
+        initialInput: block.input && typeof block.input === 'object' ? block.input : {},
+        inputJson: '',
+      };
+      return [];
+    }
+
+    return [buildClaudeSystemWarning(
+      sessionId,
+      'claude_unknown_content_block',
+      `Unhandled Claude Code content block type: ${block.type ?? 'unknown'}`,
+      { blockType: block.type, rawPreview: stringifyPreview(block) },
+    )];
   }
 
   private handleContentBlockDelta(sessionId: string, event: any): ParsedMessage[] {
@@ -1231,6 +1287,8 @@ export class ClaudeCodeProtocolParser {
           },
         }];
       }
+    } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string' && state.activeToolUseBlock) {
+      state.activeToolUseBlock.inputJson += delta.partial_json;
     }
 
     return [];
@@ -1267,8 +1325,111 @@ export class ClaudeCodeProtocolParser {
       state.isStreamingText = false;
     }
 
+    if (state.activeToolUseBlock) {
+      const toolUse = buildStreamToolUseBlock(state.activeToolUseBlock);
+      state.activeToolUseBlock = null;
+      if (toolUse.id && !state.processedToolUseIds.has(toolUse.id)) {
+        state.processedToolUseIds.add(toolUse.id);
+        results.push(
+          ...this.parseToolUse(sessionId, toolUse),
+          ...this.handleInteractivePrompt(sessionId, toolUse),
+        );
+      }
+    }
+
     return results;
   }
+}
+
+function buildStreamToolUseBlock(block: NonNullable<SessionStreamState['activeToolUseBlock']>): {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, any>;
+} {
+  let input = block.initialInput;
+  if (block.inputJson.trim()) {
+    try {
+      const parsed = JSON.parse(block.inputJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        input = parsed;
+      }
+    } catch {
+      input = {
+        ...block.initialInput,
+        partial_json: block.inputJson,
+      };
+    }
+  }
+
+  return {
+    type: 'tool_use',
+    id: block.id,
+    name: block.name,
+    input,
+  };
+}
+
+function buildClaudeSystemWarning(
+  sessionId: string,
+  subtype: string,
+  message: string,
+  metadata?: Record<string, any>,
+): ParsedMessage {
+  return {
+    serverMessage: {
+      type: 'system',
+      sessionId,
+      message,
+      severity: 'warning',
+      subtype,
+      ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
+      timestamp: new Date().toISOString(),
+    },
+  };
+}
+
+function buildUnmatchedClaudeToolResultMessage({
+  isError,
+  output,
+  sessionId,
+  toolUseId,
+}: {
+  isError: boolean;
+  output: string;
+  sessionId: string;
+  toolUseId: string;
+}): ParsedMessage {
+  return {
+    serverMessage: {
+      type: 'tool_call',
+      sessionId,
+      toolName: 'ClaudeToolResult',
+      toolParams: {
+        unmatched: true,
+        toolUseId,
+      },
+      status: isError ? 'error' : 'completed',
+      output: isError ? undefined : output,
+      error: isError ? output : undefined,
+      toolUseId,
+      timestamp: new Date().toISOString(),
+    },
+    sideEffect: { type: 'remove_pending_tool_call', toolUseId },
+  };
+}
+
+function stringifyPreview(value: unknown, maxLength = 500): string {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    serialized = String(value);
+  }
+
+  return serialized.length > maxLength
+    ? `${serialized.slice(0, maxLength)}...`
+    : serialized;
 }
 
 // =============================================================================

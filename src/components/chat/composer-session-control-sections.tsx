@@ -19,7 +19,6 @@ interface ComposerSessionRunStateProps {
   isRunning: boolean;
   isStopped: boolean;
   onStop: () => void;
-  runningLabel: string;
   stoppedLabel: string;
   stopLabel: string;
 }
@@ -55,7 +54,6 @@ export function ComposerSessionRunState({
   isRunning,
   isStopped,
   onStop,
-  runningLabel,
   stoppedLabel,
   stopLabel,
 }: ComposerSessionRunStateProps) {
@@ -74,8 +72,6 @@ export function ComposerSessionRunState({
         aria-label={stopLabel}
       >
         <span className="h-2 w-2 rounded-full bg-current" />
-        <span>{runningLabel}</span>
-        <span className="h-3.5 w-px bg-current/25" />
         <Square className="h-2.5 w-2.5 fill-current" />
       </button>
     );

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import * as dbProjects from '@/lib/db/projects';
-import * as dbSessions from '@/lib/db/sessions';
+import { resolveSessionWorkspaceRoot } from '@/lib/session/session-workspace-root';
 import logger from '@/lib/logger';
 
 /**
@@ -40,12 +39,7 @@ export async function POST(
     // stays the same. The CLI requires --resume to run from the original CWD.
     let resolvedWorkDir = workDir;
     if (!resolvedWorkDir) {
-      const dbSession = dbSessions.getSession(sessionId);
-      if (dbSession?.work_dir) {
-        resolvedWorkDir = dbSession.work_dir;
-      } else if (dbSession?.project_id) {
-        resolvedWorkDir = dbProjects.getProject(dbSession.project_id)?.decoded_path;
-      }
+      resolvedWorkDir = resolveSessionWorkspaceRoot(sessionId) ?? undefined;
     }
 
     // Use orchestrator to resume session (handles metadata update)

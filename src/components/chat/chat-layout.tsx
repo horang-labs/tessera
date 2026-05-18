@@ -47,9 +47,9 @@ import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { ALL_PROJECTS_SENTINEL } from "@/lib/constants/project-strip";
 import {
-  getSpecialSessionSourceSessionId,
   isSpecialSession,
 } from "@/lib/constants/special-sessions";
+import { resolveActiveWorkspaceSessionId } from "@/lib/session/active-workspace-session";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -95,10 +95,14 @@ function getKanbanScrollArea(): HTMLDivElement | null {
 export function ChatLayout() {
   const { t } = useI18n();
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
-  const activeGitSessionId = activeSessionId
-    ? getSpecialSessionSourceSessionId(activeSessionId)
-      ?? (isSpecialSession(activeSessionId) ? null : activeSessionId)
-    : null;
+  const activePanelSessionId = usePanelStore((state) => {
+    const activeTabData = selectActiveTab(state);
+    return activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
+  });
+  const activeGitSessionId = resolveActiveWorkspaceSessionId({
+    activePanelSessionId,
+    activeSessionId,
+  });
 
   // BR-PERSIST-002: tabs + activeTabId as persist effect dependencies
   const tabs = useTabStore((state) => state.tabs);

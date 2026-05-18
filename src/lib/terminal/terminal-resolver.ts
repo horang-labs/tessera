@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { getVisibleProjects } from '@/lib/db/projects';
+import { execFileSync } from 'child_process';
+import { getProject, getVisibleProjects } from '@/lib/db/projects';
 import { getSession } from '@/lib/db/sessions';
+import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { TerminalCwdResolution, TerminalResolvedShell, TerminalShellKind } from './types';
 
 export function resolveTerminalCwd(candidate?: string | null): string {
@@ -20,9 +22,22 @@ export function resolveTerminalCwd(candidate?: string | null): string {
   return os.homedir();
 }
 
-function resolveExistingDirectory(candidate: string): string | null {
+let cachedWindowsHostedWslRoot: string | null | undefined;
+
+function resolveExistingDirectory(candidate: string, allowedRoots: string[] = []): string | null {
+  for (const candidatePath of buildDirectoryResolutionCandidates(candidate, allowedRoots)) {
+    const existingDirectory = resolveExistingDirectoryCandidate(candidatePath);
+    if (existingDirectory) return existingDirectory;
+  }
+
+  return null;
+}
+
+function resolveExistingDirectoryCandidate(candidate: string): string | null {
   try {
-    const resolved = path.resolve(candidate);
+    const resolved = isWindowsStylePath(candidate)
+      ? path.win32.resolve(candidate)
+      : path.resolve(candidate);
     const stat = fs.statSync(resolved);
     return stat.isDirectory() ? resolved : null;
   } catch {
@@ -31,6 +46,11 @@ function resolveExistingDirectory(candidate: string): string | null {
 }
 
 function normalizeForComparison(value: string): string {
+  const wslPath = toWslPath(value);
+  if (wslPath) {
+    return path.posix.resolve(wslPath);
+  }
+
   const normalized = path.resolve(value);
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
@@ -39,8 +59,27 @@ function isSameOrChildPath(candidate: string, allowedRoot: string): boolean {
   const normalizedCandidate = normalizeForComparison(candidate);
   const normalizedRoot = normalizeForComparison(allowedRoot);
   if (normalizedCandidate === normalizedRoot) return true;
-  const relative = path.relative(normalizedRoot, normalizedCandidate);
-  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+  const pathModule = normalizedCandidate.startsWith('/') && normalizedRoot.startsWith('/')
+    ? path.posix
+    : path;
+  const relative = pathModule.relative(normalizedRoot, normalizedCandidate);
+  return Boolean(relative) && !relative.startsWith('..') && !pathModule.isAbsolute(relative);
+}
+
+function addAllowedRoot(allowedRoots: string[], seenRoots: Set<string>, root?: string | null): void {
+  const normalizedRoot = root?.trim();
+  if (!normalizedRoot || seenRoots.has(normalizedRoot)) return;
+  seenRoots.add(normalizedRoot);
+  allowedRoots.push(normalizedRoot);
+}
+
+function resolveFirstExistingAllowedRoot(allowedRoots: string[]): string | null {
+  for (const root of allowedRoots) {
+    const existingRoot = resolveExistingDirectory(root, allowedRoots);
+    if (existingRoot) return existingRoot;
+  }
+
+  return null;
 }
 
 function isWindowsDrivePath(value: string): boolean {
@@ -50,6 +89,87 @@ function isWindowsDrivePath(value: string): boolean {
 function isWindowsHostedWslPath(value: string): boolean {
   return /^\\\\(?:wsl\.localhost|wsl\$)\\/i.test(value)
     || /^\/\/(?:wsl\.localhost|wsl\$)\//i.test(value);
+}
+
+function isWindowsStylePath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value)
+    || isWindowsHostedWslPath(value)
+    || value.startsWith('\\\\')
+    || value.startsWith('//');
+}
+
+function buildDirectoryResolutionCandidates(candidate: string, allowedRoots: string[]): string[] {
+  const candidates = [candidate];
+  if (getRuntimePlatform() !== 'win32') {
+    return candidates;
+  }
+
+  if (candidate.startsWith('//')) {
+    candidates.push(candidate.replace(/\//g, '\\'));
+  }
+
+  if (candidate.startsWith('/') && !candidate.startsWith('//')) {
+    for (const root of getWindowsHostedWslReferenceRoots(allowedRoots)) {
+      candidates.push(toWindowsHostedWslPath(candidate, root));
+    }
+  }
+
+  return [...new Set(candidates)];
+}
+
+function getWindowsHostedWslReferenceRoots(values: string[]): string[] {
+  const roots = new Set<string>();
+  for (const value of values) {
+    const root = getWindowsHostedWslRoot(value);
+    if (root) roots.add(root);
+  }
+
+  const defaultRoot = getWindowsHostedWslDefaultRoot();
+  if (defaultRoot) roots.add(defaultRoot);
+
+  return [...roots];
+}
+
+function getWindowsHostedWslRoot(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\//g, '\\');
+  if (!normalized) return null;
+  const match = normalized.match(/^(\\\\(?:wsl\.localhost|wsl\$)\\[^\\]+)(?:\\|$)/i);
+  return match ? path.win32.normalize(match[1]) : null;
+}
+
+function getWindowsHostedWslDefaultRoot(): string | null {
+  if (getRuntimePlatform() !== 'win32') return null;
+  if (cachedWindowsHostedWslRoot !== undefined) {
+    return cachedWindowsHostedWslRoot;
+  }
+
+  const envDistro = process.env.WSL_DISTRO_NAME?.trim();
+  if (envDistro) {
+    cachedWindowsHostedWslRoot = `\\\\wsl.localhost\\${envDistro}`;
+    return cachedWindowsHostedWslRoot;
+  }
+
+  try {
+    const distro = execFileSync(
+      'wsl.exe',
+      ['-e', 'sh', '-c', 'printf "%s" "${WSL_DISTRO_NAME:-}"'],
+      { encoding: 'utf8', timeout: 2000, windowsHide: true },
+    ).trim();
+    cachedWindowsHostedWslRoot = distro ? `\\\\wsl.localhost\\${distro}` : null;
+  } catch {
+    cachedWindowsHostedWslRoot = null;
+  }
+
+  return cachedWindowsHostedWslRoot;
+}
+
+function toWindowsHostedWslPath(displayPath: string, wslRoot: string): string {
+  const normalizedDisplayPath = path.posix.normalize(displayPath);
+  if (normalizedDisplayPath === '/') return wslRoot;
+  return path.win32.join(
+    wslRoot,
+    ...normalizedDisplayPath.split('/').filter(Boolean),
+  );
 }
 
 function toWslPath(value: string): string | null {
@@ -125,36 +245,40 @@ export function resolveAllowedTerminalCwd(options: {
   sessionId?: string | null;
 }): TerminalCwdResolution {
   const requestedCwd = options.cwd?.trim();
-  const allowedRoots = new Set<string>();
+  const allowedRoots: string[] = [];
+  const seenRoots = new Set<string>();
+
+  const session = options.sessionId ? getSession(options.sessionId) : null;
+  if (session?.project_id) {
+    addAllowedRoot(allowedRoots, seenRoots, getProject(session.project_id)?.decoded_path);
+  }
 
   for (const project of getVisibleProjects()) {
-    allowedRoots.add(project.decoded_path);
+    addAllowedRoot(allowedRoots, seenRoots, project.decoded_path);
   }
 
-  if (options.sessionId) {
-    const session = getSession(options.sessionId);
-    if (session?.work_dir) {
-      allowedRoots.add(session.work_dir);
-    }
-  }
+  addAllowedRoot(allowedRoots, seenRoots, session?.work_dir);
 
-  if (allowedRoots.size === 0) {
+  if (allowedRoots.length === 0) {
     return { ok: false, message: 'No project is available for terminal startup.' };
   }
 
   if (!requestedCwd) {
-    for (const root of allowedRoots) {
-      const existingRoot = resolveExistingDirectory(root);
-      if (existingRoot) {
-        return { ok: true, cwd: existingRoot };
-      }
+    const fallbackCwd = resolveFirstExistingAllowedRoot(allowedRoots);
+    if (fallbackCwd) {
+      return { ok: true, cwd: fallbackCwd };
     }
 
     return { ok: false, message: 'No registered project directory exists on this server.' };
   }
 
-  const resolvedCandidate = resolveExistingDirectory(requestedCwd);
+  const resolvedCandidate = resolveExistingDirectory(requestedCwd, allowedRoots);
   if (!resolvedCandidate) {
+    const fallbackCwd = resolveFirstExistingAllowedRoot(allowedRoots);
+    if (fallbackCwd) {
+      return { ok: true, cwd: fallbackCwd };
+    }
+
     return { ok: false, message: 'Terminal cwd does not exist or is not a directory.' };
   }
 
@@ -207,6 +331,7 @@ export function resolveTerminalShell(options: {
   }
 
   const command = env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
+  const args = platform === 'darwin' ? ['-l'] : [];
 
-  return { command, args: [], cwd };
+  return { command, args, cwd };
 }

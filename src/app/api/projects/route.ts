@@ -4,7 +4,7 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
 import {
   getFilesystemPathBasename,
-  resolveNativeFilesystemPath,
+  resolveBrowsePath,
 } from '@/lib/filesystem/path-environment';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { SettingsManager } from '@/lib/settings/manager';
@@ -23,8 +23,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'folderPath is required' }, { status: 400 });
   }
 
-  const resolvedPath = resolveNativeFilesystemPath(folderPath);
   const settings = await SettingsManager.load(auth.userId);
+  let resolvedPath: string;
+  try {
+    resolvedPath = (await resolveBrowsePath(
+      folderPath,
+      settings.agentEnvironment,
+    )).filesystemPath;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to resolve project path';
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
   const environmentValidation = validateProjectEnvironment(
     resolvedPath,
     settings.agentEnvironment,

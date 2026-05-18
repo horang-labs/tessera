@@ -24,6 +24,7 @@ export const SHORTCUT_REGISTRY = {
   'focus-panel-down':  { default: '$mod+Alt+Shift+ArrowDown',  category: 'panel', descKey: 'shortcut.focusPanelDown' },
   'voice-input':    { default: '$mod+Alt+v',          category: 'input', descKey: 'shortcut.voiceInput' },
   'toggle-plan-mode':        { default: '$mod+Alt+p', category: 'input', descKey: 'shortcut.togglePlanMode' },
+  'toggle-codex-fast-mode':  { default: '$mod+Alt+f', category: 'input', descKey: 'shortcut.toggleCodexFastMode' },
   'open-model-selector':     { default: '$mod+Alt+m', category: 'input', descKey: 'shortcut.openModelSelector' },
   'open-reasoning-selector': { default: '$mod+Alt+r', category: 'input', descKey: 'shortcut.openReasoningSelector' },
 } as const satisfies Record<string, ShortcutDefinition>;

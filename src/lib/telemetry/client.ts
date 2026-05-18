@@ -8,10 +8,19 @@ export type TelemetryEventName =
   | 'agent_session_started'
   | 'agent_usage_heartbeat'
   | 'session_created'
+  | 'task_created'
+  | 'workspace_view_changed'
+  | 'provider_setup_issue_seen'
+  | 'project_import_result'
+  | 'git_panel_opened'
+  | 'git_panel_tab_changed'
+  | 'git_file_opened'
+  | 'git_action_triggered'
   | 'provider_selected'
   | 'telemetry_opt_out';
 
 export type TelemetryOptOutSource = 'setup' | 'settings';
+export type TelemetryProviderSetupIssueStatus = 'missing' | 'needs_login' | 'unavailable';
 
 export type TelemetryEventProperties = Record<string, unknown>;
 type TelemetryCaptureOptions = Pick<CaptureOptions, 'send_instantly' | 'transport'>;
@@ -41,6 +50,14 @@ const allowedEvents = new Set<TelemetryEventName>([
   'agent_session_started',
   'agent_usage_heartbeat',
   'session_created',
+  'task_created',
+  'workspace_view_changed',
+  'provider_setup_issue_seen',
+  'project_import_result',
+  'git_panel_opened',
+  'git_panel_tab_changed',
+  'git_file_opened',
+  'git_action_triggered',
   'provider_selected',
   'telemetry_opt_out',
 ]);
@@ -54,13 +71,90 @@ const allowedProperties = new Set([
   'arch',
   'channel',
   'distinct_id',
+  'environment',
+  'error_code',
+  'file_state',
+  'changed_file_count',
+  'github_available',
+  'has_collection',
+  'has_changes',
+  'has_pr',
+  'is_git_repo',
   'has_task',
   'has_worktree',
   'install_id',
   'platform',
   'provider_id',
+  'result',
   'source',
+  'status',
+  'tab',
+  'target',
+  'view',
+  'action',
 ]);
+
+const allowedSources = new Set([
+  'setup',
+  'settings',
+  'new_session',
+  'kanban',
+  'list',
+  'project_import',
+  'git_panel',
+]);
+const allowedViews = new Set(['list', 'kanban']);
+const allowedGitTabs = new Set(['git', 'files', 'agent']);
+const allowedGitActions = new Set([
+  'commit',
+  'fetch',
+  'push',
+  'pull',
+  'merge',
+  'create_pr',
+  'merge_pr',
+  'copy_branch',
+  'copy_worktree_path',
+  'open_external',
+  'preview_diff',
+  'open_diff_tab',
+  'open_file_tab',
+]);
+const allowedGitTargets = new Set([
+  'repository',
+  'pull_request',
+  'checks',
+  'branch',
+  'worktree_path',
+  'diff',
+  'file',
+  'unknown',
+]);
+const allowedGitFileStates = new Set([
+  'modified',
+  'added',
+  'deleted',
+  'renamed',
+  'copied',
+  'untracked',
+  'conflicted',
+  'typechange',
+  'unknown',
+]);
+const allowedProviderIssueStatuses = new Set<TelemetryProviderSetupIssueStatus>([
+  'missing',
+  'needs_login',
+  'unavailable',
+]);
+const allowedProjectImportResults = new Set(['success', 'failed']);
+const allowedProjectImportErrorCodes = new Set([
+  'environment_mismatch',
+  'permission_denied',
+  'missing_folder',
+  'invalid_folder',
+  'unknown',
+]);
+const allowedEnvironments = new Set(['native', 'wsl']);
 
 let telemetryContext: TelemetryRuntimeContext | null = null;
 let telemetryEnabled = false;
@@ -106,6 +200,15 @@ export function configureTelemetry(
 
 export function isTelemetryReady(): boolean {
   return Boolean(telemetryContext && telemetryEnabled && projectToken);
+}
+
+export function normalizeTelemetryProviderSetupIssueStatus(
+  status: string | null | undefined,
+): TelemetryProviderSetupIssueStatus | null {
+  if (!status || status === 'connected' || status === 'ready') return null;
+  if (status === 'needs_login') return 'needs_login';
+  if (status === 'not_installed' || status === 'missing') return 'missing';
+  return 'unavailable';
 }
 
 export async function captureTelemetryEvent(
@@ -183,7 +286,19 @@ function sanitizeTelemetryProperties(
   for (const [key, value] of Object.entries(properties)) {
     if (!allowedProperties.has(key)) continue;
 
-    if (key === 'source' && value !== 'setup' && value !== 'settings') continue;
+    if (key === 'source' && (typeof value !== 'string' || !allowedSources.has(value))) continue;
+    if (key === 'view' && (typeof value !== 'string' || !allowedViews.has(value))) continue;
+    if (key === 'tab' && (typeof value !== 'string' || !allowedGitTabs.has(value))) continue;
+    if (key === 'action' && (typeof value !== 'string' || !allowedGitActions.has(value))) continue;
+    if (key === 'target' && (typeof value !== 'string' || !allowedGitTargets.has(value))) continue;
+    if (key === 'file_state' && (typeof value !== 'string' || !allowedGitFileStates.has(value))) continue;
+    if (
+      key === 'status'
+      && (typeof value !== 'string' || !allowedProviderIssueStatuses.has(value as TelemetryProviderSetupIssueStatus))
+    ) continue;
+    if (key === 'result' && (typeof value !== 'string' || !allowedProjectImportResults.has(value))) continue;
+    if (key === 'error_code' && (typeof value !== 'string' || !allowedProjectImportErrorCodes.has(value))) continue;
+    if (key === 'environment' && (typeof value !== 'string' || !allowedEnvironments.has(value))) continue;
 
     if (typeof value === 'string') {
       sanitized[key] = value.slice(0, MAX_STRING_LENGTH);

@@ -8,7 +8,20 @@ const routingSource = fs.readFileSync(new URL('../src/lib/ws/server-message-rout
 const wsServerSource = fs.readFileSync(new URL('../src/lib/ws/server.ts', import.meta.url), 'utf8');
 const terminalManagerSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-manager.ts', import.meta.url), 'utf8');
 const terminalResolverSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-resolver.ts', import.meta.url), 'utf8');
+const clientTerminalCwdSource = fs.readFileSync(new URL('../src/lib/terminal/client-terminal-cwd.ts', import.meta.url), 'utf8');
+const hostPathSource = fs.readFileSync(new URL('../src/lib/filesystem/host-path.ts', import.meta.url), 'utf8');
+const pathExistsSource = fs.readFileSync(new URL('../src/lib/filesystem/path-exists.ts', import.meta.url), 'utf8');
+const sessionWorkspaceRootSource = fs.readFileSync(new URL('../src/lib/session/session-workspace-root.ts', import.meta.url), 'utf8');
+const sessionFileRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/file/route.ts', import.meta.url), 'utf8');
+const sessionFilesRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/files/route.ts', import.meta.url), 'utf8');
+const projectsRouteSource = fs.readFileSync(new URL('../src/app/api/projects/route.ts', import.meta.url), 'utf8');
+const archiveServiceSource = fs.readFileSync(new URL('../src/lib/archive/archive-service.ts', import.meta.url), 'utf8');
+const worktreeDiffStatsSource = fs.readFileSync(new URL('../src/lib/git/worktree-diff-stats.ts', import.meta.url), 'utf8');
+const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', import.meta.url), 'utf8');
+const prStatusProviderSource = fs.readFileSync(new URL('../src/lib/github/pr-status-provider.ts', import.meta.url), 'utf8');
+const managedWorktreesSource = fs.readFileSync(new URL('../src/lib/worktrees/managed.ts', import.meta.url), 'utf8');
 const terminalPanelSource = fs.readFileSync(new URL('../src/components/terminal/terminal-panel.tsx', import.meta.url), 'utf8');
+const emptyPanelStateSource = fs.readFileSync(new URL('../src/components/panel/empty-panel-state.tsx', import.meta.url), 'utf8');
 const wsClientSource = fs.readFileSync(new URL('../src/lib/ws/client.ts', import.meta.url), 'utf8');
 const panelWrapperSource = fs.readFileSync(new URL('../src/components/panel/panel-wrapper.tsx', import.meta.url), 'utf8');
 const panelStoreSource = fs.readFileSync(new URL('../src/stores/panel-store.ts', import.meta.url), 'utf8');
@@ -61,6 +74,44 @@ test('terminal cwd is server validated before spawning a PTY', () => {
   assert.match(terminalResolverSource, /Terminal cwd must be inside a registered project or active worktree/);
 });
 
+test('terminal startup falls back when a stored worktree cwd was deleted', () => {
+  assert.match(terminalResolverSource, /getProject/);
+  assert.match(terminalResolverSource, /resolveFirstExistingAllowedRoot/);
+  assert.match(terminalResolverSource, /if \(!resolvedCandidate\) \{\n\s+const fallbackCwd = resolveFirstExistingAllowedRoot\(allowedRoots\);/);
+});
+
+test('terminal cwd validation resolves WSL POSIX paths for Windows Electron', () => {
+  assert.match(terminalResolverSource, /getRuntimePlatform\(\) !== 'win32'/);
+  assert.match(terminalResolverSource, /getWindowsHostedWslReferenceRoots/);
+  assert.match(terminalResolverSource, /toWindowsHostedWslPath/);
+  assert.match(terminalResolverSource, /execFileSync\(\n\s+'wsl\.exe'/);
+  assert.match(terminalResolverSource, /\? path\.posix\n\s+: path/);
+  assert.match(terminalResolverSource, /pathModule\.relative/);
+});
+
+test('server filesystem reads resolve WSL POSIX paths before calling node fs', () => {
+  assert.match(hostPathSource, /export async function resolvePathForHostFilesystem/);
+  assert.match(hostPathSource, /getRuntimePlatform\(\) === 'win32' && trimmed\.startsWith\('\/'\)/);
+  assert.match(hostPathSource, /resolveBrowsePath\(trimmed, 'wsl'\)/);
+  assert.match(pathExistsSource, /resolvePathForHostFilesystem\(candidate\)/);
+  assert.match(sessionWorkspaceRootSource, /resolveSessionWorkspaceFilesystemRoot/);
+  assert.match(sessionFileRouteSource, /resolveSessionWorkspaceFilesystemRoot\(id\)/);
+  assert.match(sessionFileRouteSource, /getFilesystemPathModule\(root\)/);
+  assert.match(sessionFilesRouteSource, /resolveSessionWorkspaceFilesystemRoot\(id\)/);
+  assert.match(sessionFilesRouteSource, /pathModule\.join\(absDir, ent\.name\)/);
+  assert.match(projectsRouteSource, /resolveBrowsePath\(\n\s+folderPath,\n\s+settings\.agentEnvironment,/);
+  assert.match(archiveServiceSource, /pathExists\(workDir\)/);
+  assert.match(archiveServiceSource, /resolvePathForHostFilesystem\(item\.workDir\)/);
+  assert.match(worktreeDiffStatsSource, /await resolveFilesystemPath\(workDir\)/);
+  assert.match(worktreeDiffStatsSource, /getRuntimePlatform\(\) === 'win32' && workDir\.trim\(\)\.startsWith\('\/'\)/);
+  assert.match(gitPanelSource, /await resolveNodeFilesystemPath\(\n\s+repoRoot,\n\s+referenceFilesystemPath,/);
+  assert.match(gitPanelSource, /resolvePathForHostFilesystem\(gitPath\)/);
+  assert.match(gitPanelSource, /getRuntimePlatform\(\) === "win32" && workDir\.trim\(\)\.startsWith\("\/"\)/);
+  assert.match(prStatusProviderSource, /AgentEnvironment = inferGitHubToolEnvironment\(workDir\)/);
+  assert.match(prStatusProviderSource, /getRuntimePlatform\(\) === 'win32' && workDir\.trim\(\)\.startsWith\('\/'\)/);
+  assert.match(managedWorktreesSource, /resolvePathForHostFilesystem\(worktreePathModule\.dirname\(worktreePath\)\)/);
+});
+
 test('terminal ownership keys include user id and terminal id', () => {
   assert.match(terminalManagerSource, /getKey\(userId: string, terminalId: string\)/);
   assert.match(terminalManagerSource, /`\$\{userId\}:\$\{terminalId\}`/);
@@ -82,6 +133,12 @@ test('terminal creation is not tied to active panel focus changes', () => {
   assert.doesNotMatch(terminalPanelSource, /useSessionStore\(\(state\) => state\.activeSessionId\)/);
   assert.doesNotMatch(terminalPanelSource, /useSessionStore\.getState\(\)\.activeSessionId/);
   assert.match(terminalPanelSource, /\}, \[connectionStatus, terminalId, terminalSessionId\]\);/);
+});
+
+test('terminal panels without a bound session do not inherit stale active session cwd', () => {
+  assert.match(emptyPanelStateSource, /assignTerminal\(panelId, uuidv4\(\)\)/);
+  assert.match(clientTerminalCwdSource, /getSessionSelectionId\(sessionId \?\? null\)/);
+  assert.doesNotMatch(clientTerminalCwdSource, /sessionId \?\? sessionState\.activeSessionId/);
 });
 
 test('terminal panels preserve the source session context used to create them', () => {
@@ -144,6 +201,15 @@ test('terminal shell selection follows the configured agent environment', () => 
   assert.match(terminalResolverSource, /resolveWindowsNativeTerminalCwd/);
   assert.match(terminalResolverSource, /isWindowsHostedWslPath/);
   assert.doesNotMatch(terminalResolverSource, /WSL terminal profiles are not supported yet/);
+});
+
+test('macOS terminal startup preserves user login PATH and executable node-pty helper', () => {
+  assert.match(terminalManagerSource, /ensureNodePtySpawnHelperExecutable/);
+  assert.match(terminalManagerSource, /require\.resolve\('node-pty\/package\.json'\)/);
+  assert.match(terminalManagerSource, /spawn-helper/);
+  assert.match(terminalManagerSource, /fs\.chmodSync\(helperPath, stat\.mode \| 0o755\)/);
+  assert.match(terminalManagerSource, /buildSpawnEnv\(env\)/);
+  assert.match(terminalResolverSource, /platform === 'darwin' \? \['-l'\] : \[\]/);
 });
 
 test('electron packages node-pty native runtime assets outside the asar', () => {

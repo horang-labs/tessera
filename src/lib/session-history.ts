@@ -62,13 +62,34 @@ function ensureHistoryDir(): void {
   fs.mkdirSync(HISTORY_DIR, { recursive: true, mode: 0o700 });
 }
 
+function normalizeProgressData(data: Record<string, any>): Record<string, any> {
+  const normalizedData = { ...data };
+
+  if (normalizedData.type === 'bash_progress') {
+    delete normalizedData.fullOutput;
+  }
+
+  return normalizedData;
+}
+
+function normalizeHistoryEvent(event: SessionHistoryEvent): SessionHistoryEvent | null {
+  if (event.type !== 'progress_hook') {
+    return event;
+  }
+
+  return {
+    ...event,
+    data: normalizeProgressData(event.data),
+  };
+}
+
 function parseHistoryEvent(line: string): SessionHistoryEvent | null {
   try {
     const parsed = JSON.parse(line);
     if (!parsed || typeof parsed !== 'object' || typeof parsed.type !== 'string') {
       return null;
     }
-    return parsed as SessionHistoryEvent;
+    return normalizeHistoryEvent(parsed as SessionHistoryEvent);
   } catch {
     return null;
   }
@@ -527,20 +548,69 @@ class SessionHistoryStore {
   }
 
   private appendEvent(sessionId: string, event: SessionHistoryEvent): void {
+    const normalizedEvent = normalizeHistoryEvent(event);
+    if (!normalizedEvent) {
+      return;
+    }
+
     ensureHistoryDir();
     const filePath = this.getHistoryPath(sessionId);
-    fs.appendFileSync(filePath, JSON.stringify(event) + '\n', 'utf-8');
+    const serialized = JSON.stringify(normalizedEvent);
+    fs.appendFileSync(filePath, `${serialized}\n`, 'utf-8');
   }
 
   async readEvents(sessionId: string): Promise<SessionHistoryEvent[]> {
     const filePath = this.getHistoryPath(sessionId);
     try {
-      const raw = await fsp.readFile(filePath, 'utf-8');
-      return raw
-        .split('\n')
-        .filter(Boolean)
-        .map(parseHistoryEvent)
-        .filter((event): event is SessionHistoryEvent => event !== null);
+      await fsp.access(filePath, fs.constants.R_OK);
+
+      const events: SessionHistoryEvent[] = [];
+      let currentLine = '';
+
+      const appendLinePart = (part: string): void => {
+        currentLine += part;
+      };
+
+      const finishLine = (): void => {
+        if (currentLine) {
+          const event = parseHistoryEvent(currentLine);
+          if (event) {
+            events.push(event);
+          }
+          currentLine = '';
+        }
+      };
+
+      await new Promise<void>((resolve, reject) => {
+        const stream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+
+        stream.on('data', (chunk: string | Buffer) => {
+          const text = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+          let start = 0;
+          while (start <= text.length) {
+            const newlineIndex = text.indexOf('\n', start);
+            if (newlineIndex === -1) {
+              appendLinePart(text.slice(start));
+              break;
+            }
+
+            appendLinePart(text.slice(start, newlineIndex));
+            finishLine();
+            start = newlineIndex + 1;
+          }
+        });
+
+        stream.on('end', () => {
+          if (currentLine) {
+            finishLine();
+          }
+
+          resolve();
+        });
+        stream.on('error', reject);
+      });
+
+      return events;
     } catch (err: any) {
       if (err?.code === 'ENOENT') {
         return [];

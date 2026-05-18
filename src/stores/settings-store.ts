@@ -7,6 +7,9 @@ import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 import { i18n } from '@/lib/i18n';
 import type { ViewMode } from '@/stores/board-store';
 
+export const SETTINGS_STORAGE_KEY = 'tessera:settings';
+export const SETTINGS_SYNC_CHANNEL = 'tessera:settings-sync';
+
 export const LIST_SIDEBAR_MIN_WIDTH = 280;
 export const LIST_SIDEBAR_DEFAULT_WIDTH = 420;
 export const BOARD_SIDEBAR_MIN_WIDTH = 600;
@@ -86,6 +89,40 @@ function syncI18nLanguage(language: UserSettings['language']): void {
   void i18n.changeLanguage(language);
 }
 
+interface SettingsSyncMessage {
+  type: 'settings-updated';
+  settings: UserSettings;
+}
+
+let settingsSyncChannel: BroadcastChannel | null = null;
+
+function getSettingsSyncChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined' || typeof window.BroadcastChannel === 'undefined') {
+    return null;
+  }
+  settingsSyncChannel ??= new window.BroadcastChannel(SETTINGS_SYNC_CHANNEL);
+  return settingsSyncChannel;
+}
+
+function broadcastSettingsSnapshot(settings: UserSettings): void {
+  try {
+    getSettingsSyncChannel()?.postMessage({
+      type: 'settings-updated',
+      settings,
+    } satisfies SettingsSyncMessage);
+  } catch {
+    // Best effort only. Other windows can still pick up persisted settings.
+  }
+}
+
+export function isSettingsSyncMessage(message: unknown): message is SettingsSyncMessage {
+  if (!message || typeof message !== 'object') return false;
+  const value = message as Partial<SettingsSyncMessage>;
+  return value.type === 'settings-updated'
+    && Boolean(value.settings)
+    && typeof value.settings === 'object';
+}
+
 interface SettingsState {
   settings: UserSettings;
   serverHostInfo: ServerHostInfo | null;
@@ -109,6 +146,7 @@ interface SettingsState {
   updateSettings: (partial: Partial<UserSettings>, options?: UpdateSettingsOptions) => Promise<void>;
   reset: () => Promise<void>;
   load: () => Promise<void>;
+  applyExternalSettings: (settings: UserSettings) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -128,6 +166,11 @@ export const useSettingsStore = create<SettingsState>()(
 
       open: () => set({ isOpen: true }),
       close: () => set({ isOpen: false }),
+      applyExternalSettings: (externalSettings) => {
+        const settings = normalizeUserSettings(externalSettings);
+        set({ settings });
+        syncI18nLanguage(settings.language);
+      },
 
       // REQ-007: Sidebar toggle
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
@@ -177,6 +220,7 @@ export const useSettingsStore = create<SettingsState>()(
         });
 
         set({ settings: updated });
+        broadcastSettingsSnapshot(updated);
 
         if (partial.language) {
           syncI18nLanguage(updated.language);
@@ -199,6 +243,7 @@ export const useSettingsStore = create<SettingsState>()(
         } catch (error) {
           console.error('Failed to save settings to server', error);
           set({ settings: prior });
+          broadcastSettingsSnapshot(prior);
           if (partial.language) {
             syncI18nLanguage(prior.language);
           }
@@ -225,6 +270,7 @@ export const useSettingsStore = create<SettingsState>()(
         });
 
         set({ settings: defaults });
+        broadcastSettingsSnapshot(defaults);
         syncI18nLanguage(defaults.language);
 
         try {
@@ -239,6 +285,7 @@ export const useSettingsStore = create<SettingsState>()(
         } catch (error) {
           console.error('Failed to reset settings', error);
           set({ settings: prior });
+          broadcastSettingsSnapshot(prior);
           syncI18nLanguage(prior.language);
         }
       },

@@ -25,6 +25,11 @@ interface LeftPanelProps {
   className?: string;
 }
 
+interface ProjectImportError extends Error {
+  code?: string;
+  status?: number;
+}
+
 export function LeftPanel({ width, className }: LeftPanelProps) {
   const isFolderBrowserOpen = useFolderBrowserStore((state) => state.isOpen);
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
@@ -44,8 +49,11 @@ export function LeftPanel({ width, className }: LeftPanelProps) {
       body: JSON.stringify({ folderPath }),
     });
     if (!res.ok) {
-      const data = await res.json().catch(() => null) as { error?: string } | null;
-      throw new Error(data?.error || 'Failed to add project');
+      const data = await res.json().catch(() => null) as { code?: string; error?: string } | null;
+      const error = new Error(data?.error || 'Failed to add project') as ProjectImportError;
+      error.code = data?.code;
+      error.status = res.status;
+      throw error;
     }
 
     await useSessionStore.getState().loadProjects();

@@ -827,60 +827,56 @@ body {
 
 
 /* ============================================
-   Task Card Status Stripe — Jira-style left border
-   Uses the card's own border-left so the card's
-   rounded-lg corners clip the stroke naturally.
+   Task Card Status Stripe — card left border
+   Uses the card's own border-left; live states
+   animate color only so no extra rail is drawn.
    ============================================ */
-.task-stripe {
-  border-left-width: 3px !important;
-  /* Color is set via cascaded `.task-stripe-*` variants below. Keeping it
-     non-!important so the `task-stripe-processing` animation can override. */
-  border-left-color: var(--stripe-color, transparent);
+@property --task-stripe-intensity {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 32%;
 }
 
-/* Beat Tailwind's `border-(--board-card-border)` (which carries !important
-   weight via source order) for the steady states. */
-.task-stripe-unread,
-.task-stripe-running {
-  border-left-color: var(--stripe-color) !important;
+.task-stripe {
+  --stripe-color: transparent;
+  --task-stripe-intensity: 32%;
+  border-left-width: 3px !important;
+  border-left-color: color-mix(in srgb, var(--stripe-color) var(--task-stripe-intensity), transparent) !important;
 }
 
 .task-stripe-processing {
   --stripe-color: var(--success);
-  animation: task-stripe-flow 1.6s ease-in-out infinite;
+  animation: task-stripe-border-pulse 1.4s ease-in-out infinite;
 }
 
 .task-stripe-attention {
   --stripe-color: #facc15;
-  animation: task-stripe-attention-flow 720ms ease-in-out infinite;
+  animation: task-stripe-border-pulse 900ms ease-in-out infinite;
 }
 
 .task-stripe-unread {
   --stripe-color: #facc15;
+  --task-stripe-intensity: 78%;
 }
 
 .task-stripe-running {
   --stripe-color: var(--success);
+  --task-stripe-intensity: 78%;
 }
 
-@keyframes task-stripe-flow {
+@keyframes task-stripe-border-pulse {
   0%, 100% {
-    border-left-color: color-mix(in srgb, var(--success) 20%, transparent);
-    border-left-width: 2px;
+    --task-stripe-intensity: 30%;
   }
   50% {
-    border-left-color: var(--success);
-    border-left-width: 4px;
+    --task-stripe-intensity: 100%;
   }
 }
 
-@keyframes task-stripe-attention-flow {
-  0%, 100% {
-    border-left-color: rgba(250, 204, 21, 0.28);
-    border-left-width: 2px;
-  }
-  50% {
-    border-left-color: #facc15;
-    border-left-width: 4px;
+@media (prefers-reduced-motion: reduce) {
+  .task-stripe-processing,
+  .task-stripe-attention {
+    animation: none;
+    --task-stripe-intensity: 78%;
   }
 }

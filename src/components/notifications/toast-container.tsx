@@ -13,6 +13,7 @@ import { useBoardStore } from '@/stores/board-store';
 import { ToastNotification } from './toast-notification';
 import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
+import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 
 const MAX_VISIBLE_TOASTS = 5;
@@ -111,6 +112,7 @@ export function ToastContainer() {
     }
 
     clearUnreadCount(sessionId);
+    wsClient.sendMarkAsRead(sessionId);
 
     // Switch to the session's project if different from current
     const currentProjectDir = useBoardStore.getState().selectedProjectDir;

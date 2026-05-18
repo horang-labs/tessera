@@ -5,6 +5,7 @@ import {
   wslMountPathToWindowsDrivePath,
 } from '../filesystem/path-environment';
 import type { AgentEnvironment } from '../settings/types';
+import { getRuntimePlatform } from '../system/runtime-platform';
 
 export const MANAGED_WORKTREE_PATH_TEMPLATE_TOKENS = [
   'projectPath',
@@ -75,7 +76,11 @@ export function resolveManagedWorktreePathTemplate(
     normalizedProjectDir,
     context.agentEnvironment,
   );
-  validateResolvedWorktreePath(normalizedWorktreePath, normalizedProjectDir);
+  validateResolvedWorktreePath(
+    normalizedWorktreePath,
+    normalizedProjectDir,
+    context.agentEnvironment,
+  );
   return normalizedWorktreePath;
 }
 
@@ -101,11 +106,19 @@ function validateTemplateSyntax(template: string): void {
   }
 }
 
-function validateResolvedWorktreePath(worktreePath: string, projectDir: string): void {
+function validateResolvedWorktreePath(
+  worktreePath: string,
+  projectDir: string,
+  agentEnvironment?: AgentEnvironment,
+): void {
   if (!isAbsoluteFilesystemPath(worktreePath)) {
     throw new ManagedWorktreePathTemplateError(
       'Worktree path template must resolve to an absolute path',
     );
+  }
+
+  if (validateResolvedWslWorktreePath(worktreePath, projectDir, agentEnvironment)) {
+    return;
   }
 
   const worktreeIdentity = getFilesystemPathIdentity(worktreePath);
@@ -127,6 +140,42 @@ function validateResolvedWorktreePath(worktreePath: string, projectDir: string):
       'Worktree path template resolves to an ancestor of the source project',
     );
   }
+}
+
+function validateResolvedWslWorktreePath(
+  worktreePath: string,
+  projectDir: string,
+  agentEnvironment?: AgentEnvironment,
+): boolean {
+  if (agentEnvironment !== 'wsl') {
+    return false;
+  }
+
+  const worktreeIdentity = getWslTemplatePathIdentity(worktreePath, agentEnvironment);
+  const projectIdentity = getWslTemplatePathIdentity(projectDir, agentEnvironment);
+  if (!worktreeIdentity || !projectIdentity) {
+    return false;
+  }
+
+  if (!isSameWslTemplateFilesystem(worktreeIdentity, projectIdentity)) {
+    throw new ManagedWorktreePathTemplateError(
+      'Worktree path template must resolve in the same filesystem as the project',
+    );
+  }
+
+  if (worktreeIdentity.posixPath === projectIdentity.posixPath) {
+    throw new ManagedWorktreePathTemplateError(
+      'Worktree path template resolves to the source project directory',
+    );
+  }
+
+  if (isComparablePathInside(projectIdentity.posixPath, worktreeIdentity.posixPath)) {
+    throw new ManagedWorktreePathTemplateError(
+      'Worktree path template resolves to an ancestor of the source project',
+    );
+  }
+
+  return true;
 }
 
 type FilesystemPathKind = 'posix' | 'windows-drive' | 'windows-unc' | 'wsl-unc';
@@ -201,6 +250,16 @@ function normalizeWslResolvedWorktreePathForProject(
 
   if (!isSameWslTemplateFilesystem(worktreeIdentity, projectIdentity)) {
     return null;
+  }
+
+  if (worktreeIdentity.pathStyle === 'unc' && getRuntimePlatform() === 'win32') {
+    return buildWslUncPathForTemplate(
+      worktreeIdentity.uncDistro
+        ?? projectIdentity.uncDistro
+        ?? worktreeIdentity.distro
+        ?? projectIdentity.distro,
+      worktreeIdentity.posixPath,
+    ) ?? worktreePath;
   }
 
   if (projectIdentity.pathStyle === 'unc') {

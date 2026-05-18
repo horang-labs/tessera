@@ -3,8 +3,8 @@ import { wsClient } from '@/lib/ws/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
-import type { ContentBlock, PermissionMode } from '@/lib/ws/message-types';
-import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { ContentBlock, SessionSpawnConfig } from '@/lib/ws/message-types';
+import type { SessionGoalUpdate } from '@/types/session-goal';
 
 export function useWebSocket() {
   const user = useAuthStore((state) => state.user);
@@ -27,7 +27,7 @@ export function useWebSocket() {
       content: string | ContentBlock[],
       skillName?: string,
       displayContent?: string | ContentBlock[],
-      spawnConfig?: ({ model?: string; reasoningEffort?: string | null; permissionMode?: PermissionMode } & ProviderRuntimeControls),
+      spawnConfig?: SessionSpawnConfig,
     ) => {
       wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig);
     },
@@ -67,6 +67,18 @@ export function useWebSocket() {
     wsClient.cancelGeneration(sessionId);
   }, []);
 
+  const setSessionGoal = useCallback((sessionId: string, update: SessionGoalUpdate, spawnConfig?: SessionSpawnConfig) => {
+    wsClient.setSessionGoal(sessionId, update, spawnConfig);
+  }, []);
+
+  const refreshSessionGoal = useCallback((sessionId: string, spawnConfig?: SessionSpawnConfig) => {
+    wsClient.refreshSessionGoal(sessionId, spawnConfig);
+  }, []);
+
+  const clearSessionGoal = useCallback((sessionId: string, spawnConfig?: SessionSpawnConfig) => {
+    wsClient.clearSessionGoal(sessionId, spawnConfig);
+  }, []);
+
   const stopSession = useCallback((sessionId: string) => {
     wsClient.stopSession(sessionId);
   }, []);
@@ -83,6 +95,9 @@ export function useWebSocket() {
     retrySession,
     sendInteractiveResponse,
     cancelGeneration,
+    setSessionGoal,
+    refreshSessionGoal,
+    clearSessionGoal,
     stopSession,
     setServiceTier,
   };

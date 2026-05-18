@@ -105,6 +105,7 @@ export function useSessionCrud() {
         id: tempSessionId,
         title: t('panel.creating'),
         projectDir: options.parentProjectId || options.workDir || process.cwd(),
+        workDir: options.workDir,
         isRunning: false,
         status: 'starting',
         createdAt: new Date().toISOString(),
@@ -187,6 +188,7 @@ export function useSessionCrud() {
           id: result.sessionId,
           title: result.title,
           projectDir: projectDir,
+          workDir: options.workDir || result.projectDir,
           isRunning: false,
           status: result.status,
           createdAt: result.createdAt,
@@ -238,6 +240,7 @@ export function useSessionCrud() {
           provider_id: result.provider || resolvedProviderId,
           has_task: Boolean(options.taskId),
           has_worktree: Boolean(worktreeBranch),
+          has_collection: Boolean(options.collectionId),
         });
 
         return result.sessionId;

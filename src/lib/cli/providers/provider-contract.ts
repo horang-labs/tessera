@@ -4,6 +4,7 @@ import type { ContentBlock } from '@/lib/ws/message-types';
 import type { ParsedMessage } from './message-types';
 import type { GeneratedTitle, SpawnOptions, SpawnResult } from './session-types';
 import type { SkillSource } from './skill-types';
+import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
 
 /**
  * Three-state connection status for a given CLI × environment combination.
@@ -187,6 +188,13 @@ export interface CliProvider {
    * Optional: send an interrupt/cancel signal to the CLI process.
    */
   sendInterrupt?(proc: ChildProcess, sessionId: string): boolean;
+
+  /**
+   * Optional: manage provider-native persistent session goals.
+   */
+  setGoal?(proc: ChildProcess, sessionId: string, update: SessionGoalUpdate): Promise<SessionGoal>;
+  getGoal?(proc: ChildProcess, sessionId: string): Promise<SessionGoal | null>;
+  clearGoal?(proc: ChildProcess, sessionId: string): Promise<boolean>;
 
   /**
    * Optional: create a SkillSource bound to a specific session's CLI process.

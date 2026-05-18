@@ -672,6 +672,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
         provider_id: data.provider || providerId,
         has_task: true,
         has_worktree: Boolean(task.worktreeBranch),
+        has_collection: Boolean(task.collectionId),
       });
     } catch (err) {
       console.error('Failed to add session to task:', err);

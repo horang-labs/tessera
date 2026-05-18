@@ -1,7 +1,14 @@
-import type { ClientMessage, PermissionMode, ServerTransportMessage, ContentBlock } from './message-types';
+import type {
+  ClientMessage,
+  PermissionMode,
+  ServerTransportMessage,
+  ContentBlock,
+  SessionSpawnConfig,
+} from './message-types';
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { SessionGoalUpdate } from '@/types/session-goal';
 import { useChatStore } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import {
@@ -122,7 +129,7 @@ export class WebSocketClient {
     content: string | ContentBlock[],
     skillName?: string,
     displayContent?: string | ContentBlock[],
-    spawnConfig?: ({ model?: string; reasoningEffort?: string | null; permissionMode?: PermissionMode } & ProviderRuntimeControls),
+    spawnConfig?: SessionSpawnConfig,
   ) {
     if (!this.sendRequest('send_message', {
       sessionId,
@@ -208,6 +215,28 @@ export class WebSocketClient {
   cancelGeneration(sessionId: string) {
     finalizeInFlightTurn(sessionId);
     this.sendRequest('cancel_generation', { sessionId });
+  }
+
+  setSessionGoal(sessionId: string, update: SessionGoalUpdate, spawnConfig?: SessionSpawnConfig) {
+    this.sendRequest('set_session_goal', {
+      sessionId,
+      update,
+      ...(spawnConfig && { spawnConfig }),
+    });
+  }
+
+  refreshSessionGoal(sessionId: string, spawnConfig?: SessionSpawnConfig) {
+    this.sendRequest('refresh_session_goal', {
+      sessionId,
+      ...(spawnConfig && { spawnConfig }),
+    });
+  }
+
+  clearSessionGoal(sessionId: string, spawnConfig?: SessionSpawnConfig) {
+    this.sendRequest('clear_session_goal', {
+      sessionId,
+      ...(spawnConfig && { spawnConfig }),
+    });
   }
 
   stopSession(sessionId: string) {

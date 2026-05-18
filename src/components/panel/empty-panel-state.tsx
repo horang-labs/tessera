@@ -169,6 +169,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
         allowBranchSlugSuffix: !branchSlugEdited,
         suppressErrorToast: true,
         collectionId: selectedCollectionId ?? undefined,
+        source: 'new_session',
       });
       if (!result.ok) {
         setError(

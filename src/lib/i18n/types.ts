@@ -166,6 +166,7 @@ export interface I18nMessages {
       autoDeleteArchivedWorktreesDesc: string;
       pathTemplate: string;
       pathTemplateDesc: string;
+      pathTemplateWslWarning: string;
       pathTemplatePlaceholder: string;
       pathTemplateTokens: string;
       pathTemplateDefaultLocation: string;
@@ -257,6 +258,22 @@ export interface I18nMessages {
     or: string;
     undo: string;
   };
+  feedback: {
+    title: string;
+    tooltip: string;
+    messageLabel: string;
+    messagePlaceholder: string;
+    emailLabel: string;
+    emailPlaceholder: string;
+    send: string;
+    sending: string;
+    sent: string;
+    required: string;
+    sendFailed: string;
+    settingsCta: string;
+    providerCta: string;
+    projectImportCta: string;
+  };
   auth: {
     title: string;
     subtitle: string;
@@ -330,6 +347,9 @@ export interface I18nMessages {
     logout: string;
     copied: string;
     copy: string;
+    forkFromHere: string;
+    forkFromHereTooltip: string;
+    forkPointLabel: string;
     submit: string;
     select: string;
     responseSent: string;
@@ -413,6 +433,29 @@ export interface I18nMessages {
       networkError: string;
       reconnecting: string;
       maxRetriesReached: string;
+    };
+  };
+  goal: {
+    title: string;
+    start: string;
+    edit: string;
+    save: string;
+    pause: string;
+    resume: string;
+    clear: string;
+    complete: string;
+    refresh: string;
+    notSet: string;
+    objectiveLabel: string;
+    objectivePlaceholder: string;
+    inputPlaceholder: string;
+    steerPlaceholder: string;
+    tokensUsed: string;
+    status: {
+      active: string;
+      paused: string;
+      budgetLimited: string;
+      complete: string;
     };
   };
   notifications: {
@@ -507,6 +550,7 @@ export interface I18nMessages {
     focusPanelDown: string;
     voiceInput: string;
     togglePlanMode: string;
+    toggleCodexFastMode: string;
     openModelSelector: string;
     openReasoningSelector: string;
     browserConflict: string;

@@ -5,6 +5,7 @@ import { protocolAdapter } from './protocol-adapter';
 import type { CliProvider, ParsedMessage, ParsedMessageSideEffect, SpawnOptions } from './providers/types';
 import type { ContentBlock } from '../ws/message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
 import logger from '../logger';
 import { sessionHistory } from '../session-history';
 import {
@@ -416,6 +417,33 @@ export class ProcessManager {
     return this.tryUpdateProviderSessionConfig(
       sessionId, { serviceTier }, 'service tier', { serviceTier },
     );
+  }
+
+  async setSessionGoal(sessionId: string, update: SessionGoalUpdate): Promise<SessionGoal | null> {
+    const processInfo = this.getRunningProcessOrWarn(sessionId, 'set session goal');
+    if (!processInfo?.provider.setGoal) {
+      return null;
+    }
+
+    return processInfo.provider.setGoal(processInfo.process, sessionId, update);
+  }
+
+  async refreshSessionGoal(sessionId: string): Promise<SessionGoal | null> {
+    const processInfo = this.getRunningProcessOrWarn(sessionId, 'refresh session goal');
+    if (!processInfo?.provider.getGoal) {
+      return null;
+    }
+
+    return processInfo.provider.getGoal(processInfo.process, sessionId);
+  }
+
+  async clearSessionGoal(sessionId: string): Promise<boolean> {
+    const processInfo = this.getRunningProcessOrWarn(sessionId, 'clear session goal');
+    if (!processInfo?.provider.clearGoal) {
+      return false;
+    }
+
+    return processInfo.provider.clearGoal(processInfo.process, sessionId);
   }
 
   /**

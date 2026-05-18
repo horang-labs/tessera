@@ -3,7 +3,7 @@
 import { memo, useState, useCallback, type ReactNode } from 'react';
 import Image from 'next/image';
 import type { Components } from 'react-markdown';
-import { CheckCircle, Copy, Check } from 'lucide-react';
+import { Copy, Check, MessageSquarePlus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PluggableList } from 'unified';
@@ -30,14 +30,21 @@ import { renderMarkdownCode, renderMarkdownPre } from './markdown-code';
 import { MessageRowShell } from './message-row-shell';
 
 type TextMessage = Extract<EnhancedMessage, { type: 'text' }>;
+export type ForkFromMessageHandler = (message: EnhancedMessage, anchorElement: HTMLElement) => void;
 
 interface TimestampFormatterProps {
   formatTime: (timestamp: string) => string;
   formatFullTime: (timestamp: string) => string;
 }
 
-const MESSAGE_COPY_BUTTON_CLASS =
-  'ml-auto inline-flex w-[4.75rem] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] text-(--text-muted) opacity-0 pointer-events-none transition-[color,background-color,opacity] hover:bg-(--sidebar-hover) hover:text-(--text-primary) group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
+const MESSAGE_ACTIONS_CLASS =
+  'ml-auto inline-flex shrink-0 items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
+
+const MESSAGE_ACTION_BUTTON_CLASS =
+  'inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
+
+const MESSAGE_COPY_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[4.75rem]`;
+const MESSAGE_FORK_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[6.25rem]`;
 
 function formatMessageTime(timestamp: string) {
   const date = new Date(timestamp);
@@ -294,8 +301,10 @@ const UserMessage = memo(function UserMessage({
   message,
   formatTime,
   formatFullTime,
+  onForkFromMessage,
 }: {
   message: TextMessage;
+  onForkFromMessage?: ForkFromMessageHandler;
 } & TimestampFormatterProps) {
   const { t } = useI18n();
   const profile = useSettingsStore((state) => state.settings.profile);
@@ -328,22 +337,36 @@ const UserMessage = memo(function UserMessage({
               {formatTime(message.timestamp)}
             </span>
           </Tooltip>
-          <button
-            onClick={handleCopy}
-            className={MESSAGE_COPY_BUTTON_CLASS}
-          >
-            {copied ? (
-              <>
-                <Check className="w-3 h-3" />
-                <span>{t('chat.copied')}</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-3 h-3" />
-                <span>{t('chat.copy')}</span>
-              </>
+          <div className={MESSAGE_ACTIONS_CLASS}>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className={MESSAGE_COPY_BUTTON_CLASS}
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3 h-3" />
+                  <span>{t('chat.copied')}</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3" />
+                  <span>{t('chat.copy')}</span>
+                </>
+              )}
+            </button>
+            {onForkFromMessage && (
+              <button
+                type="button"
+                onClick={(event) => onForkFromMessage(message, event.currentTarget)}
+                className={MESSAGE_FORK_BUTTON_CLASS}
+                title={t('chat.forkFromHereTooltip')}
+              >
+                <MessageSquarePlus className="w-3 h-3" />
+                <span>{t('chat.forkFromHere')}</span>
+              </button>
             )}
-          </button>
+          </div>
         </div>
         <div
           data-testid="user-message-bubble"
@@ -375,9 +398,11 @@ const AssistantMessage = memo(function AssistantMessage({
   formatTime,
   formatFullTime,
   providerId,
+  onForkFromMessage,
 }: {
   message: TextMessage;
   providerId?: string;
+  onForkFromMessage?: ForkFromMessageHandler;
 } & TimestampFormatterProps) {
   const { t } = useI18n();
   const providerBrand = getProviderBrand(providerId);
@@ -415,23 +440,39 @@ const AssistantMessage = memo(function AssistantMessage({
               {formatTime(message.timestamp)}
             </span>
           </Tooltip>
-          {message.content && (
-            <button
-              onClick={handleCopy}
-              className={MESSAGE_COPY_BUTTON_CLASS}
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3 h-3" />
-                  <span>{t('chat.copied')}</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3" />
-                  <span>{t('chat.copy')}</span>
-                </>
+          {(message.content || onForkFromMessage) && (
+            <div className={MESSAGE_ACTIONS_CLASS}>
+              {message.content && (
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className={MESSAGE_COPY_BUTTON_CLASS}
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3 h-3" />
+                      <span>{t('chat.copied')}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>{t('chat.copy')}</span>
+                    </>
+                  )}
+                </button>
               )}
-            </button>
+              {onForkFromMessage && (
+                <button
+                  type="button"
+                  onClick={(event) => onForkFromMessage(message, event.currentTarget)}
+                  className={MESSAGE_FORK_BUTTON_CLASS}
+                  title={t('chat.forkFromHereTooltip')}
+                >
+                  <MessageSquarePlus className="w-3 h-3" />
+                  <span>{t('chat.forkFromHere')}</span>
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -444,6 +485,7 @@ const AssistantMessage = memo(function AssistantMessage({
 function renderTextMessage(
   message: TextMessage,
   providerId?: string,
+  onForkFromMessage?: ForkFromMessageHandler,
 ): ReactNode {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -468,6 +510,7 @@ function renderTextMessage(
     return (
       <UserMessage
         message={message}
+        onForkFromMessage={onForkFromMessage}
         {...formatters}
       />
     );
@@ -477,6 +520,7 @@ function renderTextMessage(
     <AssistantMessage
       message={message}
       providerId={providerId}
+      onForkFromMessage={onForkFromMessage}
       {...formatters}
     />
   );
@@ -485,10 +529,11 @@ function renderTextMessage(
 export function renderEnhancedContent(
   message: EnhancedMessage,
   providerId?: string,
+  onForkFromMessage?: ForkFromMessageHandler,
 ): ReactNode {
   switch (message.type) {
     case 'text':
-      return renderTextMessage(message, providerId);
+      return renderTextMessage(message, providerId, onForkFromMessage);
     case 'tool_call':
       return null;
     case 'thinking':

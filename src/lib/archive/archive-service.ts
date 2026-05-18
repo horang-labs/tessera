@@ -9,6 +9,8 @@ import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { isManagedWorktreePath, removeManagedWorktree } from '@/lib/worktrees/managed';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
 import logger from '@/lib/logger';
+import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
+import { pathExists } from '@/lib/filesystem/path-exists';
 import type { SessionRow } from '@/lib/db/sessions';
 import type { TaskEntity } from '@/types/task-entity';
 
@@ -94,15 +96,6 @@ function normalizeOffset(cursor: string | null | undefined): number {
   if (!cursor) return 0;
   const parsed = Number.parseInt(cursor, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-async function pathExists(candidate: string): Promise<boolean> {
-  try {
-    await fs.access(candidate);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function getWorktreeStatus(
@@ -412,7 +405,10 @@ async function removeArchivedWorktree(
         throw error;
       }
       if (worktreeStillExists) {
-        await fs.rm(item.workDir, { recursive: true, force: true });
+        await fs.rm(await resolvePathForHostFilesystem(item.workDir), {
+          recursive: true,
+          force: true,
+        });
       }
     }
   }

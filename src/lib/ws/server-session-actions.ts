@@ -16,10 +16,12 @@ import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh
 import type {
   ClientMessage,
   ContentBlock,
+  SessionSpawnConfig,
   ServerTransportMessage,
   TextContentBlock,
 } from './message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { SessionGoalUpdate } from '@/types/session-goal';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 type SessionHistoryMessage = Extract<ServerTransportMessage, { type: 'session_history' }>;
@@ -40,6 +42,7 @@ type CodexPermissionsRequestResult = {
 const CODEX_REQUEST_USER_INPUT_TOOL_NAME = 'CodexRequestUserInput';
 const CODEX_MCP_ELICITATION_TOOL_NAME = 'CodexMcpElicitation';
 const CODEX_PERMISSIONS_REQUEST_TOOL_NAME = 'CodexPermissionsRequest';
+const LIVE_EVENT_VERSION = 1;
 
 const AUTO_TITLE_PLACEHOLDER_TITLES = new Set([
   'New Task',
@@ -78,11 +81,7 @@ interface SendSessionMessageActionOptions extends SessionActionOptions {
   sessionId: string;
   skillName?: string;
   /** Composer-side config used only when no CLI process exists yet (first send). */
-  spawnConfig?: ProviderRuntimeControls & {
-    model?: string;
-    reasoningEffort?: string | null;
-    permissionMode?: string;
-  };
+  spawnConfig?: SessionSpawnConfig;
 }
 
 interface ResumeSessionActionOptions extends SessionActionOptions, ProviderRuntimeControls {
@@ -98,6 +97,12 @@ interface InteractiveResponseActionOptions extends SessionActionOptions {
   response: string;
   sessionId: string;
   toolUseId: string;
+}
+
+interface SessionGoalActionOptions extends SessionActionOptions {
+  sessionId: string;
+  spawnConfig?: SessionSpawnConfig;
+  update?: SessionGoalUpdate;
 }
 
 interface ProcessManagerControlOptions extends SessionActionOptions {
@@ -292,6 +297,115 @@ export async function sendSessionMessageFromWebSocket({
   logger.info({ sessionId, skillName, command: command.slice(0, 100) }, 'Skill command sent to CLI');
 }
 
+export async function setSessionGoalFromWebSocket({
+  sendToUser,
+  sessionId,
+  spawnConfig,
+  update,
+  userId,
+}: SessionGoalActionOptions): Promise<void> {
+  try {
+    const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
+    if (!ok) return;
+
+    const goal = await processManager.setSessionGoal(sessionId, update ?? {});
+    if (!goal) {
+      sendToUser(userId, {
+        type: 'error',
+        sessionId,
+        code: 'session_goal_unavailable',
+        message: 'This provider does not support session goals.',
+      });
+      return;
+    }
+
+    sendToUser(userId, {
+      type: 'session_goal_updated',
+      sessionId,
+      goal,
+    });
+    logger.info({ sessionId, userId, status: goal.status }, 'Session goal updated');
+  } catch (err) {
+    logger.error({ sessionId, userId, error: err }, 'Failed to set session goal');
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'session_goal_set_failed',
+      message: `Failed to update goal: ${(err as Error).message}`,
+    });
+  }
+}
+
+export async function refreshSessionGoalFromWebSocket({
+  sendToUser,
+  sessionId,
+  spawnConfig,
+  userId,
+}: SessionGoalActionOptions): Promise<void> {
+  try {
+    const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
+    if (!ok) return;
+
+    const goal = await processManager.refreshSessionGoal(sessionId);
+    sendToUser(userId, goal
+      ? {
+          type: 'session_goal_updated',
+          sessionId,
+          goal,
+        }
+      : {
+          type: 'session_goal_cleared',
+          sessionId,
+        });
+    logger.info({ sessionId, userId, hasGoal: !!goal }, 'Session goal refreshed');
+  } catch (err) {
+    logger.error({ sessionId, userId, error: err }, 'Failed to refresh session goal');
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'session_goal_refresh_failed',
+      message: `Failed to refresh goal: ${(err as Error).message}`,
+    });
+  }
+}
+
+export async function clearSessionGoalFromWebSocket({
+  sendToUser,
+  sessionId,
+  spawnConfig,
+  userId,
+}: SessionGoalActionOptions): Promise<void> {
+  try {
+    const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
+    if (!ok) return;
+
+    const cleared = await processManager.clearSessionGoal(sessionId);
+    if (!cleared) {
+      sendToUser(userId, {
+        type: 'error',
+        sessionId,
+        code: 'session_goal_clear_failed',
+        message: 'Failed to clear goal.',
+      });
+      return;
+    }
+
+    sendToUser(userId, {
+      type: 'session_goal_cleared',
+      sessionId,
+    });
+    logger.info({ sessionId, userId }, 'Session goal cleared');
+  } catch (err) {
+    logger.error({ sessionId, userId, error: err }, 'Failed to clear session goal');
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'session_goal_clear_failed',
+      message: `Failed to clear goal: ${(err as Error).message}`,
+    });
+  }
+}
+
 /**
  * Ensure a CLI process exists before sending input.
  * For persisted sessions this must use the normal resume path so provider
@@ -306,8 +420,12 @@ async function ensureSessionProcess({
   sessionId: string;
   userId: string;
   sendToUser: WsSendToUser;
-  spawnConfig?: SendSessionMessageActionOptions['spawnConfig'];
+  spawnConfig?: SessionSpawnConfig;
 }): Promise<boolean> {
+  if (processManager.getProcess(sessionId)?.status === 'running') {
+    return true;
+  }
+
   const session = dbSessions.getSession(sessionId);
   if (!session) {
     sendToUser(userId, {
@@ -506,7 +624,13 @@ export function sendInteractiveResponseFromWebSocket({
       return;
     }
 
-    sessionHistory.recordInteractivePromptResponse(sessionId, toolUseId, response);
+    sendInteractivePromptResponseReplayEvent({
+      response,
+      sendToUser,
+      sessionId,
+      toolUseId,
+      userId,
+    });
     logger.info(
       { sessionId, toolUseId, response: response.substring(0, 50) },
       'Interactive response sent (legacy)',
@@ -553,7 +677,13 @@ export function sendInteractiveResponseFromWebSocket({
   }
 
   info.pendingPermissionRequests?.delete(toolUseId);
-  sessionHistory.recordInteractivePromptResponse(sessionId, toolUseId, response);
+  sendInteractivePromptResponseReplayEvent({
+    response,
+    sendToUser,
+    sessionId,
+    toolUseId,
+    userId,
+  });
 
   logger.info({
     sessionId,
@@ -579,6 +709,26 @@ export function sendInteractiveResponseFromWebSocket({
           : 'answered'
         : response,
   }, 'Control_response sent');
+}
+
+function sendInteractivePromptResponseReplayEvent({
+  response,
+  sendToUser,
+  sessionId,
+  toolUseId,
+  userId,
+}: InteractiveResponseActionOptions): void {
+  sendToUser(userId, {
+    type: 'replay_events',
+    sessionId,
+    events: [{
+      v: LIVE_EVENT_VERSION,
+      type: 'interactive_prompt_response',
+      timestamp: new Date().toISOString(),
+      toolUseId,
+      response,
+    }],
+  });
 }
 
 export async function clearUnreadFromWebSocket({

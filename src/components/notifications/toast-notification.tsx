@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { CheckCircle, AlertTriangle, Shield, MessageCircleQuestion, X, Loader2 } from 'lucide-react';
 import { Notification } from '@/types/notification';
+import { useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
@@ -63,7 +64,9 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
     const sent = wsClient.sendInteractiveResponse(notification.sessionId, '', action.value.toString());
     if (sent) {
       onDismissRef.current();
+      useNotificationStore.getState().markSessionAsRead(notification.sessionId);
       useSessionStore.getState().clearUnreadCount(notification.sessionId);
+      wsClient.sendMarkAsRead(notification.sessionId);
       logger.info('Interactive response sent from toast', {
         sessionId: notification.sessionId,
         action: action.value,

@@ -7,6 +7,10 @@ interface LoadTasksOptions {
   setCurrent?: boolean;
 }
 
+interface QueuedProjectLoad {
+  setCurrent: boolean;
+}
+
 interface TaskPrStatusCacheEntry {
   prStatus: TaskEntity['prStatus'];
   prUnsupported: boolean;
@@ -28,6 +32,8 @@ interface TaskState {
   currentProjectId: string | null;
   /** In-flight task fetches keyed by project ID */
   loadingProjectIds: Record<string, boolean>;
+  /** Follow-up fetches requested while a project fetch is already in flight */
+  queuedProjectLoads: Record<string, QueuedProjectLoad>;
 
   /** Load tasks for a project from API */
   loadTasks: (projectId: string, options?: LoadTasksOptions) => Promise<void>;
@@ -219,10 +225,30 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   loadedProjects: {},
   currentProjectId: null,
   loadingProjectIds: {},
+  queuedProjectLoads: {},
 
   loadTasks: async (projectId, options) => {
     const shouldSetCurrent = options?.setCurrent !== false;
-    if (get().loadingProjectIds[projectId]) return;
+    if (get().loadingProjectIds[projectId]) {
+      set((state) => {
+        const previous = state.queuedProjectLoads[projectId];
+        return {
+          queuedProjectLoads: {
+            ...state.queuedProjectLoads,
+            [projectId]: {
+              setCurrent: shouldSetCurrent || previous?.setCurrent === true,
+            },
+          },
+          ...(shouldSetCurrent
+            ? {
+                currentProjectId: projectId,
+                loaded: false,
+              }
+            : {}),
+        };
+      });
+      return;
+    }
 
     set((state) => ({
       loadingProjectIds: {
@@ -259,9 +285,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     } catch {
       // Silently fail -- tasks will just not appear
     } finally {
+      const queuedLoad = get().queuedProjectLoads[projectId];
       set((state) => ({
         loadingProjectIds: removeProjectLoadingFlag(state, projectId),
+        queuedProjectLoads: Object.fromEntries(
+          Object.entries(state.queuedProjectLoads).filter(([id]) => id !== projectId)
+        ),
       }));
+      if (queuedLoad) {
+        void get().loadTasks(projectId, { setCurrent: queuedLoad.setCurrent });
+      }
     }
   },
 

@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useCallback, useMemo, useState, type KeyboardEvent } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { MessageSquarePlus, MessageSquareShare, Mic, Paperclip, SendHorizontal, Square } from 'lucide-react';
+import { MessageSquarePlus, MessageSquareShare, Mic, Paperclip, SendHorizontal, Square, Target } from 'lucide-react';
 import {
   selectHasActiveAssistantText,
   selectIsTurnInFlight,
@@ -56,11 +56,23 @@ import {
   isCodexFastCommandSkill,
 } from '@/lib/chat/codex-fast-command';
 import {
+  CODEX_GOAL_COMMAND,
+  isCodexGoalCommandSkill,
+  parseCodexGoalCommand,
+} from '@/lib/chat/codex-goal-command';
+import {
+  getSessionGoalCommandInsertSessionId,
+  SESSION_GOAL_COMMAND_INSERT_EVENT,
+} from '@/lib/chat/session-goal-command-event';
+import { SessionGoalControl } from './session-goal-control';
+import {
   MessageInputAttachmentStrip,
   MessageInputSessionRefStrip,
   MessageInputSkillChip,
   MessageInputWebSpeechBar,
 } from './message-input-sections';
+import type { SessionGoal } from '@/types/session-goal';
+import type { SessionSpawnConfig } from '@/lib/ws/message-types';
 
 interface MessageInputProps {
   sessionId: string;
@@ -71,6 +83,74 @@ interface MessageInputProps {
 }
 
 const EMPTY_COLLECTIONS: Collection[] = [];
+
+function formatGoalMetric(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+function formatGoalStatusMessage(goal: SessionGoal | null | undefined): string {
+  if (!goal) {
+    return 'No active goal is currently set.';
+  }
+
+  const commands = goal.status === 'active'
+    ? '/goal pause, /goal clear'
+    : goal.status === 'paused'
+      ? '/goal resume, /goal clear'
+      : '/goal clear';
+  return [
+    `Goal | Status: ${goal.status}`,
+    `Objective: ${goal.objective}`,
+    `Time used: ${goal.timeUsedSeconds}s`,
+    `Tokens used: ${formatGoalMetric(goal.tokensUsed)}`,
+    goal.tokenBudget ? `Token budget: ${formatGoalMetric(goal.tokenBudget)}` : '',
+    `Commands: ${commands}`,
+  ].filter(Boolean).join(' | ');
+}
+
+function formatGoalMutationMessage(command: ReturnType<typeof parseCodexGoalCommand>): string | null {
+  if (!command) return null;
+  if (command.kind === 'inspect') return null;
+  if (command.kind === 'clear') return 'Goal cleared';
+
+  if (command.update.status === 'paused') return 'Goal paused';
+  if (command.update.status === 'active' && !command.update.objective) return 'Goal resumed';
+  if (command.update.objective) return `Goal active  Objective: ${command.update.objective}`;
+
+  return null;
+}
+
+function goalStatusLabel(
+  goal: SessionGoal,
+  t: (key: string, vars?: Record<string, string>) => string,
+): string {
+  switch (goal.status) {
+    case 'active':
+      return t('goal.status.active');
+    case 'paused':
+      return t('goal.status.paused');
+    case 'budgetLimited':
+      return t('goal.status.budgetLimited');
+    case 'complete':
+      return t('goal.status.complete');
+  }
+}
+
+function goalStatusDotClass(goal: SessionGoal, isRunning: boolean): string {
+  if (isRunning) return 'bg-emerald-300 animate-pulse';
+  switch (goal.status) {
+    case 'active':
+      return 'bg-emerald-300';
+    case 'paused':
+      return 'bg-amber-300';
+    case 'budgetLimited':
+      return 'bg-sky-300';
+    case 'complete':
+      return 'bg-(--text-muted)';
+  }
+}
 
 export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isSinglePanel = false }: MessageInputProps) {
   const { t } = useI18n();
@@ -117,7 +197,14 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const updateSessionRuntimeConfig = useSessionStore((state) => state.updateSessionRuntimeConfig);
   const projects = useSessionStore((state) => state.projects);
   const sessionStatus = session && 'status' in session ? session.status : 'running';
-  const { sendMessage, cancelGeneration, setServiceTier } = useWebSocket();
+  const {
+    sendMessage,
+    cancelGeneration,
+    setServiceTier,
+    setSessionGoal,
+    refreshSessionGoal,
+    clearSessionGoal,
+  } = useWebSocket();
   const { resumeAndSend } = useSessionResume();
   const enterKeyBehavior = useSettingsStore(
     (state) => state.settings.enterKeyBehavior ?? 'send'
@@ -129,6 +216,45 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const sessionIsRunning = session?.isRunning ?? false;
   const skillPicker = useSkillPicker(sessionId, session?.provider, sessionIsRunning);
   const filePicker = useFilePicker(sessionId);
+  const insertGoalCommand = useCallback(() => {
+    if (session?.provider?.trim() !== 'codex') {
+      return;
+    }
+
+    skillPicker.clearSkill();
+    skillPicker.close();
+    filePicker.close();
+
+    const trimmed = inputValue.trim();
+    const nextValue = !trimmed
+      ? `${CODEX_GOAL_COMMAND} `
+      : trimmed === CODEX_GOAL_COMMAND || trimmed.startsWith(`${CODEX_GOAL_COMMAND} `)
+        ? inputValue
+        : trimmed.startsWith('/') && !trimmed.includes(' ')
+          ? `${CODEX_GOAL_COMMAND} `
+        : `${CODEX_GOAL_COMMAND} ${inputValue.trimStart()}`;
+
+    setInputValue(nextValue);
+    setDraftInput(sessionId, nextValue);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(nextValue.length, nextValue.length);
+    });
+  }, [filePicker, inputValue, session?.provider, sessionId, setDraftInput, skillPicker]);
+
+  useEffect(() => {
+    const handleGoalCommandInsert = (event: Event) => {
+      if (getSessionGoalCommandInsertSessionId(event) !== sessionId) {
+        return;
+      }
+      insertGoalCommand();
+    };
+
+    window.addEventListener(SESSION_GOAL_COMMAND_INSERT_EVENT, handleGoalCommandInsert);
+    return () => window.removeEventListener(SESSION_GOAL_COMMAND_INSERT_EVENT, handleGoalCommandInsert);
+  }, [insertGoalCommand, sessionId]);
 
   const getInputValue = useCallback(() => inputValue, [inputValue]);
   const sessionRefs = useSessionRefs({
@@ -175,6 +301,24 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const isGenerating = sessionStatus === 'running' && (
     isTurnInFlight || hasActiveAssistantText
   );
+  const sessionGoal = session?.goal ?? null;
+  const isGoalRunning = Boolean(sessionGoal?.status === 'active' && isGenerating);
+  const goalComposerLabel = sessionGoal
+    ? `Goal ${goalStatusLabel(sessionGoal, t)}${isGoalRunning ? ` · ${t('status.running')}` : ''}`
+    : null;
+  const buildSpawnConfigForCurrentSession = useCallback((): SessionSpawnConfig | undefined => {
+    if (sessionIsRunning) return undefined;
+
+    const providerId = session?.provider?.trim();
+    if (!providerId) return undefined;
+
+    const { settings } = useSettingsStore.getState();
+    return applyProviderSessionRuntimeOverrides(
+      getProviderSessionRuntimeConfig(settings, providerId),
+      session,
+      providerId,
+    );
+  }, [session, sessionIsRunning]);
   const activeProject = useMemo(() => {
     if (!session) return null;
     return projects.find((project) =>
@@ -534,11 +678,77 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     updateSessionRuntimeConfig,
   ]);
 
+  const executeCodexGoalCommand = useCallback((commandInput: string): boolean => {
+    if (session?.provider?.trim() !== 'codex') {
+      return false;
+    }
+
+    const command = parseCodexGoalCommand(commandInput);
+    if (!command) {
+      return false;
+    }
+
+    const mutationMessage = formatGoalMutationMessage(command);
+    if (command.kind === 'inspect') {
+      addMessage(sessionId, {
+        id: `system-goal-${uuidv4()}`,
+        type: 'text',
+        role: 'system',
+        content: formatGoalStatusMessage(session?.goal),
+        timestamp: new Date().toISOString(),
+      });
+      refreshSessionGoal(sessionId, buildSpawnConfigForCurrentSession());
+    } else if (command.kind === 'clear') {
+      if (mutationMessage) {
+        addMessage(sessionId, {
+          id: `system-goal-${uuidv4()}`,
+          type: 'text',
+          role: 'system',
+          content: mutationMessage,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      clearSessionGoal(sessionId, buildSpawnConfigForCurrentSession());
+    } else {
+      if (mutationMessage) {
+        addMessage(sessionId, {
+          id: `system-goal-${uuidv4()}`,
+          type: 'text',
+          role: 'system',
+          content: mutationMessage,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setSessionGoal(sessionId, command.update, buildSpawnConfigForCurrentSession());
+    }
+
+    clearInput();
+    clearAttachments();
+    clearSessionRefs();
+    skillPicker.clearSkill();
+    return true;
+  }, [
+    addMessage,
+    clearAttachments,
+    clearInput,
+    clearSessionRefs,
+    clearSessionGoal,
+    buildSpawnConfigForCurrentSession,
+    refreshSessionGoal,
+    session?.goal,
+    session?.provider,
+    sessionId,
+    setSessionGoal,
+    skillPicker,
+  ]);
+
   const handleSend = () => {
     const trimmed = inputValue.trim();
     const hasSelectedSkill = !!skillPicker.selectedSkill;
     const hasSelectedFastCommand = isCodexFastCommandSkill(skillPicker.selectedSkill);
+    const hasSelectedGoalCommand = isCodexGoalCommandSkill(skillPicker.selectedSkill);
     const hasAttachments = attachments.length > 0;
+
     // Block send only when text, skill, attachments, and refs are all absent, or when disabled
     if (!trimmed && !hasSelectedSkill && !hasAttachments && !hasSessionRefs) return;
     if (isDisabled) return;
@@ -549,6 +759,15 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       || (trimmed === CODEX_FAST_COMMAND && !hasSelectedSkill)
     ) {
       if (executeCodexFastCommand()) return;
+    }
+
+    if (hasSelectedGoalCommand) {
+      const commandInput = trimmed ? `${CODEX_GOAL_COMMAND} ${trimmed}` : CODEX_GOAL_COMMAND;
+      if (executeCodexGoalCommand(commandInput)) return;
+    }
+
+    if (!hasSelectedSkill && parseCodexGoalCommand(trimmed)) {
+      if (executeCodexGoalCommand(trimmed)) return;
     }
 
     // Use chip-selected skill or fallback to manual /skillname parsing
@@ -596,20 +815,12 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     } else {
       // First-time send for a session without a live CLI: attach composer defaults
       // so the server can spawn with the picked model / reasoning / permission mode.
-      const needsSpawn = !sessionIsRunning;
-      const { settings } = useSettingsStore.getState();
       const providerId = session?.provider?.trim();
       if (!providerId) {
         toast.error(t('errors.providerRequired'));
         return;
       }
-      const spawnConfig = needsSpawn
-        ? applyProviderSessionRuntimeOverrides(
-            getProviderSessionRuntimeConfig(settings, providerId),
-            session,
-            providerId,
-          )
-        : undefined;
+      const spawnConfig = buildSpawnConfigForCurrentSession();
       sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig);
     }
 
@@ -659,12 +870,17 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         textareaRef.current?.focus();
         return;
       }
+      if (isCodexGoalCommandSkill(skill)) {
+        insertGoalCommand();
+        textareaRef.current?.focus();
+        return;
+      }
 
       skillPicker.selectSkill(skill);
       setInputValue('');
       textareaRef.current?.focus();
     },
-    [executeCodexFastCommand, skillPicker],
+    [executeCodexFastCommand, insertGoalCommand, skillPicker],
   );
 
   const applyFilePick = useCallback(
@@ -717,6 +933,10 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         const confirmedSkill = skillPicker.confirm();
         if (confirmedSkill && isCodexFastCommandSkill(confirmedSkill)) {
           executeCodexFastCommand();
+          return;
+        }
+        if (confirmedSkill && isCodexGoalCommandSkill(confirmedSkill)) {
+          insertGoalCommand();
           return;
         }
         if (confirmedSkill) {
@@ -827,6 +1047,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const remainingChars = MAX_CHARS - inputValue.length;
   const isOverLimit = remainingChars < 0;
   const hasContent = inputValue.trim().length > 0 || attachments.length > 0 || hasSessionRefs;
+  const canSubmit = hasContent || !!skillPicker.selectedSkill;
   const canCreateFromCurrentSession = !isInputUnavailable &&
     !activePrompt &&
     hasExistingConversation &&
@@ -844,6 +1065,12 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
               onSelectSkill={handleSkillSelect}
               trailingContent={(
                 <>
+                  <SessionGoalControl
+                    sessionId={sessionId}
+                    variant="composer"
+                    disabled={isInputUnavailable || !!activePrompt}
+                    onInsertCommand={insertGoalCommand}
+                  />
                   <ComposerSessionControls sessionId={sessionId} variant="inline" />
                   <div ref={quickCreateTriggerRef} className="relative shrink-0">
                     <button
@@ -937,6 +1164,25 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
               </div>
             </div>
           )}
+
+        {sessionGoal && !isVoiceActive && (
+          <div
+            className="flex min-h-7 items-center gap-2 border-b border-(--divider) px-3 py-1.5 text-[11px] leading-none"
+            data-testid="composer-goal-status"
+          >
+            <Target className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+            <span
+              className={cn('h-2 w-2 shrink-0 rounded-full', goalStatusDotClass(sessionGoal, isGoalRunning))}
+              aria-hidden="true"
+            />
+            <span className="shrink-0 font-medium text-(--text-secondary)">
+              {goalComposerLabel}
+            </span>
+            <span className="min-w-0 truncate text-(--text-muted)" title={sessionGoal.objective}>
+              {sessionGoal.objective}
+            </span>
+          </div>
+        )}
 
         <MessageInputAttachmentStrip
           attachments={attachments}
@@ -1039,6 +1285,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
                           ? t('prompts.questionWaiting')
                           : activePrompt
                             ? t('prompts.responseWaiting')
+                            : isGoalRunning
+                              ? t('goal.steerPlaceholder')
                             : isGenerating
                               ? t('chat.cancelHint')
                               : skillPicker.selectedSkill
@@ -1093,21 +1341,35 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
           )}
 
           {isGenerating && !activePrompt ? (
-            <button
-              onClick={handleCancel}
-              data-testid="cancel-generation-btn"
-              className="p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100"
-              title={t('chat.cancelButton')}
-            >
-              <Square className="w-4 h-4 fill-current" />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleCancel}
+                data-testid="cancel-generation-btn"
+                className="p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100"
+                title={t('chat.cancelButton')}
+              >
+                <Square className="w-4 h-4 fill-current" />
+              </button>
+              {!isVoiceActive && canSubmit && !isOverLimit && (
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  className="p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100"
+                  title={isGoalRunning ? t('goal.steerPlaceholder') : t('chat.send')}
+                  data-testid="send-during-generation-btn"
+                >
+                  <SendHorizontal className="w-4.5 h-4.5" />
+                </button>
+              )}
+            </>
           ) : !isVoiceActive ? (
             <button
               onClick={handleSend}
-              disabled={isInputUnavailable || (!hasContent && !skillPicker.selectedSkill) || isOverLimit}
+              disabled={isInputUnavailable || !!activePrompt || !canSubmit || isOverLimit}
               className={cn(
                 'p-2 rounded-md transition-all duration-150',
-                hasContent && !isInputUnavailable && !isOverLimit
+                canSubmit && !isInputUnavailable && !activePrompt && !isOverLimit
                   ? 'bg-(--accent) text-white hover:bg-(--accent-hover) scale-100'
                   : 'text-(--text-muted) cursor-not-allowed scale-95'
               )}

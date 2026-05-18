@@ -6,9 +6,14 @@ import {
   CODEX_FAST_COMMAND_DESCRIPTION,
   CODEX_FAST_COMMAND_NAME,
 } from '@/lib/chat/codex-fast-command';
+import {
+  CODEX_GOAL_BUILTIN_COMMAND,
+  CODEX_GOAL_COMMAND_DESCRIPTION,
+  CODEX_GOAL_COMMAND_NAME,
+} from '@/lib/chat/codex-goal-command';
 
 export type SkillInfo = CommandInfo & {
-  builtinCommand?: typeof CODEX_FAST_BUILTIN_COMMAND;
+  builtinCommand?: typeof CODEX_FAST_BUILTIN_COMMAND | typeof CODEX_GOAL_BUILTIN_COMMAND;
 };
 
 interface UseSkillPickerReturn {
@@ -52,6 +57,10 @@ export function useSkillPicker(
           name: CODEX_FAST_COMMAND_NAME,
           description: CODEX_FAST_COMMAND_DESCRIPTION,
           builtinCommand: CODEX_FAST_BUILTIN_COMMAND,
+        }, {
+          name: CODEX_GOAL_COMMAND_NAME,
+          description: CODEX_GOAL_COMMAND_DESCRIPTION,
+          builtinCommand: CODEX_GOAL_BUILTIN_COMMAND,
         }]
       : [],
     [providerId],

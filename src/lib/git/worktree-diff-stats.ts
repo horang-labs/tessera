@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import logger from '@/lib/logger';
 import { isWslFilesystemPath } from '@/lib/filesystem/path-environment';
+import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
+import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { createGitRunner } from '@/lib/worktrees/git-runner';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
@@ -166,7 +168,7 @@ export async function computeWorktreeDiffStats(
   agentEnvironment: AgentEnvironment = inferGitEnvironment(workDir),
 ): Promise<WorktreeDiffStats | null> {
   try {
-    const resolved = resolveFilesystemPath(workDir);
+    const resolved = await resolveFilesystemPath(workDir);
     const pathModule = getPathModule(resolved);
     if (!(await isGitWorkTree(resolved, agentEnvironment))) return null;
 
@@ -217,7 +219,7 @@ export async function computeWorktreeFileDiffStats(
   agentEnvironment: AgentEnvironment = inferGitEnvironment(workDir),
 ): Promise<Map<string, WorktreeFileDiffStats> | null> {
   try {
-    const resolved = resolveFilesystemPath(workDir);
+    const resolved = await resolveFilesystemPath(workDir);
     const pathModule = getPathModule(resolved);
     if (!(await isGitWorkTree(resolved, agentEnvironment))) return null;
 
@@ -248,11 +250,14 @@ export async function computeWorktreeFileDiffStats(
 }
 
 function inferGitEnvironment(workDir: string): AgentEnvironment {
+  if (getRuntimePlatform() === 'win32' && workDir.trim().startsWith('/')) {
+    return 'wsl';
+  }
   return isWslFilesystemPath(workDir) ? 'wsl' : 'native';
 }
 
-function resolveFilesystemPath(filesystemPath: string): string {
-  return getPathModule(filesystemPath).resolve(filesystemPath);
+async function resolveFilesystemPath(filesystemPath: string): Promise<string> {
+  return resolvePathForHostFilesystem(filesystemPath);
 }
 
 function getPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {

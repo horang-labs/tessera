@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Bot, FileText, GitCommitHorizontal, X } from "lucide-react";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
+import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import type { GitChangedFile } from "@/types/git";
 import { AgentContextPanel } from "./agent-context-panel";
 import {
@@ -68,21 +69,113 @@ export function GitPanel({
   const isWindowsElectron = useElectronPlatform() === "win32";
   const controller = useGitPanelController(sessionId);
   const [activePanelTab, setActivePanelTab] = useState<GitPanelTab>("git");
+  const openedTelemetryRef = useRef(false);
+
+  useEffect(() => {
+    openedTelemetryRef.current = false;
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (openedTelemetryRef.current) return;
+    if (controller.loading) return;
+
+    openedTelemetryRef.current = true;
+    void captureTelemetryEvent("git_panel_opened", {
+      source: "git_panel",
+      result: controller.error ? "failed" : "success",
+      has_worktree: Boolean(controller.data?.worktreePath),
+      has_changes: Boolean(controller.changedFileCount),
+      changed_file_count: controller.changedFileCount,
+      has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
+      github_available: Boolean(controller.data?.github.available),
+    });
+  }, [
+    controller.changedFileCount,
+    controller.data?.github.available,
+    controller.data?.github.pullRequest,
+    controller.data?.prStatus,
+    controller.data?.worktreePath,
+    controller.error,
+    controller.loading,
+  ]);
+
+  const handlePanelTabChange = useCallback((tab: GitPanelTab) => {
+    if (activePanelTab === tab) return;
+    setActivePanelTab(tab);
+    void captureTelemetryEvent("git_panel_tab_changed", {
+      source: "git_panel",
+      tab,
+      has_worktree: Boolean(controller.data?.worktreePath),
+      has_changes: Boolean(controller.changedFileCount),
+      has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
+    });
+  }, [
+    activePanelTab,
+    controller.changedFileCount,
+    controller.data?.github.pullRequest,
+    controller.data?.prStatus,
+    controller.data?.worktreePath,
+  ]);
 
   const openDiffFile = useCallback((file: GitChangedFile) => {
     if (!sessionId) return;
+    void captureTelemetryEvent("git_file_opened", {
+      source: "git_panel",
+      action: "preview_diff",
+      target: "diff",
+      file_state: file.state,
+      has_worktree: Boolean(controller.data?.worktreePath),
+      has_changes: Boolean(controller.changedFileCount),
+      has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
+    });
     previewWorkspaceFileTab(sessionId, "diff", file.path);
-  }, [sessionId]);
+  }, [
+    controller.changedFileCount,
+    controller.data?.github.pullRequest,
+    controller.data?.prStatus,
+    controller.data?.worktreePath,
+    sessionId,
+  ]);
 
   const pinDiffFile = useCallback((file: GitChangedFile) => {
     if (!sessionId) return;
+    void captureTelemetryEvent("git_file_opened", {
+      source: "git_panel",
+      action: "open_diff_tab",
+      target: "diff",
+      file_state: file.state,
+      has_worktree: Boolean(controller.data?.worktreePath),
+      has_changes: Boolean(controller.changedFileCount),
+      has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
+    });
     openWorkspaceFileTab(sessionId, "diff", file.path);
-  }, [sessionId]);
+  }, [
+    controller.changedFileCount,
+    controller.data?.github.pullRequest,
+    controller.data?.prStatus,
+    controller.data?.worktreePath,
+    sessionId,
+  ]);
 
   const openReadOnlyFile = useCallback((file: GitChangedFile) => {
     if (!sessionId || file.state === "deleted") return;
+    void captureTelemetryEvent("git_file_opened", {
+      source: "git_panel",
+      action: "open_file_tab",
+      target: "file",
+      file_state: file.state,
+      has_worktree: Boolean(controller.data?.worktreePath),
+      has_changes: Boolean(controller.changedFileCount),
+      has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
+    });
     openWorkspaceFileTab(sessionId, "file", file.path);
-  }, [sessionId]);
+  }, [
+    controller.changedFileCount,
+    controller.data?.github.pullRequest,
+    controller.data?.prStatus,
+    controller.data?.worktreePath,
+    sessionId,
+  ]);
 
   return (
     <aside
@@ -105,21 +198,21 @@ export function GitPanel({
           <GitPanelTabButton
             active={activePanelTab === "git"}
             icon={<GitCommitHorizontal className="h-3.5 w-3.5" />}
-            onClick={() => setActivePanelTab("git")}
+            onClick={() => handlePanelTabChange("git")}
           >
             Git
           </GitPanelTabButton>
           <GitPanelTabButton
             active={activePanelTab === "files"}
             icon={<FileText className="h-3.5 w-3.5" />}
-            onClick={() => setActivePanelTab("files")}
+            onClick={() => handlePanelTabChange("files")}
           >
             Files
           </GitPanelTabButton>
           <GitPanelTabButton
             active={activePanelTab === "agent"}
             icon={<Bot className="h-3.5 w-3.5" />}
-            onClick={() => setActivePanelTab("agent")}
+            onClick={() => handlePanelTabChange("agent")}
           >
             Agent
           </GitPanelTabButton>

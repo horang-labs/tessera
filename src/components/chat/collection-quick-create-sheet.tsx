@@ -23,6 +23,7 @@ import { CliProviderChipSelector } from './cli-provider-chip-selector';
 
 type QuickCreateMode = 'chat' | 'task';
 type QuickCreatePlacement = 'side' | 'top';
+type TaskTelemetrySource = 'kanban' | 'list' | 'new_session';
 
 interface CollectionQuickCreateSheetProps {
   collection: Collection | null;
@@ -91,6 +92,7 @@ export function CollectionQuickCreateSheet({
   const canSelectCollection = allowCollectionSelection;
   const resolvedScopeId = scopeId ?? collection?.id ?? 'uncategorized';
   const isContinuation = Boolean(continuationSourceTitle);
+  const taskTelemetrySource = resolveTaskTelemetrySource(scopeId);
 
   const selectedCollection = useMemo(() => {
     if (!canSelectCollection) return collection;
@@ -261,6 +263,7 @@ export function CollectionQuickCreateSheet({
         suppressErrorToast: true,
         collectionId: selectedCollection?.id ?? undefined,
         workflowStatus,
+        source: taskTelemetrySource,
       });
       if (!result.ok) {
         setError(
@@ -293,6 +296,7 @@ export function CollectionQuickCreateSheet({
     selectedProvider,
     t,
     taskTitle,
+    taskTelemetrySource,
     workflowStatus,
   ]);
 
@@ -574,4 +578,10 @@ export function CollectionQuickCreateSheet({
   }
 
   return sheetMarkup;
+}
+
+function resolveTaskTelemetrySource(scopeId?: string): TaskTelemetrySource {
+  if (scopeId?.startsWith('kanban-')) return 'kanban';
+  if (scopeId?.startsWith('composer-')) return 'new_session';
+  return 'list';
 }

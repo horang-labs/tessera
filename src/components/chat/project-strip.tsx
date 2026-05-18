@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, Home, Plus, LogOut, Blocks, EyeOff } from 'lucide-react';
+import { Archive, Home, Plus, LogOut, Blocks, EyeOff, MessageSquarePlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -19,6 +19,7 @@ import { NotificationBell } from '@/components/notifications/notification-bell';
 import SettingsButton from '@/components/settings/settings-button';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useI18n } from '@/lib/i18n';
+import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
 interface ProjectStripProps {
   onAddProject: () => void;
@@ -50,6 +51,7 @@ export function ProjectStrip({
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; encodedDir: string; displayName: string } | null>(null);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, encodedDir: string, displayName: string) => {
@@ -253,6 +255,17 @@ export function ProjectStrip({
             <Archive className="w-5 h-5" />
           </Button>
         </Tooltip>
+        <Tooltip content={t('feedback.tooltip')} delay={300}>
+          <Button
+            variant="ghost"
+            size="icon-lg"
+            className="rounded-none"
+            onClick={() => setIsFeedbackOpen(true)}
+            data-testid="project-strip-feedback"
+          >
+            <MessageSquarePlus className="w-5 h-5" />
+          </Button>
+        </Tooltip>
         <SettingsButton className="rounded-none" iconSize="lg" />
         {!isElectron && (
           <Tooltip content={user?.username ?? 'Logout'} delay={300}>
@@ -293,6 +306,12 @@ export function ProjectStrip({
           </button>
         </div>,
         document.body
+      )}
+      {isFeedbackOpen && (
+        <FeedbackDialog
+          source="project_strip"
+          onClose={() => setIsFeedbackOpen(false)}
+        />
       )}
     </div>
   );

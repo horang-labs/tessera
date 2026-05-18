@@ -29,11 +29,12 @@ import os from 'os';
 import type { ParsedMessage } from '../types';
 import { CODEX_THREAD_ID_RE } from '../../../validation/path';
 import logger from '../../../logger';
-import { inferToolCallKindFromToolName } from '@/types/tool-call-kind';
+import { inferToolCallKindFromToolName, type ToolCallKind } from '@/types/tool-call-kind';
 import type { CommandExecutionToolResult } from '@/types/tool-result';
 import type { AskUserQuestionItem, AskUserQuestionOption } from '@/types/cli-jsonl-schemas';
 import { buildCodexRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import { buildToolDisplay } from '@/lib/tool-display';
+import type { SessionGoal } from '@/types/session-goal';
 
 // =============================================================================
 // Constants
@@ -52,6 +53,23 @@ const MAX_ACCUMULATED_TEXT_LENGTH = 100;
  */
 const MAX_OUTPUT_BUFFER_SIZE = 100 * 1024; // 100KB
 const BASH_PROGRESS_EMIT_INTERVAL_MS = 1000;
+
+const DISPLAY_ONLY_CODEX_ITEM_TYPES = new Set([
+  'agentMessage',
+  'contextCompaction',
+  'enteredReviewMode',
+  'exitedReviewMode',
+  'plan',
+  'reasoning',
+  'userMessage',
+]);
+
+const DISPLAY_ONLY_RAW_RESPONSE_ITEM_TYPES = new Set([
+  'compaction',
+  'context_compaction',
+  'message',
+  'reasoning',
+]);
 
 // =============================================================================
 // JSON-RPC 2.0 Shape Types
@@ -102,6 +120,33 @@ interface CodexRequestUserInputQuestion {
 
 const CODEX_MCP_ELICITATION_TOOL_NAME = 'CodexMcpElicitation';
 const CODEX_PERMISSIONS_REQUEST_TOOL_NAME = 'CodexPermissionsRequest';
+
+function normalizeCodexGoal(raw: unknown): SessionGoal | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const goal = raw as Record<string, unknown>;
+  const status = String(goal.status);
+  if (
+    typeof goal.threadId !== 'string' ||
+    typeof goal.objective !== 'string' ||
+    !['active', 'paused', 'budgetLimited', 'complete'].includes(status)
+  ) {
+    return null;
+  }
+
+  return {
+    threadId: goal.threadId,
+    objective: goal.objective,
+    status: status as SessionGoal['status'],
+    tokenBudget: typeof goal.tokenBudget === 'number' ? goal.tokenBudget : null,
+    tokensUsed: typeof goal.tokensUsed === 'number' ? goal.tokensUsed : 0,
+    timeUsedSeconds: typeof goal.timeUsedSeconds === 'number' ? goal.timeUsedSeconds : 0,
+    createdAt: typeof goal.createdAt === 'number' ? goal.createdAt : 0,
+    updatedAt: typeof goal.updatedAt === 'number' ? goal.updatedAt : 0,
+  };
+}
 
 // =============================================================================
 // Per-Session State
@@ -385,6 +430,22 @@ export class CodexProtocolParser {
           msg.result.rateLimitsByLimitId?.codex ??
           msg.result.rateLimits;
         return [this.buildRateLimitUpdateMessage(selectedRateLimit)];
+      }
+
+      if (methodName === 'thread/goal/get') {
+        const goal = normalizeCodexGoal(msg.result.goal);
+        return goal
+          ? this.buildGoalUpdatedMessages(sessionId, goal)
+          : this.buildGoalClearedMessages(sessionId);
+      }
+
+      if (methodName === 'thread/goal/set') {
+        const goal = normalizeCodexGoal(msg.result.goal);
+        return goal ? this.buildGoalUpdatedMessages(sessionId, goal) : [];
+      }
+
+      if (methodName === 'thread/goal/clear') {
+        return msg.result.cleared === true ? this.buildGoalClearedMessages(sessionId) : [];
       }
 
       // Responses to our own requests generally don't produce WS messages —
@@ -1015,6 +1076,9 @@ export class CodexProtocolParser {
       case 'item/completed':
         return this.handleItemCompleted(sessionId, params);
 
+      case 'rawResponseItem/completed':
+        return this.handleRawResponseItemCompleted(sessionId, params);
+
       case 'item/reasoning/textDelta':
         return this.handleReasoningTextDelta(sessionId, params);
 
@@ -1150,6 +1214,12 @@ export class CodexProtocolParser {
       case 'thread/started':
         return this.handleThreadStarted(sessionId, params);
 
+      case 'thread/goal/updated':
+        return this.handleThreadGoalUpdated(sessionId, params);
+
+      case 'thread/goal/cleared':
+        return this.handleThreadGoalCleared(sessionId, params);
+
       case 'thread/status/changed':
         logger.debug('Codex: thread lifecycle event', { sessionId, method });
         return [];
@@ -1181,6 +1251,33 @@ export class CodexProtocolParser {
       sideEffect: {
         type: 'remove_pending_permission_request',
         toolUseId: String(requestId),
+      },
+    }];
+  }
+
+  private buildGoalUpdatedMessages(sessionId: string, goal: SessionGoal): ParsedMessage[] {
+    return [{
+      serverMessage: {
+        type: 'session_goal_updated',
+        sessionId,
+        goal,
+      },
+      sideEffect: {
+        type: 'update_provider_state',
+        providerState: { goal },
+      },
+    }];
+  }
+
+  private buildGoalClearedMessages(sessionId: string): ParsedMessage[] {
+    return [{
+      serverMessage: {
+        type: 'session_goal_cleared',
+        sessionId,
+      },
+      sideEffect: {
+        type: 'update_provider_state',
+        providerState: { goal: null },
       },
     }];
   }
@@ -1331,7 +1428,74 @@ export class CodexProtocolParser {
       }];
     }
 
-    // Other item types (agentMessage, etc.) — suppress
+    if (itemType === 'webSearch') {
+      const { toolName, toolKind, toolParams } = this.buildWebSearchToolMetadata(item);
+
+      logger.info('Codex: webSearch started', {
+        sessionId,
+        itemId,
+        toolName,
+        query: toolParams.query,
+        url: toolParams.url,
+      });
+
+      return [{
+        serverMessage: {
+          type: 'tool_call',
+          sessionId,
+          toolName,
+          toolKind,
+          toolParams,
+          status: 'running',
+          toolUseId: itemId,
+          timestamp,
+        },
+        sideEffect: {
+          type: 'add_pending_tool_call',
+          toolUseId: itemId,
+          toolName,
+          toolKind,
+          toolParams,
+        },
+      }];
+    }
+
+    if (itemType === 'dynamicToolCall') {
+      const { toolName, toolKind, toolParams } = this.buildDynamicToolMetadata(item);
+
+      logger.info('Codex: dynamicToolCall started', {
+        sessionId,
+        itemId,
+        toolName,
+        toolKind,
+      });
+
+      return [{
+        serverMessage: {
+          type: 'tool_call',
+          sessionId,
+          toolName,
+          ...(toolKind !== undefined ? { toolKind } : {}),
+          toolParams,
+          status: 'running',
+          toolUseId: itemId,
+          timestamp,
+        },
+        sideEffect: {
+          type: 'add_pending_tool_call',
+          toolUseId: itemId,
+          toolName,
+          ...(toolKind !== undefined ? { toolKind } : {}),
+          toolParams,
+        },
+      }];
+    }
+
+    if (!this.isDisplayOnlyCodexItem(itemType)) {
+      return [this.buildGenericCodexItemToolCallMessage(sessionId, item, 'running', timestamp, true)];
+    }
+
+    // Display-only item types are handled by dedicated message/reasoning/plan streams.
     logger.debug('Codex: item/started for non-command type suppressed', { sessionId, itemType });
     return [];
   }
@@ -1470,7 +1634,9 @@ export class CodexProtocolParser {
         }
       }
 
-      const isError = item.exitCode != null && item.exitCode !== 0;
+      const isError = itemType === 'commandExecution'
+        ? item.exitCode != null && item.exitCode !== 0
+        : item.status === 'failed' || item.status === 'declined';
 
       logger.info('Codex: item completed', {
         sessionId,
@@ -1502,9 +1668,104 @@ export class CodexProtocolParser {
       return messages;
     }
 
-    // Non-command item completed — suppress
+    if (itemType === 'webSearch') {
+      const { toolName, toolKind, toolParams } = this.buildWebSearchToolMetadata(item);
+
+      logger.info('Codex: webSearch completed', {
+        sessionId,
+        itemId,
+        toolName,
+        query: toolParams.query,
+        url: toolParams.url,
+      });
+
+      return [{
+        serverMessage: {
+          type: 'tool_call',
+          sessionId,
+          toolUseId: itemId,
+          toolName,
+          toolKind,
+          toolParams,
+          status: 'completed',
+          timestamp,
+        },
+        sideEffect: { type: 'remove_pending_tool_call', toolUseId: itemId },
+      }];
+    }
+
+    if (itemType === 'dynamicToolCall') {
+      const { toolName, toolKind, toolParams } = this.buildDynamicToolMetadata(item);
+      const output = this.buildDynamicToolOutput(item);
+      const isError = this.isDynamicToolCallError(item);
+
+      logger.info('Codex: dynamicToolCall completed', {
+        sessionId,
+        itemId,
+        toolName,
+        toolKind,
+        isError,
+      });
+
+      return [{
+        serverMessage: {
+          type: 'tool_call',
+          sessionId,
+          toolUseId: itemId,
+          toolName,
+          ...(toolKind !== undefined ? { toolKind } : {}),
+          toolParams,
+          status: isError ? 'error' : 'completed',
+          output: isError ? undefined : output,
+          error: isError ? output || 'Dynamic tool call failed' : undefined,
+          timestamp,
+        },
+        sideEffect: { type: 'remove_pending_tool_call', toolUseId: itemId },
+      }];
+    }
+
+    if (!this.isDisplayOnlyCodexItem(itemType)) {
+      const status = this.normalizeCodexItemStatus(item.status, 'completed');
+      return [this.buildGenericCodexItemToolCallMessage(sessionId, item, status, timestamp, false)];
+    }
+
+    // Display-only item types are handled by dedicated message/reasoning/plan streams.
     logger.debug('Codex: item/completed for non-command type suppressed', { sessionId, itemType });
     return [];
+  }
+
+  private handleRawResponseItemCompleted(
+    sessionId: string,
+    params: Record<string, any>,
+  ): ParsedMessage[] {
+    const item = params.item;
+    if (!isRecord(item)) {
+      logger.warn('Codex: rawResponseItem/completed missing params.item', { sessionId });
+      return [];
+    }
+
+    const itemType = typeof item.type === 'string' && item.type.trim()
+      ? item.type.trim()
+      : 'unknown';
+    if (DISPLAY_ONLY_RAW_RESPONSE_ITEM_TYPES.has(itemType)) {
+      logger.debug('Codex: rawResponseItem/completed display-only item suppressed', { sessionId, itemType });
+      return [];
+    }
+
+    const timestamp = new Date().toISOString();
+    const status = this.normalizeCodexItemStatus(item.status, 'completed');
+    const message = itemType === 'web_search_call'
+      ? this.buildRawWebSearchToolCallMessage(sessionId, item, status, timestamp)
+      : this.buildRawGenericToolCallMessage(sessionId, item, status, timestamp);
+
+    logger.info('Codex: raw response item mapped to tool_call', {
+      sessionId,
+      itemType,
+      toolName: message.serverMessage?.type === 'tool_call' ? message.serverMessage.toolName : undefined,
+      status,
+    });
+
+    return [message];
   }
 
   private buildCommandToolParams(item: Record<string, any>): Record<string, any> {
@@ -1527,6 +1788,459 @@ export class CodexProtocolParser {
       ...(paths.length > 1 ? { file_paths: paths } : {}),
       ...(changes.length > 0 ? { changes } : {}),
     };
+  }
+
+  private buildWebSearchToolMetadata(item: Record<string, any>): {
+    toolName: string;
+    toolKind: ToolCallKind;
+    toolParams: Record<string, any>;
+  } {
+    const action = isRecord(item.action) ? item.action : undefined;
+    const actionType = typeof action?.type === 'string' ? action.type : undefined;
+    const query = this.extractWebSearchQuery(item, action);
+    const url = this.extractWebSearchUrl(action);
+    const pattern = typeof action?.pattern === 'string' && action.pattern.trim()
+      ? action.pattern.trim()
+      : undefined;
+    const toolKind: ToolCallKind =
+      actionType === 'openPage' ||
+      actionType === 'open_page' ||
+      actionType === 'findInPage' ||
+      actionType === 'find_in_page'
+        ? 'web_fetch'
+        : 'web_search';
+    const toolName = toolKind === 'web_fetch' ? 'WebFetch' : 'WebSearch';
+
+    return {
+      toolName,
+      toolKind,
+      toolParams: {
+        ...(query ? { query } : {}),
+        ...(url ? { url } : {}),
+        ...(pattern ? { pattern } : {}),
+        ...(actionType ? { actionType } : {}),
+        ...(action ? { action } : {}),
+      },
+    };
+  }
+
+  private buildRawWebSearchToolCallMessage(
+    sessionId: string,
+    item: Record<string, any>,
+    status: 'running' | 'completed' | 'error',
+    timestamp: string,
+  ): ParsedMessage {
+    const { toolName, toolKind, toolParams } = this.buildWebSearchToolMetadata({
+      type: 'webSearch',
+      action: item.action,
+    });
+
+    return {
+      serverMessage: {
+        type: 'tool_call',
+        sessionId,
+        toolName,
+        toolKind,
+        toolParams: {
+          responseItemType: 'web_search_call',
+          status: item.status,
+          ...toolParams,
+        },
+        status,
+        timestamp,
+      },
+    };
+  }
+
+  private buildRawGenericToolCallMessage(
+    sessionId: string,
+    item: Record<string, any>,
+    status: 'running' | 'completed' | 'error',
+    timestamp: string,
+  ): ParsedMessage {
+    const itemType = typeof item.type === 'string' && item.type.trim() ? item.type.trim() : 'unknown';
+    const toolName = `CodexRaw ${itemType}`;
+    const output = this.buildRawResponseItemOutput(item);
+
+    return {
+      serverMessage: {
+        type: 'tool_call',
+        sessionId,
+        toolName,
+        toolParams: this.extractRawResponseItemParams(item),
+        status,
+        output: status === 'error' ? undefined : output,
+        error: status === 'error' ? output || `${toolName} failed` : undefined,
+        timestamp,
+      },
+    };
+  }
+
+  private extractRawResponseItemParams(item: Record<string, any>): Record<string, any> {
+    const params: Record<string, any> = {
+      responseItemType: typeof item.type === 'string' ? item.type : 'unknown',
+    };
+
+    for (const [key, value] of Object.entries(item)) {
+      if (
+        key === 'type' ||
+        key === 'encrypted_content' ||
+        key === 'output' ||
+        key === 'result' ||
+        key === 'tools'
+      ) {
+        continue;
+      }
+
+      params[key] = value;
+    }
+
+    return params;
+  }
+
+  private buildRawResponseItemOutput(item: Record<string, any>): string | undefined {
+    if (item.output !== undefined && item.output !== null) {
+      return this.stringifyCodexItemValue(item.output);
+    }
+
+    if (item.result !== undefined && item.result !== null) {
+      return this.stringifyCodexItemValue(item.result);
+    }
+
+    if (Array.isArray(item.tools)) {
+      return this.stringifyCodexItemValue(item.tools);
+    }
+
+    return undefined;
+  }
+
+  private extractWebSearchQuery(
+    item: Record<string, any>,
+    action: Record<string, any> | undefined,
+  ): string | undefined {
+    if (typeof item.query === 'string' && item.query.trim()) {
+      return item.query.trim();
+    }
+    if (typeof action?.query === 'string' && action.query.trim()) {
+      return action.query.trim();
+    }
+    if (Array.isArray(action?.queries)) {
+      const queries = action.queries
+        .filter((query: unknown): query is string => typeof query === 'string' && query.trim().length > 0)
+        .map((query: string) => query.trim());
+      if (queries.length > 0) return queries.join(' | ');
+    }
+    return undefined;
+  }
+
+  private extractWebSearchUrl(action: Record<string, any> | undefined): string | undefined {
+    return typeof action?.url === 'string' && action.url.trim()
+      ? action.url.trim()
+      : undefined;
+  }
+
+  private buildDynamicToolMetadata(item: Record<string, any>): {
+    toolName: string;
+    toolKind?: ToolCallKind;
+    toolParams: Record<string, any>;
+  } {
+    const namespace = typeof item.namespace === 'string' && item.namespace.trim()
+      ? item.namespace.trim()
+      : undefined;
+    const tool = typeof item.tool === 'string' && item.tool.trim()
+      ? item.tool.trim()
+      : 'Tool';
+    const toolName = namespace ? `${namespace}.${tool}` : tool;
+    const args = isRecord(item.arguments) ? item.arguments : undefined;
+    const toolKind = this.inferDynamicToolKind(namespace, tool, args);
+    const webRunSummary = this.isWebRunDynamicTool(namespace, tool)
+      ? this.extractWebRunSummary(args)
+      : {};
+
+    return {
+      toolName,
+      ...(toolKind !== undefined ? { toolKind } : {}),
+      toolParams: {
+        ...(namespace ? { namespace } : {}),
+        tool,
+        ...(args ? args : item.arguments !== undefined ? { arguments: item.arguments } : {}),
+        ...webRunSummary,
+      },
+    };
+  }
+
+  private inferDynamicToolKind(
+    namespace: string | undefined,
+    tool: string,
+    args: Record<string, any> | undefined,
+  ): ToolCallKind | undefined {
+    if (!this.isWebRunDynamicTool(namespace, tool)) {
+      return inferToolCallKindFromToolName(tool);
+    }
+
+    if (!args) return 'web_search';
+    if (
+      Array.isArray(args.open) ||
+      Array.isArray(args.click) ||
+      Array.isArray(args.find) ||
+      Array.isArray(args.screenshot)
+    ) {
+      return 'web_fetch';
+    }
+
+    return 'web_search';
+  }
+
+  private isWebRunDynamicTool(namespace: string | undefined, tool: string): boolean {
+    const normalizedNamespace = namespace?.toLowerCase();
+    const normalizedTool = tool.toLowerCase();
+    return (normalizedNamespace === 'web' && normalizedTool === 'run') || normalizedTool === 'web.run';
+  }
+
+  private extractWebRunSummary(args: Record<string, any> | undefined): Record<string, string> {
+    if (!args) return {};
+
+    const query = this.extractWebRunQuery(args);
+    const url = this.extractWebRunUrl(args);
+
+    return {
+      ...(query ? { query } : {}),
+      ...(url ? { url } : {}),
+    };
+  }
+
+  private extractWebRunQuery(args: Record<string, any>): string | undefined {
+    const querySources = [
+      ...this.extractQueryList(args.search_query),
+      ...this.extractQueryList(args.image_query),
+    ];
+    if (querySources.length > 0) return querySources.join(' | ');
+
+    const weatherLocation = this.extractFirstStringFromRecordList(args.weather, 'location');
+    if (weatherLocation) return `weather: ${weatherLocation}`;
+
+    const financeTicker = this.extractFirstStringFromRecordList(args.finance, 'ticker');
+    if (financeTicker) return `finance: ${financeTicker}`;
+
+    const sportsLeague = this.extractFirstStringFromRecordList(args.sports, 'league');
+    if (sportsLeague) return `sports: ${sportsLeague}`;
+
+    return undefined;
+  }
+
+  private extractQueryList(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry) => {
+      if (!isRecord(entry)) return [];
+      const query = typeof entry.q === 'string' && entry.q.trim() ? entry.q.trim() : undefined;
+      return query ? [query] : [];
+    });
+  }
+
+  private extractFirstStringFromRecordList(value: unknown, key: string): string | undefined {
+    if (!Array.isArray(value)) return undefined;
+    for (const entry of value) {
+      if (!isRecord(entry)) continue;
+      const item = entry[key];
+      if (typeof item === 'string' && item.trim()) return item.trim();
+    }
+    return undefined;
+  }
+
+  private extractWebRunUrl(args: Record<string, any>): string | undefined {
+    const openRef = this.extractFirstStringFromRecordList(args.open, 'ref_id');
+    if (openRef && /^https?:\/\//i.test(openRef)) return openRef;
+
+    const findRef = this.extractFirstStringFromRecordList(args.find, 'ref_id');
+    if (findRef && /^https?:\/\//i.test(findRef)) return findRef;
+
+    return undefined;
+  }
+
+  private buildDynamicToolOutput(item: Record<string, any>): string | undefined {
+    if (!Array.isArray(item.contentItems)) return undefined;
+
+    const text = item.contentItems
+      .flatMap((contentItem: unknown) => {
+        if (!isRecord(contentItem)) return [];
+        return typeof contentItem.text === 'string' && contentItem.text.trim()
+          ? [contentItem.text.trim()]
+          : [];
+      })
+      .join('\n');
+
+    return text || undefined;
+  }
+
+  private isDynamicToolCallError(item: Record<string, any>): boolean {
+    return item.success === false || item.status === 'failed';
+  }
+
+  private isDisplayOnlyCodexItem(itemType: string): boolean {
+    return DISPLAY_ONLY_CODEX_ITEM_TYPES.has(itemType);
+  }
+
+  private buildGenericCodexItemToolCallMessage(
+    sessionId: string,
+    item: Record<string, any>,
+    status: 'running' | 'completed' | 'error',
+    timestamp: string,
+    addPending: boolean,
+  ): ParsedMessage {
+    const itemId = String(item.id ?? '');
+    const { toolName, toolParams } = this.buildGenericCodexItemMetadata(item);
+    const output = status === 'running' ? undefined : this.buildGenericCodexItemOutput(item);
+
+    logger.info('Codex: generic item mapped to tool_call', {
+      sessionId,
+      itemId,
+      itemType: item.type,
+      toolName,
+      status,
+    });
+
+    return {
+      serverMessage: {
+        type: 'tool_call',
+        sessionId,
+        toolUseId: itemId,
+        toolName,
+        toolParams,
+        status,
+        output: status === 'error' ? undefined : output,
+        error: status === 'error' ? output || `${toolName} failed` : undefined,
+        timestamp,
+      },
+      sideEffect: addPending
+        ? {
+            type: 'add_pending_tool_call',
+            toolUseId: itemId,
+            toolName,
+            toolParams,
+          }
+        : { type: 'remove_pending_tool_call', toolUseId: itemId },
+    };
+  }
+
+  private buildGenericCodexItemMetadata(item: Record<string, any>): {
+    toolName: string;
+    toolParams: Record<string, any>;
+  } {
+    const itemType = typeof item.type === 'string' && item.type.trim() ? item.type.trim() : 'unknown';
+    const params = this.extractGenericCodexItemParams(item);
+
+    switch (itemType) {
+      case 'mcpToolCall': {
+        const server = typeof item.server === 'string' && item.server.trim() ? item.server.trim() : undefined;
+        const tool = typeof item.tool === 'string' && item.tool.trim() ? item.tool.trim() : 'tool';
+        return {
+          toolName: server ? `MCP ${server}.${tool}` : `MCP ${tool}`,
+          toolParams: params,
+        };
+      }
+      case 'collabAgentToolCall': {
+        const tool = typeof item.tool === 'string' && item.tool.trim() ? item.tool.trim() : 'tool';
+        return {
+          toolName: `CodexCollab ${tool}`,
+          toolParams: params,
+        };
+      }
+      case 'hookPrompt':
+        return { toolName: 'HookPrompt', toolParams: params };
+      case 'imageGeneration':
+        return { toolName: 'ImageGeneration', toolParams: params };
+      case 'imageView':
+        return { toolName: 'ViewImage', toolParams: params };
+      default:
+        return { toolName: `Codex ${itemType}`, toolParams: params };
+    }
+  }
+
+  private extractGenericCodexItemParams(item: Record<string, any>): Record<string, any> {
+    const params: Record<string, any> = {
+      itemType: typeof item.type === 'string' ? item.type : 'unknown',
+    };
+
+    for (const [key, value] of Object.entries(item)) {
+      if (
+        key === 'id' ||
+        key === 'type' ||
+        key === 'aggregatedOutput' ||
+        key === 'contentItems' ||
+        key === 'error' ||
+        key === 'result'
+      ) {
+        continue;
+      }
+
+      params[key] = value;
+    }
+
+    return params;
+  }
+
+  private buildGenericCodexItemOutput(item: Record<string, any>): string | undefined {
+    if (isRecord(item.error)) {
+      const message = typeof item.error.message === 'string' && item.error.message.trim()
+        ? item.error.message.trim()
+        : undefined;
+      if (message) return message;
+    }
+
+    if (item.result !== undefined && item.result !== null) {
+      return this.stringifyCodexItemValue(item.result);
+    }
+
+    const dynamicOutput = this.buildDynamicToolOutput(item);
+    if (dynamicOutput) return dynamicOutput;
+
+    if (typeof item.aggregatedOutput === 'string' && item.aggregatedOutput.trim()) {
+      return this.truncateCodexItemText(item.aggregatedOutput.trim());
+    }
+
+    if (typeof item.savedPath === 'string' && item.savedPath.trim()) {
+      return `Saved: ${item.savedPath.trim()}`;
+    }
+
+    if (typeof item.revisedPrompt === 'string' && item.revisedPrompt.trim()) {
+      return item.revisedPrompt.trim();
+    }
+
+    return undefined;
+  }
+
+  private stringifyCodexItemValue(value: unknown): string | undefined {
+    if (typeof value === 'string') {
+      return this.truncateCodexItemText(value);
+    }
+
+    try {
+      return this.truncateCodexItemText(JSON.stringify(value));
+    } catch {
+      return this.truncateCodexItemText(String(value));
+    }
+  }
+
+  private truncateCodexItemText(value: string): string {
+    if (value.length <= MAX_OUTPUT_BUFFER_SIZE) return value;
+    return `${value.slice(0, MAX_OUTPUT_BUFFER_SIZE)}\n[... truncated ...]`;
+  }
+
+  private normalizeCodexItemStatus(
+    status: unknown,
+    fallback: 'running' | 'completed' | 'error',
+  ): 'running' | 'completed' | 'error' {
+    switch (status) {
+      case 'completed':
+        return 'completed';
+      case 'declined':
+      case 'failed':
+        return 'error';
+      case 'inProgress':
+        return 'running';
+      default:
+        return fallback;
+    }
   }
 
   private buildCommandToolResult(
@@ -1774,6 +2488,32 @@ export class CodexProtocolParser {
         providerState: { threadId: rawThreadId },
       },
     }];
+  }
+
+  private handleThreadGoalUpdated(sessionId: string, params: Record<string, any>): ParsedMessage[] {
+    const goal = normalizeCodexGoal(params.goal);
+    if (!goal) {
+      logger.warn('Codex: thread/goal/updated missing valid goal', { sessionId });
+      return [];
+    }
+
+    logger.info('Codex: goal updated', {
+      sessionId,
+      threadId: goal.threadId,
+      status: goal.status,
+      turnId: params.turnId ?? null,
+    });
+
+    return this.buildGoalUpdatedMessages(sessionId, goal);
+  }
+
+  private handleThreadGoalCleared(sessionId: string, params: Record<string, any>): ParsedMessage[] {
+    logger.info('Codex: goal cleared', {
+      sessionId,
+      threadId: params.threadId,
+    });
+
+    return this.buildGoalClearedMessages(sessionId);
   }
 
   // ---------------------------------------------------------------------------

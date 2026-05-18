@@ -11,6 +11,7 @@ import type { SpawnOptions } from 'child_process';
 import logger from '@/lib/logger';
 import { spawnCli } from '@/lib/cli/spawn-cli';
 import { isWindowsHostedWslFilesystemPath } from '@/lib/filesystem/path-environment';
+import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { createGitRunner } from '@/lib/worktrees/git-runner';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
@@ -102,7 +103,7 @@ export function resetGhAvailabilityCache(): void {
  */
 export async function resolveCurrentBranch(
   workDir: string,
-  agentEnvironment: AgentEnvironment = 'native',
+  agentEnvironment: AgentEnvironment = inferGitHubToolEnvironment(workDir),
 ): Promise<string | null> {
   if (!workDir) return null;
   const result = await execGitInDir(
@@ -301,5 +302,7 @@ function runCliCommand(
 }
 
 function inferGitHubToolEnvironment(workDir: string): AgentEnvironment {
-  return isWindowsHostedWslFilesystemPath(workDir) ? 'wsl' : 'native';
+  if (isWindowsHostedWslFilesystemPath(workDir)) return 'wsl';
+  if (getRuntimePlatform() === 'win32' && workDir.trim().startsWith('/')) return 'wsl';
+  return 'native';
 }
