@@ -17,7 +17,7 @@ import type { ServerTransportMessage } from '@/lib/ws/message-types';
 type SendToUser = (userId: string, message: ServerTransportMessage) => void;
 const MAX_REPLAY_BUFFER_CHARS = 200_000;
 const TERMINAL_TRACE_PATH = getTesseraDataPath('terminal-debug.log');
-const require = createRequire(import.meta.url);
+const nodeRequire = createRequire(__filename);
 
 function hasUtf8Locale(value: string | undefined): boolean {
   return /\butf-?8\b/i.test(value ?? '');
@@ -70,7 +70,7 @@ function ensureNodePtySpawnHelperExecutable(): void {
   if (getRuntimePlatform() !== 'darwin') return;
 
   try {
-    const packageJsonPath = require.resolve('node-pty/package.json');
+    const packageJsonPath = nodeRequire.resolve('node-pty/package.json');
     const packageDir = path.dirname(packageJsonPath);
     const archDir = process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
     const helperPath = path.join(packageDir, 'prebuilds', archDir, 'spawn-helper');
