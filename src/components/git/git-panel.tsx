@@ -260,6 +260,7 @@ export function GitPanel({
             changedFileCount={controller.changedFileCount}
             selectedPath={controller.selectedPath}
             setSelectedPath={controller.setSelectedPath}
+            onCopyFilePath={controller.copyFilePath}
             onOpenDiffFile={openDiffFile}
             onPinDiffFile={pinDiffFile}
             onOpenReadOnlyFile={openReadOnlyFile}
