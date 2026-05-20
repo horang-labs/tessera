@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Pin, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -98,10 +98,7 @@ function AllProjectSection({
   onSessionStopProcess,
 }: AllProjectSectionProps) {
   const { t } = useI18n();
-  const [addingCollection, setAddingCollection] = useState(false);
   const [isProjectQuickCreateOpen, setIsProjectQuickCreateOpen] = useState(false);
-  const [newCollectionLabel, setNewCollectionLabel] = useState('');
-  const newCollectionInputRef = useRef<HTMLInputElement>(null);
 
   const color = getProjectColor(project.displayName);
   const collections = useCollectionStore((state) => state.collectionsByProject[project.encodedDir] ?? EMPTY_COLLECTIONS);
@@ -159,11 +156,6 @@ function AllProjectSection({
     void loadTasks(project.encodedDir, { setCurrent: false });
   }, [hasMissingTaskData, isExpanded, loadTasks, project.encodedDir, tasksLoaded]);
 
-  useEffect(() => {
-    if (!addingCollection || !newCollectionInputRef.current) return;
-    newCollectionInputRef.current.focus();
-  }, [addingCollection]);
-
   const collectionGroups = useMemo(
     () => buildProjectCollectionGroups(project, collections, projectTasks),
     [collections, project, projectTasks]
@@ -218,19 +210,6 @@ function AllProjectSection({
     void useTaskStore.getState().updateTask(taskId, { workflowStatus: status as WorkflowStatus });
   }, []);
 
-  const handleAddCollection = useCallback(async () => {
-    const label = newCollectionLabel.trim();
-    if (!label) {
-      setAddingCollection(false);
-      setNewCollectionLabel('');
-      return;
-    }
-
-    await useCollectionStore.getState().addCollection(project.encodedDir, label, '#a78bfa');
-    setAddingCollection(false);
-    setNewCollectionLabel('');
-  }, [newCollectionLabel, project.encodedDir]);
-
   const handleProjectQuickCreateToggle = useCallback((event: React.MouseEvent) => {
     event.stopPropagation();
     const willOpen = !isProjectQuickCreateOpen;
@@ -244,7 +223,7 @@ function AllProjectSection({
     <div className="relative mb-3 mt-3 first:mt-1" data-testid={`all-project-section-${project.encodedDir}`}>
       <div
         className={cn(
-          'mx-1 flex items-center gap-2 rounded-md px-3 py-1.5 transition-colors',
+          'flex items-center gap-1 rounded-md py-1.5 pl-0.5 pr-2 transition-colors',
           'cursor-pointer hover:bg-(--sidebar-hover)'
         )}
         onClick={() => toggleAllProjectsSection(project.encodedDir)}
@@ -261,7 +240,7 @@ function AllProjectSection({
         >
           {project.displayName.charAt(0).toUpperCase()}
         </div>
-        <Tooltip content={project.displayName} delay={400} wrapperClassName="flex-1">
+        <Tooltip content={project.displayName} delay={400} wrapperClassName="min-w-0 flex-1">
           <span className="block truncate text-[0.625rem] font-semibold uppercase tracking-widest text-(--text-muted)">
             {project.displayName}
           </span>
@@ -299,38 +278,88 @@ function AllProjectSection({
             <div className="px-4 py-3 text-[0.6875rem] text-(--text-muted)">
               {t('common.loading')}
             </div>
+          ) : isRunningFilterActive ? (
+            <CollectionGroup
+              key={`running-flat-${project.encodedDir}`}
+              collection={null}
+              contextMenuCollections={collections}
+              projectId={project.encodedDir}
+              projectDir={project.decodedPath}
+              tasks={runningFlatItems.tasks}
+              chats={runningFlatItems.chats}
+              collapsed={false}
+              onToggleCollapse={() => {}}
+              onSessionClick={onSessionClick}
+              onSessionDoubleClick={onSessionDoubleClick}
+              activeSessionId={activeSessionId}
+              isDragActive={false}
+              isDragOver={false}
+              onItemDragStart={handleItemDragStart}
+              onItemDragEnd={handleItemDragEnd}
+              onCollectionDragOver={handleCollectionDragOver}
+              onCollectionDragLeave={handleCollectionDragLeave}
+              onCollectionDrop={handleCollectionDrop}
+              onItemDragOverItem={handleItemDragOverItem}
+              dropIndicator={null}
+              isGroupDragging={false}
+              isGroupDragOver={false}
+              onGroupDragStart={handleGroupDragStart}
+              onGroupDragEnd={handleGroupDragEnd}
+              onGroupDragOver={(event) => handleGroupDragOver(0, event)}
+              onGroupDragLeave={(event) => handleGroupDragLeave(0, event)}
+              onGroupDrop={(event) => handleGroupDrop(project.encodedDir, 0, event)}
+              onTaskRename={handleTaskRename}
+              onTaskDelete={handleTaskDelete}
+              onTaskStatusChange={handleTaskStatusChange}
+              onSessionRename={onSessionRename}
+              onSessionDelete={onSessionDelete}
+              onSessionArchive={onSessionArchive}
+              onSessionOpenInNewTab={onSessionOpenInNewTab}
+              onSessionGenerateTitle={onSessionGenerateTitle}
+              onSessionMoveToProject={onSessionMoveToProject}
+              onSessionStopProcess={onSessionStopProcess}
+              disableDnd
+              allowPanelSessionDnd
+              hideHeader
+            />
           ) : (
-            <>
-              {isRunningFilterActive ? (
+            visibleCollectionGroups.map((group, groupIdx) => {
+              const collection = group.collectionId
+                ? collections.find((item) => item.id === group.collectionId) ?? null
+                : null;
+              const collectionId = group.collectionId ?? '__uncategorized';
+              const collectionScopeId = `${project.encodedDir}::${collectionId}`;
+
+              return (
                 <CollectionGroup
-                  key={`running-flat-${project.encodedDir}`}
-                  collection={null}
+                  key={collectionScopeId}
+                  collection={collection}
                   contextMenuCollections={collections}
                   projectId={project.encodedDir}
                   projectDir={project.decodedPath}
-                  tasks={runningFlatItems.tasks}
-                  chats={runningFlatItems.chats}
-                  collapsed={false}
-                  onToggleCollapse={() => {}}
+                  tasks={group.tasks}
+                  chats={group.chats}
+                  collapsed={collapsedCollections[collectionScopeId] ?? false}
+                  onToggleCollapse={() => toggleCollectionCollapse(collectionScopeId)}
                   onSessionClick={onSessionClick}
                   onSessionDoubleClick={onSessionDoubleClick}
                   activeSessionId={activeSessionId}
-                  isDragActive={false}
-                  isDragOver={false}
+                  isDragActive={isProjectDragActive}
+                  isDragOver={dragOverCollectionId === collectionScopeId}
                   onItemDragStart={handleItemDragStart}
                   onItemDragEnd={handleItemDragEnd}
                   onCollectionDragOver={handleCollectionDragOver}
                   onCollectionDragLeave={handleCollectionDragLeave}
                   onCollectionDrop={handleCollectionDrop}
                   onItemDragOverItem={handleItemDragOverItem}
-                  dropIndicator={null}
-                  isGroupDragging={false}
-                  isGroupDragOver={false}
+                  dropIndicator={isProjectDragActive ? collectionDropIndicator : null}
+                  isGroupDragging={draggingGroupId === collectionScopeId}
+                  isGroupDragOver={isProjectGroupDragActive && groupDragOverIndex === groupIdx}
                   onGroupDragStart={handleGroupDragStart}
                   onGroupDragEnd={handleGroupDragEnd}
-                  onGroupDragOver={(event) => handleGroupDragOver(0, event)}
-                  onGroupDragLeave={(event) => handleGroupDragLeave(0, event)}
-                  onGroupDrop={(event) => handleGroupDrop(project.encodedDir, 0, event)}
+                  onGroupDragOver={(event) => handleGroupDragOver(groupIdx, event)}
+                  onGroupDragLeave={(event) => handleGroupDragLeave(groupIdx, event)}
+                  onGroupDrop={(event) => handleGroupDrop(project.encodedDir, groupIdx, event)}
                   onTaskRename={handleTaskRename}
                   onTaskDelete={handleTaskDelete}
                   onTaskStatusChange={handleTaskStatusChange}
@@ -341,100 +370,9 @@ function AllProjectSection({
                   onSessionGenerateTitle={onSessionGenerateTitle}
                   onSessionMoveToProject={onSessionMoveToProject}
                   onSessionStopProcess={onSessionStopProcess}
-                  disableDnd
-                  allowPanelSessionDnd
-                  hideHeader
                 />
-              ) : visibleCollectionGroups.map((group, groupIdx) => {
-                const collection = group.collectionId
-                  ? collections.find((item) => item.id === group.collectionId) ?? null
-                  : null;
-                const collectionId = group.collectionId ?? '__uncategorized';
-                const collectionScopeId = `${project.encodedDir}::${collectionId}`;
-
-                return (
-                  <CollectionGroup
-                    key={collectionScopeId}
-                    collection={collection}
-                    contextMenuCollections={collections}
-                    projectId={project.encodedDir}
-                    projectDir={project.decodedPath}
-                    tasks={group.tasks}
-                    chats={group.chats}
-                    collapsed={collapsedCollections[collectionScopeId] ?? false}
-                    onToggleCollapse={() => toggleCollectionCollapse(collectionScopeId)}
-                    onSessionClick={onSessionClick}
-                    onSessionDoubleClick={onSessionDoubleClick}
-                    activeSessionId={activeSessionId}
-                    isDragActive={isProjectDragActive}
-                    isDragOver={dragOverCollectionId === collectionScopeId}
-                    onItemDragStart={handleItemDragStart}
-                    onItemDragEnd={handleItemDragEnd}
-                    onCollectionDragOver={handleCollectionDragOver}
-                    onCollectionDragLeave={handleCollectionDragLeave}
-                    onCollectionDrop={handleCollectionDrop}
-                    onItemDragOverItem={handleItemDragOverItem}
-                    dropIndicator={isProjectDragActive ? collectionDropIndicator : null}
-                    isGroupDragging={draggingGroupId === collectionScopeId}
-                    isGroupDragOver={isProjectGroupDragActive && groupDragOverIndex === groupIdx}
-                    onGroupDragStart={handleGroupDragStart}
-                    onGroupDragEnd={handleGroupDragEnd}
-                    onGroupDragOver={(event) => handleGroupDragOver(groupIdx, event)}
-                    onGroupDragLeave={(event) => handleGroupDragLeave(groupIdx, event)}
-                    onGroupDrop={(event) => handleGroupDrop(project.encodedDir, groupIdx, event)}
-                    onTaskRename={handleTaskRename}
-                    onTaskDelete={handleTaskDelete}
-                    onTaskStatusChange={handleTaskStatusChange}
-                    onSessionRename={onSessionRename}
-                    onSessionDelete={onSessionDelete}
-                    onSessionArchive={onSessionArchive}
-                    onSessionOpenInNewTab={onSessionOpenInNewTab}
-                    onSessionGenerateTitle={onSessionGenerateTitle}
-                    onSessionMoveToProject={onSessionMoveToProject}
-                    onSessionStopProcess={onSessionStopProcess}
-                  />
-                );
-              })}
-
-              {!isRunningFilterActive && (addingCollection ? (
-                <div className="mx-2 mb-1.5 mt-2">
-                  <form
-                    className="flex items-center gap-1 rounded-lg border border-(--accent) bg-(--sidebar-bg) px-2 py-1"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void handleAddCollection();
-                    }}
-                  >
-                    <input
-                      ref={newCollectionInputRef}
-                      type="text"
-                      value={newCollectionLabel}
-                      onChange={(event) => setNewCollectionLabel(event.target.value)}
-                      onBlur={() => {
-                        void handleAddCollection();
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Escape') {
-                          setAddingCollection(false);
-                          setNewCollectionLabel('');
-                        }
-                      }}
-                      placeholder="Collection name..."
-                      className="flex-1 border-none bg-transparent text-[0.75rem] text-(--sidebar-text-active) outline-none placeholder:text-(--text-muted)"
-                    />
-                  </form>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setAddingCollection(true)}
-                  className="mx-2 mb-1 mt-1 flex items-center gap-1.5 rounded px-2 py-1 pl-5 text-[0.6875rem] text-(--text-muted) opacity-55 transition-colors hover:bg-transparent hover:text-(--accent-light) hover:opacity-100"
-                >
-                  <Plus className="h-2.5 w-2.5" />
-                  <span>Add collection</span>
-                </button>
-              ))}
-
-            </>
+              );
+            })
           )}
         </div>
       )}
