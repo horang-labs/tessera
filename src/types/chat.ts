@@ -185,6 +185,8 @@ export interface UnifiedSession {
   model?: string;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
+  /** True after the provider process has created real conversation state. */
+  hasStarted?: boolean;
   sessionMode?: ProviderSessionMode;
   accessMode?: ProviderSessionAccessMode;
   goal?: SessionGoal | null;
