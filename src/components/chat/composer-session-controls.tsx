@@ -428,7 +428,7 @@ function getDefaultActiveSessionMode(providerId: string): ProviderSessionMode {
 }
 
 function shouldPersistControlDefaults(session: UnifiedSession): boolean {
-  return !session.isRunning && session.status === 'starting';
+  return !session.isRunning && session.hasStarted !== true;
 }
 
 function getAccessOptions(
@@ -552,6 +552,10 @@ function ComposerSessionControlsInner({
           ? { defaultPermissionMode: runtimeControls.permissionMode }
           : {}),
       });
+      updateSessionRuntimeConfig(sessionId, {
+        sessionMode: nextSessionMode,
+        accessMode: nextAccessMode,
+      });
     } else {
       updateSessionRuntimeConfig(sessionId, {
         sessionMode: nextSessionMode,
@@ -620,6 +624,10 @@ function ComposerSessionControlsInner({
           { model: nextModel, reasoningEffort: nextReasoningEffort },
         ),
       );
+      updateSessionRuntimeConfig(sessionId, {
+        model: nextModel,
+        reasoningEffort: nextReasoningEffort,
+      });
     } else {
       updateSessionRuntimeConfig(sessionId, {
         model: nextModel,
@@ -654,6 +662,7 @@ function ComposerSessionControlsInner({
           { reasoningEffort: nextReasoningEffort },
         ),
       );
+      updateSessionRuntimeConfig(sessionId, { reasoningEffort: nextReasoningEffort });
     } else {
       updateSessionRuntimeConfig(sessionId, { reasoningEffort: nextReasoningEffort });
     }
