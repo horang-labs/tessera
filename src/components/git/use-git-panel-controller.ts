@@ -9,6 +9,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
+import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import type {
   GitChangedFilesData,
   GitDiffData,
@@ -477,6 +478,27 @@ export function useGitPanelController(sessionId: string | null) {
     panelData?.prStatus,
   ]);
 
+  const copyFilePath = useCallback(
+    async (relativePath: string) => {
+      const absolutePath = toAbsoluteWorkspacePath(data?.worktreePath, relativePath);
+      await writeClipboardText(absolutePath);
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "copy_file_path",
+        target: "file_path",
+        has_worktree: Boolean(data?.worktreePath),
+        has_changes: Boolean(panelData?.changedFiles.length),
+        has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
+      });
+    },
+    [
+      data?.worktreePath,
+      panelData?.changedFiles.length,
+      panelData?.github.pullRequest,
+      panelData?.prStatus,
+    ],
+  );
+
   const openExternal = useCallback((url: string | null | undefined) => {
     if (!url || typeof window === "undefined") return;
     void captureTelemetryEvent("git_action_triggered", {
@@ -839,6 +861,7 @@ export function useGitPanelController(sessionId: string | null) {
     checksUrl,
     closeAction,
     copyBranch,
+    copyFilePath,
     copyWorktreePath,
     data: panelData,
     diffData,

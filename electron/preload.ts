@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('open-board-window', payload),
   closeBoardPopouts: () => ipcRenderer.invoke('close-board-popouts'),
   getPopoutState: () => ipcRenderer.invoke('get-popout-state'),
+  openFilePath: (path: string) => ipcRenderer.invoke('shell-open-path', path),
+  revealFilePath: (path: string) => ipcRenderer.invoke('shell-show-item-in-folder', path),
   onPopoutStateChanged: (callback: (count: number) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { count?: number }) => {
       if (typeof payload?.count === 'number') {
