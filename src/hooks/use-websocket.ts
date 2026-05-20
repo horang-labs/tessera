@@ -67,16 +67,29 @@ export function useWebSocket() {
     wsClient.cancelGeneration(sessionId);
   }, []);
 
-  const setSessionGoal = useCallback((sessionId: string, update: SessionGoalUpdate, spawnConfig?: SessionSpawnConfig) => {
-    wsClient.setSessionGoal(sessionId, update, spawnConfig);
+  const setSessionGoal = useCallback((
+    sessionId: string,
+    update: SessionGoalUpdate,
+    spawnConfig?: SessionSpawnConfig,
+    displayContent?: string,
+  ) => {
+    wsClient.setSessionGoal(sessionId, update, spawnConfig, displayContent);
   }, []);
 
-  const refreshSessionGoal = useCallback((sessionId: string, spawnConfig?: SessionSpawnConfig) => {
-    wsClient.refreshSessionGoal(sessionId, spawnConfig);
+  const refreshSessionGoal = useCallback((
+    sessionId: string,
+    spawnConfig?: SessionSpawnConfig,
+    displayContent?: string,
+  ) => {
+    wsClient.refreshSessionGoal(sessionId, spawnConfig, displayContent);
   }, []);
 
-  const clearSessionGoal = useCallback((sessionId: string, spawnConfig?: SessionSpawnConfig) => {
-    wsClient.clearSessionGoal(sessionId, spawnConfig);
+  const clearSessionGoal = useCallback((
+    sessionId: string,
+    spawnConfig?: SessionSpawnConfig,
+    displayContent?: string,
+  ) => {
+    wsClient.clearSessionGoal(sessionId, spawnConfig, displayContent);
   }, []);
 
   const stopSession = useCallback((sessionId: string) => {
