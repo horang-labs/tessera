@@ -96,6 +96,7 @@ export interface GitPanelData {
 
 export interface GitDiffData {
   sessionId: string;
+  workDir?: string | null;
   path: string;
   diff: string;
   truncated: boolean;

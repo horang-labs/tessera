@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronLeft, ChevronRight, GitBranch } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, GitBranch } from 'lucide-react';
 import { BottomDrawer } from '@/components/ui/bottom-drawer';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -20,6 +20,7 @@ interface GitDiffDrawerProps {
   onClose: () => void;
   onMoveSelection: (direction: -1 | 1) => void;
   onResize?: (height: number) => void;
+  onCopyFilePath?: (relativePath: string) => void;
 }
 
 export function GitDiffDrawer({
@@ -33,6 +34,7 @@ export function GitDiffDrawer({
   onClose,
   onMoveSelection,
   onResize,
+  onCopyFilePath,
 }: GitDiffDrawerProps) {
   const stateMeta = selectedFile ? FILE_STATE_META[selectedFile.state] : null;
   const position =
@@ -61,6 +63,19 @@ export function GitDiffDrawer({
 
   const headerActions = (
     <div className="flex shrink-0 items-center gap-1">
+      {selectedFile && onCopyFilePath ? (
+        <Tooltip content="Copy absolute path">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => onCopyFilePath(selectedFile.path)}
+            aria-label={`Copy absolute path for ${selectedFile.path}`}
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
+        </Tooltip>
+      ) : null}
       <Tooltip content="Previous file">
         <Button
           variant="ghost"

@@ -3,6 +3,7 @@
 import {
   AlertCircle,
   ChevronRight,
+  Copy,
   FileText,
   Folder,
   FolderOpen,
@@ -12,16 +13,23 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   openWorkspaceFileTab,
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
+import {
+  copyText,
+  toAbsoluteWorkspacePath,
+} from "@/lib/workspace-tabs/file-path-actions";
+import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import { cn } from "@/lib/utils";
 
 interface WorkspaceFilesResponse {
   files?: string[];
   truncated?: boolean;
+  workDir?: string | null;
 }
 
 interface WorkspaceFilePanelState {
@@ -45,6 +53,12 @@ interface WorkspaceDirectoryNode {
 }
 
 type WorkspaceTreeNode = WorkspaceDirectoryNode | WorkspaceFileNode;
+
+interface FileContextMenuState {
+  absolutePath: string;
+  canOpenFile: boolean;
+  position: { x: number; y: number };
+}
 
 interface MutableDirectoryNode {
   name: string;
@@ -147,6 +161,8 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+  const [workDir, setWorkDir] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
   const [state, setState] = useState<WorkspaceFilePanelState>(() => ({
     loading: Boolean(sessionId),
     error: null,
@@ -154,9 +170,13 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   }));
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      setWorkDir(null);
+      return;
+    }
 
     const abortController = new AbortController();
+    setWorkDir(null);
 
     const loadFiles = async () => {
       try {
@@ -167,6 +187,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
         const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
         if (!response.ok) throw new Error("Failed to load files.");
         setFiles(Array.isArray(payload?.files) ? payload.files : []);
+        setWorkDir(payload?.workDir ?? null);
         setState({
           loading: false,
           error: null,
@@ -243,41 +264,75 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     }
 
     const isSelected = node.path === selectedPath;
+    const absolutePath = toAbsoluteWorkspacePath(workDir, node.path);
+
     return (
-      <button
+      <div
         key={`file:${node.path}`}
-        type="button"
-        onClick={() => {
-          if (!sessionId) return;
-          setSelectedPath(node.path);
-          previewWorkspaceFileTab(sessionId, "file", node.path);
-        }}
-        onDoubleClick={() => {
-          if (!sessionId) return;
-          setSelectedPath(node.path);
-          openWorkspaceFileTab(sessionId, "file", node.path);
-        }}
-        onDragStart={(event) => {
-          if (!sessionId) return;
-          setSelectedPath(node.path);
-          setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", node.path);
-        }}
-        draggable={Boolean(sessionId)}
         className={cn(
-          "group flex min-w-0 items-center gap-2 border-l-2 py-1.5 pr-2 text-left transition-colors",
+          "group relative border-l-2 transition-colors",
           isSelected
             ? "border-l-(--accent) bg-(--accent)/10 text-(--text-primary)"
             : "border-l-transparent text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
         )}
         style={{ paddingLeft: paddingLeft + 19 }}
-        title={node.path}
-        data-testid={`workspace-file-row-${node.path}`}
+        onContextMenu={(event) => {
+          if (!absolutePath) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setSelectedPath(node.path);
+          setContextMenu({
+            absolutePath,
+            canOpenFile: true,
+            position: { x: event.clientX, y: event.clientY },
+          });
+        }}
       >
-        <FileText className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-          {node.name}
-        </span>
-      </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!sessionId) return;
+            setSelectedPath(node.path);
+            previewWorkspaceFileTab(sessionId, "file", node.path);
+          }}
+          onDoubleClick={() => {
+            if (!sessionId) return;
+            setSelectedPath(node.path);
+            openWorkspaceFileTab(sessionId, "file", node.path);
+          }}
+          onDragStart={(event) => {
+            if (!sessionId) return;
+            setSelectedPath(node.path);
+            setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", node.path);
+          }}
+          draggable={Boolean(sessionId)}
+          className="flex min-w-0 items-center gap-2 border-l-transparent py-1.5 pr-2 text-left transition-colors"
+          title={node.path}
+          data-testid={`workspace-file-row-${node.path}`}
+        >
+          <FileText className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+            {node.name}
+          </span>
+        </button>
+        <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+          <Tooltip content="Copy absolute path">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!absolutePath || !node.path) return;
+                copyText(absolutePath);
+              }}
+              disabled={!absolutePath}
+              className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary) disabled:pointer-events-none disabled:opacity-35"
+              aria-label={`Copy absolute path for ${absolutePath || node.path}`}
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
     );
   }
 
@@ -346,6 +401,14 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           </ScrollArea>
         </div>
       )}
+      {contextMenu ? (
+        <WorkspaceFileContextMenu
+          absolutePath={contextMenu.absolutePath}
+          canOpenFile={contextMenu.canOpenFile}
+          onClose={() => setContextMenu(null)}
+          position={contextMenu.position}
+        />
+      ) : null}
     </div>
   );
 }

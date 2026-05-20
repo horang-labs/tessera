@@ -629,6 +629,7 @@ export async function getGitDiffData(
     const diff = await buildSyntheticUntrackedDiff(repoRoot, relativePath, workDir);
     return {
       sessionId,
+      workDir,
       path: relativePath,
       diff,
       truncated: diff.includes("diff truncated for preview"),
@@ -652,6 +653,7 @@ export async function getGitDiffData(
 
   return {
     sessionId,
+    workDir,
     path: relativePath,
     diff: diff || `No textual diff available for ${relativePath}.`,
     truncated: false,
