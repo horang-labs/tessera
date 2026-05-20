@@ -119,6 +119,7 @@ export async function GET(
       tasks: refs.tasks,
       truncated: false,
       reason: 'no-root',
+      workDir: null,
     });
   }
 
@@ -131,6 +132,7 @@ export async function GET(
         tasks: refs.tasks,
         truncated: false,
         reason: 'not-a-directory',
+        workDir: root,
       });
     }
   } catch {
@@ -140,6 +142,7 @@ export async function GET(
       tasks: refs.tasks,
       truncated: false,
       reason: 'unreadable',
+      workDir: root,
     });
   }
 
@@ -150,6 +153,7 @@ export async function GET(
       chats: refs.chats,
       tasks: refs.tasks,
       truncated: result.truncated,
+      workDir: root,
     });
   } catch {
     return NextResponse.json({
@@ -158,6 +162,7 @@ export async function GET(
       tasks: refs.tasks,
       truncated: false,
       reason: 'walk-failed',
+      workDir: root,
     });
   }
 }

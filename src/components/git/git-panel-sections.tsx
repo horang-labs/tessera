@@ -26,8 +26,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
+import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { useI18n } from "@/lib/i18n";
+import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
 import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
 import {
@@ -332,12 +334,14 @@ export function DiffPreview({
   diffLoading,
   selectedFile,
   hideFileHeader = false,
+  onCopyFilePath,
 }: {
   diffData: GitDiffData | null;
   diffError: string | null;
   diffLoading: boolean;
   selectedFile: GitChangedFile | null;
   hideFileHeader?: boolean;
+  onCopyFilePath?: (relativePath: string) => void;
 }) {
   const { t } = useI18n();
 
@@ -391,7 +395,21 @@ export function DiffPreview({
               {diffData.truncated ? " · truncated" : ""}
             </p>
           </div>
-          <FileBadge file={selectedFile} />
+          <div className="flex shrink-0 items-center gap-1">
+            {onCopyFilePath ? (
+              <Tooltip content="Copy absolute path" side="top">
+                <button
+                  type="button"
+                  onClick={() => onCopyFilePath(selectedFile.path)}
+                  className="rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+                  aria-label={`Copy absolute path for ${selectedFile.path}`}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            ) : null}
+            <FileBadge file={selectedFile} />
+          </div>
         </div>
       ) : null}
       <div className="py-2">
@@ -593,6 +611,7 @@ export function GitPanelContentSection({
   selectedPath,
   sessionId,
   setSelectedPath,
+  onCopyFilePath,
   onOpenDiffFile,
   onPinDiffFile,
   onOpenReadOnlyFile,
@@ -604,13 +623,20 @@ export function GitPanelContentSection({
   selectedPath: string | null;
   sessionId: string | null;
   setSelectedPath: (path: string | null) => void;
+  onCopyFilePath: (relativePath: string) => void;
   onOpenDiffFile: (file: GitChangedFile) => void;
   onPinDiffFile: (file: GitChangedFile) => void;
   onOpenReadOnlyFile: (file: GitChangedFile) => void;
 }) {
   const { t } = useI18n();
+  const [contextMenu, setContextMenu] = useState<{
+    absolutePath: string;
+    canOpenFile: boolean;
+    position: { x: number; y: number };
+  } | null>(null);
 
   return (
+    <>
     <div className="flex-1 overflow-hidden p-3">
       {!sessionId && !loading ? (
         <EmptyPanelMessage
@@ -641,6 +667,7 @@ export function GitPanelContentSection({
                 {data.changedFiles.map((file) => {
                   const isSelected = file.path === selectedPath;
                   const canOpenReadOnly = file.state !== "deleted";
+                  const absolutePath = toAbsoluteWorkspacePath(data.worktreePath, file.path);
                   return (
                     <div
                       key={file.path}
@@ -657,6 +684,17 @@ export function GitPanelContentSection({
                           : "border-l-transparent text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
                       )}
                       data-testid={`git-panel-file-row-${file.path}`}
+                      onContextMenu={(event) => {
+                        if (!absolutePath) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setSelectedPath(file.path);
+                        setContextMenu({
+                          absolutePath,
+                          canOpenFile: canOpenReadOnly,
+                          position: { x: event.clientX, y: event.clientY },
+                        });
+                      }}
                     >
                       <button
                         type="button"
@@ -722,6 +760,19 @@ export function GitPanelContentSection({
                             <FileText className="h-3.5 w-3.5" />
                           </button>
                         </Tooltip>
+                        <Tooltip content="Copy absolute path">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onCopyFilePath(file.path);
+                            }}
+                            className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+                            aria-label={`Copy absolute path for ${file.path}`}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
                       </div>
                     </div>
                   );
@@ -732,6 +783,15 @@ export function GitPanelContentSection({
         )
       )}
     </div>
+    {contextMenu ? (
+      <WorkspaceFileContextMenu
+        absolutePath={contextMenu.absolutePath}
+        canOpenFile={contextMenu.canOpenFile}
+        onClose={() => setContextMenu(null)}
+        position={contextMenu.position}
+      />
+    ) : null}
+    </>
   );
 }
 
