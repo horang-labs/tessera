@@ -1,11 +1,17 @@
 "use client";
 
 import { AlertCircle, Binary, Copy, FileCode2, FileText, GitCompare, LoaderCircle, X } from "lucide-react";
-import { useCallback, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
+import type { Highlighter, ThemedToken } from "shiki";
 import { PreviewMarkdown } from "@/components/chat/preview-markdown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
+import { useIsDark } from "@/hooks/use-is-dark";
+import {
+  getHighlighterInstance,
+  highlightCodeToTokens,
+} from "@/lib/code-highlighting";
 import {
   copyText,
   toAbsoluteWorkspacePath,
@@ -100,26 +106,71 @@ function getDiffLineClassName(line: string): string {
 
 function CodeLines({
   content,
+  highlightedLines,
   mode,
 }: {
   content: string;
+  highlightedLines?: ThemedToken[][] | null;
   mode: "file" | "diff";
 }) {
+  if (mode === "file" && highlightedLines) {
+    return <HighlightedCodeLines lines={highlightedLines} />;
+  }
+
   const lines = content.split("\n");
   return (
-    <div className="min-w-max py-3">
+    <div className="workspace-code-lines">
       {lines.map((line, index) => (
         <div
           key={`${index}-${line.slice(0, 16)}`}
           className={cn(
-            "grid grid-cols-[4rem_minmax(0,1fr)] font-mono text-xs leading-5",
+            "workspace-code-line",
             mode === "diff" ? getDiffLineClassName(line) : "text-(--text-secondary)",
           )}
         >
-          <span className="select-none border-r border-(--divider) px-3 text-right text-(--text-muted) opacity-70">
-            {index + 1}
-          </span>
-          <code className="whitespace-pre px-4">{line || " "}</code>
+          <span className="workspace-code-line-number">{index + 1}</span>
+          <code className="workspace-code-line-content">{line || " "}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function getTokenStyle(token: ThemedToken): CSSProperties | undefined {
+  if (token.htmlStyle) {
+    return token.htmlStyle;
+  }
+
+  const style: CSSProperties = {};
+  if (token.color) style.color = token.color;
+  if (token.bgColor) style.backgroundColor = token.bgColor;
+
+  const fontStyle = token.fontStyle ?? 0;
+  if ((fontStyle & 1) !== 0) style.fontStyle = "italic";
+  if ((fontStyle & 2) !== 0) style.fontWeight = 700;
+  if ((fontStyle & 4) !== 0) style.textDecoration = "underline";
+
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
+function HighlightedCodeLines({ lines }: { lines: ThemedToken[][] }) {
+  return (
+    <div className="workspace-code-lines">
+      {lines.map((tokens, lineIndex) => (
+        <div className="workspace-code-line" key={lineIndex}>
+          <span className="workspace-code-line-number">{lineIndex + 1}</span>
+          <code className="workspace-code-line-content">
+            {tokens.length > 0
+              ? tokens.map((token, tokenIndex) => (
+                <span
+                  key={`${token.offset}-${tokenIndex}`}
+                  style={getTokenStyle(token)}
+                >
+                  {token.content}
+                </span>
+              ))
+              : " "}
+          </code>
         </div>
       ))}
     </div>
@@ -167,6 +218,8 @@ export function WorkspaceCodeView({
   sourceSessionId?: string;
 }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [highlighter, setHighlighter] = useState<Highlighter | null>(null);
+  const isDark = useIsDark();
   const content =
     mode === "diff"
       ? (data as GitDiffData | null)?.diff ?? ""
@@ -180,12 +233,35 @@ export function WorkspaceCodeView({
   const copied = copiedKey === `${mode}:${path}`;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const isMarkdownFile = mode === "file" && fileData?.language === "markdown";
+  const shikiTheme = isDark ? "github-dark" : "github-light";
   const resolveMarkdownImageSrc = useCallback((src: string): string | null => {
     if (!sourceSessionId || isBrowserImageSrc(src)) return src;
     const assetPath = normalizeWorkspaceAssetPath(path, src);
     if (!assetPath) return null;
     return buildWorkspaceRawFileUrl(sourceSessionId, assetPath);
   }, [path, sourceSessionId]);
+  useEffect(() => {
+    if (mode !== "file" || isMarkdownFile || fileData?.binary) return undefined;
+
+    let cancelled = false;
+    getHighlighterInstance().then((h) => {
+      if (!cancelled && h) setHighlighter(h);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileData?.binary, isMarkdownFile, mode]);
+
+  const highlightedLines = useMemo(() => {
+    if (mode !== "file" || isMarkdownFile || !highlighter) return null;
+
+    try {
+      return highlightCodeToTokens(highlighter, content, fileData?.language, shikiTheme);
+    } catch {
+      return null;
+    }
+  }, [content, fileData?.language, highlighter, isMarkdownFile, mode, shikiTheme]);
 
   async function copyContent() {
     try {
@@ -298,7 +374,11 @@ export function WorkspaceCodeView({
             <PreviewMarkdown content={content} resolveImageSrc={resolveMarkdownImageSrc} />
           </div>
         ) : (
-          <CodeLines content={content} mode={mode} />
+          <CodeLines
+            content={content}
+            highlightedLines={highlightedLines}
+            mode={mode}
+          />
         )}
       </div>
     </div>
