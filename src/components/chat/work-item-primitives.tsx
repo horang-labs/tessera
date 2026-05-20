@@ -50,18 +50,6 @@ export function ItemStatusIndicator({
         ? 'ring-1 ring-(--board-card-bg)'
         : 'ring-1 ring-(--sidebar-bg)';
 
-  if (isProcessing) {
-    return (
-      <span
-        className={cn(
-          getPlacementClassName(placement, true),
-          ringClass,
-          'h-[7px] w-[7px] animate-spin rounded-full border border-(--success) border-t-transparent',
-        )}
-      />
-    );
-  }
-
   if (isAwaitingUser) {
     return (
       <span
@@ -81,6 +69,18 @@ export function ItemStatusIndicator({
           getPlacementClassName(placement, false),
           ringClass,
           'h-[6px] w-[6px] rounded-full bg-[#facc15]',
+        )}
+      />
+    );
+  }
+
+  if (isProcessing) {
+    return (
+      <span
+        className={cn(
+          getPlacementClassName(placement, true),
+          ringClass,
+          'h-[7px] w-[7px] animate-spin rounded-full border border-(--success) border-t-transparent',
         )}
       />
     );
