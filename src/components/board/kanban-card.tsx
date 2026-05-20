@@ -156,24 +156,24 @@ export const KanbanChatCard = memo(function KanbanChatCard({
 
   const timeStr = formatRelativeTime(session.createdAt, t);
   const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
-  const stripeClass = isProcessing
-    ? 'task-stripe task-stripe-processing'
-    : isAwaitingUser
-      ? 'task-stripe task-stripe-attention'
+  const stripeClass = isAwaitingUser
+    ? 'task-stripe task-stripe-attention'
     : hasUnread
       ? 'task-stripe task-stripe-unread'
-      : session.isRunning
-        ? 'task-stripe task-stripe-running'
-        : null;
-  const stripeLabel = isProcessing
-    ? t('status.processing')
-    : isAwaitingUser
-      ? t('status.inputRequired')
+      : isProcessing
+        ? 'task-stripe task-stripe-processing'
+        : session.isRunning
+          ? 'task-stripe task-stripe-running'
+          : null;
+  const stripeLabel = isAwaitingUser
+    ? t('status.inputRequired')
     : hasUnread
       ? t('status.unreadNotification')
-      : session.isRunning
-        ? t('status.sessionRunning')
-        : null;
+      : isProcessing
+        ? t('status.processing')
+        : session.isRunning
+          ? t('status.sessionRunning')
+          : null;
   const titleAnimationKey = isGeneratingTitle
     ? `${session.id}:generating`
     : `${session.id}:${session.title}:${session.hasCustomTitle ? 'custom' : 'plain'}`;
@@ -592,27 +592,27 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasRunningSession;
 
   // Left-edge status stripe — mirrors the session dot so the signal
-  // travels on two channels. Priority: processing > awaiting user input > unread > running.
+  // travels on two channels. Priority: awaiting user input > unread > processing > running.
   // Applied as a card-level class so the stroke follows `rounded-lg`
   // corners instead of drawing a straight line past them.
-  const stripeClass = hasProcessingSession
-    ? 'task-stripe task-stripe-processing'
-    : hasAwaitingUserSession
-      ? 'task-stripe task-stripe-attention'
+  const stripeClass = hasAwaitingUserSession
+    ? 'task-stripe task-stripe-attention'
     : hasUnreadSession
       ? 'task-stripe task-stripe-unread'
-      : hasRunningSession
-        ? 'task-stripe task-stripe-running'
-        : null;
-  const stripeLabel = hasProcessingSession
-    ? t('status.processing')
-    : hasAwaitingUserSession
-      ? t('status.inputRequired')
+      : hasProcessingSession
+        ? 'task-stripe task-stripe-processing'
+        : hasRunningSession
+          ? 'task-stripe task-stripe-running'
+          : null;
+  const stripeLabel = hasAwaitingUserSession
+    ? t('status.inputRequired')
     : hasUnreadSession
       ? t('status.unreadNotification')
-      : hasRunningSession
-        ? t('status.sessionRunning')
-        : null;
+      : hasProcessingSession
+        ? t('status.processing')
+        : hasRunningSession
+          ? t('status.sessionRunning')
+          : null;
 
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     const primarySession = task.sessions[0];
