@@ -111,18 +111,23 @@ test('Codex parser persists and broadcasts goal updates and clears', () => {
 test('goal controls are routed through websocket client and server actions', () => {
   assert.match(wsMessageTypesSource, /type: 'set_session_goal'/);
   assert.match(wsMessageTypesSource, /spawnConfig\?: SessionSpawnConfig/);
+  assert.match(wsMessageTypesSource, /displayContent\?: string/);
   assert.match(wsMessageTypesSource, /type: 'refresh_session_goal'/);
   assert.match(wsMessageTypesSource, /type: 'clear_session_goal'/);
   assert.match(wsMessageTypesSource, /type: 'session_goal_updated'/);
   assert.match(wsMessageTypesSource, /type: 'session_goal_cleared'/);
-  assert.match(wsClientSource, /setSessionGoal\(sessionId: string, update: SessionGoalUpdate, spawnConfig\?: SessionSpawnConfig\)/);
+  assert.match(wsClientSource, /setSessionGoal\([\s\S]*displayContent\?: string[\s\S]*'set_session_goal'/);
   assert.match(wsHookSource, /setSessionGoal/);
+  assert.match(wsHookSource, /displayContent\?: string/);
   assert.match(wsRoutingSource, /case 'set_session_goal':/);
   assert.match(wsRoutingSource, /spawnConfig: message\.spawnConfig/);
+  assert.match(wsRoutingSource, /displayContent: message\.displayContent/);
   assert.match(wsRoutingSource, /case 'refresh_session_goal':/);
   assert.match(wsRoutingSource, /case 'clear_session_goal':/);
   assert.match(wsActionsSource, /processManager\.getProcess\(sessionId\)\?\.status === 'running'/);
   assert.match(wsActionsSource, /ensureSessionProcess\(\{ sessionId, userId, sendToUser, spawnConfig \}\)/);
+  assert.match(wsActionsSource, /recordGoalCommandDisplayContent\(sessionId, displayContent\)/);
+  assert.match(wsActionsSource, /sessionHistory\.recordUserMessage\(sessionId, trimmed\)/);
   assert.match(wsActionsSource, /processManager\.setSessionGoal\(sessionId, update \?\? \{\}\)/);
 });
 
@@ -141,7 +146,9 @@ test('/goal is intercepted by the composer and exposed in UI affordances', () =>
   assert.doesNotMatch(messageInputSource, /const \[goalDraft, setGoalDraft\]/);
   assert.doesNotMatch(messageInputSource, /submitGoalMode/);
   assert.match(messageInputSource, /value=\{inputValue\}/);
-  assert.match(messageInputSource, /setSessionGoal\(sessionId, command\.update, buildSpawnConfigForCurrentSession\(\)\)/);
+  assert.match(messageInputSource, /id: `temp-goal-\$\{uuidv4\(\)\}`/);
+  assert.match(messageInputSource, /role: 'user'/);
+  assert.match(messageInputSource, /setSessionGoal\(sessionId, command\.update, buildSpawnConfigForCurrentSession\(\), displayContent\)/);
   assert.match(messageInputSource, /<SessionGoalControl[\s\S]*variant="composer"/);
   assert.match(headerSource, /<SessionGoalControl sessionId=\{sessionId\} variant="header" \/>/);
   assert.match(goalCommandEventSource, /SESSION_GOAL_COMMAND_INSERT_EVENT/);
@@ -159,7 +166,7 @@ test('/goal is intercepted by the composer and exposed in UI affordances', () =>
 });
 
 test('goal auto turns use the normal running composer lifecycle', () => {
-  assert.match(wsClientHandlersSource, /containsTurnStartProgress/);
+  assert.match(wsClientHandlersSource, /replayEventsIndicateActiveTurn/);
   assert.match(wsClientHandlersSource, /startTurnInFlight\(msg\.sessionId\)/);
   assert.match(wsClientHandlersSource, /event\.progressType === 'waiting_for_task'/);
   assert.match(messageInputSource, /const isGoalRunning = Boolean/);

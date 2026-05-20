@@ -205,6 +205,7 @@ export async function routeClientTransportMessage({
         sessionId: message.sessionId,
         spawnConfig: message.spawnConfig,
         update: message.update,
+        displayContent: message.displayContent,
       });
       return;
 
@@ -214,6 +215,7 @@ export async function routeClientTransportMessage({
         sendToUser,
         sessionId: message.sessionId,
         spawnConfig: message.spawnConfig,
+        displayContent: message.displayContent,
       });
       return;
 
@@ -223,6 +225,7 @@ export async function routeClientTransportMessage({
         sendToUser,
         sessionId: message.sessionId,
         spawnConfig: message.spawnConfig,
+        displayContent: message.displayContent,
       });
       return;
 

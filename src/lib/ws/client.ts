@@ -217,25 +217,33 @@ export class WebSocketClient {
     this.sendRequest('cancel_generation', { sessionId });
   }
 
-  setSessionGoal(sessionId: string, update: SessionGoalUpdate, spawnConfig?: SessionSpawnConfig) {
+  setSessionGoal(
+    sessionId: string,
+    update: SessionGoalUpdate,
+    spawnConfig?: SessionSpawnConfig,
+    displayContent?: string,
+  ) {
     this.sendRequest('set_session_goal', {
       sessionId,
       update,
       ...(spawnConfig && { spawnConfig }),
+      ...(displayContent && { displayContent }),
     });
   }
 
-  refreshSessionGoal(sessionId: string, spawnConfig?: SessionSpawnConfig) {
+  refreshSessionGoal(sessionId: string, spawnConfig?: SessionSpawnConfig, displayContent?: string) {
     this.sendRequest('refresh_session_goal', {
       sessionId,
       ...(spawnConfig && { spawnConfig }),
+      ...(displayContent && { displayContent }),
     });
   }
 
-  clearSessionGoal(sessionId: string, spawnConfig?: SessionSpawnConfig) {
+  clearSessionGoal(sessionId: string, spawnConfig?: SessionSpawnConfig, displayContent?: string) {
     this.sendRequest('clear_session_goal', {
       sessionId,
       ...(spawnConfig && { spawnConfig }),
+      ...(displayContent && { displayContent }),
     });
   }
 
