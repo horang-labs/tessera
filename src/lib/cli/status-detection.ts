@@ -1,6 +1,7 @@
 import type { ExecResult } from './cli-exec';
 import type {
   CliCommandSource,
+  CliConnectionStatus,
   CliDetectionReason,
   CliProbeFailureKind,
   CliProbeSummary,
@@ -36,6 +37,20 @@ export function classifyAuthFailure(result: ExecResult): CliDetectionReason {
   if (result.ok) return 'connected';
   if (result.timedOut) return 'auth_timeout';
   return 'auth_failed';
+}
+
+export function classifyAuthStatus(result: ExecResult): {
+  status: CliConnectionStatus;
+  detectionReason: CliDetectionReason;
+} {
+  const detectionReason = classifyAuthFailure(result);
+  if (result.ok) {
+    return { status: 'connected', detectionReason };
+  }
+  if (!result.timedOut && result.exitCode !== null) {
+    return { status: 'needs_login', detectionReason };
+  }
+  return { status: 'not_installed', detectionReason };
 }
 
 function getProbeFailureKind(result: ExecResult): CliProbeFailureKind {
