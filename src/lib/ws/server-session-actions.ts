@@ -100,6 +100,7 @@ interface InteractiveResponseActionOptions extends SessionActionOptions {
 }
 
 interface SessionGoalActionOptions extends SessionActionOptions {
+  displayContent?: string;
   sessionId: string;
   spawnConfig?: SessionSpawnConfig;
   update?: SessionGoalUpdate;
@@ -298,6 +299,7 @@ export async function sendSessionMessageFromWebSocket({
 }
 
 export async function setSessionGoalFromWebSocket({
+  displayContent,
   sendToUser,
   sessionId,
   spawnConfig,
@@ -308,6 +310,7 @@ export async function setSessionGoalFromWebSocket({
     const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
     if (!ok) return;
 
+    recordGoalCommandDisplayContent(sessionId, displayContent);
     const goal = await processManager.setSessionGoal(sessionId, update ?? {});
     if (!goal) {
       sendToUser(userId, {
@@ -337,6 +340,7 @@ export async function setSessionGoalFromWebSocket({
 }
 
 export async function refreshSessionGoalFromWebSocket({
+  displayContent,
   sendToUser,
   sessionId,
   spawnConfig,
@@ -346,6 +350,7 @@ export async function refreshSessionGoalFromWebSocket({
     const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
     if (!ok) return;
 
+    recordGoalCommandDisplayContent(sessionId, displayContent);
     const goal = await processManager.refreshSessionGoal(sessionId);
     sendToUser(userId, goal
       ? {
@@ -370,6 +375,7 @@ export async function refreshSessionGoalFromWebSocket({
 }
 
 export async function clearSessionGoalFromWebSocket({
+  displayContent,
   sendToUser,
   sessionId,
   spawnConfig,
@@ -379,6 +385,7 @@ export async function clearSessionGoalFromWebSocket({
     const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
     if (!ok) return;
 
+    recordGoalCommandDisplayContent(sessionId, displayContent);
     const cleared = await processManager.clearSessionGoal(sessionId);
     if (!cleared) {
       sendToUser(userId, {
@@ -404,6 +411,15 @@ export async function clearSessionGoalFromWebSocket({
       message: `Failed to clear goal: ${(err as Error).message}`,
     });
   }
+}
+
+function recordGoalCommandDisplayContent(sessionId: string, displayContent?: string): void {
+  const trimmed = displayContent?.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  sessionHistory.recordUserMessage(sessionId, trimmed);
 }
 
 /**
