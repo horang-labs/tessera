@@ -1,24 +1,25 @@
 "use client";
 
-import { AlertCircle, Binary, Copy, FileCode2, FileText, GitCompare, LoaderCircle, X } from "lucide-react";
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
-import type { Highlighter, ThemedToken } from "shiki";
+import { AlertCircle, Binary, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, LoaderCircle, X } from "lucide-react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { PreviewMarkdown } from "@/components/chat/preview-markdown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
-import { useIsDark } from "@/hooks/use-is-dark";
+import { WorkspaceMonacoEditor } from "@/components/workspace/workspace-monaco-editor";
 import {
-  getHighlighterInstance,
-  highlightCodeToTokens,
-} from "@/lib/code-highlighting";
-import {
+  canUseElectronFileActions,
   copyText,
+  openFilePathOnHost,
   toAbsoluteWorkspacePath,
 } from "@/lib/workspace-tabs/file-path-actions";
-import { cn } from "@/lib/utils";
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
+
+type MarkdownViewMode = "preview" | "source";
+
+const subscribeToStaticClientValue = () => () => {};
+const getNoElectronFileActions = () => false;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -85,94 +86,55 @@ function buildWorkspaceRawFileUrl(sessionId: string, filePath: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(filePath)}&raw=1`;
 }
 
-function getDiffLineClassName(line: string): string {
-  if (line.startsWith("+") && !line.startsWith("+++")) {
-    return "bg-[#2f8753]/8 text-[#2f8753]";
-  }
-  if (line.startsWith("-") && !line.startsWith("---")) {
-    return "bg-[#c94c4c]/8 text-[#c94c4c]";
-  }
-  if (line.startsWith("@@")) {
-    return "bg-[#4a8cd6]/10 text-[#4a8cd6]";
-  }
-  if (line.startsWith("diff --git") || line.startsWith("index ")) {
-    return "text-(--text-primary)";
-  }
-  if (line.startsWith("---") || line.startsWith("+++")) {
-    return "text-[#9b7f35]";
-  }
-  return "text-(--text-secondary)";
-}
-
-function CodeLines({
-  content,
-  highlightedLines,
-  mode,
-}: {
-  content: string;
-  highlightedLines?: ThemedToken[][] | null;
-  mode: "file" | "diff";
-}) {
-  if (mode === "file" && highlightedLines) {
-    return <HighlightedCodeLines lines={highlightedLines} />;
-  }
-
-  const lines = content.split("\n");
-  return (
-    <div className="workspace-code-lines">
-      {lines.map((line, index) => (
-        <div
-          key={`${index}-${line.slice(0, 16)}`}
-          className={cn(
-            "workspace-code-line",
-            mode === "diff" ? getDiffLineClassName(line) : "text-(--text-secondary)",
-          )}
-        >
-          <span className="workspace-code-line-number">{index + 1}</span>
-          <code className="workspace-code-line-content">{line || " "}</code>
-        </div>
-      ))}
-    </div>
+function useCanUseElectronFileActions(): boolean {
+  return useSyncExternalStore(
+    subscribeToStaticClientValue,
+    canUseElectronFileActions,
+    getNoElectronFileActions,
   );
 }
 
-function getTokenStyle(token: ThemedToken): CSSProperties | undefined {
-  if (token.htmlStyle) {
-    return token.htmlStyle;
-  }
+function MarkdownModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: MarkdownViewMode;
+  onChange: (mode: MarkdownViewMode) => void;
+}) {
+  const buttonClassName = (value: MarkdownViewMode) =>
+    [
+      "inline-flex h-7 items-center gap-1.5 rounded px-2 text-[11px] font-medium transition-colors",
+      mode === value
+        ? "bg-(--chat-bg) text-(--text-primary) shadow-sm"
+        : "text-(--text-muted) hover:text-(--text-primary)",
+    ].join(" ");
 
-  const style: CSSProperties = {};
-  if (token.color) style.color = token.color;
-  if (token.bgColor) style.backgroundColor = token.bgColor;
-
-  const fontStyle = token.fontStyle ?? 0;
-  if ((fontStyle & 1) !== 0) style.fontStyle = "italic";
-  if ((fontStyle & 2) !== 0) style.fontWeight = 700;
-  if ((fontStyle & 4) !== 0) style.textDecoration = "underline";
-
-  return Object.keys(style).length > 0 ? style : undefined;
-}
-
-function HighlightedCodeLines({ lines }: { lines: ThemedToken[][] }) {
   return (
-    <div className="workspace-code-lines">
-      {lines.map((tokens, lineIndex) => (
-        <div className="workspace-code-line" key={lineIndex}>
-          <span className="workspace-code-line-number">{lineIndex + 1}</span>
-          <code className="workspace-code-line-content">
-            {tokens.length > 0
-              ? tokens.map((token, tokenIndex) => (
-                <span
-                  key={`${token.offset}-${tokenIndex}`}
-                  style={getTokenStyle(token)}
-                >
-                  {token.content}
-                </span>
-              ))
-              : " "}
-          </code>
-        </div>
-      ))}
+    <div
+      className="flex shrink-0 items-center rounded-md border border-(--divider) bg-(--sidebar-hover) p-0.5"
+      role="tablist"
+      aria-label="Markdown view mode"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === "preview"}
+        className={buttonClassName("preview")}
+        onClick={() => onChange("preview")}
+      >
+        <Eye className="h-3.5 w-3.5" />
+        <span>Preview</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === "source"}
+        className={buttonClassName("source")}
+        onClick={() => onChange("source")}
+      >
+        <Code2 className="h-3.5 w-3.5" />
+        <span>Source</span>
+      </button>
     </div>
   );
 }
@@ -218,8 +180,10 @@ export function WorkspaceCodeView({
   sourceSessionId?: string;
 }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [highlighter, setHighlighter] = useState<Highlighter | null>(null);
-  const isDark = useIsDark();
+  const [markdownModeState, setMarkdownModeState] = useState<{ mode: MarkdownViewMode; path: string }>({
+    mode: "preview",
+    path: "",
+  });
   const content =
     mode === "diff"
       ? (data as GitDiffData | null)?.diff ?? ""
@@ -232,36 +196,20 @@ export function WorkspaceCodeView({
   );
   const copied = copiedKey === `${mode}:${path}`;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const canOpenOnHost = useCanUseElectronFileActions();
   const isMarkdownFile = mode === "file" && fileData?.language === "markdown";
-  const shikiTheme = isDark ? "github-dark" : "github-light";
+  const markdownViewMode = isMarkdownFile && markdownModeState.path === path ? markdownModeState.mode : "preview";
+  const shouldRenderMarkdownPreview = isMarkdownFile && markdownViewMode === "preview";
+  const showOpenButton = canOpenOnHost && Boolean(absolutePath);
   const resolveMarkdownImageSrc = useCallback((src: string): string | null => {
     if (!sourceSessionId || isBrowserImageSrc(src)) return src;
     const assetPath = normalizeWorkspaceAssetPath(path, src);
     if (!assetPath) return null;
     return buildWorkspaceRawFileUrl(sourceSessionId, assetPath);
   }, [path, sourceSessionId]);
-  useEffect(() => {
-    if (mode !== "file" || isMarkdownFile || fileData?.binary) return undefined;
-
-    let cancelled = false;
-    getHighlighterInstance().then((h) => {
-      if (!cancelled && h) setHighlighter(h);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fileData?.binary, isMarkdownFile, mode]);
-
-  const highlightedLines = useMemo(() => {
-    if (mode !== "file" || isMarkdownFile || !highlighter) return null;
-
-    try {
-      return highlightCodeToTokens(highlighter, content, fileData?.language, shikiTheme);
-    } catch {
-      return null;
-    }
-  }, [content, fileData?.language, highlighter, isMarkdownFile, mode, shikiTheme]);
+  const handleMarkdownViewModeChange = useCallback((nextMode: MarkdownViewMode) => {
+    setMarkdownModeState({ mode: nextMode, path });
+  }, [path]);
 
   async function copyContent() {
     try {
@@ -326,6 +274,24 @@ export function WorkspaceCodeView({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {isMarkdownFile ? (
+            <MarkdownModeToggle mode={markdownViewMode} onChange={handleMarkdownViewModeChange} />
+          ) : null}
+          {showOpenButton ? (
+            <Tooltip content="Open">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 shrink-0 px-2.5"
+                onClick={() => openFilePathOnHost(absolutePath)}
+                aria-label={`Open ${path}`}
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span>Open</span>
+              </Button>
+            </Tooltip>
+          ) : null}
           <Tooltip content={copied ? "Copied" : "Copy"}>
             <Button
               type="button"
@@ -368,16 +334,18 @@ export function WorkspaceCodeView({
           ) : null}
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {isMarkdownFile ? (
+      <div className={shouldRenderMarkdownPreview ? "min-h-0 flex-1 overflow-auto" : "min-h-0 flex-1 overflow-hidden"}>
+        {shouldRenderMarkdownPreview ? (
           <div className="mx-auto w-full max-w-4xl px-6 py-5 text-sm">
             <PreviewMarkdown content={content} resolveImageSrc={resolveMarkdownImageSrc} />
           </div>
         ) : (
-          <CodeLines
+          <WorkspaceMonacoEditor
             content={content}
-            highlightedLines={highlightedLines}
+            language={mode === "diff" ? "git-diff" : fileData?.language}
             mode={mode}
+            path={path}
+            readOnly
           />
         )}
       </div>
