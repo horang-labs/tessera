@@ -294,8 +294,8 @@ export function WorkspaceCodeView({
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {isMarkdownFile ? (
-          <div className="mx-auto w-full max-w-4xl px-6 py-5 text-sm">
-            <PreviewMarkdown content={content} resolveImageSrc={resolveMarkdownImageSrc} />
+          <div className="mx-auto w-full max-w-5xl px-6 py-8 text-base">
+            <PreviewMarkdown content={content} resolveImageSrc={resolveMarkdownImageSrc} variant="document" />
           </div>
         ) : (
           <CodeLines content={content} mode={mode} />
