@@ -88,6 +88,7 @@
     "i18next": "^25.8.13",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.563.0",
+    "monaco-editor": "^0.55.1",
     "next": "^16.2.3",
     "node-pty": "^1.1.0",
     "pino": "^8.18.0",

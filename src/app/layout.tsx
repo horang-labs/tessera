@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import ThemeInitializer from '@/components/theme-initializer';
 import '@xterm/xterm/css/xterm.css';
+import 'monaco-editor/min/vs/editor/editor.main.css';
 import './globals.css';
 import { I18nHtmlLang } from '@/components/i18n-html-lang';
 import { Agentation } from 'agentation';
