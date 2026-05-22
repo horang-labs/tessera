@@ -16,6 +16,7 @@ type PreviewMarkdownCodeProps = ComponentProps<'code'> & { node?: unknown };
 type PreviewMarkdownImageProps = ComponentProps<'img'> & { node?: unknown };
 type PreviewMarkdownTableCellProps = ComponentProps<'td'> & { node?: unknown; width?: number | string };
 type PreviewMarkdownTableHeaderProps = ComponentProps<'th'> & { node?: unknown; width?: number | string };
+type PreviewMarkdownVariant = 'compact' | 'document';
 
 function mergeUnique<T>(...lists: Array<ReadonlyArray<T> | null | undefined>): T[] {
   return Array.from(new Set(lists.flatMap((list) => list ?? [])));
@@ -54,28 +55,28 @@ function normalizeTableCellWidth(width: number | string | undefined): string | u
 const BASE_PREVIEW_MARKDOWN_COMPONENTS: Components = {
   h1({ children }) {
     return (
-      <h1 className="mb-2 mt-0 text-lg font-semibold leading-7 text-(--text-primary)">
+      <h1 className="mb-2 mt-0 text-xl font-semibold leading-7 text-(--text-primary)">
         {children}
       </h1>
     );
   },
   h2({ children }) {
     return (
-      <h2 className="mb-1.5 mt-3 text-base font-semibold leading-6 text-(--text-primary) first:mt-0">
+      <h2 className="mb-1.5 mt-3 text-lg font-semibold leading-7 text-(--text-primary) first:mt-0">
         {children}
       </h2>
     );
   },
   h3({ children }) {
     return (
-      <h3 className="mb-1 mt-2.5 text-sm font-medium leading-5 text-(--text-primary) first:mt-0">
+      <h3 className="mb-1 mt-2.5 text-base font-semibold leading-6 text-(--text-primary) first:mt-0">
         {children}
       </h3>
     );
   },
   h4({ children }) {
     return (
-      <h4 className="mb-1 mt-2 text-xs font-semibold uppercase leading-5 text-(--text-muted) first:mt-0">
+      <h4 className="mb-1 mt-2 text-sm font-semibold uppercase leading-5 text-(--text-muted) first:mt-0">
         {children}
       </h4>
     );
@@ -186,18 +187,138 @@ const BASE_PREVIEW_MARKDOWN_COMPONENTS: Components = {
   },
 };
 
+const DOCUMENT_PREVIEW_MARKDOWN_COMPONENTS: Components = {
+  ...BASE_PREVIEW_MARKDOWN_COMPONENTS,
+  h1({ children }) {
+    return (
+      <h1 className="mb-5 mt-10 border-b border-(--divider) pb-3 text-4xl font-bold leading-[1.15] text-(--text-primary) first:mt-0">
+        {children}
+      </h1>
+    );
+  },
+  h2({ children }) {
+    return (
+      <h2 className="mb-3 mt-9 border-b border-(--divider) pb-2 text-2xl font-bold leading-tight text-(--text-primary) first:mt-0">
+        {children}
+      </h2>
+    );
+  },
+  h3({ children }) {
+    return (
+      <h3 className="mb-2 mt-6 text-xl font-semibold leading-7 text-(--text-primary) first:mt-0">
+        {children}
+      </h3>
+    );
+  },
+  h4({ children }) {
+    return (
+      <h4 className="mb-2 mt-5 text-lg font-semibold leading-7 text-(--text-primary) first:mt-0">
+        {children}
+      </h4>
+    );
+  },
+  p({ children }) {
+    return <p className="my-3 text-base leading-7 text-(--text-secondary) first:mt-0 last:mb-0">{children}</p>;
+  },
+  ul({ children }) {
+    return (
+      <ul className="my-3 ml-5 list-disc space-y-1.5 text-base leading-7 text-(--text-secondary) marker:text-(--text-muted) first:mt-0 last:mb-0">
+        {children}
+      </ul>
+    );
+  },
+  ol({ children }) {
+    return (
+      <ol className="my-3 ml-5 list-decimal space-y-1.5 text-base leading-7 text-(--text-secondary) marker:text-(--text-muted) first:mt-0 last:mb-0">
+        {children}
+      </ol>
+    );
+  },
+  li({ children }) {
+    return (
+      <li className="pl-1 leading-7 text-(--text-secondary) [&>ol]:my-1.5 [&>p]:my-1 [&>ul]:my-1.5">
+        {children}
+      </li>
+    );
+  },
+  blockquote({ children }) {
+    return (
+      <blockquote className="my-4 rounded-r-md border-l-3 border-(--accent)/60 bg-(--accent)/5 py-2 pl-4 pr-3 text-base leading-7 text-(--text-secondary) [&>p]:my-0">
+        {children}
+      </blockquote>
+    );
+  },
+  hr() {
+    return <hr className="my-8 border-(--divider)" />;
+  },
+  table({ children }) {
+    return (
+      <div className="my-5 overflow-x-auto rounded-md border border-(--divider) first:mt-0 last:mb-0">
+        <table className="w-full border-collapse text-sm">{children}</table>
+      </div>
+    );
+  },
+  th({ children, align, colSpan, rowSpan, width }: PreviewMarkdownTableHeaderProps) {
+    const normalizedWidth = normalizeTableCellWidth(width);
+    return (
+      <th
+        align={align}
+        colSpan={colSpan}
+        rowSpan={rowSpan}
+        style={normalizedWidth ? { width: normalizedWidth } : undefined}
+        className="border-b border-(--divider) px-3 py-2 text-left text-sm font-semibold text-(--text-primary)"
+      >
+        {children}
+      </th>
+    );
+  },
+  td({ children, align, colSpan, rowSpan, width }: PreviewMarkdownTableCellProps) {
+    const normalizedWidth = normalizeTableCellWidth(width);
+    return (
+      <td
+        align={align}
+        colSpan={colSpan}
+        rowSpan={rowSpan}
+        style={normalizedWidth ? { width: normalizedWidth } : undefined}
+        className="border-b border-(--divider) px-3 py-2 text-sm leading-6 text-(--text-secondary)"
+      >
+        {children}
+      </td>
+    );
+  },
+  code({ className, children, ...props }: PreviewMarkdownCodeProps) {
+    return renderMarkdownCode(
+      { className, children, ...props },
+      {
+        inlineClassName: 'rounded bg-(--tool-param-bg) px-1.5 py-0.5 font-mono text-[0.95em] text-(--accent-light)',
+      },
+    );
+  },
+};
+
 interface PreviewMarkdownProps {
   content: string;
   resolveImageSrc?: (src: string) => string | null;
+  variant?: PreviewMarkdownVariant;
 }
 
-function createPreviewMarkdownComponents(resolveImageSrc?: (src: string) => string | null): Components {
+function createPreviewMarkdownComponents(
+  resolveImageSrc?: (src: string) => string | null,
+  variant: PreviewMarkdownVariant = 'compact',
+): Components {
+  const baseComponents = variant === 'document'
+    ? DOCUMENT_PREVIEW_MARKDOWN_COMPONENTS
+    : BASE_PREVIEW_MARKDOWN_COMPONENTS;
+
   return {
-    ...BASE_PREVIEW_MARKDOWN_COMPONENTS,
+    ...baseComponents,
     img({ src, alt, title }: PreviewMarkdownImageProps) {
       const rawSrc = typeof src === 'string' ? src : '';
       const resolvedSrc = rawSrc && resolveImageSrc ? resolveImageSrc(rawSrc) : rawSrc;
       if (!resolvedSrc) return null;
+      const imageClassName = variant === 'document'
+        ? 'my-5 max-h-[36rem] max-w-full rounded-md border border-(--divider) object-contain first:mt-0 last:mb-0'
+        : 'my-3 max-h-[32rem] max-w-full rounded-md border border-(--divider) object-contain first:mt-0 last:mb-0';
 
       return (
         <img
@@ -205,15 +326,18 @@ function createPreviewMarkdownComponents(resolveImageSrc?: (src: string) => stri
           alt={alt ?? ''}
           title={title}
           loading="lazy"
-          className="my-3 max-h-[32rem] max-w-full rounded-md border border-(--divider) object-contain first:mt-0 last:mb-0"
+          className={imageClassName}
         />
       );
     },
   };
 }
 
-export function PreviewMarkdown({ content, resolveImageSrc }: PreviewMarkdownProps) {
-  const components = useMemo(() => createPreviewMarkdownComponents(resolveImageSrc), [resolveImageSrc]);
+export function PreviewMarkdown({ content, resolveImageSrc, variant = 'compact' }: PreviewMarkdownProps) {
+  const components = useMemo(
+    () => createPreviewMarkdownComponents(resolveImageSrc, variant),
+    [resolveImageSrc, variant],
+  );
 
   return (
     <ReactMarkdown
