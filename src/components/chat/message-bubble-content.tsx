@@ -117,13 +117,13 @@ const MARKDOWN_COMPONENTS: Components = {
     return <p className="mb-2 last:mb-0">{children}</p>;
   },
   ul({ children }) {
-    return <ul className="list-disc list-inside my-2 space-y-1">{children}</ul>;
+    return <ul className="ml-4 list-disc my-2 space-y-1 marker:text-(--text-muted)">{children}</ul>;
   },
   ol({ children }) {
-    return <ol className="list-decimal list-inside my-2 space-y-1">{children}</ol>;
+    return <ol className="ml-4 list-decimal my-2 space-y-1 marker:text-(--text-muted)">{children}</ol>;
   },
   li({ children }) {
-    return <li className="text-(--msg-assistant-text)">{children}</li>;
+    return <li className="pl-1 text-(--msg-assistant-text) [&>p]:mb-0">{children}</li>;
   },
   a({ href, children }) {
     return (
@@ -161,13 +161,13 @@ const MARKDOWN_COMPONENTS: Components = {
     return <hr className="my-3 border-(--divider)" />;
   },
   h1({ children }) {
-    return <h1 className="text-xl font-bold mt-4 mb-2 text-(--text-primary)">{children}</h1>;
+    return <h1 className="text-2xl font-bold mt-5 mb-2 text-(--text-primary) leading-tight">{children}</h1>;
   },
   h2({ children }) {
-    return <h2 className="text-lg font-bold mt-3 mb-2 text-(--text-primary)">{children}</h2>;
+    return <h2 className="text-xl font-bold mt-4 mb-2 text-(--text-primary) leading-tight">{children}</h2>;
   },
   h3({ children }) {
-    return <h3 className="text-base font-bold mt-3 mb-1 text-(--text-primary)">{children}</h3>;
+    return <h3 className="text-lg font-semibold mt-3 mb-1 text-(--text-primary) leading-snug">{children}</h3>;
   },
 };
 
