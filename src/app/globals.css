@@ -627,37 +627,6 @@ body {
   line-height: inherit;
 }
 
-/* Workspace file code view */
-.workspace-code-lines {
-  min-width: max-content;
-  padding: 0.625rem 0;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Consolas', monospace;
-  font-size: 0.8125rem;
-  line-height: 1.25rem;
-}
-
-.workspace-code-line {
-  display: grid;
-  grid-template-columns: 4rem minmax(0, 1fr);
-  min-height: 1.25rem;
-  font: inherit;
-}
-
-.workspace-code-line-number {
-  border-right: 1px solid var(--divider);
-  color: var(--text-muted);
-  opacity: 0.7;
-  padding: 0 0.75rem;
-  text-align: right;
-  user-select: none;
-}
-
-.workspace-code-line-content {
-  padding: 0 1rem;
-  font: inherit;
-  white-space: pre;
-}
-
 /* Message enter animation */
 @keyframes message-in {
   from {
