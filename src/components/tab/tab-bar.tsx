@@ -516,7 +516,7 @@ export const TabBar = memo(function TabBar() {
       {/* Spacer — keep this area draggable for frameless Electron windows. */}
       <div
         className={cn(
-          'flex-1 transition-colors',
+          'electron-drag flex-1 transition-colors',
           isCreateTabDragOver && 'bg-(--accent)/10',
         )}
         onDragOver={handleCreateTabDragOver}
