@@ -58,13 +58,22 @@ export const AppHeader = memo(function AppHeader() {
           {shouldShowProjectContext ? (
             <>
               <div
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[0.6875rem] font-bold leading-none text-white shadow-sm"
+                className={cn(
+                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[0.6875rem] font-bold leading-none text-white shadow-sm',
+                  isElectronTitlebar && 'electron-drag pointer-events-none',
+                )}
                 style={{ backgroundColor: getProjectColor(projectDisplayName) }}
                 aria-hidden="true"
               >
                 {projectInitial}
               </div>
-              <div className="min-w-0 flex-1" title={projectTitle}>
+              <div
+                className={cn(
+                  'min-w-0 flex-1',
+                  isElectronTitlebar && 'electron-drag pointer-events-none',
+                )}
+                title={projectTitle}
+              >
                 <div className="truncate text-[0.875rem] font-semibold leading-5 text-(--sidebar-text-active)">
                   {projectDisplayName}
                 </div>
