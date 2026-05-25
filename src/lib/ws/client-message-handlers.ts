@@ -79,6 +79,7 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'replay_events':
+      sessionStore.touchSessionActivity(msg.sessionId, getLatestReplayEventTimestamp(msg.events));
       if (shouldStartTurnFromReplayEvents(sessionStore, msg.sessionId, msg.events)) {
         startTurnInFlight(msg.sessionId);
         sessionStore.updateSessionStatus(msg.sessionId, 'running');
@@ -87,6 +88,7 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'notification':
+      sessionStore.touchSessionActivity(msg.sessionId);
       handleNotificationMessage(msg, sessionStore.activeSessionId);
       if (msg.event === 'completed') {
         finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
@@ -102,6 +104,7 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'interactive_prompt':
+      sessionStore.touchSessionActivity(msg.sessionId);
       handleInteractivePromptMessage(msg, sessionStore.activeSessionId);
       return { wasReconnect };
 
@@ -286,6 +289,19 @@ function replayEventsIndicateActiveTurn(
         return false;
     }
   });
+}
+
+function getLatestReplayEventTimestamp(
+  events: Extract<ServerTransportMessage, { type: 'replay_events' }>['events'],
+): string | undefined {
+  let latest: string | undefined;
+  for (const event of events) {
+    if (!event.timestamp) continue;
+    if (!latest || event.timestamp > latest) {
+      latest = event.timestamp;
+    }
+  }
+  return latest;
 }
 
 function shouldStartTurnFromReplayEvents(

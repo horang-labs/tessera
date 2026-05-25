@@ -11,6 +11,12 @@ import {
   shouldAutoRegisterCurrentProject,
 } from '@/lib/projects/current-project';
 import logger from '@/lib/logger';
+import { getSessionHistoryModifiedAt } from '@/lib/session-history';
+
+function maxActivityTimestamp(left: string, right: string | null): string {
+  if (!right) return left;
+  return right > left ? right : left;
+}
 
 /**
  * GET /api/sessions/projects
@@ -66,6 +72,7 @@ export async function GET(req: NextRequest) {
 
       const sessions = result.sessions.map((row) => ({
         ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
+        lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
       }));

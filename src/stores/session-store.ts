@@ -33,6 +33,7 @@ interface SessionState {
   upsertSession: (session: UnifiedSession) => void;
   removeProject: (encodedDir: string) => void;
   updateSessionTitle: (sessionId: string, title: string, hasCustomTitle?: boolean) => void;
+  touchSessionActivity: (sessionId: string, touchedAt?: string) => void;
   updateSessionStatus: (sessionId: string, status: SessionStatus) => void;
   markSessionReadOnly: (sessionId: string, isReadOnly: boolean) => void;
   markSessionRunning: (
@@ -632,6 +633,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         ),
       })),
     })),
+
+  touchSessionActivity: (sessionId, touchedAt) =>
+    set((state) => {
+      const nextTouchedAt = touchedAt ?? new Date().toISOString();
+      return {
+        projects: state.projects.map((project) => ({
+          ...project,
+          sessions: project.sessions.map((session) => {
+            if (session.id !== sessionId) return session;
+            if (session.lastModified && session.lastModified >= nextTouchedAt) return session;
+            return { ...session, lastModified: nextTouchedAt };
+          }),
+        })),
+      };
+    }),
 
   updateSessionStatus: (sessionId, status) =>
     set((state) => ({
