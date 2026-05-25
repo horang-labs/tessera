@@ -560,10 +560,14 @@ export function extractOpenCodeSessionId(providerState: string | null): string |
 
 /**
  * Touch session updated_at (e.g., when a message is received).
+ * Keeps the existing timestamp if the supplied activity timestamp is older.
  */
-export function touchSession(id: string): void {
-  getDb().prepare('UPDATE sessions SET updated_at = ? WHERE id = ?')
-    .run(new Date().toISOString(), id);
+export function touchSession(id: string, touchedAt = new Date().toISOString()): void {
+  getDb().prepare(`
+    UPDATE sessions
+    SET updated_at = CASE WHEN updated_at < ? THEN ? ELSE updated_at END
+    WHERE id = ?
+  `).run(touchedAt, touchedAt, id);
 }
 
 /**
