@@ -426,8 +426,8 @@ function getDefaultActiveSessionMode(providerId: string): ProviderSessionMode {
   return isOpenCodeProvider(providerId) ? 'build' : 'work';
 }
 
-function isPreStartSession(session: UnifiedSession): boolean {
-  return !session.isRunning && session.hasStarted !== true;
+function shouldPersistDefaultsForSession(session: UnifiedSession): boolean {
+  return !session.isRunning;
 }
 
 function getAccessOptions(
@@ -540,7 +540,7 @@ function ComposerSessionControlsInner({
   ) => {
     const runtimeControls = buildRuntimeControls(providerIdForSticky, nextSessionMode, nextAccessMode);
 
-    if (isPreStartSession(session)) {
+    if (shouldPersistDefaultsForSession(session)) {
       void updateSettings({
         ...buildProviderSessionDefaultsUpdate(
           useSettingsStore.getState().settings,
@@ -608,7 +608,7 @@ function ComposerSessionControlsInner({
     setModel(nextModel);
     setRequestedReasoningEffort(nextReasoningEffort);
 
-    if (isPreStartSession(session)) {
+    if (shouldPersistDefaultsForSession(session)) {
       // Sticky persistence — next new session will use this as default, and the
       // first send_message of an unspawned session will pull from here too.
       void updateSettings(
@@ -643,7 +643,7 @@ function ComposerSessionControlsInner({
   const handleReasoningEffortChange = (nextReasoningEffort: string) => {
     setRequestedReasoningEffort(nextReasoningEffort);
 
-    if (isPreStartSession(session)) {
+    if (shouldPersistDefaultsForSession(session)) {
       void updateSettings(
         buildProviderSessionDefaultsUpdate(
           useSettingsStore.getState().settings,
