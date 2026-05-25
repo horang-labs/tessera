@@ -46,15 +46,7 @@ async function resolveRuntimeModelDefaults(
     return options;
   }
 
-  const hasLegacyCodexDefault =
-    providerId === 'codex'
-    &&
-    options.model === 'gpt-5.4'
-    && (
-      options.reasoningEffort === 'medium'
-      || options.reasoningEffort == null
-    );
-  if (providerId === 'codex' && options.model && options.reasoningEffort && !hasLegacyCodexDefault) {
+  if (providerId === 'codex' && options.model && options.reasoningEffort) {
     return options;
   }
 
@@ -64,8 +56,8 @@ async function resolveRuntimeModelDefaults(
 
   try {
     const sessionOptions = await getProviderSessionOptions(providerId, userId);
-    const requestedModel = hasLegacyCodexDefault ? undefined : options.model;
-    const requestedReasoningEffort = hasLegacyCodexDefault ? null : options.reasoningEffort;
+    const requestedModel = options.model;
+    const requestedReasoningEffort = options.reasoningEffort;
     const modelOption = resolveProviderModelOption(providerId, sessionOptions, requestedModel);
 
     if (!modelOption) {
