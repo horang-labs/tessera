@@ -18,6 +18,22 @@ const composerSessionControlsSource = fs.readFileSync(
   new URL('../src/components/chat/composer-session-controls.tsx', import.meta.url),
   'utf8',
 );
+const providerDefaultsSource = fs.readFileSync(
+  new URL('../src/lib/settings/provider-defaults.ts', import.meta.url),
+  'utf8',
+);
+const sessionLifecycleSource = fs.readFileSync(
+  new URL('../src/lib/session/session-orchestrator-lifecycle.ts', import.meta.url),
+  'utf8',
+);
+const collectionGroupSource = fs.readFileSync(
+  new URL('../src/components/chat/collection-group.tsx', import.meta.url),
+  'utf8',
+);
+const kanbanBoardSource = fs.readFileSync(
+  new URL('../src/components/board/kanban-board.tsx', import.meta.url),
+  'utf8',
+);
 
 test('sessions expose whether provider conversation state has started', () => {
   assert.match(chatTypesSource, /hasStarted\?: boolean/);
@@ -29,6 +45,23 @@ test('sessions expose whether provider conversation state has started', () => {
 });
 
 test('pre-start model changes persist defaults and update the pending session', () => {
+  assert.match(composerSessionControlsSource, /function isPreStartSession/);
   assert.match(composerSessionControlsSource, /return !session\.isRunning && session\.hasStarted !== true/);
   assert.match(composerSessionControlsSource, /buildProviderSessionDefaultsUpdate\([\s\S]*\{ model: nextModel, reasoningEffort: nextReasoningEffort \}[\s\S]*updateSessionRuntimeConfig\(sessionId, \{\s*model: nextModel,\s*reasoningEffort: nextReasoningEffort,/);
+});
+
+test('provider option loading does not auto-save model defaults', () => {
+  assert.doesNotMatch(composerSessionControlsSource, /providerDefaults\.model/);
+  assert.doesNotMatch(composerSessionControlsSource, /providerDefaults\.reasoningEffort/);
+  assert.doesNotMatch(composerSessionControlsSource, /patch\.model = providerDefaultsWithOptions\.model/);
+});
+
+test('Codex model defaults are not special-cased by model id', () => {
+  assert.doesNotMatch(providerDefaultsSource, /rawCodexProviderDefaults\.model === 'gpt-5\.4'/);
+  assert.doesNotMatch(sessionLifecycleSource, /hasLegacyCodexDefault/);
+});
+
+test('deferred session creation stays pre-start until the provider starts', () => {
+  assert.match(collectionGroupSource, /isRunning: false,[\s\S]*hasStarted: false,[\s\S]*status: sessionData\.status \|\| 'starting'/);
+  assert.match(kanbanBoardSource, /isRunning: false,[\s\S]*hasStarted: false,[\s\S]*status: data\.status \|\| 'starting'/);
 });
