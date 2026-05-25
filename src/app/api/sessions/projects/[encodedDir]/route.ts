@@ -7,6 +7,12 @@ import * as dbSessions from '@/lib/db/sessions';
 import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
+import { getSessionHistoryModifiedAt } from '@/lib/session-history';
+
+function maxActivityTimestamp(left: string, right: string | null): string {
+  if (!right) return left;
+  return right > left ? right : left;
+}
 
 /**
  * GET /api/sessions/projects/:encodedDir
@@ -67,6 +73,7 @@ export async function GET(
 
     const mapped = result.sessions.map((row) => ({
       ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
+      lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
       ...(runtimeConfigs.get(row.id) ?? {}),
     }));
     // Diff badge is only meaningful for sessions bound to a worktree branch.

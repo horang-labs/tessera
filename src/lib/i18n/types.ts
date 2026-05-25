@@ -683,6 +683,9 @@ export interface I18nMessages {
     collapse: string;
     removeFromSidebar: string;
     createNewSession: string;
+    recentWork: string;
+    recentChat: string;
+    recentTask: string;
     showMore: string;
     noSessions: string;
     dragSessionToReference: string;
