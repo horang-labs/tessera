@@ -44,9 +44,9 @@ test('sessions expose whether provider conversation state has started', () => {
   assert.match(sessionStoreSource, /hasStarted: true/);
 });
 
-test('pre-start model changes persist defaults and update the pending session', () => {
-  assert.match(composerSessionControlsSource, /function isPreStartSession/);
-  assert.match(composerSessionControlsSource, /return !session\.isRunning && session\.hasStarted !== true/);
+test('non-running model changes persist defaults and update the selected session', () => {
+  assert.match(composerSessionControlsSource, /function shouldPersistDefaultsForSession/);
+  assert.match(composerSessionControlsSource, /return !session\.isRunning/);
   assert.match(composerSessionControlsSource, /buildProviderSessionDefaultsUpdate\([\s\S]*\{ model: nextModel, reasoningEffort: nextReasoningEffort \}[\s\S]*updateSessionRuntimeConfig\(sessionId, \{\s*model: nextModel,\s*reasoningEffort: nextReasoningEffort,/);
 });
 
