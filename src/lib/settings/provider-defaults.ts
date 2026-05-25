@@ -562,16 +562,6 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     ...defaults.providerDefaults.codex,
     ...rawCodexProviderDefaults,
   };
-  if (
-    rawCodexProviderDefaults.model === 'gpt-5.4'
-    && (
-      rawCodexProviderDefaults.reasoningEffort === 'medium'
-      || rawCodexProviderDefaults.reasoningEffort == null
-    )
-  ) {
-    delete codexProviderDefaults.model;
-    delete codexProviderDefaults.reasoningEffort;
-  }
 
   const providerDefaults = {
     ...defaults.providerDefaults,
