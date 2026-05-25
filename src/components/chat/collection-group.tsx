@@ -118,6 +118,11 @@ async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) 
   }
 }
 
+export type CollectionGroupOrderedItem = {
+  type: 'task' | 'chat';
+  id: string;
+};
+
 export interface CollectionGroupProps {
   collection: Collection | null;
   contextMenuCollections?: Collection[];
@@ -125,6 +130,7 @@ export interface CollectionGroupProps {
   projectDir: string;
   tasks: TaskEntity[];
   chats: UnifiedSession[];
+  orderedItems?: CollectionGroupOrderedItem[];
   collapsed: boolean;
   onToggleCollapse: () => void;
   onSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
@@ -176,6 +182,9 @@ export interface CollectionGroupProps {
   disableDnd?: boolean;
   allowPanelSessionDnd?: boolean;
   hideHeader?: boolean;
+  groupIdOverride?: string;
+  headerLabel?: string;
+  hideHeaderActions?: boolean;
 }
 
 export const CollectionGroup = memo(function CollectionGroup({
@@ -185,6 +194,7 @@ export const CollectionGroup = memo(function CollectionGroup({
   projectDir,
   tasks,
   chats,
+  orderedItems,
   collapsed,
   onToggleCollapse,
   onSessionClick,
@@ -219,12 +229,15 @@ export const CollectionGroup = memo(function CollectionGroup({
   disableDnd = false,
   allowPanelSessionDnd = false,
   hideHeader = false,
+  groupIdOverride,
+  headerLabel,
+  hideHeaderActions = false,
 }: CollectionGroupProps) {
   const { t } = useI18n();
-  const isUncategorized = collection === null;
-  const collectionLabel = collection?.label ?? t('task.creation.noCollection');
+  const isUncategorized = collection === null && !groupIdOverride;
+  const collectionLabel = headerLabel ?? collection?.label ?? t('task.creation.noCollection');
   const totalItems = tasks.length + chats.length;
-  const collectionId = collection?.id ?? '__uncategorized';
+  const collectionId = groupIdOverride ?? collection?.id ?? '__uncategorized';
   const collectionScopeId = `${projectId}::${collectionId}`;
   const justDroppedId = useBoardStore((state) => state.justDroppedId);
   const draggingItemId = useBoardStore((state) => state.draggingCollectionItem?.id);
@@ -288,6 +301,8 @@ export const CollectionGroup = memo(function CollectionGroup({
 
   const editInputRef = useRef<HTMLInputElement>(null);
   const quickCreateTriggerRef = useRef<HTMLButtonElement>(null);
+  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const chatById = useMemo(() => new Map(chats.map((session) => [session.id, session])), [chats]);
 
   const openItemContextMenu = useCallback(
     (
@@ -297,13 +312,16 @@ export const CollectionGroup = memo(function CollectionGroup({
       currentCollectionId: string | null,
       isSubSession?: boolean,
     ) => {
+      const task = type === 'task'
+        ? useTaskStore.getState().getTask(id) ?? taskById.get(id)
+        : undefined;
       const isRunning =
         type === 'chat'
           ? useSessionStore.getState().getSession(id)?.isRunning ?? false
-          : useTaskStore.getState().getTask(id)?.sessions.some((session) => session.isRunning) ?? false;
+          : task?.sessions.some((session) => session.isRunning) ?? false;
 
       const currentStatus =
-        type === 'task' ? (useTaskStore.getState().getTask(id)?.workflowStatus ?? 'todo') : undefined;
+        type === 'task' ? (task?.workflowStatus ?? 'todo') : undefined;
 
       setContextMenu({
         x: event.clientX,
@@ -316,7 +334,7 @@ export const CollectionGroup = memo(function CollectionGroup({
         currentStatus,
       });
     },
-    [],
+    [taskById],
   );
 
   const startEditingCollection = useCallback(() => {
@@ -376,15 +394,18 @@ export const CollectionGroup = memo(function CollectionGroup({
   const handleContextMenuGenerateTitle = useCallback(() => {
     if (!contextMenu || !onSessionGenerateTitle) return;
 
+    const task = contextMenu.type === 'task'
+      ? useTaskStore.getState().getTask(contextMenu.targetId) ?? taskById.get(contextMenu.targetId)
+      : undefined;
     const targetSessionId =
       contextMenu.type === 'task'
-        ? useTaskStore.getState().getTask(contextMenu.targetId)?.sessions[0]?.id
+        ? task?.sessions[0]?.id
         : contextMenu.targetId;
 
     if (targetSessionId) {
       onSessionGenerateTitle(targetSessionId);
     }
-  }, [contextMenu, onSessionGenerateTitle]);
+  }, [contextMenu, onSessionGenerateTitle, taskById]);
 
   const handleContextMenuStopProcess = useCallback(() => {
     if (!contextMenu || !onSessionStopProcess) return;
@@ -394,14 +415,66 @@ export const CollectionGroup = memo(function CollectionGroup({
       return;
     }
 
-    const task = useTaskStore.getState().getTask(contextMenu.targetId) ?? tasks.find((item) => item.id === contextMenu.targetId);
+    const task = useTaskStore.getState().getTask(contextMenu.targetId) ?? taskById.get(contextMenu.targetId);
     for (const session of task?.sessions ?? []) {
       const liveSession = useSessionStore.getState().getSession(session.id);
       if (liveSession?.isRunning ?? session.isRunning) {
         onSessionStopProcess(session.id);
       }
     }
-  }, [contextMenu, onSessionStopProcess, tasks]);
+  }, [contextMenu, onSessionStopProcess, taskById]);
+
+  const renderTaskRow = (task: TaskEntity) => (
+    <TaskItemRow
+      key={`task:${task.id}`}
+      task={task}
+      activeSessionId={activeSessionId}
+      onSessionClick={onSessionClick}
+      onSessionDoubleClick={onSessionDoubleClick}
+      onContextMenu={openItemContextMenu}
+      isDragging={draggingItemId === task.id}
+      isJustDropped={justDroppedId === task.id}
+      dropIndicatorBefore={dropIndicator?.targetId === task.id && dropIndicator.position === 'before'}
+      dropIndicatorAfter={dropIndicator?.targetId === task.id && dropIndicator.position === 'after'}
+      onDragStart={(event) => onItemDragStart('task', task.id, task.collectionId ?? null, projectId, event)}
+      onDragEnd={onItemDragEnd}
+      onDragOverItem={(event) => onItemDragOverItem(task.id, collectionScopeId, 'task', projectId, event)}
+      onRename={onTaskRename}
+      onSessionRename={onSessionRename}
+      renamingSessionId={renamingItem?.type === 'chat' ? renamingItem.id : null}
+      isRenameRequested={renamingItem?.type === 'task' && renamingItem.id === task.id}
+      onRenameComplete={finishItemRename}
+      onAddSession={(providerId) => addSessionToTask(task, providerId)}
+      onStopProcess={onSessionStopProcess}
+      disableDnd={disableDnd}
+      allowPanelSessionDnd={allowPanelSessionDnd}
+    />
+  );
+
+  const renderChatRow = (session: UnifiedSession) => (
+    <ChatItemRow
+      key={`chat:${session.id}`}
+      session={session}
+      activeSessionId={activeSessionId}
+      onSessionClick={onSessionClick}
+      onSessionDoubleClick={onSessionDoubleClick}
+      onContextMenu={openItemContextMenu}
+      isDragging={draggingItemId === session.id}
+      isJustDropped={justDroppedId === session.id}
+      dropIndicatorBefore={dropIndicator?.targetId === session.id && dropIndicator.position === 'before'}
+      dropIndicatorAfter={dropIndicator?.targetId === session.id && dropIndicator.position === 'after'}
+      onDragStart={(event) => onItemDragStart('chat', session.id, session.collectionId ?? null, projectId, event)}
+      onDragEnd={onItemDragEnd}
+      onDragOverItem={(event) => onItemDragOverItem(session.id, collectionScopeId, 'chat', projectId, event)}
+      onRename={onSessionRename}
+      isRenameRequested={renamingItem?.type === 'chat' && renamingItem.id === session.id}
+      onRenameComplete={finishItemRename}
+      onArchive={onSessionArchive}
+      onStopProcess={onSessionStopProcess}
+      disableDnd={disableDnd}
+      allowPanelSessionDnd={allowPanelSessionDnd}
+    />
+  );
 
   return (
     <div
@@ -450,88 +523,90 @@ export const CollectionGroup = memo(function CollectionGroup({
           onClick={isEmpty ? undefined : onToggleCollapse}
           data-testid={`collection-header-${collectionId}`}
         >
-        <div className="relative h-3 w-3 shrink-0">
-          {isEmpty ? (
-            <Tag className="absolute inset-0 h-3 w-3 text-(--text-muted)" />
-          ) : (
-            <>
-              <Tag className="absolute inset-0 h-3 w-3 text-(--text-muted) transition-opacity duration-150 group-hover/collection:opacity-0" />
-              <ChevronRight
-                className={cn(
-                  'absolute inset-0 h-3 w-3 text-(--text-muted) opacity-0 transition-all duration-150 group-hover/collection:opacity-100',
-                  !isCollapsed && 'rotate-90',
-                )}
-              />
-            </>
-          )}
-          {collectionIndicatorStatus && isCollapsed && (
-            <span data-testid={`collection-status-indicator-${collectionId}`}>
-              <ItemStatusIndicator
-                isProcessing={collectionIndicatorStatus === 'processing'}
-                isAwaitingUser={collectionIndicatorStatus === 'awaiting-user'}
-                hasUnread={collectionIndicatorStatus === 'unread'}
-                isRunning={collectionIndicatorStatus === 'running'}
-                placement="corner"
-                surface="sidebar"
-              />
-            </span>
-          )}
-        </div>
-
-        {isEditingCollection ? (
-          <input
-            ref={editInputRef}
-            value={editingLabel}
-            onChange={(event) => setEditingLabel(event.target.value)}
-            onBlur={commitCollectionRename}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') commitCollectionRename();
-              if (event.key === 'Escape') setIsEditingCollection(false);
-            }}
-            onClick={(event) => event.stopPropagation()}
-            className="min-w-0 flex-1 rounded border border-(--accent) bg-transparent px-1 py-0.5 text-[0.8125rem] font-medium leading-snug outline-none"
-            style={{ color: 'var(--sidebar-text-active)' }}
-          />
-        ) : (
-          <span
-            className="flex flex-1 items-center gap-1.5 leading-snug"
-            style={{ color: 'var(--sidebar-text-active)' }}
-          >
-            <span className="truncate text-[0.8125rem] font-medium">{collectionLabel}</span>
-            <span className="tabular-nums text-[0.625rem] font-normal text-(--text-muted) opacity-50">
-              {totalItems}
-            </span>
-          </span>
-        )}
-
-        <div
-          className={cn(
-            'flex items-center gap-0.5 transition-opacity duration-150',
-            isQuickCreateOpen ? 'opacity-100' : 'opacity-0 group-hover/collection:opacity-100',
-          )}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            ref={quickCreateTriggerRef}
-            type="button"
-            onClick={() => setIsQuickCreateOpen((prev) => !prev)}
-            className={cn(
-              'rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
-              isQuickCreateOpen && 'bg-(--sidebar-hover) text-(--sidebar-text-active)',
+          <div className="relative h-3 w-3 shrink-0">
+            {isEmpty ? (
+              <Tag className="absolute inset-0 h-3 w-3 text-(--text-muted)" />
+            ) : (
+              <>
+                <Tag className="absolute inset-0 h-3 w-3 text-(--text-muted) transition-opacity duration-150 group-hover/collection:opacity-0" />
+                <ChevronRight
+                  className={cn(
+                    'absolute inset-0 h-3 w-3 text-(--text-muted) opacity-0 transition-all duration-150 group-hover/collection:opacity-100',
+                    !isCollapsed && 'rotate-90',
+                  )}
+                />
+              </>
             )}
-            aria-label="Create in collection"
-            data-testid={`collection-quick-create-toggle-${collectionId}`}
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-          {!isUncategorized && (
-            <CollectionHeaderMenu collectionId={collectionId} onEdit={startEditingCollection} />
+            {collectionIndicatorStatus && isCollapsed && (
+              <span data-testid={`collection-status-indicator-${collectionId}`}>
+                <ItemStatusIndicator
+                  isProcessing={collectionIndicatorStatus === 'processing'}
+                  isAwaitingUser={collectionIndicatorStatus === 'awaiting-user'}
+                  hasUnread={collectionIndicatorStatus === 'unread'}
+                  isRunning={collectionIndicatorStatus === 'running'}
+                  placement="corner"
+                  surface="sidebar"
+                />
+              </span>
+            )}
+          </div>
+
+          {isEditingCollection ? (
+            <input
+              ref={editInputRef}
+              value={editingLabel}
+              onChange={(event) => setEditingLabel(event.target.value)}
+              onBlur={commitCollectionRename}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') commitCollectionRename();
+                if (event.key === 'Escape') setIsEditingCollection(false);
+              }}
+              onClick={(event) => event.stopPropagation()}
+              className="min-w-0 flex-1 rounded border border-(--accent) bg-transparent px-1 py-0.5 text-[0.8125rem] font-medium leading-snug outline-none"
+              style={{ color: 'var(--sidebar-text-active)' }}
+            />
+          ) : (
+            <span
+              className="flex flex-1 items-center gap-1.5 leading-snug"
+              style={{ color: 'var(--sidebar-text-active)' }}
+            >
+              <span className="truncate text-[0.8125rem] font-medium">{collectionLabel}</span>
+              <span className="tabular-nums text-[0.625rem] font-normal text-(--text-muted) opacity-50">
+                {totalItems}
+              </span>
+            </span>
           )}
-        </div>
+
+          {!hideHeaderActions && (
+            <div
+              className={cn(
+                'flex items-center gap-0.5 transition-opacity duration-150',
+                isQuickCreateOpen ? 'opacity-100' : 'opacity-0 group-hover/collection:opacity-100',
+              )}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                ref={quickCreateTriggerRef}
+                type="button"
+                onClick={() => setIsQuickCreateOpen((prev) => !prev)}
+                className={cn(
+                  'rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
+                  isQuickCreateOpen && 'bg-(--sidebar-hover) text-(--sidebar-text-active)',
+                )}
+                aria-label="Create in collection"
+                data-testid={`collection-quick-create-toggle-${collectionId}`}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+              {!isUncategorized && (
+                <CollectionHeaderMenu collectionId={collectionId} onEdit={startEditingCollection} />
+              )}
+            </div>
+          )}
         </div>
       )}
 
-      {!hideHeader && isQuickCreateOpen && (
+      {!hideHeader && !hideHeaderActions && isQuickCreateOpen && (
         <CollectionQuickCreateSheet
           collection={collection}
           projectId={projectId}
@@ -545,63 +620,29 @@ export const CollectionGroup = memo(function CollectionGroup({
         <div
           className={cn(hideHeader ? 'space-y-0.5' : 'ml-4 space-y-0.5')}
         >
-          {tasks.map((task) => (
-            <TaskItemRow
-              key={task.id}
-              task={task}
-              activeSessionId={activeSessionId}
-              onSessionClick={onSessionClick}
-              onSessionDoubleClick={onSessionDoubleClick}
-              onContextMenu={openItemContextMenu}
-              isDragging={draggingItemId === task.id}
-              isJustDropped={justDroppedId === task.id}
-              dropIndicatorBefore={dropIndicator?.targetId === task.id && dropIndicator.position === 'before'}
-              dropIndicatorAfter={dropIndicator?.targetId === task.id && dropIndicator.position === 'after'}
-              onDragStart={(event) => onItemDragStart('task', task.id, task.collectionId ?? null, projectId, event)}
-              onDragEnd={onItemDragEnd}
-              onDragOverItem={(event) => onItemDragOverItem(task.id, collectionScopeId, 'task', projectId, event)}
-              onRename={onTaskRename}
-              onSessionRename={onSessionRename}
-              renamingSessionId={renamingItem?.type === 'chat' ? renamingItem.id : null}
-              isRenameRequested={renamingItem?.type === 'task' && renamingItem.id === task.id}
-              onRenameComplete={finishItemRename}
-              onAddSession={(providerId) => addSessionToTask(task, providerId)}
-              onStopProcess={onSessionStopProcess}
-              disableDnd={disableDnd}
-              allowPanelSessionDnd={allowPanelSessionDnd}
-            />
-          ))}
+          {orderedItems ? (
+            orderedItems.map((item) => {
+              if (item.type === 'task') {
+                const task = taskById.get(item.id);
+                return task ? renderTaskRow(task) : null;
+              }
 
-          {chats.length > 0 && (
-            <div className="relative space-y-0.5">
-              {tasks.length > 0 && (
-                <div className="pointer-events-none absolute -top-px left-4 right-4 h-px bg-(--divider) opacity-20" />
+              const session = chatById.get(item.id);
+              return session ? renderChatRow(session) : null;
+            })
+          ) : (
+            <>
+              {tasks.map((task) => renderTaskRow(task))}
+
+              {chats.length > 0 && (
+                <div className="relative space-y-0.5">
+                  {tasks.length > 0 && (
+                    <div className="pointer-events-none absolute -top-px left-4 right-4 h-px bg-(--divider) opacity-20" />
+                  )}
+                  {chats.map((session) => renderChatRow(session))}
+                </div>
               )}
-              {chats.map((session) => (
-                <ChatItemRow
-                  key={session.id}
-                  session={session}
-                  activeSessionId={activeSessionId}
-                  onSessionClick={onSessionClick}
-                  onSessionDoubleClick={onSessionDoubleClick}
-                  onContextMenu={openItemContextMenu}
-                  isDragging={draggingItemId === session.id}
-                  isJustDropped={justDroppedId === session.id}
-                  dropIndicatorBefore={dropIndicator?.targetId === session.id && dropIndicator.position === 'before'}
-                  dropIndicatorAfter={dropIndicator?.targetId === session.id && dropIndicator.position === 'after'}
-                  onDragStart={(event) => onItemDragStart('chat', session.id, session.collectionId ?? null, projectId, event)}
-                  onDragEnd={onItemDragEnd}
-                  onDragOverItem={(event) => onItemDragOverItem(session.id, collectionScopeId, 'chat', projectId, event)}
-                  onRename={onSessionRename}
-                  isRenameRequested={renamingItem?.type === 'chat' && renamingItem.id === session.id}
-                  onRenameComplete={finishItemRename}
-                  onArchive={onSessionArchive}
-                  onStopProcess={onSessionStopProcess}
-                  disableDnd={disableDnd}
-                  allowPanelSessionDnd={allowPanelSessionDnd}
-                />
-              ))}
-            </div>
+            </>
           )}
 
           {totalItems === 0 && (

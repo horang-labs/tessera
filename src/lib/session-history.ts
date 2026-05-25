@@ -16,6 +16,7 @@ import type {
 } from './session-replay-types';
 import logger from './logger';
 import { getTesseraDataPath } from './tessera-data-dir';
+import * as dbSessions from './db/sessions';
 
 const HISTORY_DIR = getTesseraDataPath('session-history');
 const HISTORY_VERSION = 1;
@@ -60,6 +61,14 @@ interface PaginatedReplayMessages {
 
 function ensureHistoryDir(): void {
   fs.mkdirSync(HISTORY_DIR, { recursive: true, mode: 0o700 });
+}
+
+export function getSessionHistoryModifiedAt(sessionId: string): string | null {
+  try {
+    return fs.statSync(path.join(HISTORY_DIR, `${sessionId}.jsonl`)).mtime.toISOString();
+  } catch {
+    return null;
+  }
 }
 
 function normalizeProgressData(data: Record<string, any>): Record<string, any> {
@@ -109,6 +118,10 @@ class SessionHistoryStore {
     } catch {
       return false;
     }
+  }
+
+  getHistoryModifiedAt(sessionId: string): string | null {
+    return getSessionHistoryModifiedAt(sessionId);
   }
 
   recordUserMessage(sessionId: string, content: string | ContentBlock[], timestamp = new Date().toISOString()): void {
@@ -557,6 +570,16 @@ class SessionHistoryStore {
     const filePath = this.getHistoryPath(sessionId);
     const serialized = JSON.stringify(normalizedEvent);
     fs.appendFileSync(filePath, `${serialized}\n`, 'utf-8');
+
+    try {
+      dbSessions.touchSession(sessionId, normalizedEvent.timestamp || new Date().toISOString());
+    } catch (error) {
+      logger.warn({
+        sessionId,
+        eventType: normalizedEvent.type,
+        error: (error as Error).message,
+      }, 'Failed to touch session activity timestamp');
+    }
   }
 
   async readEvents(sessionId: string): Promise<SessionHistoryEvent[]> {
