@@ -79,7 +79,7 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'replay_events':
-      if (replayEventsIndicateActiveTurn(msg.events)) {
+      if (shouldStartTurnFromReplayEvents(sessionStore, msg.sessionId, msg.events)) {
         startTurnInFlight(msg.sessionId);
         sessionStore.updateSessionStatus(msg.sessionId, 'running');
       }
@@ -286,6 +286,26 @@ function replayEventsIndicateActiveTurn(
         return false;
     }
   });
+}
+
+function shouldStartTurnFromReplayEvents(
+  sessionStore: ReturnType<typeof useSessionStore.getState>,
+  sessionId: string,
+  events: Extract<ServerTransportMessage, { type: 'replay_events' }>['events'],
+): boolean {
+  if (!replayEventsIndicateActiveTurn(events)) {
+    return false;
+  }
+
+  // A completed background session may receive a late replay chunk after the
+  // completion notification. Keep the unread notification as the visible state
+  // until the user opens or marks the session as read.
+  const session = sessionStore.getSession(sessionId);
+  if ((session?.unreadCount ?? 0) > 0) {
+    return false;
+  }
+
+  return true;
 }
 
 function addCreatedSession(
