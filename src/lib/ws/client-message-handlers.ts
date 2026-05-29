@@ -325,6 +325,7 @@ function addCreatedSession(
     projectDir: msg.workDir,
     workDir: msg.workDir,
     isRunning: false,
+    hasStarted: false,
     status: 'starting',
     createdAt: new Date().toISOString(),
     lastModified: new Date().toISOString(),

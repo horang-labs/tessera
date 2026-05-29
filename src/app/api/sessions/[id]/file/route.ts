@@ -186,6 +186,7 @@ export async function GET(
 
     return NextResponse.json({
       sessionId: id,
+      workDir: root,
       path: relativePath,
       content: binary ? "" : contentBuffer.toString("utf8"),
       language: inferLanguage(relativePath),

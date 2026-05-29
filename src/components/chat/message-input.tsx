@@ -110,18 +110,6 @@ function formatGoalStatusMessage(goal: SessionGoal | null | undefined): string {
   ].filter(Boolean).join(' | ');
 }
 
-function formatGoalMutationMessage(command: ReturnType<typeof parseCodexGoalCommand>): string | null {
-  if (!command) return null;
-  if (command.kind === 'inspect') return null;
-  if (command.kind === 'clear') return 'Goal cleared';
-
-  if (command.update.status === 'paused') return 'Goal paused';
-  if (command.update.status === 'active' && !command.update.objective) return 'Goal resumed';
-  if (command.update.objective) return `Goal active  Objective: ${command.update.objective}`;
-
-  return null;
-}
-
 function goalStatusLabel(
   goal: SessionGoal,
   t: (key: string, vars?: Record<string, string>) => string,
@@ -688,7 +676,15 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return false;
     }
 
-    const mutationMessage = formatGoalMutationMessage(command);
+    const displayContent = commandInput.trim();
+    addMessage(sessionId, {
+      id: `temp-goal-${uuidv4()}`,
+      type: 'text',
+      role: 'user',
+      content: displayContent,
+      timestamp: new Date().toISOString(),
+    });
+
     if (command.kind === 'inspect') {
       addMessage(sessionId, {
         id: `system-goal-${uuidv4()}`,
@@ -697,29 +693,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         content: formatGoalStatusMessage(session?.goal),
         timestamp: new Date().toISOString(),
       });
-      refreshSessionGoal(sessionId, buildSpawnConfigForCurrentSession());
+      refreshSessionGoal(sessionId, buildSpawnConfigForCurrentSession(), displayContent);
     } else if (command.kind === 'clear') {
-      if (mutationMessage) {
-        addMessage(sessionId, {
-          id: `system-goal-${uuidv4()}`,
-          type: 'text',
-          role: 'system',
-          content: mutationMessage,
-          timestamp: new Date().toISOString(),
-        });
-      }
-      clearSessionGoal(sessionId, buildSpawnConfigForCurrentSession());
+      clearSessionGoal(sessionId, buildSpawnConfigForCurrentSession(), displayContent);
     } else {
-      if (mutationMessage) {
-        addMessage(sessionId, {
-          id: `system-goal-${uuidv4()}`,
-          type: 'text',
-          role: 'system',
-          content: mutationMessage,
-          timestamp: new Date().toISOString(),
-        });
-      }
-      setSessionGoal(sessionId, command.update, buildSpawnConfigForCurrentSession());
+      setSessionGoal(sessionId, command.update, buildSpawnConfigForCurrentSession(), displayContent);
     }
 
     clearInput();
