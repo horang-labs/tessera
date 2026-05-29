@@ -43,6 +43,74 @@ const WINDOWS_TITLEBAR_DIMMED_THEME = {
   },
 } satisfies Record<TitlebarTheme, { color: string; symbolColor: string }>;
 const TESSERA_HOMEPAGE = 'https://github.com/horang-labs/tessera';
+const MAX_SHELL_PATH_LENGTH = 32768;
+
+function isWindowsStylePath(filesystemPath: string): boolean {
+  return (
+    /^[a-zA-Z]:[\\/]/.test(filesystemPath)
+    || /^[a-zA-Z]:$/.test(filesystemPath)
+    || filesystemPath.startsWith('\\\\')
+    || filesystemPath.startsWith('//')
+  );
+}
+
+function getShellPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {
+  return isWindowsStylePath(filesystemPath) || process.platform === 'win32'
+    ? path.win32
+    : path.posix;
+}
+
+function convertWslPathWithWslpath(filesystemPath: string): string | null {
+  try {
+    const result = spawnSync('wsl.exe', ['-e', 'wslpath', '-w', filesystemPath], {
+      encoding: 'utf8',
+      timeout: 4000,
+      windowsHide: true,
+    });
+    const converted = result.stdout?.trim();
+    return result.status === 0 && converted ? converted : null;
+  } catch {
+    return null;
+  }
+}
+
+function convertPosixPathForWindowsShell(filesystemPath: string): string {
+  if (filesystemPath.startsWith('//')) return filesystemPath.replace(/\//g, '\\');
+  if (process.platform !== 'win32' || !filesystemPath.startsWith('/')) return filesystemPath;
+
+  const converted = convertWslPathWithWslpath(filesystemPath);
+  if (converted) return converted;
+
+  const mountedDriveMatch = filesystemPath.match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
+  if (mountedDriveMatch) {
+    const drive = mountedDriveMatch[1].toUpperCase();
+    const rest = mountedDriveMatch[2]?.replace(/\//g, '\\') ?? '';
+    return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
+  }
+
+  const distro = process.env.WSL_DISTRO_NAME;
+  if (distro) {
+    return `\\\\wsl.localhost\\${distro}${filesystemPath.replace(/\//g, '\\')}`;
+  }
+
+  return filesystemPath;
+}
+
+function resolveShellPath(rawPath: unknown): string | null {
+  if (typeof rawPath !== 'string') return null;
+  const trimmed = rawPath.trim();
+  if (!trimmed || trimmed.length > MAX_SHELL_PATH_LENGTH || trimmed.includes('\0')) {
+    return null;
+  }
+  return convertPosixPathForWindowsShell(trimmed);
+}
+
+function getExistingParentDirectory(filesystemPath: string): string | null {
+  const pathModule = getShellPathModule(filesystemPath);
+  const parent = pathModule.dirname(filesystemPath);
+  if (!parent || parent === filesystemPath) return null;
+  return fs.existsSync(parent) ? parent : null;
+}
 
 function getTitlebarOverlayOptions(theme: TitlebarTheme, options: TitlebarThemeOptions = {}) {
   const palette = options.dimmed ? WINDOWS_TITLEBAR_DIMMED_THEME[theme] : WINDOWS_TITLEBAR_THEME[theme];
@@ -709,6 +777,31 @@ function broadcastPopoutState(): void {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
+ipcMain.handle('shell-open-path', async (_event, rawPath: unknown) => {
+  const targetPath = resolveShellPath(rawPath);
+  if (!targetPath) return { ok: false, error: 'invalid_path' };
+
+  const error = await shell.openPath(targetPath);
+  return error ? { ok: false, error } : { ok: true };
+});
+ipcMain.handle('shell-show-item-in-folder', async (_event, rawPath: unknown) => {
+  const targetPath = resolveShellPath(rawPath);
+  if (!targetPath) return { ok: false, error: 'invalid_path' };
+
+  if (fs.existsSync(targetPath)) {
+    shell.showItemInFolder(targetPath);
+    return { ok: true };
+  }
+
+  const parentDirectory = getExistingParentDirectory(targetPath);
+  if (parentDirectory) {
+    const error = await shell.openPath(parentDirectory);
+    return error ? { ok: false, error } : { ok: true };
+  }
+
+  shell.showItemInFolder(targetPath);
+  return { ok: true };
+});
 ipcMain.handle('open-board-window', (_event, payload?: unknown) => {
   if (!serverPort) return { ok: false };
   const params = new URLSearchParams();

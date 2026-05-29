@@ -2,7 +2,9 @@
  * Session CRUD and query operations backed by SQLite.
  */
 
+import fs from 'fs';
 import { getDb } from './database';
+import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import type { SessionGoal } from '@/types/session-goal';
 
 export interface SessionRow {
@@ -457,6 +459,7 @@ export function mapSessionRowToApi(
 ) {
   const isRunning = activeSessionIds.has(row.id);
   const isGenerating = generatingSessionIds.has(row.id);
+  const hasStarted = isRunning || hasProviderConversationState(row.provider_state) || hasSessionHistoryFile(row.id);
   return {
     id: row.id,
     title: row.title,
@@ -465,6 +468,7 @@ export function mapSessionRowToApi(
     createdAt: row.created_at,
     isRunning,
     isGenerating,
+    hasStarted,
     status: isRunning ? 'running' : ('completed' as const),
     projectDir: row.project_id,
     workDir: row.work_dir ?? undefined,
@@ -478,6 +482,25 @@ export function mapSessionRowToApi(
     taskId: row.task_id ?? undefined,
     collectionId: row.collection_id ?? undefined,
   };
+}
+
+function hasProviderConversationState(providerState: string | null): boolean {
+  if (!providerState) return false;
+
+  try {
+    const value = JSON.parse(providerState);
+    return (
+      typeof value?.threadId === 'string' && value.threadId.trim().length > 0
+    ) || (
+      typeof value?.opencodeSessionId === 'string' && value.opencodeSessionId.trim().length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasSessionHistoryFile(sessionId: string): boolean {
+  return fs.existsSync(getTesseraDataPath('session-history', `${sessionId}.jsonl`));
 }
 
 /**

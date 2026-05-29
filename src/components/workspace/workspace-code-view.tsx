@@ -5,6 +5,11 @@ import { useCallback, useState } from "react";
 import { PreviewMarkdown } from "@/components/chat/preview-markdown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
+import {
+  copyText,
+  toAbsoluteWorkspacePath,
+} from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
@@ -168,7 +173,12 @@ export function WorkspaceCodeView({
       : (data as WorkspaceFileData | null)?.content ?? "";
   const fileData = mode === "file" ? (data as WorkspaceFileData | null) : null;
   const diffData = mode === "diff" ? (data as GitDiffData | null) : null;
+  const absolutePath = toAbsoluteWorkspacePath(
+    mode === "diff" ? diffData?.workDir : fileData?.workDir,
+    path,
+  );
   const copied = copiedKey === `${mode}:${path}`;
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const isMarkdownFile = mode === "file" && fileData?.language === "markdown";
   const resolveMarkdownImageSrc = useCallback((src: string): string | null => {
     if (!sourceSessionId || isBrowserImageSrc(src)) return src;
@@ -211,6 +221,7 @@ export function WorkspaceCodeView({
   }
 
   return (
+    <>
     <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-(--chat-header-border) px-4">
         <div className="flex min-w-0 items-center gap-2">
@@ -221,7 +232,15 @@ export function WorkspaceCodeView({
           ) : (
             <FileCode2 className="h-4 w-4 shrink-0 text-(--text-muted)" />
           )}
-          <div className="min-w-0">
+          <div
+            className="min-w-0"
+            onContextMenu={(event) => {
+              if (!absolutePath) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setContextMenu({ x: event.clientX, y: event.clientY });
+            }}
+          >
             <p className="truncate font-mono text-sm text-(--text-primary)">{path}</p>
             <p className="truncate text-[10px] uppercase tracking-[0.14em] text-(--text-muted)">
               {mode === "diff" ? "Diff" : fileData?.language || "text"}
@@ -240,6 +259,19 @@ export function WorkspaceCodeView({
               onClick={copyContent}
               disabled={!content}
               aria-label="Copy file content"
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+          </Tooltip>
+          <Tooltip content="Copy absolute path">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => copyText(absolutePath)}
+              disabled={!absolutePath}
+              aria-label={`Copy absolute path for ${path}`}
             >
               <Copy className="h-4 w-4" />
             </Button>
@@ -270,5 +302,13 @@ export function WorkspaceCodeView({
         )}
       </div>
     </div>
+    {contextMenu && absolutePath ? (
+      <WorkspaceFileContextMenu
+        absolutePath={absolutePath}
+        onClose={() => setContextMenu(null)}
+        position={contextMenu}
+      />
+    ) : null}
+    </>
   );
 }

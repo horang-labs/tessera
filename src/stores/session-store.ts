@@ -120,6 +120,7 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     model: s.model ?? undefined,
     reasoningEffort: 'reasoningEffort' in s ? s.reasoningEffort : undefined,
     serviceTier: 'serviceTier' in s ? s.serviceTier : undefined,
+    hasStarted: s.hasStarted ?? s.isRunning ?? false,
     goal: 'goal' in s ? s.goal : undefined,
     taskId: s.taskId ?? undefined,
     collectionId: s.collectionId ?? undefined,
@@ -459,6 +460,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         ...session,
         projectDir,
         archived: session.archived ?? false,
+        hasStarted: session.hasStarted ?? session.isRunning ?? false,
         sortOrder: session.sortOrder ?? 0,
       };
 
@@ -541,6 +543,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         projectDir,
         archived: session.archived ?? false,
         isReadOnly: session.isReadOnly ?? session.archived ?? false,
+        hasStarted: session.hasStarted ?? session.isRunning ?? false,
         sortOrder: session.sortOrder ?? 0,
       };
 
@@ -653,7 +656,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (idx === -1) return project;
 
         const now = new Date().toISOString();
-        const updatedSession = { ...project.sessions[idx], status, lastModified: now };
+        const updatedSession = {
+          ...project.sessions[idx],
+          status,
+          lastModified: now,
+          ...(status === 'running' && { hasStarted: true }),
+        };
 
         // Move to top when session becomes active (running)
         if (status === 'running' && idx > 0) {
@@ -697,6 +705,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             ? {
                 ...s,
                 isRunning: true,
+                hasStarted: true,
                 isReadOnly: false,
                 status: 'running' as SessionStatus,
                 tesseraSessionId,

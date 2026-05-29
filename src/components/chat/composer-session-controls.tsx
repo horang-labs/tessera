@@ -24,7 +24,6 @@ import type {
 } from '@/lib/cli/provider-session-options';
 import {
   buildProviderSessionDefaultsUpdate,
-  getProviderSessionDefaults,
   getProviderSessionDefaultsWithOptions,
   resolveProviderPermissionMode,
   resolveProviderReasoningEffort,
@@ -427,8 +426,8 @@ function getDefaultActiveSessionMode(providerId: string): ProviderSessionMode {
   return isOpenCodeProvider(providerId) ? 'build' : 'work';
 }
 
-function shouldPersistControlDefaults(session: UnifiedSession): boolean {
-  return !session.isRunning && session.status === 'starting';
+function shouldPersistDefaultsForSession(session: UnifiedSession): boolean {
+  return !session.isRunning;
 }
 
 function getAccessOptions(
@@ -541,7 +540,7 @@ function ComposerSessionControlsInner({
   ) => {
     const runtimeControls = buildRuntimeControls(providerIdForSticky, nextSessionMode, nextAccessMode);
 
-    if (shouldPersistControlDefaults(session)) {
+    if (shouldPersistDefaultsForSession(session)) {
       void updateSettings({
         ...buildProviderSessionDefaultsUpdate(
           useSettingsStore.getState().settings,
@@ -552,12 +551,11 @@ function ComposerSessionControlsInner({
           ? { defaultPermissionMode: runtimeControls.permissionMode }
           : {}),
       });
-    } else {
-      updateSessionRuntimeConfig(sessionId, {
-        sessionMode: nextSessionMode,
-        accessMode: nextAccessMode,
-      });
     }
+    updateSessionRuntimeConfig(sessionId, {
+      sessionMode: nextSessionMode,
+      accessMode: nextAccessMode,
+    });
 
     if (session.isRunning) {
       wsClient.setPermissionMode(sessionId, runtimeControls.permissionMode, runtimeControls);
@@ -610,7 +608,7 @@ function ComposerSessionControlsInner({
     setModel(nextModel);
     setRequestedReasoningEffort(nextReasoningEffort);
 
-    if (shouldPersistControlDefaults(session)) {
+    if (shouldPersistDefaultsForSession(session)) {
       // Sticky persistence — next new session will use this as default, and the
       // first send_message of an unspawned session will pull from here too.
       void updateSettings(
@@ -620,12 +618,11 @@ function ComposerSessionControlsInner({
           { model: nextModel, reasoningEffort: nextReasoningEffort },
         ),
       );
-    } else {
-      updateSessionRuntimeConfig(sessionId, {
-        model: nextModel,
-        reasoningEffort: nextReasoningEffort,
-      });
     }
+    updateSessionRuntimeConfig(sessionId, {
+      model: nextModel,
+      reasoningEffort: nextReasoningEffort,
+    });
 
     if (session?.isRunning) {
       wsClient.setModel(
@@ -646,7 +643,7 @@ function ComposerSessionControlsInner({
   const handleReasoningEffortChange = (nextReasoningEffort: string) => {
     setRequestedReasoningEffort(nextReasoningEffort);
 
-    if (shouldPersistControlDefaults(session)) {
+    if (shouldPersistDefaultsForSession(session)) {
       void updateSettings(
         buildProviderSessionDefaultsUpdate(
           useSettingsStore.getState().settings,
@@ -654,9 +651,8 @@ function ComposerSessionControlsInner({
           { reasoningEffort: nextReasoningEffort },
         ),
       );
-    } else {
-      updateSessionRuntimeConfig(sessionId, { reasoningEffort: nextReasoningEffort });
     }
+    updateSessionRuntimeConfig(sessionId, { reasoningEffort: nextReasoningEffort });
 
     if (session?.isRunning) {
       if (isOpenCodeProvider(providerIdForSticky)) {
@@ -853,6 +849,11 @@ function ComposerSessionControlsInner({
               modelOptions={sessionOptions?.modelOptions ?? []}
               selectedModel={model}
               loadingLabel={t('settings.model.loadingOptions')}
+              allowCustomModel={providerIdForSticky === 'claude-code'}
+              customLabel={t('settings.model.customLabel')}
+              customPlaceholder={t('settings.model.customPlaceholder')}
+              customApplyLabel={t('settings.model.customApply')}
+              customHint={t('settings.model.customHint')}
               onSelectModel={(nextModel) => {
                 handleModelChange(nextModel);
                 close();
@@ -900,11 +901,9 @@ function ComposerSessionControlsInner({
 export function ComposerSessionControls({ sessionId, variant = 'block' }: ComposerSessionControlsProps) {
   const session = useSessionStore((state) => state.getSession(sessionId));
   const settings = useSettingsStore((state) => state.settings);
-  const updateSettings = useSettingsStore((state) => state.updateSettings);
   const providerId = session?.provider?.trim();
   const providerSessionOptions = useProviderSessionOptions(providerId, settings.agentEnvironment);
   const resolvedProviderId = providerId ?? '';
-  const providerDefaults = getProviderSessionDefaults(settings, resolvedProviderId);
   const providerDefaultsWithOptions = getProviderSessionDefaultsWithOptions(
     settings,
     resolvedProviderId,
@@ -922,48 +921,6 @@ export function ComposerSessionControls({ sessionId, variant = 'block' }: Compos
   const initialAccessMode = session?.accessMode
     ?? providerDefaultsWithOptions.accessMode
     ?? getDefaultWorkAccess(resolvedProviderId);
-
-  useEffect(() => {
-    if (
-      (resolvedProviderId !== 'codex' && resolvedProviderId !== 'opencode')
-      || !providerSessionOptions.data
-    ) {
-      return;
-    }
-
-    const patch: {
-      model?: string;
-      reasoningEffort?: string | null;
-    } = {};
-
-    if (providerDefaultsWithOptions.model && providerDefaults.model !== providerDefaultsWithOptions.model) {
-      patch.model = providerDefaultsWithOptions.model;
-    }
-
-    if (providerDefaults.reasoningEffort !== providerDefaultsWithOptions.reasoningEffort) {
-      patch.reasoningEffort = providerDefaultsWithOptions.reasoningEffort ?? null;
-    }
-
-    if (Object.keys(patch).length === 0) {
-      return;
-    }
-
-    void updateSettings(
-      buildProviderSessionDefaultsUpdate(
-        useSettingsStore.getState().settings,
-        resolvedProviderId,
-        patch,
-      ),
-    );
-  }, [
-    resolvedProviderId,
-    providerSessionOptions.data,
-    providerDefaults.model,
-    providerDefaults.reasoningEffort,
-    providerDefaultsWithOptions.model,
-    providerDefaultsWithOptions.reasoningEffort,
-    updateSettings,
-  ]);
 
   if (!session || !providerId) {
     return null;

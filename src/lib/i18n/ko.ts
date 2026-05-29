@@ -150,6 +150,10 @@ export const ko: I18nMessages = {
       label: '기본 모델',
       reasoningEffortLabel: 'Thinking 강도',
       loadingOptions: '프로바이더 옵션을 불러오는 중...',
+      customLabel: '사용자 지정 모델',
+      customPlaceholder: '모델 식별자 입력',
+      customApply: '사용',
+      customHint: '목록에 없어도 Claude Code CLI가 허용하는 모든 모델을 사용할 수 있습니다.',
     },
     effort: {
       readOnlyTooltip: '세션 실행 중에는 변경할 수 없습니다. 중지 후 변경하세요',

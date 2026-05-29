@@ -19,7 +19,7 @@ import {
   resolveProviderCliCommandWithMetadata,
 } from '../../provider-command';
 import {
-  classifyAuthFailure,
+  classifyAuthStatus,
   classifyVersionFailure,
   summarizeExecProbe,
 } from '../../status-detection';
@@ -147,10 +147,10 @@ export class OpenCodeAdapter implements CliProvider {
     }
 
     const version = parseVersion(versionResult.stdout);
-    const connected = modelsResult.ok;
+    const authStatus = classifyAuthStatus(modelsResult);
     return {
-      status: connected ? 'connected' : 'needs_login',
-      detectionReason: connected ? 'connected' : classifyAuthFailure(modelsResult),
+      status: authStatus.status,
+      detectionReason: authStatus.detectionReason,
       ...(version ? { version } : {}),
       ...baseTelemetry,
     };
