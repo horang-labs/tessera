@@ -336,8 +336,8 @@ export function WorkspaceCodeView({
       </div>
       <div className={shouldRenderMarkdownPreview ? "min-h-0 flex-1 overflow-auto" : "min-h-0 flex-1 overflow-hidden"}>
         {shouldRenderMarkdownPreview ? (
-          <div className="mx-auto w-full max-w-4xl px-6 py-5 text-sm">
-            <PreviewMarkdown content={content} resolveImageSrc={resolveMarkdownImageSrc} />
+          <div className="mx-auto w-full max-w-5xl px-6 py-8 text-base">
+            <PreviewMarkdown content={content} resolveImageSrc={resolveMarkdownImageSrc} variant="document" />
           </div>
         ) : (
           <WorkspaceMonacoEditor
