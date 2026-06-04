@@ -4,61 +4,15 @@ import { useState, useEffect, useMemo, memo, useCallback } from 'react';
 import type { Highlighter } from 'shiki';
 import { useI18n } from '@/lib/i18n';
 import { useIsDark } from '@/hooks/use-is-dark';
+import {
+  getHighlighterInstance,
+  highlightCodeToHtml,
+} from '@/lib/code-highlighting';
 
 interface CodeBlockProps {
   code: string;
   language: string;
   filename?: string;
-}
-
-// Singleton highlighter instance
-let highlighterInstance: Highlighter | null = null;
-let highlighterPromise: Promise<Highlighter | null> | null = null;
-
-async function getHighlighterInstance(): Promise<Highlighter | null> {
-  if (highlighterInstance) {
-    return highlighterInstance;
-  }
-
-  if (!highlighterPromise) {
-    highlighterPromise = (async () => {
-      try {
-        const shiki = await import('shiki');
-        const highlighter = await shiki.createHighlighter({
-          themes: ['github-dark', 'github-light'],
-          langs: [
-            'javascript',
-            'typescript',
-            'python',
-            'bash',
-            'shell',
-            'json',
-            'markdown',
-            'html',
-            'css',
-            'yaml',
-            'sql',
-            'rust',
-            'go',
-            'java',
-            'cpp',
-            'c',
-            'tsx',
-            'jsx',
-          ],
-        });
-        highlighterInstance = highlighter;
-        return highlighter;
-      } catch {
-        // Shiki dynamic import fails in custom server dev mode (webpack chunk issue)
-        // Gracefully fallback to plain text rendering
-        highlighterPromise = null;
-        return null;
-      }
-    })();
-  }
-
-  return highlighterPromise;
 }
 
 export const CodeBlock = memo(function CodeBlock({ code, language, filename }: CodeBlockProps) {
@@ -68,9 +22,15 @@ export const CodeBlock = memo(function CodeBlock({ code, language, filename }: C
   const isDark = useIsDark();
 
   useEffect(() => {
+    let cancelled = false;
+
     getHighlighterInstance().then(h => {
-      if (h) setHighlighter(h);
+      if (!cancelled && h) setHighlighter(h);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const shikiTheme = isDark ? 'github-dark' : 'github-light';
@@ -79,25 +39,9 @@ export const CodeBlock = memo(function CodeBlock({ code, language, filename }: C
     if (!highlighter) return code;
 
     try {
-      let normalizedLang = language.toLowerCase();
-      if (normalizedLang === 'sh') normalizedLang = 'bash';
-      if (normalizedLang === 'ts') normalizedLang = 'typescript';
-      if (normalizedLang === 'js') normalizedLang = 'javascript';
-      if (normalizedLang === 'py') normalizedLang = 'python';
-
-      return highlighter.codeToHtml(code, {
-        lang: normalizedLang || 'text',
-        theme: shikiTheme,
-      });
+      return highlightCodeToHtml(highlighter, code, language, shikiTheme);
     } catch {
-      try {
-        return highlighter.codeToHtml(code, {
-          lang: 'text',
-          theme: shikiTheme,
-        });
-      } catch {
-        return code;
-      }
+      return code;
     }
   }, [highlighter, code, language, shikiTheme]);
 
