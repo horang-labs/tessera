@@ -150,10 +150,6 @@ export const ja: I18nMessages = {
       label: 'デフォルトモデル',
       reasoningEffortLabel: 'Thinking 強度',
       loadingOptions: 'プロバイダー設定を読み込み中...',
-      customLabel: 'カスタムモデル',
-      customPlaceholder: 'モデル識別子を入力',
-      customApply: '使用',
-      customHint: 'リストにないモデルでも、Claude Code CLI が受け付けるモデルを指定できます。',
     },
     effort: {
       readOnlyTooltip: 'セッション実行中は変更できません。停止してから変更してください',
