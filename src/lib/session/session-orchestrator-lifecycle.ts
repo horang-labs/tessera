@@ -178,7 +178,37 @@ export async function resumeSessionWithLifecycle({
     useResume = !!opencodeSessionId;
   }
 
-  const runtimeDefaults = await resolveRuntimeModelDefaults(providerId, userId, options);
+  // Fall back to the persisted model/effort when the caller didn't supply them.
+  // Every resume path converges here (REST resume, WS resume, retry), and the WS
+  // path in particular sends no model/effort — without this, a cold resume after
+  // the in-memory store is gone would silently drop the session's ultracode/model
+  // choice and spawn at the global default.
+  const optionsWithPersisted: SessionResumeOptions = {
+    ...options,
+    model: options.model ?? session.model ?? undefined,
+    reasoningEffort: options.reasoningEffort !== undefined
+      ? options.reasoningEffort
+      : (session.reasoning_effort ?? undefined),
+  };
+
+  // Persist a deliberate change (e.g. the user picked a new model/effort before
+  // resuming) so it survives the next cold restart too. skipTimestamp keeps the
+  // sidebar ordering stable.
+  if (
+    providerId === 'claude-code'
+    && (options.model !== undefined || options.reasoningEffort !== undefined)
+  ) {
+    dbSessions.updateSession(
+      sessionId,
+      {
+        ...(options.model !== undefined ? { model: options.model } : {}),
+        ...(options.reasoningEffort !== undefined ? { reasoning_effort: options.reasoningEffort } : {}),
+      },
+      { skipTimestamp: true },
+    );
+  }
+
+  const runtimeDefaults = await resolveRuntimeModelDefaults(providerId, userId, optionsWithPersisted);
 
   let cliSessionId = await processManager.resumeSession(
     sessionId,

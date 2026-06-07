@@ -193,8 +193,14 @@ export class ClaudeCodeAdapter implements CliProvider {
       args.push('--model', model);
     }
 
-    // 'auto' or null → don't pass --effort, let CLI use its own default
-    if (reasoningEffort && reasoningEffort !== 'auto') {
+    // Ultracode is not an --effort value — the CLI rejects `--effort ultracode`
+    // ("Unknown --effort value"). It pairs xhigh effort with standing multi-agent
+    // workflow orchestration and is enabled via the `ultracode` settings boolean,
+    // merged in for this session with --settings (session-scoped, no file writes).
+    if (reasoningEffort === 'ultracode') {
+      args.push('--settings', JSON.stringify({ ultracode: true }));
+    } else if (reasoningEffort && reasoningEffort !== 'auto') {
+      // 'auto' or null → don't pass --effort, let CLI use its own default
       args.push('--effort', reasoningEffort);
     }
 

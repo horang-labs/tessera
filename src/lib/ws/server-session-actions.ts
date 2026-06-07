@@ -161,6 +161,8 @@ export async function createSessionFromWebSocket({
       resolvedWorkDir,
       title: result.title,
       providerId: resolvedProviderId,
+      model,
+      reasoningEffort,
     });
 
     sendToUser(userId, {

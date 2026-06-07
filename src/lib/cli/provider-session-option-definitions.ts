@@ -139,24 +139,48 @@ const CLAUDE_EFFORT_WITH_MAX: ProviderReasoningEffortOption[] = [
 
 const CLAUDE_EFFORT_WITH_XHIGH_MAX: ProviderReasoningEffortOption[] = [
   ...CLAUDE_EFFORT_COMMON,
-  { value: 'xhigh', label: 'Extra High', description: 'Deeper reasoning, just below maximum (Opus 4.7 only)' },
+  { value: 'xhigh', label: 'Extra High', description: 'Deeper reasoning, just below maximum' },
   { value: 'max', label: 'Max', description: 'Maximum reasoning depth' },
 ];
 
+// Ultracode is not an extra --effort level — it pairs xhigh effort with standing
+// permission to launch multi-agent (dynamic workflow) orchestration. Listed at the
+// TOP, mirroring Claude Code's own /effort menu. The adapter maps this selection to
+// `--settings '{"ultracode":true}'` rather than `--effort`. Only models that support
+// xhigh expose it; the CLI silently ignores ultracode on models that don't.
+const CLAUDE_EFFORT_WITH_ULTRACODE: ProviderReasoningEffortOption[] = [
+  { value: 'ultracode', label: 'Ultracode', description: 'xhigh + automatic multi-agent workflow orchestration (uses far more tokens)' },
+  ...CLAUDE_EFFORT_WITH_XHIGH_MAX,
+];
+
 export const CLAUDE_MODELS: ProviderModelOption[] = [
+  {
+    value: 'claude-opus-4-8',
+    label: 'claude-opus-4-8',
+    isDefault: false,
+    defaultReasoningEffort: 'auto',
+    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
+  },
+  {
+    value: 'claude-opus-4-8[1m]',
+    label: 'claude-opus-4-8[1m]',
+    isDefault: true,
+    defaultReasoningEffort: 'auto',
+    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
+  },
   {
     value: 'claude-opus-4-7',
     label: 'claude-opus-4-7',
     isDefault: false,
     defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_XHIGH_MAX,
+    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
   },
   {
     value: 'claude-opus-4-7[1m]',
     label: 'claude-opus-4-7[1m]',
-    isDefault: true,
+    isDefault: false,
     defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_XHIGH_MAX,
+    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
   },
   {
     value: 'claude-opus-4-6',

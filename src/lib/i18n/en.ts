@@ -150,6 +150,10 @@ export const en: I18nMessages = {
       label: 'Default Model',
       reasoningEffortLabel: 'Thinking Intensity',
       loadingOptions: 'Loading provider options...',
+      customLabel: 'Custom model',
+      customPlaceholder: 'Enter model identifier',
+      customApply: 'Use',
+      customHint: 'Use any model the Claude Code CLI accepts, even if it’s not listed.',
     },
     effort: {
       readOnlyTooltip: 'Cannot change while a session is running. Stop the session to change.',

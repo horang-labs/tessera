@@ -148,6 +148,10 @@ export interface I18nMessages {
       label: string;
       reasoningEffortLabel: string;
       loadingOptions: string;
+      customLabel: string;
+      customPlaceholder: string;
+      customApply: string;
+      customHint: string;
     };
     effort: {
       readOnlyTooltip: string;

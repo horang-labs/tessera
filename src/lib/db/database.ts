@@ -214,6 +214,8 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   // latest schema version marker without every latest column. Keep startup
   // idempotent so runtime queries do not depend solely on the version marker.
   addColumnIfMissing(db, 'sessions', 'worktree_managed', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'sessions', 'model', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
 }
 
 /**
@@ -949,6 +951,12 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
       db.exec(`ALTER TABLE sessions ADD COLUMN worktree_managed INTEGER NOT NULL DEFAULT 0`);
     }
     logger.info('Migration v25 applied: sessions.worktree_managed column added');
+  }
+
+  if (fromVersion < 26) {
+    addColumnIfMissing(db, 'sessions', 'model', 'TEXT');
+    addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
+    logger.info('Migration v26 applied: sessions.model + sessions.reasoning_effort columns added');
   }
 }
 

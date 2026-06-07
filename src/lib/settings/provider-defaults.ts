@@ -71,7 +71,7 @@ export function normalizeClaudeModel(model?: string): string | undefined {
 
   switch (model) {
     case 'opus':
-      return 'claude-opus-4-7[1m]';
+      return 'claude-opus-4-8[1m]';
     case 'sonnet':
       return 'claude-sonnet-4-6';
     case 'haiku':
@@ -136,6 +136,21 @@ export function getProviderSessionDefaultsWithOptions(
   };
 }
 
+/**
+ * Build a synthetic model option for a Claude model the user typed that isn't in
+ * the curated list. No reasoning-effort tiers are claimed (we can't know what an
+ * arbitrary model supports), so the CLI uses its own --effort default.
+ */
+function buildCustomClaudeModelOption(model: string): ProviderModelOption {
+  return {
+    value: model,
+    label: model,
+    isDefault: false,
+    defaultReasoningEffort: null,
+    supportedReasoningEfforts: [],
+  };
+}
+
 export function resolveProviderModelOption(
   providerId: string,
   sessionOptions: ProviderSessionOptions | null | undefined,
@@ -152,6 +167,16 @@ export function resolveProviderModelOption(
     const selected = sessionOptions.modelOptions.find((option) => option.value === normalizedRequestedModel);
     if (selected) {
       return selected;
+    }
+
+    // Claude Code passes --model straight to the CLI, so it accepts any model the
+    // CLI understands — including ones not in the curated list (e.g. a new release
+    // that ships before Tessera updates CLAUDE_MODELS). Preserve the custom value as
+    // a synthetic option instead of snapping back to the default, so it survives
+    // round-trips through the sticky session defaults. Codex/OpenCode model lists are
+    // probed from the CLI, so an unknown model there is invalid and falls through.
+    if (providerId === 'claude-code' && normalizedRequestedModel && normalizedRequestedModel.trim().length > 0) {
+      return buildCustomClaudeModelOption(normalizedRequestedModel);
     }
   }
 
@@ -200,6 +225,15 @@ export function resolveProviderReasoningEffort(
 
   const reasoningOptions = modelOption?.supportedReasoningEfforts ?? [];
   if (reasoningOptions.length === 0) {
+    // Claude Code model lists are static, so an empty tier list means the model
+    // genuinely supports no effort selection (e.g. Haiku, or a custom model). Drop
+    // any stale request — otherwise a leftover "ultracode" would follow the user
+    // onto a model that can't use it and emit --settings ultracode pointlessly.
+    // Codex/OpenCode lists are probed lazily, so an empty list there may just mean
+    // "not loaded yet"; preserve the requested value for them as before.
+    if (providerId === 'claude-code') {
+      return modelOption?.defaultReasoningEffort ?? null;
+    }
     return requestedReasoningEffort
       ?? modelOption?.defaultReasoningEffort
       ?? null;
@@ -481,10 +515,10 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     fontSize: DEFAULT_FONT_SCALE,
     enterKeyBehavior: 'send',
     defaultPermissionMode: 'default',
-    defaultModel: 'claude-opus-4-7[1m]',
+    defaultModel: 'claude-opus-4-8[1m]',
     providerDefaults: {
       'claude-code': {
-        model: 'claude-opus-4-7[1m]',
+        model: 'claude-opus-4-8[1m]',
         reasoningEffort: null,
         sessionMode: 'work',
         accessMode: 'default',

@@ -849,6 +849,11 @@ function ComposerSessionControlsInner({
               modelOptions={sessionOptions?.modelOptions ?? []}
               selectedModel={model}
               loadingLabel={t('settings.model.loadingOptions')}
+              allowCustomModel={providerIdForSticky === 'claude-code'}
+              customLabel={t('settings.model.customLabel')}
+              customPlaceholder={t('settings.model.customPlaceholder')}
+              customApplyLabel={t('settings.model.customApply')}
+              customHint={t('settings.model.customHint')}
               onSelectModel={(nextModel) => {
                 handleModelChange(nextModel);
                 close();
