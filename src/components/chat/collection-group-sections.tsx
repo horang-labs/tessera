@@ -38,6 +38,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
+import { CHAT_WORKFLOW_ICON_COLOR } from '@/types/task-entity';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
 import type { UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
@@ -48,6 +49,7 @@ import {
   ItemStatusIndicator,
   OverflowMenuButton,
   StopProcessButton,
+  WorkflowMessageSquareIcon,
 } from './work-item-primitives';
 import { CollectionMoveSubmenu } from './collection-move-submenu';
 import { DiffStatsBadge } from './diff-stats-badge';
@@ -366,7 +368,7 @@ export function CollectionContextMenu({
                 {t('task.contextMenu.setStatus' as Parameters<typeof t>[0])}
               </span>
             </div>
-            {SIDEBAR_STATUS_GROUP_ORDER.filter((s) => s !== 'chat').map((status) => {
+            {SIDEBAR_STATUS_GROUP_ORDER.filter((s) => menu.type === 'chat' && !menu.isSubSession ? true : s !== 'chat').map((status) => {
               const config = SIDEBAR_STATUS_GROUP_CONFIG[status];
               const isCurrent = status === menu.currentStatus;
               return (
@@ -1151,6 +1153,10 @@ export function ChatItemRow({
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
   const liveIsRunning = useSessionStore((state) => state.getSession(session.id)?.isRunning ?? session.isRunning);
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(session.id));
+  const workflowStatus = session.workflowStatus;
+  const workflowColor = workflowStatus
+    ? CHAT_WORKFLOW_ICON_COLOR[workflowStatus]
+    : null;
   const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
@@ -1251,10 +1257,18 @@ export function ChatItemRow({
               data-testid={`collection-chat-agent-icon-${session.id}`}
             />
           ) : (
-            <MessageSquare
-              className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
-              data-testid={`collection-chat-bubble-${session.id}`}
-            />
+            workflowColor ? (
+              <WorkflowMessageSquareIcon
+                className="h-3.5 w-3.5 opacity-95"
+                style={{ color: workflowColor }}
+                testId={`collection-chat-bubble-${session.id}`}
+              />
+            ) : (
+              <MessageSquare
+                className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
+                data-testid={`collection-chat-bubble-${session.id}`}
+              />
+            )
           )}
           <ItemStatusIndicator
             isProcessing={isProcessing}

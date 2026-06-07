@@ -340,6 +340,13 @@ export function Sidebar() {
     useTaskStore.getState().updateTask(taskId, { workflowStatus: status as WorkflowStatus });
   }, []);
 
+  const handleChatStatusChangeById = useCallback((sessionId: string, status: string) => {
+    useSessionStore.getState().updateChatWorkflowStatus(
+      sessionId,
+      status === 'chat' ? null : status as WorkflowStatus,
+    );
+  }, []);
+
   const handleTaskEntityRename = useCallback((taskId: string, title: string) => {
     void useTaskStore.getState().updateTask(taskId, { title });
   }, []);
@@ -698,6 +705,7 @@ export function Sidebar() {
                   onTaskRename={handleTaskEntityRename}
                   onTaskDelete={handleTaskEntityDelete}
                   onTaskStatusChange={handleTaskStatusChangeById}
+                  onChatStatusChange={handleChatStatusChangeById}
                   onSessionRename={handleTaskRename}
                   onSessionDelete={handleTaskDelete}
                   onSessionArchive={handleTaskArchive}
@@ -713,6 +721,7 @@ export function Sidebar() {
                 onSessionClick={handleSessionClick}
                 onSessionDoubleClick={handleSessionDoubleClick}
                 onSessionArchive={handleTaskArchive}
+                onChatStatusChange={handleChatStatusChangeById}
                 onSessionRename={handleTaskRename}
                 onSessionDelete={handleTaskDelete}
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
@@ -759,6 +768,7 @@ export function Sidebar() {
                 onTaskRename={handleTaskEntityRename}
                 onTaskDelete={handleTaskEntityDelete}
                 onTaskStatusChange={handleTaskStatusChangeById}
+                onChatStatusChange={handleChatStatusChangeById}
                 onSessionRename={handleTaskRename}
                 onSessionDelete={handleTaskDelete}
                 onSessionArchive={handleTaskArchive}
@@ -783,6 +793,7 @@ export function Sidebar() {
                   onTaskRename={handleTaskEntityRename}
                   onTaskDelete={handleTaskEntityDelete}
                   onTaskStatusChange={handleTaskStatusChangeById}
+                  onChatStatusChange={handleChatStatusChangeById}
                   onSessionRename={handleTaskRename}
                   onSessionDelete={handleTaskDelete}
                   onSessionArchive={handleTaskArchive}
@@ -840,6 +851,7 @@ export function Sidebar() {
                       onTaskRename={handleTaskEntityRename}
                       onTaskDelete={handleTaskEntityDelete}
                       onTaskStatusChange={handleTaskStatusChangeById}
+                      onChatStatusChange={handleChatStatusChangeById}
                       onSessionRename={handleTaskRename}
                       onSessionDelete={handleTaskDelete}
                       onSessionArchive={handleTaskArchive}

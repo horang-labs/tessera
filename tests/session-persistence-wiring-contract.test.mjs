@@ -12,13 +12,14 @@ const restCreate = read('../src/app/api/sessions/route.ts');
 const wsActions = read('../src/lib/ws/server-session-actions.ts');
 
 test('schema declares model + reasoning_effort columns and bumps the version', () => {
-  assert.match(schema, /SCHEMA_VERSION = 26/);
+  // v27 after merging dev (dev took v26 for chat_workflow_status).
+  assert.match(schema, /SCHEMA_VERSION = 27/);
   assert.match(schema, /model\s+TEXT/);
   assert.match(schema, /reasoning_effort TEXT/);
 });
 
-test('database adds the columns via migration v26 and the idempotent guard', () => {
-  assert.match(database, /fromVersion < 26/);
+test('database adds the columns via migration v27 and the idempotent guard', () => {
+  assert.match(database, /fromVersion < 27/);
   assert.match(database, /addColumnIfMissing\(db, 'sessions', 'model'/);
   assert.match(database, /addColumnIfMissing\(db, 'sessions', 'reasoning_effort'/);
 });

@@ -148,8 +148,8 @@ export interface UnifiedSession {
   hasCustomTitle?: boolean;
 
   /**
-   * Workflow state derived from the parent task.
-   * Undefined for plain chat sessions that are not linked to a task.
+   * Workflow state derived from the parent task, or manually assigned to a
+   * standalone chat. Undefined standalone chats remain in the Chat bucket.
    */
   workflowStatus?: WorkflowStatus;
 

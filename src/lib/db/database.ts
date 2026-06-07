@@ -216,6 +216,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'worktree_managed', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'sessions', 'model', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
 }
 
 /**
@@ -954,9 +955,17 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
   }
 
   if (fromVersion < 26) {
+    const cols = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
+    if (!cols.some((col) => col.name === 'chat_workflow_status')) {
+      db.exec(`ALTER TABLE sessions ADD COLUMN chat_workflow_status TEXT`);
+    }
+    logger.info('Migration v26 applied: sessions.chat_workflow_status column added');
+  }
+
+  if (fromVersion < 27) {
     addColumnIfMissing(db, 'sessions', 'model', 'TEXT');
     addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
-    logger.info('Migration v26 applied: sessions.model + sessions.reasoning_effort columns added');
+    logger.info('Migration v27 applied: sessions.model + sessions.reasoning_effort columns added');
   }
 }
 

@@ -97,6 +97,40 @@ export function ItemStatusIndicator({
   );
 }
 
+export function WorkflowMessageSquareIcon({
+  className,
+  style,
+  testId,
+}: {
+  className?: string;
+  style?: React.CSSProperties;
+  testId?: string;
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      style={style}
+      fill="none"
+      aria-hidden="true"
+      data-testid={testId}
+    >
+      <path
+        d="M21 15a4 4 0 0 1-4 4H8.1L3 22V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"
+        fill="currentColor"
+        fillOpacity="var(--chat-workflow-icon-fill-opacity)"
+      />
+      <path
+        d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function InlineRenameInput({
   className,
   inputRef,

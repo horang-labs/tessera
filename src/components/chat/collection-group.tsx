@@ -180,6 +180,7 @@ export interface CollectionGroupProps {
   onSessionMoveToProject?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
   onTaskStatusChange?: (taskId: string, status: string) => void;
+  onChatStatusChange?: (sessionId: string, status: string) => void;
   disableDnd?: boolean;
   allowPanelSessionDnd?: boolean;
   hideHeader?: boolean;
@@ -227,6 +228,7 @@ export const CollectionGroup = memo(function CollectionGroup({
   onSessionMoveToProject,
   onSessionStopProcess,
   onTaskStatusChange,
+  onChatStatusChange,
   disableDnd = false,
   allowPanelSessionDnd = false,
   hideHeader = false,
@@ -321,8 +323,15 @@ export const CollectionGroup = memo(function CollectionGroup({
           ? useSessionStore.getState().getSession(id)?.isRunning ?? false
           : task?.sessions.some((session) => session.isRunning) ?? false;
 
+      const session = type === 'chat'
+        ? useSessionStore.getState().getSession(id) ?? chatById.get(id)
+        : undefined;
       const currentStatus =
-        type === 'task' ? (task?.workflowStatus ?? 'todo') : undefined;
+        type === 'task'
+          ? (task?.workflowStatus ?? 'todo')
+          : !isSubSession
+            ? (session?.workflowStatus ?? 'chat')
+            : undefined;
 
       setContextMenu({
         x: event.clientX,
@@ -335,7 +344,7 @@ export const CollectionGroup = memo(function CollectionGroup({
         currentStatus,
       });
     },
-    [taskById],
+    [chatById, taskById],
   );
 
   const startEditingCollection = useCallback(() => {
@@ -676,6 +685,8 @@ export const CollectionGroup = memo(function CollectionGroup({
           onStatusChange={
             contextMenu.type === 'task' && !contextMenu.isSubSession && onTaskStatusChange
               ? (status) => onTaskStatusChange(contextMenu.targetId, status)
+              : contextMenu.type === 'chat' && !contextMenu.isSubSession && onChatStatusChange
+                ? (status) => onChatStatusChange(contextMenu.targetId, status)
               : undefined
           }
         />
