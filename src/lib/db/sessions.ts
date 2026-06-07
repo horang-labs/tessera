@@ -23,6 +23,7 @@ export interface SessionRow {
   worktree_deleted_at: string | null;
   deleted: number; // 0 | 1 — soft-delete flag
   task_id: string | null;
+  chat_workflow_status: string | null;
   collection_id: string | null;
   sort_order: number;
   created_at: string;
@@ -41,7 +42,7 @@ function isUuidLikeSearchQuery(query: string): boolean {
 
 const SESSION_STATUS_GROUP_SQL = `
   CASE
-    WHEN s.task_id IS NULL THEN 'chat'
+    WHEN s.task_id IS NULL THEN COALESCE(s.chat_workflow_status, 'chat')
     ELSE COALESCE(t.workflow_status, 'todo')
   END
 `;
@@ -49,7 +50,10 @@ const SESSION_STATUS_GROUP_SQL = `
 const SESSION_SELECT_WITH_TASK = `
   SELECT
     s.*,
-    t.workflow_status AS workflow_status
+    CASE
+      WHEN s.task_id IS NULL THEN s.chat_workflow_status
+      ELSE COALESCE(t.workflow_status, 'todo')
+    END AS workflow_status
   FROM sessions s
   LEFT JOIN tasks t ON t.id = s.task_id
   LEFT JOIN projects p ON p.id = s.project_id
@@ -233,7 +237,7 @@ export function softDeleteSession(id: string): void {
  */
 export function updateSession(
   id: string,
-  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'collection_id'>>,
+  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'chat_workflow_status' | 'collection_id'>>,
   options?: { skipTimestamp?: boolean }
 ): void {
   const db = getDb();
@@ -251,6 +255,7 @@ export function updateSession(
   if (patch.provider_state !== undefined) { sets.push('provider_state = ?'); values.push(patch.provider_state); }
   if (patch.project_id !== undefined) { sets.push('project_id = ?'); values.push(patch.project_id); }
   if (patch.task_id !== undefined) { sets.push('task_id = ?'); values.push(patch.task_id); }
+  if (patch.chat_workflow_status !== undefined) { sets.push('chat_workflow_status = ?'); values.push(patch.chat_workflow_status); }
   if (patch.collection_id !== undefined) { sets.push('collection_id = ?'); values.push(patch.collection_id); }
 
   if (sets.length === 0) return;

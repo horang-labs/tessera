@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SessionStatus, ProjectGroup, UnifiedSession } from '@/types/chat';
+import type { WorkflowStatus } from '@/types/task-entity';
 import type { SessionGoal } from '@/types/session-goal';
 import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
@@ -56,6 +57,7 @@ interface SessionState {
   clearUnreadCount: (sessionId: string) => void;
   // Task workflow actions (Unit 1 — Task Board Sidebar v2)
   updateLinkedTaskWorkflowStatus: (sessionId: string, workflowStatus: string) => void;
+  updateChatWorkflowStatus: (sessionId: string, workflowStatus: WorkflowStatus | null) => void;
   syncTaskWorkflowStatus: (
     taskId: string,
     previousWorkflowStatus: NonNullable<UnifiedSession['workflowStatus']>,
@@ -164,6 +166,50 @@ function applyTaskWorkflowStatusToProjects(
       counts[previousWorkflowStatus] = Math.max(0, counts[previousWorkflowStatus] - affectedSessions.length);
     }
     counts[nextWorkflowStatus] = (counts[nextWorkflowStatus] ?? 0) + affectedSessions.length;
+
+    return { ...project, sessions: updatedSessions, countByStatus: counts };
+  });
+}
+
+function applyChatWorkflowStatusToProjects(
+  projects: ProjectGroup[],
+  sessionId: string,
+  previousStatusGroup: string,
+  nextWorkflowStatus: WorkflowStatus | null,
+): ProjectGroup[] {
+  const nextStatusGroup = nextWorkflowStatus ?? 'chat';
+  const touchedAt = new Date().toISOString();
+
+  return projects.map((project) => {
+    let hasAffectedSession = false;
+    let isAffectedSessionArchived = false;
+    const updatedSessions = project.sessions.map((session) => {
+      if (session.id !== sessionId || session.taskId) {
+        return session;
+      }
+
+      hasAffectedSession = true;
+      isAffectedSessionArchived = session.archived;
+      return {
+        ...session,
+        workflowStatus: nextWorkflowStatus ?? undefined,
+        lastModified: touchedAt,
+      };
+    });
+
+    if (!hasAffectedSession) {
+      return project;
+    }
+
+    if (!project.countByStatus || isAffectedSessionArchived) {
+      return { ...project, sessions: updatedSessions };
+    }
+
+    const counts = { ...project.countByStatus };
+    if (counts[previousStatusGroup] != null) {
+      counts[previousStatusGroup] = Math.max(0, counts[previousStatusGroup] - 1);
+    }
+    counts[nextStatusGroup] = (counts[nextStatusGroup] ?? 0) + 1;
 
     return { ...project, sessions: updatedSessions, countByStatus: counts };
   });
@@ -848,6 +894,51 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       get().syncTaskWorkflowStatus(taskId, nextWorkflowStatus, previousWorkflowStatus);
       console.warn(`[session-store] updateLinkedTaskWorkflowStatus rollback for task ${taskId}`);
+    });
+  },
+
+  updateChatWorkflowStatus: (sessionId, workflowStatus) => {
+    const session = get().getSession(sessionId);
+    if (!session) return;
+
+    if (session.taskId) {
+      if (workflowStatus) {
+        get().updateLinkedTaskWorkflowStatus(sessionId, workflowStatus);
+      }
+      return;
+    }
+
+    const previousWorkflowStatus = session.workflowStatus ?? null;
+    if (previousWorkflowStatus === workflowStatus) return;
+
+    const previousStatusGroup = getSessionStatusGroup(session);
+    set((state) => ({
+      projects: applyChatWorkflowStatusToProjects(
+        state.projects,
+        sessionId,
+        previousStatusGroup,
+        workflowStatus,
+      ),
+    }));
+
+    fetchWithClientId(`/api/sessions/${sessionId}/workflow-status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflowStatus }),
+    }).then((response) => {
+      if (!response.ok) {
+        throw new Error('Failed to update chat workflow status');
+      }
+    }).catch(() => {
+      set((state) => ({
+        projects: applyChatWorkflowStatusToProjects(
+          state.projects,
+          sessionId,
+          workflowStatus ?? 'chat',
+          previousWorkflowStatus,
+        ),
+      }));
+      console.warn(`[session-store] updateChatWorkflowStatus rollback for session ${sessionId}`);
     });
   },
 

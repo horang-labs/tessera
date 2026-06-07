@@ -214,6 +214,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   // latest schema version marker without every latest column. Keep startup
   // idempotent so runtime queries do not depend solely on the version marker.
   addColumnIfMissing(db, 'sessions', 'worktree_managed', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
 }
 
 /**
@@ -949,6 +950,14 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
       db.exec(`ALTER TABLE sessions ADD COLUMN worktree_managed INTEGER NOT NULL DEFAULT 0`);
     }
     logger.info('Migration v25 applied: sessions.worktree_managed column added');
+  }
+
+  if (fromVersion < 26) {
+    const cols = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
+    if (!cols.some((col) => col.name === 'chat_workflow_status')) {
+      db.exec(`ALTER TABLE sessions ADD COLUMN chat_workflow_status TEXT`);
+    }
+    logger.info('Migration v26 applied: sessions.chat_workflow_status column added');
   }
 }
 
