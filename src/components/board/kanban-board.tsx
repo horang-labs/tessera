@@ -6,6 +6,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useChatStore } from '@/stores/chat-store';
+import { useSelectionStore } from '@/stores/selection-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -16,10 +17,10 @@ import {
   useSessionClickHandlers,
   tryForwardClickToMainWindow,
 } from '@/hooks/use-session-click-handlers';
-import { setKanbanChatDragData } from '@/lib/dnd/panel-session-drag';
+import { getKanbanMultiSessionDragIds, setKanbanChatDragData } from '@/lib/dnd/panel-session-drag';
 import { WORKFLOW_STATUS_ORDER } from '@/types/task-entity';
 import type { WorkflowStatus, TaskEntity } from '@/types/task-entity';
-import { TASK_DND_MIME } from '@/types/task';
+import { TASK_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
 import type { UnifiedSession } from '@/types/chat';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 import { CollectionFilterBar } from './collection-filter-bar';
@@ -302,7 +303,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return project?.sessions ?? [];
   }, [projects, selectedProjectDir]);
 
-  // Chat sessions: sessions with no taskId, not archived
+  // Standalone chat sessions: no taskId, not archived. Chats without a
+  // workflowStatus stay in the Chat column; positioned chats render below
+  // tasks in the matching workflow column.
   const chatSessions = useMemo(() => {
     return allSessions.filter((s) => !s.taskId && !s.archived);
   }, [allSessions]);
@@ -312,8 +315,34 @@ export const KanbanBoard = memo(function KanbanBoard() {
     const baseChats = activeCollectionFilter
       ? chatSessions.filter((s) => s.collectionId === activeCollectionFilter)
       : chatSessions;
-    return baseChats.slice().sort((a, b) => a.sortOrder - b.sortOrder);
+    return baseChats
+      .filter((session) => !session.workflowStatus)
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [chatSessions, activeCollectionFilter]);
+
+  const workflowChatsByStatus = useMemo(() => {
+    const map: Record<WorkflowStatus, UnifiedSession[]> = {
+      todo: [],
+      in_progress: [],
+      in_review: [],
+      done: [],
+    };
+    const baseChats = activeCollectionFilter
+      ? chatSessions.filter((s) => s.collectionId === activeCollectionFilter)
+      : chatSessions;
+
+    for (const session of baseChats) {
+      const status = session.workflowStatus;
+      if (status && map[status]) {
+        map[status].push(session);
+      }
+    }
+    for (const status of WORKFLOW_STATUS_ORDER) {
+      map[status].sort((a, b) => a.sortOrder - b.sortOrder);
+    }
+    return map;
+  }, [activeCollectionFilter, chatSessions]);
 
   const visibleTaskSessions = useMemo(() => {
     return allSessions.filter((s) => s.taskId && !s.archived);
@@ -407,18 +436,31 @@ export const KanbanBoard = memo(function KanbanBoard() {
           ids.push(s.id);
         }
       }
+      for (const s of workflowChatsByStatus[status]) {
+        ids.push(s.id);
+      }
     }
     for (const s of filteredChats) {
       ids.push(s.id);
     }
     return ids;
-  }, [filteredChats, mergedTasksByStatus]);
+  }, [filteredChats, mergedTasksByStatus, workflowChatsByStatus]);
 
   // Click handlers
   const { handleSessionClick, handleSessionDoubleClick } = useSessionClickHandlers({ orderedIds });
 
   const handleChatDragStart = useCallback((sessionId: string, e: React.DragEvent) => {
+    const selectionStore = useSelectionStore.getState();
+    const isMultiDrag = selectionStore.selectedIds.size > 1 && selectionStore.selectedIds.has(sessionId);
+
+    if (selectionStore.selectedIds.size > 0 && !selectionStore.selectedIds.has(sessionId)) {
+      selectionStore.clearSelection();
+    }
+
     setKanbanChatDragData(e.dataTransfer, sessionId);
+    if (isMultiDrag) {
+      e.dataTransfer.setData(TASK_MULTI_DND_MIME, JSON.stringify([...selectionStore.selectedIds]));
+    }
     requestAnimationFrame(() => {
       useBoardStore.getState().setDragging(sessionId);
     });
@@ -431,10 +473,19 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, []);
 
   const handleChatSessionDragOver = useCallback((sessionId: string, status: string, e: React.DragEvent) => {
-    if (status !== 'chat' || !e.dataTransfer.types.includes(TASK_DND_MIME)) return;
+    if (!e.dataTransfer.types.includes(TASK_DND_MIME)) return;
 
     const draggingSessionId = useBoardStore.getState().draggingTaskId;
     if (!draggingSessionId || draggingSessionId === sessionId) {
+      if (useBoardStore.getState().dropIndicator) {
+        useBoardStore.getState().setDropIndicator(null);
+      }
+      return;
+    }
+
+    const draggingSession = useSessionStore.getState().getSession(draggingSessionId);
+    const draggingStatus = draggingSession?.workflowStatus ?? 'chat';
+    if (draggingStatus !== status) {
       if (useBoardStore.getState().dropIndicator) {
         useBoardStore.getState().setDropIndicator(null);
       }
@@ -455,7 +506,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, []);
 
   const handleChatColumnDragOver = useCallback((status: string, e: React.DragEvent) => {
-    if (status !== 'chat' || !e.dataTransfer.types.includes(TASK_DND_MIME)) return;
+    const hasChatDrag = e.dataTransfer.types.includes(TASK_DND_MIME);
+    const hasMultiDrag = e.dataTransfer.types.includes(TASK_MULTI_DND_MIME);
+    if (status !== 'chat' || (!hasChatDrag && !hasMultiDrag)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     if (useBoardStore.getState().dragOverStatus !== 'chat') {
@@ -475,12 +528,49 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   const handleChatColumnDrop = useCallback((status: string, e: React.DragEvent) => {
     e.preventDefault();
-    if (status !== 'chat' || !e.dataTransfer.types.includes(TASK_DND_MIME)) return;
+    const hasChatDrag = e.dataTransfer.types.includes(TASK_DND_MIME);
+    const hasMultiDrag = e.dataTransfer.types.includes(TASK_MULTI_DND_MIME);
+    if (status !== 'chat' || (!hasChatDrag && !hasMultiDrag)) return;
 
-    const sessionId = e.dataTransfer.getData(TASK_DND_MIME);
+    const sessionId = hasChatDrag ? e.dataTransfer.getData(TASK_DND_MIME) : '';
     const indicator = useBoardStore.getState().dropIndicator;
+    const session = sessionId ? useSessionStore.getState().getSession(sessionId) : undefined;
+    const multiSessionIds = getKanbanMultiSessionDragIds(e.dataTransfer);
 
-    if (selectedProjectDir && sessionId) {
+    if (selectedProjectDir && multiSessionIds.length > 1) {
+      const sessionStore = useSessionStore.getState();
+      let movedCount = 0;
+
+      for (const selectedSessionId of multiSessionIds) {
+        const selectedSession = sessionStore.getSession(selectedSessionId);
+        if (
+          !selectedSession ||
+          selectedSession.taskId ||
+          selectedSession.projectDir !== selectedProjectDir ||
+          !selectedSession.workflowStatus
+        ) {
+          continue;
+        }
+
+        sessionStore.updateChatWorkflowStatus(selectedSessionId, null);
+        movedCount += 1;
+      }
+
+      if (movedCount > 0) {
+        useBoardStore.getState().flashDrop(sessionId || multiSessionIds[0]);
+        useSelectionStore.getState().clearSelection();
+      }
+
+      useBoardStore.getState().setDragging(null);
+      useBoardStore.getState().setDragOver(null);
+      useBoardStore.getState().setDropIndicator(null);
+      return;
+    }
+
+    if (selectedProjectDir && sessionId && session?.workflowStatus) {
+      useSessionStore.getState().updateChatWorkflowStatus(sessionId, null);
+      useBoardStore.getState().flashDrop(sessionId);
+    } else if (selectedProjectDir && sessionId) {
       const ids = filteredChats.map((session) => session.id);
       const filtered = ids.filter((id) => id !== sessionId);
 
@@ -521,8 +611,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, []);
 
   // Context menu handlers for kanban chat cards
-  const handleCardStatusChange = useCallback((taskId: string, status: string) => {
-    useSessionStore.getState().updateLinkedTaskWorkflowStatus(taskId, status);
+  const handleCardStatusChange = useCallback((sessionId: string, status: string) => {
+    useSessionStore.getState().updateChatWorkflowStatus(
+      sessionId,
+      status === 'chat' ? null : status as WorkflowStatus,
+    );
   }, []);
 
   const handleCardArchive = useCallback((taskId: string) => {
@@ -799,6 +892,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
               key={status}
               status={status}
               tasks={tasksByStatus[status]}
+              chats={workflowChatsByStatus[status]}
               sessionsByTaskId={sessionsByTaskId}
               activeSessionId={selectionSessionId}
               onCreateTask={() => handleCreateTaskInStatus(status)}
@@ -813,9 +907,15 @@ export const KanbanBoard = memo(function KanbanBoard() {
               } : undefined}
               onSessionClick={handleChatClick}
               onSessionDoubleClick={handleChatDoubleClick}
+              onChatDragStart={handleChatDragStart}
+              onChatDragEnd={handleChatDragEnd}
+              onChatDragOver={handleChatSessionDragOver}
               onAddSession={handleAddSessionToTask}
               onTaskContextMenu={handleTaskContextMenu}
               onTaskRename={handleTaskRename}
+              onChatArchive={handleCardArchive}
+              onChatUnarchive={handleCardUnarchive}
+              onChatStatusChange={handleCardStatusChange}
               onSessionRename={handleCardRename}
               onSessionDelete={handleCardDelete}
               onSessionOpenInNewTab={handleCardOpenInNewTab}

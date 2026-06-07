@@ -16,6 +16,7 @@ type RecentWorkSectionProps = Pick<
   | 'onTaskRename'
   | 'onTaskDelete'
   | 'onTaskStatusChange'
+  | 'onChatStatusChange'
   | 'onSessionRename'
   | 'onSessionDelete'
   | 'onSessionArchive'

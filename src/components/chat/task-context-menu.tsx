@@ -14,6 +14,7 @@ import { CollectionMoveSubmenu } from './collection-move-submenu';
 export interface TaskContextMenuProps {
   anchorRect: DOMRect;
   currentStatus?: string;
+  allowChatStatus?: boolean;
   isArchived: boolean;
   isRunning?: boolean;
   collections?: Collection[];
@@ -38,6 +39,7 @@ const PADDING = 6;
 export function TaskContextMenu({
   anchorRect,
   currentStatus,
+  allowChatStatus = false,
   isArchived,
   isRunning,
   collections = [],
@@ -68,7 +70,7 @@ export function TaskContextMenu({
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const statusCount = currentStatus && onStatusChange
-      ? SIDEBAR_STATUS_GROUP_ORDER.filter((s) => s !== 'chat' && s !== currentStatus).length
+      ? SIDEBAR_STATUS_GROUP_ORDER.filter((s) => (allowChatStatus || s !== 'chat') && s !== currentStatus).length
       : 0;
     const optionalItems = (isRunning && onStopProcess ? 1 : 0)
       + (onMoveToCollection ? 1 : 0)
@@ -101,6 +103,7 @@ export function TaskContextMenu({
     return { top, left };
   }, [
     anchorRect,
+    allowChatStatus,
     currentStatus,
     isRunning,
     onGenerateTitle,
@@ -199,7 +202,7 @@ export function TaskContextMenu({
   if (typeof document === 'undefined' || !menuPos) return null;
 
   const otherStatuses = currentStatus && onStatusChange
-    ? SIDEBAR_STATUS_GROUP_ORDER.filter((s) => s !== 'chat' && s !== currentStatus)
+    ? SIDEBAR_STATUS_GROUP_ORDER.filter((s) => (allowChatStatus || s !== 'chat') && s !== currentStatus)
     : [];
 
   return createPortal(
