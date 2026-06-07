@@ -150,10 +150,6 @@ export const zh: I18nMessages = {
       label: '默认模型',
       reasoningEffortLabel: 'Thinking 强度',
       loadingOptions: '正在加载 Provider 选项...',
-      customLabel: '自定义模型',
-      customPlaceholder: '输入模型标识符',
-      customApply: '使用',
-      customHint: '可使用 Claude Code CLI 接受的任何模型，即使未在列表中。',
     },
     effort: {
       readOnlyTooltip: '会话运行中无法更改，请停止会话后再更改',

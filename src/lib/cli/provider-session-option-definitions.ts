@@ -139,30 +139,11 @@ const CLAUDE_EFFORT_WITH_MAX: ProviderReasoningEffortOption[] = [
 
 const CLAUDE_EFFORT_WITH_XHIGH_MAX: ProviderReasoningEffortOption[] = [
   ...CLAUDE_EFFORT_COMMON,
-  { value: 'xhigh', label: 'Extra High', description: 'Deeper reasoning, just below maximum' },
+  { value: 'xhigh', label: 'Extra High', description: 'Deeper reasoning, just below maximum (Opus 4.7 only)' },
   { value: 'max', label: 'Max', description: 'Maximum reasoning depth' },
 ];
 
-const CLAUDE_EFFORT_WITH_ULTRACODE: ProviderReasoningEffortOption[] = [
-  ...CLAUDE_EFFORT_WITH_XHIGH_MAX,
-  { value: 'ultracode', label: 'Ultracode', description: 'Above maximum — most exhaustive effort' },
-];
-
 export const CLAUDE_MODELS: ProviderModelOption[] = [
-  {
-    value: 'claude-opus-4-8',
-    label: 'claude-opus-4-8',
-    isDefault: false,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
-  },
-  {
-    value: 'claude-opus-4-8[1m]',
-    label: 'claude-opus-4-8[1m]',
-    isDefault: true,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
-  },
   {
     value: 'claude-opus-4-7',
     label: 'claude-opus-4-7',
@@ -173,7 +154,7 @@ export const CLAUDE_MODELS: ProviderModelOption[] = [
   {
     value: 'claude-opus-4-7[1m]',
     label: 'claude-opus-4-7[1m]',
-    isDefault: false,
+    isDefault: true,
     defaultReasoningEffort: 'auto',
     supportedReasoningEfforts: CLAUDE_EFFORT_WITH_XHIGH_MAX,
   },
