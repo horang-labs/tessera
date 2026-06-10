@@ -24,7 +24,7 @@ import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
 import type { UnifiedSession } from '@/types/chat';
-import { CHAT_WORKFLOW_ICON_COLOR } from '@/types/task-entity';
+import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
 import { ProviderQuickMenu } from '@/components/chat/provider-quick-menu';
@@ -160,6 +160,9 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const workflowStatus = session.workflowStatus;
   const workflowColor = workflowStatus
     ? CHAT_WORKFLOW_ICON_COLOR[workflowStatus]
+    : null;
+  const workflowIconFill = workflowStatus
+    ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
   const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
   const stripeClass = isAwaitingUser
@@ -308,10 +311,11 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 data-testid={`kanban-chat-agent-icon-${session.id}`}
               />
             ) : (
-              workflowColor ? (
+              workflowColor && workflowIconFill ? (
                 <WorkflowMessageSquareIcon
                   className="h-3.5 w-3.5 opacity-95"
                   style={{ color: workflowColor }}
+                  fillColor={workflowIconFill}
                   testId={`kanban-chat-bubble-${session.id}`}
                 />
               ) : (
