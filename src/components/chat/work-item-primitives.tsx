@@ -99,10 +99,12 @@ export function ItemStatusIndicator({
 
 export function WorkflowMessageSquareIcon({
   className,
+  fillColor,
   style,
   testId,
 }: {
   className?: string;
+  fillColor: string;
   style?: React.CSSProperties;
   testId?: string;
 }) {
@@ -116,12 +118,11 @@ export function WorkflowMessageSquareIcon({
       data-testid={testId}
     >
       <path
-        d="M21 15a4 4 0 0 1-4 4H8.1L3 22V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"
-        fill="currentColor"
-        fillOpacity="var(--chat-workflow-icon-fill-opacity)"
+        d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"
+        fill={fillColor}
       />
       <path
-        d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"
+        d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"

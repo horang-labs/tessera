@@ -38,7 +38,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
-import { CHAT_WORKFLOW_ICON_COLOR } from '@/types/task-entity';
+import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
 import type { UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
@@ -1157,6 +1157,9 @@ export function ChatItemRow({
   const workflowColor = workflowStatus
     ? CHAT_WORKFLOW_ICON_COLOR[workflowStatus]
     : null;
+  const workflowIconFill = workflowStatus
+    ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
+    : null;
   const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
@@ -1257,10 +1260,11 @@ export function ChatItemRow({
               data-testid={`collection-chat-agent-icon-${session.id}`}
             />
           ) : (
-            workflowColor ? (
+            workflowColor && workflowIconFill ? (
               <WorkflowMessageSquareIcon
                 className="h-3.5 w-3.5 opacity-95"
                 style={{ color: workflowColor }}
+                fillColor={workflowIconFill}
                 testId={`collection-chat-bubble-${session.id}`}
               />
             ) : (

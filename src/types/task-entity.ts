@@ -23,10 +23,17 @@ export const WORKFLOW_STATUS_CONFIG: Record<WorkflowStatus, { label: string; col
 };
 
 export const CHAT_WORKFLOW_ICON_COLOR: Record<WorkflowStatus, string> = {
-  todo: 'var(--chat-workflow-todo-icon)',
+  todo: 'var(--workflow-todo)',
   in_progress: 'var(--workflow-doing)',
-  in_review: 'var(--chat-workflow-review-icon)',
-  done: 'var(--chat-workflow-done-icon)',
+  in_review: 'var(--workflow-review)',
+  done: 'var(--workflow-done)',
+};
+
+export const CHAT_WORKFLOW_ICON_FILL: Record<WorkflowStatus, string> = {
+  todo: 'var(--chat-workflow-todo-fill)',
+  in_progress: 'var(--chat-workflow-doing-fill)',
+  in_review: 'var(--chat-workflow-review-fill)',
+  done: 'var(--chat-workflow-done-fill)',
 };
 
 export interface TaskEntity {

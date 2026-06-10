@@ -231,12 +231,12 @@
   --workflow-doing: #b45309;
   --workflow-review: #2563eb;
   --workflow-done: #7c3aed;
-  --chat-workflow-icon-fill-opacity: 0.42;
 
-  /* Chat workflow icon contrast colors. Keep Git workflow colors canonical. */
-  --chat-workflow-todo-icon: #4b5563;
-  --chat-workflow-review-icon: #005bd8;
-  --chat-workflow-done-icon: #a21caf;
+  /* Chat workflow icon fills. Outlines use the canonical Git workflow colors. */
+  --chat-workflow-todo-fill: color-mix(in srgb, var(--workflow-todo) 22%, transparent);
+  --chat-workflow-doing-fill: color-mix(in srgb, var(--workflow-doing) 22%, transparent);
+  --chat-workflow-review-fill: color-mix(in srgb, var(--workflow-review) 22%, transparent);
+  --chat-workflow-done-fill: color-mix(in srgb, var(--workflow-done) 22%, transparent);
 
   /* Worktree Status Icon Colors */
   --worktree-doing: var(--workflow-doing);
@@ -382,12 +382,12 @@
   --workflow-doing: #f59e0b;
   --workflow-review: #60a5fa;
   --workflow-done: #a78bfa;
-  --chat-workflow-icon-fill-opacity: 0.46;
 
-  /* Chat workflow icon contrast colors. Keep Git workflow colors canonical. */
-  --chat-workflow-todo-icon: #d1d5db;
-  --chat-workflow-review-icon: #22d3ee;
-  --chat-workflow-done-icon: #e879f9;
+  /* Chat workflow icon fills. Outlines use the canonical Git workflow colors. */
+  --chat-workflow-todo-fill: color-mix(in srgb, var(--workflow-todo) 28%, transparent);
+  --chat-workflow-doing-fill: color-mix(in srgb, var(--workflow-doing) 28%, transparent);
+  --chat-workflow-review-fill: color-mix(in srgb, var(--workflow-review) 28%, transparent);
+  --chat-workflow-done-fill: color-mix(in srgb, var(--workflow-done) 28%, transparent);
 
   /* Worktree Status Icon Colors */
   --worktree-doing: var(--workflow-doing);
