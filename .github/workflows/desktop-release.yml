@@ -68,6 +68,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Isolate Windows user profile for build
+        shell: pwsh
+        run: |
+          $safeHome = Join-Path $env:RUNNER_TEMP 'tessera-home'
+          $safeAppData = Join-Path $safeHome 'AppData\Roaming'
+          $safeLocalAppData = Join-Path $safeHome 'AppData\Local'
+
+          New-Item -ItemType Directory -Force -Path $safeHome | Out-Null
+          New-Item -ItemType Directory -Force -Path $safeAppData | Out-Null
+          New-Item -ItemType Directory -Force -Path $safeLocalAppData | Out-Null
+
+          "HOME=$safeHome" >> $env:GITHUB_ENV
+          "USERPROFILE=$safeHome" >> $env:GITHUB_ENV
+          "APPDATA=$safeAppData" >> $env:GITHUB_ENV
+          "LOCALAPPDATA=$safeLocalAppData" >> $env:GITHUB_ENV
+
       - name: Build desktop package
         run: npm run electron:build:win
         env:
