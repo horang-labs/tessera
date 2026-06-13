@@ -72,3 +72,13 @@ export type CliMessage = {
   event?: CliStreamEventPayload;
   parent_tool_use_id?: string | null;
 };
+
+/**
+ * Top-level CLI stdout message types that tessera intentionally ignores rather
+ * than rendering. These are benign telemetry/status pushes (e.g. the CLI's
+ * `rate_limit_event`, emitted when unified usage-limit info changes) that have no
+ * chat representation. Shared by every stdout parsing path so a new benign type
+ * only needs to be listed once — otherwise an unmodeled type falls through to a
+ * generic "Unhandled Claude Code message type" warning in the transcript.
+ */
+export const KNOWN_IGNORED_MESSAGE_TYPES = new Set<string>(['rate_limit_event']);
