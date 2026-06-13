@@ -53,7 +53,7 @@ import {
   resolveProviderCliCommandWithMetadata,
 } from '../../provider-command';
 import {
-  classifyAuthFailure,
+  classifyAuthStatus,
   classifyVersionFailure,
   summarizeExecProbe,
 } from '../../status-detection';
@@ -338,11 +338,11 @@ export class CodexAdapter implements CliProvider {
     }
 
     const version = parseVersion(versionResult.stdout);
-    const connected = loginResult.ok;
+    const authStatus = classifyAuthStatus(loginResult);
 
     return {
-      status: connected ? 'connected' : 'needs_login',
-      detectionReason: connected ? 'connected' : classifyAuthFailure(loginResult),
+      status: authStatus.status,
+      detectionReason: authStatus.detectionReason,
       ...(version ? { version } : {}),
       ...baseTelemetry,
     };

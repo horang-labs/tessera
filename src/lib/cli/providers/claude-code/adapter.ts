@@ -32,7 +32,7 @@ import {
   resolveProviderCliCommandWithMetadata,
 } from '../../provider-command';
 import {
-  classifyAuthFailure,
+  classifyAuthStatus,
   classifyVersionFailure,
   summarizeExecProbe,
 } from '../../status-detection';
@@ -144,11 +144,11 @@ export class ClaudeCodeAdapter implements CliProvider {
     }
 
     const version = parseVersion(versionResult.stdout);
-    const connected = authResult.ok;
+    const authStatus = classifyAuthStatus(authResult);
 
     return {
-      status: connected ? 'connected' : 'needs_login',
-      detectionReason: connected ? 'connected' : classifyAuthFailure(authResult),
+      status: authStatus.status,
+      detectionReason: authStatus.detectionReason,
       ...(version ? { version } : {}),
       ...baseTelemetry,
     };
