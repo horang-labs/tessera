@@ -285,6 +285,10 @@ export class WebSocketClient {
     this.sendRequest('set_service_tier', { sessionId, serviceTier });
   }
 
+  setFastMode(sessionId: string, fastMode: boolean | null) {
+    this.sendRequest('set_fast_mode', { sessionId, fastMode });
+  }
+
   getCommands(sessionId: string) {
     this.sendRequest('get_commands', { sessionId });
   }

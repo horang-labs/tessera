@@ -294,6 +294,20 @@ export async function routeClientTransportMessage({
       });
       return;
 
+    case 'set_fast_mode':
+      runProcessManagerControlAction({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        action: (sessionId) =>
+          processManager.sendSetFastMode(sessionId, message.fastMode),
+        errorCode: 'set_fast_mode_failed',
+        errorMessage: 'Failed to set fast mode',
+        logMessage: 'Set fast mode requested',
+        logMetadata: { fastMode: message.fastMode },
+      });
+      return;
+
     case 'stop_session':
       await closeSessionFromWebSocket({
         userId,
