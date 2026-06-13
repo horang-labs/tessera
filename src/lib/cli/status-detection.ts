@@ -1,6 +1,7 @@
 import type { ExecResult } from './cli-exec';
 import type {
   CliCommandSource,
+  CliConnectionStatus,
   CliDetectionReason,
   CliProbeFailureKind,
   CliProbeSummary,
@@ -36,6 +37,30 @@ export function classifyAuthFailure(result: ExecResult): CliDetectionReason {
   if (result.ok) return 'connected';
   if (result.timedOut) return 'auth_timeout';
   return 'auth_failed';
+}
+
+/**
+ * Resolves OpenCode's connection status from the version probe alone.
+ *
+ * Unlike Claude Code (`auth status`) and Codex (`login status`), OpenCode has
+ * no dedicated auth-status command and never gates on login: its free hosted
+ * models are always available, so `opencode models` exits 0 even with zero
+ * credentials. Probing `models` therefore measures OpenCode's ~2s runtime boot,
+ * not auth — and on a slow boot it timed out and was mislabeled "needs_login".
+ *
+ * A runnable binary is "connected"; only a failed version probe is a problem.
+ */
+export function classifyOpenCodeStatus(
+  versionResult: ExecResult,
+  commandSource: CliCommandSource,
+): { status: CliConnectionStatus; detectionReason: CliDetectionReason } {
+  if (!versionResult.ok) {
+    return {
+      status: 'not_installed',
+      detectionReason: classifyVersionFailure(versionResult, commandSource),
+    };
+  }
+  return { status: 'connected', detectionReason: 'connected' };
 }
 
 function getProbeFailureKind(result: ExecResult): CliProbeFailureKind {
