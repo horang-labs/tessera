@@ -38,6 +38,17 @@ function timeValue(value: string | undefined): number {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+/**
+ * 정렬 anchor로 쓰는 불변 생성 시각.
+ * task 항목은 TaskEntity.createdAt(DB 값)을 쓴다 — 어떤 세션이 "가장 최근"인지에 따라
+ * item.session이 바뀌어도 흔들리지 않기 때문이다(taskToRecentItem의 liveSession,
+ * fallbackTaskItemsFromSessions의 recentSession 모두 최신 세션을 따라 바뀔 수 있다).
+ * chat 항목은 세션이 하나뿐이라 session.createdAt이 곧 불변 anchor다.
+ */
+function sortAnchorTime(item: RecentWorkItem): number {
+  return timeValue(item.type === 'task' ? item.task.createdAt : item.session.createdAt);
+}
+
 function getMostRecentTaskSession(sessions: TaskSession[]): TaskSession | null {
   let recent: TaskSession | null = null;
   for (const session of sessions) {
@@ -115,6 +126,14 @@ function fallbackTaskItemsFromSessions(
   return Array.from(grouped.entries()).map(([taskId, sessions]) => {
     const sortedSessions = sortSessionsByLastActivity(sessions);
     const recentSession = sortedSessions[0];
+    // 그룹의 정렬 anchor는 "가장 먼저 생성된 세션"의 createdAt으로 고정한다.
+    // recentSession.createdAt을 쓰면 동시 실행 중인 세션끼리 최신 자리가 바뀔 때
+    // anchor도 따라 바뀌어 정렬이 흔들린다.
+    const earliestCreatedAt = sortedSessions.reduce(
+      (earliest, session) =>
+        timeValue(session.createdAt) < timeValue(earliest) ? session.createdAt : earliest,
+      recentSession.createdAt,
+    );
     const taskSessions: TaskSession[] = sortedSessions.map((session) => ({
       id: session.id,
       title: session.title,
@@ -133,7 +152,7 @@ function fallbackTaskItemsFromSessions(
       archived: false,
       sortOrder: recentSession.sortOrder,
       sessions: taskSessions,
-      createdAt: recentSession.createdAt,
+      createdAt: earliestCreatedAt,
       updatedAt: recentSession.lastModified,
       diffStats: recentSession.diffStats,
     };
@@ -203,6 +222,26 @@ export function buildRecentWorkItems({
   }
 
   return items
-    .sort((left, right) => timeValue(right.lastActivityAt) - timeValue(left.lastActivityAt))
+    .sort((left, right) => {
+      // 1) 실행 중 항목을 위로 (사용자가 주시하는 라이브 작업).
+      const runDiff = (right.isRunning ? 1 : 0) - (left.isRunning ? 1 : 0);
+      if (runDiff !== 0) return runDiff;
+
+      // 2) 같은 그룹 안에서는 키를 다르게 고른다.
+      //    실행 중 세션은 스트리밍 청크마다 lastModified가 갱신되므로
+      //    (touchSessionActivity, session-store.ts), lastActivityAt로 정렬하면
+      //    동시에 스트리밍 중인 세션끼리 텍스트 델타마다 자리를 맞바꾼다.
+      //    createdAt은 불변이라 실행 중 그룹의 순서가 흔들리지 않는다.
+      //    완료된 항목은 lastActivityAt로 정렬해 실제 "최근 작업" 순서를 유지한다.
+      //    (이 부분을 lastActivityAt로 되돌리면 정렬 흔들림 버그가 재발한다.)
+      const leftKey = left.isRunning ? sortAnchorTime(left) : timeValue(left.lastActivityAt);
+      const rightKey = right.isRunning ? sortAnchorTime(right) : timeValue(right.lastActivityAt);
+      if (rightKey !== leftKey) return rightKey - leftKey;
+
+      // 3) 키가 같을 때도 순서가 절대 뒤섞이지 않도록 결정적 tie-break.
+      const createdDiff = sortAnchorTime(right) - sortAnchorTime(left);
+      if (createdDiff !== 0) return createdDiff;
+      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+    })
     .slice(0, limit);
 }
