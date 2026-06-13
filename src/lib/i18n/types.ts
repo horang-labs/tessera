@@ -554,7 +554,7 @@ export interface I18nMessages {
     focusPanelDown: string;
     voiceInput: string;
     togglePlanMode: string;
-    toggleCodexFastMode: string;
+    toggleFastMode: string;
     openModelSelector: string;
     openReasoningSelector: string;
     browserConflict: string;

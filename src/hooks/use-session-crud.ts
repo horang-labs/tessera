@@ -203,6 +203,7 @@ export function useSessionCrud() {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
           serviceTier: result.serviceTier,
+          fastMode: result.fastMode,
           sessionMode: result.sessionMode,
           accessMode: result.accessMode,
           taskId: options.taskId,

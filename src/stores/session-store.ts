@@ -40,12 +40,12 @@ interface SessionState {
   markSessionRunning: (
     sessionId: string,
     tesseraSessionId: string,
-    runtimeConfig?: Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'sessionMode' | 'accessMode'>,
+    runtimeConfig?: Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'fastMode' | 'sessionMode' | 'accessMode'>,
   ) => void;
   markSessionStopped: (sessionId: string) => void;
   updateSessionRuntimeConfig: (
     sessionId: string,
-    runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'sessionMode' | 'accessMode'>>,
+    runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'fastMode' | 'sessionMode' | 'accessMode'>>,
   ) => void;
   updateSessionGoal: (sessionId: string, goal: SessionGoal | null) => void;
   setCreatingSession: (sessionId: string | null) => void;
@@ -122,6 +122,7 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     model: s.model ?? undefined,
     reasoningEffort: 'reasoningEffort' in s ? s.reasoningEffort : undefined,
     serviceTier: 'serviceTier' in s ? s.serviceTier : undefined,
+    fastMode: 'fastMode' in s ? s.fastMode : undefined,
     hasStarted: s.hasStarted ?? s.isRunning ?? false,
     goal: 'goal' in s ? s.goal : undefined,
     taskId: s.taskId ?? undefined,
@@ -762,6 +763,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 ...(runtimeConfig?.serviceTier !== undefined && {
                   serviceTier: runtimeConfig.serviceTier,
                 }),
+                ...(runtimeConfig?.fastMode !== undefined && {
+                  fastMode: runtimeConfig.fastMode,
+                }),
                 ...(runtimeConfig?.sessionMode !== undefined && {
                   sessionMode: runtimeConfig.sessionMode,
                 }),
@@ -806,6 +810,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 }),
                 ...(runtimeConfig.serviceTier !== undefined && {
                   serviceTier: runtimeConfig.serviceTier,
+                }),
+                ...(runtimeConfig.fastMode !== undefined && {
+                  fastMode: runtimeConfig.fastMode,
                 }),
                 ...(runtimeConfig.sessionMode !== undefined && {
                   sessionMode: runtimeConfig.sessionMode,

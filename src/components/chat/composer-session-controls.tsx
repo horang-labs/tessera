@@ -412,6 +412,10 @@ function isCodexProvider(providerId: string): boolean {
   return providerId === 'codex';
 }
 
+function isClaudeCodeProvider(providerId: string): boolean {
+  return providerId === 'claude-code';
+}
+
 function isOpenCodeProvider(providerId: string): boolean {
   return providerId === 'opencode';
 }
@@ -464,10 +468,11 @@ function resolveModeToggleTitle(providerId: string, sessionMode: ProviderSession
   return sessionMode === 'plan' ? 'Plan mode is on' : 'Plan before implementation';
 }
 
-function resolveFastModeToggleTitle(isEnabled: boolean): string {
+function resolveFastModeToggleTitle(isEnabled: boolean, providerId: string): string {
+  const label = isClaudeCodeProvider(providerId) ? 'Claude' : 'Codex';
   return isEnabled
-    ? 'Codex fast mode is on'
-    : 'Use Codex fast mode for this session';
+    ? `${label} fast mode is on`
+    : `Use ${label} fast mode for this session`;
 }
 
 function buildProviderModelControlValue(
@@ -521,12 +526,13 @@ function ComposerSessionControlsInner({
   const modelShortcut = useEffectiveShortcut('open-model-selector');
   const reasoningShortcut = useEffectiveShortcut('open-reasoning-selector');
   const planShortcut = useEffectiveShortcut('toggle-plan-mode');
-  const fastModeShortcut = useEffectiveShortcut('toggle-codex-fast-mode');
+  const fastModeShortcut = useEffectiveShortcut('toggle-fast-mode');
   const providerIdForSticky = session.provider;
 
   const sessionOptions = providerSessionOptions.data;
   const selectedModelOption = sessionOptions?.modelOptions.find((option) => option.value === model) ?? null;
   const reasoningOptions = selectedModelOption?.supportedReasoningEfforts ?? [];
+  const currentModelSupportsFastMode = Boolean(selectedModelOption?.supportsFastMode);
   const reasoningEffort = resolveReasoningEffort(
     providerIdForSticky,
     sessionOptions,
@@ -572,20 +578,32 @@ function ComposerSessionControlsInner({
   }, [accessMode, applySessionControls, providerIdForSticky, sessionId, sessionMode]);
 
   const handleFastModeToggle = useCallback(() => {
-    if (!isCodexProvider(providerIdForSticky)) return;
-
-    const nextServiceTier = session.serviceTier === CODEX_FAST_SERVICE_TIER
-      ? null
-      : CODEX_FAST_SERVICE_TIER;
-    updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
-    if (session.isRunning) {
-      wsClient.setServiceTier(sessionId, nextServiceTier);
+    if (isCodexProvider(providerIdForSticky)) {
+      const nextServiceTier = session.serviceTier === CODEX_FAST_SERVICE_TIER
+        ? null
+        : CODEX_FAST_SERVICE_TIER;
+      updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
+      if (session.isRunning) {
+        wsClient.setServiceTier(sessionId, nextServiceTier);
+      }
+      focusSessionInput(sessionId);
+      return;
     }
-    focusSessionInput(sessionId);
+
+    if (isClaudeCodeProvider(providerIdForSticky) && currentModelSupportsFastMode) {
+      const nextFastMode = !(session.fastMode === true);
+      updateSessionRuntimeConfig(sessionId, { fastMode: nextFastMode });
+      if (session.isRunning) {
+        wsClient.setFastMode(sessionId, nextFastMode);
+      }
+      focusSessionInput(sessionId);
+    }
   }, [
+    currentModelSupportsFastMode,
     providerIdForSticky,
     session.isRunning,
     session.serviceTier,
+    session.fastMode,
     sessionId,
     updateSessionRuntimeConfig,
   ]);
@@ -701,10 +719,12 @@ function ComposerSessionControlsInner({
     t('settings.model.reasoningEffortLabel'),
   );
   const isInline = variant === 'inline';
-  const isFastModeEnabled = isCodexProvider(providerIdForSticky)
-    && session.serviceTier === CODEX_FAST_SERVICE_TIER;
-  const canToggleFastMode = isCodexProvider(providerIdForSticky);
-  const fastModeToggleTitle = resolveFastModeToggleTitle(isFastModeEnabled);
+  const isFastModeEnabled =
+    (isCodexProvider(providerIdForSticky) && session.serviceTier === CODEX_FAST_SERVICE_TIER)
+    || (isClaudeCodeProvider(providerIdForSticky) && session.fastMode === true);
+  const canToggleFastMode = isCodexProvider(providerIdForSticky)
+    || (isClaudeCodeProvider(providerIdForSticky) && currentModelSupportsFastMode);
+  const fastModeToggleTitle = resolveFastModeToggleTitle(isFastModeEnabled, providerIdForSticky);
   const canOpenReasoningSelector = Boolean(
     sessionOptions?.supportsReasoningEffort
     && reasoningOptions.length > 0
@@ -795,8 +815,8 @@ function ComposerSessionControlsInner({
             compact={isInline}
             controlId="service-tier"
             title={fastModeToggleTitle}
-            shortcutId="toggle-codex-fast-mode"
-            shortcutLabel={t('shortcut.toggleCodexFastMode')}
+            shortcutId="toggle-fast-mode"
+            shortcutLabel={t('shortcut.toggleFastMode')}
           />
         )}
 

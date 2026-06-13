@@ -51,6 +51,7 @@ export function handleIncomingServerMessage({
         model: msg.model,
         reasoningEffort: msg.reasoningEffort,
         serviceTier: msg.serviceTier,
+        fastMode: msg.fastMode,
         sessionMode: msg.sessionMode,
         accessMode: msg.accessMode,
       });
@@ -350,6 +351,7 @@ function addCreatedSession(
     model: msg.model,
     reasoningEffort: msg.reasoningEffort,
     serviceTier: msg.serviceTier,
+    fastMode: msg.fastMode,
     sessionMode: msg.sessionMode,
     accessMode: msg.accessMode,
     sortOrder: 0,

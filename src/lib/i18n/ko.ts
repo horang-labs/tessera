@@ -556,7 +556,7 @@ export const ko: I18nMessages = {
     focusPanelDown: '아래 패널로 이동',
     voiceInput: '음성 입력',
     togglePlanMode: 'Plan 모드 전환',
-    toggleCodexFastMode: 'Codex Fast 모드 전환',
+    toggleFastMode: 'Fast 모드 전환',
     openModelSelector: '모델 선택',
     openReasoningSelector: 'Thinking 강도 선택',
     browserConflict: '이 단축키는 브라우저와 충돌해 동작이 보장되지 않습니다',

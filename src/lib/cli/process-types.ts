@@ -48,4 +48,6 @@ export interface ProcessInfo {
   model?: string;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
+  /** Claude Code high-speed serving toggle. null/false = off. */
+  fastMode?: boolean | null;
 }

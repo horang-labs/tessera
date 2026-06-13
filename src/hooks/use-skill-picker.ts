@@ -7,13 +7,21 @@ import {
   CODEX_FAST_COMMAND_NAME,
 } from '@/lib/chat/codex-fast-command';
 import {
+  CLAUDE_FAST_BUILTIN_COMMAND,
+  CLAUDE_FAST_COMMAND_DESCRIPTION,
+  CLAUDE_FAST_COMMAND_NAME,
+} from '@/lib/chat/claude-fast-command';
+import {
   CODEX_GOAL_BUILTIN_COMMAND,
   CODEX_GOAL_COMMAND_DESCRIPTION,
   CODEX_GOAL_COMMAND_NAME,
 } from '@/lib/chat/codex-goal-command';
 
 export type SkillInfo = CommandInfo & {
-  builtinCommand?: typeof CODEX_FAST_BUILTIN_COMMAND | typeof CODEX_GOAL_BUILTIN_COMMAND;
+  builtinCommand?:
+    | typeof CODEX_FAST_BUILTIN_COMMAND
+    | typeof CODEX_GOAL_BUILTIN_COMMAND
+    | typeof CLAUDE_FAST_BUILTIN_COMMAND;
 };
 
 interface UseSkillPickerReturn {
@@ -52,8 +60,9 @@ export function useSkillPicker(
     (s) => (sessionId ? s.commands[sessionId] : undefined),
   );
   const builtInCommands = useMemo<SkillInfo[]>(
-    () => providerId === 'codex'
-      ? [{
+    () => {
+      if (providerId === 'codex') {
+        return [{
           name: CODEX_FAST_COMMAND_NAME,
           description: CODEX_FAST_COMMAND_DESCRIPTION,
           builtinCommand: CODEX_FAST_BUILTIN_COMMAND,
@@ -61,8 +70,17 @@ export function useSkillPicker(
           name: CODEX_GOAL_COMMAND_NAME,
           description: CODEX_GOAL_COMMAND_DESCRIPTION,
           builtinCommand: CODEX_GOAL_BUILTIN_COMMAND,
-        }]
-      : [],
+        }];
+      }
+      if (providerId === 'claude-code') {
+        return [{
+          name: CLAUDE_FAST_COMMAND_NAME,
+          description: CLAUDE_FAST_COMMAND_DESCRIPTION,
+          builtinCommand: CLAUDE_FAST_BUILTIN_COMMAND,
+        }];
+      }
+      return [];
+    },
     [providerId],
   );
   const availableCommands = useMemo<SkillInfo[]>(() => {

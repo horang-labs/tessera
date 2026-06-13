@@ -64,6 +64,7 @@ export class ProcessManager {
       model: spawnOptions.model,
       reasoningEffort: spawnOptions.reasoningEffort,
       serviceTier: spawnOptions.serviceTier,
+      fastMode: spawnOptions.fastMode,
     };
   }
 
@@ -166,6 +167,9 @@ export class ProcessManager {
       }
       if (patch.serviceTier !== undefined) {
         info.serviceTier = patch.serviceTier;
+      }
+      if (patch.fastMode !== undefined) {
+        info.fastMode = patch.fastMode;
       }
       logger.info(
         { sessionId, provider: info.provider.getDisplayName(), ...logFields },
@@ -417,6 +421,32 @@ export class ProcessManager {
     return this.tryUpdateProviderSessionConfig(
       sessionId, { serviceTier }, 'service tier', { serviceTier },
     );
+  }
+
+  /**
+   * Toggle Claude Code fast mode at runtime. Providers implementing
+   * updateSessionConfig (Codex) receive the patch; Claude Code falls through to an
+   * apply_flag_settings control_request on stdin (no restart). Disable sends null.
+   */
+  sendSetFastMode(sessionId: string, fastMode: boolean | null): boolean {
+    if (this.tryUpdateProviderSessionConfig(
+      sessionId, { fastMode }, 'fast mode', { fastMode },
+    )) {
+      return true;
+    }
+    const sent = this.writeControlRequest(
+      sessionId,
+      { subtype: 'apply_flag_settings', settings: { fastMode: fastMode === true ? true : null } },
+      'apply_flag_settings',
+    );
+    if (sent) {
+      const info = this.processes.get(sessionId);
+      if (info) {
+        info.fastMode = fastMode;
+      }
+      logger.info({ sessionId, fastMode }, 'apply_flag_settings (fastMode) sent to CLI');
+    }
+    return sent;
   }
 
   async setSessionGoal(sessionId: string, update: SessionGoalUpdate): Promise<SessionGoal | null> {

@@ -554,7 +554,7 @@ export const zh: I18nMessages = {
     focusPanelDown: '切换到下方面板',
     voiceInput: '语音输入',
     togglePlanMode: '切换 Plan 模式',
-    toggleCodexFastMode: '切换 Codex Fast 模式',
+    toggleFastMode: '切换 Fast 模式',
     openModelSelector: '选择模型',
     openReasoningSelector: '选择思考强度',
     browserConflict: '此快捷键可能被浏览器拦截而无法正常工作',
