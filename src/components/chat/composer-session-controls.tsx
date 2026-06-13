@@ -526,7 +526,7 @@ function ComposerSessionControlsInner({
   const modelShortcut = useEffectiveShortcut('open-model-selector');
   const reasoningShortcut = useEffectiveShortcut('open-reasoning-selector');
   const planShortcut = useEffectiveShortcut('toggle-plan-mode');
-  const fastModeShortcut = useEffectiveShortcut('toggle-codex-fast-mode');
+  const fastModeShortcut = useEffectiveShortcut('toggle-fast-mode');
   const providerIdForSticky = session.provider;
 
   const sessionOptions = providerSessionOptions.data;
@@ -810,8 +810,8 @@ function ComposerSessionControlsInner({
             compact={isInline}
             controlId="service-tier"
             title={fastModeToggleTitle}
-            shortcutId="toggle-codex-fast-mode"
-            shortcutLabel={t('shortcut.toggleCodexFastMode')}
+            shortcutId="toggle-fast-mode"
+            shortcutLabel={t('shortcut.toggleFastMode')}
           />
         )}
 
