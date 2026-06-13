@@ -660,7 +660,12 @@ function ComposerSessionControlsInner({
           sessionId,
           buildProviderModelControlValue(providerIdForSticky, model, nextReasoningEffort),
         );
-      } else {
+      } else if (sessionOptions?.runtimeEffortChange) {
+        // Only providers that declare runtimeEffortChange (codex) can apply an
+        // effort change to a live process. Claude Code declares it false — its
+        // adapter has no updateSessionConfig, so sending set_reasoning_effort
+        // here would fail with set_reasoning_effort_failed. We persist above and
+        // let the next spawn/resume pick it up, mirroring handleModelChange.
         wsClient.setReasoningEffort(sessionId, nextReasoningEffort);
       }
     }
