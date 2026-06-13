@@ -26,3 +26,33 @@ test('set_fast_mode has websocket + routing paths', () => {
   assert.match(routingSource, /case 'set_fast_mode':/);
   assert.match(routingSource, /processManager\.sendSetFastMode\(sessionId, message\.fastMode\)/);
 });
+
+test('claude-code fast mode toggle + /fast are wired', () => {
+  const composer = read('src/components/chat/composer-session-controls.tsx');
+  const messageInput = read('src/components/chat/message-input.tsx');
+  const skillPicker = read('src/hooks/use-skill-picker.ts');
+  const claudeFastCmd = read('src/lib/chat/claude-fast-command.ts');
+
+  // toggle branches for claude-code on a fastMode boolean
+  assert.match(composer, /session\.fastMode === true/);
+  assert.match(composer, /isClaudeCodeProvider/);
+  assert.match(composer, /setFastMode\(sessionId/);
+  assert.match(composer, /updateSessionRuntimeConfig\(sessionId, \{ fastMode/);
+
+  // /fast command for claude-code
+  assert.match(claudeFastCmd, /CLAUDE_FAST_BUILTIN_COMMAND = 'claude-fast'/);
+  assert.match(skillPicker, /providerId === 'claude-code'/);
+  assert.match(messageInput, /executeClaudeFastCommand/);
+  assert.match(messageInput, /isClaudeFastCommandSkill/);
+});
+
+test('session store + claude-code defaults persist fastMode', () => {
+  const sessionStore = read('src/stores/session-store.ts');
+  const providerDefaults = read('src/lib/settings/provider-defaults.ts');
+
+  assert.match(sessionStore, /'fastMode'/);
+  assert.match(sessionStore, /runtimeConfig\.fastMode !== undefined/);
+  assert.match(sessionStore, /fastMode: runtimeConfig\.fastMode/);
+  assert.match(sessionStore, /fastMode: 'fastMode' in s \? s\.fastMode : undefined/);
+  assert.match(providerDefaults, /fastMode/);
+});

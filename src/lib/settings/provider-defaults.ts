@@ -261,6 +261,7 @@ export function applyProviderSessionRuntimeOverrides(
     model?: string;
     reasoningEffort?: string | null;
     serviceTier?: string | null;
+    fastMode?: boolean | null;
     sessionMode?: ProviderSessionMode;
     accessMode?: ProviderSessionAccessMode;
   } | null | undefined,
@@ -286,6 +287,7 @@ export function applyProviderSessionRuntimeOverrides(
     ...(overrides?.model !== undefined && { model: overrides.model }),
     ...(overrides?.reasoningEffort !== undefined && { reasoningEffort: overrides.reasoningEffort }),
     ...(overrides?.serviceTier !== undefined && { serviceTier: overrides.serviceTier }),
+    ...(overrides?.fastMode !== undefined && { fastMode: overrides.fastMode }),
     ...controlPatch,
   };
 }
@@ -302,6 +304,7 @@ export function getProviderSessionRuntimeConfig(
     reasoningEffort: defaults.reasoningEffort ?? null,
     sessionMode: defaults.sessionMode,
     accessMode: defaults.accessMode,
+    ...(defaults.fastMode !== undefined && { fastMode: defaults.fastMode }),
     ...(permissionMode && { permissionMode }),
     ...resolveProviderRuntimeControls(providerId, defaults),
   };
@@ -522,6 +525,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
         reasoningEffort: null,
         sessionMode: 'work',
         accessMode: 'default',
+        fastMode: false,
       },
       codex: {
         sessionMode: 'work',

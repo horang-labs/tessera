@@ -29,6 +29,8 @@ export interface ProviderSessionDefaults {
   reasoningEffort?: string | null;
   sessionMode?: ProviderSessionMode;
   accessMode?: ProviderSessionAccessMode;
+  /** Claude Code high-speed serving toggle. Defaults off (opt-in; uses more credits). */
+  fastMode?: boolean | null;
 }
 
 export interface UserProfileSettings {
