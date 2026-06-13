@@ -73,7 +73,8 @@ test('Codex /fast is exposed through the slash command palette', () => {
 test('Codex fast mode is always visible to the left of the Plan control as a toggle', () => {
   assert.match(composerSessionControlsSource, /CODEX_FAST_SERVICE_TIER/);
   assert.match(composerSessionControlsSource, /session\.serviceTier === CODEX_FAST_SERVICE_TIER/);
-  assert.match(composerSessionControlsSource, /const canToggleFastMode = isCodexProvider\(providerIdForSticky\);/);
+  // Fast mode is now provider-general; the Codex branch must still enable the toggle.
+  assert.match(composerSessionControlsSource, /const canToggleFastMode = isCodexProvider\(providerIdForSticky\)/);
   assert.match(composerSessionControlsSource, /testId="fast-mode-toggle"/);
   assert.match(composerSessionControlsSource, /pressed=\{isFastModeEnabled\}/);
   assert.match(composerSessionControlsSource, /controlId="service-tier"/);
@@ -93,13 +94,13 @@ test('Codex fast mode has a configurable keyboard shortcut', () => {
     'utf8',
   );
 
-  assert.match(keyboardRegistrySource, /'toggle-codex-fast-mode':\s*\{ default: '\$mod\+Alt\+f'/);
-  assert.match(keyboardRegistrySource, /descKey: 'shortcut\.toggleCodexFastMode'/);
-  assert.match(i18nTypesSource, /toggleCodexFastMode: string;/);
-  assert.match(composerSessionControlsSource, /const fastModeShortcut = useEffectiveShortcut\('toggle-codex-fast-mode'\);/);
+  assert.match(keyboardRegistrySource, /'toggle-fast-mode':\s*\{ default: '\$mod\+Alt\+f'/);
+  assert.match(keyboardRegistrySource, /descKey: 'shortcut\.toggleFastMode'/);
+  assert.match(i18nTypesSource, /toggleFastMode: string;/);
+  assert.match(composerSessionControlsSource, /const fastModeShortcut = useEffectiveShortcut\('toggle-fast-mode'\);/);
   assert.match(composerSessionControlsSource, /bindings\[fastModeShortcut\]/);
   assert.match(composerSessionControlsSource, /handleFastModeToggle\(\);/);
-  assert.match(composerSessionControlsSource, /shortcutId="toggle-codex-fast-mode"/);
+  assert.match(composerSessionControlsSource, /shortcutId="toggle-fast-mode"/);
 });
 
 test('composer running state omits the Running text label', () => {

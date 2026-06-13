@@ -5,11 +5,13 @@ import type React from 'react';
 import { Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { getKanbanMultiSessionDragIds } from '@/lib/dnd/panel-session-drag';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 import { useBoardStore } from '@/stores/board-store';
 import { useSelectionStore } from '@/stores/selection-store';
+import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
-import { TASK_ENTITY_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
+import { TASK_DND_MIME, TASK_ENTITY_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
 import { WORKFLOW_STATUS_CONFIG } from '@/types/task-entity';
 import type { WorkflowStatus, TaskEntity } from '@/types/task-entity';
 import type { UnifiedSession } from '@/types/chat';
@@ -205,6 +207,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
 interface KanbanWorkflowColumnProps {
   status: WorkflowStatus;
   tasks: TaskEntity[];
+  chats: UnifiedSession[];
   sessionsByTaskId: Record<string, UnifiedSession[]>;
   activeSessionId: string | null;
   onCreateTask?: () => void;
@@ -220,9 +223,15 @@ interface KanbanWorkflowColumnProps {
   };
   onSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
   onSessionDoubleClick: (session: UnifiedSession) => void;
+  onChatDragStart: (sessionId: string, e: React.DragEvent) => void;
+  onChatDragEnd: (e: React.DragEvent) => void;
+  onChatDragOver: (sessionId: string, status: string, e: React.DragEvent) => void;
   onAddSession?: (task: TaskEntity, providerId?: string) => void;
   onTaskContextMenu?: (task: TaskEntity, anchorRect: DOMRect) => void;
   onTaskRename?: (taskId: string, newTitle: string) => void;
+  onChatArchive?: (sessionId: string) => void;
+  onChatUnarchive?: (sessionId: string) => void;
+  onChatStatusChange?: (sessionId: string, status: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
   onSessionDelete?: (sessionId: string) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
@@ -236,6 +245,7 @@ interface KanbanWorkflowColumnProps {
 export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   status,
   tasks,
+  chats,
   sessionsByTaskId,
   activeSessionId,
   onCreateTask,
@@ -244,9 +254,15 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   quickCreateConfig,
   onSessionClick,
   onSessionDoubleClick,
+  onChatDragStart,
+  onChatDragEnd,
+  onChatDragOver,
   onAddSession,
   onTaskContextMenu,
   onTaskRename,
+  onChatArchive,
+  onChatUnarchive,
+  onChatStatusChange,
   onSessionRename,
   onSessionDelete,
   onSessionOpenInNewTab,
@@ -297,7 +313,13 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   }, [status]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes(TASK_ENTITY_DND_MIME)) return;
+    if (
+      !e.dataTransfer.types.includes(TASK_ENTITY_DND_MIME) &&
+      !e.dataTransfer.types.includes(TASK_DND_MIME) &&
+      !e.dataTransfer.types.includes(TASK_MULTI_DND_MIME)
+    ) {
+      return;
+    }
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     const currentOver = useBoardStore.getState().dragOverStatus;
@@ -320,7 +342,13 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    if (!e.dataTransfer.types.includes(TASK_ENTITY_DND_MIME)) return;
+    if (
+      !e.dataTransfer.types.includes(TASK_ENTITY_DND_MIME) &&
+      !e.dataTransfer.types.includes(TASK_DND_MIME) &&
+      !e.dataTransfer.types.includes(TASK_MULTI_DND_MIME)
+    ) {
+      return;
+    }
 
     const boardStore = useBoardStore.getState();
     const taskStore = useTaskStore.getState();
@@ -331,48 +359,91 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     };
 
     const taskId = e.dataTransfer.getData(TASK_ENTITY_DND_MIME);
-    const multiData = e.dataTransfer.getData(TASK_MULTI_DND_MIME);
+    const chatSessionId = e.dataTransfer.getData(TASK_DND_MIME);
+    const multiSessionIds = getKanbanMultiSessionDragIds(e.dataTransfer);
     const draggedTask = taskId ? taskStore.getTask(taskId) : undefined;
+    const sessionStore = useSessionStore.getState();
+    const draggedChatSession = chatSessionId ? sessionStore.getSession(chatSessionId) : undefined;
+    const sourceProjectId = draggedTask?.projectId ?? draggedChatSession?.projectDir;
 
-    if (multiData && draggedTask) {
+    if (multiSessionIds.length > 1 && sourceProjectId) {
       const selectedTaskIds: string[] = [];
+      const selectedChatIds: string[] = [];
       const seenTaskIds = new Set<string>();
+      const seenChatIds = new Set<string>();
 
-      try {
-        const selectedSessionIds: unknown = JSON.parse(multiData);
-        if (Array.isArray(selectedSessionIds)) {
-          for (const selectedSessionId of selectedSessionIds) {
-            if (typeof selectedSessionId !== 'string') continue;
-            const selectedTask = taskStore.getTaskBySessionId(selectedSessionId);
-            if (
-              !selectedTask ||
-              selectedTask.projectId !== draggedTask.projectId ||
-              seenTaskIds.has(selectedTask.id)
-            ) {
-              continue;
-            }
-            seenTaskIds.add(selectedTask.id);
-            selectedTaskIds.push(selectedTask.id);
+      for (const selectedSessionId of multiSessionIds) {
+        const selectedTask = taskStore.getTaskBySessionId(selectedSessionId);
+        if (selectedTask) {
+          if (selectedTask.projectId !== sourceProjectId || seenTaskIds.has(selectedTask.id)) {
+            continue;
           }
+          seenTaskIds.add(selectedTask.id);
+          selectedTaskIds.push(selectedTask.id);
+          continue;
         }
-      } catch {
-        // Ignore malformed external drag payloads and fall back to single-task DnD.
+
+        const selectedSession = sessionStore.getSession(selectedSessionId);
+        if (
+          !selectedSession ||
+          selectedSession.taskId ||
+          selectedSession.projectDir !== sourceProjectId ||
+          seenChatIds.has(selectedSession.id)
+        ) {
+          continue;
+        }
+        seenChatIds.add(selectedSession.id);
+        selectedChatIds.push(selectedSession.id);
       }
 
       const movingTaskIds = selectedTaskIds.filter((selectedTaskId) => {
         const selectedTask = taskStore.getTask(selectedTaskId);
         return selectedTask && selectedTask.workflowStatus !== status;
       });
+      const movingChatIds = selectedChatIds.filter((selectedChatId) => {
+        const selectedSession = sessionStore.getSession(selectedChatId);
+        return selectedSession && selectedSession.workflowStatus !== status;
+      });
 
-      if (selectedTaskIds.length > 1 && movingTaskIds.length > 0) {
+      if (movingTaskIds.length + movingChatIds.length > 0) {
         for (const movingTaskId of movingTaskIds) {
           taskStore.updateTask(movingTaskId, { workflowStatus: status });
         }
-        boardStore.flashDrop(taskId || movingTaskIds[0]);
+        for (const movingChatId of movingChatIds) {
+          sessionStore.updateChatWorkflowStatus(movingChatId, status);
+        }
+        boardStore.flashDrop(taskId || chatSessionId || movingTaskIds[0] || movingChatIds[0]);
         useSelectionStore.getState().clearSelection();
         finishDrop();
         return;
       }
+    }
+
+    if (chatSessionId && e.dataTransfer.types.includes(TASK_DND_MIME)) {
+      const session = draggedChatSession;
+      const indicator = boardStore.dropIndicator;
+
+      if (session && !session.taskId && session.workflowStatus === status && indicator) {
+        const orderedIds = chats
+          .slice()
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((item) => item.id);
+        const filtered = orderedIds.filter((id) => id !== chatSessionId);
+        const targetIdx = filtered.indexOf(indicator.targetSessionId);
+
+        if (targetIdx !== -1) {
+          const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
+          filtered.splice(insertIdx, 0, chatSessionId);
+          sessionStore.reorderSessionsByIds(filtered);
+          boardStore.flashDrop(chatSessionId);
+        }
+      } else if (session && !session.taskId && session.workflowStatus !== status) {
+        sessionStore.updateChatWorkflowStatus(chatSessionId, status);
+        boardStore.flashDrop(chatSessionId);
+      }
+
+      finishDrop();
+      return;
     }
 
     if (taskId) {
@@ -400,7 +471,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     }
 
     finishDrop();
-  }, [status, tasks]);
+  }, [chats, status, tasks]);
 
   // Card drag-over: Ring Gradient highlight using column status color
   const dragOverStyle = isDragOver
@@ -477,7 +548,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
             : undefined
           }
         >
-          {tasks.length}
+          {tasksWithLiveSessions.length + chats.length}
         </span>
 
         <div
@@ -553,10 +624,36 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
               onRenameComplete={() => onTaskRenameComplete?.(task.id)}
             />
           ))}
+          {chats.map((session) => (
+            <KanbanChatCard
+              key={session.id}
+              session={session}
+              isActive={session.id === activeSessionId}
+              dropIndicatorBefore={dropIndicator?.targetSessionId === session.id && dropIndicator.position === 'before'}
+              dropIndicatorAfter={dropIndicator?.targetSessionId === session.id && dropIndicator.position === 'after'}
+              onDragStart={(e) => onChatDragStart(session.id, e)}
+              onDragEnd={onChatDragEnd}
+              onDragOverItem={(e) => onChatDragOver(session.id, status, e)}
+              onClick={(e) => onSessionClick(session, e)}
+              onDoubleClick={() => onSessionDoubleClick(session)}
+              onStatusChange={onChatStatusChange}
+              onArchive={onChatArchive}
+              onUnarchive={onChatUnarchive}
+              onRename={onSessionRename}
+              onDelete={onSessionDelete}
+              onOpenInNewTab={onSessionOpenInNewTab}
+              onGenerateTitle={onSessionGenerateTitle}
+              onMoveToProject={onSessionMoveToProject}
+              onMoveToCollection={(sessionId, collectionId) =>
+                useSessionStore.getState().updateSessionCollection(sessionId, collectionId)
+              }
+              onStopProcess={onSessionStopProcess}
+            />
+          ))}
         </div>
 
         {/* Empty state */}
-        {tasksWithLiveSessions.length === 0 && (
+        {tasksWithLiveSessions.length + chats.length === 0 && (
           <div
             className={cn(
               'flex items-center justify-center py-6',

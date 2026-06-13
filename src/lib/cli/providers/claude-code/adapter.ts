@@ -166,7 +166,7 @@ export class ClaudeCodeAdapter implements CliProvider {
    * For resume sessions: --resume <id> + all of the above except --session-id
    */
   getCliArgs(options: SpawnOptions): string[] {
-    const { sessionId, resume, permissionMode, model, reasoningEffort } = options;
+    const { sessionId, resume, permissionMode, model, reasoningEffort, fastMode } = options;
 
     const args = [
       '--print',
@@ -193,9 +193,24 @@ export class ClaudeCodeAdapter implements CliProvider {
       args.push('--model', model);
     }
 
-    // 'auto' or null → don't pass --effort, let CLI use its own default
-    if (reasoningEffort && reasoningEffort !== 'auto') {
+    // Settings booleans (ultracode, fastMode) are session-scoped and merged into a
+    // SINGLE --settings object — never pass --settings twice (the CLI would only honor
+    // one). Ultracode is not an --effort value (the CLI rejects `--effort ultracode`)
+    // and pairs xhigh effort with standing multi-agent orchestration. fastMode is
+    // orthogonal to effort and enables Claude's high-speed serving on supported models;
+    // the CLI silently ignores it on models without fast-mode support.
+    const settings: Record<string, unknown> = {};
+    if (reasoningEffort === 'ultracode') {
+      settings.ultracode = true;
+    } else if (reasoningEffort && reasoningEffort !== 'auto') {
+      // 'auto' or null → don't pass --effort, let CLI use its own default
       args.push('--effort', reasoningEffort);
+    }
+    if (fastMode === true) {
+      settings.fastMode = true;
+    }
+    if (Object.keys(settings).length > 0) {
+      args.push('--settings', JSON.stringify(settings));
     }
 
     return args;

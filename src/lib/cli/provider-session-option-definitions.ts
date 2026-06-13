@@ -143,9 +143,14 @@ const CLAUDE_EFFORT_WITH_XHIGH_MAX: ProviderReasoningEffortOption[] = [
   { value: 'max', label: 'Max', description: 'Maximum reasoning depth' },
 ];
 
+// Ultracode is not an extra --effort level — it pairs xhigh effort with standing
+// permission to launch multi-agent (dynamic workflow) orchestration. Listed at the
+// TOP, mirroring Claude Code's own /effort menu. The adapter maps this selection to
+// `--settings '{"ultracode":true}'` rather than `--effort`. Only models that support
+// xhigh expose it; the CLI silently ignores ultracode on models that don't.
 const CLAUDE_EFFORT_WITH_ULTRACODE: ProviderReasoningEffortOption[] = [
+  { value: 'ultracode', label: 'Ultracode', description: 'xhigh + automatic multi-agent workflow orchestration (uses far more tokens)' },
   ...CLAUDE_EFFORT_WITH_XHIGH_MAX,
-  { value: 'ultracode', label: 'Ultracode', description: 'Above maximum — most exhaustive effort' },
 ];
 
 export const CLAUDE_MODELS: ProviderModelOption[] = [
@@ -155,6 +160,7 @@ export const CLAUDE_MODELS: ProviderModelOption[] = [
     isDefault: false,
     defaultReasoningEffort: 'auto',
     supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
+    supportsFastMode: true,
   },
   {
     value: 'claude-opus-4-8[1m]',
@@ -162,20 +168,23 @@ export const CLAUDE_MODELS: ProviderModelOption[] = [
     isDefault: true,
     defaultReasoningEffort: 'auto',
     supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
+    supportsFastMode: true,
   },
   {
     value: 'claude-opus-4-7',
     label: 'claude-opus-4-7',
     isDefault: false,
     defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_XHIGH_MAX,
+    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
+    supportsFastMode: true,
   },
   {
     value: 'claude-opus-4-7[1m]',
     label: 'claude-opus-4-7[1m]',
     isDefault: false,
     defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_XHIGH_MAX,
+    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
+    supportsFastMode: true,
   },
   {
     value: 'claude-opus-4-6',
@@ -183,6 +192,7 @@ export const CLAUDE_MODELS: ProviderModelOption[] = [
     isDefault: false,
     defaultReasoningEffort: 'auto',
     supportedReasoningEfforts: CLAUDE_EFFORT_WITH_MAX,
+    supportsFastMode: true,
   },
   {
     value: 'claude-opus-4-6[1m]',
@@ -190,6 +200,7 @@ export const CLAUDE_MODELS: ProviderModelOption[] = [
     isDefault: false,
     defaultReasoningEffort: 'auto',
     supportedReasoningEfforts: CLAUDE_EFFORT_WITH_MAX,
+    supportsFastMode: true,
   },
   {
     value: 'claude-sonnet-4-6',

@@ -21,6 +21,8 @@ export interface ProviderModelOption {
   defaultReasoningEffort?: string | null;
   supportedReasoningEfforts: ProviderReasoningEffortOption[];
   serviceTiers?: ProviderServiceTierOption[];
+  /** Claude models that support the fast-mode (high-speed) toggle. */
+  supportsFastMode?: boolean;
 }
 
 export interface ProviderPermissionMapping {

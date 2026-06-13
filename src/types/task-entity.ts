@@ -6,10 +6,11 @@
  *
  * NOTE: WorkflowStatus is intentionally separate from sidebar status groups
  * (defined in task.ts). Sidebar groups govern UI buckets like `chat`/`todo`,
- * while WorkflowStatus governs task-level workflow progression.
+ * while WorkflowStatus governs logical workflow progression for tasks and
+ * user-positioned standalone chats.
  */
 
-/** Workflow status for tasks (not for chat sessions). */
+/** Workflow status for tasks and user-positioned standalone chat sessions. */
 export type WorkflowStatus = 'todo' | 'in_progress' | 'in_review' | 'done';
 
 export const WORKFLOW_STATUS_ORDER: WorkflowStatus[] = ['todo', 'in_progress', 'in_review', 'done'];
@@ -19,6 +20,20 @@ export const WORKFLOW_STATUS_CONFIG: Record<WorkflowStatus, { label: string; col
   in_progress: { label: 'Doing', color: 'var(--workflow-doing)' },
   in_review: { label: 'Review', color: 'var(--workflow-review)' },
   done: { label: 'Done', color: 'var(--workflow-done)' },
+};
+
+export const CHAT_WORKFLOW_ICON_COLOR: Record<WorkflowStatus, string> = {
+  todo: 'var(--workflow-todo)',
+  in_progress: 'var(--workflow-doing)',
+  in_review: 'var(--workflow-review)',
+  done: 'var(--workflow-done)',
+};
+
+export const CHAT_WORKFLOW_ICON_FILL: Record<WorkflowStatus, string> = {
+  todo: 'var(--chat-workflow-todo-fill)',
+  in_progress: 'var(--chat-workflow-doing-fill)',
+  in_review: 'var(--chat-workflow-review-fill)',
+  done: 'var(--chat-workflow-done-fill)',
 };
 
 export interface TaskEntity {

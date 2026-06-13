@@ -275,6 +275,7 @@ export function useVirtualMessageList({
   const pendingSnapshotRestoreFrameRef = useRef<number | null>(null);
   const isRestoringInitialScrollRef = useRef(false);
   const isUserScrollingRef = useRef(false);
+  const userLockedAwayFromBottomRef = useRef(false);
   const wasViewActiveRef = useRef(isViewActive);
   const isViewActiveRef = useRef(isViewActive);
   const forceBottomOnNextResumeRef = useRef(false);
@@ -347,12 +348,11 @@ export function useVirtualMessageList({
     [groupedMessages],
   );
   const shouldRestoreToBottom = useCallback((snapshot: ScrollPositionSnapshot | undefined) => (
-    isTurnInFlight ||
     forceBottomOnNextResumeRef.current ||
     !snapshot ||
     snapshot.isAtBottom === true ||
     snapshot.capturedDuringTurn === true
-  ), [isTurnInFlight]);
+  ), []);
 
   const virtualizer = useVirtualizer({
     count,
@@ -397,7 +397,10 @@ export function useVirtualMessageList({
       isAtBottom: distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX,
       itemCount: count,
       tailSignature,
-      capturedDuringTurn: isTurnInFlight,
+      capturedDuringTurn:
+        isTurnInFlight &&
+        !userLockedAwayFromBottomRef.current &&
+        distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX,
     };
     const containerTop = container.getBoundingClientRect().top;
     const rowElements = Array.from(
@@ -451,6 +454,18 @@ export function useVirtualMessageList({
     isRestoringInitialScrollRef.current = false;
   }, []);
 
+  const setAutoScrollFromCaller = useCallback<React.Dispatch<React.SetStateAction<boolean>>>((value) => {
+    setAutoScroll((previous) => {
+      const next = typeof value === 'function'
+        ? (value as (previous: boolean) => boolean)(previous)
+        : value;
+      if (next) {
+        userLockedAwayFromBottomRef.current = false;
+      }
+      return next;
+    });
+  }, []);
+
   const markUserScrolling = useCallback(() => {
     isUserScrollingRef.current = true;
     if (userScrollEndTimerRef.current !== null) {
@@ -482,7 +497,17 @@ export function useVirtualMessageList({
     return true;
   }, [captureScrollPosition, storeGoodScrollPosition]);
 
+  const disableAutoScrollFromUser = useCallback((container: HTMLDivElement) => {
+    userLockedAwayFromBottomRef.current = true;
+    forceBottomOnNextResumeRef.current = false;
+    cancelPendingRestores();
+    setAutoScroll(false);
+    captureAndStoreGoodScrollPosition(container);
+  }, [cancelPendingRestores, captureAndStoreGoodScrollPosition]);
+
   const markBottomOnNextResume = useCallback(() => {
+    if (userLockedAwayFromBottomRef.current) return;
+
     forceBottomOnNextResumeRef.current = true;
     const snapshot = lastGoodScrollPositionRef.current;
     if (snapshot) {
@@ -573,6 +598,10 @@ export function useVirtualMessageList({
         isRestoringInitialScrollRef.current = false;
         return;
       }
+      if (userLockedAwayFromBottomRef.current) {
+        isRestoringInitialScrollRef.current = false;
+        return;
+      }
 
       pinToBottom();
       const distanceFromBottom = getDistanceFromBottom(currentContainer);
@@ -660,6 +689,7 @@ export function useVirtualMessageList({
   }, [cancelPendingRestores, captureAndStoreGoodScrollPosition, isSnapshotRestoreComplete, restoreSnapshotPosition, scrollContainerRef]);
 
   const scheduleAutoScrollToBottom = useCallback(() => {
+    if (userLockedAwayFromBottomRef.current) return;
     if (pendingSnapshotRestoreFrameRef.current !== null) return;
     scheduleBottomRestore({ storePosition: true });
   }, [scheduleBottomRestore]);
@@ -669,11 +699,14 @@ export function useVirtualMessageList({
     if (!container) return;
 
     if (behavior === 'instant') {
+      userLockedAwayFromBottomRef.current = false;
       scheduleBottomRestore({ storePosition: true });
       return;
     }
 
     cancelPendingRestores();
+    userLockedAwayFromBottomRef.current = false;
+    setAutoScroll(true);
     const top = getMaxScrollTop(container);
     container.scrollTo({ top, behavior });
   }, [cancelPendingRestores, scheduleBottomRestore, scrollContainerRef]);
@@ -689,39 +722,47 @@ export function useVirtualMessageList({
       return;
     }
 
+    const { scrollTop } = container;
+    const distanceFromBottom = getDistanceFromBottom(container);
+    const previousScrollTop = prevScrollTopRef.current;
+
     if (isRestoringInitialScrollRef.current) {
-      prevScrollTopRef.current = container.scrollTop;
+      const userMovedAwayDuringRestore =
+        distanceFromBottom > NEAR_BOTTOM_THRESHOLD_PX &&
+        (isUserScrollingRef.current || scrollTop < previousScrollTop);
+      if (userMovedAwayDuringRestore) {
+        prevScrollTopRef.current = scrollTop;
+        disableAutoScrollFromUser(container);
+        return;
+      }
+      prevScrollTopRef.current = scrollTop;
       return;
     }
 
     cancelPendingRestores();
 
-    const { scrollTop } = container;
-    const distanceFromBottom = getDistanceFromBottom(container);
-    const previousScrollTop = prevScrollTopRef.current;
     prevScrollTopRef.current = scrollTop;
 
     captureAndStoreGoodScrollPosition(container);
 
-    // Near bottom → enable auto-scroll
-    if (distanceFromBottom < NEAR_BOTTOM_THRESHOLD_PX) {
-      setAutoScroll(true);
+    // User intent wins even if the viewport is still technically near bottom.
+    if (scrollTop < previousScrollTop) {
+      disableAutoScrollFromUser(container);
       return;
     }
 
-    // Scrolling up → disable
-    if (scrollTop < previousScrollTop) {
-      cancelPendingRestores();
-      setAutoScroll(false);
+    // Near bottom → enable auto-scroll
+    if (distanceFromBottom < NEAR_BOTTOM_THRESHOLD_PX) {
+      userLockedAwayFromBottomRef.current = false;
+      setAutoScroll(true);
       return;
     }
 
     // Far from bottom → disable
     if (distanceFromBottom > FAR_FROM_BOTTOM_THRESHOLD_PX) {
-      cancelPendingRestores();
-      setAutoScroll(false);
+      disableAutoScrollFromUser(container);
     }
-  }, [cancelPendingRestores, captureAndStoreGoodScrollPosition, isTurnInFlight, isViewActive, markBottomOnNextResume, scrollContainerRef]);
+  }, [cancelPendingRestores, captureAndStoreGoodScrollPosition, disableAutoScrollFromUser, isTurnInFlight, isViewActive, markBottomOnNextResume, scrollContainerRef]);
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     const container = scrollContainerRef.current;
@@ -729,14 +770,12 @@ export function useVirtualMessageList({
     if (!isViewActive || isBrowserDocumentHidden()) return;
 
     markUserScrolling();
-    cancelPendingRestores();
 
     const distanceFromBottom = getDistanceFromBottom(container);
     if (event.deltaY < 0 || distanceFromBottom > NEAR_BOTTOM_THRESHOLD_PX) {
-      cancelPendingRestores();
-      setAutoScroll(false);
+      disableAutoScrollFromUser(container);
     }
-  }, [cancelPendingRestores, isViewActive, markUserScrolling, scrollContainerRef]);
+  }, [disableAutoScrollFromUser, isViewActive, markUserScrolling, scrollContainerRef]);
 
   // -----------------------------------------------------------------------
   // Initial bottom pin & auto-scroll on new messages / streaming growth
@@ -890,7 +929,7 @@ export function useVirtualMessageList({
   return {
     virtualizer,
     autoScroll,
-    setAutoScroll,
+    setAutoScroll: setAutoScrollFromCaller,
     handleScroll,
     handleWheel,
     handleLoadMore,

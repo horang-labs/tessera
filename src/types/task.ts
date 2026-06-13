@@ -3,8 +3,9 @@ import type { WorkflowStatus } from './task-entity';
 /**
  * Sidebar/list grouping bucket.
  *
- * `chat` is a special bucket for sessions that are not attached to a task.
- * Worktree/task items use the parent task's workflow status.
+ * `chat` is the unassigned bucket for standalone chat sessions.
+ * Standalone chats may also carry a workflow status once the user places
+ * them on the board; task items use the parent task's workflow status.
  */
 export type SidebarStatusGroup = 'chat' | WorkflowStatus;
 
@@ -45,7 +46,7 @@ export function getSessionStatusGroup(session: {
   taskId?: string;
   workflowStatus?: WorkflowStatus;
 }): SidebarStatusGroup {
-  if (!session.taskId) return 'chat';
+  if (!session.taskId) return session.workflowStatus ?? 'chat';
   return session.workflowStatus ?? 'todo';
 }
 

@@ -4,7 +4,7 @@ import {
   SESSION_DRAG_MIME,
   WORKSPACE_FILE_DRAG_MIME,
 } from '@/types/panel';
-import { TASK_DND_MIME, TASK_ENTITY_DND_MIME } from '@/types/task';
+import { TASK_DND_MIME, TASK_ENTITY_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
 import {
   buildWorkspaceFileSessionId,
   type WorkspaceFileTabKind,
@@ -190,6 +190,22 @@ export function setKanbanChatDragData(
   setPanelSessionDragData(dataTransfer, sessionId);
   dataTransfer.setData(TASK_DND_MIME, sessionId);
   dataTransfer.effectAllowed = 'move';
+}
+
+export function getKanbanMultiSessionDragIds(
+  dataTransfer: Pick<DataTransfer, 'getData'>,
+): string[] {
+  try {
+    const raw = dataTransfer.getData(TASK_MULTI_DND_MIME);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  } catch {
+    return [];
+  }
 }
 
 /**

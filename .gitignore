@@ -49,6 +49,7 @@ next-env.d.ts
 # IDE / Tools
 .claude/
 aidlc-docs/
+prd-doc/
 /.superpowers/
 
 # Worktrees

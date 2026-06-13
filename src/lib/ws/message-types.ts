@@ -79,6 +79,7 @@ export type ClientMessage =
   | { type: 'set_model'; requestId: string; sessionId: string; model: string }
   | { type: 'set_reasoning_effort'; requestId: string; sessionId: string; reasoningEffort: string | null }
   | { type: 'set_service_tier'; requestId: string; sessionId: string; serviceTier: string | null }
+  | { type: 'set_fast_mode'; requestId: string; sessionId: string; fastMode: boolean | null }
   | { type: 'stop_session'; requestId: string; sessionId: string }
   | { type: 'get_commands'; requestId: string; sessionId: string }
   | { type: 'list_providers'; requestId: string }

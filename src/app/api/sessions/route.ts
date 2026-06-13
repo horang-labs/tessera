@@ -105,6 +105,8 @@ export async function POST(req: NextRequest) {
         hasCustomTitle: hasCustomTitle === true,
         worktreeBranch: normalizedWorktreeBranch,
         worktreeManaged: Boolean(normalizedWorktreeBranch),
+        model,
+        reasoningEffort,
       });
 
       broadcastSessionMutation(userId, {

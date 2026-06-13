@@ -81,6 +81,7 @@ export function useSessionResume() {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
           serviceTier: result.serviceTier ?? runtimeConfig.serviceTier,
+          fastMode: result.fastMode ?? runtimeConfig.fastMode,
           sessionMode: runtimeConfig.sessionMode,
           accessMode: runtimeConfig.accessMode,
         });
@@ -141,6 +142,7 @@ export function useSessionResume() {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
           serviceTier: result.serviceTier ?? runtimeConfig.serviceTier,
+          fastMode: result.fastMode ?? runtimeConfig.fastMode,
           sessionMode: runtimeConfig.sessionMode,
           accessMode: runtimeConfig.accessMode,
         });

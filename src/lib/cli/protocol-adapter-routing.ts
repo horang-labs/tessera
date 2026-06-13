@@ -1,9 +1,8 @@
 import logger from '../logger';
 import type { SessionReplayEvent } from '../session-replay-types';
 import { buildProtocolSystemReplayEvent } from './protocol-adapter-events';
+import { KNOWN_IGNORED_MESSAGE_TYPES } from './protocol-message-types';
 import type { CliMessage } from './types';
-
-const KNOWN_IGNORED_MESSAGE_TYPES = new Set(['rate_limit_event']);
 
 type ProtocolMessageHandler = (sessionId: string, userId: string, msg: CliMessage) => void;
 

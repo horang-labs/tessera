@@ -97,6 +97,41 @@ export function ItemStatusIndicator({
   );
 }
 
+export function WorkflowMessageSquareIcon({
+  className,
+  fillColor,
+  style,
+  testId,
+}: {
+  className?: string;
+  fillColor: string;
+  style?: React.CSSProperties;
+  testId?: string;
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      style={style}
+      fill="none"
+      aria-hidden="true"
+      data-testid={testId}
+    >
+      <path
+        d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"
+        fill={fillColor}
+      />
+      <path
+        d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function InlineRenameInput({
   className,
   inputRef,

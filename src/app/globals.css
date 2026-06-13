@@ -232,6 +232,12 @@
   --workflow-review: #2563eb;
   --workflow-done: #7c3aed;
 
+  /* Chat workflow icon fills. Outlines use the canonical Git workflow colors. */
+  --chat-workflow-todo-fill: color-mix(in srgb, var(--workflow-todo) 46%, var(--board-card-bg));
+  --chat-workflow-doing-fill: color-mix(in srgb, var(--workflow-doing) 24%, var(--board-card-bg));
+  --chat-workflow-review-fill: color-mix(in srgb, var(--workflow-review) 24%, var(--board-card-bg));
+  --chat-workflow-done-fill: color-mix(in srgb, var(--workflow-done) 24%, var(--board-card-bg));
+
   /* Worktree Status Icon Colors */
   --worktree-doing: var(--workflow-doing);
   --worktree-review: #0369a1;
@@ -376,6 +382,12 @@
   --workflow-doing: #f59e0b;
   --workflow-review: #60a5fa;
   --workflow-done: #a78bfa;
+
+  /* Chat workflow icon fills. Outlines use the canonical Git workflow colors. */
+  --chat-workflow-todo-fill: color-mix(in srgb, var(--workflow-todo) 40%, var(--board-card-bg));
+  --chat-workflow-doing-fill: color-mix(in srgb, var(--workflow-doing) 30%, var(--board-card-bg));
+  --chat-workflow-review-fill: color-mix(in srgb, var(--workflow-review) 30%, var(--board-card-bg));
+  --chat-workflow-done-fill: color-mix(in srgb, var(--workflow-done) 30%, var(--board-card-bg));
 
   /* Worktree Status Icon Colors */
   --worktree-doing: var(--workflow-doing);

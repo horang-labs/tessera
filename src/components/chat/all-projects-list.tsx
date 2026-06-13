@@ -33,6 +33,7 @@ interface AllProjectsListProps {
   onSessionGenerateTitle: (sessionId: string) => void;
   onSessionMoveToProject: (sessionId: string) => void;
   onSessionStopProcess: (sessionId: string) => void;
+  onChatStatusChange: (sessionId: string, status: string) => void;
 }
 
 export function AllProjectsList({
@@ -47,6 +48,7 @@ export function AllProjectsList({
   onSessionGenerateTitle,
   onSessionMoveToProject,
   onSessionStopProcess,
+  onChatStatusChange,
 }: AllProjectsListProps) {
   const projects = useSessionStore((state) => state.projects);
   const visibleProjects = useMemo(() => {
@@ -73,6 +75,7 @@ export function AllProjectsList({
           onSessionGenerateTitle={onSessionGenerateTitle}
           onSessionMoveToProject={onSessionMoveToProject}
           onSessionStopProcess={onSessionStopProcess}
+          onChatStatusChange={onChatStatusChange}
         />
       ))}
     </>
@@ -96,6 +99,7 @@ function AllProjectSection({
   onSessionGenerateTitle,
   onSessionMoveToProject,
   onSessionStopProcess,
+  onChatStatusChange,
 }: AllProjectSectionProps) {
   const { t } = useI18n();
   const [isProjectQuickCreateOpen, setIsProjectQuickCreateOpen] = useState(false);
@@ -311,6 +315,7 @@ function AllProjectSection({
               onTaskRename={handleTaskRename}
               onTaskDelete={handleTaskDelete}
               onTaskStatusChange={handleTaskStatusChange}
+              onChatStatusChange={onChatStatusChange}
               onSessionRename={onSessionRename}
               onSessionDelete={onSessionDelete}
               onSessionArchive={onSessionArchive}
@@ -363,6 +368,7 @@ function AllProjectSection({
                   onTaskRename={handleTaskRename}
                   onTaskDelete={handleTaskDelete}
                   onTaskStatusChange={handleTaskStatusChange}
+                  onChatStatusChange={onChatStatusChange}
                   onSessionRename={onSessionRename}
                   onSessionDelete={onSessionDelete}
                   onSessionArchive={onSessionArchive}

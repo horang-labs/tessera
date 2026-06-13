@@ -14,6 +14,8 @@ export interface SessionRow {
   has_custom_title: number; // 0 | 1
   provider: string;
   provider_state: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
   workflow_status?: string | null;
   work_dir: string | null;
   worktree_branch: string | null;
@@ -23,6 +25,7 @@ export interface SessionRow {
   worktree_deleted_at: string | null;
   deleted: number; // 0 | 1 — soft-delete flag
   task_id: string | null;
+  chat_workflow_status: string | null;
   collection_id: string | null;
   sort_order: number;
   created_at: string;
@@ -41,7 +44,7 @@ function isUuidLikeSearchQuery(query: string): boolean {
 
 const SESSION_STATUS_GROUP_SQL = `
   CASE
-    WHEN s.task_id IS NULL THEN 'chat'
+    WHEN s.task_id IS NULL THEN COALESCE(s.chat_workflow_status, 'chat')
     ELSE COALESCE(t.workflow_status, 'todo')
   END
 `;
@@ -49,7 +52,10 @@ const SESSION_STATUS_GROUP_SQL = `
 const SESSION_SELECT_WITH_TASK = `
   SELECT
     s.*,
-    t.workflow_status AS workflow_status
+    CASE
+      WHEN s.task_id IS NULL THEN s.chat_workflow_status
+      ELSE COALESCE(t.workflow_status, 'todo')
+    END AS workflow_status
   FROM sessions s
   LEFT JOIN tasks t ON t.id = s.task_id
   LEFT JOIN projects p ON p.id = s.project_id
@@ -118,6 +124,8 @@ export function createSession(
     worktreeManaged?: boolean;
     taskId?: string;
     collectionId?: string;
+    model?: string;
+    reasoningEffort?: string | null;
   } = {}
 ): void {
   const db = getDb();
@@ -129,15 +137,17 @@ export function createSession(
   `).run(projectId);
   db.prepare(`
     INSERT INTO sessions (
-      id, project_id, title, provider, work_dir, worktree_managed,
+      id, project_id, title, provider, model, reasoning_effort, work_dir, worktree_managed,
       task_id, collection_id, sort_order, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     id,
     projectId,
     title,
     provider,
+    options.model ?? null,
+    options.reasoningEffort ?? null,
     options.workDir ?? null,
     options.worktreeManaged ? 1 : 0,
     options.taskId ?? null,
@@ -233,7 +243,7 @@ export function softDeleteSession(id: string): void {
  */
 export function updateSession(
   id: string,
-  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'collection_id'>>,
+  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'model' | 'reasoning_effort' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'chat_workflow_status' | 'collection_id'>>,
   options?: { skipTimestamp?: boolean }
 ): void {
   const db = getDb();
@@ -242,6 +252,8 @@ export function updateSession(
 
   if (patch.title !== undefined) { sets.push('title = ?'); values.push(patch.title); }
   if (patch.has_custom_title !== undefined) { sets.push('has_custom_title = ?'); values.push(patch.has_custom_title); }
+  if (patch.model !== undefined) { sets.push('model = ?'); values.push(patch.model); }
+  if (patch.reasoning_effort !== undefined) { sets.push('reasoning_effort = ?'); values.push(patch.reasoning_effort); }
   if (patch.work_dir !== undefined) { sets.push('work_dir = ?'); values.push(patch.work_dir); }
   if (patch.worktree_branch !== undefined) { sets.push('worktree_branch = ?'); values.push(patch.worktree_branch); }
   if (patch.worktree_managed !== undefined) { sets.push('worktree_managed = ?'); values.push(patch.worktree_managed); }
@@ -251,6 +263,7 @@ export function updateSession(
   if (patch.provider_state !== undefined) { sets.push('provider_state = ?'); values.push(patch.provider_state); }
   if (patch.project_id !== undefined) { sets.push('project_id = ?'); values.push(patch.project_id); }
   if (patch.task_id !== undefined) { sets.push('task_id = ?'); values.push(patch.task_id); }
+  if (patch.chat_workflow_status !== undefined) { sets.push('chat_workflow_status = ?'); values.push(patch.chat_workflow_status); }
   if (patch.collection_id !== undefined) { sets.push('collection_id = ?'); values.push(patch.collection_id); }
 
   if (sets.length === 0) return;
@@ -478,6 +491,8 @@ export function mapSessionRowToApi(
     archivedAt: row.archived_at ?? undefined,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
     provider: row.provider,
+    model: row.model ?? undefined,
+    reasoningEffort: row.reasoning_effort ?? undefined,
     goal: extractSessionGoal(row.provider_state) ?? undefined,
     taskId: row.task_id ?? undefined,
     collectionId: row.collection_id ?? undefined,
@@ -560,10 +575,14 @@ export function extractOpenCodeSessionId(providerState: string | null): string |
 
 /**
  * Touch session updated_at (e.g., when a message is received).
+ * Keeps the existing timestamp if the supplied activity timestamp is older.
  */
-export function touchSession(id: string): void {
-  getDb().prepare('UPDATE sessions SET updated_at = ? WHERE id = ?')
-    .run(new Date().toISOString(), id);
+export function touchSession(id: string, touchedAt = new Date().toISOString()): void {
+  getDb().prepare(`
+    UPDATE sessions
+    SET updated_at = CASE WHEN updated_at < ? THEN ? ELSE updated_at END
+    WHERE id = ?
+  `).run(touchedAt, touchedAt, id);
 }
 
 /**

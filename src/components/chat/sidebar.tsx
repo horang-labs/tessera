@@ -11,6 +11,7 @@ import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { CollectionGroup } from './collection-group';
 import { AllProjectsList } from './all-projects-list';
+import { RecentWorkSection } from './recent-work-section';
 import { MoveProjectDialog } from './move-project-dialog';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { useBoardStore } from '@/stores/board-store';
@@ -43,6 +44,7 @@ import {
   buildSidebarOrderedSessionIds,
   findSidebarProject,
 } from './sidebar-utils';
+import { buildRecentWorkItems } from '@/lib/chat/recent-work';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 
@@ -297,6 +299,7 @@ export function Sidebar() {
       : EMPTY_COLLECTIONS,
   );
   const tasks = useTaskStore((state) => state.tasks);
+  const tasksByProject = useTaskStore((state) => state.tasksByProject);
 
   // Load collections and tasks on mount / when selectedProject changes
   useEffect(() => {
@@ -335,6 +338,21 @@ export function Sidebar() {
   // Context menu action handlers
   const handleTaskStatusChangeById = useCallback((taskId: string, status: string) => {
     useTaskStore.getState().updateTask(taskId, { workflowStatus: status as WorkflowStatus });
+  }, []);
+
+  const handleChatStatusChangeById = useCallback((sessionId: string, status: string) => {
+    useSessionStore.getState().updateChatWorkflowStatus(
+      sessionId,
+      status === 'chat' ? null : status as WorkflowStatus,
+    );
+  }, []);
+
+  const handleTaskEntityRename = useCallback((taskId: string, title: string) => {
+    void useTaskStore.getState().updateTask(taskId, { title });
+  }, []);
+
+  const handleTaskEntityDelete = useCallback((taskId: string) => {
+    void useTaskStore.getState().deleteTask(taskId);
   }, []);
 
   const handleTaskArchive = useCallback((taskId: string) => {
@@ -573,6 +591,20 @@ export function Sidebar() {
 
   const { handleSessionClick, handleSessionDoubleClick } = useSessionClickHandlers({ orderedIds });
 
+  const recentWorkItems = useMemo(() => {
+    const scopedProjects = isAllMode
+      ? projects
+      : selectedProject
+        ? [selectedProject]
+        : [];
+
+    return buildRecentWorkItems({
+      projects: scopedProjects,
+      tasksByProject,
+      limit: 8,
+    });
+  }, [isAllMode, projects, selectedProject, tasksByProject]);
+
   const collectionGroupScopeKeys = useMemo(() => {
     if (!selectedProject || !visibleCollectionGroups) return [];
     return visibleCollectionGroups
@@ -660,19 +692,44 @@ export function Sidebar() {
           ) : isRunningFilterActive && allProjectsRunningSessionIds.length === 0 ? (
             <SidebarRunningFilterEmpty label={t('status.noRunningProcesses')} />
           ) : (
-            <AllProjectsList
-              activeSessionId={selectionSessionId}
-              isRunningFilterActive={isRunningFilterActive}
-              onSessionClick={handleSessionClick}
-              onSessionDoubleClick={handleSessionDoubleClick}
-              onSessionArchive={handleTaskArchive}
-              onSessionRename={handleTaskRename}
-              onSessionDelete={handleTaskDelete}
-              onSessionOpenInNewTab={handleTaskOpenInNewTab}
-              onSessionGenerateTitle={handleTaskGenerateTitle}
-              onSessionMoveToProject={handleTaskMoveToProject}
-              onSessionStopProcess={handleTaskStopProcess}
-            />
+            <>
+              {!isRunningFilterActive && (
+                <RecentWorkSection
+                  items={recentWorkItems}
+                  contextMenuCollections={EMPTY_COLLECTIONS}
+                  projectId={ALL_PROJECTS_SENTINEL}
+                  projectDir=""
+                  activeSessionId={selectionSessionId}
+                  onSessionClick={handleSessionClick}
+                  onSessionDoubleClick={handleSessionDoubleClick}
+                  onTaskRename={handleTaskEntityRename}
+                  onTaskDelete={handleTaskEntityDelete}
+                  onTaskStatusChange={handleTaskStatusChangeById}
+                  onChatStatusChange={handleChatStatusChangeById}
+                  onSessionRename={handleTaskRename}
+                  onSessionDelete={handleTaskDelete}
+                  onSessionArchive={handleTaskArchive}
+                  onSessionOpenInNewTab={handleTaskOpenInNewTab}
+                  onSessionGenerateTitle={handleTaskGenerateTitle}
+                  onSessionMoveToProject={handleTaskMoveToProject}
+                  onSessionStopProcess={handleTaskStopProcess}
+                />
+              )}
+              <AllProjectsList
+                activeSessionId={selectionSessionId}
+                isRunningFilterActive={isRunningFilterActive}
+                onSessionClick={handleSessionClick}
+                onSessionDoubleClick={handleSessionDoubleClick}
+                onSessionArchive={handleTaskArchive}
+                onChatStatusChange={handleChatStatusChangeById}
+                onSessionRename={handleTaskRename}
+                onSessionDelete={handleTaskDelete}
+                onSessionOpenInNewTab={handleTaskOpenInNewTab}
+                onSessionGenerateTitle={handleTaskGenerateTitle}
+                onSessionMoveToProject={handleTaskMoveToProject}
+                onSessionStopProcess={handleTaskStopProcess}
+              />
+            </>
           )
         ) : visibleCollectionGroups && selectedProject ? (
           <>
@@ -708,9 +765,10 @@ export function Sidebar() {
                 onGroupDragOver={(e) => handleCollGroupDragOver(0, e)}
                 onGroupDragLeave={(e) => handleCollGroupDragLeave(0, e)}
                 onGroupDrop={(e) => handleCollGroupDrop(selectedProject.encodedDir, 0, e)}
-                onTaskRename={(taskId, title) => useTaskStore.getState().updateTask(taskId, { title })}
-                onTaskDelete={(taskId) => useTaskStore.getState().deleteTask(taskId)}
+                onTaskRename={handleTaskEntityRename}
+                onTaskDelete={handleTaskEntityDelete}
                 onTaskStatusChange={handleTaskStatusChangeById}
+                onChatStatusChange={handleChatStatusChangeById}
                 onSessionRename={handleTaskRename}
                 onSessionDelete={handleTaskDelete}
                 onSessionArchive={handleTaskArchive}
@@ -722,55 +780,20 @@ export function Sidebar() {
                 allowPanelSessionDnd
                 hideHeader
               />
-            ) : visibleCollectionGroups.map((group, groupIdx) => {
-              const colId = group.collectionId;
-              const collection = colId ? collections.find((c) => c.id === colId) ?? null : null;
-              const key = colId ?? '__uncategorized';
-              const scopedKey = `${selectedProject.encodedDir}::${key}`;
-
-              return (
-                <CollectionGroup
-                  key={scopedKey}
-                  collection={collection}
+            ) : (
+              <>
+                <RecentWorkSection
+                  items={recentWorkItems}
                   contextMenuCollections={collections}
                   projectId={selectedProject.encodedDir}
                   projectDir={selectedProject.decodedPath}
-                  tasks={group.tasks}
-                  chats={group.chats}
-                  collapsed={collapsedCollections[scopedKey] ?? false}
-                  onToggleCollapse={() => toggleCollectionCollapse(scopedKey)}
+                  activeSessionId={selectionSessionId}
                   onSessionClick={handleSessionClick}
                   onSessionDoubleClick={handleSessionDoubleClick}
-                  activeSessionId={selectionSessionId}
-                  // Item DnD
-                  isDragActive={draggingCollectionItem?.projectId === selectedProject.encodedDir}
-                  isDragOver={dragOverCollectionId === scopedKey}
-                  onItemDragStart={handleCollectionItemDragStart}
-                  onItemDragEnd={handleCollectionItemDragEnd}
-                  onCollectionDragOver={handleCollectionGroupDragOver}
-                  onCollectionDragLeave={handleCollectionGroupDragLeave}
-                  onCollectionDrop={handleCollectionGroupDrop}
-                  onItemDragOverItem={handleCollectionItemDragOverItem}
-                  dropIndicator={
-                    draggingCollectionItem?.projectId === selectedProject.encodedDir
-                      ? collectionDropIndicator
-                      : null
-                  }
-                  // Group DnD
-                  isGroupDragging={draggingGroupId === scopedKey}
-                  isGroupDragOver={
-                    (draggingGroupId?.startsWith(`${selectedProject.encodedDir}::`) ?? false) &&
-                    groupDragOverIndex === groupIdx
-                  }
-                  onGroupDragStart={handleCollGroupDragStart}
-                  onGroupDragEnd={handleCollGroupDragEnd}
-                  onGroupDragOver={(e) => handleCollGroupDragOver(groupIdx, e)}
-                  onGroupDragLeave={(e) => handleCollGroupDragLeave(groupIdx, e)}
-                  onGroupDrop={(e) => handleCollGroupDrop(selectedProject.encodedDir, groupIdx, e)}
-                  // Actions
-                  onTaskRename={(taskId, title) => useTaskStore.getState().updateTask(taskId, { title })}
-                  onTaskDelete={(taskId) => useTaskStore.getState().deleteTask(taskId)}
+                  onTaskRename={handleTaskEntityRename}
+                  onTaskDelete={handleTaskEntityDelete}
                   onTaskStatusChange={handleTaskStatusChangeById}
+                  onChatStatusChange={handleChatStatusChangeById}
                   onSessionRename={handleTaskRename}
                   onSessionDelete={handleTaskDelete}
                   onSessionArchive={handleTaskArchive}
@@ -778,10 +801,70 @@ export function Sidebar() {
                   onSessionGenerateTitle={handleTaskGenerateTitle}
                   onSessionMoveToProject={handleTaskMoveToProject}
                   onSessionStopProcess={handleTaskStopProcess}
-                  disableDnd={isRunningFilterActive}
                 />
-              );
-            })}
+                {visibleCollectionGroups.map((group, groupIdx) => {
+                  const colId = group.collectionId;
+                  const collection = colId ? collections.find((c) => c.id === colId) ?? null : null;
+                  const key = colId ?? '__uncategorized';
+                  const scopedKey = `${selectedProject.encodedDir}::${key}`;
+
+                  return (
+                    <CollectionGroup
+                      key={scopedKey}
+                      collection={collection}
+                      contextMenuCollections={collections}
+                      projectId={selectedProject.encodedDir}
+                      projectDir={selectedProject.decodedPath}
+                      tasks={group.tasks}
+                      chats={group.chats}
+                      collapsed={collapsedCollections[scopedKey] ?? false}
+                      onToggleCollapse={() => toggleCollectionCollapse(scopedKey)}
+                      onSessionClick={handleSessionClick}
+                      onSessionDoubleClick={handleSessionDoubleClick}
+                      activeSessionId={selectionSessionId}
+                      // Item DnD
+                      isDragActive={draggingCollectionItem?.projectId === selectedProject.encodedDir}
+                      isDragOver={dragOverCollectionId === scopedKey}
+                      onItemDragStart={handleCollectionItemDragStart}
+                      onItemDragEnd={handleCollectionItemDragEnd}
+                      onCollectionDragOver={handleCollectionGroupDragOver}
+                      onCollectionDragLeave={handleCollectionGroupDragLeave}
+                      onCollectionDrop={handleCollectionGroupDrop}
+                      onItemDragOverItem={handleCollectionItemDragOverItem}
+                      dropIndicator={
+                        draggingCollectionItem?.projectId === selectedProject.encodedDir
+                          ? collectionDropIndicator
+                          : null
+                      }
+                      // Group DnD
+                      isGroupDragging={draggingGroupId === scopedKey}
+                      isGroupDragOver={
+                        (draggingGroupId?.startsWith(`${selectedProject.encodedDir}::`) ?? false) &&
+                        groupDragOverIndex === groupIdx
+                      }
+                      onGroupDragStart={handleCollGroupDragStart}
+                      onGroupDragEnd={handleCollGroupDragEnd}
+                      onGroupDragOver={(e) => handleCollGroupDragOver(groupIdx, e)}
+                      onGroupDragLeave={(e) => handleCollGroupDragLeave(groupIdx, e)}
+                      onGroupDrop={(e) => handleCollGroupDrop(selectedProject.encodedDir, groupIdx, e)}
+                      // Actions
+                      onTaskRename={handleTaskEntityRename}
+                      onTaskDelete={handleTaskEntityDelete}
+                      onTaskStatusChange={handleTaskStatusChangeById}
+                      onChatStatusChange={handleChatStatusChangeById}
+                      onSessionRename={handleTaskRename}
+                      onSessionDelete={handleTaskDelete}
+                      onSessionArchive={handleTaskArchive}
+                      onSessionOpenInNewTab={handleTaskOpenInNewTab}
+                      onSessionGenerateTitle={handleTaskGenerateTitle}
+                      onSessionMoveToProject={handleTaskMoveToProject}
+                      onSessionStopProcess={handleTaskStopProcess}
+                      disableDnd={isRunningFilterActive}
+                    />
+                  );
+                })}
+              </>
+            )}
             {!isRunningFilterActive && (
               <SidebarAddCollectionControl
                 isAdding={addingCollection}

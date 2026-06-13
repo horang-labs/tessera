@@ -70,7 +70,9 @@ const toastNotificationSource = fs.readFileSync(
 test('live replay events mark background popout cards as processing', () => {
   assert.match(clientMessageHandlersSource, /startTurnInFlight/);
   assert.match(clientMessageHandlersSource, /function replayEventsIndicateActiveTurn/);
-  assert.match(clientMessageHandlersSource, /case 'replay_events':\s*if \(replayEventsIndicateActiveTurn\(msg\.events\)\) \{\s*startTurnInFlight\(msg\.sessionId\);/);
+  assert.match(clientMessageHandlersSource, /case 'replay_events':[\s\S]*if \(shouldStartTurnFromReplayEvents\(sessionStore, msg\.sessionId, msg\.events\)\) \{\s*startTurnInFlight\(msg\.sessionId\);/);
+  assert.match(clientMessageHandlersSource, /function shouldStartTurnFromReplayEvents/);
+  assert.match(clientMessageHandlersSource, /\(session\?\.unreadCount \?\? 0\) > 0/);
   assert.match(clientMessageHandlersSource, /event\.hookEvent === 'waiting_for_task' \|\| event\.progressType === 'waiting_for_task'/);
   assert.match(clientMessageHandlersSource, /case 'tool_call':\s*return event\.status === 'running';/);
   assert.match(clientMessageHandlersSource, /case 'interactive_prompt_response':\s*return true;/);

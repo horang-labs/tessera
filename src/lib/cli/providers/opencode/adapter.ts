@@ -19,8 +19,7 @@ import {
   resolveProviderCliCommandWithMetadata,
 } from '../../provider-command';
 import {
-  classifyAuthStatus,
-  classifyVersionFailure,
+  classifyOpenCodeStatus,
   summarizeExecProbe,
 } from '../../status-detection';
 import { updateProviderStateWithRetry } from '../../process-manager-side-effects';
@@ -125,34 +124,29 @@ export class OpenCodeAdapter implements CliProvider {
       options.userId,
     );
     const command = commandMetadata.command;
-    const [versionResult, modelsResult] = await Promise.all([
-      execCli(command, ['--version'], options.environment, STATUS_CHECK_TIMEOUT_MS),
-      execCli(command, ['models'], options.environment, STATUS_CHECK_TIMEOUT_MS),
-    ]);
-    const versionProbe = summarizeExecProbe(versionResult);
-    const authProbe = summarizeExecProbe(modelsResult);
-    const baseTelemetry = {
+    // OpenCode needs no login, so we only probe `--version` to confirm the
+    // binary runs. We deliberately skip `opencode models`: it never detects a
+    // missing login (free models always list, even offline) and its ~2s boot
+    // used to time out and mislabel a healthy install as "needs_login".
+    const versionResult = await execCli(
+      command,
+      ['--version'],
+      options.environment,
+      STATUS_CHECK_TIMEOUT_MS,
+    );
+    const { status, detectionReason } = classifyOpenCodeStatus(
+      versionResult,
+      commandMetadata.commandSource,
+    );
+    const version = parseVersion(versionResult.stdout);
+
+    return {
+      status,
+      detectionReason,
+      ...(version ? { version } : {}),
       commandSource: commandMetadata.commandSource,
       commandShape: commandMetadata.commandShape,
-      versionProbe,
-      authProbe,
-    };
-
-    if (!versionResult.ok) {
-      return {
-        status: 'not_installed',
-        detectionReason: classifyVersionFailure(versionResult, commandMetadata.commandSource),
-        ...baseTelemetry,
-      };
-    }
-
-    const version = parseVersion(versionResult.stdout);
-    const authStatus = classifyAuthStatus(modelsResult);
-    return {
-      status: authStatus.status,
-      detectionReason: authStatus.detectionReason,
-      ...(version ? { version } : {}),
-      ...baseTelemetry,
+      versionProbe: summarizeExecProbe(versionResult),
     };
   }
 

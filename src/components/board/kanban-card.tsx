@@ -24,6 +24,7 @@ import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
 import type { UnifiedSession } from '@/types/chat';
+import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
 import { ProviderQuickMenu } from '@/components/chat/provider-quick-menu';
@@ -35,6 +36,7 @@ import {
   ItemStatusIndicator,
   OverflowMenuButton,
   StopProcessButton,
+  WorkflowMessageSquareIcon,
 } from '@/components/chat/work-item-primitives';
 import { DiffStatsBadge } from '@/components/chat/diff-stats-badge';
 import { ProviderLogoMark } from '@/components/chat/provider-brand';
@@ -155,6 +157,13 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   });
 
   const timeStr = formatRelativeTime(session.createdAt, t);
+  const workflowStatus = session.workflowStatus;
+  const workflowColor = workflowStatus
+    ? CHAT_WORKFLOW_ICON_COLOR[workflowStatus]
+    : null;
+  const workflowIconFill = workflowStatus
+    ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
+    : null;
   const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
   const stripeClass = isAwaitingUser
     ? 'task-stripe task-stripe-attention'
@@ -302,13 +311,22 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 data-testid={`kanban-chat-agent-icon-${session.id}`}
               />
             ) : (
-              <MessageSquare
-                className={cn(
-                  'h-3.5 w-3.5',
-                  isActive && !isSelected ? 'text-(--text-primary) opacity-70' : 'text-(--text-secondary) opacity-75',
-                )}
-                data-testid={`kanban-chat-bubble-${session.id}`}
-              />
+              workflowColor && workflowIconFill ? (
+                <WorkflowMessageSquareIcon
+                  className="h-3.5 w-3.5 opacity-95"
+                  style={{ color: workflowColor }}
+                  fillColor={workflowIconFill}
+                  testId={`kanban-chat-bubble-${session.id}`}
+                />
+              ) : (
+                <MessageSquare
+                  className={cn(
+                    'h-3.5 w-3.5',
+                    isActive && !isSelected ? 'text-(--text-primary) opacity-70' : 'text-(--text-secondary) opacity-75',
+                  )}
+                  data-testid={`kanban-chat-bubble-${session.id}`}
+                />
+              )
             )}
             <ItemStatusIndicator
               isProcessing={isProcessing}
@@ -437,11 +455,12 @@ export const KanbanChatCard = memo(function KanbanChatCard({
       {menuAnchorRect && (
         <TaskContextMenu
           anchorRect={menuAnchorRect}
-          currentStatus={session.taskId ? session.workflowStatus : undefined}
+          currentStatus={session.workflowStatus ?? 'chat'}
+          allowChatStatus={!session.taskId}
           isArchived={session.archived ?? false}
           collections={collections}
           currentCollectionId={session.collectionId ?? null}
-          onStatusChange={session.taskId ? handleStatusChange : undefined}
+          onStatusChange={onStatusChange ? handleStatusChange : undefined}
           onMoveToCollection={
             onMoveToCollection ? (collectionId) => onMoveToCollection(session.id, collectionId) : undefined
           }

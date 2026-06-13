@@ -100,6 +100,10 @@ export function useWebSocket() {
     wsClient.setServiceTier(sessionId, serviceTier);
   }, []);
 
+  const setFastMode = useCallback((sessionId: string, fastMode: boolean | null) => {
+    wsClient.setFastMode(sessionId, fastMode);
+  }, []);
+
   return {
     sendMessage,
     createSession,
@@ -113,5 +117,6 @@ export function useWebSocket() {
     clearSessionGoal,
     stopSession,
     setServiceTier,
+    setFastMode,
   };
 }

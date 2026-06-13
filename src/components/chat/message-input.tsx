@@ -56,6 +56,9 @@ import {
   isCodexFastCommandSkill,
 } from '@/lib/chat/codex-fast-command';
 import {
+  isClaudeFastCommandSkill,
+} from '@/lib/chat/claude-fast-command';
+import {
   CODEX_GOAL_COMMAND,
   isCodexGoalCommandSkill,
   parseCodexGoalCommand,
@@ -189,6 +192,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     sendMessage,
     cancelGeneration,
     setServiceTier,
+    setFastMode,
     setSessionGoal,
     refreshSessionGoal,
     clearSessionGoal,
@@ -666,6 +670,39 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     updateSessionRuntimeConfig,
   ]);
 
+  const executeClaudeFastCommand = useCallback((): boolean => {
+    if (session?.provider?.trim() !== 'claude-code') {
+      return false;
+    }
+
+    const next = !(session.fastMode === true);
+    updateSessionRuntimeConfig(sessionId, { fastMode: next });
+    if (sessionIsRunning) {
+      setFastMode(sessionId, next);
+    }
+    clearInput();
+    clearAttachments();
+    clearSessionRefs();
+    skillPicker.clearSkill();
+    toast.info(
+      next
+        ? 'Claude fast mode enabled'
+        : 'Claude fast mode disabled',
+    );
+    return true;
+  }, [
+    clearAttachments,
+    clearInput,
+    clearSessionRefs,
+    session?.provider,
+    session?.fastMode,
+    sessionId,
+    sessionIsRunning,
+    setFastMode,
+    skillPicker,
+    updateSessionRuntimeConfig,
+  ]);
+
   const executeCodexGoalCommand = useCallback((commandInput: string): boolean => {
     if (session?.provider?.trim() !== 'codex') {
       return false;
@@ -723,7 +760,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const handleSend = () => {
     const trimmed = inputValue.trim();
     const hasSelectedSkill = !!skillPicker.selectedSkill;
-    const hasSelectedFastCommand = isCodexFastCommandSkill(skillPicker.selectedSkill);
+    const hasSelectedFastCommand = isCodexFastCommandSkill(skillPicker.selectedSkill)
+      || isClaudeFastCommandSkill(skillPicker.selectedSkill);
     const hasSelectedGoalCommand = isCodexGoalCommandSkill(skillPicker.selectedSkill);
     const hasAttachments = attachments.length > 0;
 
@@ -736,7 +774,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       hasSelectedFastCommand
       || (trimmed === CODEX_FAST_COMMAND && !hasSelectedSkill)
     ) {
-      if (executeCodexFastCommand()) return;
+      if (executeCodexFastCommand() || executeClaudeFastCommand()) return;
     }
 
     if (hasSelectedGoalCommand) {
@@ -848,6 +886,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         textareaRef.current?.focus();
         return;
       }
+      if (isClaudeFastCommandSkill(skill)) {
+        executeClaudeFastCommand();
+        textareaRef.current?.focus();
+        return;
+      }
       if (isCodexGoalCommandSkill(skill)) {
         insertGoalCommand();
         textareaRef.current?.focus();
@@ -858,7 +901,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       setInputValue('');
       textareaRef.current?.focus();
     },
-    [executeCodexFastCommand, insertGoalCommand, skillPicker],
+    [executeCodexFastCommand, executeClaudeFastCommand, insertGoalCommand, skillPicker],
   );
 
   const applyFilePick = useCallback(
@@ -911,6 +954,10 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         const confirmedSkill = skillPicker.confirm();
         if (confirmedSkill && isCodexFastCommandSkill(confirmedSkill)) {
           executeCodexFastCommand();
+          return;
+        }
+        if (confirmedSkill && isClaudeFastCommandSkill(confirmedSkill)) {
+          executeClaudeFastCommand();
           return;
         }
         if (confirmedSkill && isCodexGoalCommandSkill(confirmedSkill)) {
@@ -1005,7 +1052,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
       if (!e.shiftKey && !e.ctrlKey && !e.metaKey && inputValue.trim() === CODEX_FAST_COMMAND) {
         e.preventDefault();
-        if (executeCodexFastCommand()) return;
+        if (executeCodexFastCommand() || executeClaudeFastCommand()) return;
       }
 
       if (enterKeyBehavior === 'send') {
