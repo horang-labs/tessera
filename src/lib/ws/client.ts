@@ -165,6 +165,7 @@ export class WebSocketClient {
       ...(payload.approvalPolicy && { approvalPolicy: payload.approvalPolicy }),
       ...(payload.sandboxMode && { sandboxMode: payload.sandboxMode }),
       ...(payload.serviceTier !== undefined && { serviceTier: payload.serviceTier }),
+      ...(payload.fastMode !== undefined && { fastMode: payload.fastMode }),
     });
   }
 
@@ -182,6 +183,7 @@ export class WebSocketClient {
       ...(controls?.approvalPolicy && { approvalPolicy: controls.approvalPolicy }),
       ...(controls?.sandboxMode && { sandboxMode: controls.sandboxMode }),
       ...(controls?.serviceTier !== undefined && { serviceTier: controls.serviceTier }),
+      ...(controls?.fastMode !== undefined && { fastMode: controls.fastMode }),
     });
   }
 

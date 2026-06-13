@@ -56,3 +56,13 @@ test('session store + claude-code defaults persist fastMode', () => {
   assert.match(sessionStore, /fastMode: 'fastMode' in s \? s\.fastMode : undefined/);
   assert.match(providerDefaults, /fastMode/);
 });
+
+test('fastMode is threaded through spawn options', () => {
+  const serverActions = read('src/lib/ws/server-session-actions.ts');
+  const orchestrator = read('src/lib/session/session-orchestrator-lifecycle.ts');
+  const resumeRoute = read('src/app/api/sessions/[id]/resume/route.ts');
+
+  assert.match(serverActions, /fastMode/);
+  assert.match(orchestrator, /fastMode: options\.fastMode/);
+  assert.match(resumeRoute, /fastMode/);
+});

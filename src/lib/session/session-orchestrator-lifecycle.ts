@@ -227,6 +227,7 @@ export async function resumeSessionWithLifecycle({
       approvalPolicy: options.approvalPolicy,
       sandboxMode: options.sandboxMode,
       serviceTier: options.serviceTier,
+      fastMode: options.fastMode,
     },
   );
 
@@ -257,6 +258,7 @@ export async function resumeSessionWithLifecycle({
         approvalPolicy: options.approvalPolicy,
         sandboxMode: options.sandboxMode,
         serviceTier: options.serviceTier,
+      fastMode: options.fastMode,
       },
     );
   }
@@ -284,6 +286,7 @@ export async function resumeSessionWithLifecycle({
         approvalPolicy: options.approvalPolicy,
         sandboxMode: options.sandboxMode,
         serviceTier: options.serviceTier,
+      fastMode: options.fastMode,
       },
     );
   }
@@ -297,6 +300,7 @@ export async function resumeSessionWithLifecycle({
       model: runtimeDefaults.model,
       reasoningEffort: runtimeDefaults.reasoningEffort,
       serviceTier: options.serviceTier,
+      fastMode: options.fastMode,
       sessionMode: options.sessionMode,
       accessMode: options.accessMode,
     };

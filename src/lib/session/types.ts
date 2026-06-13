@@ -64,6 +64,7 @@ export interface SessionResumeResult {
   model?: string;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
+  fastMode?: boolean | null;
   sessionMode?: ProviderRuntimeControls['sessionMode'];
   accessMode?: ProviderRuntimeControls['accessMode'];
   usage?: PersistedUsage | null;
