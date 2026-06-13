@@ -15,6 +15,7 @@
 
 import type { ParsedMessage } from '../types';
 import type { CliCommandInfo, CliMessage } from '../../types';
+import { KNOWN_IGNORED_MESSAGE_TYPES } from '../../protocol-message-types';
 import { buildModelUsageEntries, pickPrimaryModelName } from '../../protocol-adapter-events';
 import { parseContentBlocks, extractToolResultOutput, extractOutputString } from '../../message-parser';
 import { hookHandler } from '../../hook-handler';
@@ -206,6 +207,11 @@ export class ClaudeCodeProtocolParser {
         results = this.handleStreamEvent(sessionId, msg);
         break;
       default: {
+        if (KNOWN_IGNORED_MESSAGE_TYPES.has(msg.type)) {
+          logger.debug('Ignoring known benign CLI message type', { sessionId, type: msg.type });
+          results = [];
+          break;
+        }
         logger.warn('Unknown CLI message type', { sessionId, type: msg.type });
         results = [buildClaudeSystemWarning(
           sessionId,
