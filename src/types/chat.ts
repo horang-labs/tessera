@@ -185,6 +185,8 @@ export interface UnifiedSession {
   model?: string;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
+  /** Claude Code high-speed serving toggle. null/false = off. */
+  fastMode?: boolean | null;
   /** True after the provider process has created real conversation state. */
   hasStarted?: boolean;
   sessionMode?: ProviderSessionMode;

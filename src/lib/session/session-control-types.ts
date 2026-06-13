@@ -25,4 +25,6 @@ export interface ProviderRuntimeControls {
   approvalPolicy?: CodexApprovalPolicy;
   sandboxMode?: CodexSandboxMode;
   serviceTier?: string | null;
+  /** Claude Code high-speed serving toggle. null/false = off. */
+  fastMode?: boolean | null;
 }
