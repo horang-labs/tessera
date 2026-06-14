@@ -383,7 +383,22 @@ export function useVirtualMessageList({
     };
     const scrollOffset = virtualizerState.getScrollOffset?.() ?? virtualizerState.scrollOffset ?? 0;
     const scrollAdjustments = virtualizerState.scrollAdjustments ?? 0;
-    return item.start < scrollOffset + scrollAdjustments;
+    const anchor = scrollOffset + scrollAdjustments;
+
+    // Following the live tail: keep the bottom pinned by compensating for any
+    // item above the offset as new content streams in.
+    if (autoScroll) {
+      return item.start < anchor;
+    }
+
+    // Parked away from the bottom — the user is reading. Only compensate when the
+    // changed item sits ENTIRELY above the viewport top (genuine re-layout of
+    // already-read content: images decoding, code highlighting). A streaming
+    // message that straddles the viewport top grows at its tail, below the read
+    // position; adjusting scroll there would shove the read text upward out of
+    // view. `item` carries the pre-growth measurement, so `item.end` is the old
+    // bottom edge — leave straddling (and below-viewport) items untouched.
+    return item.end <= anchor;
   };
 
   const totalSize = virtualizer.getTotalSize();
