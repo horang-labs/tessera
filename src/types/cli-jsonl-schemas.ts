@@ -992,3 +992,74 @@ export type CliJsonlEntry =
   | FileHistorySnapshot
   | QueueOperation
   | CustomTitle;
+
+// =============================================================================
+// PART 8: 다이나믹 워크플로우 (Workflow 도구, ultracode)
+// =============================================================================
+//
+// Claude Code가 `--print`(stream-json) + ultracode 모드에서 Workflow 도구를
+// 실행하면, 백그라운드 워크플로우의 진행 상태를 `system` 메시지로 stdout에
+// 방출한다(subtype: task_started / task_progress / task_updated /
+// task_notification). `task_progress.workflow_progress`는 직전 이후의 **델타
+// 배치**이며, 클라이언트가 `${type}:${index}` 키로 누적(upsert)해야 한다.
+
+/** 워크플로우 진행 이벤트의 한 항목 (delta 배치 내부). */
+export type WorkflowProgressEntry =
+  | WorkflowPhaseEntry
+  | WorkflowAgentEntry
+  | WorkflowLogEntry;
+
+/** 워크플로우 단계(phase) 항목. `phase('Title')` 호출당 1개. */
+export interface WorkflowPhaseEntry {
+  type: 'workflow_phase';
+  /** 단계 번호 (1부터). 누적 시 dedup 키. */
+  index: number;
+  /** 단계 제목. */
+  title: string;
+  /** 단계 종류 (CLI 내부 분류). 보통 생략. */
+  kind?: string;
+}
+
+/** 워크플로우 에이전트 항목. `agent()` 호출당 1개 (index로 dedup). */
+export interface WorkflowAgentEntry {
+  type: 'workflow_agent';
+  /** 에이전트 인덱스 (1부터). 누적 시 dedup 키. */
+  index: number;
+  /** 표시 라벨 (opts.label 또는 프롬프트 첫 줄). */
+  label: string;
+  /** 소속 단계 번호. */
+  phaseIndex?: number;
+  /** 소속 단계 제목. */
+  phaseTitle?: string;
+  /** 실행 단계: 큐잉(agentId 없음) → 실행/진행 → 완료/실패/스킵. */
+  state: 'start' | 'progress' | 'done' | 'failed' | 'skipped' | string;
+  /** 에이전트 인스턴스 ID (실행 시작 후 부여). */
+  agentId?: string;
+  /** 사용 모델 (예: "claude-opus-4-8[1m]"). */
+  model?: string;
+  /** 프롬프트 미리보기 (잘림). */
+  promptPreview?: string;
+  /** 결과 미리보기 (done 시). */
+  resultPreview?: string;
+  /** 누적 토큰 수. */
+  tokens?: number;
+  /** 누적 툴 호출 수. */
+  toolCalls?: number;
+  /** 소요 시간(ms) (done 시). */
+  durationMs?: number;
+  /** 재시도 횟수 (1부터). */
+  attempt?: number;
+  /** 큐잉 시각 (epoch ms). */
+  queuedAt?: number;
+  /** 실행 시작 시각 (epoch ms). */
+  startedAt?: number;
+  /** 마지막 진행 갱신 시각 (epoch ms). */
+  lastProgressAt?: number;
+}
+
+/** 워크플로우 로그 항목. 스크립트의 `log()` 또는 런타임 경고. */
+export interface WorkflowLogEntry {
+  type: 'workflow_log';
+  /** 로그 메시지. */
+  message: string;
+}

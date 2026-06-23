@@ -248,7 +248,7 @@ export const TabItem = memo(function TabItem({
         .sort()
         .join(',');
 
-  const isGenerating = useChatStore(
+  const isGeneratingTurn = useChatStore(
     useCallback(
       (state) => {
         if (!panelSessionIds) return false;
@@ -257,6 +257,16 @@ export const TabItem = memo(function TabItem({
       [panelSessionIds],
     ),
   );
+  // A background workflow keeps the tab "running" even after the turn ends.
+  const hasRunningWorkflow = useSessionStore(
+    useCallback(
+      (state) =>
+        !!panelSessionIds &&
+        panelSessionIds.split(',').some((id) => state.runningWorkflowSessionIds.has(id)),
+      [panelSessionIds],
+    ),
+  );
+  const isGenerating = isGeneratingTurn || hasRunningWorkflow;
 
   const isAwaitingUser = useChatStore(
     useCallback(

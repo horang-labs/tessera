@@ -14,6 +14,7 @@ function isReplayTransportedServerMessage(message: ServerMessage): message is Re
     case 'thinking_update':
     case 'system':
     case 'progress_hook':
+    case 'workflow_event':
     case 'context_usage':
       return true;
     default:

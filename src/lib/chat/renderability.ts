@@ -23,6 +23,10 @@ export function isRenderableEnhancedMessage(message: EnhancedMessage): boolean {
       );
     case 'progress_hook':
       return isRenderableProgressType(message.progressType);
+    case 'workflow':
+      // Rendered in the docked WorkflowStatusBar above the composer, not inline
+      // in the message stream — keep it out of the grouped message list.
+      return false;
     default:
       return false;
   }

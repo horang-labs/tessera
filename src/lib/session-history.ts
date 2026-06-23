@@ -540,6 +540,7 @@ class SessionHistoryStore {
       case 'tool_call':
       case 'system':
       case 'progress_hook':
+      case 'workflow_event':
       case 'interactive_prompt':
       case 'interactive_prompt_response':
         this.flushBufferedContent(sessionId);

@@ -19,7 +19,7 @@ import {
 } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useSessionStore, selectHasRunningWorkflow, selectAnyRunningWorkflow } from '@/stores/session-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
@@ -135,7 +135,9 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const collections = useCollectionStore((state) => state.collections);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
-  const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
   const isGeneratingTitle = useSessionStore((s) => s.generatingTitleIds.has(session.id));
   const isJustDropped = useBoardStore((s) => s.justDroppedId === session.id);
@@ -596,7 +598,9 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       return false;
     })
   );
-  const hasProcessingSession = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(taskSessionIds));
+  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
   const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
   const hasUnreadSession = useSessionStore((state) =>
     !isActive && taskSessionIds.some((id) => {
@@ -1145,7 +1149,9 @@ function KanbanSubSessionItem({
   const [isHovered, setIsHovered] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
-  const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const liveSession = useSessionStore((state) => state.getSession(session.id));

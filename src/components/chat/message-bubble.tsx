@@ -61,6 +61,9 @@ export const MessageBubble = memo(
           prevMsg.content === (nextMsg as any).content &&
           prevMsg.status === (nextMsg as any).status
         );
+      case 'workflow':
+        // rev bumps on every applied workflow event; id stays stable.
+        return prevMsg.rev === (nextMsg as any).rev;
       default:
         return true; // system, progress_hook - timestamp만 다름
     }

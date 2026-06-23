@@ -99,6 +99,15 @@ export class ClaudeCodeProtocolParser {
   private lastTodoSnapshots = new Map<string, Array<{ content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string }>>();
 
   /**
+   * Per-session set of background-task ids known to be dynamic workflows.
+   * Populated on `task_started` (task_type === 'local_workflow') so later
+   * `task_updated` / `task_notification` events — which look identical for
+   * non-workflow background tasks — are only forwarded as workflow events
+   * when they belong to a tracked workflow run.
+   */
+  private workflowTaskIds = new Map<string, Set<string>>();
+
+  /**
    * Per-session last assistant message (used for notification preview).
    */
   private lastAssistantMessage = new Map<string, string>();
@@ -152,6 +161,7 @@ export class ClaudeCodeProtocolParser {
     this.lastAssistantMessage.delete(sessionId);
     this.lastAssistantModel.delete(sessionId);
     this.lastTodoSnapshots.delete(sessionId);
+    this.workflowTaskIds.delete(sessionId);
 
     return [{
       serverMessage: {
@@ -326,9 +336,131 @@ export class ClaudeCodeProtocolParser {
         outcome: msg.message?.outcome,
       });
       return [];
+    } else if (
+      msg.subtype === 'task_started' ||
+      msg.subtype === 'task_progress' ||
+      msg.subtype === 'task_updated' ||
+      msg.subtype === 'task_notification'
+    ) {
+      return this.parseWorkflowTaskMessage(sessionId, msg);
     } else {
       return this.parseSystemMessage(sessionId, msg);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Handler: dynamic workflow background-task lifecycle
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Translates the CLI's `system/task_*` background-task stream into
+   * `workflow_event` server messages — but only for dynamic workflows
+   * (Workflow tool, ultracode). Non-workflow background tasks (run_in_background
+   * subagents/bash) share the same subtypes; those are dropped here (they were
+   * already invisible as empty info system messages).
+   */
+  private parseWorkflowTaskMessage(sessionId: string, msg: CliMessage): ParsedMessage[] {
+    const raw = msg as any;
+    const taskId: string | undefined = raw.task_id;
+    if (typeof taskId !== 'string' || !taskId) {
+      return [];
+    }
+
+    let known = this.workflowTaskIds.get(sessionId);
+
+    if (raw.subtype === 'task_started') {
+      const isWorkflow = raw.task_type === 'local_workflow' || typeof raw.workflow_name === 'string';
+      if (!isWorkflow) {
+        return [];
+      }
+      if (!known) {
+        known = new Set<string>();
+        this.workflowTaskIds.set(sessionId, known);
+      }
+      known.add(taskId);
+      return [{
+        serverMessage: {
+          type: 'workflow_event',
+          sessionId,
+          kind: 'started',
+          taskId,
+          toolUseId: typeof raw.tool_use_id === 'string' ? raw.tool_use_id : undefined,
+          workflowName: typeof raw.workflow_name === 'string' ? raw.workflow_name : undefined,
+          description: typeof raw.description === 'string' ? raw.description : undefined,
+          timestamp: new Date().toISOString(),
+        },
+      }];
+    }
+
+    // progress/updated/notification only matter for tracked workflow runs.
+    if (!known?.has(taskId)) {
+      // task_progress also identifies a workflow by carrying workflow_progress,
+      // even if we missed task_started (e.g. mid-stream resume).
+      if (raw.subtype === 'task_progress' && Array.isArray(raw.workflow_progress)) {
+        if (!known) {
+          known = new Set<string>();
+          this.workflowTaskIds.set(sessionId, known);
+        }
+        known.add(taskId);
+      } else {
+        return [];
+      }
+    }
+
+    if (raw.subtype === 'task_progress') {
+      const progress = Array.isArray(raw.workflow_progress) ? raw.workflow_progress : [];
+      const usage = raw.usage && typeof raw.usage === 'object' ? {
+        totalTokens: raw.usage.total_tokens,
+        toolUses: raw.usage.tool_uses,
+        durationMs: raw.usage.duration_ms,
+      } : undefined;
+      return [{
+        serverMessage: {
+          type: 'workflow_event',
+          sessionId,
+          kind: 'progress',
+          taskId,
+          progress,
+          usage,
+          timestamp: new Date().toISOString(),
+        },
+      }];
+    }
+
+    if (raw.subtype === 'task_updated') {
+      const patch = raw.patch && typeof raw.patch === 'object' ? raw.patch : {};
+      return [{
+        serverMessage: {
+          type: 'workflow_event',
+          sessionId,
+          kind: 'updated',
+          taskId,
+          status: typeof patch.status === 'string' ? patch.status : undefined,
+          endTime: typeof patch.end_time === 'number' ? patch.end_time : undefined,
+          timestamp: new Date().toISOString(),
+        },
+      }];
+    }
+
+    // task_notification (terminal)
+    const usage = raw.usage && typeof raw.usage === 'object' ? {
+      totalTokens: raw.usage.total_tokens,
+      toolUses: raw.usage.tool_uses,
+      durationMs: raw.usage.duration_ms,
+    } : undefined;
+    known.delete(taskId);
+    return [{
+      serverMessage: {
+        type: 'workflow_event',
+        sessionId,
+        kind: 'notification',
+        taskId,
+        status: typeof raw.status === 'string' ? raw.status : undefined,
+        outputFile: typeof raw.output_file === 'string' ? raw.output_file : undefined,
+        usage,
+        timestamp: new Date().toISOString(),
+      },
+    }];
   }
 
   // ---------------------------------------------------------------------------

@@ -197,6 +197,8 @@ export interface ChatState {
     endTime?: string;
     elapsedMs?: number;
   }) => void;
+  /** Replace a workflow card message (matched by id) with its merged next state. */
+  updateWorkflowMessage: (sessionId: string, messageId: string, message: EnhancedMessage) => void;
 }
 
 export function isTurnInFlight(state: ChatState, sessionId: string): boolean {
@@ -730,6 +732,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const updatedMessages = [...sessionMessages];
       updatedMessages[idx] = updatedMsg;
+      const messages = new Map(state.messages);
+      messages.set(sessionId, updatedMessages);
+      return { messages };
+    }),
+
+  updateWorkflowMessage: (sessionId, messageId, message) =>
+    set((state) => {
+      const sessionMessages = state.messages.get(sessionId) || [];
+      const idx = sessionMessages.findIndex((m) => m.id === messageId && m.type === 'workflow');
+      if (idx === -1) return state;
+      const updatedMessages = [...sessionMessages];
+      updatedMessages[idx] = message;
       const messages = new Map(state.messages);
       messages.set(sessionId, updatedMessages);
       return { messages };

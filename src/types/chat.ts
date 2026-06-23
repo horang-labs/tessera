@@ -1,4 +1,9 @@
-import type { ToolUseResult, AskUserQuestionItem } from './cli-jsonl-schemas';
+import type {
+  ToolUseResult,
+  AskUserQuestionItem,
+  WorkflowPhaseEntry,
+  WorkflowAgentEntry,
+} from './cli-jsonl-schemas';
 import type { AgentContextEvent } from './agent-context';
 import type { CanonicalToolResultValue } from './tool-result';
 import type { ToolCallKind } from './tool-call-kind';
@@ -91,8 +96,47 @@ export interface ProgressHookMessage extends BaseEnhancedMessage {
   errorMessage?: string;
 }
 
+/**
+ * Dynamic-workflow card (NEW).
+ *
+ * One per running workflow, keyed by the CLI `task_id`. Accumulated client-side
+ * from the `task_started` / `task_progress` / `task_updated` / `task_notification`
+ * stream emitted by Claude Code in `--print` + ultracode mode. `task_progress`
+ * carries DELTA batches, so phases/agents are merged by index here.
+ */
+export interface WorkflowMessage extends BaseEnhancedMessage {
+  type: 'workflow';
+  sessionId: string;
+  /** CLI background-task id (stable identity across delta updates). */
+  taskId: string;
+  /** Workflow tool_use id that launched this run. */
+  toolUseId?: string;
+  /** meta.name from the workflow script. */
+  workflowName: string;
+  /** Human description (task description). */
+  description?: string;
+  status: 'running' | 'completed' | 'failed';
+  /** Phases, ordered by index. */
+  phases: WorkflowPhaseEntry[];
+  /** Agents, ordered by index (merged across deltas). */
+  agents: WorkflowAgentEntry[];
+  /** Narrator/log lines from log() and runtime warnings. */
+  logs: string[];
+  /** Aggregate usage reported by the CLI. */
+  usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+  /** Run start (ISO). */
+  startedAt: string;
+  /** Run end (ISO), set on completion. */
+  endedAt?: string;
+  /** Final output file path (from task_notification). */
+  outputFile?: string;
+  /** Monotonic revision; bumped on every applied event so memoized
+   *  rendering re-renders even though the message id is stable. */
+  rev: number;
+}
+
 // Enhanced message type (for Unit 4 - Message Rendering)
-export type EnhancedMessage = TextMessage | ToolCallMessage | ThinkingMessage | SystemMessage | ProgressHookMessage;
+export type EnhancedMessage = TextMessage | ToolCallMessage | ThinkingMessage | SystemMessage | ProgressHookMessage | WorkflowMessage;
 
 // Active interactive prompt (floating bar/panel state, separate from message stream)
 export interface ActiveInteractivePrompt {

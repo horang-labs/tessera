@@ -49,7 +49,8 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   );
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(sessionId));
   const { renameSession, generateTitle, deleteSession } = useSessionCrud();
-  const isProcessing = useChatStore(selectIsTurnInFlight(sessionId));
+  const hasRunningWorkflow = useSessionStore((state) => state.runningWorkflowSessionIds.has(sessionId));
+  const isProcessing = useChatStore(selectIsTurnInFlight(sessionId)) || hasRunningWorkflow;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(sessionId));
 
   // Multi-panel unread indicator — active panel's unread is auto-cleared by

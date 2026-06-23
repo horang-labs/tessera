@@ -115,6 +115,23 @@ export function serverMessageToReplayEvents(msg: ServerMessage): SessionReplayEv
         progressType: msg.progressType,
       }];
 
+    case 'workflow_event':
+      return [{
+        v: LIVE_EVENT_VERSION,
+        type: 'workflow_event',
+        timestamp: msg.timestamp,
+        kind: msg.kind,
+        taskId: msg.taskId,
+        toolUseId: msg.toolUseId,
+        workflowName: msg.workflowName,
+        description: msg.description,
+        progress: msg.progress,
+        usage: msg.usage,
+        status: msg.status,
+        endTime: msg.endTime,
+        outputFile: msg.outputFile,
+      }];
+
     case 'interactive_prompt':
       return [{
         v: LIVE_EVENT_VERSION,

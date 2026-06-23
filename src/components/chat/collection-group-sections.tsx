@@ -35,7 +35,7 @@ import { useCollectionStore } from '@/stores/collection-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useSessionStore, selectHasRunningWorkflow, selectAnyRunningWorkflow } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
 import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
@@ -481,7 +481,9 @@ function SubSessionRow({
   const isActive = sess.id === activeSessionId;
   const isSelected = useSelectionStore((state) => state.selectedIds.has(sess.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
-  const isProcessing = useChatStore(selectIsTurnInFlight(sess.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(sess.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(sess.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(sess.id));
   const liveIsRunning = useSessionStore((state) => {
     for (const project of state.projects) {
@@ -716,7 +718,9 @@ export function TaskItemRow({
       return false;
     }),
   );
-  const hasProcessingSession = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(taskSessionIds));
+  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
   const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
   const hasUnreadSession = useSessionStore((state) =>
     !isTaskActive &&
@@ -1149,7 +1153,9 @@ export function ChatItemRow({
   const isSelected = useSelectionStore((state) => state.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const [isHovered, setIsHovered] = useState(false);
-  const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
   const liveIsRunning = useSessionStore((state) => state.getSession(session.id)?.isRunning ?? session.isRunning);
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(session.id));
