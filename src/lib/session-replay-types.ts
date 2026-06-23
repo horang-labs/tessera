@@ -94,6 +94,21 @@ export type SessionHistoryEvent =
     }
   | {
       v: number;
+      type: 'workflow_event';
+      timestamp: string;
+      kind: 'started' | 'progress' | 'updated' | 'notification';
+      taskId: string;
+      toolUseId?: string;
+      workflowName?: string;
+      description?: string;
+      progress?: import('@/types/cli-jsonl-schemas').WorkflowProgressEntry[];
+      usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+      status?: string;
+      endTime?: number;
+      outputFile?: string;
+    }
+  | {
+      v: number;
       type: 'interactive_prompt';
       timestamp: string;
       promptType: 'select' | 'input' | 'ask_user_question' | 'permission_request' | 'plan_approval';

@@ -6,7 +6,12 @@ import type {
   TextMessage,
   ThinkingMessage,
   ToolCallMessage,
+  WorkflowMessage,
 } from '@/types/chat';
+import type {
+  WorkflowAgentEntry,
+  WorkflowPhaseEntry,
+} from '@/types/cli-jsonl-schemas';
 import { isRenderableEnhancedMessage } from '@/lib/chat/renderability';
 import type {
   PersistedContextUsage,
@@ -199,6 +204,126 @@ function upsertStreamingThinkingMessage(
   };
 }
 
+function workflowMessageId(taskId: string): string {
+  return `hist-workflow-${taskId}`;
+}
+
+function normalizeWorkflowStatus(status?: string): WorkflowMessage['status'] {
+  if (status === 'completed') return 'completed';
+  if (status === 'failed' || status === 'killed' || status === 'cancelled' || status === 'error') {
+    return 'failed';
+  }
+  return 'running';
+}
+
+/** Merge an incoming entry over an existing one, ignoring undefined fields. */
+function mergeDefined<T extends Record<string, any>>(prev: T | undefined, next: T): T {
+  if (!prev) return next;
+  const merged: Record<string, any> = { ...prev };
+  for (const [key, value] of Object.entries(next)) {
+    if (value !== undefined) merged[key] = value;
+  }
+  return merged as T;
+}
+
+function upsertWorkflowMessage(
+  state: SessionReplayState,
+  sessionId: string,
+  event: Extract<SessionReplayEvent, { type: 'workflow_event' }>,
+): void {
+  const id = workflowMessageId(event.taskId);
+  const existingIdx = state.messages.findIndex(
+    (message) => message.type === 'workflow' && message.id === id,
+  );
+  const existing = existingIdx !== -1 ? (state.messages[existingIdx] as WorkflowMessage) : undefined;
+
+  // Ignore terminal/update events for unknown runs — nothing to render.
+  if (!existing && event.kind !== 'started' && event.kind !== 'progress') {
+    return;
+  }
+
+  const base: WorkflowMessage = existing ?? {
+    id,
+    type: 'workflow',
+    sessionId,
+    taskId: event.taskId,
+    toolUseId: event.toolUseId,
+    workflowName: event.workflowName || 'Workflow',
+    description: event.description,
+    status: 'running',
+    phases: [],
+    agents: [],
+    logs: [],
+    usage: undefined,
+    startedAt: event.timestamp,
+    timestamp: event.timestamp,
+    rev: 0,
+  };
+
+  const next: WorkflowMessage = {
+    ...base,
+    rev: base.rev + 1,
+  };
+
+  switch (event.kind) {
+    case 'started':
+      if (event.workflowName) next.workflowName = event.workflowName;
+      if (event.description !== undefined) next.description = event.description;
+      if (event.toolUseId !== undefined) next.toolUseId = event.toolUseId;
+      break;
+
+    case 'progress': {
+      if (event.progress && event.progress.length > 0) {
+        const phases = [...next.phases];
+        const agents = [...next.agents];
+        const logs = [...next.logs];
+        for (const entry of event.progress) {
+          if (entry.type === 'workflow_phase') {
+            const idx = phases.findIndex((p) => p.index === entry.index);
+            if (idx === -1) phases.push(entry);
+            else phases[idx] = mergeDefined<WorkflowPhaseEntry>(phases[idx], entry);
+          } else if (entry.type === 'workflow_agent') {
+            const idx = agents.findIndex((a) => a.index === entry.index);
+            if (idx === -1) agents.push(entry);
+            else agents[idx] = mergeDefined<WorkflowAgentEntry>(agents[idx], entry);
+          } else if (entry.type === 'workflow_log') {
+            logs.push(entry.message);
+          }
+        }
+        phases.sort((a, b) => a.index - b.index);
+        agents.sort((a, b) => a.index - b.index);
+        next.phases = phases;
+        next.agents = agents;
+        next.logs = logs;
+      }
+      if (event.usage) next.usage = { ...next.usage, ...event.usage };
+      break;
+    }
+
+    case 'updated':
+      if (event.status) next.status = normalizeWorkflowStatus(event.status);
+      if (typeof event.endTime === 'number') {
+        next.endedAt = new Date(event.endTime).toISOString();
+      }
+      break;
+
+    case 'notification':
+      next.status = normalizeWorkflowStatus(event.status) === 'running'
+        ? 'completed'
+        : normalizeWorkflowStatus(event.status);
+      if (event.outputFile) next.outputFile = event.outputFile;
+      if (event.usage) next.usage = { ...next.usage, ...event.usage };
+      if (!next.endedAt) next.endedAt = event.timestamp;
+      break;
+  }
+
+  if (existingIdx !== -1) {
+    state.messages[existingIdx] = next;
+  } else {
+    state.messages.push(next);
+  }
+}
+
 export function applySessionReplayEvent(
   sessionId: string,
   currentState: SessionReplayState,
@@ -300,6 +425,10 @@ export function applySessionReplayEvent(
 
     case 'tool_call':
       upsertToolCallMessage(state, sessionId, event, options);
+      return state;
+
+    case 'workflow_event':
+      upsertWorkflowMessage(state, sessionId, event);
       return state;
 
     case 'interactive_prompt':

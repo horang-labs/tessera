@@ -51,6 +51,14 @@ export function getMessageSearchText(message: EnhancedMessage): string {
         message.output,
         message.error,
       ].filter(Boolean).join('\n');
+    case 'workflow':
+      return [
+        message.workflowName,
+        message.description,
+        ...message.phases.map((p) => p.title),
+        ...message.agents.map((a) => `${a.label} ${a.promptPreview ?? ''} ${a.resultPreview ?? ''}`),
+        ...message.logs,
+      ].filter(Boolean).join('\n');
     default:
       return '';
   }

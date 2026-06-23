@@ -13,6 +13,7 @@ import { ThinkingBlock } from './thinking-block';
 import { SystemMessageBlock } from './system-message-block';
 import { AgentProgress } from './progress/agent-progress';
 import { McpProgress } from './progress/mcp-progress';
+import { WorkflowCard } from './workflow/workflow-card';
 import type {
   AgentProgressData,
   McpProgressData,
@@ -555,6 +556,8 @@ export function renderEnhancedContent(
         return <McpProgress data={message.data as unknown as McpProgressData} />;
       }
       return null;
+    case 'workflow':
+      return <WorkflowCard message={message} />;
     default:
       const _exhaustive: never = message;
       return null;

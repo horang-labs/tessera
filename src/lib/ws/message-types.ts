@@ -153,6 +153,25 @@ export type ReplaySourceServerMessage =
       timestamp: string;
     }
   | {
+      type: 'workflow_event';
+      sessionId: string;
+      kind: 'started' | 'progress' | 'updated' | 'notification';
+      taskId: string;
+      toolUseId?: string;
+      workflowName?: string;
+      description?: string;
+      /** Delta batch of phase/agent/log entries (kind === 'progress'). */
+      progress?: import('@/types/cli-jsonl-schemas').WorkflowProgressEntry[];
+      usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+      /** Status from task_updated.patch / task_notification. */
+      status?: string;
+      /** Run end time (epoch ms) from task_updated.patch. */
+      endTime?: number;
+      /** Final output file (kind === 'notification'). */
+      outputFile?: string;
+      timestamp: string;
+    }
+  | {
       type: 'context_usage';
       sessionId: string;
       inputTokens: number;

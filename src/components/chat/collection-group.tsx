@@ -20,7 +20,7 @@ import {
 } from '@/stores/chat-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useSessionStore, selectAnyRunningWorkflow } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useTaskStore } from '@/stores/task-store';
@@ -265,7 +265,9 @@ export const CollectionGroup = memo(function CollectionGroup({
       return snapshot.isRunning;
     }),
   );
-  const hasProcessingSession = useChatStore(selectAnyTurnInFlight(collectionSessionIds));
+  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(collectionSessionIds));
+  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(collectionSessionIds));
+  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
   const hasUnreadSession = useSessionStore((state) =>
     collectionSessionSnapshots.some((snapshot) => {
       if (snapshot.id === activeSessionId) return false;
