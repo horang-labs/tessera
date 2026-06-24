@@ -7,6 +7,7 @@ import {
   X,
   Ban,
   Circle,
+  CircleSlash,
   Clock,
   Zap,
   Wrench,
@@ -32,7 +33,7 @@ interface WorkflowCardProps {
   defaultCollapsed?: boolean;
 }
 
-type AgentLifecycle = 'queued' | 'running' | 'done' | 'failed' | 'skipped';
+type AgentLifecycle = 'queued' | 'running' | 'done' | 'failed' | 'skipped' | 'stopped';
 
 function agentLifecycle(agent: WorkflowAgentEntry): AgentLifecycle {
   if (agent.state === 'done') return 'done';
@@ -80,18 +81,38 @@ const AGENT_ICON: Record<AgentLifecycle, React.ReactNode> = {
   failed: <X className="h-3 w-3 text-(--error)" />,
   skipped: <Ban className="h-3 w-3 text-(--text-muted)" />,
   queued: <Circle className="h-3 w-3 text-(--text-muted) opacity-50" />,
+  stopped: <CircleSlash className="h-3 w-3 text-(--text-muted)" />,
 };
 
-const WorkflowAgentRow = memo(function WorkflowAgentRow({ agent }: { agent: WorkflowAgentEntry }) {
-  const lifecycle = agentLifecycle(agent);
+const WorkflowAgentRow = memo(function WorkflowAgentRow({
+  agent,
+  workflowRunning,
+}: {
+  agent: WorkflowAgentEntry;
+  workflowRunning: boolean;
+}) {
+  const rawLifecycle = agentLifecycle(agent);
+  // The live timer must stop once the workflow itself is no longer running —
+  // otherwise an agent left mid-flight (e.g. the run was stopped) keeps ticking.
+  const isActive = (rawLifecycle === 'running' || rawLifecycle === 'queued') && workflowRunning;
   const liveElapsed = useLiveElapsed({
-    isActive: lifecycle === 'running' || lifecycle === 'queued',
+    isActive,
     startTime: agent.startedAt ? new Date(agent.startedAt).toISOString() : null,
   });
+  // An unfinished agent on a finished workflow is "stopped", not running.
+  const lifecycle: AgentLifecycle =
+    !workflowRunning && (rawLifecycle === 'running' || rawLifecycle === 'queued')
+      ? 'stopped'
+      : rawLifecycle;
 
   const model = shortModel(agent.model);
   const tokens = formatTokens(agent.tokens);
-  const duration = lifecycle === 'running' ? formatSeconds(liveElapsed) : formatSeconds(agent.durationMs);
+  const duration =
+    lifecycle === 'running'
+      ? formatSeconds(liveElapsed)
+      : lifecycle === 'done' || lifecycle === 'failed' || lifecycle === 'skipped'
+        ? formatSeconds(agent.durationMs)
+        : null;
 
   return (
     <div className="group/agent flex items-center gap-2 rounded-md py-1 pl-2 pr-1 text-[11px] transition-colors hover:bg-(--sidebar-hover)">
@@ -122,9 +143,17 @@ const WorkflowAgentRow = memo(function WorkflowAgentRow({ agent }: { agent: Work
   );
 });
 
-function PhaseGroup({ phase, agents }: { phase: WorkflowPhaseEntry | null; agents: WorkflowAgentEntry[] }) {
+function PhaseGroup({
+  phase,
+  agents,
+  workflowRunning,
+}: {
+  phase: WorkflowPhaseEntry | null;
+  agents: WorkflowAgentEntry[];
+  workflowRunning: boolean;
+}) {
   const done = agents.filter((a) => isSettled(agentLifecycle(a))).length;
-  const running = agents.some((a) => agentLifecycle(a) === 'running');
+  const running = workflowRunning && agents.some((a) => agentLifecycle(a) === 'running');
 
   return (
     <div className="mt-2 first:mt-0">
@@ -138,7 +167,7 @@ function PhaseGroup({ phase, agents }: { phase: WorkflowPhaseEntry | null; agent
       {agents.length > 0 && (
         <div className="ml-[3px] border-l border-(--divider) pl-2">
           {agents.map((agent) => (
-            <WorkflowAgentRow key={agent.index} agent={agent} />
+            <WorkflowAgentRow key={agent.index} agent={agent} workflowRunning={workflowRunning} />
           ))}
         </div>
       )}
@@ -243,7 +272,7 @@ export const WorkflowCard = memo(function WorkflowCard({
           )}
 
           {renderableGroups.map((group, i) => (
-            <PhaseGroup key={group.phase ? `p${group.phase.index}` : `none-${i}`} phase={group.phase} agents={group.agents} />
+            <PhaseGroup key={group.phase ? `p${group.phase.index}` : `none-${i}`} phase={group.phase} agents={group.agents} workflowRunning={running} />
           ))}
 
           {logs.length > 0 && (
