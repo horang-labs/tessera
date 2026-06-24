@@ -863,6 +863,37 @@ export function TaskItemRow({
         data-testid={`collection-task-${task.id}`}
       >
         <span className="flex shrink-0 items-center gap-1">
+          {showProviderIcons ? (
+            <span className="relative flex shrink-0 items-center">
+              <ProviderLogoMark
+                providerId={task.sessions[0]?.provider}
+                className={COLLECTION_PROVIDER_MARK_CLASS}
+                iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
+                data-testid={`collection-task-agent-icon-${task.id}`}
+              />
+              {!task.worktreeBranch && (
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="corner"
+                  surface="sidebar"
+                />
+              )}
+            </span>
+          ) : !task.worktreeBranch && hasTaskStatus ? (
+            <span className="relative flex w-3.5 shrink-0 items-center justify-center">
+              <ItemStatusIndicator
+                isProcessing={hasProcessingSession}
+                isAwaitingUser={hasAwaitingUserSession}
+                hasUnread={hasUnreadSession}
+                isRunning={hasRunningSession}
+                placement="inline"
+                surface="sidebar"
+              />
+            </span>
+          ) : null}
           {task.worktreeBranch ? (
             <span
               title={task.worktreeMissing ? t('task.worktree.missing', { branch: task.worktreeBranch }) : task.worktreeBranch}
@@ -912,37 +943,6 @@ export function TaskItemRow({
                   className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--sidebar-bg)"
                 />
               )}
-            </span>
-          ) : null}
-          {showProviderIcons ? (
-            <span className="relative flex shrink-0 items-center">
-              <ProviderLogoMark
-                providerId={task.sessions[0]?.provider}
-                className={COLLECTION_PROVIDER_MARK_CLASS}
-                iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
-                data-testid={`collection-task-agent-icon-${task.id}`}
-              />
-              {!task.worktreeBranch && (
-                <ItemStatusIndicator
-                  isProcessing={hasProcessingSession}
-                  isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
-                  placement="corner"
-                  surface="sidebar"
-                />
-              )}
-            </span>
-          ) : !task.worktreeBranch && hasTaskStatus ? (
-            <span className="relative flex w-3.5 shrink-0 items-center justify-center">
-              <ItemStatusIndicator
-                isProcessing={hasProcessingSession}
-                isAwaitingUser={hasAwaitingUserSession}
-                hasUnread={hasUnreadSession}
-                isRunning={hasRunningSession}
-                placement="inline"
-                surface="sidebar"
-              />
             </span>
           ) : null}
         </span>
