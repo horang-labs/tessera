@@ -844,8 +844,39 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       >
         {/* Main row: icon + content */}
         <div className="flex items-start gap-2.5">
-          {/* Worktree/status icon first when present, provider mark otherwise leads */}
+          {/* Provider mark leads; worktree/status icon follows when present */}
           <span className="mt-[3px] flex shrink-0 items-center gap-1">
+            {showProviderIcons ? (
+              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <ProviderLogoMark
+                  providerId={task.sessions[0]?.provider}
+                  className={KANBAN_PROVIDER_MARK_CLASS}
+                  iconClassName={KANBAN_PROVIDER_ICON_CLASS}
+                  data-testid={`kanban-task-agent-icon-${task.id}`}
+                />
+                {!task.worktreeBranch && (
+                  <ItemStatusIndicator
+                    isProcessing={hasProcessingSession}
+                    isAwaitingUser={hasAwaitingUserSession}
+                    hasUnread={hasUnreadSession}
+                    isRunning={hasRunningSession}
+                    placement="corner"
+                    surface="board"
+                  />
+                )}
+              </span>
+            ) : !task.worktreeBranch && hasTaskStatus ? (
+              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="inline"
+                  surface="board"
+                />
+              </span>
+            ) : null}
             {task.worktreeBranch ? (
               <span
                 title={
@@ -895,37 +926,6 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     />
                   </span>
                 )}
-              </span>
-            ) : null}
-            {showProviderIcons ? (
-              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                <ProviderLogoMark
-                  providerId={task.sessions[0]?.provider}
-                  className={KANBAN_PROVIDER_MARK_CLASS}
-                  iconClassName={KANBAN_PROVIDER_ICON_CLASS}
-                  data-testid={`kanban-task-agent-icon-${task.id}`}
-                />
-                {!task.worktreeBranch && (
-                  <ItemStatusIndicator
-                    isProcessing={hasProcessingSession}
-                    isAwaitingUser={hasAwaitingUserSession}
-                    hasUnread={hasUnreadSession}
-                    isRunning={hasRunningSession}
-                    placement="corner"
-                    surface="board"
-                  />
-                )}
-              </span>
-            ) : !task.worktreeBranch && hasTaskStatus ? (
-              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                <ItemStatusIndicator
-                  isProcessing={hasProcessingSession}
-                  isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
-                  placement="inline"
-                  surface="board"
-                />
               </span>
             ) : null}
             {prMismatch && !task.worktreeBranch && (
