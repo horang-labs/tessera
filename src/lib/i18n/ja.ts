@@ -34,7 +34,7 @@ export const ja: I18nMessages = {
     autoGenerateTitleDesc: '最初の応答後にAIタイトルを自動生成します',
     translate: {
       title: '翻訳',
-      enabled: '翻訳を有効にする',
+      enabled: '自動翻訳',
       sourceLanguage: '元の言語',
       targetLanguage: '翻訳先の言語',
       inputSection: '入力翻訳',
@@ -47,6 +47,9 @@ export const ja: I18nMessages = {
       promptLabel: '翻訳プロンプト',
       promptHint: 'プレースホルダー: {{source}}, {{target}}, {{text}}。空欄でデフォルトを使用します。ヒント: 確実な解析のため JSON 出力指示は残してください。',
       promptReset: 'デフォルトに戻す',
+      sendShortcut: '翻訳して送信のショートカット',
+      sendShortcutHint: '自動翻訳がオフでも入力を翻訳してから送信します。クリックしてキーの組み合わせを押してください。',
+      shortcutRecording: 'キーの組み合わせを押してください…（Esc でキャンセル）',
     },
     telemetry: {
       title: '匿名テレメトリ',
@@ -419,7 +422,7 @@ export const ja: I18nMessages = {
     showSentToAgent: '送信内容を表示',
     translate: '翻訳',
     autoTranslate: '自動翻訳',
-    translateAndSend: '翻訳して送信 (⌥+Enter)',
+    translateAndSend: '翻訳して送信',
     referencePicker: '参照ピッカー',
     referencesLoading: '参照を読み込み中...',
     noReferenceMatches: '一致する項目がありません',

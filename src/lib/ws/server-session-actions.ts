@@ -291,7 +291,7 @@ async function translateOutgoingContent(
 
   if (typeof content === 'string') {
     if (!content.trim()) return { content, attempted: false };
-    const translated = await translateMessageText(content, sourceLang, targetLang, translate.input, userId, translate.promptTemplate);
+    const translated = await translateMessageText(content, sourceLang, targetLang, translate.input, userId, translate.input.promptTemplate);
     if (!translated) return { content, attempted: true, sourceLang, targetLang };
     return { content: translated, sentContent: translated, attempted: true, sourceLang, targetLang };
   }
@@ -302,7 +302,7 @@ async function translateOutgoingContent(
     .join('\n')
     .trim();
   if (!joined) return { content, attempted: false };
-  const translated = await translateMessageText(joined, sourceLang, targetLang, translate.input, userId, translate.promptTemplate);
+  const translated = await translateMessageText(joined, sourceLang, targetLang, translate.input, userId, translate.input.promptTemplate);
   if (!translated) return { content, attempted: true, sourceLang, targetLang };
 
   // Put the whole translation into the first text block; drop the remaining text blocks

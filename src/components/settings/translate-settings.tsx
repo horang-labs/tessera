@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { DEFAULT_TRANSLATE_PROMPT_TEMPLATE } from '@/lib/session/translate-prompt';
+import { eventToShortcut, formatShortcut } from '@/lib/keyboard-shortcut';
 import type { Language } from '@/lib/settings/types';
 
 const LANGUAGE_OPTIONS: { value: Language; label: string }[] = [
@@ -18,21 +20,78 @@ const PROVIDER_OPTIONS = ['claude-code', 'codex', 'opencode'] as const;
 const SELECT_CLASS =
   'w-full px-3 py-2 border border-(--input-border) rounded-md bg-(--input-bg) text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent) disabled:opacity-50 disabled:cursor-not-allowed';
 
+const TEXTAREA_CLASS =
+  'w-full px-3 py-2 border border-(--input-border) rounded-md bg-(--input-bg) text-(--text-primary) text-[12px] font-mono leading-relaxed resize-y focus:outline-none focus:ring-1 focus:ring-(--accent)';
+
 type Direction = {
   provider: string;
   model?: string;
+  promptTemplate?: string;
 };
+
+/** A small on/off switch. */
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+        checked ? 'bg-(--accent)' : 'bg-(--divider)'
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-4' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
+  );
+}
+
+/** Click then press a key combo to record a shortcut. */
+function ShortcutRecorder({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  const { t } = useI18n();
+  const [recording, setRecording] = useState(false);
+
+  return (
+    <button
+      type="button"
+      onClick={() => setRecording(true)}
+      onBlur={() => setRecording(false)}
+      onKeyDown={(e) => {
+        if (!recording) return;
+        if (e.key === 'Escape') {
+          setRecording(false);
+          return;
+        }
+        e.preventDefault();
+        const sc = eventToShortcut(e);
+        if (sc) {
+          onChange(sc);
+          setRecording(false);
+        }
+      }}
+      className={`${SELECT_CLASS} text-left font-mono ${recording ? 'ring-1 ring-(--accent)' : ''}`}
+    >
+      {recording ? t('settings.translate.shortcutRecording') : formatShortcut(value) || '—'}
+    </button>
+  );
+}
 
 function TranslateDirectionSettings({
   sectionTitle,
   value,
   onChangeProvider,
   onChangeModel,
+  onChangePrompt,
 }: {
   sectionTitle: string;
   value: Direction;
   onChangeProvider: (provider: string) => void;
   onChangeModel: (model: string) => void;
+  onChangePrompt: (prompt: string) => void;
 }) {
   const { t } = useI18n();
   const cliCommandOverrides = useSettingsStore((state) => state.settings.cliCommandOverrides);
@@ -91,6 +150,28 @@ function TranslateDirectionSettings({
           </p>
         )}
       </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="block text-sm font-medium text-(--text-secondary)">
+            {t('settings.translate.promptLabel')}
+          </label>
+          <button
+            type="button"
+            onClick={() => onChangePrompt(DEFAULT_TRANSLATE_PROMPT_TEMPLATE)}
+            className="text-[11px] text-(--accent) hover:underline"
+          >
+            {t('settings.translate.promptReset')}
+          </button>
+        </div>
+        <textarea
+          value={value.promptTemplate || DEFAULT_TRANSLATE_PROMPT_TEMPLATE}
+          onChange={(e) => onChangePrompt(e.target.value)}
+          rows={10}
+          className={TEXTAREA_CLASS}
+        />
+        <p className="text-[11px] text-(--text-tertiary)">{t('settings.translate.promptHint')}</p>
+      </div>
     </div>
   );
 }
@@ -105,17 +186,12 @@ export default function TranslateSettings() {
       <h3 className="font-medium text-(--text-primary)">{t('settings.translate.title')}</h3>
 
       <div className="flex items-center justify-between">
-        <label htmlFor="translateEnabled" className="text-sm text-(--text-secondary)">
+        <label className="text-sm text-(--text-secondary)">
           {t('settings.translate.enabled')}
         </label>
-        <input
-          type="checkbox"
-          id="translateEnabled"
+        <Toggle
           checked={translate.enabled}
-          onChange={(e) =>
-            updateSettings({ translate: { ...translate, enabled: e.target.checked } })
-          }
-          className="w-4 h-4 accent-(--accent)"
+          onChange={(next) => updateSettings({ translate: { ...translate, enabled: next } })}
         />
       </div>
 
@@ -161,6 +237,17 @@ export default function TranslateSettings() {
         </select>
       </div>
 
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-(--text-secondary)">
+          {t('settings.translate.sendShortcut')}
+        </label>
+        <ShortcutRecorder
+          value={translate.sendShortcut}
+          onChange={(next) => updateSettings({ translate: { ...translate, sendShortcut: next } })}
+        />
+        <p className="text-[11px] text-(--text-tertiary)">{t('settings.translate.sendShortcutHint')}</p>
+      </div>
+
       <TranslateDirectionSettings
         sectionTitle={t('settings.translate.inputSection')}
         value={translate.input}
@@ -175,6 +262,11 @@ export default function TranslateSettings() {
               ...translate,
               input: { ...translate.input, model: model || undefined },
             },
+          })
+        }
+        onChangePrompt={(promptTemplate) =>
+          updateSettings({
+            translate: { ...translate, input: { ...translate.input, promptTemplate } },
           })
         }
       />
@@ -195,36 +287,12 @@ export default function TranslateSettings() {
             },
           })
         }
+        onChangePrompt={(promptTemplate) =>
+          updateSettings({
+            translate: { ...translate, output: { ...translate.output, promptTemplate } },
+          })
+        }
       />
-
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <label className="block text-sm font-medium text-(--text-secondary)">
-            {t('settings.translate.promptLabel')}
-          </label>
-          <button
-            type="button"
-            onClick={() =>
-              updateSettings({
-                translate: { ...translate, promptTemplate: DEFAULT_TRANSLATE_PROMPT_TEMPLATE },
-              })
-            }
-            className="text-[11px] text-(--accent) hover:underline"
-          >
-            {t('settings.translate.promptReset')}
-          </button>
-        </div>
-        <textarea
-          value={translate.promptTemplate}
-          onChange={(e) =>
-            updateSettings({ translate: { ...translate, promptTemplate: e.target.value } })
-          }
-          placeholder={DEFAULT_TRANSLATE_PROMPT_TEMPLATE}
-          rows={10}
-          className="w-full px-3 py-2 border border-(--input-border) rounded-md bg-(--input-bg) text-(--text-primary) text-[12px] font-mono leading-relaxed resize-y focus:outline-none focus:ring-1 focus:ring-(--accent)"
-        />
-        <p className="text-[11px] text-(--text-tertiary)">{t('settings.translate.promptHint')}</p>
-      </div>
     </div>
   );
 }

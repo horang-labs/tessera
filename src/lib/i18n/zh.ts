@@ -34,7 +34,7 @@ export const zh: I18nMessages = {
     autoGenerateTitleDesc: '首次回复后自动生成AI标题',
     translate: {
       title: '翻译',
-      enabled: '启用翻译',
+      enabled: '自动翻译',
       sourceLanguage: '源语言',
       targetLanguage: '目标语言',
       inputSection: '输入翻译',
@@ -47,6 +47,9 @@ export const zh: I18nMessages = {
       promptLabel: '翻译提示词',
       promptHint: '占位符：{{source}}、{{target}}、{{text}}。留空则使用默认值。提示：保留 JSON 输出指令以确保解析可靠。',
       promptReset: '重置为默认',
+      sendShortcut: '翻译并发送快捷键',
+      sendShortcutHint: '即使关闭自动翻译，也会先翻译输入再发送。点击后按下组合键。',
+      shortcutRecording: '请按组合键…（Esc 取消）',
     },
     telemetry: {
       title: '匿名遥测',
@@ -419,7 +422,7 @@ export const zh: I18nMessages = {
     showSentToAgent: '查看已发送内容',
     translate: '翻译',
     autoTranslate: '自动翻译',
-    translateAndSend: '翻译并发送 (⌥+Enter)',
+    translateAndSend: '翻译并发送',
     referencePicker: '引用选择器',
     referencesLoading: '正在加载引用...',
     noReferenceMatches: '没有匹配项',

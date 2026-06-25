@@ -54,10 +54,11 @@ export interface UserSettings {
     enabled: boolean;
     sourceLanguage: Language;
     targetLanguage: Language;
-    input: { provider: string; model?: string };
-    output: { provider: string; model?: string };
-    /** Custom translation prompt template ({{source}}/{{target}}/{{text}}); '' = built-in default. */
-    promptTemplate: string;
+    /** Per-direction provider + model + custom prompt template ({{source}}/{{target}}/{{text}}; '' = default). */
+    input: { provider: string; model?: string; promptTemplate?: string };
+    output: { provider: string; model?: string; promptTemplate?: string };
+    /** Keyboard shortcut for "translate & send" (e.g. 'alt+enter'). */
+    sendShortcut: string;
   };
   theme: Theme;
   fontSize: number;

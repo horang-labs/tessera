@@ -179,7 +179,7 @@ export function maybeTranslateAssistantMessage({
       translationTriggered.add(dedupKey);
 
       const ok = await performTranslation({
-        sendReplayEvent, sessionId, userId, messageId, content, sourceLang, targetLang, output: translate.output, promptTemplate: translate.promptTemplate,
+        sendReplayEvent, sessionId, userId, messageId, content, sourceLang, targetLang, output: translate.output, promptTemplate: translate.output.promptTemplate,
       });
       if (!ok) {
         // Fail-soft: allow a later manual retry.
@@ -226,7 +226,7 @@ export function translateAssistantMessageById({
       translationTriggered.add(`${sessionId}:${messageId}`);
 
       const ok = await performTranslation({
-        sendReplayEvent, sessionId, userId, messageId, content, sourceLang, targetLang, output: translate.output, promptTemplate: translate.promptTemplate,
+        sendReplayEvent, sessionId, userId, messageId, content, sourceLang, targetLang, output: translate.output, promptTemplate: translate.output.promptTemplate,
       });
       logger.info({ sessionId, messageId, ok }, 'On-demand message translation');
     } catch (error: any) {

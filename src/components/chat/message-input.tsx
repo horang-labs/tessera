@@ -19,6 +19,7 @@ import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { matchShortcut, formatShortcut } from '@/lib/keyboard-shortcut';
 import {
   applyProviderSessionRuntimeOverrides,
   getProviderSessionRuntimeConfig,
@@ -200,6 +201,9 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const { resumeAndSend } = useSessionResume();
   const enterKeyBehavior = useSettingsStore(
     (state) => state.settings.enterKeyBehavior ?? 'send'
+  );
+  const translateSendShortcut = useSettingsStore(
+    (state) => state.settings.translate?.sendShortcut || 'meta+enter'
   );
   const fontSize = useSettingsStore((state) => state.settings.fontSize);
   const sttEngine = useSettingsStore((state) => state.settings.sttEngine);
@@ -1043,19 +1047,20 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return;
     }
 
+    // Configurable "translate & send" shortcut (default ⌥+Enter). Works for any combo
+    // incl. non-Enter; translates the input to the agent's language then sends, even
+    // when auto-translation is off.
+    if (voiceState !== 'recording' && matchShortcut(e, translateSendShortcut)) {
+      e.preventDefault();
+      handleSend({ forceTranslate: true });
+      return;
+    }
+
     if (e.key === 'Enter') {
       // 녹음 중 Enter → 녹음 종료 (전송하지 않음)
       if (voiceState === 'recording') {
         e.preventDefault();
         stopVoiceRecording();
-        return;
-      }
-
-      // ⌥(Alt)+Enter: translate the input to the agent's language, then send — even
-      // when auto-translation is off. (manual "translate & send")
-      if (e.altKey) {
-        e.preventDefault();
-        handleSend({ forceTranslate: true });
         return;
       }
 
@@ -1401,7 +1406,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
             <button
               onClick={() => handleSend()}
               disabled={isInputUnavailable || !!activePrompt || !canSubmit || isOverLimit}
-              title={`${t('chat.send')}\n${t('chat.translateAndSend')}`}
+              title={`${t('chat.send')}\n${t('chat.translateAndSend')} (${formatShortcut(translateSendShortcut)})`}
               className={cn(
                 'p-2 rounded-md transition-all duration-150',
                 canSubmit && !isInputUnavailable && !activePrompt && !isOverLimit
