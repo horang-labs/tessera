@@ -394,6 +394,19 @@ class SessionHistoryStore {
     return null;
   }
 
+  /** Returns the recorded toolParams for a tool call, used to re-derive on-disk paths server-side. */
+  async readToolCallParams(sessionId: string, toolUseId: string): Promise<Record<string, any> | null> {
+    this.flushSession(sessionId);
+    const events = await this.readEvents(sessionId);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (event.type === 'tool_call' && event.toolUseId === toolUseId) {
+        return event.toolParams ?? null;
+      }
+    }
+    return null;
+  }
+
   async readUsage(sessionId: string): Promise<PersistedUsage | null> {
     const replayState = await this.readReplayState(sessionId, { lazyToolOutput: true });
     return replayState.usage;
