@@ -34,7 +34,7 @@ export const ko: I18nMessages = {
     autoGenerateTitleDesc: '첫 번째 응답 완료 후 AI 타이틀을 자동으로 생성합니다',
     translate: {
       title: '번역',
-      enabled: '번역 사용',
+      enabled: '자동 번역',
       sourceLanguage: '원본 언어',
       targetLanguage: '대상 언어',
       inputSection: '입력 번역',
@@ -47,6 +47,9 @@ export const ko: I18nMessages = {
       promptLabel: '번역 프롬프트',
       promptHint: '치환자: {{source}}, {{target}}, {{text}}. 비워두면 기본값을 사용합니다. 팁: 안정적인 파싱을 위해 JSON 출력 지시는 유지하세요.',
       promptReset: '기본값으로 초기화',
+      sendShortcut: '번역해서 전송 단축키',
+      sendShortcutHint: '자동 번역이 꺼져 있어도 입력을 번역한 뒤 전송합니다. 클릭 후 키 조합을 누르세요.',
+      shortcutRecording: '키 조합을 누르세요… (Esc 취소)',
     },
     telemetry: {
       title: '익명 텔레메트리',
@@ -421,7 +424,7 @@ export const ko: I18nMessages = {
     showSentToAgent: '전송된 내용 보기',
     translate: '번역',
     autoTranslate: '자동 번역',
-    translateAndSend: '번역해서 전송 (⌥+Enter)',
+    translateAndSend: '번역해서 전송',
     referencePicker: '참조 선택',
     referencesLoading: '참조 목록 불러오는 중...',
     noReferenceMatches: '매치되는 항목이 없습니다',

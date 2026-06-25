@@ -45,6 +45,9 @@ export interface I18nMessages {
       promptLabel: string;
       promptHint: string;
       promptReset: string;
+      sendShortcut: string;
+      sendShortcutHint: string;
+      shortcutRecording: string;
     };
     telemetry: {
       title: string;
