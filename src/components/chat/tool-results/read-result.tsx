@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, memo } from 'react';
-import Image from 'next/image';
 import type { FileReadToolResult } from '@/types/tool-result';
+import { ImageLightbox } from '../image-lightbox';
 
 const MAX_DISPLAY_LINES = 50;
 
@@ -13,26 +13,39 @@ interface ReadResultProps {
 
 export const ReadResult = memo(function ReadResult({ result, filePath }: ReadResultProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
   if (result.contentType === 'image') {
-    const { base64, mimeType, dimensions } = result;
+    const src = result.url
+      ?? (result.base64 ? `data:${result.mimeType ?? 'image/png'};base64,${result.base64}` : null);
+
+    if (!src) return null;
+
     return (
       <div className="space-y-1">
         {filePath && (
           <div className="text-[10px] text-(--text-muted) font-mono">{filePath}</div>
         )}
-        <Image
-          src={`data:${mimeType};base64,${base64}`}
-          alt={filePath || 'Image'}
-          width={dimensions.displayWidth}
-          height={dimensions.displayHeight}
-          unoptimized
-          sizes={`${dimensions.displayWidth}px`}
-          className="rounded max-w-full h-auto"
-        />
-        <div className="text-[10px] text-(--text-muted)">
-          {dimensions.originalWidth}x{dimensions.originalHeight}
-        </div>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setLightboxSrc(src); }}
+          className="block cursor-zoom-in rounded overflow-hidden border border-(--divider) hover:border-(--accent) transition-colors"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- dynamic local/remote src, dimensions unknown */}
+          <img
+            src={src}
+            alt={filePath || 'Image'}
+            className="max-w-full h-auto max-h-[400px] object-contain"
+          />
+        </button>
+        {result.dimensions && (
+          <div className="text-[10px] text-(--text-muted)">
+            {result.dimensions.originalWidth}x{result.dimensions.originalHeight}
+          </div>
+        )}
+        {lightboxSrc && (
+          <ImageLightbox src={lightboxSrc} alt={filePath} onClose={() => setLightboxSrc(null)} />
+        )}
       </div>
     );
   }

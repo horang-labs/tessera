@@ -25,6 +25,7 @@ import logger from '../../../logger';
 import type { ToolCallKind } from '@/types/tool-call-kind';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
 import { normalizeToolResult } from '@/lib/tool-results/normalize-tool-result';
+import { buildImageToolResult, isImagePath } from '@/lib/tool-results/tool-image';
 import { buildToolDisplay } from '@/lib/tool-display';
 
 // =============================================================================
@@ -780,7 +781,16 @@ export class ClaudeCodeProtocolParser {
       outputLength: output?.length || 0,
     });
 
-    const syntheticToolUseResult = synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
+    // Image reads (e.g. Read of a .png) arrive on stdout as image content blocks
+    // with no text output, so synthesis yields nothing renderable. Serve the file
+    // lazily instead of dropping the image.
+    const imageToolUseResult = !isError
+      && pendingTool.toolKind === 'file_read'
+      && isImagePath(pendingTool.toolParams?.file_path)
+      ? buildImageToolResult(sessionId, toolUseId)
+      : undefined;
+
+    const effectiveToolUseResult = imageToolUseResult ?? synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
       output,
       error: isError ? output : undefined,
       isError,
@@ -803,7 +813,7 @@ export class ClaudeCodeProtocolParser {
         status: isError ? 'error' : 'completed',
         output: isError ? undefined : output,
         error: isError ? output : undefined,
-        ...(syntheticToolUseResult !== undefined ? { toolUseResult: syntheticToolUseResult } : {}),
+        ...(effectiveToolUseResult !== undefined ? { toolUseResult: effectiveToolUseResult } : {}),
         toolUseId,
         timestamp: new Date().toISOString(),
       },
@@ -844,6 +854,10 @@ export class ClaudeCodeProtocolParser {
         continue;
       }
 
+      const isImageRead = !toolResult.isError
+        && pendingTool.toolKind === 'file_read'
+        && isImagePath(pendingTool.toolParams?.file_path);
+
       const toolUseResult = rawToolUseResult
         ? normalizeToolResult(
             pendingTool.toolKind,
@@ -852,12 +866,14 @@ export class ClaudeCodeProtocolParser {
               toolName: pendingTool.toolName,
             }),
           )
-        : synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
-            output: toolResult.output,
-            error: toolResult.isError ? toolResult.output : undefined,
-            isError: toolResult.isError,
-            previousTodos: this.lastTodoSnapshots.get(sessionId),
-          });
+        : isImageRead
+          ? buildImageToolResult(sessionId, toolResult.toolUseId)
+          : synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
+              output: toolResult.output,
+              error: toolResult.isError ? toolResult.output : undefined,
+              isError: toolResult.isError,
+              previousTodos: this.lastTodoSnapshots.get(sessionId),
+            });
 
       sessionPending!.delete(toolResult.toolUseId);
 

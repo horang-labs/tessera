@@ -31,6 +31,7 @@ import { CODEX_THREAD_ID_RE } from '../../../validation/path';
 import logger from '../../../logger';
 import { inferToolCallKindFromToolName, type ToolCallKind } from '@/types/tool-call-kind';
 import type { CommandExecutionToolResult } from '@/types/tool-result';
+import { buildImageToolResult, isImagePath } from '@/lib/tool-results/tool-image';
 import type { AskUserQuestionItem, AskUserQuestionOption } from '@/types/cli-jsonl-schemas';
 import { buildCodexRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import { buildToolDisplay } from '@/lib/tool-display';
@@ -2091,6 +2092,14 @@ export class CodexProtocolParser {
     const { toolName, toolParams } = this.buildGenericCodexItemMetadata(item);
     const output = status === 'running' ? undefined : this.buildGenericCodexItemOutput(item);
 
+    // `view_image` (imageView) injects a local file into context with no image
+    // bytes in the result — render it inline by serving the file at `path`.
+    const isImageView = toolParams.itemType === 'imageView' || toolName === 'ViewImage';
+    const toolKind: ToolCallKind | undefined = isImageView ? 'file_read' : undefined;
+    const imageToolUseResult = isImageView && status === 'completed' && itemId && isImagePath(toolParams.path)
+      ? buildImageToolResult(sessionId, itemId)
+      : undefined;
+
     logger.info('Codex: generic item mapped to tool_call', {
       sessionId,
       itemId,
@@ -2105,10 +2114,12 @@ export class CodexProtocolParser {
         sessionId,
         toolUseId: itemId,
         toolName,
+        ...(toolKind !== undefined ? { toolKind } : {}),
         toolParams,
         status,
         output: status === 'error' ? undefined : output,
         error: status === 'error' ? output || `${toolName} failed` : undefined,
+        ...(imageToolUseResult !== undefined ? { toolUseResult: imageToolUseResult } : {}),
         timestamp,
       },
       sideEffect: addPending
