@@ -22,5 +22,6 @@ export type {
   ProviderMeta,
   SpawnOptions,
   SpawnResult,
+  TranslatedText,
 } from './session-types';
 export type { SkillInfo, SkillSource } from './skill-types';

@@ -15,6 +15,7 @@ export type {
   ParsedMessageSideEffect,
   ProviderMeta,
   GeneratedTitle,
+  TranslatedText,
 } from './types';
 
 export {

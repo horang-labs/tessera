@@ -107,3 +107,11 @@ export interface GeneratedTitle {
   /** Short human-readable title (max ~30 chars, same language as conversation). */
   title: string;
 }
+
+/**
+ * Result of CliProvider.translateText().
+ */
+export interface TranslatedText {
+  /** Translated text in the requested target language. */
+  text: string;
+}

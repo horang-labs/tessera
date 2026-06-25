@@ -66,7 +66,8 @@ export type SessionSpawnConfig = {
 export type ClientMessage =
   | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'close_session'; requestId: string; sessionId: string }
-  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig }
+  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string }
+  | { type: 'translate_message'; requestId: string; sessionId: string; messageId: string }
   | ({ type: 'resume_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'retry_session'; requestId: string; sessionId: string }
   | { type: 'interactive_response'; requestId: string; sessionId: string; toolUseId: string; response: string }
@@ -93,7 +94,7 @@ export type ClientMessage =
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions';
 
 export type ReplaySourceServerMessage =
-  | { type: 'message'; sessionId: string; role: 'assistant'; content: string }
+  | { type: 'message'; sessionId: string; role: 'assistant'; content: string; messageId?: string }
   | {
       type: 'user_message';
       sessionId: string;

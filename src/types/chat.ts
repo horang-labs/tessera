@@ -33,6 +33,15 @@ export interface TextMessage extends BaseEnhancedMessage {
    * assistant/system role 메시지는 항상 string.
    */
   content: string | ContentBlock[];
+  /**
+   * 번역 결과. 어시스턴트: content(영어 원문)의 한국어 번역. 유저: content(한국어 원문)의
+   * 영어 번역(에이전트에 전달된 텍스트). 메시지별 토글로 content↔translatedContent 전환.
+   */
+  translatedContent?: string;
+  /** 번역 진행 상태. 'pending' 동안 원문 + 인디케이터, 'error' 시 조용히 원문 폴백. */
+  translationStatus?: 'pending' | 'completed' | 'error';
+  /** translatedContent 의 언어 코드. */
+  translationLang?: string;
 }
 
 // Tool call message (NEW)

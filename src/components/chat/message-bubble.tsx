@@ -26,7 +26,7 @@ export const MessageBubble = memo(
   return (
     <MessageErrorBoundary>
       <div className={`py-1${disableAnimation ? '' : ' message-enter'}`}>
-        {renderEnhancedContent(message, providerId, onForkFromMessage)}
+        {renderEnhancedContent(message, providerId, onForkFromMessage, sessionId)}
       </div>
     </MessageErrorBoundary>
   );
@@ -55,7 +55,11 @@ export const MessageBubble = memo(
 
     switch (prevMsg.type) {
       case 'text':
-        return prevMsg.content === (nextMsg as any).content;
+        return (
+          prevMsg.content === (nextMsg as any).content &&
+          prevMsg.translatedContent === (nextMsg as any).translatedContent &&
+          prevMsg.translationStatus === (nextMsg as any).translationStatus
+        );
       case 'thinking':
         return (
           prevMsg.content === (nextMsg as any).content &&

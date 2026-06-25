@@ -28,6 +28,7 @@ import type {
   SpawnResult,
   ParsedMessage,
   GeneratedTitle,
+  TranslatedText,
   SkillSource,
   SkillInfo,
   CheckStatusOptions,
@@ -961,6 +962,38 @@ export class CodexAdapter implements CliProvider {
   }
 
   // ---------------------------------------------------------------------------
+  // CliProvider: translateText
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Translates the given prompt by spawning `codex exec --json` and returning the
+   * raw agent_message text (NOT JSON-parsed) — translations are multi-line and may
+   * contain quotes/markdown/code, so the raw agent response IS the translation.
+   *
+   * When a model is provided it is injected via `-c model="<model>"`, mirroring the
+   * existing `model_reasoning_effort` config option.
+   *
+   * Returns null on any error/timeout/empty result (fail-open).
+   */
+  async translateText(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<TranslatedText | null> {
+    try {
+      const extra = model ? ['-c', `model="${model}"`] : [];
+      const text = await this._execOneShot(prompt, userId, extra);
+      const t = text.trim();
+      return t ? { text: t } : null;
+    } catch (err) {
+      logger.warn('CodexAdapter: translateText failed', {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Private: JSON-RPC handshake
   // ---------------------------------------------------------------------------
 
@@ -1191,6 +1224,26 @@ export class CodexAdapter implements CliProvider {
     prompt: string,
     userId?: string,
   ): Promise<GeneratedTitle | null> {
+    const text = await this._execOneShot(prompt, userId);
+    return text ? this._parseGeneratedTitleText(text) : null;
+  }
+
+  /**
+   * Spawns `codex exec --json` headless/read-only with the given prompt and
+   * resolves the raw text of the last agent_message item observed on stdout.
+   *
+   * `extraArgs` are appended after the `model_reasoning_effort` config option,
+   * allowing callers to inject additional `-c key="value"` config (e.g. a model).
+   *
+   * On timeout the last agent text seen so far is resolved. On close, if no agent
+   * text was captured and the exit code is non-zero the promise rejects; otherwise
+   * the (possibly empty) agent text is resolved. A spawn error rejects.
+   */
+  private async _execOneShot(
+    prompt: string,
+    userId?: string,
+    extraArgs: string[] = [],
+  ): Promise<string> {
     const agentEnv = await getAgentEnvironment(userId);
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, userId);
 
@@ -1205,6 +1258,7 @@ export class CodexAdapter implements CliProvider {
           'read-only',
           '-c',
           `model_reasoning_effort="${TITLE_REASONING_EFFORT}"`,
+          ...extraArgs,
         ],
         {
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -1217,14 +1271,13 @@ export class CodexAdapter implements CliProvider {
       let buffer = '';
       let stderr = '';
       let settled = false;
-      let titleFound: GeneratedTitle | null = null;
       let lastAgentText = '';
 
       const timeout = setTimeout(() => {
         if (!settled) {
           settled = true;
           child.kill('SIGTERM');
-          resolve(titleFound);
+          resolve(lastAgentText);
         }
       }, CLI_TIMEOUT_MS);
 
@@ -1251,11 +1304,6 @@ export class CodexAdapter implements CliProvider {
             typeof parsed.item?.text === 'string'
           ) {
             lastAgentText = parsed.item.text;
-            const parsedTitle = this._parseGeneratedTitleText(parsed.item.text);
-            if (parsedTitle) {
-              titleFound = parsedTitle;
-              logger.info('CodexAdapter: generateTitle parsed agent_message', parsedTitle);
-            }
           }
         }
       });
@@ -1280,20 +1328,15 @@ export class CodexAdapter implements CliProvider {
         logger.debug('CodexAdapter: codex exec closed', {
           code,
           stderrLength: stderr.length,
-          titleFound: !!titleFound,
+          hasAgentText: !!lastAgentText,
         });
 
-        if (!titleFound && code !== 0) {
+        if (!lastAgentText && code !== 0) {
           reject(new Error(`codex exec exited with code ${code}: ${stderr.slice(0, 200)}`));
           return;
         }
 
-        if (!titleFound && lastAgentText) {
-          reject(new Error(`Invalid Codex title payload: ${lastAgentText.slice(0, 300)}`));
-          return;
-        }
-
-        resolve(titleFound);
+        resolve(lastAgentText);
       });
 
       child.stdin?.write(prompt);

@@ -761,6 +761,9 @@ export class ProcessManager {
       autoGenerateTitle: (targetSessionId, targetUserId) => {
         protocolAdapter.maybeAutoGenerateTitle(targetSessionId, targetUserId);
       },
+      translateAssistantMessage: (targetSessionId, targetUserId) => {
+        protocolAdapter.maybeTranslateAssistantMessage(targetSessionId, targetUserId);
+      },
     });
   }
 
