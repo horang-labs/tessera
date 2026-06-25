@@ -154,6 +154,12 @@ export interface ChatState {
   // session-wide translationView for that one message (set by the per-message button).
   messageViewOverride: Map<string, 'original' | 'translation'>;
 
+  // Translate requests deferred until the turn finishes streaming, keyed by
+  // session → set of messageIds. Pressing "translate" while a message is still
+  // streaming would otherwise translate the partial text; we queue and fire once
+  // the turn completes (the message is then fully streamed and persisted).
+  translateQueue: Map<string, Set<string>>;
+
   // Actions
   isHistoryLoaded: (sessionId: string) => boolean;
   setDraftInput: (sessionId: string, text: string) => void;
@@ -162,6 +168,8 @@ export interface ChatState {
   setTranslationView: (sessionId: string, view: 'original' | 'translation') => void;
   toggleTranslationView: (sessionId: string) => void;
   setMessageViewOverride: (messageId: string, view: 'original' | 'translation') => void;
+  enqueueTranslateOnStreamEnd: (sessionId: string, messageId: string) => void;
+  drainTranslateQueue: (sessionId: string) => string[];
   setScrollPosition: (sessionId: string, position: number | ScrollPositionSnapshot) => void;
   getScrollPosition: (sessionId: string) => ScrollPositionSnapshot | undefined;
   setActiveInteractivePrompt: (sessionId: string, prompt: ActiveInteractivePrompt | null) => void;
@@ -292,6 +300,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   draftInputs: new Map(),
   translationView: new Map(),
   messageViewOverride: new Map(),
+  translateQueue: new Map(),
   scrollPositions: new Map(),
 
   isHistoryLoaded: (sessionId) => get().historyLoaded.has(sessionId),
@@ -329,6 +338,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updated.set(messageId, view);
       return { messageViewOverride: updated };
     }),
+
+  enqueueTranslateOnStreamEnd: (sessionId, messageId) =>
+    set((state) => {
+      const updated = new Map(state.translateQueue);
+      const ids = new Set(updated.get(sessionId) ?? []);
+      ids.add(messageId);
+      updated.set(sessionId, ids);
+      return { translateQueue: updated };
+    }),
+
+  drainTranslateQueue: (sessionId) => {
+    const ids = get().translateQueue.get(sessionId);
+    if (!ids || ids.size === 0) return [];
+    set((state) => {
+      const updated = new Map(state.translateQueue);
+      updated.delete(sessionId);
+      return { translateQueue: updated };
+    });
+    return [...ids];
+  },
 
   setScrollPosition: (sessionId, position) =>
     set((state) => {
@@ -689,9 +718,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const clearedScrollPositions = new Map(state.scrollPositions);
       clearedScrollPositions.delete(sessionId);
 
+      const clearedTranslateQueue = new Map(state.translateQueue);
+      clearedTranslateQueue.delete(sessionId);
+
       return {
         messages: updatedMessages,
         historyLoaded: clearedHistoryLoaded,
+        translateQueue: clearedTranslateQueue,
         assistantTextBuffers: clearedBuffers,
         assistantTextFlushTimers: clearedTimers,
         activeAssistantTextBySession: updateActiveAssistantTextMap(
