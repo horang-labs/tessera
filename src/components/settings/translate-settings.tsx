@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
@@ -47,6 +47,69 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (next: bool
         }`}
       />
     </button>
+  );
+}
+
+const PROMPT_COMMIT_DEBOUNCE_MS = 500;
+
+/**
+ * Prompt editor backed by local state.
+ *
+ * Two things used to throw the caret to the end mid-edit: (1) every keystroke wrote
+ * straight back into the async settings store, whose snapshot re-rendered the
+ * controlled <textarea> with a fresh value; and (2) the store also persists to the
+ * server on every change — fast typing raced those writes into a 500, after which
+ * `updateSettings` rolled the in-memory settings back, reverting the text.
+ *
+ * Fix: while the field is focused, `local` is authoritative — no async store update
+ * (echo, rollback, snapshot) can touch it — and we only push to the store on a debounce
+ * and on blur, so the per-keystroke save storm is gone. External changes (Reset, initial
+ * load, other tabs) are adopted during render, but only while not editing.
+ */
+function PromptTextarea({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  const [local, setLocal] = useState(value);
+  const [editing, setEditing] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  if (!editing && value !== local) {
+    setLocal(value);
+  }
+
+  useEffect(() => () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+  }, []);
+
+  const scheduleCommit = (next: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      onChange(next);
+    }, PROMPT_COMMIT_DEBOUNCE_MS);
+  };
+
+  const flushCommit = (next: string) => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    onChange(next);
+  };
+
+  return (
+    <textarea
+      value={local}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => {
+        setLocal(e.target.value);
+        scheduleCommit(e.target.value);
+      }}
+      onBlur={(e) => {
+        flushCommit(e.target.value);
+        setEditing(false);
+      }}
+      rows={10}
+      className={TEXTAREA_CLASS}
+    />
   );
 }
 
@@ -164,11 +227,9 @@ function TranslateDirectionSettings({
             {t('settings.translate.promptReset')}
           </button>
         </div>
-        <textarea
+        <PromptTextarea
           value={value.promptTemplate || DEFAULT_TRANSLATE_PROMPT_TEMPLATE}
-          onChange={(e) => onChangePrompt(e.target.value)}
-          rows={10}
-          className={TEXTAREA_CLASS}
+          onChange={onChangePrompt}
         />
         <p className="text-[11px] text-(--text-tertiary)">{t('settings.translate.promptHint')}</p>
       </div>

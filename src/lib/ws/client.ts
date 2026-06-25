@@ -10,7 +10,7 @@ import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { SessionGoalUpdate } from '@/types/session-goal';
 import { v4 as uuidv4 } from 'uuid';
-import { useChatStore } from '@/stores/chat-store';
+import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import {
@@ -165,6 +165,15 @@ export class WebSocketClient {
 
   /** Request on-demand translation of a specific assistant message. */
   translateMessage(sessionId: string, messageId: string) {
+    const chat = useChatStore.getState();
+    // If the turn is still streaming, the message text isn't final (nor persisted
+    // server-side) yet. Queue the request and show a "translating…" hint; the turn
+    // finalizer drains the queue once streaming completes (session-client-effects).
+    if (isTurnInFlight(chat, sessionId)) {
+      chat.enqueueTranslateOnStreamEnd(sessionId, messageId);
+      chat.attachMessageTranslation(sessionId, messageId, { translationStatus: 'pending' });
+      return;
+    }
     if (!this.sendRequest('translate_message', { sessionId, messageId })) {
       console.error('WebSocket not connected');
     }

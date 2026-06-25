@@ -43,6 +43,18 @@ export function finalizeInFlightTurn(sessionId: string, options: { clearPrompt?:
   stopTurnInFlight(sessionId);
   chatStore.flushAndClearAssistantText(sessionId);
 
+  // Streaming is done: fire any translate requests that were deferred while the
+  // turn was in flight (now the messages are fully streamed and persisted).
+  // turn-in-flight is already false above, so translateMessage sends immediately.
+  const queuedTranslations = chatStore.drainTranslateQueue(sessionId);
+  if (queuedTranslations.length > 0) {
+    void import('@/lib/ws/client').then(({ wsClient }) => {
+      for (const messageId of queuedTranslations) {
+        wsClient.translateMessage(sessionId, messageId);
+      }
+    });
+  }
+
   if (options.clearPrompt) {
     clearInteractivePromptState(sessionId);
   }

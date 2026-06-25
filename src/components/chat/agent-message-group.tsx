@@ -1,18 +1,21 @@
 'use client';
 
 import { memo, useCallback, useState } from 'react';
-import { Check, Copy, MessageSquarePlus } from 'lucide-react';
-import type { AgentMessageGroup as AgentMessageGroupModel, AgentSubGroup } from '@/lib/chat/group-messages';
+import { Check, Copy, Languages, MessageSquarePlus } from 'lucide-react';
+import type { AgentMessageGroup as AgentMessageGroupModel, AgentSubGroup, AssistantTextMessage } from '@/lib/chat/group-messages';
 import type { TextMessage, ToolCallMessage } from '@/types/chat';
 import type { AgentProgressData, McpProgressData } from '@/types/cli-jsonl-schemas';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
+import { useChatStore } from '@/stores/chat-store';
+import { useSessionStore } from '@/stores/session-store';
+import { wsClient } from '@/lib/ws/client';
 import { ProviderLogoMark, getProviderBrand } from './provider-brand';
 import { ThinkingBlock } from './thinking-block';
 import { AgentProgress } from './progress/agent-progress';
 import { McpProgress } from './progress/mcp-progress';
 import { ToolCallGrid } from './tool-call-grid';
-import { AssistantTextBody, MessageTranslateButton, extractAssistantText, type ForkFromMessageHandler } from './message-bubble-content';
+import { AssistantTextBody, extractAssistantText, type ForkFromMessageHandler } from './message-bubble-content';
 import { MessageRowShell } from './message-row-shell';
 
 function formatMessageTime(timestamp: string) {
@@ -53,6 +56,9 @@ interface AgentSubGroupViewProps {
   onForkFromMessage?: ForkFromMessageHandler;
 }
 
+const MESSAGE_ACTIONS_CLASS =
+  'ml-auto inline-flex shrink-0 items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
+
 const MESSAGE_ACTION_BUTTON_CLASS =
   'inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
 
@@ -60,63 +66,67 @@ const MESSAGE_COPY_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[4.75rem]`;
 const MESSAGE_FORK_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[6.25rem]`;
 
 /**
- * One assistant text bubble in a group, with its OWN hover action row
- * (Copy · Translate · From here). Per-bubble so every message — including the
- * intermediate ones before tool calls — is individually copyable/translatable/forkable.
+ * Translate button for the subgroup header action row. Operates on EVERY assistant
+ * text bubble in the subgroup (the intermediate ones before tool calls and the final
+ * answer alike), so a single click translates the whole agent turn. Requests are
+ * auto-deferred while the turn is still streaming (see wsClient.translateMessage).
  */
-function GroupedAssistantText({
-  message,
-  onForkFromMessage,
+function SubgroupTranslateButton({
+  messages,
 }: {
-  message: TextMessage;
-  onForkFromMessage?: ForkFromMessageHandler;
+  messages: TextMessage[];
 }) {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const overrides = useChatStore((state) => state.messageViewOverride);
+  const setMessageViewOverride = useChatStore((state) => state.setMessageViewOverride);
 
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(extractAssistantText(message.content));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
+  const hasAnyTranslation = messages.some(
+    (m) => typeof m.translatedContent === 'string' && m.translatedContent.length > 0,
+  );
+  const isAnyPending = messages.some((m) => m.translationStatus === 'pending');
+  // "Showing translation" if any already-translated bubble is currently in translation
+  // view (assistant bubbles default to 'translation').
+  const showingTranslation = messages.some((m) => {
+    const hasTranslation = typeof m.translatedContent === 'string' && m.translatedContent.length > 0;
+    return hasTranslation && (overrides.get(m.id) ?? 'translation') === 'translation';
+  });
+
+  const handleClick = useCallback(() => {
+    const sid = activeSessionId ?? '';
+    if (hasAnyTranslation) {
+      const next = showingTranslation ? 'original' : 'translation';
+      for (const m of messages) {
+        setMessageViewOverride(m.id, next);
+      }
+      return;
     }
-  }, [message.content]);
+    // No translation yet → request one for every text bubble and reveal it on arrival.
+    for (const m of messages) {
+      setMessageViewOverride(m.id, 'translation');
+      const already = typeof m.translatedContent === 'string' && m.translatedContent.length > 0;
+      if (!already && sid) wsClient.translateMessage(sid, m.id);
+    }
+  }, [activeSessionId, hasAnyTranslation, showingTranslation, messages, setMessageViewOverride]);
+
+  const label = isAnyPending
+    ? t('chat.translating')
+    : hasAnyTranslation
+      ? (showingTranslation ? t('chat.showOriginal') : t('chat.showTranslation'))
+      : t('chat.translate');
 
   return (
-    <div className="group/bubble relative">
-      <div className="absolute right-0 -top-3 z-10 opacity-0 transition-opacity group-hover/bubble:opacity-100">
-        <div className="inline-flex items-center gap-1 rounded-md bg-(--chat-bg) px-1 py-0.5 shadow-sm">
-          <button type="button" onClick={handleCopy} className={MESSAGE_COPY_BUTTON_CLASS}>
-            {copied ? (
-              <>
-                <Check className="w-3 h-3" />
-                <span>{t('chat.copied')}</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-3 h-3" />
-                <span>{t('chat.copy')}</span>
-              </>
-            )}
-          </button>
-          <MessageTranslateButton message={message} />
-          {onForkFromMessage && (
-            <button
-              type="button"
-              onClick={(event) => onForkFromMessage(message, event.currentTarget)}
-              className={MESSAGE_FORK_BUTTON_CLASS}
-              title={t('chat.forkFromHereTooltip')}
-            >
-              <MessageSquarePlus className="w-3 h-3" />
-              <span>{t('chat.forkFromHere')}</span>
-            </button>
-          )}
-        </div>
-      </div>
-      <AssistantTextBody message={message} />
-    </div>
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={isAnyPending}
+      data-testid="message-translate-btn"
+      className={MESSAGE_FORK_BUTTON_CLASS}
+      title={t('chat.translate')}
+    >
+      <Languages className="w-3 h-3" />
+      <span>{label}</span>
+    </button>
   );
 }
 
@@ -131,6 +141,32 @@ function AgentSubGroupView({
   const { t } = useI18n();
   const providerBrand = getProviderBrand(providerId);
   const timestamp = subgroup.messages[0]?.timestamp ?? new Date().toISOString();
+  const [copied, setCopied] = useState(false);
+
+  const textMessages = subgroup.items
+    .filter(
+      (item): item is { kind: 'message'; message: AssistantTextMessage } =>
+        item.kind === 'message' && item.message.type === 'text',
+    )
+    .map((item) => item.message);
+
+  const combinedText = textMessages
+    .map((message) => extractAssistantText(message.content))
+    .filter(Boolean)
+    .join('\n\n');
+
+  const handleCopy = useCallback(async () => {
+    if (!combinedText) return;
+    try {
+      await navigator.clipboard.writeText(combinedText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, [combinedText]);
+
+  const forkTargetMessage = subgroup.messages[subgroup.messages.length - 1];
 
   return (
     <MessageRowShell
@@ -158,6 +194,39 @@ function AgentSubGroupView({
               {formatMessageTime(timestamp)}
             </span>
           </Tooltip>
+          {combinedText && (
+            <div className={MESSAGE_ACTIONS_CLASS}>
+              <button
+                type="button"
+                onClick={handleCopy}
+                className={MESSAGE_COPY_BUTTON_CLASS}
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3 h-3" />
+                    <span>{t('chat.copied')}</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>{t('chat.copy')}</span>
+                  </>
+                )}
+              </button>
+              <SubgroupTranslateButton messages={textMessages} />
+              {onForkFromMessage && forkTargetMessage && (
+                <button
+                  type="button"
+                  onClick={(event) => onForkFromMessage(forkTargetMessage, event.currentTarget)}
+                  className={MESSAGE_FORK_BUTTON_CLASS}
+                  title={t('chat.forkFromHereTooltip')}
+                >
+                  <MessageSquarePlus className="w-3 h-3" />
+                  <span>{t('chat.forkFromHere')}</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="max-w-2xl">
@@ -187,10 +256,9 @@ function AgentSubGroupView({
 
             if (message.type === 'text') {
               return (
-                <GroupedAssistantText
+                <AssistantTextBody
                   key={message.id}
                   message={message}
-                  onForkFromMessage={onForkFromMessage}
                 />
               );
             }
