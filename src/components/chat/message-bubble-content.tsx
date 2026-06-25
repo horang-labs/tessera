@@ -31,6 +31,7 @@ import {
 import { ImageLightbox } from './image-lightbox';
 import { ProviderLogoMark, getProviderBrand } from './provider-brand';
 import { renderMarkdownCode, renderMarkdownPre } from './markdown-code';
+import { MarkdownLink } from './markdown-link';
 import { MessageRowShell } from './message-row-shell';
 
 type TextMessage = Extract<EnhancedMessage, { type: 'text' }>;
@@ -131,14 +132,9 @@ const MARKDOWN_COMPONENTS: Components = {
   },
   a({ href, children }) {
     return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-(--accent-light) hover:underline"
-      >
+      <MarkdownLink href={href} className="text-(--accent-light) hover:underline">
         {children}
-      </a>
+      </MarkdownLink>
     );
   },
   strong({ children }) {
