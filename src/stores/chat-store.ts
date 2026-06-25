@@ -146,10 +146,22 @@ export interface ChatState {
   // Per-session scroll position (preserved across session switches)
   scrollPositions: Map<string, ScrollPositionSnapshot>;
 
+  // Per-session translation view: 'original' shows the agent's source text,
+  // 'translation' (default) shows translatedContent when present.
+  translationView: Map<string, 'original' | 'translation'>;
+
+  // Per-message view override (keyed by messageId). Takes precedence over the
+  // session-wide translationView for that one message (set by the per-message button).
+  messageViewOverride: Map<string, 'original' | 'translation'>;
+
   // Actions
   isHistoryLoaded: (sessionId: string) => boolean;
   setDraftInput: (sessionId: string, text: string) => void;
   getDraftInput: (sessionId: string) => string;
+  getTranslationView: (sessionId: string) => 'original' | 'translation';
+  setTranslationView: (sessionId: string, view: 'original' | 'translation') => void;
+  toggleTranslationView: (sessionId: string) => void;
+  setMessageViewOverride: (messageId: string, view: 'original' | 'translation') => void;
   setScrollPosition: (sessionId: string, position: number | ScrollPositionSnapshot) => void;
   getScrollPosition: (sessionId: string) => ScrollPositionSnapshot | undefined;
   setActiveInteractivePrompt: (sessionId: string, prompt: ActiveInteractivePrompt | null) => void;
@@ -181,6 +193,11 @@ export interface ChatState {
     toolUseResult?: any;
     agentContext?: AgentContextEvent[];
     hasOutput?: boolean;
+  }) => void;
+  attachMessageTranslation: (sessionId: string, targetMessageId: string, update: {
+    translatedContent?: string;
+    translationStatus?: 'pending' | 'completed' | 'error';
+    translationLang?: string;
   }) => void;
   setReadOnlyPagination: (sessionId: string, pagination: {
     projectDir: string;
@@ -273,6 +290,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   promptHistory: new Map(),
   historyLoaded: new Set(),
   draftInputs: new Map(),
+  translationView: new Map(),
+  messageViewOverride: new Map(),
   scrollPositions: new Map(),
 
   isHistoryLoaded: (sessionId) => get().historyLoaded.has(sessionId),
@@ -289,6 +308,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   getDraftInput: (sessionId) => get().draftInputs.get(sessionId) || '',
+
+  getTranslationView: (sessionId) => get().translationView.get(sessionId) ?? 'translation',
+  setTranslationView: (sessionId, view) =>
+    set((state) => {
+      const updated = new Map(state.translationView);
+      updated.set(sessionId, view);
+      return { translationView: updated };
+    }),
+  toggleTranslationView: (sessionId) =>
+    set((state) => {
+      const current = state.translationView.get(sessionId) ?? 'translation';
+      const updated = new Map(state.translationView);
+      updated.set(sessionId, current === 'translation' ? 'original' : 'translation');
+      return { translationView: updated };
+    }),
+  setMessageViewOverride: (messageId, view) =>
+    set((state) => {
+      const updated = new Map(state.messageViewOverride);
+      updated.set(messageId, view);
+      return { messageViewOverride: updated };
+    }),
 
   setScrollPosition: (sessionId, position) =>
     set((state) => {
@@ -683,6 +723,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return msg;
       });
+      const messages = new Map(state.messages);
+      messages.set(sessionId, updatedMessages);
+      return { messages };
+    }),
+
+  attachMessageTranslation: (sessionId, targetMessageId, update) =>
+    set((state) => {
+      const sessionMessages = state.messages.get(sessionId) || [];
+      let changed = false;
+      const updatedMessages = sessionMessages.map((msg) => {
+        if (msg.id === targetMessageId && 'type' in msg && msg.type === 'text') {
+          changed = true;
+          return { ...msg, ...update };
+        }
+        return msg;
+      });
+      if (!changed) return state;
       const messages = new Map(state.messages);
       messages.set(sessionId, updatedMessages);
       return { messages };

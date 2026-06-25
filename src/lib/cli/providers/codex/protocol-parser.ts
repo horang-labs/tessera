@@ -26,6 +26,7 @@
  */
 
 import os from 'os';
+import { randomUUID } from 'crypto';
 import type { ParsedMessage } from '../types';
 import { CODEX_THREAD_ID_RE } from '../../../validation/path';
 import logger from '../../../logger';
@@ -1329,6 +1330,10 @@ export class CodexProtocolParser {
         sessionId,
         role: 'assistant',
         content: text,
+        // Stable id per delta; the first delta of a contiguous text run wins on both
+        // the client (chunk merge) and the history buffer (||=), so the live message
+        // and the flushed assistant_message share one id (translation attach).
+        messageId: randomUUID(),
       },
     }];
   }

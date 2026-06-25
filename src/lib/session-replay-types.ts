@@ -41,12 +41,29 @@ export type SessionHistoryEvent =
       type: 'user_message';
       timestamp: string;
       content: string | ContentBlock[];
+      /** Stable id so a post-hoc message_translation (the English actually sent) can attach by id. */
+      messageId?: string;
     }
   | {
       v: number;
       type: 'assistant_message';
       timestamp: string;
       content: string;
+      /** Stable id assigned at flush so post-hoc events (e.g. message_translation) can attach by id. */
+      messageId?: string;
+    }
+  | {
+      v: number;
+      type: 'message_translation';
+      timestamp: string;
+      /** assistant_message.messageId this translation attaches to. */
+      targetMessageId: string;
+      /** Translated text. Absent for 'pending'/'error' status signals. */
+      content?: string;
+      sourceLang: string;
+      targetLang: string;
+      /** 'pending'/'error' are live-only signals (not persisted); 'completed' (or absent) is persisted. */
+      status?: 'pending' | 'completed' | 'error';
     }
   | {
       v: number;
@@ -144,6 +161,9 @@ export type SessionReplayEvent =
       type: 'assistant_message_chunk';
       timestamp: string;
       content: string;
+      /** Stable id for the assistant text run, assigned at the first chunk so the live
+       *  message and the persisted/flushed assistant_message share one id (translation attach). */
+      messageId?: string;
     }
   | {
       v: number;

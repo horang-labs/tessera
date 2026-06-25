@@ -757,7 +757,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     skillPicker,
   ]);
 
-  const handleSend = () => {
+  const handleSend = (sendOptions?: { forceTranslate?: boolean }) => {
+    const forceTranslateInput = sendOptions?.forceTranslate === true;
     const trimmed = inputValue.trim();
     const hasSelectedSkill = !!skillPicker.selectedSkill;
     const hasSelectedFastCommand = isCodexFastCommandSkill(skillPicker.selectedSkill)
@@ -827,7 +828,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         timestamp: new Date().toISOString(),
       });
 
-      resumeAndSend(sessionId, session.projectDir, sendContent, skillName, displayContent);
+      resumeAndSend(sessionId, session.projectDir, sendContent, skillName, displayContent, { forceTranslateInput });
     } else {
       // First-time send for a session without a live CLI: attach composer defaults
       // so the server can spawn with the picked model / reasoning / permission mode.
@@ -837,7 +838,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         return;
       }
       const spawnConfig = buildSpawnConfigForCurrentSession();
-      sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig);
+      sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig, { forceTranslateInput });
     }
 
     clearInput();
@@ -1047,6 +1048,14 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       if (voiceState === 'recording') {
         e.preventDefault();
         stopVoiceRecording();
+        return;
+      }
+
+      // ⌥(Alt)+Enter: translate the input to the agent's language, then send — even
+      // when auto-translation is off. (manual "translate & send")
+      if (e.altKey) {
+        e.preventDefault();
+        handleSend({ forceTranslate: true });
         return;
       }
 
@@ -1379,7 +1388,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
               {!isVoiceActive && canSubmit && !isOverLimit && (
                 <button
                   type="button"
-                  onClick={handleSend}
+                  onClick={() => handleSend()}
                   className="p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100"
                   title={isGoalRunning ? t('goal.steerPlaceholder') : t('chat.send')}
                   data-testid="send-during-generation-btn"
@@ -1390,8 +1399,9 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
             </>
           ) : !isVoiceActive ? (
             <button
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={isInputUnavailable || !!activePrompt || !canSubmit || isOverLimit}
+              title={`${t('chat.send')}\n${t('chat.translateAndSend')}`}
               className={cn(
                 'p-2 rounded-md transition-all duration-150',
                 canSubmit && !isInputUnavailable && !activePrompt && !isOverLimit

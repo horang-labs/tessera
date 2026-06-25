@@ -16,6 +16,7 @@ export function serverMessageToReplayEvents(msg: ServerMessage): SessionReplayEv
         type: 'assistant_message_chunk',
         timestamp,
         content: msg.content,
+        ...(msg.messageId ? { messageId: msg.messageId } : {}),
       }];
 
     case 'user_message':

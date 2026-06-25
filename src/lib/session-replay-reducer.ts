@@ -340,14 +340,24 @@ export function applySessionReplayEvent(
   switch (event.type) {
     case 'user_message':
       state.messages.push(
-        makeTextMessage(`hist-user-${state.messages.length}`, 'user', event.content, event.timestamp),
+        makeTextMessage(
+          event.messageId ?? `hist-user-${state.messages.length}`,
+          'user',
+          event.content,
+          event.timestamp,
+        ),
       );
       return state;
 
     case 'assistant_message':
       if (event.content) {
         state.messages.push(
-          makeTextMessage(`hist-assistant-${state.messages.length}`, 'assistant', event.content, event.timestamp),
+          makeTextMessage(
+            event.messageId ?? `hist-assistant-${state.messages.length}`,
+            'assistant',
+            event.content,
+            event.timestamp,
+          ),
         );
       }
       state.activeInteractivePrompt = null;
@@ -362,8 +372,33 @@ export function applySessionReplayEvent(
         };
       } else {
         state.messages.push(
-          makeTextMessage(`hist-assistant-live-${state.messages.length}`, 'assistant', event.content, event.timestamp),
+          makeTextMessage(
+            event.messageId ?? `hist-assistant-live-${state.messages.length}`,
+            'assistant',
+            event.content,
+            event.timestamp,
+          ),
         );
+      }
+      return state;
+    }
+
+    case 'message_translation': {
+      const idx = state.messages.findIndex((message) => message.id === event.targetMessageId);
+      if (idx !== -1 && state.messages[idx].type === 'text') {
+        const target = state.messages[idx] as TextMessage;
+        if (event.status === 'pending') {
+          state.messages[idx] = { ...target, translationStatus: 'pending' };
+        } else if (event.status === 'error') {
+          state.messages[idx] = { ...target, translationStatus: 'error' };
+        } else {
+          state.messages[idx] = {
+            ...target,
+            translatedContent: event.content ?? target.translatedContent,
+            translationStatus: 'completed',
+            translationLang: event.targetLang,
+          };
+        }
       }
       return state;
     }

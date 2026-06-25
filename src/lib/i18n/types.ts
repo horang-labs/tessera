@@ -30,6 +30,22 @@ export interface I18nMessages {
     toast: string;
     autoGenerateTitle: string;
     autoGenerateTitleDesc: string;
+    translate: {
+      title: string;
+      enabled: string;
+      sourceLanguage: string;
+      targetLanguage: string;
+      inputSection: string;
+      outputSection: string;
+      provider: string;
+      model: string;
+      modelDefault: string;
+      opencodeModelNote: string;
+      noCliCommandWarning: string;
+      promptLabel: string;
+      promptHint: string;
+      promptReset: string;
+    };
     telemetry: {
       title: string;
       description: string;
@@ -397,6 +413,13 @@ export interface I18nMessages {
     imageOriginalView: string;
     generateTitle: string;
     generatingTitle: string;
+    showOriginal: string;
+    showTranslation: string;
+    translating: string;
+    showSentToAgent: string;
+    translate: string;
+    autoTranslate: string;
+    translateAndSend: string;
     referencePicker: string;
     referencesLoading: string;
     noReferenceMatches: string;

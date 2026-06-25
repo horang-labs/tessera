@@ -514,6 +514,14 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       showToast: true,
       autoGenerateTitle: true,
     },
+    translate: {
+      enabled: false,
+      sourceLanguage: 'ko',
+      targetLanguage: 'en',
+      input: { provider: 'claude-code', model: '' },
+      output: { provider: 'claude-code', model: '' },
+      promptTemplate: '',
+    },
     theme: 'auto',
     fontSize: DEFAULT_FONT_SCALE,
     enterKeyBehavior: 'send',
@@ -621,6 +629,18 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     notifications: {
       ...defaults.notifications,
       ...(raw?.notifications ?? {}),
+    },
+    translate: {
+      ...defaults.translate,
+      ...(raw?.translate ?? {}),
+      input: {
+        ...defaults.translate.input,
+        ...(raw?.translate?.input ?? {}),
+      },
+      output: {
+        ...defaults.translate.output,
+        ...(raw?.translate?.output ?? {}),
+      },
     },
     providerDefaults,
     setup: {

@@ -21,6 +21,7 @@ import {
   sendInteractiveResponseFromWebSocket,
   sendSessionMessageFromWebSocket,
   setSessionGoalFromWebSocket,
+  translateMessageFromWebSocket,
 } from './server-session-actions';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
@@ -137,6 +138,17 @@ export async function routeClientTransportMessage({
         displayContent: message.displayContent,
         skillName: message.skillName,
         spawnConfig: message.spawnConfig,
+        forceTranslateInput: message.forceTranslateInput,
+        messageId: message.messageId,
+      });
+      return;
+
+    case 'translate_message':
+      translateMessageFromWebSocket({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        messageId: message.messageId,
       });
       return;
 

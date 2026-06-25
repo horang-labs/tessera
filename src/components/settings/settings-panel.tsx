@@ -7,6 +7,7 @@ import { useI18n } from '@/lib/i18n';
 import ProfileSettings from './profile-settings';
 import LanguageSwitcher from './language-switcher';
 import NotificationSettings from './notification-settings';
+import TranslateSettings from './translate-settings';
 import TelemetrySettings from './telemetry-settings';
 import UpdateSettings from './update-settings';
 import KeyboardSettings from './keyboard-settings';
@@ -167,6 +168,9 @@ export default function SettingsPanel() {
             </SettingsCard>
             <SettingsCard testId="settings-section-general-notifications">
               <NotificationSettings />
+            </SettingsCard>
+            <SettingsCard testId="settings-section-general-translate">
+              <TranslateSettings />
             </SettingsCard>
             <SettingsCard testId="settings-section-general-updates">
               <UpdateSettings />

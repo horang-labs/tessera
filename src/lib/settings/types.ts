@@ -50,6 +50,15 @@ export interface UserSettings {
     showToast: boolean;
     autoGenerateTitle: boolean;
   };
+  translate: {
+    enabled: boolean;
+    sourceLanguage: Language;
+    targetLanguage: Language;
+    input: { provider: string; model?: string };
+    output: { provider: string; model?: string };
+    /** Custom translation prompt template ({{source}}/{{target}}/{{text}}); '' = built-in default. */
+    promptTemplate: string;
+  };
   theme: Theme;
   fontSize: number;
   enterKeyBehavior: EnterKeyBehavior;

@@ -13,6 +13,8 @@ import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import { buildCodexSkillContent } from '../chat/build-codex-skill-content';
 import { buildUserMessageDisplayContent } from '../chat/build-user-message-display-content';
 import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh';
+import { SettingsManager } from '../settings/manager';
+import { translateMessageText } from '../session/message-translator';
 import type {
   ClientMessage,
   ContentBlock,
@@ -82,6 +84,10 @@ interface SendSessionMessageActionOptions extends SessionActionOptions {
   skillName?: string;
   /** Composer-side config used only when no CLI process exists yet (first send). */
   spawnConfig?: SessionSpawnConfig;
+  /** Manual "translate & send": translate the input even when auto-translate is off. */
+  forceTranslateInput?: boolean;
+  /** Client-minted stable id for the user message (used to attach the input translation). */
+  messageId?: string;
 }
 
 interface ResumeSessionActionOptions extends SessionActionOptions, ProviderRuntimeControls {
@@ -245,6 +251,75 @@ export function sendCommandsListToWebSocketUser({
   });
 }
 
+interface OutgoingTranslation {
+  content: string | ContentBlock[];
+  /** The translated text actually sent to the agent (present only on success). */
+  sentContent?: string;
+  /** True when translation was attempted (gates passed), regardless of success. */
+  attempted: boolean;
+  sourceLang?: string;
+  targetLang?: string;
+}
+
+/**
+ * Input translation: rewrite the CLI-facing content from the user's language to the
+ * agent's working language. The user's own bubble (displayContent) is untouched. On
+ * success `sentContent` carries the translated text (broadcast to the client as the
+ * user message's translation). Fail-open: any miss/error forwards the original content.
+ */
+async function translateOutgoingContent(
+  content: string | ContentBlock[],
+  userId: string,
+  force = false,
+): Promise<OutgoingTranslation> {
+  let settings;
+  try {
+    settings = await SettingsManager.load(userId);
+  } catch {
+    return { content, attempted: false };
+  }
+  const translate = settings.translate;
+  // Auto path requires the toggle; manual "translate & send" forces it on.
+  if (!translate || (!translate.enabled && !force)) {
+    return { content, attempted: false };
+  }
+  const sourceLang = translate.sourceLanguage;
+  const targetLang = translate.targetLanguage;
+  if (!sourceLang || sourceLang === targetLang) {
+    return { content, attempted: false };
+  }
+
+  if (typeof content === 'string') {
+    if (!content.trim()) return { content, attempted: false };
+    const translated = await translateMessageText(content, sourceLang, targetLang, translate.input, userId, translate.promptTemplate);
+    if (!translated) return { content, attempted: true, sourceLang, targetLang };
+    return { content: translated, sentContent: translated, attempted: true, sourceLang, targetLang };
+  }
+
+  const joined = content
+    .filter((block): block is TextContentBlock => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+    .trim();
+  if (!joined) return { content, attempted: false };
+  const translated = await translateMessageText(joined, sourceLang, targetLang, translate.input, userId, translate.promptTemplate);
+  if (!translated) return { content, attempted: true, sourceLang, targetLang };
+
+  // Put the whole translation into the first text block; drop the remaining text blocks
+  // (non-text blocks such as images are preserved in place).
+  const newContent: ContentBlock[] = [];
+  let placed = false;
+  for (const block of content) {
+    if (block.type !== 'text') {
+      newContent.push(block);
+    } else if (!placed) {
+      placed = true;
+      newContent.push({ ...block, text: translated });
+    }
+  }
+  return { content: newContent, sentContent: translated, attempted: true, sourceLang, targetLang };
+}
+
 export async function sendSessionMessageFromWebSocket({
   content,
   displayContent,
@@ -253,6 +328,8 @@ export async function sendSessionMessageFromWebSocket({
   skillName,
   spawnConfig,
   userId,
+  forceTranslateInput,
+  messageId,
 }: SendSessionMessageActionOptions): Promise<void> {
   const contentType =
     typeof content === 'string' ? 'string' : `ContentBlock[${content.length}]`;
@@ -265,22 +342,50 @@ export async function sendSessionMessageFromWebSocket({
     if (!ok) return;
   }
 
+  // Display content (the user's bubble) is captured from the ORIGINAL content before
+  // input translation, so the user keeps seeing what they typed.
   const resolvedDisplayContent = buildUserMessageDisplayContent(
     displayContent ?? content,
     skillName,
   );
-  sessionHistory.recordUserMessage(sessionId, resolvedDisplayContent);
+
+  // Translate the CLI-facing content (fail-open to original).
+  const { content: outgoingContent, sentContent, attempted, sourceLang, targetLang } =
+    await translateOutgoingContent(content, userId, forceTranslateInput === true);
+
+  sessionHistory.recordUserMessage(sessionId, resolvedDisplayContent, undefined, messageId);
   await maybeAutoSetSessionTitle(sessionId, resolvedDisplayContent);
 
+  // Attach the translated (sent) text to the user's message as a message_translation
+  // event — resolving the optimistic "translating…" state on the client. Persisted via
+  // the server's recordTransportMessage tap; 'error' clears pending without a translation.
+  if (messageId && attempted) {
+    sendToUser(userId, {
+      type: 'replay_events',
+      sessionId,
+      events: [
+        {
+          v: LIVE_EVENT_VERSION,
+          type: 'message_translation',
+          timestamp: new Date().toISOString(),
+          targetMessageId: messageId,
+          sourceLang: sourceLang ?? '',
+          targetLang: targetLang ?? '',
+          ...(sentContent ? { content: sentContent, status: 'completed' as const } : { status: 'error' as const }),
+        },
+      ],
+    });
+  }
+
   if (!skillName) {
-    processManager.sendMessage(sessionId, content);
+    processManager.sendMessage(sessionId, outgoingContent);
     return;
   }
 
   const processInfo = processManager.getProcess(sessionId);
   if (processInfo?.provider.getProviderId() === 'codex') {
     await sendCodexSkillMessage({
-      content,
+      content: outgoingContent,
       processInfo,
       sendToUser,
       sessionId,
@@ -291,9 +396,9 @@ export async function sendSessionMessageFromWebSocket({
   }
 
   const skillText =
-    typeof content === 'string'
-      ? content.trim()
-      : content
+    typeof outgoingContent === 'string'
+      ? outgoingContent.trim()
+      : outgoingContent
           .filter((block): block is TextContentBlock => block.type === 'text')
           .map((block) => block.text)
           .join('\n')
@@ -301,6 +406,21 @@ export async function sendSessionMessageFromWebSocket({
   const command = skillText ? `/${skillName} ${skillText}` : `/${skillName}`;
   processManager.sendMessage(sessionId, command);
   logger.info({ sessionId, skillName, command: command.slice(0, 100) }, 'Skill command sent to CLI');
+}
+
+interface TranslateMessageActionOptions extends SessionActionOptions {
+  sessionId: string;
+  messageId: string;
+}
+
+export function translateMessageFromWebSocket({
+  sessionId,
+  messageId,
+  userId,
+}: TranslateMessageActionOptions): void {
+  // On-demand per-message translation. Reads the message from history, translates via
+  // the configured output provider, and broadcasts a message_translation event.
+  protocolAdapter.translateMessageById(sessionId, userId, messageId);
 }
 
 export async function setSessionGoalFromWebSocket({

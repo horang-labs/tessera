@@ -13,6 +13,7 @@
  *   parseStdout(sessionId: string, line: string): ParsedMessage[]
  */
 
+import { randomUUID } from 'crypto';
 import type { ParsedMessage } from '../types';
 import type { CliCommandInfo, CliMessage } from '../../types';
 import { KNOWN_IGNORED_MESSAGE_TYPES } from '../../protocol-message-types';
@@ -40,6 +41,9 @@ interface SessionStreamState {
   /** True if we already emitted an isRedacted:true update for the active block. */
   thinkingRedactedEmitted: boolean;
   isStreamingText: boolean;
+  /** Stable id for the active assistant text run, shared by the live message + the
+   *  flushed assistant_message so translations attach by id. Null between text runs. */
+  activeAssistantMessageId: string | null;
   /** True if stream_event text deltas were sent this turn. */
   hasStreamedText: boolean;
   /** Dedup: track tool_use IDs already sent to prevent duplicate tool_call messages. */
@@ -1174,6 +1178,7 @@ export class ClaudeCodeProtocolParser {
           sessionId,
           role: 'assistant',
           content: resultText,
+          messageId: randomUUID(),
         },
       });
     }
@@ -1329,6 +1334,7 @@ export class ClaudeCodeProtocolParser {
         hasReceivedThinkingDelta: false,
         thinkingRedactedEmitted: false,
         isStreamingText: false,
+        activeAssistantMessageId: null,
         hasStreamedText: false,
         processedToolUseIds: new Set(),
         activeToolUseBlock: null,
@@ -1364,6 +1370,8 @@ export class ClaudeCodeProtocolParser {
     } else if (block.type === 'text') {
       state.isStreamingText = true;
       state.hasStreamedText = true;
+      // New text run -> mint a stable id shared by the live message + flushed assistant_message.
+      state.activeAssistantMessageId = randomUUID();
 
       return [{
         serverMessage: {
@@ -1371,6 +1379,7 @@ export class ClaudeCodeProtocolParser {
           sessionId,
           role: 'assistant',
           content: '',
+          messageId: state.activeAssistantMessageId,
         },
       }];
     }
@@ -1401,12 +1410,16 @@ export class ClaudeCodeProtocolParser {
     if (!state) return [];
 
     if (delta.type === 'text_delta' && delta.text) {
+      if (!state.activeAssistantMessageId) {
+        state.activeAssistantMessageId = randomUUID();
+      }
       return [{
         serverMessage: {
           type: 'message',
           sessionId,
           role: 'assistant',
           content: delta.text,
+          messageId: state.activeAssistantMessageId,
         },
       }];
     } else if (delta.type === 'thinking_delta' && delta.thinking && state.activeThinkingId) {
@@ -1477,6 +1490,8 @@ export class ClaudeCodeProtocolParser {
 
     if (state.isStreamingText) {
       state.isStreamingText = false;
+      // End of this text run; next run mints a fresh id.
+      state.activeAssistantMessageId = null;
     }
 
     if (state.activeToolUseBlock) {

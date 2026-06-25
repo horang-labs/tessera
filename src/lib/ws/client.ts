@@ -9,8 +9,10 @@ import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { SessionGoalUpdate } from '@/types/session-goal';
+import { v4 as uuidv4 } from 'uuid';
 import { useChatStore } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import {
   applyLocalInteractiveResponseStart,
   finalizeInFlightTurn,
@@ -130,19 +132,42 @@ export class WebSocketClient {
     skillName?: string,
     displayContent?: string | ContentBlock[],
     spawnConfig?: SessionSpawnConfig,
+    options?: { forceTranslateInput?: boolean },
   ) {
+    // Stable id shared by the optimistic message and the server record, so the
+    // input-translation result (message_translation) can attach to this exact message.
+    const messageId = uuidv4();
+    const translate = useSettingsStore.getState().settings.translate;
+    const willTranslateInput =
+      !!translate &&
+      (translate.enabled || options?.forceTranslateInput === true) &&
+      !!translate.sourceLanguage &&
+      translate.sourceLanguage !== translate.targetLanguage;
+
     if (!this.sendRequest('send_message', {
       sessionId,
       content,
+      messageId,
       ...(skillName && { skillName }),
       ...(displayContent && { displayContent }),
       ...(spawnConfig && { spawnConfig }),
+      ...(options?.forceTranslateInput && { forceTranslateInput: true }),
     })) {
       console.error('WebSocket not connected');
       return;
     }
 
-    applyOptimisticUserMessage(sessionId, content, skillName, displayContent);
+    applyOptimisticUserMessage(sessionId, content, skillName, displayContent, {
+      messageId,
+      pendingTranslation: willTranslateInput,
+    });
+  }
+
+  /** Request on-demand translation of a specific assistant message. */
+  translateMessage(sessionId: string, messageId: string) {
+    if (!this.sendRequest('translate_message', { sessionId, messageId })) {
+      console.error('WebSocket not connected');
+    }
   }
 
   createSession(args: {
