@@ -22,7 +22,8 @@ export const AppHeader = memo(function AppHeader() {
   const electronPlatform = useElectronPlatform();
   const isMacElectron = electronPlatform === 'darwin';
   const isWindowsElectron = electronPlatform === 'win32';
-  const isElectronTitlebar = isMacElectron || isWindowsElectron;
+  const isLinuxElectron = electronPlatform === 'linux';
+  const isElectronTitlebar = isMacElectron || isWindowsElectron || isLinuxElectron;
 
   // Sidebar collapse
   const toggleSidebar = useSettingsStore((state) => state.toggleSidebar);
@@ -45,6 +46,7 @@ export const AppHeader = memo(function AppHeader() {
         className={cn(
           'shrink-0 flex h-9 items-center border-b border-(--divider) bg-(--sidebar-bg)',
           isWindowsElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
+          isLinuxElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
           isMacElectron && 'electron-drag h-10 bg-(--chat-header-bg) border-b-(--chat-header-border) select-none'
         )}
         data-testid="app-header"

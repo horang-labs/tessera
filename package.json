@@ -37,6 +37,10 @@
     ".next/",
     "!.next/cache/",
     "!.next/cache/**",
+    "!.next/dev/",
+    "!.next/dev/**",
+    "!.next/diagnostics/",
+    "!.next/diagnostics/**",
     "!.next/trace",
     "!.next/trace-build",
     "!.next/turbopack",
@@ -90,7 +94,7 @@
     "lucide-react": "^0.563.0",
     "monaco-editor": "^0.55.1",
     "next": "^16.2.3",
-    "node-pty": "^1.1.0",
+    "node-pty": "1.2.0-beta.13",
     "pino": "^8.18.0",
     "posthog-js": "^1.372.6",
     "react": "^19.2.5",
@@ -104,7 +108,7 @@
     "sql.js": "^1.14.1",
     "tailwind-merge": "^3.4.0",
     "tinykeys": "^3.0.0",
-    "uuid": "^9.0.1",
+    "uuid": "^11.1.1",
     "ws": "^8.16.0",
     "zod": "^3.22.0",
     "zustand": "^5.0.0"
@@ -117,7 +121,6 @@
     "@types/node": "20.19.35",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/uuid": "^9.0.8",
     "@types/ws": "^8.5.10",
     "@vercel/nft": "^1.5.0",
     "autoprefixer": "^10.4.0",
@@ -197,7 +200,8 @@
     },
     "deb": {
       "packageName": "tessera",
-      "artifactName": "Tessera-${version}-linux-${arch}.${ext}"
+      "artifactName": "Tessera-${version}-linux-${arch}.${ext}",
+      "afterInstall": "scripts/linux-deb-after-install.tpl"
     }
   }
 }
