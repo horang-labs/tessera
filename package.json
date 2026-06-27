@@ -68,7 +68,7 @@
     "electron:prebuild:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run electron:prebuild",
     "electron:build:win": "npm run electron:prebuild && electron-builder --win portable --x64 --publish never",
     "electron:build:win:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run electron:build:win",
-    "electron:build:linux": "npm run electron:prebuild && electron-builder --linux AppImage deb --x64 --publish never",
+    "electron:build:linux": "npm run electron:prebuild && electron-builder --linux deb --x64 --publish never",
     "electron:build:mac-x64": "npm run electron:prebuild && electron-builder --mac --x64 --publish never",
     "electron:build:mac-arm64": "npm run electron:prebuild && electron-builder --mac --arm64 --publish never",
     "electron:build:mac-x64:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --x64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64",
@@ -171,7 +171,6 @@
     },
     "linux": {
       "target": [
-        "AppImage",
         "deb"
       ],
       "category": "Development",
