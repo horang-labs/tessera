@@ -16,6 +16,7 @@ export function serverMessageToReplayEvents(msg: ServerMessage): SessionReplayEv
         type: 'assistant_message_chunk',
         timestamp,
         content: msg.content,
+        ...(msg.messageId ? { messageId: msg.messageId } : {}),
       }];
 
     case 'user_message':
@@ -113,6 +114,23 @@ export function serverMessageToReplayEvents(msg: ServerMessage): SessionReplayEv
         hookEvent: msg.hookEvent,
         data: msg.data,
         progressType: msg.progressType,
+      }];
+
+    case 'workflow_event':
+      return [{
+        v: LIVE_EVENT_VERSION,
+        type: 'workflow_event',
+        timestamp: msg.timestamp,
+        kind: msg.kind,
+        taskId: msg.taskId,
+        toolUseId: msg.toolUseId,
+        workflowName: msg.workflowName,
+        description: msg.description,
+        progress: msg.progress,
+        usage: msg.usage,
+        status: msg.status,
+        endTime: msg.endTime,
+        outputFile: msg.outputFile,
       }];
 
     case 'interactive_prompt':

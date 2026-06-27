@@ -17,7 +17,16 @@ const WSL_LOGIN_SHELL_PROBE_SCRIPT = [
   'if [ -z "$shell" ] && [ -n "$user" ] && [ -r /etc/passwd ]; then shell="$(awk -F: -v user="$user" \'$1 == user { print $7; exit }\' /etc/passwd)"; fi',
   `case "$shell" in /*) printf "%s" "$shell" ;; *) printf "${WSL_FALLBACK_LOGIN_SHELL}" ;; esac`,
 ].join('; ');
-const MAC_LOGIN_ENV_EXACT_KEYS = new Set([
+// Heavy zsh setups (oh-my-zsh + powerlevel10k + nvm + pyenv + corporate AV
+// scanning the binary on first launch) routinely take 5–8s for a cold
+// `-l -c` invocation. 5s was the previous value and produced empty PATH
+// captures for a non-trivial fraction of macOS users on cold boot.
+const LOGIN_SHELL_PROBE_TIMEOUT_MS = 10_000;
+
+// Login-shell env keys we trust enough to inherit verbatim into spawned CLIs.
+// Captured from `$SHELL -l -c env` on macOS/Linux when the parent process
+// (typically the Electron main process on a GUI launch) doesn't have them.
+const LOGIN_ENV_EXACT_KEYS = new Set([
   'PATH',
   'HOME',
   'USER',
@@ -35,7 +44,7 @@ const MAC_LOGIN_ENV_EXACT_KEYS = new Set([
   'all_proxy',
   'no_proxy',
 ]);
-const MAC_LOGIN_ENV_PREFIXES = [
+const LOGIN_ENV_PREFIXES = [
   'ANTHROPIC_',
   'CLAUDE_',
   'CODEX_',
@@ -48,6 +57,22 @@ const MAC_SUPPLEMENTAL_CLI_PATHS = [
   'go/bin',
   '.deno/bin',
   '.local/bin',
+];
+
+// Absolute supplemental paths on macOS/Linux that aren't tied to $HOME and are
+// commonly missing from a tessera parent process's PATH when launched from
+// Finder/GUI on macOS or systemd on Linux. Apple Silicon Homebrew lives at
+// /opt/homebrew/bin; Intel Homebrew at /usr/local/bin.
+//
+// The login-shell PATH probe usually surfaces these already when the user has a
+// normal .zshrc; this list is a fallback for the cases the probe can't help —
+// fish/nushell users (POSIX probe fails to parse), `brew shellenv` only in
+// .zshrc (login shell misses it), slow dotfiles that hit the probe timeout.
+const UNIX_ABSOLUTE_SUPPLEMENTAL_CLI_PATHS = [
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/local/sbin',
 ];
 
 export function resolveDefaultAgentEnvironment(): AgentEnvironment {
@@ -81,33 +106,48 @@ export function buildSpawnEnvironment(
 
   const shell = resolveLoginShell(cache, env);
 
+  // Capture login-shell env vars (proxy, CA certs, ANTHROPIC_*, etc.) on both
+  // macOS and Linux. GUI launchers (Finder, Dock, freedesktop .desktop entries)
+  // start the app with a minimal env that does NOT execute the user's
+  // .zshrc/.bashrc, so users whose dotfiles set HTTPS_PROXY or
+  // NODE_EXTRA_CA_CERTS for corporate CAs would otherwise lose them.
+  const loginShellEnv = resolveLoginShellEnvironment(cache, shell, env);
+  if (loginShellEnv) {
+    mergeWhitelistedLoginEnvironment(env, loginShellEnv);
+  }
+
+  const loginShellPath = resolveLoginShellPath(cache, shell, env);
+  if (loginShellPath) {
+    mergeIntoEnvironmentPath(env, loginShellPath);
+  }
+
   if (getRuntimePlatform() === 'darwin') {
-    const loginShellEnv = resolveMacLoginShellEnvironment(cache, shell, env);
-    if (loginShellEnv) {
-      mergeWhitelistedMacLoginEnvironment(env, loginShellEnv);
-    }
-
-    const loginShellPath = resolveLoginShellPath(cache, shell, env);
-    if (loginShellPath) {
-      mergeIntoEnvironmentPath(env, loginShellPath);
-    }
-
     const supplementalPath = resolveMacSupplementalCliPath(env);
     if (supplementalPath) {
       appendIntoEnvironmentPath(env, supplementalPath);
     }
-
     return env;
   }
 
-  const loginShellPath = resolveLoginShellPath(cache, shell, env);
-
-  if (!loginShellPath) {
-    return env;
+  const linuxSupplementalPath = resolveLinuxSupplementalCliPath();
+  if (linuxSupplementalPath) {
+    appendIntoEnvironmentPath(env, linuxSupplementalPath);
   }
 
-  mergeIntoEnvironmentPath(env, loginShellPath);
   return env;
+}
+
+function resolveLinuxSupplementalCliPath(): string | null {
+  const candidates = UNIX_ABSOLUTE_SUPPLEMENTAL_CLI_PATHS.filter((candidate) => {
+    try {
+      return existsSync(candidate);
+    } catch {
+      return false;
+    }
+  });
+  return candidates.length > 0
+    ? [...new Set(candidates)].join(getEnvironmentPathDelimiter())
+    : null;
 }
 
 export function spawnCliProcess(
@@ -322,7 +362,7 @@ function resolveLoginShellPath(
       {
         encoding: 'utf8',
         env,
-        timeout: 5000,
+        timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
         windowsHide: true,
       },
     );
@@ -338,7 +378,7 @@ function resolveLoginShellPath(
   }
 }
 
-function resolveMacLoginShellEnvironment(
+function resolveLoginShellEnvironment(
   cache: SpawnCliCache,
   shell: string | null,
   env: NodeJS.ProcessEnv,
@@ -349,7 +389,7 @@ function resolveMacLoginShellEnvironment(
 
   cache.didResolveLoginShellEnvironment = true;
 
-  if (getRuntimePlatform() !== 'darwin' || !shell) {
+  if (getRuntimePlatform() === 'win32' || !shell) {
     return null;
   }
 
@@ -357,7 +397,7 @@ function resolveMacLoginShellEnvironment(
     const probe = spawnSync(shell, ['-l', '-c', 'env'], {
       encoding: 'utf8',
       env,
-      timeout: 5000,
+      timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
       windowsHide: true,
     });
 
@@ -418,7 +458,7 @@ function parseEnvOutput(stdout: string): LoginShellEnvironment | null {
   return Object.keys(parsed).length > 0 ? parsed : null;
 }
 
-function mergeWhitelistedMacLoginEnvironment(
+function mergeWhitelistedLoginEnvironment(
   target: NodeJS.ProcessEnv,
   source: LoginShellEnvironment,
 ): void {
@@ -432,29 +472,28 @@ function mergeWhitelistedMacLoginEnvironment(
       continue;
     }
 
-    if (isAllowedMacLoginEnvironmentKey(key)) {
+    if (isAllowedLoginEnvironmentKey(key)) {
       target[key] = value;
     }
   }
 }
 
-function isAllowedMacLoginEnvironmentKey(key: string): boolean {
-  if (MAC_LOGIN_ENV_EXACT_KEYS.has(key)) {
+function isAllowedLoginEnvironmentKey(key: string): boolean {
+  if (LOGIN_ENV_EXACT_KEYS.has(key)) {
     return true;
   }
 
   const upperKey = key.toUpperCase();
-  return MAC_LOGIN_ENV_PREFIXES.some((prefix) => upperKey.startsWith(prefix));
+  return LOGIN_ENV_PREFIXES.some((prefix) => upperKey.startsWith(prefix));
 }
 
 function resolveMacSupplementalCliPath(env: NodeJS.ProcessEnv): string | null {
   const home = (env.HOME || process.env.HOME)?.trim();
-  if (!home) {
-    return null;
-  }
+  const homeRelative = home
+    ? MAC_SUPPLEMENTAL_CLI_PATHS.map((relativePath) => `${home}/${relativePath}`)
+    : [];
 
-  const candidates = MAC_SUPPLEMENTAL_CLI_PATHS
-    .map((relativePath) => `${home}/${relativePath}`)
+  const candidates = [...homeRelative, ...UNIX_ABSOLUTE_SUPPLEMENTAL_CLI_PATHS]
     .filter((candidate) => {
       try {
         return existsSync(candidate);
@@ -695,7 +734,7 @@ function resolveWslLoginShell(cache: SpawnCliCache, env: NodeJS.ProcessEnv): str
       {
         encoding: 'utf8',
         env,
-        timeout: 5000,
+        timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
         windowsHide: true,
       },
     );

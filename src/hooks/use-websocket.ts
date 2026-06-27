@@ -28,8 +28,9 @@ export function useWebSocket() {
       skillName?: string,
       displayContent?: string | ContentBlock[],
       spawnConfig?: SessionSpawnConfig,
+      options?: { forceTranslateInput?: boolean },
     ) => {
-      wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig);
+      wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
     },
     [],
   );

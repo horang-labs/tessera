@@ -8,6 +8,15 @@ const __dirname = dirname(__filename);
 
 /** @type {import('eslint').Linter.Config[]} */
 const config = [
+  {
+    ignores: [
+      ".electron-runtime/**",
+      ".next/**",
+      "dist-electron/**",
+      "dist-server/**",
+      "release/**",
+    ],
+  },
   ...nextConfig,
   {
     plugins: {

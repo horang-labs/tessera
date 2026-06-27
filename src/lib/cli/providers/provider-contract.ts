@@ -2,7 +2,7 @@ import type { ChildProcess } from 'child_process';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { ParsedMessage } from './message-types';
-import type { GeneratedTitle, SpawnOptions, SpawnResult } from './session-types';
+import type { GeneratedTitle, SpawnOptions, SpawnResult, TranslatedText } from './session-types';
 import type { SkillSource } from './skill-types';
 import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
 
@@ -149,6 +149,16 @@ export interface CliProvider {
    * Generates a semantic title for a session from the initial prompt text.
    */
   generateTitle(prompt: string, userId?: string): Promise<GeneratedTitle | null>;
+
+  /**
+   * Translates the given (pre-built) prompt's text via a one-shot CLI call.
+   * Mirrors generateTitle: the caller builds the full instruction prompt; the
+   * provider runs it headless and returns the model's raw response text.
+   * `model` optionally overrides the model used for this one-shot translation.
+   * Optional — providers that cannot translate one-shot (or are unconfigured)
+   * may omit it; callers must fail-open when absent.
+   */
+  translateText?(prompt: string, userId?: string, model?: string): Promise<TranslatedText | null>;
 
   /**
    * Optional: update provider-side session configuration for future turns.

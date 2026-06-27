@@ -8,6 +8,7 @@ import type {
   SpawnOptions,
   SpawnResult,
   CliRawLogSink,
+  TranslatedText,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
@@ -403,6 +404,27 @@ export class OpenCodeAdapter implements CliProvider {
     }
   }
 
+  async translateText(
+    prompt: string,
+    userId?: string,
+    // opencode one-shot `run` cannot inject a model: the model is only settable
+    // via the JSON-RPC `session/set_model` after a full handshake, which the
+    // one-shot path deliberately skips. We ignore the caller model and use the
+    // CLI default (the UI disables model selection for opencode translation).
+    _model?: string,
+  ): Promise<TranslatedText | null> {
+    try {
+      const text = await this._runOneShot(prompt, userId);
+      const t = text.trim();
+      return t ? { text: t } : null;
+    } catch (err) {
+      logger.warn('OpenCodeAdapter: translateText failed', {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
   private async _performHandshake(
     proc: ChildProcess,
     cwd: string,
@@ -514,6 +536,17 @@ export class OpenCodeAdapter implements CliProvider {
     prompt: string,
     userId?: string,
   ): Promise<GeneratedTitle | null> {
+    const text = await this._runOneShot(prompt, userId);
+    return text ? parseGeneratedTitleText(text) : null;
+  }
+
+  // Spawns `opencode run --format json` headless, feeds the prompt over stdin,
+  // and resolves the last `type === 'text'` part's raw text. Shared by title
+  // generation and translation (which differ only in how they parse this text).
+  private async _runOneShot(
+    prompt: string,
+    userId?: string,
+  ): Promise<string> {
     const agentEnv = await getAgentEnvironment(userId);
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, userId);
 
@@ -531,14 +564,13 @@ export class OpenCodeAdapter implements CliProvider {
       let buffer = '';
       let stderr = '';
       let settled = false;
-      let titleFound: GeneratedTitle | null = null;
       let lastText = '';
 
       const timeout = setTimeout(() => {
         if (settled) return;
         settled = true;
         child.kill('SIGTERM');
-        resolve(titleFound);
+        resolve(lastText);
       }, TITLE_TIMEOUT_MS);
 
       child.stdout?.on('data', (chunk: Buffer | string) => {
@@ -559,7 +591,6 @@ export class OpenCodeAdapter implements CliProvider {
 
           if (parsed.type === 'text' && typeof parsed.part?.text === 'string') {
             lastText = parsed.part.text;
-            titleFound = parseGeneratedTitleText(parsed.part.text) ?? titleFound;
           }
         }
       });
@@ -580,17 +611,12 @@ export class OpenCodeAdapter implements CliProvider {
         settled = true;
         clearTimeout(timeout);
 
-        if (!titleFound && code !== 0) {
+        if (!lastText && code !== 0) {
           reject(new Error(`opencode run exited with code ${code}: ${stderr.slice(0, 200)}`));
           return;
         }
 
-        if (!titleFound && lastText) {
-          reject(new Error(`Invalid OpenCode title payload: ${lastText.slice(0, 300)}`));
-          return;
-        }
-
-        resolve(titleFound);
+        resolve(lastText);
       });
 
       child.stdin?.write(prompt);

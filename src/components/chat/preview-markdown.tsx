@@ -10,6 +10,7 @@ import type { Schema } from 'hast-util-sanitize';
 import remarkGfm from 'remark-gfm';
 import type { PluggableList } from 'unified';
 import { renderMarkdownCode, renderMarkdownPre } from './markdown-code';
+import { MarkdownLink } from './markdown-link';
 
 const PREVIEW_MARKDOWN_REMARK_PLUGINS: PluggableList = [[remarkGfm, { singleTilde: false }]];
 type PreviewMarkdownCodeProps = ComponentProps<'code'> & { node?: unknown };
@@ -114,14 +115,12 @@ const BASE_PREVIEW_MARKDOWN_COMPONENTS: Components = {
   },
   a({ href, children }) {
     return (
-      <a
+      <MarkdownLink
         href={href}
-        target="_blank"
-        rel="noopener noreferrer"
         className="font-medium text-(--accent-light) underline-offset-2 hover:underline"
       >
         {children}
-      </a>
+      </MarkdownLink>
     );
   },
   strong({ children }) {

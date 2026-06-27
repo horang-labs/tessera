@@ -19,7 +19,7 @@ import {
 } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useSessionStore, selectHasRunningWorkflow, selectAnyRunningWorkflow } from '@/stores/session-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
@@ -135,7 +135,9 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const collections = useCollectionStore((state) => state.collections);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
-  const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
   const isGeneratingTitle = useSessionStore((s) => s.generatingTitleIds.has(session.id));
   const isJustDropped = useBoardStore((s) => s.justDroppedId === session.id);
@@ -596,7 +598,9 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       return false;
     })
   );
-  const hasProcessingSession = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(taskSessionIds));
+  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
   const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
   const hasUnreadSession = useSessionStore((state) =>
     !isActive && taskSessionIds.some((id) => {
@@ -840,8 +844,39 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       >
         {/* Main row: icon + content */}
         <div className="flex items-start gap-2.5">
-          {/* Worktree/status icon first when present, provider mark otherwise leads */}
+          {/* Provider mark leads; worktree/status icon follows when present */}
           <span className="mt-[3px] flex shrink-0 items-center gap-1">
+            {showProviderIcons ? (
+              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <ProviderLogoMark
+                  providerId={task.sessions[0]?.provider}
+                  className={KANBAN_PROVIDER_MARK_CLASS}
+                  iconClassName={KANBAN_PROVIDER_ICON_CLASS}
+                  data-testid={`kanban-task-agent-icon-${task.id}`}
+                />
+                {!task.worktreeBranch && (
+                  <ItemStatusIndicator
+                    isProcessing={hasProcessingSession}
+                    isAwaitingUser={hasAwaitingUserSession}
+                    hasUnread={hasUnreadSession}
+                    isRunning={hasRunningSession}
+                    placement="corner"
+                    surface="board"
+                  />
+                )}
+              </span>
+            ) : !task.worktreeBranch && hasTaskStatus ? (
+              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="inline"
+                  surface="board"
+                />
+              </span>
+            ) : null}
             {task.worktreeBranch ? (
               <span
                 title={
@@ -891,37 +926,6 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     />
                   </span>
                 )}
-              </span>
-            ) : null}
-            {showProviderIcons ? (
-              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                <ProviderLogoMark
-                  providerId={task.sessions[0]?.provider}
-                  className={KANBAN_PROVIDER_MARK_CLASS}
-                  iconClassName={KANBAN_PROVIDER_ICON_CLASS}
-                  data-testid={`kanban-task-agent-icon-${task.id}`}
-                />
-                {!task.worktreeBranch && (
-                  <ItemStatusIndicator
-                    isProcessing={hasProcessingSession}
-                    isAwaitingUser={hasAwaitingUserSession}
-                    hasUnread={hasUnreadSession}
-                    isRunning={hasRunningSession}
-                    placement="corner"
-                    surface="board"
-                  />
-                )}
-              </span>
-            ) : !task.worktreeBranch && hasTaskStatus ? (
-              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                <ItemStatusIndicator
-                  isProcessing={hasProcessingSession}
-                  isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
-                  placement="inline"
-                  surface="board"
-                />
               </span>
             ) : null}
             {prMismatch && !task.worktreeBranch && (
@@ -1145,7 +1149,9 @@ function KanbanSubSessionItem({
   const [isHovered, setIsHovered] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
-  const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const liveSession = useSessionStore((state) => state.getSession(session.id));

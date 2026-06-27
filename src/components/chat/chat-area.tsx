@@ -10,6 +10,7 @@ import { groupMessages } from "@/lib/chat/group-messages";
 import { Header } from "./header";
 import { MessageList } from "./message-list";
 import { MessageInput } from "./message-input";
+import { WorkflowStatusBar } from "./workflow/workflow-status-bar";
 import { InteractivePromptOverlay } from "./interactive-prompt-overlay";
 import { MessageSquare, AlertCircle, X as XIcon } from "lucide-react";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
@@ -168,6 +169,8 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
       </div>
 
       {!isReadOnly && <InteractivePromptOverlay sessionId={sessionId} />}
+
+      <WorkflowStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
 
       <MessageInput
         sessionId={sessionId}

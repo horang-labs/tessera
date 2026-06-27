@@ -19,6 +19,7 @@ import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { matchShortcut, formatShortcut } from '@/lib/keyboard-shortcut';
 import {
   applyProviderSessionRuntimeOverrides,
   getProviderSessionRuntimeConfig,
@@ -200,6 +201,9 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const { resumeAndSend } = useSessionResume();
   const enterKeyBehavior = useSettingsStore(
     (state) => state.settings.enterKeyBehavior ?? 'send'
+  );
+  const translateSendShortcut = useSettingsStore(
+    (state) => state.settings.translate?.sendShortcut || 'meta+enter'
   );
   const fontSize = useSettingsStore((state) => state.settings.fontSize);
   const sttEngine = useSettingsStore((state) => state.settings.sttEngine);
@@ -757,7 +761,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     skillPicker,
   ]);
 
-  const handleSend = () => {
+  const handleSend = (sendOptions?: { forceTranslate?: boolean }) => {
+    const forceTranslateInput = sendOptions?.forceTranslate === true;
     const trimmed = inputValue.trim();
     const hasSelectedSkill = !!skillPicker.selectedSkill;
     const hasSelectedFastCommand = isCodexFastCommandSkill(skillPicker.selectedSkill)
@@ -827,7 +832,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         timestamp: new Date().toISOString(),
       });
 
-      resumeAndSend(sessionId, session.projectDir, sendContent, skillName, displayContent);
+      resumeAndSend(sessionId, session.projectDir, sendContent, skillName, displayContent, { forceTranslateInput });
     } else {
       // First-time send for a session without a live CLI: attach composer defaults
       // so the server can spawn with the picked model / reasoning / permission mode.
@@ -837,7 +842,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         return;
       }
       const spawnConfig = buildSpawnConfigForCurrentSession();
-      sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig);
+      sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig, { forceTranslateInput });
     }
 
     clearInput();
@@ -1039,6 +1044,15 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     if (e.key === 'Backspace' && inputValue === '' && skillPicker.selectedSkill) {
       e.preventDefault();
       skillPicker.clearSkill();
+      return;
+    }
+
+    // Configurable "translate & send" shortcut (default ⌥+Enter). Works for any combo
+    // incl. non-Enter; translates the input to the agent's language then sends, even
+    // when auto-translation is off.
+    if (voiceState !== 'recording' && matchShortcut(e, translateSendShortcut)) {
+      e.preventDefault();
+      handleSend({ forceTranslate: true });
       return;
     }
 
@@ -1379,7 +1393,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
               {!isVoiceActive && canSubmit && !isOverLimit && (
                 <button
                   type="button"
-                  onClick={handleSend}
+                  onClick={() => handleSend()}
                   className="p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100"
                   title={isGoalRunning ? t('goal.steerPlaceholder') : t('chat.send')}
                   data-testid="send-during-generation-btn"
@@ -1390,8 +1404,9 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
             </>
           ) : !isVoiceActive ? (
             <button
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={isInputUnavailable || !!activePrompt || !canSubmit || isOverLimit}
+              title={`${t('chat.send')}\n${t('chat.translateAndSend')} (${formatShortcut(translateSendShortcut)})`}
               className={cn(
                 'p-2 rounded-md transition-all duration-150',
                 canSubmit && !isInputUnavailable && !activePrompt && !isOverLimit

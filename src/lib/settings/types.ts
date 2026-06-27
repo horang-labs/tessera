@@ -50,6 +50,16 @@ export interface UserSettings {
     showToast: boolean;
     autoGenerateTitle: boolean;
   };
+  translate: {
+    enabled: boolean;
+    sourceLanguage: Language;
+    targetLanguage: Language;
+    /** Per-direction provider + model + custom prompt template ({{source}}/{{target}}/{{text}}; '' = default). */
+    input: { provider: string; model?: string; promptTemplate?: string };
+    output: { provider: string; model?: string; promptTemplate?: string };
+    /** Keyboard shortcut for "translate & send" (e.g. 'alt+enter'). */
+    sendShortcut: string;
+  };
   theme: Theme;
   fontSize: number;
   enterKeyBehavior: EnterKeyBehavior;

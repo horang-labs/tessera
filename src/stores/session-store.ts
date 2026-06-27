@@ -11,7 +11,7 @@ import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 
 
-interface SessionState {
+export interface SessionState {
   // Core state - NEW (project-grouped)
   projects: ProjectGroup[];
   activeSessionId: string | null;
@@ -93,6 +93,16 @@ interface SessionState {
   setGeneratingTitle: (sessionId: string, generating: boolean) => void;
   setGeneratingTitleIds: (sessionIds: readonly string[]) => void;
   isGeneratingTitle: (sessionId: string) => boolean;
+
+  /**
+   * Sessions with a background dynamic workflow currently executing. Drives the
+   * "running/computing" indicators in the sidebar, tab/title and kanban so a
+   * session looks active while its workflow runs — even after the main turn
+   * ends. This is visual only; it never disables the composer.
+   */
+  runningWorkflowSessionIds: Set<string>;
+  setSessionWorkflowRunning: (sessionId: string, running: boolean) => void;
+  hasRunningWorkflow: (sessionId: string) => boolean;
 
   /** Apply updated diff stats to every session whose id is in the set. */
   applyDiffStatsUpdate: (sessionIds: string[], diffStats: UnifiedSession['diffStats']) => void;
@@ -576,9 +586,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
 
+      let runningWorkflowSessionIds = state.runningWorkflowSessionIds;
+      if (runningWorkflowSessionIds.has(sessionId)) {
+        runningWorkflowSessionIds = new Set(runningWorkflowSessionIds);
+        runningWorkflowSessionIds.delete(sessionId);
+      }
+
       return {
         projects: updatedProjects,
         activeSessionId: newActiveId,
+        runningWorkflowSessionIds,
       };
     }),
 
@@ -780,21 +797,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   markSessionStopped: (sessionId) =>
-    set((state) => ({
-      projects: state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((s) =>
-          s.id === sessionId
-            ? {
-                ...s,
-                isRunning: false,
-                status: 'stopped' as SessionStatus,
-                tesseraSessionId: undefined,
-              }
-            : s
-        ),
-      })),
-    })),
+    set((state) => {
+      let runningWorkflowSessionIds = state.runningWorkflowSessionIds;
+      if (runningWorkflowSessionIds.has(sessionId)) {
+        runningWorkflowSessionIds = new Set(runningWorkflowSessionIds);
+        runningWorkflowSessionIds.delete(sessionId);
+      }
+      return {
+        runningWorkflowSessionIds,
+        projects: state.projects.map((project) => ({
+          ...project,
+          sessions: project.sessions.map((s) =>
+            s.id === sessionId
+              ? {
+                  ...s,
+                  isRunning: false,
+                  status: 'stopped' as SessionStatus,
+                  tesseraSessionId: undefined,
+                }
+              : s
+          ),
+        })),
+      };
+    }),
 
   updateSessionRuntimeConfig: (sessionId, runtimeConfig) =>
     set((state) => ({
@@ -1303,6 +1328,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
   isGeneratingTitle: (sessionId) => get().generatingTitleIds.has(sessionId),
 
+  // Background workflow execution tracking
+  runningWorkflowSessionIds: new Set<string>(),
+  setSessionWorkflowRunning: (sessionId, running) => {
+    set((state) => {
+      if (running === state.runningWorkflowSessionIds.has(sessionId)) return state;
+      const next = new Set(state.runningWorkflowSessionIds);
+      if (running) next.add(sessionId);
+      else next.delete(sessionId);
+      return { runningWorkflowSessionIds: next };
+    });
+  },
+  hasRunningWorkflow: (sessionId) => get().runningWorkflowSessionIds.has(sessionId),
+
   applyDiffStatsUpdate: (sessionIds, diffStats) => {
     if (sessionIds.length === 0) return;
     const targets = new Set(sessionIds);
@@ -1326,3 +1364,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
 }));
+
+/** True when the given session has a background workflow currently executing. */
+export const selectHasRunningWorkflow = (sessionId: string) =>
+  (state: SessionState): boolean => state.runningWorkflowSessionIds.has(sessionId);
+
+/** True when any of the given sessions has a background workflow executing. */
+export const selectAnyRunningWorkflow = (sessionIds: readonly string[]) =>
+  (state: SessionState): boolean =>
+    sessionIds.some((id) => state.runningWorkflowSessionIds.has(id));

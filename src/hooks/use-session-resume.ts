@@ -103,7 +103,7 @@ export function useSessionResume() {
    * Used when user sends a message to a read-only session.
    */
   const resumeAndSend = useCallback(
-    async (sessionId: string, _projectDir: string, content: string | ContentBlock[], skillName?: string, displayContent?: string | ContentBlock[]) => {
+    async (sessionId: string, _projectDir: string, content: string | ContentBlock[], skillName?: string, displayContent?: string | ContentBlock[], options?: { forceTranslateInput?: boolean }) => {
       setIsResuming(true);
 
       try {
@@ -151,9 +151,9 @@ export function useSessionResume() {
         chatStore.clearSessionMessages(sessionId);
 
         if (displayContent !== undefined) {
-          wsClient.sendMessage(sessionId, content, skillName, displayContent);
+          wsClient.sendMessage(sessionId, content, skillName, displayContent, undefined, options);
         } else {
-          wsClient.sendMessage(sessionId, content, skillName);
+          wsClient.sendMessage(sessionId, content, skillName, undefined, undefined, options);
         }
 
         toast.success(i18n.t('notifications.sessionResumed'));

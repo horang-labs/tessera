@@ -52,6 +52,9 @@ function estimateGroupedItemHeight(item: GroupedItem): number {
     case 'text': {
       return 64 + estimateContentBodyHeight(msg.content);
     }
+    case 'workflow':
+      // header + phase rows + agent rows + optional logs/footer
+      return 64 + msg.phases.length * 24 + msg.agents.length * 26 + Math.min(msg.logs.length, 3) * 18;
     default:
       return 80;
   }
@@ -162,6 +165,9 @@ function getMessageSizeSignature(message: EnhancedMessage): string {
   }
   if (message.type === 'system') {
     return `${message.id}:${message.type}:${message.severity}:${message.message.length}`;
+  }
+  if (message.type === 'workflow') {
+    return `${message.id}:${message.type}:${message.rev}`;
   }
   return `${message.id}:${message.type}:${message.hookEvent}:${message.errorMessage?.length ?? 0}`;
 }

@@ -20,6 +20,7 @@ import type {
   SpawnResult,
   ParsedMessage,
   GeneratedTitle,
+  TranslatedText,
   CliRawLogSink,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
@@ -34,6 +35,8 @@ import {
 import {
   classifyAuthStatus,
   classifyVersionFailure,
+  isVersionProbeRunnable,
+  synthesizeRunnableStatus,
   summarizeExecProbe,
 } from '../../status-detection';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
@@ -135,7 +138,10 @@ export class ClaudeCodeAdapter implements CliProvider {
       authProbe,
     };
 
-    if (!versionResult.ok) {
+    // Treat the binary as installed whenever the version probe was launchable —
+    // a slow boot (timeout) or a CLI that prints help-to-stderr-and-exit-1 is
+    // still a real install, and the auth probe is the source of truth from here.
+    if (!isVersionProbeRunnable(versionResult)) {
       return {
         status: 'not_installed',
         detectionReason: classifyVersionFailure(versionResult, commandMetadata.commandSource),
@@ -144,11 +150,11 @@ export class ClaudeCodeAdapter implements CliProvider {
     }
 
     const version = parseVersion(versionResult.stdout);
-    const authStatus = classifyAuthStatus(authResult);
+    const finalStatus = synthesizeRunnableStatus(versionResult, classifyAuthStatus(authResult));
 
     return {
-      status: authStatus.status,
-      detectionReason: authStatus.detectionReason,
+      status: finalStatus.status,
+      detectionReason: finalStatus.detectionReason,
       ...(version ? { version } : {}),
       ...baseTelemetry,
     };
@@ -336,15 +342,46 @@ export class ClaudeCodeAdapter implements CliProvider {
     }
   }
 
+  /**
+   * Translates a prompt using the Claude CLI with -p flag.
+   * Mirrors generateTitle, but returns the model's RAW response text (not
+   * JSON-parsed for a key) because translations are multi-line and contain
+   * quotes/markdown/code that would break a key:value regex.
+   * When a model is provided it is injected via --model.
+   *
+   * Returns null on any error/timeout/empty (fail-open).
+   */
+  async translateText(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<TranslatedText | null> {
+    try {
+      const text = await this._callCliRaw(prompt, userId, model ? ['--model', model] : []);
+      return text.trim() ? { text: text.trim() } : null;
+    } catch (err) {
+      logger.warn('ClaudeCodeAdapter: translateText failed', {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Private: CLI invocation for title generation
   // ---------------------------------------------------------------------------
 
   /**
-   * Calls claude CLI with -p flag to generate a title from a conversation prompt.
+   * Calls claude CLI with -p flag and resolves the raw result text from the
+   * CLI's JSON envelope ({"result": "..."}), with no title parsing.
+   * Shared spawn primitive for generateTitle and translateText.
    * Extracted from ai-title-generator.ts callCli function.
    */
-  private async _callCli(prompt: string, userId?: string): Promise<GeneratedTitle> {
+  private async _callCliRaw(
+    prompt: string,
+    userId?: string,
+    extraArgs: string[] = [],
+  ): Promise<string> {
     const agentEnv = await getAgentEnvironment(userId);
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, userId);
 
@@ -358,6 +395,7 @@ export class ClaudeCodeAdapter implements CliProvider {
 
       const child = spawnCli(command, [
         '-p',
+        ...extraArgs,
         '--output-format', 'json',
         '--no-session-persistence',
         '--effort', 'low',
@@ -408,25 +446,7 @@ export class ClaudeCodeAdapter implements CliProvider {
           const cliOutput = JSON.parse(stdout);
           const resultText = cliOutput.result || cliOutput.text || stdout;
           const text = typeof resultText === 'string' ? resultText : JSON.stringify(resultText);
-
-          // Extract {"title":"..."} from anywhere in the text
-          const jsonMatch = text.match(/"title"\s*:\s*"([^"]+)"/);
-          if (jsonMatch) {
-            const [, title] = jsonMatch;
-            resolve({ title: title.slice(0, 100) });
-            return;
-          }
-
-          // Fallback: try parsing resultText directly as JSON
-          try {
-            const direct = JSON.parse(text);
-            if (typeof direct.title === 'string') {
-              resolve({ title: direct.title.slice(0, 100) });
-              return;
-            }
-          } catch { /* not pure JSON, already tried regex */ }
-
-          reject(new Error(`Invalid CLI response format: ${text.slice(0, 300)}`));
+          resolve(text);
         } catch (err: any) {
           reject(new Error(`Failed to parse CLI response: ${err.message}`));
         }
@@ -435,6 +455,31 @@ export class ClaudeCodeAdapter implements CliProvider {
       child.stdin?.write(prompt);
       child.stdin?.end();
     });
+  }
+
+  /**
+   * Calls claude CLI with -p flag to generate a title from a conversation prompt.
+   * Extracted from ai-title-generator.ts callCli function.
+   */
+  private async _callCli(prompt: string, userId?: string): Promise<GeneratedTitle> {
+    const text = await this._callCliRaw(prompt, userId);
+
+    // Extract {"title":"..."} from anywhere in the text
+    const jsonMatch = text.match(/"title"\s*:\s*"([^"]+)"/);
+    if (jsonMatch) {
+      const [, title] = jsonMatch;
+      return { title: title.slice(0, 100) };
+    }
+
+    // Fallback: try parsing resultText directly as JSON
+    try {
+      const direct = JSON.parse(text);
+      if (typeof direct.title === 'string') {
+        return { title: direct.title.slice(0, 100) };
+      }
+    } catch { /* not pure JSON, already tried regex */ }
+
+    throw new Error(`Invalid CLI response format: ${text.slice(0, 300)}`);
   }
 }
 

@@ -66,7 +66,8 @@ export type SessionSpawnConfig = {
 export type ClientMessage =
   | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'close_session'; requestId: string; sessionId: string }
-  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig }
+  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string }
+  | { type: 'translate_message'; requestId: string; sessionId: string; messageId: string }
   | ({ type: 'resume_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'retry_session'; requestId: string; sessionId: string }
   | { type: 'interactive_response'; requestId: string; sessionId: string; toolUseId: string; response: string }
@@ -93,7 +94,7 @@ export type ClientMessage =
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions';
 
 export type ReplaySourceServerMessage =
-  | { type: 'message'; sessionId: string; role: 'assistant'; content: string }
+  | { type: 'message'; sessionId: string; role: 'assistant'; content: string; messageId?: string }
   | {
       type: 'user_message';
       sessionId: string;
@@ -150,6 +151,25 @@ export type ReplaySourceServerMessage =
       hookEvent: string;
       data: Record<string, any>;
       progressType?: string;
+      timestamp: string;
+    }
+  | {
+      type: 'workflow_event';
+      sessionId: string;
+      kind: 'started' | 'progress' | 'updated' | 'notification';
+      taskId: string;
+      toolUseId?: string;
+      workflowName?: string;
+      description?: string;
+      /** Delta batch of phase/agent/log entries (kind === 'progress'). */
+      progress?: import('@/types/cli-jsonl-schemas').WorkflowProgressEntry[];
+      usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+      /** Status from task_updated.patch / task_notification. */
+      status?: string;
+      /** Run end time (epoch ms) from task_updated.patch. */
+      endTime?: number;
+      /** Final output file (kind === 'notification'). */
+      outputFile?: string;
       timestamp: string;
     }
   | {

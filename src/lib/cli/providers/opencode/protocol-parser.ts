@@ -333,6 +333,10 @@ export class OpenCodeProtocolParser {
           sessionId,
           role: 'assistant',
           content: text,
+          // Stable id per chunk; first chunk of a contiguous run wins on both the
+          // client (merge) and the history buffer (||=), so the live message and the
+          // flushed assistant_message share one id (translation attach).
+          messageId: randomUUID(),
         },
       },
     ];

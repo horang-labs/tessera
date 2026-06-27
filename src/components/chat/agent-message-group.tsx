@@ -1,12 +1,15 @@
 'use client';
 
 import { memo, useCallback, useState } from 'react';
-import { Check, Copy, MessageSquarePlus } from 'lucide-react';
-import type { AgentMessageGroup as AgentMessageGroupModel, AgentSubGroup } from '@/lib/chat/group-messages';
-import type { ToolCallMessage } from '@/types/chat';
+import { Check, Copy, Languages, MessageSquarePlus } from 'lucide-react';
+import type { AgentMessageGroup as AgentMessageGroupModel, AgentSubGroup, AssistantTextMessage } from '@/lib/chat/group-messages';
+import type { TextMessage, ToolCallMessage } from '@/types/chat';
 import type { AgentProgressData, McpProgressData } from '@/types/cli-jsonl-schemas';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
+import { useChatStore } from '@/stores/chat-store';
+import { useSessionStore } from '@/stores/session-store';
+import { wsClient } from '@/lib/ws/client';
 import { ProviderLogoMark, getProviderBrand } from './provider-brand';
 import { ThinkingBlock } from './thinking-block';
 import { AgentProgress } from './progress/agent-progress';
@@ -62,6 +65,71 @@ const MESSAGE_ACTION_BUTTON_CLASS =
 const MESSAGE_COPY_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[4.75rem]`;
 const MESSAGE_FORK_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[6.25rem]`;
 
+/**
+ * Translate button for the subgroup header action row. Operates on EVERY assistant
+ * text bubble in the subgroup (the intermediate ones before tool calls and the final
+ * answer alike), so a single click translates the whole agent turn. Requests are
+ * auto-deferred while the turn is still streaming (see wsClient.translateMessage).
+ */
+function SubgroupTranslateButton({
+  messages,
+}: {
+  messages: TextMessage[];
+}) {
+  const { t } = useI18n();
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const overrides = useChatStore((state) => state.messageViewOverride);
+  const setMessageViewOverride = useChatStore((state) => state.setMessageViewOverride);
+
+  const hasAnyTranslation = messages.some(
+    (m) => typeof m.translatedContent === 'string' && m.translatedContent.length > 0,
+  );
+  const isAnyPending = messages.some((m) => m.translationStatus === 'pending');
+  // "Showing translation" if any already-translated bubble is currently in translation
+  // view (assistant bubbles default to 'translation').
+  const showingTranslation = messages.some((m) => {
+    const hasTranslation = typeof m.translatedContent === 'string' && m.translatedContent.length > 0;
+    return hasTranslation && (overrides.get(m.id) ?? 'translation') === 'translation';
+  });
+
+  const handleClick = useCallback(() => {
+    const sid = activeSessionId ?? '';
+    if (hasAnyTranslation) {
+      const next = showingTranslation ? 'original' : 'translation';
+      for (const m of messages) {
+        setMessageViewOverride(m.id, next);
+      }
+      return;
+    }
+    // No translation yet → request one for every text bubble and reveal it on arrival.
+    for (const m of messages) {
+      setMessageViewOverride(m.id, 'translation');
+      const already = typeof m.translatedContent === 'string' && m.translatedContent.length > 0;
+      if (!already && sid) wsClient.translateMessage(sid, m.id);
+    }
+  }, [activeSessionId, hasAnyTranslation, showingTranslation, messages, setMessageViewOverride]);
+
+  const label = isAnyPending
+    ? t('chat.translating')
+    : hasAnyTranslation
+      ? (showingTranslation ? t('chat.showOriginal') : t('chat.showTranslation'))
+      : t('chat.translate');
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={isAnyPending}
+      data-testid="message-translate-btn"
+      className={MESSAGE_FORK_BUTTON_CLASS}
+      title={t('chat.translate')}
+    >
+      <Languages className="w-3 h-3" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
 function AgentSubGroupView({
   subgroup,
   providerId,
@@ -75,13 +143,15 @@ function AgentSubGroupView({
   const timestamp = subgroup.messages[0]?.timestamp ?? new Date().toISOString();
   const [copied, setCopied] = useState(false);
 
-  const combinedText = subgroup.items
-    .map((item) => {
-      if (item.kind === 'message' && item.message.type === 'text') {
-        return extractAssistantText(item.message.content);
-      }
-      return '';
-    })
+  const textMessages = subgroup.items
+    .filter(
+      (item): item is { kind: 'message'; message: AssistantTextMessage } =>
+        item.kind === 'message' && item.message.type === 'text',
+    )
+    .map((item) => item.message);
+
+  const combinedText = textMessages
+    .map((message) => extractAssistantText(message.content))
     .filter(Boolean)
     .join('\n\n');
 
@@ -143,6 +213,7 @@ function AgentSubGroupView({
                   </>
                 )}
               </button>
+              <SubgroupTranslateButton messages={textMessages} />
               {onForkFromMessage && forkTargetMessage && (
                 <button
                   type="button"

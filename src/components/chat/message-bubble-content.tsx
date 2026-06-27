@@ -3,7 +3,8 @@
 import { memo, useState, useCallback, type ReactNode } from 'react';
 import Image from 'next/image';
 import type { Components } from 'react-markdown';
-import { Copy, Check, MessageSquarePlus } from 'lucide-react';
+import { Copy, Check, MessageSquarePlus, Languages } from 'lucide-react';
+import { wsClient } from '@/lib/ws/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PluggableList } from 'unified';
@@ -13,6 +14,7 @@ import { ThinkingBlock } from './thinking-block';
 import { SystemMessageBlock } from './system-message-block';
 import { AgentProgress } from './progress/agent-progress';
 import { McpProgress } from './progress/mcp-progress';
+import { WorkflowCard } from './workflow/workflow-card';
 import type {
   AgentProgressData,
   McpProgressData,
@@ -20,6 +22,8 @@ import type {
 import { Tooltip } from '@/components/ui/tooltip';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useChatStore } from '@/stores/chat-store';
+import { useSessionStore } from '@/stores/session-store';
 import {
   DEFAULT_PROFILE_AVATAR_DATA_URL,
   DEFAULT_PROFILE_DISPLAY_NAME,
@@ -27,6 +31,7 @@ import {
 import { ImageLightbox } from './image-lightbox';
 import { ProviderLogoMark, getProviderBrand } from './provider-brand';
 import { renderMarkdownCode, renderMarkdownPre } from './markdown-code';
+import { MarkdownLink } from './markdown-link';
 import { MessageRowShell } from './message-row-shell';
 
 type TextMessage = Extract<EnhancedMessage, { type: 'text' }>;
@@ -127,14 +132,9 @@ const MARKDOWN_COMPONENTS: Components = {
   },
   a({ href, children }) {
     return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-(--accent-light) hover:underline"
-      >
+      <MarkdownLink href={href} className="text-(--accent-light) hover:underline">
         {children}
-      </a>
+      </MarkdownLink>
     );
   },
   strong({ children }) {
@@ -311,6 +311,15 @@ const UserMessage = memo(function UserMessage({
   const [copied, setCopied] = useState(false);
   const displayName = profile.displayName.trim() || DEFAULT_PROFILE_DISPLAY_NAME;
   const avatarDataUrl = profile.avatarDataUrl.trim() || DEFAULT_PROFILE_AVATAR_DATA_URL;
+  // Input translation: default shows the original (typed) text; toggle reveals the sent
+  // (translated) text. 'pending' shows a "translating…" indicator while it's in flight.
+  const override = useChatStore((s) => s.messageViewOverride.get(message.id));
+  const view = override ?? 'original';
+  const hasTranslation =
+    typeof message.translatedContent === 'string' && message.translatedContent.length > 0;
+  const showTranslation = view === 'translation' && hasTranslation;
+  const renderedUserContent = showTranslation ? message.translatedContent! : message.content;
+  const isTranslating = message.translationStatus === 'pending';
 
   const getTextContent = useCallback(() => extractTextContent(message.content), [message.content]);
 
@@ -355,6 +364,7 @@ const UserMessage = memo(function UserMessage({
                 </>
               )}
             </button>
+            <MessageTranslateButton message={message} />
             {onForkFromMessage && (
               <button
                 type="button"
@@ -373,23 +383,113 @@ const UserMessage = memo(function UserMessage({
           className="w-fit max-w-full rounded-2xl rounded-tl-md bg-(--msg-user-bubble) border border-(--msg-user-bubble-border) px-3.5 py-2.5 shadow-sm sm:max-w-2xl"
         >
           <div className="text-sm text-(--msg-user-text) leading-relaxed break-words">
-            {renderTextContent(message.content, true)}
+            {renderTextContent(renderedUserContent, true)}
           </div>
         </div>
+        {isTranslating && (
+          <div className="mt-1 text-[11px] text-(--text-muted) italic">
+            {t('chat.translating')}
+          </div>
+        )}
       </div>
     </MessageRowShell>
   );
 });
+
+// Default view per role: assistant shows the translation (Korean) by default;
+// user shows the original (what they typed) by default. A per-message override flips it.
+function defaultViewForRole(role: TextMessage['role']): 'original' | 'translation' {
+  return role === 'user' ? 'original' : 'translation';
+}
 
 export const AssistantTextBody = memo(function AssistantTextBody({
   message,
 }: {
   message: TextMessage;
 }) {
+  const { t } = useI18n();
+  const override = useChatStore((s) => s.messageViewOverride.get(message.id));
+  const view = override ?? defaultViewForRole(message.role);
+
+  const hasTranslation =
+    typeof message.translatedContent === 'string' && message.translatedContent.length > 0;
+  const showTranslation = view === 'translation' && hasTranslation;
+  const renderedContent = showTranslation ? message.translatedContent! : message.content;
+  const isPending = message.translationStatus === 'pending';
+
   return (
     <div className="text-sm text-(--msg-assistant-text) leading-relaxed break-words">
-      {renderTextContent(message.content, false)}
+      {renderTextContent(renderedContent, false)}
+      {isPending && (
+        <div className="mt-1 text-[11px] text-(--text-muted) italic">
+          {t('chat.translating')}
+        </div>
+      )}
     </div>
+  );
+});
+
+/**
+ * Per-message translate button for the action row (Copy / From here / Translate).
+ * - Assistant, no translation yet → requests an on-demand translation (even if auto is off).
+ * - Already translated (either role) → toggles THIS message between original and translation.
+ * - User with no translation → not rendered (user input isn't translated on demand).
+ */
+export const MessageTranslateButton = memo(function MessageTranslateButton({
+  message,
+  sessionId,
+  className,
+}: {
+  message: TextMessage;
+  sessionId?: string;
+  className?: string;
+}) {
+  const { t } = useI18n();
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const sid = sessionId ?? activeSessionId ?? '';
+  const override = useChatStore((s) => s.messageViewOverride.get(message.id));
+  const setMessageViewOverride = useChatStore((s) => s.setMessageViewOverride);
+  const view = override ?? defaultViewForRole(message.role);
+
+  const isUser = message.role === 'user';
+  const hasTranslation =
+    typeof message.translatedContent === 'string' && message.translatedContent.length > 0;
+  const isPending = message.translationStatus === 'pending';
+
+  const handleClick = useCallback(() => {
+    if (hasTranslation) {
+      setMessageViewOverride(message.id, view === 'translation' ? 'original' : 'translation');
+      return;
+    }
+    // Assistant only: request on-demand translation and reveal it once it arrives.
+    setMessageViewOverride(message.id, 'translation');
+    if (sid) wsClient.translateMessage(sid, message.id);
+  }, [hasTranslation, view, message.id, sid, setMessageViewOverride]);
+
+  // User input is translated on send (or not at all) — no on-demand request, so a user
+  // message only gets a toggle once a translation exists. Pending is shown in the body.
+  if (isUser && !hasTranslation) {
+    return null;
+  }
+
+  const label = isPending
+    ? t('chat.translating')
+    : hasTranslation
+      ? (view === 'translation' ? t('chat.showOriginal') : t('chat.showTranslation'))
+      : t('chat.translate');
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={isPending}
+      data-testid="message-translate-btn"
+      className={className ?? MESSAGE_FORK_BUTTON_CLASS}
+      title={t('chat.translate')}
+    >
+      <Languages className="w-3 h-3" />
+      <span>{label}</span>
+    </button>
   );
 });
 
@@ -398,10 +498,12 @@ const AssistantMessage = memo(function AssistantMessage({
   formatTime,
   formatFullTime,
   providerId,
+  sessionId,
   onForkFromMessage,
 }: {
   message: TextMessage;
   providerId?: string;
+  sessionId?: string;
   onForkFromMessage?: ForkFromMessageHandler;
 } & TimestampFormatterProps) {
   const { t } = useI18n();
@@ -461,6 +563,9 @@ const AssistantMessage = memo(function AssistantMessage({
                   )}
                 </button>
               )}
+              {message.content && (
+                <MessageTranslateButton message={message} sessionId={sessionId} />
+              )}
               {onForkFromMessage && (
                 <button
                   type="button"
@@ -486,6 +591,7 @@ function renderTextMessage(
   message: TextMessage,
   providerId?: string,
   onForkFromMessage?: ForkFromMessageHandler,
+  sessionId?: string,
 ): ReactNode {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -520,6 +626,7 @@ function renderTextMessage(
     <AssistantMessage
       message={message}
       providerId={providerId}
+      sessionId={sessionId}
       onForkFromMessage={onForkFromMessage}
       {...formatters}
     />
@@ -530,10 +637,11 @@ export function renderEnhancedContent(
   message: EnhancedMessage,
   providerId?: string,
   onForkFromMessage?: ForkFromMessageHandler,
+  sessionId?: string,
 ): ReactNode {
   switch (message.type) {
     case 'text':
-      return renderTextMessage(message, providerId, onForkFromMessage);
+      return renderTextMessage(message, providerId, onForkFromMessage, sessionId);
     case 'tool_call':
       return null;
     case 'thinking':
@@ -555,6 +663,8 @@ export function renderEnhancedContent(
         return <McpProgress data={message.data as unknown as McpProgressData} />;
       }
       return null;
+    case 'workflow':
+      return <WorkflowCard message={message} />;
     default:
       const _exhaustive: never = message;
       return null;

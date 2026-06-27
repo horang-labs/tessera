@@ -10,6 +10,8 @@ import { TOOL_STATUS_TEXT } from './tool-call-block-utils';
 import { ToolCallDetailPanel } from './tool-call-detail-panel';
 import { MESSAGE_BODY_OFFSET_CLASS } from './message-layout';
 import { MessageRowShell } from './message-row-shell';
+import { ImageLightbox } from './image-lightbox';
+import { buildToolImageUrl, isImagePath } from '@/lib/tool-results/tool-image';
 
 // --- Layout threshold ---
 const SUMMARY_BAR_MIN = 4;
@@ -87,6 +89,58 @@ async function prefetchToolOutput(tc: ToolCallMessage): Promise<boolean> {
     isError: false,
   });
   return false;
+}
+
+// --- Inline image tool calls ---
+
+/** An image-producing tool call (Codex `view_image`, Claude image `Read`). */
+function isImageToolCall(tc: ToolCallMessage): boolean {
+  if (tc.status === 'error') return false;
+  if (tc.toolKind !== 'file_read' && tc.toolName !== 'ViewImage') return false;
+  return isImagePath(tc.toolParams?.file_path ?? tc.toolParams?.path);
+}
+
+/** Renders the image inline in the chat flow (no click needed), with click-to-zoom. */
+function InlineToolImage({ toolCall, alignWithMessageBody }: {
+  toolCall: ToolCallMessage;
+  alignWithMessageBody: boolean;
+}) {
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const toolUseId = extractToolUseId(toolCall);
+  const sessionId = toolCall.sessionId;
+  if (!toolUseId || !sessionId) return null;
+
+  const url = buildToolImageUrl(sessionId, toolUseId);
+  const filePath = toolCall.toolParams?.file_path ?? toolCall.toolParams?.path;
+  const caption = typeof filePath === 'string' ? filePath : shortenToolName(toolCall.toolName);
+
+  const content = (
+    <div className={cn('my-2 max-w-2xl', alignWithMessageBody && MESSAGE_BODY_OFFSET_CLASS)}>
+      <div className="mb-1 flex items-center gap-1.5 text-[11px] text-(--text-muted)">
+        <span className="text-(--text-secondary)">{getToolIcon(toolCall.toolName, toolCall.toolKind)}</span>
+        <span className="truncate font-mono">{caption}</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => setLightboxOpen(true)}
+        className="inline-block cursor-zoom-in overflow-hidden rounded-lg border border-(--tool-border) hover:border-(--accent) transition-colors"
+        title="Click to enlarge"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- dynamic local image, dimensions unknown */}
+        <img
+          src={url}
+          alt={typeof filePath === 'string' ? filePath : 'image'}
+          className="block max-h-[180px] max-w-[240px] w-auto h-auto object-contain"
+        />
+      </button>
+      {lightboxOpen && (
+        <ImageLightbox src={url} alt={typeof filePath === 'string' ? filePath : undefined} onClose={() => setLightboxOpen(false)} />
+      )}
+    </div>
+  );
+
+  if (!alignWithMessageBody) return content;
+  return <MessageRowShell>{content}</MessageRowShell>;
 }
 
 // --- Compact Row ---
@@ -333,11 +387,15 @@ export const ToolCallGrid = memo(function ToolCallGrid({
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
+  // Image tool calls render inline as images; everything else uses the compact grid.
+  const imageToolCalls = useMemo(() => toolCalls.filter(isImageToolCall), [toolCalls]);
+  const gridToolCalls = useMemo(() => toolCalls.filter(tc => !isImageToolCall(tc)), [toolCalls]);
+
   const isExternallyManaged = onSelectToolCall !== undefined;
   const effectiveSelectedId = isExternallyManaged ? (selectedToolCallId ?? null) : localSelectedId;
 
   const selectedToolCall = effectiveSelectedId
-    ? toolCalls.find(tc => tc.id === effectiveSelectedId) ?? null
+    ? gridToolCalls.find(tc => tc.id === effectiveSelectedId) ?? null
     : null;
 
   // Commit selection (after prefetch or immediately)
@@ -381,7 +439,7 @@ export const ToolCallGrid = memo(function ToolCallGrid({
   const showInlinePanel = !isExternallyManaged;
 
   const commonProps = {
-    toolCalls,
+    toolCalls: gridToolCalls,
     selectedId: effectiveSelectedId,
     loadingId,
     onToggle: handleToggle,
@@ -390,8 +448,15 @@ export const ToolCallGrid = memo(function ToolCallGrid({
     alignWithMessageBody,
   };
 
-  if (toolCalls.length >= SUMMARY_BAR_MIN) {
-    return <SummaryBar {...commonProps} />;
-  }
-  return <CompactList {...commonProps} />;
+  const imagesBlock = imageToolCalls.map(tc => (
+    <InlineToolImage key={tc.id} toolCall={tc} alignWithMessageBody={alignWithMessageBody} />
+  ));
+
+  const gridBlock = gridToolCalls.length === 0
+    ? null
+    : gridToolCalls.length >= SUMMARY_BAR_MIN
+      ? <SummaryBar {...commonProps} />
+      : <CompactList {...commonProps} />;
+
+  return <>{imagesBlock}{gridBlock}</>;
 });

@@ -92,7 +92,21 @@ function syncI18nLanguage(language: UserSettings['language']): void {
 interface SettingsSyncMessage {
   type: 'settings-updated';
   settings: UserSettings;
+  /** Identifies the originating tab so it can ignore its own broadcast (see below). */
+  senderId: string;
 }
+
+/**
+ * Unique per-tab id. Two BroadcastChannel objects in the SAME window still receive
+ * each other's messages (only the exact sender object is excluded), so without this
+ * a tab would re-apply its own settings snapshot asynchronously — replacing the
+ * settings object mid-edit and resetting the caret in any focused settings field.
+ * Receivers drop messages carrying this id; cross-tab sync (different id) still works.
+ */
+export const SETTINGS_SYNC_SENDER_ID =
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
 
 let settingsSyncChannel: BroadcastChannel | null = null;
 
@@ -109,6 +123,7 @@ function broadcastSettingsSnapshot(settings: UserSettings): void {
     getSettingsSyncChannel()?.postMessage({
       type: 'settings-updated',
       settings,
+      senderId: SETTINGS_SYNC_SENDER_ID,
     } satisfies SettingsSyncMessage);
   } catch {
     // Best effort only. Other windows can still pick up persisted settings.
@@ -120,7 +135,8 @@ export function isSettingsSyncMessage(message: unknown): message is SettingsSync
   const value = message as Partial<SettingsSyncMessage>;
   return value.type === 'settings-updated'
     && Boolean(value.settings)
-    && typeof value.settings === 'object';
+    && typeof value.settings === 'object'
+    && typeof value.senderId === 'string';
 }
 
 interface SettingsState {
