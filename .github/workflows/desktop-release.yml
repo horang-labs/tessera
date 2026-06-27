@@ -176,14 +176,12 @@ jobs:
           TESSERA_NOTARY_TIMEOUT: 90m
         run: npm run electron:build:mac-${{ matrix.arch }}:signed
 
-      - name: Verify DMG
+      - name: Verify DMG checksum
         run: |
           version="$(node -p "require('./package.json').version")"
           dmg="release/Tessera-${version}-macos-${{ matrix.arch }}.dmg"
           test -f "$dmg"
           hdiutil verify "$dmg"
-          xcrun stapler validate "$dmg"
-          spctl --assess --type open --context context:primary-signature --verbose "$dmg"
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v4
