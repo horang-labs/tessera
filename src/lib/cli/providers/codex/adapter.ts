@@ -55,6 +55,8 @@ import {
 import {
   classifyAuthStatus,
   classifyVersionFailure,
+  isVersionProbeRunnable,
+  synthesizeRunnableStatus,
   summarizeExecProbe,
 } from '../../status-detection';
 import { updateProviderStateWithRetry } from '../../process-manager-side-effects';
@@ -329,7 +331,7 @@ export class CodexAdapter implements CliProvider {
       authProbe,
     };
 
-    if (!versionResult.ok) {
+    if (!isVersionProbeRunnable(versionResult)) {
       return {
         status: 'not_installed',
         detectionReason: classifyVersionFailure(versionResult, commandMetadata.commandSource),
@@ -338,11 +340,11 @@ export class CodexAdapter implements CliProvider {
     }
 
     const version = parseVersion(versionResult.stdout);
-    const authStatus = classifyAuthStatus(loginResult);
+    const finalStatus = synthesizeRunnableStatus(versionResult, classifyAuthStatus(loginResult));
 
     return {
-      status: authStatus.status,
-      detectionReason: authStatus.detectionReason,
+      status: finalStatus.status,
+      detectionReason: finalStatus.detectionReason,
       ...(version ? { version } : {}),
       ...baseTelemetry,
     };
