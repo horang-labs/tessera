@@ -10,6 +10,7 @@ import { useCrossWindowUiSync } from '@/hooks/use-cross-window-ui-sync';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { ProjectStrip } from '@/components/chat/project-strip';
 import { ElectronTitlebarThemeSync } from '@/components/layout/electron-titlebar';
+import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { KeyboardShortcutProvider } from '@/components/keyboard/keyboard-shortcut-provider';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { cn } from '@/lib/utils';
@@ -41,7 +42,8 @@ export function BoardPopoutLayout() {
   const electronPlatform = useElectronPlatform();
   const isMacElectron = electronPlatform === 'darwin';
   const isWindowsElectron = electronPlatform === 'win32';
-  const isElectronTitlebar = isMacElectron || isWindowsElectron;
+  const isLinuxElectron = electronPlatform === 'linux';
+  const isElectronTitlebar = isMacElectron || isWindowsElectron || isLinuxElectron;
   const projects = useSessionStore((s) => s.projects);
   const loadSettings = useSettingsStore((state) => state.load);
   const [projectsLoaded, setProjectsLoaded] = useState(projects.length > 0);
@@ -113,6 +115,7 @@ export function BoardPopoutLayout() {
             className={cn(
               'electron-drag shrink-0 flex items-center select-none',
               isWindowsElectron && 'h-[40px] bg-(--electron-titlebar-bg) border-b border-(--electron-titlebar-border)',
+              isLinuxElectron && 'h-[40px] bg-(--electron-titlebar-bg) border-b border-(--electron-titlebar-border)',
               isMacElectron && 'h-10 bg-(--chat-header-bg) border-b border-(--chat-header-border) pl-20',
             )}
             data-testid="board-popout-titlebar"
@@ -120,6 +123,8 @@ export function BoardPopoutLayout() {
             <div className="px-3 text-[0.8125rem] font-semibold text-(--text-muted) truncate">
               Tessera Board
             </div>
+            <div className="ml-auto" />
+            <ElectronWindowControls />
           </div>
         )}
         <div className="flex flex-1 overflow-hidden">

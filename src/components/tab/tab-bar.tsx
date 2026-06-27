@@ -15,6 +15,7 @@ import { TabItem } from './tab-item';
 import { TabContextMenu } from './tab-context-menu';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
+import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 
 const TAB_SCROLL_MIN_STEP = 180;
 const TAB_SCROLL_EDGE_EPSILON = 1;
@@ -32,6 +33,7 @@ export const TabBar = memo(function TabBar() {
   const electronPlatform = useElectronPlatform();
   const isMacElectron = electronPlatform === 'darwin';
   const isWindowsElectron = electronPlatform === 'win32';
+  const isLinuxElectron = electronPlatform === 'linux';
   // Store subscriptions — minimal slices to avoid unnecessary re-renders
   const tabs = useTabStore((state) => state.tabs);
   const activeTabId = useTabStore((state) => state.activeTabId);
@@ -390,6 +392,7 @@ export const TabBar = memo(function TabBar() {
         'flex items-stretch h-9 border-b border-b-(--divider) bg-(--chat-header-bg) shrink-0',
         isWindowsElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
         isWindowsElectron && !gitPanelOpen && 'pr-[152px]',
+        isLinuxElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
         isMacElectron && 'electron-drag h-10 border-b-(--chat-header-border) select-none',
         isMacElectron && sidebarCollapsed && 'pl-[84px]'
       )}
@@ -401,6 +404,7 @@ export const TabBar = memo(function TabBar() {
           className={cn(
             'shrink-0 flex items-center justify-center w-9 h-9 text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors border-r border-r-(--divider)',
             isWindowsElectron && 'electron-no-drag w-[40px] h-[39px]',
+            isLinuxElectron && 'electron-no-drag w-[40px] h-[39px]',
             isMacElectron && 'electron-no-drag w-10 h-10'
           )}
           onClick={toggleSidebar}
@@ -442,6 +446,7 @@ export const TabBar = memo(function TabBar() {
             className={cn(
               'electron-no-drag shrink-0 w-6 transition-colors',
               isWindowsElectron && 'h-[39px]',
+              isLinuxElectron && 'h-[39px]',
               isEndZoneDragOver && 'border-l-2 border-l-(--accent)',
             )}
             onDragOver={handleEndZoneDragOver}
@@ -499,6 +504,7 @@ export const TabBar = memo(function TabBar() {
           className={cn(
             'shrink-0 flex items-center justify-center w-9 h-9 text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors',
             isWindowsElectron && 'electron-no-drag w-[40px] h-[39px]',
+            isLinuxElectron && 'electron-no-drag w-[40px] h-[39px]',
             isMacElectron && 'electron-no-drag w-10 h-10',
             isCreateTabDragOver && 'bg-(--accent)/14 text-(--accent) shadow-[inset_0_-2px_0_var(--accent)]'
           )}
@@ -532,6 +538,7 @@ export const TabBar = memo(function TabBar() {
           'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover)',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent)',
           isWindowsElectron && 'w-[40px] h-[39px]',
+          isLinuxElectron && 'w-[40px] h-[39px]',
           isMacElectron && 'electron-no-drag w-10 h-10',
           gitPanelOpen
             ? 'bg-(--accent)/14 text-(--accent) shadow-[inset_0_-2px_0_var(--accent)]'
@@ -545,6 +552,8 @@ export const TabBar = memo(function TabBar() {
       >
         {gitPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
       </button>
+
+      {isLinuxElectron && !gitPanelOpen ? <ElectronWindowControls /> : null}
 
       {/* Tab context menu */}
       {contextMenu && (() => {
