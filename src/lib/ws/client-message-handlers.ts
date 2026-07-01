@@ -68,6 +68,11 @@ export function handleIncomingServerMessage({
     case 'session_stopped':
       sessionStore.markSessionStopped(msg.sessionId);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      // The session was stopped, so any workflow still flagged running can no
+      // longer emit its terminal task_notification — settle it instead of
+      // leaving the card spinning forever.
+      chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
+      sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       useCommandStore.getState().clearSession(msg.sessionId);
       return { wasReconnect };
 
@@ -133,6 +138,13 @@ export function handleIncomingServerMessage({
     case 'cli_down':
       applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      // The CLI parser now synthesizes a failed workflow_event on exit
+      // (protocol-parser.handleProcessExit), which is the durable fix. This
+      // in-memory settle is a belt-and-suspenders backup covering the rare case
+      // where that event is missed/reordered, so the live view never shows a
+      // card spinning past the session's death.
+      chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
+      sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       sessionStore.updateSessionStatus(msg.sessionId, 'error');
       chatStore.addMessage(msg.sessionId, {
         id: uuidv4(),

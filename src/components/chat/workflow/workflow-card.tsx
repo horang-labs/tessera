@@ -31,6 +31,10 @@ interface WorkflowCardProps {
   docked?: boolean;
   /** Initial collapsed state (e.g. completed runs start collapsed in the bar). */
   defaultCollapsed?: boolean;
+  /** When provided, renders a dismiss (X) button that hides the card from view.
+   *  Receives the card's taskId so the caller can pass a stable store action
+   *  directly (keeping WorkflowCard's memo intact). */
+  onDismiss?: (taskId: string) => void;
 }
 
 type AgentLifecycle = 'queued' | 'running' | 'done' | 'failed' | 'skipped' | 'stopped';
@@ -180,8 +184,9 @@ export const WorkflowCard = memo(function WorkflowCard({
   alignWithMessageBody = true,
   docked = false,
   defaultCollapsed = false,
+  onDismiss,
 }: WorkflowCardProps) {
-  const { status, workflowName, description, phases, agents, logs, usage, outputFile } = message;
+  const { taskId, status, workflowName, description, phases, agents, logs, usage, outputFile } = message;
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   const liveElapsed = useLiveElapsed({ isActive: status === 'running', startTime: message.startedAt });
@@ -241,29 +246,43 @@ export const WorkflowCard = memo(function WorkflowCard({
         />
       </div>
 
-      {/* Header (click to collapse) */}
-      <button
-        type="button"
-        onClick={() => setCollapsed((v) => !v)}
-        aria-expanded={!collapsed}
-        className="flex w-full items-center gap-2 px-3 pb-1.5 pt-2 text-left"
-      >
-        {collapsed ? <ChevronRight className="h-3 w-3 shrink-0 text-(--text-muted)" /> : <ChevronDown className="h-3 w-3 shrink-0 text-(--text-muted)" />}
-        <WorkflowIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-        <span className="truncate text-xs font-semibold text-(--text-primary)">{workflowName}</span>
+      {/* Header (click to collapse; optional dismiss button on the right) */}
+      <div className="flex w-full items-center">
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          aria-expanded={!collapsed}
+          className={cn('flex min-w-0 flex-1 items-center gap-2 pb-1.5 pl-3 pt-2 text-left', !onDismiss && 'pr-3')}
+        >
+          {collapsed ? <ChevronRight className="h-3 w-3 shrink-0 text-(--text-muted)" /> : <ChevronDown className="h-3 w-3 shrink-0 text-(--text-muted)" />}
+          <WorkflowIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <span className="truncate text-xs font-semibold text-(--text-primary)">{workflowName}</span>
 
-        <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium', statusPill.cls)}>
-          {statusPill.icon}
-          {statusPill.label}
-        </span>
+          <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium', statusPill.cls)}>
+            {statusPill.icon}
+            {statusPill.label}
+          </span>
 
-        <span className="ml-auto flex shrink-0 items-center gap-3 text-[10px] text-(--text-muted)">
-          {agents.length > 0 && <Stat icon={Bot}>{settledCount}/{agents.length}</Stat>}
-          {totalTokens && <Stat icon={Zap}>{totalTokens}</Stat>}
-          {usage?.toolUses != null && usage.toolUses > 0 && <Stat icon={Wrench}>{usage.toolUses}</Stat>}
-          {elapsed && <Stat icon={Clock}>{elapsed}</Stat>}
-        </span>
-      </button>
+          <span className="ml-auto flex shrink-0 items-center gap-3 text-[10px] text-(--text-muted)">
+            {agents.length > 0 && <Stat icon={Bot}>{settledCount}/{agents.length}</Stat>}
+            {totalTokens && <Stat icon={Zap}>{totalTokens}</Stat>}
+            {usage?.toolUses != null && usage.toolUses > 0 && <Stat icon={Wrench}>{usage.toolUses}</Stat>}
+            {elapsed && <Stat icon={Clock}>{elapsed}</Stat>}
+          </span>
+        </button>
+
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={() => onDismiss(taskId)}
+            aria-label="Dismiss workflow"
+            title="Dismiss"
+            className="mr-1.5 shrink-0 self-stretch rounded px-1.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
 
       {!collapsed && (
         <div className="px-3 pb-2.5">
