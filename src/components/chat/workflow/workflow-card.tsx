@@ -113,26 +113,39 @@ const WorkflowAgentRow = memo(function WorkflowAgentRow({
       : lifecycle === 'done' || lifecycle === 'failed' || lifecycle === 'skipped'
         ? formatSeconds(agent.durationMs)
         : null;
+  const hasDetail = Boolean(
+    (lifecycle === 'done' && agent.resultPreview) || lifecycle === 'failed' || agent.promptPreview,
+  );
 
   return (
-    <div className="group/agent flex items-center gap-2 rounded-md py-1 pl-2 pr-1 text-[11px] transition-colors hover:bg-(--sidebar-hover)">
+    <div className="group/agent flex min-w-0 items-center gap-2 overflow-hidden rounded-md py-1 pl-2 pr-1 text-[11px] transition-colors hover:bg-(--sidebar-hover)">
       <span className="shrink-0">{AGENT_ICON[lifecycle]}</span>
-      <span className="shrink-0 font-medium text-(--text-secondary)">{agent.label}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+        <span
+          className={cn(
+            'shrink-0 truncate font-medium text-(--text-secondary)',
+            hasDetail ? 'max-w-[45%]' : 'max-w-full',
+          )}
+          title={agent.label}
+        >
+          {agent.label}
+        </span>
 
-      {lifecycle === 'done' && agent.resultPreview ? (
-        <span className="flex min-w-0 items-center gap-1">
-          <span className="text-(--text-muted)">→</span>
-          <span className="truncate font-mono text-(--status-success-text)" title={agent.resultPreview}>
-            {agent.resultPreview}
+        {lifecycle === 'done' && agent.resultPreview ? (
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <span className="shrink-0 text-(--text-muted)">→</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-(--status-success-text)" title={agent.resultPreview}>
+              {agent.resultPreview}
+            </span>
           </span>
-        </span>
-      ) : lifecycle === 'failed' ? (
-        <span className="truncate text-(--status-error-text)">failed{agent.attempt && agent.attempt > 1 ? ` · ${agent.attempt} tries` : ''}</span>
-      ) : agent.promptPreview ? (
-        <span className="truncate italic text-(--text-muted)" title={agent.promptPreview}>
-          {agent.promptPreview}
-        </span>
-      ) : null}
+        ) : lifecycle === 'failed' ? (
+          <span className="min-w-0 flex-1 truncate text-(--status-error-text)">failed{agent.attempt && agent.attempt > 1 ? ` · ${agent.attempt} tries` : ''}</span>
+        ) : agent.promptPreview ? (
+          <span className="min-w-0 flex-1 truncate italic text-(--text-muted)" title={agent.promptPreview}>
+            {agent.promptPreview}
+          </span>
+        ) : null}
+      </span>
 
       <span className="ml-auto flex shrink-0 items-center gap-2.5 text-[10px] text-(--text-muted)">
         {model && <span className="font-mono opacity-80">{model}</span>}
@@ -250,7 +263,7 @@ export const WorkflowCard = memo(function WorkflowCard({
       >
         {collapsed ? <ChevronRight className="h-3 w-3 shrink-0 text-(--text-muted)" /> : <ChevronDown className="h-3 w-3 shrink-0 text-(--text-muted)" />}
         <WorkflowIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-        <span className="truncate text-xs font-semibold text-(--text-primary)">{workflowName}</span>
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-(--text-primary)">{workflowName}</span>
 
         <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium', statusPill.cls)}>
           {statusPill.icon}
