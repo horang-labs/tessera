@@ -16,6 +16,8 @@ import { SettingsManager } from './src/lib/settings/manager';
 import { pruneExpiredArchivedWorktrees } from './src/lib/archive/archive-service';
 import { prewarmCliStatusSnapshot } from './src/lib/cli/provider-status-prewarm';
 import { snapshotTelemetryStartupDataState } from './src/lib/telemetry/server-state';
+import { setModelConfigBroadcast, triggerModelConfigRefresh } from './src/lib/model-config/refresh';
+import { ensureRemoteModelConfigLoaded } from './src/lib/model-config/remote-config';
 import logger from './src/lib/logger';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -28,6 +30,9 @@ snapshotTelemetryStartupDataState();
 
 async function startServer() {
   await initDatabase();
+  // Warm the model-config store from disk (no network) so the first API request
+  // serving provider options already reflects the last known remote list.
+  await ensureRemoteModelConfigLoaded();
   await ensureRSAKeys();
   prewarmCliStatusSnapshot('server');
   try {
@@ -75,6 +80,11 @@ async function startServer() {
     // Start rate limit poller
     rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
     rateLimitPoller.start();
+
+    // Model config: one refresh per launch (doubles as the launch-count ping). No periodic
+    // poll — every Claude session creation triggers its own refresh ('session' event).
+    setModelConfigBroadcast((msg) => wsServer.broadcast(msg));
+    void triggerModelConfigRefresh('launch');
 
     // Start task PR poller + relay updates to connected clients
     installTaskPrStatusBroadcast((msg) => wsServer.broadcast(msg));

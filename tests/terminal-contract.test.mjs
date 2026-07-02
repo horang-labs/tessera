@@ -205,7 +205,7 @@ test('terminal shell selection follows the configured agent environment', () => 
 
 test('macOS terminal startup preserves user login PATH and executable node-pty helper', () => {
   assert.match(terminalManagerSource, /ensureNodePtySpawnHelperExecutable/);
-  assert.match(terminalManagerSource, /require\.resolve\('node-pty\/package\.json'\)/);
+  assert.match(terminalManagerSource, /nodeRequire\.resolve\('node-pty\/package\.json'\)/);
   assert.match(terminalManagerSource, /spawn-helper/);
   assert.match(terminalManagerSource, /fs\.chmodSync\(helperPath, stat\.mode \| 0o755\)/);
   assert.match(terminalManagerSource, /buildSpawnEnv\(env\)/);

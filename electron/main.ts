@@ -125,6 +125,31 @@ function sendMenuCommand(win: BrowserWindow, command: string) {
   win.webContents.send('titlebar-menu-command', { command });
 }
 
+type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close';
+
+function isWindowControlAction(action: unknown): action is WindowControlAction {
+  return action === 'minimize' || action === 'toggle-maximize' || action === 'close';
+}
+
+function getWindowStatePayload(win: BrowserWindow) {
+  return {
+    isMaximized: win.isMaximized(),
+    isFullScreen: win.isFullScreen(),
+  };
+}
+
+function sendWindowState(win: BrowserWindow) {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send('window-state-changed', getWindowStatePayload(win));
+}
+
+function bindWindowStateEvents(win: BrowserWindow) {
+  win.on('maximize', () => sendWindowState(win));
+  win.on('unmaximize', () => sendWindowState(win));
+  win.on('enter-full-screen', () => sendWindowState(win));
+  win.on('leave-full-screen', () => sendWindowState(win));
+}
+
 function buildTitlebarMenuTemplate(
   section: TitlebarMenuSection,
   win: BrowserWindow
@@ -602,6 +627,7 @@ async function stopServer(): Promise<void> {
 function createWindow(port: number): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
+  const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 
   const win = new BrowserWindow({
@@ -611,6 +637,7 @@ function createWindow(port: number): BrowserWindow {
     minHeight: 600,
     title: 'Tessera',
     show: false,
+    frame: !isLinux,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -619,10 +646,12 @@ function createWindow(port: number): BrowserWindow {
       webSecurity: true,
     },
     autoHideMenuBar: !isMac,
-    backgroundColor: isWindows ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
+    backgroundColor: isWindows || isLinux ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
     titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
+
+  bindWindowStateEvents(win);
 
   if (!isMac) {
     win.removeMenu();
@@ -715,6 +744,7 @@ function createWindow(port: number): BrowserWindow {
 function createPopoutWindow(port: number, route: string): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
+  const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 
   const win = new BrowserWindow({
@@ -724,6 +754,7 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
     minHeight: 400,
     title: 'Tessera Board',
     show: false,
+    frame: !isLinux,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -732,10 +763,12 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
       webSecurity: true,
     },
     autoHideMenuBar: !isMac,
-    backgroundColor: isWindows ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
+    backgroundColor: isWindows || isLinux ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
     titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
+
+  bindWindowStateEvents(win);
 
   if (!isMac) {
     win.removeMenu();
@@ -926,6 +959,27 @@ ipcMain.handle(
     });
   }
 );
+ipcMain.handle('window-control', (event, action: unknown) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || !isWindowControlAction(action)) return;
+
+  if (action === 'minimize') {
+    win.minimize();
+  } else if (action === 'toggle-maximize') {
+    if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+    sendWindowState(win);
+  } else {
+    win.close();
+  }
+});
+ipcMain.handle('get-window-state', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  return win ? getWindowStatePayload(win) : { isMaximized: false, isFullScreen: false };
+});
 ipcMain.on('set-titlebar-theme', (event, theme: TitlebarTheme, options?: TitlebarThemeOptions) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || process.platform !== 'win32') return;

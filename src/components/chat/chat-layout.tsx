@@ -104,9 +104,6 @@ export function ChatLayout() {
     activeSessionId,
   });
 
-  // BR-PERSIST-002: tabs + activeTabId as persist effect dependencies
-  const tabs = useTabStore((state) => state.tabs);
-  const activeTabId = useTabStore((state) => state.activeTabId);
   const markSessionAsRead = useNotificationStore(
     (state) => state.markSessionAsRead,
   );
@@ -129,7 +126,7 @@ export function ChatLayout() {
   useWebSocket(); // Initialize WebSocket connection
   useCrossWindowUiSync(); // Mirror activeSessionId / selectedProjectDir to popouts
 
-  // BR-PERSIST-001: persistLayout debounce ref (200ms)
+  // BR-PERSIST-001: persist tab/panel state with a short debounce.
   const persistDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const kanbanScrollAnchorRef = useRef<{ rightEdge: number; atEnd: boolean } | null>(null);
   const [viewportWidth, setViewportWidth] = useState(getViewportWidth);
@@ -332,19 +329,42 @@ export function ChatLayout() {
     [selectedProjectDir],
   );
 
-  // BR-PERSIST-001/002/003: debounced tab state persistence (200ms)
+  // BR-PERSIST-001/002/003: debounced tab + panel state persistence (200ms)
   useEffect(
-    function persistTabState() {
-      clearTimeout(persistDebounceRef.current ?? undefined);
-      persistDebounceRef.current = setTimeout(function debouncedPersist() {
+    function persistWorkspaceState() {
+      function flushPersist() {
+        clearTimeout(persistDebounceRef.current ?? undefined);
+        persistDebounceRef.current = null;
         useTabStore.getState().persistToLocalStorage();
-      }, 200);
+      }
+
+      function schedulePersist() {
+        clearTimeout(persistDebounceRef.current ?? undefined);
+        persistDebounceRef.current = setTimeout(function debouncedPersist() {
+          persistDebounceRef.current = null;
+          useTabStore.getState().persistToLocalStorage();
+        }, 200);
+      }
+
+      const unsubscribeTabs = useTabStore.subscribe(schedulePersist);
+      const unsubscribePanels = usePanelStore.subscribe(schedulePersist);
+
+      window.addEventListener("beforeunload", flushPersist);
+      window.addEventListener("pagehide", flushPersist);
+
+      schedulePersist();
 
       return function clearPersistDebounce() {
+        flushPersist();
+        unsubscribeTabs();
+        unsubscribePanels();
+        window.removeEventListener("beforeunload", flushPersist);
+        window.removeEventListener("pagehide", flushPersist);
         clearTimeout(persistDebounceRef.current ?? undefined);
+        persistDebounceRef.current = null;
       };
     },
-    [tabs, activeTabId],
+    [],
   );
 
   useEffect(() => {

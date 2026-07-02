@@ -24,6 +24,7 @@ import { i18n } from '@/lib/i18n';
 import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
@@ -183,6 +184,10 @@ export function handleIncomingServerMessage({
         planType: msg.planType,
         updatedAt: msg.updatedAt,
       });
+      return { wasReconnect };
+
+    case 'model_config_updated':
+      invalidateProviderSessionOptionsClientCache(msg.providerId);
       return { wasReconnect };
 
     case 'commands_ready':

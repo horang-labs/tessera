@@ -1,9 +1,8 @@
 import type { PermissionMode } from '@/lib/ws/message-types';
 import { getCodexPermissionMapping, listCodexPermissionMappings } from './providers/codex/session-config';
+import { getClaudeModelOptions } from '../model-config/remote-config';
 import type {
-  ProviderModelOption,
   ProviderPermissionMapping,
-  ProviderReasoningEffortOption,
   ProviderSessionOptions,
 } from './provider-session-option-types';
 
@@ -125,97 +124,8 @@ export const OPENCODE_ACCESS_OPTIONS = [
   },
 ] as const;
 
-const CLAUDE_EFFORT_COMMON: ProviderReasoningEffortOption[] = [
-  { value: 'auto', label: 'Auto', description: 'CLI default (no --effort flag)' },
-  { value: 'low', label: 'Low', description: 'Faster responses with less thinking' },
-  { value: 'medium', label: 'Medium', description: 'Balanced thinking and speed' },
-  { value: 'high', label: 'High', description: 'Deeper reasoning' },
-];
-
-const CLAUDE_EFFORT_WITH_MAX: ProviderReasoningEffortOption[] = [
-  ...CLAUDE_EFFORT_COMMON,
-  { value: 'max', label: 'Max', description: 'Maximum reasoning depth' },
-];
-
-const CLAUDE_EFFORT_WITH_XHIGH_MAX: ProviderReasoningEffortOption[] = [
-  ...CLAUDE_EFFORT_COMMON,
-  { value: 'xhigh', label: 'Extra High', description: 'Deeper reasoning, just below maximum' },
-  { value: 'max', label: 'Max', description: 'Maximum reasoning depth' },
-];
-
-// Ultracode is not an extra --effort level — it pairs xhigh effort with standing
-// permission to launch multi-agent (dynamic workflow) orchestration. Listed at the
-// TOP, mirroring Claude Code's own /effort menu. The adapter maps this selection to
-// `--settings '{"ultracode":true}'` rather than `--effort`. Only models that support
-// xhigh expose it; the CLI silently ignores ultracode on models that don't.
-const CLAUDE_EFFORT_WITH_ULTRACODE: ProviderReasoningEffortOption[] = [
-  { value: 'ultracode', label: 'Ultracode', description: 'xhigh + automatic multi-agent workflow orchestration (uses far more tokens)' },
-  ...CLAUDE_EFFORT_WITH_XHIGH_MAX,
-];
-
-export const CLAUDE_MODELS: ProviderModelOption[] = [
-  {
-    value: 'claude-opus-4-8',
-    label: 'claude-opus-4-8',
-    isDefault: false,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
-    supportsFastMode: true,
-  },
-  {
-    value: 'claude-opus-4-8[1m]',
-    label: 'claude-opus-4-8[1m]',
-    isDefault: true,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
-    supportsFastMode: true,
-  },
-  {
-    value: 'claude-opus-4-7',
-    label: 'claude-opus-4-7',
-    isDefault: false,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
-    supportsFastMode: true,
-  },
-  {
-    value: 'claude-opus-4-7[1m]',
-    label: 'claude-opus-4-7[1m]',
-    isDefault: false,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
-    supportsFastMode: true,
-  },
-  {
-    value: 'claude-opus-4-6',
-    label: 'claude-opus-4-6',
-    isDefault: false,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_MAX,
-    supportsFastMode: true,
-  },
-  {
-    value: 'claude-opus-4-6[1m]',
-    label: 'claude-opus-4-6[1m]',
-    isDefault: false,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_MAX,
-    supportsFastMode: true,
-  },
-  {
-    value: 'claude-sonnet-4-6',
-    label: 'claude-sonnet-4-6',
-    isDefault: false,
-    defaultReasoningEffort: 'auto',
-    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_MAX,
-  },
-  {
-    value: 'claude-haiku-4-5-20251001',
-    label: 'claude-haiku-4-5-20251001',
-    isDefault: false,
-    supportedReasoningEfforts: [],
-  },
-];
+// The Claude model list is served entirely by the remote config Worker (via
+// getClaudeModelOptions()). No models, effort tiers, or defaults are hardcoded here.
 
 export function buildSharedPermissionMapping(permissionMode: PermissionMode): ProviderPermissionMapping {
   return {
@@ -237,7 +147,7 @@ export function buildClaudeSessionOptions(): ProviderSessionOptions {
     supportsReasoningEffort: true,
     runtimeEffortChange: false,
     runtimeAccessChange: true,
-    modelOptions: CLAUDE_MODELS,
+    modelOptions: getClaudeModelOptions(),
     permissionMappings: buildClaudePermissionMappings(),
     modeOptions: [...SHARED_MODE_OPTIONS],
     accessOptions: [...CLAUDE_ACCESS_OPTIONS],
