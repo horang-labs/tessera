@@ -4,6 +4,7 @@ import { cliProviderRegistry } from '../cli/providers/registry';
 import { getProviderSessionOptions } from '../cli/provider-session-options';
 import * as dbSessions from '../db/sessions';
 import logger from '../logger';
+import { triggerModelConfigRefresh } from '../model-config/refresh';
 import { sessionHistory } from '../session-history';
 import {
   resolveProviderModelOption,
@@ -91,6 +92,12 @@ export async function createSessionWithLifecycle({
   const workDir = options.workDir || process.cwd();
   // Resolve provider so that an unknown providerId throws here instead of later at spawn time.
   cliProviderRegistry.getProvider(options.providerId);
+
+  // Fire-and-forget: every Claude session creation re-checks the remote model config and
+  // counts as a 'session' usage event on the Worker. Never blocks session creation.
+  if (options.providerId === 'claude-code') {
+    void triggerModelConfigRefresh('session');
+  }
 
   const sessionId = uuidv4();
   const activeProcesses = processManager.getUserProcesses(userId);
