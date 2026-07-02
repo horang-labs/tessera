@@ -176,6 +176,7 @@ export interface I18nMessages {
     };
     effort: {
       readOnlyTooltip: string;
+      requiresRestartTooltip: string;
     };
     agentEnv: {
       label: string;

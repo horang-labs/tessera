@@ -178,6 +178,7 @@ export const en: I18nMessages = {
     },
     effort: {
       readOnlyTooltip: 'Cannot change while a session is running. Stop the session to change.',
+      requiresRestartTooltip: 'Only applies when a session starts. Stop the session and start again to use it.',
     },
     agentEnv: {
       label: 'Agent Environment',

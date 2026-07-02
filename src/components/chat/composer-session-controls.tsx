@@ -647,10 +647,13 @@ function ComposerSessionControlsInner({
         sessionId,
         buildProviderModelControlValue(providerIdForSticky, nextModel, nextReasoningEffort),
       );
+      const nextEffortRequiresRestart = nextModelOption?.supportedReasoningEfforts
+        .find((option) => option.value === nextReasoningEffort)?.requiresRestart === true;
       if (
         !isOpenCodeProvider(providerIdForSticky)
         && sessionOptions?.supportsReasoningEffort
         && sessionOptions.runtimeEffortChange
+        && !nextEffortRequiresRestart
       ) {
         wsClient.setReasoningEffort(sessionId, nextReasoningEffort);
       }
@@ -679,12 +682,17 @@ function ComposerSessionControlsInner({
           buildProviderModelControlValue(providerIdForSticky, model, nextReasoningEffort),
         );
       } else if (sessionOptions?.runtimeEffortChange) {
-        // Only providers that declare runtimeEffortChange (codex) can apply an
-        // effort change to a live process. Claude Code declares it false — its
-        // adapter has no updateSessionConfig, so sending set_reasoning_effort
-        // here would fail with set_reasoning_effort_failed. We persist above and
-        // let the next spawn/resume pick it up, mirroring handleModelChange.
-        wsClient.setReasoningEffort(sessionId, nextReasoningEffort);
+        // Codex applies this via updateSessionConfig, Claude Code via an
+        // apply_flag_settings control_request on the live process. Spawn-only
+        // levels (Claude max) are disabled in the menu while running so they
+        // never reach here, but skip defensively instead of surfacing
+        // set_reasoning_effort_failed; the persisted value above still applies
+        // on the next spawn/resume.
+        const requiresRestart = reasoningOptions
+          .find((option) => option.value === nextReasoningEffort)?.requiresRestart === true;
+        if (!requiresRestart) {
+          wsClient.setReasoningEffort(sessionId, nextReasoningEffort);
+        }
       }
     }
     focusSessionInput(sessionId);
@@ -725,10 +733,18 @@ function ComposerSessionControlsInner({
   const canToggleFastMode = isCodexProvider(providerIdForSticky)
     || (isClaudeCodeProvider(providerIdForSticky) && currentModelSupportsFastMode);
   const fastModeToggleTitle = resolveFastModeToggleTitle(isFastModeEnabled, providerIdForSticky);
+  // A session spawned with a spawn-only effort (Claude max → --effort flag) can't
+  // change effort at runtime at all: the flag outranks apply_flag_settings for
+  // the process lifetime, so live changes would be silent no-ops. Those sessions
+  // keep the read-only badge until stopped.
+  const isEffortSpawnLocked = Boolean(
+    session?.isRunning
+    && reasoningOptions.find((option) => option.value === reasoningEffort)?.requiresRestart,
+  );
   const canOpenReasoningSelector = Boolean(
     sessionOptions?.supportsReasoningEffort
     && reasoningOptions.length > 0
-    && (sessionOptions.runtimeEffortChange || !session?.isRunning),
+    && ((sessionOptions.runtimeEffortChange && !isEffortSpawnLocked) || !session?.isRunning),
   );
 
   useEffect(() => {
@@ -888,7 +904,7 @@ function ComposerSessionControlsInner({
         </ComposerControlDropdown>
 
         {sessionOptions?.supportsReasoningEffort && reasoningOptions.length > 0 && (
-          sessionOptions.runtimeEffortChange || !session?.isRunning ? (
+          canOpenReasoningSelector ? (
             <ComposerControlDropdown
               icon={Gauge}
               label={reasoningLabel}
@@ -904,6 +920,8 @@ function ComposerSessionControlsInner({
                 <ComposerReasoningEffortMenu
                   options={reasoningOptions}
                   selectedEffort={reasoningEffort}
+                  disableRestartRequired={session?.isRunning === true}
+                  restartRequiredTooltip={t('settings.effort.requiresRestartTooltip')}
                   onSelect={(nextReasoningEffort) => {
                     handleReasoningEffortChange(nextReasoningEffort);
                     close();

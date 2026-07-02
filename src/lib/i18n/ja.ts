@@ -178,6 +178,7 @@ export const ja: I18nMessages = {
     },
     effort: {
       readOnlyTooltip: 'セッション実行中は変更できません。停止してから変更してください',
+      requiresRestartTooltip: 'セッション開始時にのみ適用されます。使用するにはセッションを停止して再開してください',
     },
     agentEnv: {
       label: 'エージェント環境',

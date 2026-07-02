@@ -57,11 +57,21 @@ function normalizeEffort(raw: unknown): ProviderReasoningEffortOption | null {
   const value = toTrimmedString(r.value);
   const label = toTrimmedString(r.label);
   if (!value || !label) return null;
-  return {
+  const effort: ProviderReasoningEffortOption = {
     value,
     label,
     description: typeof r.description === 'string' ? r.description : '',
   };
+  // Whether a level is spawn-only is a property of the CLI integration, not the
+  // remote catalog: `max` exists only as the --effort flag (the apply_flag_settings
+  // effortLevel enum stops at xhigh), so it can't change on a live process. Stamp
+  // it here, letting the Worker override if it ever starts sending the field.
+  if (typeof r.requiresRestart === 'boolean') {
+    effort.requiresRestart = r.requiresRestart;
+  } else if (value === 'max') {
+    effort.requiresRestart = true;
+  }
+  return effort;
 }
 
 function normalizeEfforts(raw: unknown): ProviderReasoningEffortOption[] | null {

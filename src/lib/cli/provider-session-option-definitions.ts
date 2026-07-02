@@ -145,7 +145,10 @@ export function buildClaudeSessionOptions(): ProviderSessionOptions {
     providerId: 'claude-code',
     displayName: 'Claude Code',
     supportsReasoningEffort: true,
-    runtimeEffortChange: false,
+    // Live changes ride the apply_flag_settings control_request (the same
+    // mechanism the CLI's own /effort command uses) — except `max`, which is
+    // spawn-only (stamped requiresRestart in remote-config normalization).
+    runtimeEffortChange: true,
     runtimeAccessChange: true,
     modelOptions: getClaudeModelOptions(),
     permissionMappings: buildClaudePermissionMappings(),
