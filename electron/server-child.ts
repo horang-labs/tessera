@@ -30,6 +30,8 @@ snapshotTelemetryStartupDataState();
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '127.0.0.1';
 const port = parseInt(process.env.PORT || '3000', 10);
+const isElectronChild = process.env.ELECTRON_CHILD === '1';
+const originalParentPid = process.ppid;
 // In packaged apps, cwd must be a real directory while Next should still resolve
 // assets from the packaged app root (typically resources/app.asar).
 const dir = process.env.TESSERA_APP_ROOT || process.cwd();
@@ -64,6 +66,46 @@ function logStartup(level: StartupLogLevel, msg: string) {
   }
   fs.mkdirSync(path.dirname(STARTUP_LOG), { recursive: true });
   fs.appendFileSync(STARTUP_LOG, `[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}\n`);
+}
+
+let shutdownHandler: ((reason: string) => Promise<void>) | null = null;
+let parentWatchdog: NodeJS.Timeout | null = null;
+let parentShutdownRequested = false;
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
+}
+
+function requestParentGoneShutdown(reason: string): void {
+  if (parentShutdownRequested) return;
+  parentShutdownRequested = true;
+  logStartup('error', `Electron parent unavailable; shutting down server child (${reason})`);
+
+  if (shutdownHandler) {
+    void shutdownHandler(reason);
+    return;
+  }
+
+  process.exit(1);
+}
+
+if (isElectronChild) {
+  process.on('disconnect', () => {
+    requestParentGoneShutdown('ipc-disconnect');
+  });
+
+  parentWatchdog = setInterval(() => {
+    const parentMissing = originalParentPid > 1 && !isProcessAlive(originalParentPid);
+    if (process.ppid === 1 || parentMissing) {
+      requestParentGoneShutdown(`parent-pid=${originalParentPid}, current-ppid=${process.ppid}`);
+    }
+  }, 2_000);
+  parentWatchdog.unref?.();
 }
 
 logStartup('debug', `Server child starting (cwd=${process.cwd()}, dir=${dir}, port=${port})`);
@@ -116,16 +158,20 @@ initDatabase().then(() => {
 
   // ── Graceful shutdown ─────────────────────────────────────────────────
   let isShuttingDown = false;
-  const shutdown = async () => {
+  const shutdown = async (reason = 'requested') => {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    if (parentWatchdog) {
+      clearInterval(parentWatchdog);
+      parentWatchdog = null;
+    }
 
     const forceShutdownTimer = setTimeout(() => {
       logger.error('Forced shutdown after timeout');
       process.exit(1);
     }, 10_000);
 
-    logger.info('Shutting down server...');
+    logger.info({ reason }, 'Shutting down server...');
 
     try {
       logger.info('Closing WebSocket connections...');
@@ -163,17 +209,18 @@ initDatabase().then(() => {
       server.closeAllConnections?.();
     }, 1_000);
   };
+  shutdownHandler = shutdown;
 
   // IPC shutdown from Electron main process
   process.on('message', (msg: { type: string }) => {
     if (msg?.type === 'shutdown') {
-      shutdown();
+      void shutdown('ipc-shutdown');
     }
   });
 
   // Fallback signals for non-Electron usage
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   process.on('unhandledRejection', (reason) => {
     logger.error({ reason, reasonType: typeof reason }, 'Unhandled Rejection');
@@ -192,7 +239,7 @@ initDatabase().then(() => {
     }
 
     logger.error({ error: msg, stack: error.stack }, 'Uncaught Exception');
-    shutdown();
+    void shutdown('uncaughtException');
   });
 }).catch((err) => {
   logStartup('fatal', `FATAL ERROR: ${err}`);

@@ -613,12 +613,28 @@ async function stopServer(): Promise<void> {
       resolve();
     });
 
+    const requestSignalShutdown = (reason: string) => {
+      log('warn', `${reason}; sending SIGTERM to server child`);
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // Process may have already exited.
+      }
+    };
+
     try {
-      proc.send({ type: 'shutdown' });
-    } catch {
-      // IPC channel already closed — process may have exited
-      clearTimeout(timeout);
-      resolve();
+      if (proc.connected) {
+        proc.send({ type: 'shutdown' }, (error) => {
+          if (error) {
+            requestSignalShutdown(`Server shutdown IPC failed: ${error.message}`);
+          }
+        });
+      } else {
+        requestSignalShutdown('Server shutdown IPC channel already closed');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      requestSignalShutdown(`Server shutdown IPC threw: ${message}`);
     }
   });
 }
