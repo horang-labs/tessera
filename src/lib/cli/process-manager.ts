@@ -476,6 +476,15 @@ export class ProcessManager {
     return processInfo.provider.clearGoal(processInfo.process, sessionId);
   }
 
+  async compactSession(sessionId: string): Promise<boolean> {
+    const processInfo = this.getRunningProcessOrWarn(sessionId, 'compact session');
+    if (!processInfo?.provider.compactThread) {
+      return false;
+    }
+
+    return processInfo.provider.compactThread(processInfo.process, sessionId);
+  }
+
   /**
    * Send control_response success payload to CLI.
    */

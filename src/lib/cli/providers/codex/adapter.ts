@@ -13,9 +13,10 @@
  *  1. Spawn `codex app-server`
  *  2. Write initialize request (id=1, protocolVersion "2025-01-01")
  *  3. Await response id=1 (server confirms protocol)
- *  4. Write thread/start request (id=2)
- *  5. Await response id=2 (server returns threadId)
- *  6. For each user turn: write turn/start notification with user input text
+ *  4. Write initialized notification
+ *  5. Write thread/start request (id=2)
+ *  6. Await response id=2 (server returns threadId)
+ *  7. For each user turn: write turn/start notification with user input text
  */
 
 import { randomUUID } from 'crypto';
@@ -375,9 +376,10 @@ export class CodexAdapter implements CliProvider {
    *  1. Spawn `codex app-server`
    *  2. Write initialize request (id=1, protocolVersion "2025-01-01")
    *  3. Await response id=1
-   *  4. Write thread/start request (id=2)
-   *  5. Await response id=2, extract threadId
-   *  6. Store threadId on the protocol parser
+   *  4. Write initialized notification
+   *  5. Write thread/start request (id=2)
+   *  6. Await response id=2, extract threadId
+   *  7. Store threadId on the protocol parser
    *
    * The sessionId in SpawnOptions is used to key the parser's per-session state.
    */
@@ -684,6 +686,27 @@ export class CodexAdapter implements CliProvider {
     this._writeStdin(proc, 'goal_clear', `${JSON.stringify(request)}\n`);
     const response = await this._awaitResponse(proc, requestId, 'thread/goal/clear');
     return response.result?.cleared === true;
+  }
+
+  async compactThread(proc: ChildProcess, sessionId: string): Promise<boolean> {
+    const threadId = this._processThreadIds.get(proc);
+    if (!threadId) {
+      throw new Error('Codex thread is not ready');
+    }
+
+    const requestId = this._nextRequestId++;
+    const request: JsonRpcRequest = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'thread/compact/start',
+      params: { threadId },
+    };
+
+    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/compact/start');
+    this._writeStdin(proc, 'compact_start', `${JSON.stringify(request)}\n`);
+    await this._awaitResponse(proc, requestId, 'thread/compact/start');
+    logger.info('CodexAdapter: sent thread/compact/start', { sessionId, threadId });
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -1003,11 +1026,12 @@ export class CodexAdapter implements CliProvider {
    * Performs the Codex app-server initialization handshake:
    *  1. Writes initialize request (id=1)
    *  2. Awaits success response with id=1
-   *  3. Determines thread method: thread/resume (if options.resume && options.threadId)
+   *  3. Writes initialized notification
+   *  4. Determines thread method: thread/resume (if options.resume && options.threadId)
    *     or thread/start (new session or fallback when threadId is missing)
-   *  4. Writes the thread request (id=2)
-   *  5. Awaits response with id=2 and extracts threadId
-   *  6. Stores threadId on the protocol parser for the given sessionId
+   *  5. Writes the thread request (id=2)
+   *  6. Awaits response with id=2 and extracts threadId
+   *  7. Stores threadId on the protocol parser for the given sessionId
    *
    * Uses a local nextId counter (starting at 1) to avoid interleaving with the
    * singleton this._nextRequestId used by sendMessage / sendInterrupt.
@@ -1044,7 +1068,15 @@ export class CodexAdapter implements CliProvider {
     await this._awaitResponse(proc, initId, 'initialize', startupTimeoutMs);
     logger.info('CodexAdapter: initialize handshake complete', { sessionId });
 
-    // Step 3: Determine whether to resume an existing thread or start a new one
+    // Step 3: Confirm the initialize handshake per Codex app-server protocol.
+    const initializedNotification: JsonRpcNotification = {
+      jsonrpc: '2.0',
+      method: 'initialized',
+    };
+    this._writeStdin(proc, 'handshake_initialized', `${JSON.stringify(initializedNotification)}\n`);
+    logger.info('CodexAdapter: sent initialized notification', { sessionId });
+
+    // Step 4: Determine whether to resume an existing thread or start a new one
     const isResume = options?.resume === true && !!options?.threadId;
 
     if (options?.resume === true && !options?.threadId) {
@@ -1075,7 +1107,7 @@ export class CodexAdapter implements CliProvider {
       threadParams.sandbox = accessConfig.sandboxMode;
     }
 
-    // Step 4: Send thread/start or thread/resume request
+    // Step 5: Send thread/start or thread/resume request
     const threadReqId = nextId++;
     const threadRequest: JsonRpcRequest = {
       jsonrpc: '2.0',
@@ -1088,7 +1120,7 @@ export class CodexAdapter implements CliProvider {
     this._writeStdin(proc, `handshake_${threadMethod}`, `${JSON.stringify(threadRequest)}\n`);
     logger.info(`CodexAdapter: sent ${threadMethod} request`, { sessionId, id: threadReqId });
 
-    // Step 5: Await thread response and extract threadId
+    // Step 6: Await thread response and extract threadId
     const threadResponse = await this._awaitResponse(proc, threadReqId, threadMethod, startupTimeoutMs);
     const activeModel = extractCodexActiveModel(threadResponse);
     if (activeModel) {
@@ -1099,7 +1131,7 @@ export class CodexAdapter implements CliProvider {
       codexProtocolParser.setSessionModel(sessionId, activeModel);
     }
 
-    // Step 6: Store threadId returned by server (at result.thread.id or result.threadId)
+    // Step 7: Store threadId returned by server (at result.thread.id or result.threadId)
     const serverThreadId = threadResponse?.result?.thread?.id ?? threadResponse?.result?.threadId;
     if (serverThreadId) {
       const tid = String(serverThreadId);

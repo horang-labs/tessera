@@ -112,6 +112,12 @@ interface SessionGoalActionOptions extends SessionActionOptions {
   update?: SessionGoalUpdate;
 }
 
+interface SessionCompactActionOptions extends SessionActionOptions {
+  displayContent?: string;
+  sessionId: string;
+  spawnConfig?: SessionSpawnConfig;
+}
+
 interface ProcessManagerControlOptions extends SessionActionOptions {
   action: (sessionId: string) => boolean;
   errorCode: string;
@@ -538,7 +544,51 @@ export async function clearSessionGoalFromWebSocket({
   }
 }
 
+export async function compactSessionFromWebSocket({
+  displayContent,
+  sendToUser,
+  sessionId,
+  spawnConfig,
+  userId,
+}: SessionCompactActionOptions): Promise<void> {
+  try {
+    const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
+    if (!ok) return;
+
+    recordCompactCommandDisplayContent(sessionId, displayContent);
+    const compacted = await processManager.compactSession(sessionId);
+    if (!compacted) {
+      sendToUser(userId, {
+        type: 'error',
+        sessionId,
+        code: 'session_compact_unavailable',
+        message: 'This provider does not support manual compaction.',
+      });
+      return;
+    }
+
+    logger.info({ sessionId, userId }, 'Session compaction requested');
+  } catch (err) {
+    logger.error({ sessionId, userId, error: err }, 'Failed to compact session');
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'session_compact_failed',
+      message: `Failed to compact session: ${(err as Error).message}`,
+    });
+  }
+}
+
 function recordGoalCommandDisplayContent(sessionId: string, displayContent?: string): void {
+  const trimmed = displayContent?.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  sessionHistory.recordUserMessage(sessionId, trimmed);
+}
+
+function recordCompactCommandDisplayContent(sessionId: string, displayContent?: string): void {
   const trimmed = displayContent?.trim();
   if (!trimmed) {
     return;
