@@ -1,6 +1,6 @@
 {
   "name": "@horang-labs/tessera",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Open-source web and desktop workspace for AI coding agents",
   "private": false,
   "license": "AGPL-3.0-only",
