@@ -3,6 +3,7 @@
 import { AlertCircle, FileText, FolderTree, LoaderCircle, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { openWorkspaceFileTab } from "@/lib/workspace-tabs/open-workspace-tab";
 import type { WorkspaceExplorerSessionRef } from "@/lib/workspace-tabs/special-session";
 import { cn } from "@/lib/utils";
@@ -61,9 +62,9 @@ export function WorkspaceExplorerTab({
 
     const loadFiles = async () => {
       try {
-        const response = await fetch(
+        const response = await fetchWithTimeout(
           `/api/sessions/${encodeURIComponent(explorerRef.sourceSessionId)}/files`,
-          { signal: abortController.signal },
+          { signal: abortController.signal, retries: 1 },
         );
         const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
         if (!response.ok) throw new Error("Failed to load files.");
@@ -71,7 +72,9 @@ export function WorkspaceExplorerTab({
         setTruncated(Boolean(payload?.truncated));
       } catch (error) {
         if (abortController.signal.aborted) return;
-        setError(error instanceof Error ? error.message : "Failed to load files.");
+        setError(isTimeoutError(error)
+          ? "The file list did not load in time."
+          : error instanceof Error ? error.message : "Failed to load files.");
       } finally {
         if (!abortController.signal.aborted) setLoading(false);
       }

@@ -19,6 +19,7 @@ import {
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
+import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import {
   copyText,
   toAbsoluteWorkspacePath,
@@ -180,9 +181,9 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
 
     const loadFiles = async () => {
       try {
-        const response = await fetch(
+        const response = await fetchWithTimeout(
           `/api/sessions/${encodeURIComponent(sessionId)}/files`,
-          { signal: abortController.signal },
+          { signal: abortController.signal, retries: 1 },
         );
         const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
         if (!response.ok) throw new Error("Failed to load files.");
@@ -197,7 +198,9 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
         if (abortController.signal.aborted) return;
         setState({
           loading: false,
-          error: error instanceof Error ? error.message : "Failed to load files.",
+          error: isTimeoutError(error)
+            ? "The file list did not load in time."
+            : error instanceof Error ? error.message : "Failed to load files.",
           truncated: false,
         });
       }
