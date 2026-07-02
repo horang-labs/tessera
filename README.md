@@ -4,7 +4,10 @@
 
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
 [![npm](https://img.shields.io/npm/v/@horang-labs/tessera?label=npm)](https://www.npmjs.com/package/@horang-labs/tessera)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](#license)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](#license)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/kP8vz8eud)
+
+> 💬 **Come hang out on our [Discord](https://discord.gg/kP8vz8eud)!** Feel free to drop by — if you share anything that feels rough or could be better, we'd really appreciate it.
 
 Tessera helps you run Claude Code, Codex, and OpenCode side by side without losing track of sessions, files, branches, diffs, or pull requests.
 
@@ -92,18 +95,6 @@ Download from [GitHub Releases](https://github.com/horang-labs/tessera/releases)
 | Linux beta | `.deb` |
 
 Windows builds are not code-signed yet, so SmartScreen may show an unknown-publisher warning. macOS builds are signed and notarized with Apple Developer ID.
-
-Release downloads, excluding npm installs, as of 2026-05-15 00:28 UTC:
-
-| Version | Windows | macOS | Linux | Total |
-|---------|--------:|------:|------:|------:|
-| 0.1.0 | 8 | 6 | 0 | 14 |
-| 0.1.1 | 14 | 13 | 0 | 27 |
-| 0.1.2 | 6 | 9 | 1 | 16 |
-| 0.1.3 | 24 | 21 | 5 | 50 |
-| 0.1.4 | 30 | 27 | 2 | 59 |
-| 0.1.5 | 27 | 62 | 9 | 98 |
-| **Total** | **109** | **138** | **17** | **264** |
 
 ### Browser runtime
 
@@ -288,7 +279,7 @@ Please open a [GitHub Issue](https://github.com/horang-labs/tessera/issues) with
 
 ## License
 
-Tessera is open source under the Apache License 2.0 (`Apache-2.0`).
+Tessera is open source under the GNU Affero General Public License v3.0 (`AGPL-3.0`).
 
 Copyright (c) 2026 Horang Labs, Inc.
 

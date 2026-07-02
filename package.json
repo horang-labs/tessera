@@ -3,7 +3,7 @@
   "version": "0.1.8",
   "description": "Open-source web and desktop workspace for AI coding agents",
   "private": false,
-  "license": "Apache-2.0",
+  "license": "AGPL-3.0-only",
   "author": {
     "name": "Horang Labs, Inc."
   },
