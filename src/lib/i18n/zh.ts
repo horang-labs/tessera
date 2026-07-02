@@ -178,6 +178,7 @@ export const zh: I18nMessages = {
     },
     effort: {
       readOnlyTooltip: '会话运行中无法更改，请停止会话后再更改',
+      requiresRestartTooltip: '仅在会话启动时生效。如需使用，请停止会话后重新开始',
     },
     agentEnv: {
       label: '代理环境',

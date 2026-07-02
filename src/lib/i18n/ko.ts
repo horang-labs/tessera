@@ -178,6 +178,7 @@ export const ko: I18nMessages = {
     },
     effort: {
       readOnlyTooltip: '세션 실행 중에는 변경할 수 없습니다. 중지 후 변경하세요',
+      requiresRestartTooltip: '세션 시작 시에만 적용됩니다. 사용하려면 세션을 중지한 뒤 다시 시작하세요',
     },
     agentEnv: {
       label: '에이전트 환경',

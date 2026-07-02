@@ -69,6 +69,34 @@ test('extractClaudeModels parses a valid Worker document', () => {
   assert.equal(result.models[0].supportedReasoningEfforts.length, 2);
 });
 
+test('normalization stamps requiresRestart on max (spawn-only) unless the Worker overrides it', () => {
+  // `max` only exists as the spawn-only --effort flag (the apply_flag_settings
+  // effortLevel enum stops at xhigh), so the client stamps it during normalization
+  // rather than expecting the remote catalog to know about CLI transport limits.
+  const result = extractClaudeModels({
+    version: 3,
+    providers: {
+      'claude-code': {
+        models: [{
+          value: 'claude-opus-4-8',
+          label: 'claude-opus-4-8',
+          isDefault: false,
+          supportedReasoningEfforts: [
+            { value: 'high', label: 'High', description: '' },
+            { value: 'max', label: 'Max', description: '' },
+            { value: 'xhigh', label: 'Extra High', description: '', requiresRestart: false },
+          ],
+        }],
+      },
+    },
+  });
+  assert.ok(result);
+  const efforts = result.models[0].supportedReasoningEfforts;
+  assert.equal(efforts.find((e) => e.value === 'high')?.requiresRestart, undefined);
+  assert.equal(efforts.find((e) => e.value === 'max')?.requiresRestart, true);
+  assert.equal(efforts.find((e) => e.value === 'xhigh')?.requiresRestart, false);
+});
+
 test('extractClaudeModels rejects a missing/invalid version', () => {
   assert.equal(extractClaudeModels({ providers: { 'claude-code': { models: [] } } }), null);
   assert.equal(
