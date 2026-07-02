@@ -50,6 +50,7 @@ next-env.d.ts
 .claude/
 aidlc-docs/
 prd-doc/
+prd-docs/
 /.superpowers/
 
 # Worktrees
