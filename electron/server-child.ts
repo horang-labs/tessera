@@ -19,6 +19,8 @@ import { installTaskPrStatusBroadcast, uninstallTaskPrStatusBroadcast } from '..
 import { installSessionPrStatusBroadcast, uninstallSessionPrStatusBroadcast } from '../src/lib/github/session-pr-broadcast';
 import { prewarmCliStatusSnapshot } from '../src/lib/cli/provider-status-prewarm';
 import { snapshotTelemetryStartupDataState } from '../src/lib/telemetry/server-state';
+import { setModelConfigBroadcast, triggerModelConfigRefresh } from '../src/lib/model-config/refresh';
+import { ensureRemoteModelConfigLoaded } from '../src/lib/model-config/remote-config';
 import logger from '../src/lib/logger';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 
@@ -111,7 +113,10 @@ if (isElectronChild) {
 logStartup('debug', `Server child starting (cwd=${process.cwd()}, dir=${dir}, port=${port})`);
 
 initDatabase().then(() => {
-  logStartup('debug', 'DB initialized, calling ensureRSAKeys...');
+  logStartup('debug', 'DB initialized, loading model config cache...');
+  return ensureRemoteModelConfigLoaded();
+}).then(() => {
+  logStartup('debug', 'Model config cache loaded, calling ensureRSAKeys...');
   return ensureRSAKeys();
 }).then(async () => {
   logStartup('debug', 'RSA keys ensured, creating server and calling app.prepare...');
@@ -138,6 +143,11 @@ initDatabase().then(() => {
       return getAgentEnvironment(userId);
     });
     rateLimitPoller.start();
+
+    // Model config: packaged Electron uses this child process instead of server.ts,
+    // so it must run the same startup refresh path.
+    setModelConfigBroadcast((msg) => wsServer.broadcast(msg));
+    void triggerModelConfigRefresh('launch');
 
     // Wire PR sync broadcasts and start the background PR poller. Without
     // these the in-process subscribe callbacks on syncTaskPr/syncSessionPr
