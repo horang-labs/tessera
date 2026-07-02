@@ -253,6 +253,14 @@ export class WebSocketClient {
     this.sendRequest('cancel_generation', { sessionId });
   }
 
+  compactSession(sessionId: string, spawnConfig?: SessionSpawnConfig, displayContent?: string) {
+    this.sendRequest('compact_session', {
+      sessionId,
+      ...(spawnConfig && { spawnConfig }),
+      ...(displayContent && { displayContent }),
+    });
+  }
+
   setSessionGoal(
     sessionId: string,
     update: SessionGoalUpdate,
