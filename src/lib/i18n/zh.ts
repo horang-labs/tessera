@@ -75,6 +75,8 @@ export const zh: I18nMessages = {
     inactivePanelDimming: '非活跃面板变暗',
     showProviderIcons: '显示提供者图标',
     showProviderIconsDesc: '在列表和看板项目中显示 CLI 提供者标记。',
+    showRecentWork: '显示"最近工作"区域',
+    showRecentWorkDesc: '在侧边栏顶部显示"最近工作"区域。',
     enterKey: {
       label: 'Enter 键行为',
       send: 'Enter = 发送',

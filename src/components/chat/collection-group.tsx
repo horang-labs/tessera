@@ -187,6 +187,7 @@ export interface CollectionGroupProps {
   groupIdOverride?: string;
   headerLabel?: string;
   hideHeaderActions?: boolean;
+  disableAutoExpand?: boolean;
 }
 
 export const CollectionGroup = memo(function CollectionGroup({
@@ -235,6 +236,7 @@ export const CollectionGroup = memo(function CollectionGroup({
   groupIdOverride,
   headerLabel,
   hideHeaderActions = false,
+  disableAutoExpand = false,
 }: CollectionGroupProps) {
   const { t } = useI18n();
   const isUncategorized = collection === null && !groupIdOverride;
@@ -289,7 +291,7 @@ export const CollectionGroup = memo(function CollectionGroup({
   });
 
   useEffect(() => {
-    if (hideHeader) return;
+    if (hideHeader || disableAutoExpand) return;
     if (activeSessionId && collapsed && collectionGroupContainsSession({ tasks, chats }, activeSessionId)) {
       setCollectionCollapsed(collectionScopeId, false);
     }

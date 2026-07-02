@@ -15,6 +15,7 @@ import { RecentWorkSection } from './recent-work-section';
 import { MoveProjectDialog } from './move-project-dialog';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { useBoardStore } from '@/stores/board-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useChatStore } from '@/stores/chat-store';
 import { toast } from '@/stores/notification-store';
@@ -591,7 +592,11 @@ export function Sidebar() {
 
   const { handleSessionClick, handleSessionDoubleClick } = useSessionClickHandlers({ orderedIds });
 
+  const showRecentWork = useSettingsStore((state) => state.settings.showRecentWork);
+
   const recentWorkItems = useMemo(() => {
+    if (!showRecentWork) return [];
+
     const scopedProjects = isAllMode
       ? projects
       : selectedProject
@@ -603,7 +608,7 @@ export function Sidebar() {
       tasksByProject,
       limit: 8,
     });
-  }, [isAllMode, projects, selectedProject, tasksByProject]);
+  }, [isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
 
   const collectionGroupScopeKeys = useMemo(() => {
     if (!selectedProject || !visibleCollectionGroups) return [];
@@ -693,7 +698,7 @@ export function Sidebar() {
             <SidebarRunningFilterEmpty label={t('status.noRunningProcesses')} />
           ) : (
             <>
-              {!isRunningFilterActive && (
+              {!isRunningFilterActive && showRecentWork && (
                 <RecentWorkSection
                   items={recentWorkItems}
                   contextMenuCollections={EMPTY_COLLECTIONS}
@@ -782,26 +787,28 @@ export function Sidebar() {
               />
             ) : (
               <>
-                <RecentWorkSection
-                  items={recentWorkItems}
-                  contextMenuCollections={collections}
-                  projectId={selectedProject.encodedDir}
-                  projectDir={selectedProject.decodedPath}
-                  activeSessionId={selectionSessionId}
-                  onSessionClick={handleSessionClick}
-                  onSessionDoubleClick={handleSessionDoubleClick}
-                  onTaskRename={handleTaskEntityRename}
-                  onTaskDelete={handleTaskEntityDelete}
-                  onTaskStatusChange={handleTaskStatusChangeById}
-                  onChatStatusChange={handleChatStatusChangeById}
-                  onSessionRename={handleTaskRename}
-                  onSessionDelete={handleTaskDelete}
-                  onSessionArchive={handleTaskArchive}
-                  onSessionOpenInNewTab={handleTaskOpenInNewTab}
-                  onSessionGenerateTitle={handleTaskGenerateTitle}
-                  onSessionMoveToProject={handleTaskMoveToProject}
-                  onSessionStopProcess={handleTaskStopProcess}
-                />
+                {showRecentWork && (
+                  <RecentWorkSection
+                    items={recentWorkItems}
+                    contextMenuCollections={collections}
+                    projectId={selectedProject.encodedDir}
+                    projectDir={selectedProject.decodedPath}
+                    activeSessionId={selectionSessionId}
+                    onSessionClick={handleSessionClick}
+                    onSessionDoubleClick={handleSessionDoubleClick}
+                    onTaskRename={handleTaskEntityRename}
+                    onTaskDelete={handleTaskEntityDelete}
+                    onTaskStatusChange={handleTaskStatusChangeById}
+                    onChatStatusChange={handleChatStatusChangeById}
+                    onSessionRename={handleTaskRename}
+                    onSessionDelete={handleTaskDelete}
+                    onSessionArchive={handleTaskArchive}
+                    onSessionOpenInNewTab={handleTaskOpenInNewTab}
+                    onSessionGenerateTitle={handleTaskGenerateTitle}
+                    onSessionMoveToProject={handleTaskMoveToProject}
+                    onSessionStopProcess={handleTaskStopProcess}
+                  />
+                )}
                 {visibleCollectionGroups.map((group, groupIdx) => {
                   const colId = group.collectionId;
                   const collection = colId ? collections.find((c) => c.id === colId) ?? null : null;

@@ -16,6 +16,7 @@ export default function AppearanceSettings() {
   const fontSize = useSettingsStore((state) => state.settings.fontSize);
   const inactivePanelDimming = useSettingsStore((state) => state.settings.inactivePanelDimming);
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
+  const showRecentWork = useSettingsStore((state) => state.settings.showRecentWork);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
 
   // Theme and font scale are applied globally by ThemeInitializer.
@@ -93,6 +94,23 @@ export default function AppearanceSettings() {
           </span>
           <span className="mt-0.5 block text-xs leading-5 text-(--text-muted)">
             {t('settings.showProviderIconsDesc')}
+          </span>
+        </span>
+      </label>
+
+      <label className="flex items-start gap-3 rounded-md border border-(--divider) bg-(--sidebar-bg) px-3 py-2.5">
+        <input
+          type="checkbox"
+          checked={showRecentWork}
+          onChange={(e) => updateSettings({ showRecentWork: e.target.checked })}
+          className="mt-0.5 h-4 w-4 accent-(--accent)"
+        />
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-(--text-secondary)">
+            {t('settings.showRecentWork')}
+          </span>
+          <span className="mt-0.5 block text-xs leading-5 text-(--text-muted)">
+            {t('settings.showRecentWorkDesc')}
           </span>
         </span>
       </label>
