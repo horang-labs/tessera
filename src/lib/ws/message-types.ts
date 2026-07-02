@@ -322,6 +322,7 @@ export type AppServerMessage =
   | { type: 'session_goal_updated'; sessionId: string; goal: SessionGoal }
   | { type: 'session_goal_cleared'; sessionId: string }
   | ({ type: 'rate_limit_update' } & ProviderRateLimitsSnapshot)
+  | { type: 'model_config_updated'; providerId: 'claude-code' }
   | {
       type: 'providers_list';
       requestId: string;

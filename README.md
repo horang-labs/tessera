@@ -228,6 +228,8 @@ Telemetry is limited to basic app usage duration. Tessera does not collect click
 
 Provider requests are handled by the Claude Code, Codex, or OpenCode CLIs installed on your machine. Tessera does not replace their authentication, billing, model access, or network behavior.
 
+On launch — and whenever a new Claude session is created — Tessera fetches the latest Claude model list from a first-party endpoint (cached under `~/.tessera/`; the cached copy is used if the request fails). Each request carries a random install id, the trigger (`launch` or `session`), and the app version, platform, arch, and channel, used only for coarse counts of active installs and created sessions — which the consent-gated PostHog telemetry above cannot measure. It never includes prompts, messages, file paths, repository names, IP addresses, or account details. These counts are independent of the in-app PostHog toggle; the endpoint can be overridden with the `TESSERA_MODEL_CONFIG_URL` environment variable.
+
 ## Tech Stack
 
 | Area | Stack |
