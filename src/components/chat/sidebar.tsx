@@ -157,7 +157,7 @@ function ProjectListContextHeader({
     >
       <div className="flex min-w-0 items-center gap-2">
         <div
-          className="grid h-6 min-w-0 flex-1 grid-cols-[0.55fr_1.45fr] rounded-md border border-(--divider) bg-(--sidebar-bg) p-px"
+          className="grid h-6 min-w-0 flex-1 grid-cols-2 rounded-md border border-(--divider) bg-(--sidebar-bg) p-px"
           role="group"
           aria-label="Session filters"
           data-testid="sidebar-filter-bar"
