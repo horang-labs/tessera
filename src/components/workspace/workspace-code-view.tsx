@@ -1,7 +1,7 @@
 "use client";
 
-import { AlertCircle, Binary, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, LoaderCircle, X } from "lucide-react";
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { AlertCircle, Binary, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import { PreviewMarkdown } from "@/components/chat/preview-markdown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -143,10 +143,12 @@ function EmptyState({
   title,
   body,
   icon = "file",
+  action,
 }: {
   title: string;
   body: string;
   icon?: "file" | "error" | "binary";
+  action?: ReactNode;
 }) {
   const Icon = icon === "error" ? AlertCircle : icon === "binary" ? Binary : FileCode2;
   return (
@@ -157,7 +159,45 @@ function EmptyState({
         </div>
         <p className="text-sm font-medium text-(--text-primary)">{title}</p>
         <p className="mt-1 text-xs leading-5 text-(--text-muted)">{body}</p>
+        {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
       </div>
+    </div>
+  );
+}
+
+function PendingStateHeader({
+  mode,
+  path,
+  onClose,
+}: {
+  mode: "file" | "diff";
+  path: string;
+  onClose?: () => void;
+}) {
+  return (
+    <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-(--chat-header-border) px-4">
+      <div className="flex min-w-0 items-center gap-2">
+        {mode === "diff" ? (
+          <GitCompare className="h-4 w-4 shrink-0 text-(--text-muted)" />
+        ) : (
+          <FileCode2 className="h-4 w-4 shrink-0 text-(--text-muted)" />
+        )}
+        <p className="truncate font-mono text-sm text-(--text-primary)">{path}</p>
+      </div>
+      {onClose ? (
+        <Tooltip content="Close">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={onClose}
+            aria-label="Close file panel"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </Tooltip>
+      ) : null}
     </div>
   );
 }
@@ -168,6 +208,7 @@ export function WorkspaceCodeView({
   loading,
   mode,
   onClose,
+  onRetry,
   path,
   sourceSessionId,
 }: {
@@ -176,6 +217,7 @@ export function WorkspaceCodeView({
   loading: boolean;
   mode: "file" | "diff";
   onClose?: () => void;
+  onRetry?: () => void;
   path: string;
   sourceSessionId?: string;
 }) {
@@ -226,14 +268,40 @@ export function WorkspaceCodeView({
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <LoaderCircle className="h-5 w-5 animate-spin text-(--text-muted)" />
+      <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
+        <PendingStateHeader mode={mode} path={path} onClose={onClose} />
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <LoaderCircle className="h-5 w-5 animate-spin text-(--text-muted)" />
+        </div>
       </div>
     );
   }
 
   if (error) {
-    return <EmptyState title="Unable to open file" body={error} icon="error" />;
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
+        <PendingStateHeader mode={mode} path={path} onClose={onClose} />
+        <div className="min-h-0 flex-1">
+          <EmptyState
+            title="Unable to open file"
+            body={error}
+            icon="error"
+            action={onRetry ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onRetry}
+                aria-label={`Retry loading ${path}`}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span>Retry</span>
+              </Button>
+            ) : null}
+          />
+        </div>
+      </div>
+    );
   }
 
   if (!data) {
