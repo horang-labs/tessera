@@ -155,6 +155,17 @@ const CLAUDE_EFFORT_WITH_ULTRACODE: ProviderReasoningEffortOption[] = [
 
 export const CLAUDE_MODELS: ProviderModelOption[] = [
   {
+    // Fable 5 has a 1M context window by default (no separate [1m] variant) and
+    // does not support fast mode (Opus 4.8/4.7 only) — so no supportsFastMode.
+    // Thinking is always on; effort is the only depth control, and xhigh support
+    // means ultracode is exposed.
+    value: 'claude-fable-5',
+    label: 'claude-fable-5',
+    isDefault: false,
+    defaultReasoningEffort: 'auto',
+    supportedReasoningEfforts: CLAUDE_EFFORT_WITH_ULTRACODE,
+  },
+  {
     value: 'claude-opus-4-8',
     label: 'claude-opus-4-8',
     isDefault: false,
