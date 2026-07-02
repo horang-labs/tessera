@@ -75,6 +75,8 @@ export const en: I18nMessages = {
     inactivePanelDimming: 'Inactive Panel Dimming',
     showProviderIcons: 'Show provider icons',
     showProviderIconsDesc: 'Show the CLI provider mark in list and kanban items.',
+    showRecentWork: 'Show Recent Work section',
+    showRecentWorkDesc: 'Show a "Recent Work" section at the top of the sidebar.',
     enterKey: {
       label: 'Enter Key Behavior',
       send: 'Enter = Send',
@@ -176,6 +178,7 @@ export const en: I18nMessages = {
     },
     effort: {
       readOnlyTooltip: 'Cannot change while a session is running. Stop the session to change.',
+      requiresRestartTooltip: 'Only applies when a session starts. Stop the session and start again to use it.',
     },
     agentEnv: {
       label: 'Agent Environment',

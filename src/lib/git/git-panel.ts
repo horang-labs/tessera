@@ -28,6 +28,7 @@ import type {
 
 const COMMAND_MAX_BUFFER = 4 * 1024 * 1024;
 const MAX_SYNTHETIC_DIFF_BYTES = 64 * 1024;
+const COMMAND_TIMEOUT_MS = 10_000;
 
 export class GitPanelError extends Error {
   readonly code:
@@ -35,7 +36,8 @@ export class GitPanelError extends Error {
     | "missing_work_dir"
     | "not_git_repo"
     | "invalid_file_path"
-    | "command_failed";
+    | "command_failed"
+    | "command_timeout";
   readonly status: number;
 
   constructor(code: GitPanelError["code"], message: string, status = 500) {
@@ -54,7 +56,9 @@ async function runCommand(
   return new Promise((resolve, reject) => {
     const options: SpawnOptions = {
       cwd,
-      env: process.env,
+      // stdin is ignored, so a credential prompt would block the child
+      // forever; tell git to fail instead of prompting.
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     };
@@ -63,6 +67,26 @@ async function runCommand(
     const stderrChunks: Buffer[] = [];
     let stdoutLength = 0;
     let stderrLength = 0;
+
+    // Reject on our own timer instead of spawn's `timeout` option: waiting
+    // for "close" is not enough, because a wedged grandchild (hook,
+    // credential helper, fsmonitor) inherits the stdio pipes and keeps
+    // "close" from firing even after the command itself is killed.
+    const killTimer = setTimeout(() => {
+      reject(new GitPanelError(
+        "command_timeout",
+        `${command} did not respond within ${COMMAND_TIMEOUT_MS / 1000}s and was terminated`,
+        504,
+      ));
+      try {
+        // detached spawn makes the command a group leader on POSIX; kill the
+        // whole group so wedged grandchildren die with it.
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    }, COMMAND_TIMEOUT_MS);
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutLength += chunk.length;
@@ -74,6 +98,7 @@ async function runCommand(
     });
 
     child.on("close", (code) => {
+      clearTimeout(killTimer);
       const stdout = Buffer.concat(stdoutChunks).toString("utf8").trimEnd();
       const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
 
@@ -86,6 +111,7 @@ async function runCommand(
     });
 
     child.on("error", (error) => {
+      clearTimeout(killTimer);
       reject(new GitPanelError("command_failed", error.message || `Failed to run ${command}`, 500));
     });
   });
@@ -99,7 +125,11 @@ async function runOptionalCommand(
 ): Promise<string | null> {
   try {
     return await runCommand(command, args, cwd, agentEnvironment);
-  } catch {
+  } catch (error) {
+    // An expected failure (no upstream, not a repo, ...) degrades to null,
+    // but a timed-out command must surface as 504 — swallowing it would
+    // misreport a hung git as an empty result (e.g. 404 "not in change set").
+    if (error instanceof GitPanelError && error.status === 504) throw error;
     return null;
   }
 }

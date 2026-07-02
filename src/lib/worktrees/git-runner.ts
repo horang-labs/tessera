@@ -9,8 +9,22 @@ export interface GitRunResult {
 
 export type GitRunner = (args: string[]) => Promise<GitRunResult>;
 
-export function createGitRunner(agentEnvironment: AgentEnvironment): GitRunner {
-  return (args) => runGitCommand(normalizeGitPathArgs(args, agentEnvironment), agentEnvironment);
+export interface GitRunnerOptions {
+  // Kill the command (and its process group) after this many milliseconds.
+  // Only opt in for read-only queries; long-running operations like
+  // `worktree add` on large repos legitimately exceed small deadlines.
+  timeoutMs?: number;
+}
+
+export function createGitRunner(
+  agentEnvironment: AgentEnvironment,
+  runnerOptions?: GitRunnerOptions,
+): GitRunner {
+  return (args) => runGitCommand(
+    normalizeGitPathArgs(args, agentEnvironment),
+    agentEnvironment,
+    runnerOptions,
+  );
 }
 
 function normalizeGitPathArgs(args: string[], agentEnvironment: AgentEnvironment): string[] {
@@ -31,14 +45,33 @@ function looksLikeFilesystemPath(value: string): boolean {
   );
 }
 
-function runGitCommand(args: string[], agentEnvironment: AgentEnvironment): Promise<GitRunResult> {
+function runGitCommand(
+  args: string[],
+  agentEnvironment: AgentEnvironment,
+  runnerOptions?: GitRunnerOptions,
+): Promise<GitRunResult> {
   return new Promise((resolve, reject) => {
     const options: SpawnOptions = {
-      env: process.env,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     };
     const child = spawnCli('git', args, options, agentEnvironment);
+
+    // Reject on a timer rather than spawn's `timeout`: a wedged grandchild
+    // (hook, fsmonitor) inherits the stdio pipes and keeps 'close' from
+    // firing even after git itself is killed.
+    const killTimer = runnerOptions?.timeoutMs
+      ? setTimeout(() => {
+        reject(new Error(`git did not respond within ${runnerOptions.timeoutMs}ms and was terminated`));
+        try {
+          if (child.pid) process.kill(-child.pid, 'SIGKILL');
+          else child.kill('SIGKILL');
+        } catch {
+          child.kill('SIGKILL');
+        }
+      }, runnerOptions.timeoutMs)
+      : null;
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -47,6 +80,7 @@ function runGitCommand(args: string[], agentEnvironment: AgentEnvironment): Prom
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
     child.on('close', (code) => {
+      if (killTimer) clearTimeout(killTimer);
       const stdout = Buffer.concat(stdoutChunks).toString('utf8').trim();
       const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
 
@@ -59,6 +93,7 @@ function runGitCommand(args: string[], agentEnvironment: AgentEnvironment): Prom
     });
 
     child.on('error', (error) => {
+      if (killTimer) clearTimeout(killTimer);
       reject(error);
     });
   });

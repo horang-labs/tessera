@@ -95,6 +95,11 @@ export interface ChatState {
   // Messages by session
   messages: Map<string, EnhancedMessage[]>;
 
+  // Workflow cards the user has manually dismissed from the docked status bar,
+  // keyed by CLI task id (globally unique). Dismissal is UI-only and does not
+  // touch the underlying run.
+  dismissedWorkflowTaskIds: Set<string>;
+
   // Assistant text blocks currently waiting for text flush, keyed by session.
   // This drives only the inline streaming dots. It is intentionally separate
   // from turnInFlightBySession, which can stay true during thinking/tools.
@@ -224,6 +229,12 @@ export interface ChatState {
   }) => void;
   /** Replace a workflow card message (matched by id) with its merged next state. */
   updateWorkflowMessage: (sessionId: string, messageId: string, message: EnhancedMessage) => void;
+  /** Force-settle a session's still-running workflow cards — used when the CLI
+   *  process dies or the session is stopped without a terminal task_notification,
+   *  which would otherwise leave the card spinning as "running" forever. */
+  settleRunningWorkflows: (sessionId: string, status: 'completed' | 'failed') => void;
+  /** Hide a workflow card from the docked status bar (UI-only; keyed by task id). */
+  dismissWorkflowCard: (taskId: string) => void;
 }
 
 export function isTurnInFlight(state: ChatState, sessionId: string): boolean {
@@ -302,6 +313,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messageViewOverride: new Map(),
   translateQueue: new Map(),
   scrollPositions: new Map(),
+  dismissedWorkflowTaskIds: new Set(),
 
   isHistoryLoaded: (sessionId) => get().historyLoaded.has(sessionId),
 
@@ -837,5 +849,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const messages = new Map(state.messages);
       messages.set(sessionId, updatedMessages);
       return { messages };
+    }),
+
+  settleRunningWorkflows: (sessionId, status) =>
+    set((state) => {
+      const sessionMessages = state.messages.get(sessionId);
+      if (!sessionMessages) return state;
+      const now = new Date().toISOString();
+      let changed = false;
+      const updatedMessages = sessionMessages.map((m) => {
+        if (m.type !== 'workflow' || m.status !== 'running') return m;
+        changed = true;
+        return { ...m, status, endedAt: m.endedAt ?? now, rev: m.rev + 1 };
+      });
+      if (!changed) return state;
+      const messages = new Map(state.messages);
+      messages.set(sessionId, updatedMessages);
+      return { messages };
+    }),
+
+  dismissWorkflowCard: (taskId) =>
+    set((state) => {
+      if (state.dismissedWorkflowTaskIds.has(taskId)) return state;
+      const dismissedWorkflowTaskIds = new Set(state.dismissedWorkflowTaskIds);
+      dismissedWorkflowTaskIds.add(taskId);
+      return { dismissedWorkflowTaskIds };
     }),
 }));

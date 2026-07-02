@@ -73,6 +73,8 @@ export interface I18nMessages {
     inactivePanelDimming: string;
     showProviderIcons: string;
     showProviderIconsDesc: string;
+    showRecentWork: string;
+    showRecentWorkDesc: string;
     enterKey: {
       label: string;
       send: string;
@@ -174,6 +176,7 @@ export interface I18nMessages {
     };
     effort: {
       readOnlyTooltip: string;
+      requiresRestartTooltip: string;
     };
     agentEnv: {
       label: string;

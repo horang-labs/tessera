@@ -5,6 +5,12 @@ export interface ProviderReasoningEffortOption {
   value: string;
   label: string;
   description: string;
+  /**
+   * Effort levels that only take effect at spawn (e.g. Claude `max`: the CLI's
+   * apply_flag_settings effortLevel enum stops at xhigh and silently drops
+   * unknown values). Shown disabled in the selector while the session runs.
+   */
+  requiresRestart?: boolean;
 }
 
 export interface ProviderServiceTierOption {

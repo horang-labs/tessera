@@ -68,6 +68,14 @@ export function useWebSocket() {
     wsClient.cancelGeneration(sessionId);
   }, []);
 
+  const compactSession = useCallback((
+    sessionId: string,
+    spawnConfig?: SessionSpawnConfig,
+    displayContent?: string,
+  ) => {
+    wsClient.compactSession(sessionId, spawnConfig, displayContent);
+  }, []);
+
   const setSessionGoal = useCallback((
     sessionId: string,
     update: SessionGoalUpdate,
@@ -113,6 +121,7 @@ export function useWebSocket() {
     retrySession,
     sendInteractiveResponse,
     cancelGeneration,
+    compactSession,
     setSessionGoal,
     refreshSessionGoal,
     clearSessionGoal,

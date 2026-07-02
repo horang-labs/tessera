@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WorkspaceCodeView } from "@/components/workspace/workspace-code-view";
 import { extractGitPanelErrorMessage } from "@/components/git/git-panel-shared";
+import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { wsClient } from "@/lib/ws/client";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS } from "@/stores/panel-store";
 import type { GitDiffData } from "@/types/git";
@@ -15,6 +16,10 @@ interface WorkspaceFileTabState {
   error: string | null;
   data: WorkspaceFileData | GitDiffData | null;
 }
+
+const FILE_LOAD_TIMEOUT_MS = 3_000;
+const FILE_LOAD_TIMEOUT_MESSAGE =
+  "The file did not load in time. The workspace filesystem or git may be unresponsive.";
 
 function getFileUrl(ref: WorkspaceFileSessionRef): string {
   const sessionId = encodeURIComponent(ref.sourceSessionId);
@@ -68,11 +73,16 @@ export function WorkspaceFileTab({
     data: null,
   });
   const requestSeqRef = useRef(0);
+  const activeLoadsRef = useRef(0);
 
   const loadFile = useCallback(async (options?: {
     signal?: AbortSignal;
     silent?: boolean;
   }) => {
+    // A silent refresh must not supersede an in-flight load: bumping the
+    // sequence would discard that load's response while loading stays true.
+    if (options?.silent && activeLoadsRef.current > 0) return;
+
     const requestSeq = requestSeqRef.current + 1;
     requestSeqRef.current = requestSeq;
 
@@ -84,14 +94,18 @@ export function WorkspaceFileTab({
       });
     }
 
+    activeLoadsRef.current += 1;
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         getFileUrl({ type: "workspace-file", sourceSessionId, kind, path }),
-        { signal: options?.signal },
+        { signal: options?.signal, timeoutMs: FILE_LOAD_TIMEOUT_MS, retries: 1 },
       );
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         throw new Error(extractGitPanelErrorMessage(payload, "Failed to load file."));
+      }
+      if (payload === null) {
+        throw new Error("Failed to load file.");
       }
 
       if (requestSeqRef.current !== requestSeq) return;
@@ -102,11 +116,23 @@ export function WorkspaceFileTab({
       });
     } catch (error) {
       if (options?.signal?.aborted || requestSeqRef.current !== requestSeq) return;
-      setState({
-        loading: false,
-        error: error instanceof Error ? error.message : "Failed to load file.",
-        data: null,
-      });
+      const message = isTimeoutError(error)
+        ? FILE_LOAD_TIMEOUT_MESSAGE
+        : error instanceof Error ? error.message : "Failed to load file.";
+      if (options?.silent) {
+        // Keep showing current content when a background refresh fails.
+        setState((current) => (
+          current.data ? current : { loading: false, error: message, data: null }
+        ));
+      } else {
+        setState({
+          loading: false,
+          error: message,
+          data: null,
+        });
+      }
+    } finally {
+      activeLoadsRef.current -= 1;
     }
   }, [kind, path, sourceSessionId]);
 
@@ -176,6 +202,7 @@ export function WorkspaceFileTab({
           assignSession(panelId, null);
         }
       }}
+      onRetry={() => void loadFile()}
       path={fileRef.path}
       sourceSessionId={sourceSessionId}
     />

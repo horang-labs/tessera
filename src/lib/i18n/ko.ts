@@ -75,6 +75,8 @@ export const ko: I18nMessages = {
     inactivePanelDimming: '비활성 패널 흐리기',
     showProviderIcons: '프로바이더 아이콘 표시',
     showProviderIconsDesc: '리스트와 칸반 항목에 CLI 프로바이더 마크를 표시합니다.',
+    showRecentWork: '최근 작업 섹션 표시',
+    showRecentWorkDesc: '사이드바 상단에 "최근 작업" 섹션을 표시합니다.',
     enterKey: {
       label: 'Enter 키 동작',
       send: 'Enter = 전송',
@@ -176,6 +178,7 @@ export const ko: I18nMessages = {
     },
     effort: {
       readOnlyTooltip: '세션 실행 중에는 변경할 수 없습니다. 중지 후 변경하세요',
+      requiresRestartTooltip: '세션 시작 시에만 적용됩니다. 사용하려면 세션을 중지한 뒤 다시 시작하세요',
     },
     agentEnv: {
       label: '에이전트 환경',

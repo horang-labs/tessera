@@ -37,6 +37,15 @@ interface PendingToolCall {
   previousTodos?: TodoItem[];
 }
 
+interface ModelUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: number;
+  contextWindow?: number;
+}
+
 interface SessionState {
   pendingRequests: Map<number | string, PendingRequest>;
   pendingToolCalls: Map<string, PendingToolCall>;
@@ -49,6 +58,12 @@ interface SessionState {
   } | null;
   currentModel: string | null;
   lastTodoSnapshots: TodoItem[];
+  // session/prompt result usage is per-turn, but the usage store expects
+  // modelUsage to be cumulative (as Claude Code reports it) — accumulate here.
+  modelUsageTotals: Map<string, ModelUsageTotals>;
+  // usage_update's cost is cumulative across the OpenCode session; per-model
+  // cost is apportioned from its per-turn delta against this baseline.
+  lastSessionCostUsd: number;
 }
 
 const MAX_ACCUMULATED_TEXT_LENGTH = 100;
@@ -487,6 +502,11 @@ export class OpenCodeProtocolParser {
       return [];
     }
 
+    // usage_update carries no cache breakdown: `used` is input + cache-read
+    // combined (and excludes cache-write), so this snapshot understates the
+    // context and shows zero cache activity. It is still emitted because for
+    // some flows (e.g. ACP commands like compact) it is the only usage signal;
+    // prompt completion overwrites it with the accurate split right after.
     return [{
       serverMessage: {
         type: 'context_usage',
@@ -694,6 +714,24 @@ export class OpenCodeProtocolParser {
       });
     }
 
+    // The prompt result carries the accurate per-turn token split (the
+    // usage_update snapshot lumps cache reads into `used` and drops cache
+    // writes entirely) — overwrite the context snapshot with it.
+    if (usage) {
+      messages.push({
+        serverMessage: {
+          type: 'context_usage',
+          sessionId,
+          inputTokens: usage.inputTokens,
+          cacheCreationTokens: usage.cacheCreationTokens,
+          cacheReadTokens: usage.cacheReadTokens,
+          ...(usage.contextWindowSize !== undefined
+            ? { contextWindowSize: usage.contextWindowSize }
+            : {}),
+        },
+      });
+    }
+
     messages.push(
       {
         serverMessage: {
@@ -749,6 +787,8 @@ export class OpenCodeProtocolParser {
         latestUsageUpdate: null,
         currentModel: null,
         lastTodoSnapshots: [],
+        modelUsageTotals: new Map(),
+        lastSessionCostUsd: 0,
       };
       this.sessionStates.set(sessionId, state);
     }
@@ -1208,7 +1248,42 @@ function buildCompletedUsage(
   const cacheReadTokens = toNumber(usage.cachedReadTokens) ?? 0;
   const cacheCreationTokens = toNumber(usage.cachedWriteTokens) ?? 0;
   const contextWindowSize = state.latestUsageUpdate?.size;
-  const costUsd = state.latestUsageUpdate?.cost ?? 0;
+  // Session-cumulative (OpenCode reports totalSessionCost). After a process
+  // respawn the accumulator restarts at 0, so the first turn's delta absorbs
+  // the pre-respawn cost — per-model split degrades but the total stays right.
+  const sessionCostUsd = state.latestUsageUpdate?.cost ?? state.lastSessionCostUsd;
+  const turnCostUsd = Math.max(0, sessionCostUsd - state.lastSessionCostUsd);
+  state.lastSessionCostUsd = sessionCostUsd;
+
+  if (state.currentModel) {
+    const totals = state.modelUsageTotals.get(state.currentModel) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      costUsd: 0,
+    };
+    totals.inputTokens += inputTokens;
+    totals.outputTokens += outputTokens;
+    totals.cacheReadTokens += cacheReadTokens;
+    totals.cacheCreationTokens += cacheCreationTokens;
+    totals.costUsd += turnCostUsd;
+    if (contextWindowSize !== undefined) {
+      totals.contextWindow = contextWindowSize;
+    }
+    state.modelUsageTotals.set(state.currentModel, totals);
+  }
+
+  const modelUsage = [...state.modelUsageTotals.entries()].map(([model, totals]) => ({
+    model,
+    inputTokens: totals.inputTokens,
+    outputTokens: totals.outputTokens,
+    cacheReadInputTokens: totals.cacheReadTokens,
+    cacheCreationInputTokens: totals.cacheCreationTokens,
+    webSearchRequests: 0,
+    costUSD: totals.costUsd,
+    ...(totals.contextWindow !== undefined ? { contextWindow: totals.contextWindow } : {}),
+  }));
 
   return {
     inputTokens,
@@ -1218,20 +1293,9 @@ function buildCompletedUsage(
     durationMs,
     durationApiMs: 0,
     numTurns: 0,
-    costUsd,
+    costUsd: sessionCostUsd,
     ...(contextWindowSize !== undefined ? { contextWindowSize } : {}),
-    ...(state.currentModel ? {
-      modelUsage: [{
-        model: state.currentModel,
-        inputTokens,
-        outputTokens,
-        cacheReadInputTokens: cacheReadTokens,
-        cacheCreationInputTokens: cacheCreationTokens,
-        webSearchRequests: 0,
-        costUSD: costUsd,
-        ...(contextWindowSize !== undefined ? { contextWindow: contextWindowSize } : {}),
-      }],
-    } : {}),
+    ...(modelUsage.length > 0 ? { modelUsage } : {}),
   };
 }
 

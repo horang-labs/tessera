@@ -12,6 +12,7 @@ import {
   clearUnreadFromWebSocket,
   clearSessionGoalFromWebSocket,
   closeSessionFromWebSocket,
+  compactSessionFromWebSocket,
   createSessionFromWebSocket,
   refreshSessionGoalFromWebSocket,
   resumeSessionFromWebSocket,
@@ -208,6 +209,16 @@ export async function routeClientTransportMessage({
         userId,
         'cancel_generation requested',
       );
+      return;
+
+    case 'compact_session':
+      await compactSessionFromWebSocket({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        spawnConfig: message.spawnConfig,
+        displayContent: message.displayContent,
+      });
       return;
 
     case 'set_session_goal':

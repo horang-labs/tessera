@@ -11,7 +11,8 @@ import type {
   SkillAnalysis,
   SkillDetail,
 } from '@/lib/skill/skill-analysis-types';
-import { CLAUDE_MODELS } from '@/lib/cli/provider-session-option-definitions';
+import type { ProviderModelOption } from '@/lib/cli/provider-session-options';
+import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { SkillCard } from './skill-card';
 import {
   CategoryAccordion,
@@ -22,6 +23,7 @@ import {
 import { useI18n } from '@/lib/i18n';
 
 const EMPTY_FAVORITE_SKILLS: string[] = [];
+const EMPTY_MODELS: ProviderModelOption[] = [];
 
 type SkillDashboardTab = 'claude' | 'codex';
 
@@ -46,6 +48,10 @@ export function SkillDashboard() {
   const loadSettings = useSettingsStore((s) => s.load);
 
   useWebSocket();
+
+  // Remote-driven model list; empty until the config loads (there is no bundled fallback).
+  const { data: claudeOptions } = useProviderSessionOptions('claude-code');
+  const claudeModels = claudeOptions?.modelOptions ?? EMPTY_MODELS;
 
   const analysisStatus = useSkillAnalysisStore((s) => s.status);
   const analysisSkillCount = useSkillAnalysisStore((s) => s.skillCount);
@@ -82,10 +88,8 @@ export function SkillDashboard() {
       .catch(() => setIsLoading(false));
   }, [loadSettings]);
 
-  // Model selector
-  const [analysisModelChoice, setAnalysisModelChoice] = useState(
-    () => CLAUDE_MODELS.find((m) => m.isDefault)?.value ?? CLAUDE_MODELS[0].value,
-  );
+  // Model selector — seeded from the remote config's default (isDefault → first) once it loads.
+  const [analysisModelChoice, setAnalysisModelChoice] = useState('');
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
 
@@ -97,6 +101,12 @@ export function SkillDashboard() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [modelMenuOpen]);
+
+  useEffect(() => {
+    if (!analysisModelChoice && claudeModels.length > 0) {
+      setAnalysisModelChoice(claudeModels.find((m) => m.isDefault)?.value ?? claudeModels[0].value);
+    }
+  }, [claudeModels, analysisModelChoice]);
 
   const handleRefreshAnalysis = useCallback(() => {
     fetch('/api/skills/analyze', {
@@ -154,7 +164,7 @@ export function SkillDashboard() {
   );
 
   const modelDisplayName = analysisModel
-    ? (CLAUDE_MODELS.find((m) => m.value === analysisModel)?.label ?? analysisModel)
+    ? (claudeModels.find((m) => m.value === analysisModel)?.label ?? analysisModel)
     : 'Claude';
 
   const progressPct = (completedCount != null && totalCount && totalCount > 0)
@@ -199,12 +209,12 @@ export function SkillDashboard() {
                       'disabled:opacity-50 disabled:cursor-not-allowed',
                     )}
                   >
-                    {CLAUDE_MODELS.find((m) => m.value === analysisModelChoice)?.label ?? analysisModelChoice}
+                    {claudeModels.find((m) => m.value === analysisModelChoice)?.label ?? analysisModelChoice}
                     <ChevronDown className="w-3 h-3" />
                   </button>
                   {modelMenuOpen && (
                     <div className="absolute right-0 top-full mt-1 py-1 rounded-md shadow-lg z-20 min-w-[100px] border border-(--divider)" style={{ backgroundColor: 'var(--chat-header-bg)' }}>
-                      {CLAUDE_MODELS.map((m) => (
+                      {claudeModels.map((m) => (
                         <button
                           key={m.value}
                           onClick={() => { setAnalysisModelChoice(m.value); setModelMenuOpen(false); }}

@@ -199,18 +199,26 @@ export class ClaudeCodeAdapter implements CliProvider {
       args.push('--model', model);
     }
 
-    // Settings booleans (ultracode, fastMode) are session-scoped and merged into a
+    // Session-scoped settings (ultracode, effortLevel, fastMode) are merged into a
     // SINGLE --settings object — never pass --settings twice (the CLI would only honor
     // one). Ultracode is not an --effort value (the CLI rejects `--effort ultracode`)
     // and pairs xhigh effort with standing multi-agent orchestration. fastMode is
     // orthogonal to effort and enables Claude's high-speed serving on supported models;
     // the CLI silently ignores it on models without fast-mode support.
+    //
+    // Effort rides settings.effortLevel instead of the --effort flag: the flag
+    // outranks flag settings for the process lifetime, which would make later
+    // apply_flag_settings effort changes (sendSetReasoningEffort) silent no-ops.
+    // `max` is the exception — the effortLevel enum stops at xhigh, so max only
+    // exists as --effort; such sessions can't change effort until respawn.
     const settings: Record<string, unknown> = {};
     if (reasoningEffort === 'ultracode') {
       settings.ultracode = true;
-    } else if (reasoningEffort && reasoningEffort !== 'auto') {
-      // 'auto' or null → don't pass --effort, let CLI use its own default
+    } else if (reasoningEffort === 'max') {
       args.push('--effort', reasoningEffort);
+    } else if (reasoningEffort && reasoningEffort !== 'auto') {
+      // 'auto' or null → pass no effort, let CLI use its own default
+      settings.effortLevel = reasoningEffort;
     }
     if (fastMode === true) {
       settings.fastMode = true;

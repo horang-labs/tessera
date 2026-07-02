@@ -19,7 +19,7 @@ async function runGit(
   agentEnvironment: AgentEnvironment,
 ): Promise<string | null> {
   try {
-    const runGitCommand = createGitRunner(agentEnvironment);
+    const runGitCommand = createGitRunner(agentEnvironment, { timeoutMs: 10_000 });
     const { stdout } = await runGitCommand(['-C', workDir, ...args]);
     return stdout;
   } catch {

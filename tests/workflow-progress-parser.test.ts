@@ -86,3 +86,52 @@ test('task_progress carrying workflow_progress is recognized even without a seen
   assert.equal(events.length, 1);
   assert.equal(events[0].kind, 'progress');
 });
+
+function workflowEventsOf(parsed: ReturnType<typeof claudeCodeProtocolParser.handleProcessExit>): WorkflowEvent[] {
+  return parsed
+    .map((p) => p.serverMessage)
+    .filter((m): m is WorkflowEvent => !!m && (m as any).type === 'workflow_event') as WorkflowEvent[];
+}
+
+test('handleProcessExit synthesizes a failed terminal for a still-running workflow', () => {
+  const sid = 'exit1';
+  workflowEvents(sid, {
+    type: 'system', subtype: 'task_started', task_id: 'wfX',
+    task_type: 'local_workflow', workflow_name: 'probe',
+  });
+
+  const out = claudeCodeProtocolParser.handleProcessExit(sid, -1);
+  const wf = workflowEventsOf(out);
+  assert.equal(wf.length, 1, 'one synthesized terminal event');
+  assert.equal(wf[0].kind, 'updated');
+  assert.equal(wf[0].taskId, 'wfX');
+  assert.equal(wf[0].status, 'failed');
+  assert.ok(typeof wf[0].endTime === 'number' && wf[0].endTime > 0, 'endTime is stamped');
+  // The cli_down message is still emitted after the terminal event.
+  const kinds = out.map((p) => (p.serverMessage as any)?.type);
+  assert.ok(kinds.includes('cli_down'));
+  assert.ok(kinds.indexOf('workflow_event') < kinds.indexOf('cli_down'), 'terminal precedes cli_down');
+});
+
+test('handleProcessExit does not synthesize a terminal for an already-notified workflow', () => {
+  const sid = 'exit2';
+  workflowEvents(sid, {
+    type: 'system', subtype: 'task_started', task_id: 'wfY',
+    task_type: 'local_workflow', workflow_name: 'probe',
+  });
+  // Terminal notification removes it from tracking.
+  workflowEvents(sid, {
+    type: 'system', subtype: 'task_notification', task_id: 'wfY', status: 'completed',
+  });
+
+  const out = claudeCodeProtocolParser.handleProcessExit(sid, -1);
+  assert.equal(workflowEventsOf(out).length, 0, 'no terminal for a finished run');
+  assert.ok(out.some((p) => (p.serverMessage as any)?.type === 'cli_down'));
+});
+
+test('handleProcessExit emits only cli_down when no workflow is tracked', () => {
+  const out = claudeCodeProtocolParser.handleProcessExit('exit3', 0);
+  assert.equal(workflowEventsOf(out).length, 0);
+  assert.equal(out.length, 1);
+  assert.equal((out[0].serverMessage as any).type, 'cli_down');
+});

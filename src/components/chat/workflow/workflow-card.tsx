@@ -31,6 +31,10 @@ interface WorkflowCardProps {
   docked?: boolean;
   /** Initial collapsed state (e.g. completed runs start collapsed in the bar). */
   defaultCollapsed?: boolean;
+  /** When provided, renders a dismiss (X) button that hides the card from view.
+   *  Receives the card's taskId so the caller can pass a stable store action
+   *  directly (keeping WorkflowCard's memo intact). */
+  onDismiss?: (taskId: string) => void;
 }
 
 type AgentLifecycle = 'queued' | 'running' | 'done' | 'failed' | 'skipped' | 'stopped';
@@ -113,26 +117,39 @@ const WorkflowAgentRow = memo(function WorkflowAgentRow({
       : lifecycle === 'done' || lifecycle === 'failed' || lifecycle === 'skipped'
         ? formatSeconds(agent.durationMs)
         : null;
+  const hasDetail = Boolean(
+    (lifecycle === 'done' && agent.resultPreview) || lifecycle === 'failed' || agent.promptPreview,
+  );
 
   return (
-    <div className="group/agent flex items-center gap-2 rounded-md py-1 pl-2 pr-1 text-[11px] transition-colors hover:bg-(--sidebar-hover)">
+    <div className="group/agent flex min-w-0 items-center gap-2 overflow-hidden rounded-md py-1 pl-2 pr-1 text-[11px] transition-colors hover:bg-(--sidebar-hover)">
       <span className="shrink-0">{AGENT_ICON[lifecycle]}</span>
-      <span className="shrink-0 font-medium text-(--text-secondary)">{agent.label}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+        <span
+          className={cn(
+            'shrink-0 truncate font-medium text-(--text-secondary)',
+            hasDetail ? 'max-w-[45%]' : 'max-w-full',
+          )}
+          title={agent.label}
+        >
+          {agent.label}
+        </span>
 
-      {lifecycle === 'done' && agent.resultPreview ? (
-        <span className="flex min-w-0 items-center gap-1">
-          <span className="text-(--text-muted)">→</span>
-          <span className="truncate font-mono text-(--status-success-text)" title={agent.resultPreview}>
-            {agent.resultPreview}
+        {lifecycle === 'done' && agent.resultPreview ? (
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <span className="shrink-0 text-(--text-muted)">→</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-(--status-success-text)" title={agent.resultPreview}>
+              {agent.resultPreview}
+            </span>
           </span>
-        </span>
-      ) : lifecycle === 'failed' ? (
-        <span className="truncate text-(--status-error-text)">failed{agent.attempt && agent.attempt > 1 ? ` · ${agent.attempt} tries` : ''}</span>
-      ) : agent.promptPreview ? (
-        <span className="truncate italic text-(--text-muted)" title={agent.promptPreview}>
-          {agent.promptPreview}
-        </span>
-      ) : null}
+        ) : lifecycle === 'failed' ? (
+          <span className="min-w-0 flex-1 truncate text-(--status-error-text)">failed{agent.attempt && agent.attempt > 1 ? ` · ${agent.attempt} tries` : ''}</span>
+        ) : agent.promptPreview ? (
+          <span className="min-w-0 flex-1 truncate italic text-(--text-muted)" title={agent.promptPreview}>
+            {agent.promptPreview}
+          </span>
+        ) : null}
+      </span>
 
       <span className="ml-auto flex shrink-0 items-center gap-2.5 text-[10px] text-(--text-muted)">
         {model && <span className="font-mono opacity-80">{model}</span>}
@@ -180,8 +197,9 @@ export const WorkflowCard = memo(function WorkflowCard({
   alignWithMessageBody = true,
   docked = false,
   defaultCollapsed = false,
+  onDismiss,
 }: WorkflowCardProps) {
-  const { status, workflowName, description, phases, agents, logs, usage, outputFile } = message;
+  const { taskId, status, workflowName, description, phases, agents, logs, usage, outputFile } = message;
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   const liveElapsed = useLiveElapsed({ isActive: status === 'running', startTime: message.startedAt });
@@ -241,29 +259,43 @@ export const WorkflowCard = memo(function WorkflowCard({
         />
       </div>
 
-      {/* Header (click to collapse) */}
-      <button
-        type="button"
-        onClick={() => setCollapsed((v) => !v)}
-        aria-expanded={!collapsed}
-        className="flex w-full items-center gap-2 px-3 pb-1.5 pt-2 text-left"
-      >
-        {collapsed ? <ChevronRight className="h-3 w-3 shrink-0 text-(--text-muted)" /> : <ChevronDown className="h-3 w-3 shrink-0 text-(--text-muted)" />}
-        <WorkflowIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-        <span className="truncate text-xs font-semibold text-(--text-primary)">{workflowName}</span>
+      {/* Header (click to collapse; optional dismiss button on the right) */}
+      <div className="flex w-full items-center">
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          aria-expanded={!collapsed}
+          className={cn('flex min-w-0 flex-1 items-center gap-2 pb-1.5 pl-3 pt-2 text-left', !onDismiss && 'pr-3')}
+        >
+          {collapsed ? <ChevronRight className="h-3 w-3 shrink-0 text-(--text-muted)" /> : <ChevronDown className="h-3 w-3 shrink-0 text-(--text-muted)" />}
+          <WorkflowIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-(--text-primary)">{workflowName}</span>
 
-        <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium', statusPill.cls)}>
-          {statusPill.icon}
-          {statusPill.label}
-        </span>
+          <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium', statusPill.cls)}>
+            {statusPill.icon}
+            {statusPill.label}
+          </span>
 
-        <span className="ml-auto flex shrink-0 items-center gap-3 text-[10px] text-(--text-muted)">
-          {agents.length > 0 && <Stat icon={Bot}>{settledCount}/{agents.length}</Stat>}
-          {totalTokens && <Stat icon={Zap}>{totalTokens}</Stat>}
-          {usage?.toolUses != null && usage.toolUses > 0 && <Stat icon={Wrench}>{usage.toolUses}</Stat>}
-          {elapsed && <Stat icon={Clock}>{elapsed}</Stat>}
-        </span>
-      </button>
+          <span className="ml-auto flex shrink-0 items-center gap-3 text-[10px] text-(--text-muted)">
+            {agents.length > 0 && <Stat icon={Bot}>{settledCount}/{agents.length}</Stat>}
+            {totalTokens && <Stat icon={Zap}>{totalTokens}</Stat>}
+            {usage?.toolUses != null && usage.toolUses > 0 && <Stat icon={Wrench}>{usage.toolUses}</Stat>}
+            {elapsed && <Stat icon={Clock}>{elapsed}</Stat>}
+          </span>
+        </button>
+
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={() => onDismiss(taskId)}
+            aria-label="Dismiss workflow"
+            title="Dismiss"
+            className="mr-1.5 shrink-0 self-stretch rounded px-1.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
 
       {!collapsed && (
         <div className="px-3 pb-2.5">

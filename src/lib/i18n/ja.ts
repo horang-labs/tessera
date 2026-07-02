@@ -75,6 +75,8 @@ export const ja: I18nMessages = {
     inactivePanelDimming: '非アクティブパネルの暗さ',
     showProviderIcons: 'プロバイダーアイコンを表示',
     showProviderIconsDesc: 'リストとカンバンの項目に CLI プロバイダーのマークを表示します。',
+    showRecentWork: '「最近の作業」セクションを表示',
+    showRecentWorkDesc: 'サイドバー上部に「最近の作業」セクションを表示します。',
     enterKey: {
       label: 'Enter キーの動作',
       send: 'Enter = 送信',
@@ -176,6 +178,7 @@ export const ja: I18nMessages = {
     },
     effort: {
       readOnlyTooltip: 'セッション実行中は変更できません。停止してから変更してください',
+      requiresRestartTooltip: 'セッション開始時にのみ適用されます。使用するにはセッションを停止して再開してください',
     },
     agentEnv: {
       label: 'エージェント環境',

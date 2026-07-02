@@ -41,17 +41,18 @@ test('fastMode + ultracode merge into ONE --settings object', () => {
   assert.ok(!valuesOf(args, '--effort').includes('ultracode'));
 });
 
-test('fastMode + plain effort: --effort flag AND --settings fastMode', () => {
+test('fastMode + plain effort merge into ONE --settings object, no --effort flag', () => {
   const args = claudeCodeAdapter.getCliArgs({
     sessionId: '33333333-3333-3333-3333-333333333333',
     model: 'claude-opus-4-8',
     reasoningEffort: 'high',
     fastMode: true,
   });
-  assert.deepEqual(valuesOf(args, '--effort'), ['high']);
+  assert.equal(valuesOf(args, '--effort').length, 0, `plain effort must ride --settings; got: ${args.join(' ')}`);
   const settings = valuesOf(args, '--settings');
   assert.equal(settings.length, 1);
   assert.equal(JSON.parse(settings[0]).fastMode, true);
+  assert.equal(JSON.parse(settings[0]).effortLevel, 'high');
   assert.equal(JSON.parse(settings[0]).ultracode, undefined);
 });
 

@@ -85,6 +85,7 @@ interface BoardState {
 // localStorage keys for persistence
 const VIEW_MODE_KEY = 'ccw:viewMode';
 const PROJECT_VIEW_MODES_KEY = 'ccw:projectViewModes';
+const COLLAPSED_COLLECTIONS_KEY = 'ccw:collapsedCollections';
 
 function isViewMode(value: unknown): value is ViewMode {
   return value === 'list' || value === 'board';
@@ -123,6 +124,33 @@ function saveProjectViewModes(modes: Record<string, ViewMode>): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(PROJECT_VIEW_MODES_KEY, JSON.stringify(modes));
+  } catch {
+    // ignore
+  }
+}
+
+function loadCollapsedCollections(): Record<string, boolean> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(COLLAPSED_COLLECTIONS_KEY) ?? '{}') as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return {};
+
+    const collapsed: Record<string, boolean> = {};
+    for (const [scopeKey, value] of Object.entries(parsed)) {
+      if (typeof scopeKey === 'string' && scopeKey.length > 0 && typeof value === 'boolean') {
+        collapsed[scopeKey] = value;
+      }
+    }
+    return collapsed;
+  } catch {
+    return {};
+  }
+}
+
+function saveCollapsedCollections(collapsed: Record<string, boolean>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(COLLAPSED_COLLECTIONS_KEY, JSON.stringify(collapsed));
   } catch {
     // ignore
   }
@@ -192,21 +220,25 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }, 1100);
   },
 
-  collapsedCollections: {},
+  collapsedCollections: loadCollapsedCollections(),
   toggleCollectionCollapse: (colId) =>
-    set((state) => ({
-      collapsedCollections: {
+    set((state) => {
+      const collapsedCollections = {
         ...state.collapsedCollections,
         [colId]: !state.collapsedCollections[colId],
-      },
-    })),
+      };
+      saveCollapsedCollections(collapsedCollections);
+      return { collapsedCollections };
+    }),
   setCollectionCollapsed: (colId, collapsed) =>
-    set((state) => ({
-      collapsedCollections: {
+    set((state) => {
+      const collapsedCollections = {
         ...state.collapsedCollections,
         [colId]: collapsed,
-      },
-    })),
+      };
+      saveCollapsedCollections(collapsedCollections);
+      return { collapsedCollections };
+    }),
 
   allProjectsExpandedSections: {},
   toggleAllProjectsSection: (projectId) =>

@@ -200,6 +200,11 @@ export interface CliProvider {
   sendInterrupt?(proc: ChildProcess, sessionId: string): boolean;
 
   /**
+   * Optional: start provider-native context compaction for the session.
+   */
+  compactThread?(proc: ChildProcess, sessionId: string): Promise<boolean>;
+
+  /**
    * Optional: manage provider-native persistent session goals.
    */
   setGoal?(proc: ChildProcess, sessionId: string, update: SessionGoalUpdate): Promise<SessionGoal>;
