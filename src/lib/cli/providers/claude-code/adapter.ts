@@ -35,6 +35,8 @@ import {
 import {
   classifyAuthStatus,
   classifyVersionFailure,
+  isVersionProbeRunnable,
+  synthesizeRunnableStatus,
   summarizeExecProbe,
 } from '../../status-detection';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
@@ -136,7 +138,10 @@ export class ClaudeCodeAdapter implements CliProvider {
       authProbe,
     };
 
-    if (!versionResult.ok) {
+    // Treat the binary as installed whenever the version probe was launchable —
+    // a slow boot (timeout) or a CLI that prints help-to-stderr-and-exit-1 is
+    // still a real install, and the auth probe is the source of truth from here.
+    if (!isVersionProbeRunnable(versionResult)) {
       return {
         status: 'not_installed',
         detectionReason: classifyVersionFailure(versionResult, commandMetadata.commandSource),
@@ -145,11 +150,11 @@ export class ClaudeCodeAdapter implements CliProvider {
     }
 
     const version = parseVersion(versionResult.stdout);
-    const authStatus = classifyAuthStatus(authResult);
+    const finalStatus = synthesizeRunnableStatus(versionResult, classifyAuthStatus(authResult));
 
     return {
-      status: authStatus.status,
-      detectionReason: authStatus.detectionReason,
+      status: finalStatus.status,
+      detectionReason: finalStatus.detectionReason,
       ...(version ? { version } : {}),
       ...baseTelemetry,
     };

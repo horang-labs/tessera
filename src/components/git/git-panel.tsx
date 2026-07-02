@@ -20,6 +20,7 @@ import {
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
 import { cn } from "@/lib/utils";
+import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
 
 type GitPanelTab = "git" | "files" | "agent";
 
@@ -66,7 +67,9 @@ export function GitPanel({
   closeLabel?: string;
   onClose?: () => void;
 }) {
-  const isWindowsElectron = useElectronPlatform() === "win32";
+  const electronPlatform = useElectronPlatform();
+  const isWindowsElectron = electronPlatform === "win32";
+  const isLinuxElectron = electronPlatform === "linux";
   const controller = useGitPanelController(sessionId);
   const [activePanelTab, setActivePanelTab] = useState<GitPanelTab>("git");
   const openedTelemetryRef = useRef(false);
@@ -185,8 +188,10 @@ export function GitPanel({
       )}
       style={{ width: typeof width === "number" ? `${width}px` : width }}
     >
-      {isWindowsElectron ? (
-        <div className="electron-drag h-[40px] shrink-0 border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)" />
+      {isWindowsElectron || isLinuxElectron ? (
+        <div className="electron-drag flex h-[40px] shrink-0 items-stretch justify-end border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)">
+          {isLinuxElectron ? <ElectronWindowControls /> : null}
+        </div>
       ) : null}
 
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-(--chat-header-border) px-2">

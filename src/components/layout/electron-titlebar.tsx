@@ -4,6 +4,8 @@ import { useEffect, type MouseEvent } from 'react';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useTabStore } from '@/stores/tab-store';
+import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
+import { cn } from '@/lib/utils';
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
 
@@ -102,6 +104,7 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
   const electronPlatform = useElectronPlatform();
   const isMacElectron = electronPlatform === 'darwin';
   const isWindowsElectron = electronPlatform === 'win32';
+  const isLinuxElectron = electronPlatform === 'linux';
   useElectronTitlebarThemeSync(isWindowsElectron);
 
   useEffect(() => {
@@ -112,7 +115,7 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
 
     const supported = Boolean(
       electronApi?.isElectron &&
-      platform === 'win32' &&
+      (platform === 'win32' || platform === 'linux') &&
       electronApi.popupTitlebarMenu
     );
 
@@ -146,7 +149,7 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
     );
   }
 
-  if (!isWindowsElectron) return null;
+  if (!isWindowsElectron && !isLinuxElectron) return null;
 
   async function handleMenuOpen(
     section: TitlebarMenuSection,
@@ -164,11 +167,14 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
 
   return (
     <header
-      className="electron-drag shrink-0 px-3 pr-[152px] border-b flex items-center gap-1.5 bg-(--electron-titlebar-bg) border-(--electron-titlebar-border) text-(--electron-titlebar-text) select-none"
+      className={cn(
+        'electron-drag shrink-0 border-b flex items-center gap-1.5 bg-(--electron-titlebar-bg) border-(--electron-titlebar-border) text-(--electron-titlebar-text) select-none',
+        isWindowsElectron && 'pr-[152px]',
+      )}
       style={{ height: WINDOWS_TITLEBAR_HEIGHT_PX }}
       data-testid="electron-titlebar"
     >
-      <div className="flex items-center gap-2.5 min-w-0 mr-2">
+      <div className="flex items-center gap-2.5 min-w-0 mr-2 pl-3">
         <div className="w-5 h-5 rounded-md bg-(--accent) text-white text-[11px] font-semibold flex items-center justify-center shadow-sm">
           T
         </div>
@@ -193,6 +199,7 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
       ) : null}
 
       <div className="ml-auto min-w-0" />
+      <ElectronWindowControls />
     </header>
   );
 }
