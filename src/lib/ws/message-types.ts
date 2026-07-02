@@ -73,6 +73,7 @@ export type ClientMessage =
   | { type: 'interactive_response'; requestId: string; sessionId: string; toolUseId: string; response: string }
   | { type: 'mark_as_read'; requestId: string; sessionId: string } // NEW - for FEAT-002
   | { type: 'cancel_generation'; requestId: string; sessionId: string }
+  | { type: 'compact_session'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }
   | { type: 'set_session_goal'; requestId: string; sessionId: string; update: SessionGoalUpdate; spawnConfig?: SessionSpawnConfig; displayContent?: string }
   | { type: 'refresh_session_goal'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }
   | { type: 'clear_session_goal'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }

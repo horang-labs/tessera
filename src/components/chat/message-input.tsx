@@ -57,6 +57,10 @@ import {
   isCodexFastCommandSkill,
 } from '@/lib/chat/codex-fast-command';
 import {
+  CODEX_COMPACT_COMMAND,
+  isCodexCompactCommandSkill,
+} from '@/lib/chat/codex-compact-command';
+import {
   isClaudeFastCommandSkill,
 } from '@/lib/chat/claude-fast-command';
 import {
@@ -189,9 +193,14 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const updateSessionRuntimeConfig = useSessionStore((state) => state.updateSessionRuntimeConfig);
   const projects = useSessionStore((state) => state.projects);
   const sessionStatus = session && 'status' in session ? session.status : 'running';
+  const sessionProviderId = session?.provider?.trim() ?? '';
+  const sessionCollectionId = session?.collectionId ?? null;
+  const sessionServiceTier = session?.serviceTier;
+  const sessionFastMode = session?.fastMode;
   const {
     sendMessage,
     cancelGeneration,
+    compactSession,
     setServiceTier,
     setFastMode,
     setSessionGoal,
@@ -210,10 +219,10 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const isElectron = useElectronPlatform() !== null;
 
   const sessionIsRunning = session?.isRunning ?? false;
-  const skillPicker = useSkillPicker(sessionId, session?.provider, sessionIsRunning);
+  const skillPicker = useSkillPicker(sessionId, sessionProviderId || undefined, sessionIsRunning);
   const filePicker = useFilePicker(sessionId);
   const insertGoalCommand = useCallback(() => {
-    if (session?.provider?.trim() !== 'codex') {
+    if (sessionProviderId !== 'codex') {
       return;
     }
 
@@ -238,7 +247,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       textarea.focus();
       textarea.setSelectionRange(nextValue.length, nextValue.length);
     });
-  }, [filePicker, inputValue, session?.provider, sessionId, setDraftInput, skillPicker]);
+  }, [filePicker, inputValue, sessionProviderId, sessionId, setDraftInput, skillPicker]);
 
   useEffect(() => {
     const handleGoalCommandInsert = (event: Event) => {
@@ -305,7 +314,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const buildSpawnConfigForCurrentSession = useCallback((): SessionSpawnConfig | undefined => {
     if (sessionIsRunning) return undefined;
 
-    const providerId = session?.provider?.trim();
+    const providerId = sessionProviderId;
     if (!providerId) return undefined;
 
     const { settings } = useSettingsStore.getState();
@@ -314,7 +323,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       session,
       providerId,
     );
-  }, [session, sessionIsRunning]);
+  }, [session, sessionIsRunning, sessionProviderId]);
   const activeProject = useMemo(() => {
     if (!session) return null;
     return projects.find((project) =>
@@ -328,9 +337,9 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     activeProjectId ? state.collectionsByProject?.[activeProjectId] ?? EMPTY_COLLECTIONS : EMPTY_COLLECTIONS
   );
   const activeCollection = useMemo(() => {
-    if (!session?.collectionId) return null;
-    return collections.find((collection) => collection.id === session.collectionId) ?? null;
-  }, [collections, session?.collectionId]);
+    if (!sessionCollectionId) return null;
+    return collections.find((collection) => collection.id === sessionCollectionId) ?? null;
+  }, [collections, sessionCollectionId]);
 
   useEffect(() => {
     if (!activeProjectId) return;
@@ -640,11 +649,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   ]);
 
   const executeCodexFastCommand = useCallback((): boolean => {
-    if (session?.provider?.trim() !== 'codex') {
+    if (sessionProviderId !== 'codex') {
       return false;
     }
 
-    const nextServiceTier = session.serviceTier === CODEX_FAST_SERVICE_TIER
+    const nextServiceTier = sessionServiceTier === CODEX_FAST_SERVICE_TIER
       ? null
       : CODEX_FAST_SERVICE_TIER;
     updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
@@ -665,8 +674,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     clearAttachments,
     clearInput,
     clearSessionRefs,
-    session?.provider,
-    session?.serviceTier,
+    sessionProviderId,
+    sessionServiceTier,
     sessionId,
     sessionIsRunning,
     setServiceTier,
@@ -674,12 +683,48 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     updateSessionRuntimeConfig,
   ]);
 
-  const executeClaudeFastCommand = useCallback((): boolean => {
-    if (session?.provider?.trim() !== 'claude-code') {
+  const executeCodexCompactCommand = useCallback((): boolean => {
+    if (sessionProviderId !== 'codex') {
+      return false;
+    }
+    if (isDisabled || isReadOnly) {
       return false;
     }
 
-    const next = !(session.fastMode === true);
+    const displayContent = CODEX_COMPACT_COMMAND;
+    addMessage(sessionId, {
+      id: `temp-compact-${uuidv4()}`,
+      type: 'text',
+      role: 'user',
+      content: displayContent,
+      timestamp: new Date().toISOString(),
+    });
+    compactSession(sessionId, buildSpawnConfigForCurrentSession(), displayContent);
+    clearInput();
+    clearAttachments();
+    clearSessionRefs();
+    skillPicker.clearSkill();
+    return true;
+  }, [
+    addMessage,
+    buildSpawnConfigForCurrentSession,
+    clearAttachments,
+    clearInput,
+    clearSessionRefs,
+    compactSession,
+    isDisabled,
+    isReadOnly,
+    sessionProviderId,
+    sessionId,
+    skillPicker,
+  ]);
+
+  const executeClaudeFastCommand = useCallback((): boolean => {
+    if (sessionProviderId !== 'claude-code') {
+      return false;
+    }
+
+    const next = !(sessionFastMode === true);
     updateSessionRuntimeConfig(sessionId, { fastMode: next });
     if (sessionIsRunning) {
       setFastMode(sessionId, next);
@@ -698,8 +743,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     clearAttachments,
     clearInput,
     clearSessionRefs,
-    session?.provider,
-    session?.fastMode,
+    sessionProviderId,
+    sessionFastMode,
     sessionId,
     sessionIsRunning,
     setFastMode,
@@ -708,7 +753,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   ]);
 
   const executeCodexGoalCommand = useCallback((commandInput: string): boolean => {
-    if (session?.provider?.trim() !== 'codex') {
+    if (sessionProviderId !== 'codex') {
       return false;
     }
 
@@ -731,7 +776,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         id: `system-goal-${uuidv4()}`,
         type: 'text',
         role: 'system',
-        content: formatGoalStatusMessage(session?.goal),
+        content: formatGoalStatusMessage(sessionGoal),
         timestamp: new Date().toISOString(),
       });
       refreshSessionGoal(sessionId, buildSpawnConfigForCurrentSession(), displayContent);
@@ -754,8 +799,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     clearSessionGoal,
     buildSpawnConfigForCurrentSession,
     refreshSessionGoal,
-    session?.goal,
-    session?.provider,
+    sessionGoal,
+    sessionProviderId,
     sessionId,
     setSessionGoal,
     skillPicker,
@@ -767,6 +812,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     const hasSelectedSkill = !!skillPicker.selectedSkill;
     const hasSelectedFastCommand = isCodexFastCommandSkill(skillPicker.selectedSkill)
       || isClaudeFastCommandSkill(skillPicker.selectedSkill);
+    const hasSelectedCompactCommand = isCodexCompactCommandSkill(skillPicker.selectedSkill);
     const hasSelectedGoalCommand = isCodexGoalCommandSkill(skillPicker.selectedSkill);
     const hasAttachments = attachments.length > 0;
 
@@ -780,6 +826,13 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       || (trimmed === CODEX_FAST_COMMAND && !hasSelectedSkill)
     ) {
       if (executeCodexFastCommand() || executeClaudeFastCommand()) return;
+    }
+
+    if (
+      hasSelectedCompactCommand
+      || (trimmed === CODEX_COMPACT_COMMAND && !hasSelectedSkill)
+    ) {
+      if (executeCodexCompactCommand()) return;
     }
 
     if (hasSelectedGoalCommand) {
@@ -836,7 +889,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     } else {
       // First-time send for a session without a live CLI: attach composer defaults
       // so the server can spawn with the picked model / reasoning / permission mode.
-      const providerId = session?.provider?.trim();
+      const providerId = sessionProviderId;
       if (!providerId) {
         toast.error(t('errors.providerRequired'));
         return;
@@ -896,6 +949,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         textareaRef.current?.focus();
         return;
       }
+      if (isCodexCompactCommandSkill(skill)) {
+        executeCodexCompactCommand();
+        textareaRef.current?.focus();
+        return;
+      }
       if (isCodexGoalCommandSkill(skill)) {
         insertGoalCommand();
         textareaRef.current?.focus();
@@ -906,7 +964,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       setInputValue('');
       textareaRef.current?.focus();
     },
-    [executeCodexFastCommand, executeClaudeFastCommand, insertGoalCommand, skillPicker],
+    [executeCodexCompactCommand, executeCodexFastCommand, executeClaudeFastCommand, insertGoalCommand, skillPicker],
   );
 
   const applyFilePick = useCallback(
@@ -963,6 +1021,10 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         }
         if (confirmedSkill && isClaudeFastCommandSkill(confirmedSkill)) {
           executeClaudeFastCommand();
+          return;
+        }
+        if (confirmedSkill && isCodexCompactCommandSkill(confirmedSkill)) {
+          executeCodexCompactCommand();
           return;
         }
         if (confirmedSkill && isCodexGoalCommandSkill(confirmedSkill)) {

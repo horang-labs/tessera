@@ -241,6 +241,13 @@ interface SessionState {
     status: 'started' | 'completed' | 'failed';
     startTimestamp: string;
   }>;
+
+  /**
+   * Last compact boundary emitted by any Codex compact event shape. Recent
+   * duplicates are suppressed because different Codex versions may emit both
+   * item-level compaction records and thread-level compacted notifications.
+   */
+  lastCompactBoundaryAtMs: number;
 }
 
 // =============================================================================
@@ -1216,6 +1223,9 @@ export class CodexProtocolParser {
       case 'thread/started':
         return this.handleThreadStarted(sessionId, params);
 
+      case 'thread/compacted':
+        return this.handleThreadCompacted(sessionId, params);
+
       case 'thread/goal/updated':
         return this.handleThreadGoalUpdated(sessionId, params);
 
@@ -1730,6 +1740,15 @@ export class CodexProtocolParser {
       }];
     }
 
+    if (itemType === 'contextCompaction') {
+      return this.buildCompactBoundaryMessages(sessionId, {
+        source: itemType,
+        itemId,
+        threadId: params.threadId ?? item.threadId,
+        turnId: params.turnId ?? item.turnId,
+      });
+    }
+
     if (!this.isDisplayOnlyCodexItem(itemType)) {
       const status = this.normalizeCodexItemStatus(item.status, 'completed');
       return [this.buildGenericCodexItemToolCallMessage(sessionId, item, status, timestamp, false)];
@@ -1753,6 +1772,14 @@ export class CodexProtocolParser {
     const itemType = typeof item.type === 'string' && item.type.trim()
       ? item.type.trim()
       : 'unknown';
+    if (itemType === 'compaction' || itemType === 'context_compaction') {
+      return this.buildCompactBoundaryMessages(sessionId, {
+        source: itemType,
+        threadId: params.threadId ?? item.threadId,
+        turnId: params.turnId ?? item.turnId,
+      });
+    }
+
     if (DISPLAY_ONLY_RAW_RESPONSE_ITEM_TYPES.has(itemType)) {
       logger.debug('Codex: rawResponseItem/completed display-only item suppressed', { sessionId, itemType });
       return [];
@@ -2506,6 +2533,73 @@ export class CodexProtocolParser {
     }];
   }
 
+  private handleThreadCompacted(sessionId: string, params: Record<string, any>): ParsedMessage[] {
+    return this.buildCompactBoundaryMessages(sessionId, {
+      source: 'thread/compacted',
+      threadId: params.threadId,
+      turnId: params.turnId,
+    });
+  }
+
+  private buildCompactBoundaryMessages(
+    sessionId: string,
+    metadata: {
+      itemId?: unknown;
+      source: string;
+      threadId?: unknown;
+      turnId?: unknown;
+    },
+  ): ParsedMessage[] {
+    const state = this.getOrCreateState(sessionId);
+    const now = Date.now();
+    if (now - state.lastCompactBoundaryAtMs < 5_000) {
+      logger.debug('Codex: duplicate compact boundary suppressed', {
+        sessionId,
+        source: metadata.source,
+      });
+      return [];
+    }
+    state.lastCompactBoundaryAtMs = now;
+
+    const threadId = typeof metadata.threadId === 'string' && metadata.threadId.trim()
+      ? metadata.threadId.trim()
+      : state.threadId;
+    const turnId = typeof metadata.turnId === 'string' && metadata.turnId.trim()
+      ? metadata.turnId.trim()
+      : undefined;
+    const itemId = typeof metadata.itemId === 'string' && metadata.itemId.trim()
+      ? metadata.itemId.trim()
+      : undefined;
+
+    logger.info('Codex: thread compacted', {
+      sessionId,
+      threadId,
+      turnId,
+      source: metadata.source,
+    });
+
+    return [{
+      serverMessage: {
+        type: 'system',
+        sessionId,
+        message: 'Context compacted',
+        severity: 'info',
+        subtype: 'compact_boundary',
+        metadata: {
+          compactMetadata: {
+            trigger: 'manual',
+            provider: 'codex',
+            source: metadata.source,
+            ...(threadId ? { threadId } : {}),
+            ...(turnId ? { turnId } : {}),
+            ...(itemId ? { itemId } : {}),
+          },
+        },
+        timestamp: new Date().toISOString(),
+      },
+    }];
+  }
+
   private handleThreadGoalUpdated(sessionId: string, params: Record<string, any>): ParsedMessage[] {
     const goal = normalizeCodexGoal(params.goal);
     if (!goal) {
@@ -3053,6 +3147,7 @@ export class CodexProtocolParser {
         currentModel: null,
         commandProgress: new Map(),
         mcpStartupServers: new Map(),
+        lastCompactBoundaryAtMs: 0,
       };
       this.sessionStates.set(sessionId, state);
     }

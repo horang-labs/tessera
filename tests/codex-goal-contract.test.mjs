@@ -141,7 +141,7 @@ test('/goal is intercepted by the composer and exposed in UI affordances', () =>
   assert.doesNotMatch(goalCommandSource, /normalized === 'complete'/);
   assert.match(messageInputSource, /parseCodexGoalCommand\(trimmed\)/);
   assert.match(messageInputSource, /insertGoalCommand/);
-  assert.match(messageInputSource, /formatGoalStatusMessage\(session\?\.goal\)/);
+  assert.match(messageInputSource, /formatGoalStatusMessage\(sessionGoal\)/);
   assert.doesNotMatch(messageInputSource, /const \[isGoalMode, setIsGoalMode\]/);
   assert.doesNotMatch(messageInputSource, /const \[goalDraft, setGoalDraft\]/);
   assert.doesNotMatch(messageInputSource, /submitGoalMode/);
