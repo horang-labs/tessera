@@ -1,9 +1,12 @@
 'use client';
 
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import type { RecentWorkItem } from '@/lib/chat/recent-work';
 import { useI18n } from '@/lib/i18n';
+import { useBoardStore } from '@/stores/board-store';
 import { CollectionGroup, type CollectionGroupProps } from './collection-group';
+
+const RECENT_WORK_GROUP_ID = '__recent_work';
 
 type RecentWorkSectionProps = Pick<
   CollectionGroupProps,
@@ -45,10 +48,12 @@ export const RecentWorkSection = memo(function RecentWorkSection({
   ...groupProps
 }: RecentWorkSectionProps) {
   const { t } = useI18n();
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const collapseScopeKey = `${groupProps.projectId}::${RECENT_WORK_GROUP_ID}`;
+  const isCollapsed = useBoardStore((state) => state.collapsedCollections[collapseScopeKey] ?? false);
+  const setCollectionCollapsed = useBoardStore((state) => state.setCollectionCollapsed);
   const toggleCollapsed = useCallback(() => {
-    setIsCollapsed((current) => !current);
-  }, []);
+    setCollectionCollapsed(collapseScopeKey, !isCollapsed);
+  }, [collapseScopeKey, isCollapsed, setCollectionCollapsed]);
 
   const tasks = useMemo(
     () => items.flatMap((item) => (item.type === 'task' ? [item.task] : [])),
@@ -93,9 +98,10 @@ export const RecentWorkSection = memo(function RecentWorkSection({
         onGroupDrop={noopGroupDrop}
         disableDnd
         allowPanelSessionDnd
-        groupIdOverride="__recent_work"
+        groupIdOverride={RECENT_WORK_GROUP_ID}
         headerLabel={t('sidebar.recentWork')}
         hideHeaderActions
+        disableAutoExpand
       />
     </div>
   );

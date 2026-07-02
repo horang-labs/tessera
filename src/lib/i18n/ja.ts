@@ -75,6 +75,8 @@ export const ja: I18nMessages = {
     inactivePanelDimming: '非アクティブパネルの暗さ',
     showProviderIcons: 'プロバイダーアイコンを表示',
     showProviderIconsDesc: 'リストとカンバンの項目に CLI プロバイダーのマークを表示します。',
+    showRecentWork: '「最近の作業」セクションを表示',
+    showRecentWorkDesc: 'サイドバー上部に「最近の作業」セクションを表示します。',
     enterKey: {
       label: 'Enter キーの動作',
       send: 'Enter = 送信',

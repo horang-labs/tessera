@@ -25,22 +25,29 @@ function recencyKey(w: WorkflowMessage): number {
  */
 export function WorkflowStatusBar({ sessionId, isSinglePanel }: WorkflowStatusBarProps) {
   const sessionMessages = useChatStore((s) => s.messages.get(sessionId));
+  const dismissedIds = useChatStore((s) => s.dismissedWorkflowTaskIds);
+  const dismissWorkflowCard = useChatStore((s) => s.dismissWorkflowCard);
 
   const workflowsToShow = useMemo(() => {
     const all = (sessionMessages ?? []).filter(
       (m): m is WorkflowMessage => m.type === 'workflow',
     );
-    const running = all.filter((w) => w.status === 'running');
+    // Running cards: show each one the user hasn't individually dismissed.
+    const running = all.filter((w) => w.status === 'running' && !dismissedIds.has(w.taskId));
 
-    // Most recently finished run (iterate in array order so later wins ties).
+    // Completed slot: the single most-recently-finished run. Pick it across ALL
+    // finished runs (not the dismissed-filtered list) so that dismissing the
+    // visible card clears the slot, rather than resurfacing an older finished run
+    // that had already dropped out of the bar.
     let lastFinished: WorkflowMessage | null = null;
     for (const w of all) {
       if (w.status === 'running') continue;
       if (!lastFinished || recencyKey(w) >= recencyKey(lastFinished)) lastFinished = w;
     }
+    const finished = lastFinished && !dismissedIds.has(lastFinished.taskId) ? lastFinished : null;
 
-    return lastFinished ? [...running, lastFinished] : running;
-  }, [sessionMessages]);
+    return finished ? [...running, finished] : running;
+  }, [sessionMessages, dismissedIds]);
 
   if (workflowsToShow.length === 0) return null;
 
@@ -54,6 +61,7 @@ export function WorkflowStatusBar({ sessionId, isSinglePanel }: WorkflowStatusBa
               message={wf}
               docked
               defaultCollapsed={wf.status !== 'running'}
+              onDismiss={dismissWorkflowCard}
             />
           ))}
         </div>

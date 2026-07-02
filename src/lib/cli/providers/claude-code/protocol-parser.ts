@@ -159,6 +159,28 @@ export class ClaudeCodeProtocolParser {
   handleProcessExit(sessionId: string, exitCode: number): ParsedMessage[] {
     logger.error('Handling process exit', { sessionId, exitCode });
 
+    // Any workflow still tracked here never received its terminal
+    // task_notification — the CLI died mid-run. Synthesize a failed terminal
+    // event for each so the card stops spinning as "running". This goes through
+    // the normal workflow_event pipeline, so it is broadcast to the live client
+    // AND persisted to session history — the reduced replay on reconnect/reload
+    // then shows the card as failed instead of reverting to a stuck "running".
+    const pendingWorkflows = this.workflowTaskIds.get(sessionId);
+    const now = new Date().toISOString();
+    const workflowTerminations: ParsedMessage[] = pendingWorkflows
+      ? [...pendingWorkflows].map((taskId) => ({
+          serverMessage: {
+            type: 'workflow_event' as const,
+            sessionId,
+            kind: 'updated' as const,
+            taskId,
+            status: 'failed',
+            endTime: Date.now(),
+            timestamp: now,
+          },
+        }))
+      : [];
+
     this.streamState.delete(sessionId);
     this.contextWindowSizeCache.delete(sessionId);
     this.pendingToolCalls.delete(sessionId);
@@ -168,14 +190,17 @@ export class ClaudeCodeProtocolParser {
     this.lastTodoSnapshots.delete(sessionId);
     this.workflowTaskIds.delete(sessionId);
 
-    return [{
-      serverMessage: {
-        type: 'cli_down',
-        sessionId,
-        exitCode,
-        message: `Claude Code Down (exit code: ${exitCode})`,
+    return [
+      ...workflowTerminations,
+      {
+        serverMessage: {
+          type: 'cli_down',
+          sessionId,
+          exitCode,
+          message: `Claude Code Down (exit code: ${exitCode})`,
+        },
       },
-    }];
+    ];
   }
 
   // ---------------------------------------------------------------------------
