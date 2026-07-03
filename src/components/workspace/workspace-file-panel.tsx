@@ -55,7 +55,7 @@ interface WorkspaceDirectoryNode {
 
 type WorkspaceTreeNode = WorkspaceDirectoryNode | WorkspaceFileNode;
 
-interface FileContextMenuState {
+interface PathContextMenuState {
   absolutePath: string;
   canOpenFile: boolean;
   position: { x: number; y: number };
@@ -163,7 +163,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [workDir, setWorkDir] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
+  const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
   const [state, setState] = useState<WorkspaceFilePanelState>(() => ({
     loading: Boolean(sessionId),
     error: null,
@@ -237,11 +237,22 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     if (node.type === "directory") {
       const expanded = isSearching || expandedPaths.has(node.path);
       const FolderIcon = expanded ? FolderOpen : Folder;
+      const absolutePath = toAbsoluteWorkspacePath(workDir, node.path);
       return (
         <div key={`dir:${node.path}`} className="flex flex-col">
           <button
             type="button"
             onClick={() => toggleDirectory(node.path)}
+            onContextMenu={(event) => {
+              if (!absolutePath) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setContextMenu({
+                absolutePath,
+                canOpenFile: true,
+                position: { x: event.clientX, y: event.clientY },
+              });
+            }}
             className="group flex min-w-0 items-center gap-1.5 border-l-2 border-l-transparent py-1.5 pr-2 text-left text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
             style={{ paddingLeft }}
             title={node.path}
