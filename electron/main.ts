@@ -250,10 +250,6 @@ function buildWebContentsContextMenuTemplate(
     ];
   }
 
-  if (editFlags.canSelectAll) {
-    return [{ role: 'selectAll' }];
-  }
-
   return [];
 }
 
