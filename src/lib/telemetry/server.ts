@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { getServerHostInfo } from '@/lib/system/server-host';
 import { getTelemetryBootstrapInfo } from './server-state';
+import type { TelemetryBootstrapInfo } from './server-state';
 import logger from '@/lib/logger';
 
 export type ServerTelemetryEventName =
@@ -73,6 +74,11 @@ export async function captureServerTelemetryEvent(
           platform: hostInfo.platform,
           arch: hostInfo.arch,
           channel: hostInfo.channel,
+          first_run_eligible: bootstrap.firstRunEligible,
+          first_run_status: getFirstRunStatus(bootstrap),
+          ...(bootstrap.firstRunSkipReason
+            ? { first_run_skip_reason: bootstrap.firstRunSkipReason }
+            : {}),
           $geoip_disable: true,
           $process_person_profile: false,
           ...sanitizeTelemetryProperties(properties),
@@ -89,6 +95,13 @@ export async function captureServerTelemetryEvent(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function getFirstRunStatus(bootstrap: TelemetryBootstrapInfo): string {
+  if (bootstrap.firstRunCapturedAt) return 'captured';
+  if (bootstrap.firstRunSkippedAt) return 'skipped';
+  if (bootstrap.firstRunEligible) return 'eligible';
+  return 'unknown';
 }
 
 function getPostHogCaptureHost(): string {

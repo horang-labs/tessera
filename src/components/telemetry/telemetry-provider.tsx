@@ -8,7 +8,6 @@ import {
   captureTelemetryFirstRun,
   configureTelemetry,
   createTelemetrySessionId,
-  getTelemetryInstallId,
   type TelemetryRuntimeContext,
 } from '@/lib/telemetry/client';
 import type { TelemetryBootstrapInfo } from '@/lib/telemetry/server-state';
@@ -23,30 +22,28 @@ export function TelemetryProvider() {
   const telemetrySettingEnabled = useSettingsStore(
     (state) => state.settings.telemetry.enabled,
   );
-  const settingsServerHostInfo = useSettingsStore((state) => state.serverHostInfo);
   const activeProviderId = useSessionStore((state) => {
     if (!state.activeSessionId) return null;
     return state.getSession(state.activeSessionId)?.provider ?? null;
   });
 
-  const [fallbackInstallId] = useState(getTelemetryInstallId);
   const [appSessionId] = useState(createTelemetrySessionId);
   const [bootstrap, setBootstrap] = useState<TelemetryBootstrapResponse | null>(null);
   const appStartedCapturedRef = useRef(false);
   const firstRunCaptureStartedRef = useRef(false);
   const previousProviderRef = useRef<string | null>(null);
   const activeProviderIdRef = useRef<string | null>(null);
-  const contextServerHostInfo = settingsServerHostInfo ?? bootstrap?.serverHostInfo ?? null;
-  const installId = bootstrap?.installId ?? fallbackInstallId;
+  const contextServerHostInfo = bootstrap?.serverHostInfo ?? null;
+  const installId = bootstrap?.installId ?? null;
 
   const telemetryAllowed = Boolean(
-    settingsServerHostInfo
+    bootstrap
       && telemetrySettingEnabled
-      && !settingsServerHostInfo.telemetryDisabledByEnv,
+      && !bootstrap.serverHostInfo.telemetryDisabledByEnv,
   );
 
   const telemetryContext = useMemo<TelemetryRuntimeContext | null>(() => {
-    if (!contextServerHostInfo) return null;
+    if (!contextServerHostInfo || !installId) return null;
 
     return {
       installId,
@@ -105,6 +102,7 @@ export function TelemetryProvider() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             status: result === 'captured' ? 'captured' : 'skipped',
+            ...(result === 'disabled' ? { skipReason: 'client_disabled' } : {}),
           }),
         });
       } catch {
