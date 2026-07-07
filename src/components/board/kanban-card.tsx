@@ -67,11 +67,17 @@ function formatRelativeTime(
 }
 
 /** Collection name label with Tag icon (matching list view) */
-function CollectionLabel({ collectionId, isActive }: { collectionId?: string; isActive?: boolean }) {
+function CollectionLabel({ collectionId, isActive }: { collectionId?: string | null; isActive?: boolean }) {
+  const { t } = useI18n();
+  const collectionsByProject = useCollectionStore((state) => state.collectionsByProject);
   const config = collectionId
-    ? useCollectionStore.getState().getCollectionConfig(collectionId)
+    ? Object.values(collectionsByProject)
+        .flat()
+        .find((collection) => collection.id === collectionId)
     : null;
-  if (!config) return null;
+  const label = collectionId ? config?.label : t('task.creation.noCollection');
+
+  if (!label) return null;
 
   return (
     <span className={cn(
@@ -79,7 +85,7 @@ function CollectionLabel({ collectionId, isActive }: { collectionId?: string; is
       isActive ? 'text-(--text-primary) opacity-55' : 'text-(--text-muted)',
     )}>
       <Tag className="w-2.5 h-2.5" />
-      {config.label}
+      {label}
     </span>
   );
 }
