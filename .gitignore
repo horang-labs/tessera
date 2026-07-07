@@ -48,6 +48,7 @@ next-env.d.ts
 
 # IDE / Tools
 .claude/
+_bmad-output/
 aidlc-docs/
 prd-doc/
 prd-docs/
