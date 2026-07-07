@@ -844,6 +844,44 @@ export interface I18nMessages {
     addProject: string;
   };
   gitPanel: {
+    tabs: {
+      rightPanel: string;
+      git: string;
+      diff: string;
+      files: string;
+      tools: string;
+      context: string;
+    };
+    tools: {
+      title: string;
+      live: string;
+      idle: string;
+      noSessionTitle: string;
+      noSessionBody: string;
+      noActivityTitle: string;
+      noActivityBody: string;
+      noMatchingEvents: string;
+      noSavedToolOutput: string;
+      loadToolOutputFailed: string;
+      loadingSavedOutput: string;
+      noErrorOutput: string;
+      columns: {
+        time: string;
+        kind: string;
+        event: string;
+      };
+      filters: {
+        all: string;
+        cmd: string;
+        read: string;
+        search: string;
+        edit: string;
+        issue: string;
+        task: string;
+        todo: string;
+        web: string;
+      };
+    };
     empty: {
       noWorktreeTitle: string;
       noWorktreeBody: string;
@@ -852,6 +890,115 @@ export interface I18nMessages {
       diffUnavailableTitle: string;
       selectFileTitle: string;
       selectFileBody: string;
+    };
+  };
+  memoryPanel: {
+    sections: {
+      userScopeTitle: string;
+      codexUserScopeDescription: string;
+      claudeUserScopeDescription: string;
+      opencodeUserScopeDescription: string;
+      projectScopeTitle: string;
+      codexProjectScopeDescription: string;
+      claudeProjectScopeDescription: string;
+      opencodeProjectScopeDescription: string;
+      codexGlobalMemoryTitle: string;
+      codexGlobalMemoryDescription: string;
+      claudeProjectMemoryTitle: string;
+      claudeProjectMemoryDescription: string;
+      rolloutSummariesTitle: string;
+      rolloutSummariesDescription: string;
+      adHocNotesTitle: string;
+      adHocNotesDescription: string;
+      memorySkillsTitle: string;
+      memorySkillsDescription: string;
+    };
+    rows: {
+      active: string;
+      fallbackActive: string;
+      configured: string;
+      shadowedByOverride: string;
+      shadowedByAgents: string;
+      shadowedByOpenCodeGlobal: string;
+      disabledByEnv: string;
+      typeUser: string;
+      typeProject: string;
+      typeReference: string;
+      deleteMemory: string;
+      deleteFile: string;
+    };
+    fileDescriptions: {
+      globalSummary: string;
+      globalRegistry: string;
+      rolloutSummary: string;
+      adHocNote: string;
+      memorySkill: string;
+    };
+    empty: {
+      noUserInstructions: string;
+      noProjectInstructions: string;
+      noMemoryFiles: string;
+      noFilesYet: string;
+      noSessionTitle: string;
+      noSessionBody: string;
+      unavailableTitle: string;
+      noFilesTitle: string;
+      noFilesBody: string;
+      providerMemoryFolder: string;
+    };
+    actions: {
+      retry: string;
+      newMemory: string;
+      create: string;
+      delete: string;
+    };
+    dialog: {
+      newMemoryTitle: string;
+      newMemoryDescription: string;
+      newMemoryPlaceholder: string;
+      deleteMemoryTitle: string;
+      deleteMemoryDescription: string;
+    };
+    errors: {
+      loadFailed: string;
+      listTimedOut: string;
+      createNameRequired: string;
+      createFailed: string;
+      createTimedOut: string;
+      deleteFailed: string;
+      deleteTimedOut: string;
+    };
+    toast: {
+      created: string;
+      deleted: string;
+    };
+    fileTab: {
+      viewModeAria: string;
+      preview: string;
+      edit: string;
+      globalGuideline: string;
+      projectGuideline: string;
+      memory: string;
+      globalScope: string;
+      projectScope: string;
+      unsavedChanges: string;
+      save: string;
+      saveShortcut: string;
+      noUnsavedChanges: string;
+      copyContent: string;
+      closeMemoryPanel: string;
+      unableToOpenTitle: string;
+      loadFallback: string;
+      retryLoading: string;
+      conflictMessage: string;
+      reloadDiscard: string;
+      overwrite: string;
+      copied: string;
+      copyFailed: string;
+      saved: string;
+      saveTimedOut: string;
+      saveFailed: string;
+      loadTimedOut: string;
     };
   };
   task: {

@@ -7,9 +7,11 @@ import { buildAgentContextSummary } from "@/lib/agent-context-summary";
 import { useChatStore } from "@/stores/chat-store";
 import type { EnhancedMessage } from "@/types/chat";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const EMPTY_MESSAGES: EnhancedMessage[] = [];
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 type LogFilterKey =
   | "cmd"
@@ -23,18 +25,17 @@ type LogFilterKey =
 
 interface FilterOption {
   key: LogFilterKey;
-  label: string;
 }
 
 const FILTER_OPTIONS: FilterOption[] = [
-  { key: "cmd", label: "CMD" },
-  { key: "read", label: "READ" },
-  { key: "search", label: "SEARCH" },
-  { key: "edit", label: "EDIT" },
-  { key: "issue", label: "ISSUE" },
-  { key: "task", label: "TASK" },
-  { key: "todo", label: "TODO" },
-  { key: "web", label: "WEB" },
+  { key: "cmd" },
+  { key: "read" },
+  { key: "search" },
+  { key: "edit" },
+  { key: "issue" },
+  { key: "task" },
+  { key: "todo" },
+  { key: "web" },
 ];
 
 const EMPTY_FILTER_COUNTS: Record<LogFilterKey, number> = {
@@ -69,26 +70,8 @@ function getFilterKey(item: AgentTimelineItem): LogFilterKey {
   return item.kind;
 }
 
-function getKindLabel(item: AgentTimelineItem): string {
-  const key = getFilterKey(item);
-  switch (key) {
-    case "read":
-      return "READ";
-    case "search":
-      return "SEARCH";
-    case "cmd":
-      return "CMD";
-    case "edit":
-      return "EDIT";
-    case "issue":
-      return "ISSUE";
-    case "task":
-      return "TASK";
-    case "todo":
-      return "TODO";
-    case "web":
-      return "WEB";
-  }
+function getKindLabel(item: AgentTimelineItem, t: Translate): string {
+  return t(`gitPanel.tools.filters.${getFilterKey(item)}`);
 }
 
 function getKindClass(item: AgentTimelineItem): string {
@@ -125,10 +108,10 @@ function getRowDetailParts(item: AgentTimelineItem): string[] {
   return parts.filter((part): part is string => Boolean(part));
 }
 
-function getEventTitle(item: AgentTimelineItem): string {
+function getEventTitle(item: AgentTimelineItem, t: Translate): string {
   const parts = [
     formatTime(item.timestamp),
-    getKindLabel(item),
+    getKindLabel(item, t),
     getEventText(item),
     item.detail,
     item.meta,
@@ -173,7 +156,7 @@ function getToolResultErrorText(result: unknown): string | undefined {
   return firstRecordString(task, ["output", "result", "message"]);
 }
 
-function useIssueDetail(item: AgentTimelineItem): {
+function useIssueDetail(item: AgentTimelineItem, t: Translate): {
   detail: string;
   isLoading: boolean;
 } {
@@ -197,7 +180,11 @@ function useIssueDetail(item: AgentTimelineItem): {
         const params = new URLSearchParams({ toolUseId: item.toolUseId! });
         const response = await fetch(`/api/sessions/${item.sessionId}/tool-output?${params}`);
         if (!response.ok) {
-          throw new Error(response.status === 404 ? "No saved tool output found" : `Failed to load tool output (${response.status})`);
+          throw new Error(
+            response.status === 404
+              ? t("gitPanel.tools.noSavedToolOutput")
+              : t("gitPanel.tools.loadToolOutputFailed", { status: response.status }),
+          );
         }
 
         const data = await response.json();
@@ -223,24 +210,26 @@ function useIssueDetail(item: AgentTimelineItem): {
     return () => {
       isCancelled = true;
     };
-  }, [item.sessionId, item.toolUseId, shouldLoadSavedOutput]);
+  }, [item.sessionId, item.toolUseId, shouldLoadSavedOutput, t]);
 
   const cachedDetail = getToolResultErrorText(cachedOutput?.toolUseResult)
     || nonEmptyString(cachedOutput?.output);
   const detail = item.errorDetail
     || cachedDetail
     || loadError
-    || (shouldLoadSavedOutput || isLoading ? "Loading saved tool output..." : "No error output captured for this failed tool call.");
+    || (shouldLoadSavedOutput || isLoading
+      ? t("gitPanel.tools.loadingSavedOutput")
+      : t("gitPanel.tools.noErrorOutput"));
 
   return { detail, isLoading };
 }
 
-function IssueEventCell({ item }: { item: AgentTimelineItem }) {
-  const { detail, isLoading } = useIssueDetail(item);
+function IssueEventCell({ item, t }: { item: AgentTimelineItem; t: Translate }) {
+  const { detail, isLoading } = useIssueDetail(item, t);
 
   return (
     <span
-      title={[formatTime(item.timestamp), getKindLabel(item), getEventText(item), detail].filter(Boolean).join(" | ")}
+      title={[formatTime(item.timestamp), getKindLabel(item, t), getEventText(item), detail].filter(Boolean).join(" | ")}
       className="line-clamp-4 min-w-0 overflow-hidden whitespace-normal text-(--text-secondary) [overflow-wrap:anywhere]"
     >
       {getEventText(item)}
@@ -261,7 +250,7 @@ function itemMatchesFilters(item: AgentTimelineItem, filters: Set<LogFilterKey>)
   return filters.size === 0 || filters.has(getFilterKey(item));
 }
 
-function TimelineRow({ item }: { item: AgentTimelineItem }) {
+function TimelineRow({ item, t }: { item: AgentTimelineItem; t: Translate }) {
   const eventText = getEventText(item);
   const detailParts = getRowDetailParts(item);
   const eventCell = (
@@ -275,16 +264,16 @@ function TimelineRow({ item }: { item: AgentTimelineItem }) {
 
   return (
     <li
-      title={item.kind === "issue" ? undefined : getEventTitle(item)}
+      title={item.kind === "issue" ? undefined : getEventTitle(item, t)}
       className="grid min-h-[22px] grid-cols-[44px_46px_minmax(0,1fr)] items-start gap-x-2 border-b border-(--chat-header-border) px-1.5 py-0.5 font-mono text-[10.5px] leading-[1.32] transition-colors hover:bg-(--sidebar-hover)"
     >
       <time className="truncate pt-px tabular-nums text-(--text-muted)" dateTime={item.timestamp}>
         {formatShortTime(item.timestamp)}
       </time>
       <span className={cn("truncate pt-px text-[10px] font-semibold", getKindClass(item))}>
-        {getKindLabel(item)}
+        {getKindLabel(item, t)}
       </span>
-      {item.kind === "issue" ? <IssueEventCell item={item} /> : eventCell}
+      {item.kind === "issue" ? <IssueEventCell item={item} t={t} /> : eventCell}
     </li>
   );
 }
@@ -293,12 +282,14 @@ function FilterBar({
   activeFilters,
   counts,
   totalCount,
+  t,
   onClear,
   onToggle,
 }: {
   activeFilters: Set<LogFilterKey>;
   counts: Record<LogFilterKey, number>;
   totalCount: number;
+  t: Translate;
   onClear: () => void;
   onToggle: (key: LogFilterKey) => void;
 }) {
@@ -315,7 +306,7 @@ function FilterBar({
             : "border-(--divider) text-(--text-muted) hover:text-(--text-primary)",
         )}
       >
-        ALL
+        {t("gitPanel.tools.filters.all")}
         <span className="tabular-nums">{totalCount}</span>
       </button>
       {FILTER_OPTIONS.map((filter) => {
@@ -336,7 +327,7 @@ function FilterBar({
                   : "border-(--divider) text-(--text-muted)/55",
             )}
           >
-            {filter.label}
+            {t(`gitPanel.tools.filters.${filter.key}`)}
             <span className="tabular-nums">{count}</span>
           </button>
         );
@@ -350,6 +341,7 @@ export const AgentContextPanel = memo(function AgentContextPanel({
 }: {
   sessionId: string | null;
 }) {
+  const { t } = useI18n();
   const streamRef = useRef<HTMLDivElement>(null);
   const [activeFilterKeys, setActiveFilterKeys] = useState<LogFilterKey[]>([]);
   const messages = useChatStore((state) =>
@@ -415,9 +407,9 @@ export const AgentContextPanel = memo(function AgentContextPanel({
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div>
           <FileSearch className="mx-auto h-5 w-5 text-(--text-muted)" />
-          <h3 className="mt-2 text-sm font-medium text-(--text-primary)">No session selected</h3>
+          <h3 className="mt-2 text-sm font-medium text-(--text-primary)">{t("gitPanel.tools.noSessionTitle")}</h3>
           <p className="mt-1 text-xs leading-5 text-(--text-muted)">
-            Select a session to track agent context.
+            {t("gitPanel.tools.noSessionBody")}
           </p>
         </div>
       </div>
@@ -428,7 +420,7 @@ export const AgentContextPanel = memo(function AgentContextPanel({
     <div className="flex h-full min-h-0 flex-col overflow-x-hidden">
       <div className="shrink-0 border-b border-(--chat-header-border) px-2.5 py-2">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="min-w-0 truncate text-sm font-semibold text-(--text-primary)">Agent context</h2>
+          <h2 className="min-w-0 truncate text-sm font-semibold text-(--text-primary)">{t("gitPanel.tools.title")}</h2>
           <span
             className={cn(
               "inline-flex h-5 shrink-0 items-center gap-1.5 border px-1.5 font-mono text-[10px] uppercase",
@@ -438,13 +430,14 @@ export const AgentContextPanel = memo(function AgentContextPanel({
             )}
           >
             <span className={cn("h-1.5 w-1.5 rounded-full", isLive ? "bg-(--accent) motion-safe:animate-pulse" : "bg-(--text-muted)")} />
-            {isLive ? "Live" : "Idle"}
+            {isLive ? t("gitPanel.tools.live") : t("gitPanel.tools.idle")}
           </span>
         </div>
         <FilterBar
           activeFilters={activeFilters}
           counts={filterCounts}
           totalCount={summary.timeline.length}
+          t={t}
           onClear={() => setActiveFilterKeys([])}
           onToggle={toggleFilter}
         />
@@ -454,28 +447,28 @@ export const AgentContextPanel = memo(function AgentContextPanel({
         <div className="flex flex-1 items-center justify-center px-6 text-center">
           <div>
             <FileSearch className="mx-auto h-5 w-5 text-(--text-muted)" />
-            <h3 className="mt-2 text-sm font-medium text-(--text-primary)">No agent context yet</h3>
+            <h3 className="mt-2 text-sm font-medium text-(--text-primary)">{t("gitPanel.tools.noActivityTitle")}</h3>
             <p className="mt-1 text-xs leading-5 text-(--text-muted)">
-              Tool calls, tasks, and todos will appear as the session runs.
+              {t("gitPanel.tools.noActivityBody")}
             </p>
           </div>
         </div>
       ) : (
         <ScrollArea ref={streamRef} className="scrollbar-none min-h-0 flex-1 overflow-x-hidden">
           <div className="sticky top-0 z-10 grid h-5 grid-cols-[44px_46px_minmax(0,1fr)] items-center gap-x-2 border-b border-(--divider) bg-(--sidebar-bg) px-1.5 font-mono text-[9.5px] uppercase leading-none text-(--text-muted)">
-            <span>T</span>
-            <span>Kind</span>
-            <span>Event</span>
+            <span>{t("gitPanel.tools.columns.time")}</span>
+            <span>{t("gitPanel.tools.columns.kind")}</span>
+            <span>{t("gitPanel.tools.columns.event")}</span>
           </div>
           {filteredTimeline.length > 0 ? (
             <ol className="pb-8">
               {filteredTimeline.map((item) => (
-                <TimelineRow key={item.id} item={item} />
+                <TimelineRow key={item.id} item={item} t={t} />
               ))}
             </ol>
           ) : (
             <div className="flex h-32 items-center justify-center px-4 text-center text-xs text-(--text-muted)">
-              No matching events.
+              {t("gitPanel.tools.noMatchingEvents")}
             </div>
           )}
         </ScrollArea>

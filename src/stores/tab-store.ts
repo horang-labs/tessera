@@ -18,7 +18,10 @@ import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { getSpecialSessionSourceSessionId, isSpecialSession } from '@/lib/constants/special-sessions';
-import { parseWorkspaceFileSessionId } from '@/lib/workspace-tabs/special-session';
+import {
+  parseMemoryFileSessionId,
+  parseWorkspaceFileSessionId,
+} from '@/lib/workspace-tabs/special-session';
 
 // --- 순수 함수 헬퍼 ---
 
@@ -54,21 +57,25 @@ function getTabActiveSessionId(
   return tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
 }
 
+function isFileLikeSessionId(sessionId: string | null): boolean {
+  if (!sessionId) return false;
+  return parseWorkspaceFileSessionId(sessionId) !== null
+    || parseMemoryFileSessionId(sessionId) !== null;
+}
+
 function isWorkspaceFilePreviewTab(
   tab: Tab,
   panelStore: ReturnType<typeof usePanelStore.getState>,
 ): boolean {
   if (!tab.isPreview) return false;
-  const sessionId = getTabActiveSessionId(tab.id, panelStore);
-  return sessionId ? parseWorkspaceFileSessionId(sessionId) !== null : false;
+  return isFileLikeSessionId(getTabActiveSessionId(tab.id, panelStore));
 }
 
 function isWorkspaceFileTab(
   tabId: string,
   panelStore: ReturnType<typeof usePanelStore.getState>,
 ): boolean {
-  const sessionId = getTabActiveSessionId(tabId, panelStore);
-  return sessionId ? parseWorkspaceFileSessionId(sessionId) !== null : false;
+  return isFileLikeSessionId(getTabActiveSessionId(tabId, panelStore));
 }
 
 function insertTabAfter(tabs: Tab[], newTab: Tab, anchorTabId?: string | null): Tab[] {
