@@ -5,12 +5,12 @@ import { createPortal } from 'react-dom';
 import { CheckCircle, AlertTriangle, Inbox } from 'lucide-react';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
-import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 
 interface NotificationCenterProps {
   isOpen: boolean;
@@ -97,10 +97,7 @@ function NotificationCenterContent({
 
     if (location) {
       // Session already open — switch to correct tab and focus panel
-      if (location.tabId !== tabStore.activeTabId) {
-        tabStore.setActiveTab(location.tabId);
-      }
-      usePanelStore.getState().setActivePanelId(location.panelId);
+      activateSessionPanel(sessionId, { location });
     } else {
       // Session not in any tab/panel — let bridge effect assign it
       setActiveSession(sessionId);

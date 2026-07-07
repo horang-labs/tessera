@@ -13,6 +13,7 @@ import { PANEL_NODE_DRAG_MIME, SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
+import { focusPanelControl } from '@/lib/session/focus-session-panel';
 
 /** Edge zone threshold — the outer 25% of each edge triggers a split. */
 const EDGE_THRESHOLD = 0.25;
@@ -54,7 +55,9 @@ interface PanelWrapperProps {
 export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: PanelWrapperProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
-  const isActive = usePanelStore((s) => s.tabPanels[tabId]?.activePanelId === panelId);
+  const isActive = usePanelStore((s) => (
+    s.activeTabId === tabId && s.tabPanels[tabId]?.activePanelId === panelId
+  ));
   const isSinglePanel = usePanelStore((s) => Object.keys(s.tabPanels[tabId]?.panels ?? EMPTY_PANELS).length <= 1);
   const setActivePanelId = usePanelStore((s) => s.setActivePanelId);
   const inactivePanelDimming = useSettingsStore((s) => s.settings.inactivePanelDimming);
@@ -89,22 +92,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   // 패널 활성화 시 포커스 자동 이동
   useEffect(() => {
     if (!isActive) return;
-    requestAnimationFrame(() => {
-      const panelEl = document.querySelector(`[data-panel-id="${panelId}"]`);
-      if (!panelEl) return;
-      const prompt = panelEl.querySelector<HTMLElement>('[data-interactive-prompt]');
-      if (prompt) {
-        prompt.focus();
-        return;
-      }
-      const textarea = panelEl.querySelector('textarea');
-      if (textarea) {
-        textarea.focus();
-        return;
-      }
-      const createBtn = panelEl.querySelector<HTMLElement>('[data-testid="empty-panel-create-session"]');
-      createBtn?.focus();
-    });
+    focusPanelControl(panelId);
   }, [isActive, panelId, sessionId]);
 
   const handleMouseDown = useCallback(() => {

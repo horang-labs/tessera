@@ -16,6 +16,7 @@ import { TabContextMenu } from './tab-context-menu';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
+import { focusPanelControl } from '@/lib/session/focus-session-panel';
 
 const TAB_SCROLL_MIN_STEP = 180;
 const TAB_SCROLL_EDGE_EPSILON = 1;
@@ -255,8 +256,14 @@ export const TabBar = memo(function TabBar() {
 
   const handleTabActivate = useCallback(function handleTabActivate(tabId: string) {
     const tabStore = useTabStore.getState();
-    if (tabId === tabStore.activeTabId) return;
-    tabStore.setActiveTab(tabId);
+    const panelStore = usePanelStore.getState();
+    const targetPanelId = panelStore.tabPanels[tabId]?.activePanelId;
+    if (tabId !== tabStore.activeTabId) {
+      tabStore.setActiveTab(tabId);
+    }
+    if (targetPanelId) {
+      focusPanelControl(targetPanelId);
+    }
   }, []);
 
   const handleTabClose = useCallback(function handleTabClose(tabId: string) {
