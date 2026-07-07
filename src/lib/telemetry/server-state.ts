@@ -10,6 +10,7 @@ export interface TelemetryInstallState {
   installId: string;
   firstRunCapturedAt: string | null;
   firstRunSkippedAt: string | null;
+  firstRunSkipReason: FirstRunSkipReason | null;
 }
 
 export interface TelemetryBootstrapInfo extends TelemetryInstallState {
@@ -18,6 +19,11 @@ export interface TelemetryBootstrapInfo extends TelemetryInstallState {
 }
 
 type FirstRunDisposition = 'captured' | 'skipped';
+export type FirstRunSkipReason =
+  | 'client_disabled'
+  | 'existing_install_data'
+  | 'telemetry_disabled_by_env'
+  | 'unknown';
 
 const TELEMETRY_STATE_FILE = 'telemetry.json';
 const EXISTING_INSTALL_MARKERS = [
@@ -48,6 +54,9 @@ export async function getTelemetryBootstrapInfo(
     state = createTelemetryInstallState();
     if (serverHostInfo.telemetryDisabledByEnv || startupHadExistingInstallData === true) {
       state.firstRunSkippedAt = now;
+      state.firstRunSkipReason = serverHostInfo.telemetryDisabledByEnv
+        ? 'telemetry_disabled_by_env'
+        : 'existing_install_data';
     }
     await writeTelemetryInstallState(state);
   } else if (
@@ -55,7 +64,11 @@ export async function getTelemetryBootstrapInfo(
     && !state.firstRunSkippedAt
     && serverHostInfo.telemetryDisabledByEnv
   ) {
-    state = { ...state, firstRunSkippedAt: now };
+    state = {
+      ...state,
+      firstRunSkippedAt: now,
+      firstRunSkipReason: 'telemetry_disabled_by_env',
+    };
     await writeTelemetryInstallState(state);
   }
 
@@ -70,6 +83,7 @@ export async function getTelemetryBootstrapInfo(
 
 export async function markTelemetryFirstRun(
   disposition: FirstRunDisposition,
+  options: { skipReason?: FirstRunSkipReason | null } = {},
 ): Promise<TelemetryInstallState> {
   const current = await readTelemetryInstallState();
   const state = current ?? createTelemetryInstallState();
@@ -83,7 +97,10 @@ export async function markTelemetryFirstRun(
     ...state,
     ...(disposition === 'captured'
       ? { firstRunCapturedAt: now }
-      : { firstRunSkippedAt: now }),
+      : {
+        firstRunSkippedAt: now,
+        firstRunSkipReason: options.skipReason ?? 'unknown',
+      }),
   };
   await writeTelemetryInstallState(updated);
   return updated;
@@ -104,6 +121,7 @@ function createTelemetryInstallState(): TelemetryInstallState {
     installId: randomUUID(),
     firstRunCapturedAt: null,
     firstRunSkippedAt: null,
+    firstRunSkipReason: null,
   };
 }
 
@@ -122,7 +140,20 @@ function normalizeTelemetryInstallState(raw: unknown): TelemetryInstallState | n
     firstRunSkippedAt: typeof value.firstRunSkippedAt === 'string'
       ? value.firstRunSkippedAt
       : null,
+    firstRunSkipReason: normalizeFirstRunSkipReason(value.firstRunSkipReason),
   };
+}
+
+function normalizeFirstRunSkipReason(value: unknown): FirstRunSkipReason | null {
+  if (
+    value === 'client_disabled'
+    || value === 'existing_install_data'
+    || value === 'telemetry_disabled_by_env'
+    || value === 'unknown'
+  ) {
+    return value;
+  }
+  return null;
 }
 
 async function writeTelemetryInstallState(state: TelemetryInstallState): Promise<void> {
