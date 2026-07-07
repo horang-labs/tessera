@@ -11,9 +11,14 @@ import {
   LoaderCircle,
   Search,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
+import {
+  useDocumentVisibility,
+  useStableWorkspaceFilesSubscriberId,
+  useWorkspaceFilesLiveSync,
+} from "@/hooks/use-workspace-files-live-sync";
 import {
   openWorkspaceFileTab,
   previewWorkspaceFileTab,
@@ -130,6 +135,11 @@ function buildFileTree(filePaths: string[]): WorkspaceTreeNode[] {
   return finalizeDirectory(root).children;
 }
 
+function sameStringArray(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
 function EmptyState({
   title,
   body,
@@ -158,6 +168,8 @@ function EmptyState({
 }
 
 export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) {
+  const isDocumentVisible = useDocumentVisibility();
+  const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [files, setFiles] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -169,46 +181,85 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     error: null,
     truncated: false,
   }));
+  const requestSeqRef = useRef(0);
+  const activeLoadsRef = useRef(0);
 
-  useEffect(() => {
+  const loadFiles = useCallback(async (options?: {
+    signal?: AbortSignal;
+    silent?: boolean;
+  }) => {
     if (!sessionId) {
+      setFiles([]);
       setWorkDir(null);
+      setState({ loading: false, error: null, truncated: false });
       return;
     }
 
-    const abortController = new AbortController();
-    setWorkDir(null);
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
 
-    const loadFiles = async () => {
-      try {
-        const response = await fetchWithTimeout(
-          `/api/sessions/${encodeURIComponent(sessionId)}/files`,
-          { signal: abortController.signal, retries: 1 },
-        );
-        const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
-        if (!response.ok) throw new Error("Failed to load files.");
-        setFiles(Array.isArray(payload?.files) ? payload.files : []);
-        setWorkDir(payload?.workDir ?? null);
-        setState({
+    if (!options?.silent) {
+      setWorkDir(null);
+      setState({ loading: true, error: null, truncated: false });
+    }
+
+    activeLoadsRef.current += 1;
+    try {
+      const response = await fetchWithTimeout(
+        `/api/sessions/${encodeURIComponent(sessionId)}/files`,
+        { signal: options?.signal, retries: 1 },
+      );
+      const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
+      if (!response.ok) throw new Error("Failed to load files.");
+
+      if (requestSeqRef.current !== requestSeq) return;
+      const nextFiles = Array.isArray(payload?.files) ? payload.files : [];
+      setFiles((current) => sameStringArray(current, nextFiles) ? current : nextFiles);
+      setWorkDir(payload?.workDir ?? null);
+      setState({
+        loading: false,
+        error: null,
+        truncated: Boolean(payload?.truncated),
+      });
+    } catch (error) {
+      if (options?.signal?.aborted || requestSeqRef.current !== requestSeq) return;
+      const message = isTimeoutError(error)
+        ? "The file list did not load in time."
+        : error instanceof Error ? error.message : "Failed to load files.";
+      if (options?.silent) {
+        setState((current) => current.loading ? current : {
           loading: false,
-          error: null,
-          truncated: Boolean(payload?.truncated),
+          error: current.error,
+          truncated: current.truncated,
         });
-      } catch (error) {
-        if (abortController.signal.aborted) return;
+      } else {
         setState({
           loading: false,
-          error: isTimeoutError(error)
-            ? "The file list did not load in time."
-            : error instanceof Error ? error.message : "Failed to load files.",
+          error: message,
           truncated: false,
         });
       }
-    };
-
-    void loadFiles();
-    return () => abortController.abort();
+    } finally {
+      activeLoadsRef.current -= 1;
+    }
   }, [sessionId]);
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    void loadFiles({ signal: abortController.signal });
+    return () => abortController.abort();
+  }, [loadFiles]);
+
+  const refreshFiles = useCallback(() => {
+    void loadFiles({ silent: true });
+  }, [loadFiles]);
+
+  useWorkspaceFilesLiveSync({
+    enabled: Boolean(sessionId) && isDocumentVisible,
+    onRefresh: refreshFiles,
+    sessionId,
+    subscriberId,
+  });
 
   const visibleFiles = useMemo(() => {
     const trimmed = query.trim().toLowerCase();

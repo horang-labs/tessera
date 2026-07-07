@@ -6,6 +6,7 @@ import * as dbSessions from '../db/sessions';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
 import { bindTerminalSender } from '../terminal/shared-terminal-manager';
+import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { ProviderMeta } from '../cli/providers/types';
 import {
@@ -28,6 +29,7 @@ import {
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 
 interface RouteClientTransportMessageOptions {
+  connectionId: string;
   message: ClientMessage;
   sendToUser: WsSendToUser;
   userId: string;
@@ -98,6 +100,7 @@ export function verifyClientSessionAccess(
 }
 
 export async function routeClientTransportMessage({
+  connectionId,
   message,
   sendToUser,
   userId,
@@ -383,6 +386,24 @@ export async function routeClientTransportMessage({
 
     case 'terminal_close':
       bindTerminalSender(sendToUser).close(message.terminalId, userId);
+      return;
+
+    case 'subscribe_workspace_files':
+      await workspaceFileWatchManager.subscribe({
+        connectionId,
+        sendToUser,
+        sessionId: message.sessionId,
+        subscriberId: message.subscriberId,
+        userId,
+      });
+      return;
+
+    case 'unsubscribe_workspace_files':
+      workspaceFileWatchManager.unsubscribe({
+        connectionId,
+        sessionId: message.sessionId,
+        subscriberId: message.subscriberId,
+      });
       return;
 
     default:

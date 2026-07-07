@@ -1,72 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs/promises';
-import * as path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
 import { getDb } from '@/lib/db/database';
-import { getFilesystemPathModule } from '@/lib/filesystem/host-path';
 import { resolveSessionWorkspaceFilesystemRoot } from '@/lib/session/session-workspace-root';
-
-const MAX_FILES = 20000;
-
-const IGNORED_DIR_NAMES = new Set([
-  'node_modules',
-  '.next',
-  '.git',
-  'dist',
-  'build',
-  '.turbo',
-  'coverage',
-  '.cache',
-  '.vercel',
-  '.idea',
-  '.vscode',
-  'out',
-]);
-
-type WalkResult = { files: string[]; truncated: boolean };
-type PathModule = typeof path.win32 | typeof path.posix;
+import { workspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-watch-manager';
+import { walkWorkspaceFiles } from '@/lib/workspace-files/workspace-file-scan';
 
 interface SessionRef {
   sessionId: string;
   title: string;
-}
-
-async function walk(root: string): Promise<WalkResult> {
-  const out: string[] = [];
-  let truncated = false;
-  const pathModule: PathModule = getFilesystemPathModule(root);
-
-  async function recurse(absDir: string, relDir: string): Promise<void> {
-    if (truncated) return;
-    let entries: import('fs').Dirent[];
-    try {
-      entries = await fs.readdir(absDir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const ent of entries) {
-      if (truncated) return;
-      if (ent.name.startsWith('.') && ent.name !== '.env.example') {
-        continue;
-      }
-      if (ent.isDirectory()) {
-        if (IGNORED_DIR_NAMES.has(ent.name)) continue;
-        const childRel = relDir ? `${relDir}/${ent.name}` : ent.name;
-        await recurse(pathModule.join(absDir, ent.name), childRel);
-      } else if (ent.isFile()) {
-        const childRel = relDir ? `${relDir}/${ent.name}` : ent.name;
-        out.push(childRel);
-        if (out.length >= MAX_FILES) {
-          truncated = true;
-          return;
-        }
-      }
-    }
-  }
-
-  await recurse(root, '');
-  return { files: out, truncated };
 }
 
 function listReferenceSessions(projectId: string, currentSessionId: string): {
@@ -147,7 +90,8 @@ export async function GET(
   }
 
   try {
-    const result = await walk(root);
+    const result = await workspaceFileWatchManager.getIndexedSnapshotForRoot(root)
+      ?? await walkWorkspaceFiles(root);
     return NextResponse.json({
       files: result.files,
       chats: refs.chats,

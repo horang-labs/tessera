@@ -1,14 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { WorkspaceCodeView } from "@/components/workspace/workspace-code-view";
 import { extractGitPanelErrorMessage } from "@/components/git/git-panel-shared";
+import {
+  useDocumentVisibility,
+  useStableWorkspaceFilesSubscriberId,
+  useWorkspaceFilesLiveSync,
+} from "@/hooks/use-workspace-files-live-sync";
 import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { wsClient } from "@/lib/ws/client";
-import { usePanelStore, selectActiveTab, EMPTY_PANELS } from "@/stores/panel-store";
+import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
+import { useTabStore } from "@/stores/tab-store";
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
-import type { WorkspaceFileSessionRef } from "@/lib/workspace-tabs/special-session";
+import {
+  buildWorkspaceFileSessionId,
+  type WorkspaceFileSessionRef,
+} from "@/lib/workspace-tabs/special-session";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
 
 interface WorkspaceFileTabState {
@@ -28,9 +37,37 @@ function getFileUrl(ref: WorkspaceFileSessionRef): string {
   return `/api/sessions/${sessionId}/file?path=${path}`;
 }
 
+function getDirectoryName(filePath: string): string {
+  const slashIndex = filePath.lastIndexOf("/");
+  return slashIndex === -1 ? "" : filePath.slice(0, slashIndex);
+}
+
+function getExtension(filePath: string): string {
+  const basename = filePath.split("/").pop() ?? filePath;
+  const dotIndex = basename.lastIndexOf(".");
+  return dotIndex <= 0 ? "" : basename.slice(dotIndex);
+}
+
+function findRenameTarget(
+  msg: ServerTransportMessage,
+  filePath: string,
+): string | null {
+  if (msg.type !== "workspace_files_changed") return null;
+  if (msg.hasMoreChangedPaths || !msg.deletedPaths.includes(filePath)) return null;
+
+  const currentDirectory = getDirectoryName(filePath);
+  const sameDirectoryAdded = msg.addedPaths.filter((path) => getDirectoryName(path) === currentDirectory);
+  if (sameDirectoryAdded.length === 1) return sameDirectoryAdded[0];
+
+  const currentExtension = getExtension(filePath);
+  const sameExtensionAdded = sameDirectoryAdded.filter((path) => getExtension(path) === currentExtension);
+  return sameExtensionAdded.length === 1 ? sameExtensionAdded[0] : null;
+}
+
 function shouldRefreshForSession(
   msg: ServerTransportMessage,
   sessionId: string,
+  filePath: string,
 ): boolean {
   switch (msg.type) {
     case "git_panel_state":
@@ -42,6 +79,9 @@ function shouldRefreshForSession(
       return msg.sessionId === sessionId && msg.event === "completed";
     case "worktree_diff_stats":
       return msg.sessionIds.includes(sessionId);
+    case "workspace_files_changed":
+      return msg.sessionIds.includes(sessionId)
+        && (msg.hasMoreChangedPaths || msg.changedPaths.includes(filePath));
     case "replay_events":
       return msg.sessionId === sessionId
         && msg.events.some((event) =>
@@ -62,6 +102,10 @@ export function WorkspaceFileTab({
   panelId: string;
 }) {
   const { kind, path, sourceSessionId } = fileRef;
+  const tabId = useContext(TabIdContext);
+  const isTabActive = useTabStore((state) => state.activeTabId === tabId);
+  const isDocumentVisible = useDocumentVisibility();
+  const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-tab");
   const panelCount = usePanelStore(
     (state) => Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length,
   );
@@ -136,6 +180,18 @@ export function WorkspaceFileTab({
     }
   }, [kind, path, sourceSessionId]);
 
+  const refreshFile = useCallback(() => {
+    void loadFile({ silent: true });
+  }, [loadFile]);
+
+  useWorkspaceFilesLiveSync({
+    enabled: isTabActive && isDocumentVisible,
+    onRefresh: refreshFile,
+    refreshOnTreeChange: false,
+    sessionId: sourceSessionId,
+    subscriberId,
+  });
+
   useEffect(() => {
     const abortController = new AbortController();
     void loadFile({ signal: abortController.signal });
@@ -175,7 +231,25 @@ export function WorkspaceFileTab({
     };
 
     const unsubscribe = wsClient.subscribeServerMessages((msg) => {
-      if (shouldRefreshForSession(msg, sourceSessionId)) {
+      const renameTarget = findRenameTarget(msg, path);
+      if (renameTarget && msg.type === "workspace_files_changed" && msg.sessionIds.includes(sourceSessionId)) {
+        assignSession(
+          panelId,
+          buildWorkspaceFileSessionId(sourceSessionId, kind, renameTarget),
+        );
+        return;
+      }
+
+      if (
+        msg.type === "workspace_files_changed"
+        && msg.sessionIds.includes(sourceSessionId)
+        && msg.deletedPaths.includes(path)
+      ) {
+        void loadFile({ signal: abortController.signal });
+        return;
+      }
+
+      if (shouldRefreshForSession(msg, sourceSessionId, path)) {
         scheduleRefresh();
       }
     });
@@ -187,7 +261,7 @@ export function WorkspaceFileTab({
         window.clearTimeout(refreshTimer);
       }
     };
-  }, [loadFile, sourceSessionId]);
+  }, [assignSession, kind, loadFile, panelId, path, sourceSessionId]);
 
   return (
     <WorkspaceCodeView
