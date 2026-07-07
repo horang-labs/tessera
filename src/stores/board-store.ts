@@ -86,6 +86,10 @@ interface BoardState {
 const VIEW_MODE_KEY = 'ccw:viewMode';
 const PROJECT_VIEW_MODES_KEY = 'ccw:projectViewModes';
 const COLLAPSED_COLLECTIONS_KEY = 'ccw:collapsedCollections';
+const SELECTED_PROJECT_DIR_KEY = 'ccw:selectedProjectDir';
+const ALL_PROJECTS_EXPANDED_SECTIONS_KEY = 'ccw:allProjectsExpandedSections';
+const LIST_RUNNING_FILTER_KEY = 'ccw:listRunningFilterActive';
+const ACTIVE_COLLECTION_FILTER_KEY = 'ccw:activeCollectionFilter';
 
 function isViewMode(value: unknown): value is ViewMode {
   return value === 'list' || value === 'board';
@@ -151,6 +155,74 @@ function saveCollapsedCollections(collapsed: Record<string, boolean>): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(COLLAPSED_COLLECTIONS_KEY, JSON.stringify(collapsed));
+  } catch {
+    // ignore
+  }
+}
+
+function loadBooleanRecord(key: string): Record<string, boolean> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return {};
+
+    const record: Record<string, boolean> = {};
+    for (const [id, value] of Object.entries(parsed)) {
+      if (typeof id === 'string' && id.length > 0 && typeof value === 'boolean') {
+        record[id] = value;
+      }
+    }
+    return record;
+  } catch {
+    return {};
+  }
+}
+
+function saveBooleanRecord(key: string, record: Record<string, boolean>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(record));
+  } catch {
+    // ignore
+  }
+}
+
+function loadNullableString(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = localStorage.getItem(key);
+    return value && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveNullableString(key: string, value: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (value && value.length > 0) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function loadBooleanFlag(key: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(key) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveBooleanFlag(key: string, value: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, value ? 'true' : 'false');
   } catch {
     // ignore
   }
@@ -240,32 +312,40 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       return { collapsedCollections };
     }),
 
-  allProjectsExpandedSections: {},
+  allProjectsExpandedSections: loadBooleanRecord(ALL_PROJECTS_EXPANDED_SECTIONS_KEY),
   toggleAllProjectsSection: (projectId) =>
-    set((state) => ({
-      allProjectsExpandedSections: {
+    set((state) => {
+      const allProjectsExpandedSections = {
         ...state.allProjectsExpandedSections,
         [projectId]: !state.allProjectsExpandedSections[projectId],
-      },
-    })),
+      };
+      saveBooleanRecord(ALL_PROJECTS_EXPANDED_SECTIONS_KEY, allProjectsExpandedSections);
+      return { allProjectsExpandedSections };
+    }),
   setAllProjectsSectionExpanded: (projectId, expanded) =>
-    set((state) => ({
-      allProjectsExpandedSections: {
+    set((state) => {
+      const allProjectsExpandedSections = {
         ...state.allProjectsExpandedSections,
         [projectId]: expanded,
-      },
-    })),
+      };
+      saveBooleanRecord(ALL_PROJECTS_EXPANDED_SECTIONS_KEY, allProjectsExpandedSections);
+      return { allProjectsExpandedSections };
+    }),
   setAllProjectsSectionsExpanded: (projectIds, expanded) =>
     set((state) => {
       const next = { ...state.allProjectsExpandedSections };
       for (const projectId of projectIds) {
         next[projectId] = expanded;
       }
+      saveBooleanRecord(ALL_PROJECTS_EXPANDED_SECTIONS_KEY, next);
       return { allProjectsExpandedSections: next };
     }),
 
-  isListRunningFilterActive: false,
-  setListRunningFilterActive: (active) => set({ isListRunningFilterActive: active }),
+  isListRunningFilterActive: loadBooleanFlag(LIST_RUNNING_FILTER_KEY),
+  setListRunningFilterActive: (active) => {
+    saveBooleanFlag(LIST_RUNNING_FILTER_KEY, active);
+    set({ isListRunningFilterActive: active });
+  },
 
   kanbanAddMenuColumn: null,
   setKanbanAddMenuColumn: (column) => set({ kanbanAddMenuColumn: column }),
@@ -276,7 +356,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set({ draggingProjectDir: dir, projectDragOverIndex: dir === null ? null : get().projectDragOverIndex }),
   setProjectDragOverIndex: (index) => set({ projectDragOverIndex: index }),
 
-  selectedProjectDir: null,
+  selectedProjectDir: loadNullableString(SELECTED_PROJECT_DIR_KEY),
   setSelectedProjectDir: (dir) => {
     set((state) => {
       const nextProjectViewModes =
@@ -294,12 +374,16 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       };
     });
     const { projectViewModes, viewMode } = get();
+    saveNullableString(SELECTED_PROJECT_DIR_KEY, dir);
     try { localStorage.setItem(VIEW_MODE_KEY, viewMode); } catch { /* ignore */ }
     saveProjectViewModes(projectViewModes);
   },
 
-  activeCollectionFilter: null,
-  setCollectionFilter: (id) => set({ activeCollectionFilter: id }),
+  activeCollectionFilter: loadNullableString(ACTIVE_COLLECTION_FILTER_KEY),
+  setCollectionFilter: (id) => {
+    saveNullableString(ACTIVE_COLLECTION_FILTER_KEY, id);
+    set({ activeCollectionFilter: id });
+  },
 
   // Collection item DnD
   draggingCollectionItem: null,

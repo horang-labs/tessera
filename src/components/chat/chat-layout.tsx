@@ -313,6 +313,15 @@ export function ChatLayout() {
       } else {
         const stillExists = projects.some((p) => p.encodedDir === current);
         if (!stillExists) {
+          const restoredProjectDir = useTabStore.getState().currentProjectDir;
+          if (restoredProjectDir === ALL_PROJECTS_SENTINEL) {
+            useBoardStore.getState().setSelectedProjectDir(restoredProjectDir);
+            return;
+          }
+          if (restoredProjectDir && projects.some((p) => p.encodedDir === restoredProjectDir)) {
+            useBoardStore.getState().setSelectedProjectDir(restoredProjectDir);
+            return;
+          }
           const proj = projects.find((p) => p.isCurrent) ?? projects[0];
           useBoardStore.getState().setSelectedProjectDir(proj.encodedDir);
         }
