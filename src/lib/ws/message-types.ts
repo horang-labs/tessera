@@ -90,7 +90,9 @@ export type ClientMessage =
   | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number }
   | { type: 'terminal_input'; requestId: string; terminalId: string; data: string }
   | { type: 'terminal_resize'; requestId: string; terminalId: string; cols: number; rows: number }
-  | { type: 'terminal_close'; requestId: string; terminalId: string };
+  | { type: 'terminal_close'; requestId: string; terminalId: string }
+  | { type: 'subscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string }
+  | { type: 'unsubscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string };
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions';
 
@@ -390,6 +392,26 @@ export type AppServerMessage =
       type: 'git_panel_state';
       sessionId: string;
       data: import('@/types/git').GitPanelData;
+    }
+  | {
+      type: 'workspace_files_changed';
+      workDir: string;
+      sessionIds: string[];
+      version: number;
+      treeChanged: boolean;
+      changedPaths: string[];
+      addedPaths: string[];
+      deletedPaths: string[];
+      hasMoreChangedPaths: boolean;
+    }
+  | {
+      type: 'workspace_file_watch_status';
+      sessionId: string;
+      subscriberId: string;
+      status: 'starting' | 'active' | 'fallback';
+      version?: number;
+      workDir?: string;
+      reason?: string;
     }
   | {
       type: 'session_mutated';

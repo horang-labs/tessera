@@ -396,6 +396,14 @@ export class WebSocketClient {
     this.sendRequest('terminal_close', { terminalId });
   }
 
+  subscribeWorkspaceFiles(sessionId: string, subscriberId: string): boolean {
+    return this.sendRequest('subscribe_workspace_files', { sessionId, subscriberId });
+  }
+
+  unsubscribeWorkspaceFiles(sessionId: string, subscriberId: string): boolean {
+    return this.sendRequest('unsubscribe_workspace_files', { sessionId, subscriberId });
+  }
+
   private sendRequest<T extends ClientMessage['type']>(
     type: T,
     payload: Omit<Extract<ClientMessage, { type: T }>, 'type' | 'requestId'>,
