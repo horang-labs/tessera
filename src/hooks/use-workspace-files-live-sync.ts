@@ -7,6 +7,11 @@ import type { ServerTransportMessage } from "@/lib/ws/message-types";
 
 const FALLBACK_POLL_INTERVAL_MS = 2_000;
 
+type WorkspaceFilesChangedMessage = Extract<
+  ServerTransportMessage,
+  { type: "workspace_files_changed" }
+>;
+
 function createSubscriberId(prefix: string): string {
   const random =
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -45,12 +50,14 @@ export function useStableWorkspaceFilesSubscriberId(prefix: string): string {
 
 export function useWorkspaceFilesLiveSync({
   enabled,
+  onFilesChanged,
   onRefresh,
   refreshOnTreeChange = true,
   sessionId,
   subscriberId,
 }: {
   enabled: boolean;
+  onFilesChanged?: (msg: WorkspaceFilesChangedMessage) => void;
   onRefresh: () => void;
   refreshOnTreeChange?: boolean;
   sessionId: string | null;
@@ -58,7 +65,12 @@ export function useWorkspaceFilesLiveSync({
 }): void {
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const [fallbackPolling, setFallbackPolling] = useState(false);
+  const onFilesChangedRef = useRef(onFilesChanged);
   const onRefreshRef = useRef(onRefresh);
+
+  useEffect(() => {
+    onFilesChangedRef.current = onFilesChanged;
+  }, [onFilesChanged]);
 
   useEffect(() => {
     onRefreshRef.current = onRefresh;
@@ -100,6 +112,7 @@ export function useWorkspaceFilesLiveSync({
         msg.type === "workspace_files_changed"
         && msg.sessionIds.includes(sessionId)
       ) {
+        onFilesChangedRef.current?.(msg);
         if (refreshOnTreeChange && msg.treeChanged) {
           onRefreshRef.current();
         }

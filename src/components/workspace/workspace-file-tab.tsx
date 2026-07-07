@@ -20,6 +20,11 @@ import {
 } from "@/lib/workspace-tabs/special-session";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
 
+type WorkspaceFilesChangedMessage = Extract<
+  ServerTransportMessage,
+  { type: "workspace_files_changed" }
+>;
+
 interface WorkspaceFileTabState {
   loading: boolean;
   error: string | null;
@@ -42,32 +47,27 @@ function getDirectoryName(filePath: string): string {
   return slashIndex === -1 ? "" : filePath.slice(0, slashIndex);
 }
 
-function getExtension(filePath: string): string {
-  const basename = filePath.split("/").pop() ?? filePath;
-  const dotIndex = basename.lastIndexOf(".");
-  return dotIndex <= 0 ? "" : basename.slice(dotIndex);
-}
-
 function findRenameTarget(
-  msg: ServerTransportMessage,
+  msg: WorkspaceFilesChangedMessage,
   filePath: string,
 ): string | null {
-  if (msg.type !== "workspace_files_changed") return null;
-  if (msg.hasMoreChangedPaths || !msg.deletedPaths.includes(filePath)) return null;
+  if (
+    msg.hasMoreChangedPaths
+    || msg.deletedPaths.length !== 1
+    || msg.addedPaths.length !== 1
+    || msg.deletedPaths[0] !== filePath
+  ) {
+    return null;
+  }
 
   const currentDirectory = getDirectoryName(filePath);
-  const sameDirectoryAdded = msg.addedPaths.filter((path) => getDirectoryName(path) === currentDirectory);
-  if (sameDirectoryAdded.length === 1) return sameDirectoryAdded[0];
-
-  const currentExtension = getExtension(filePath);
-  const sameExtensionAdded = sameDirectoryAdded.filter((path) => getExtension(path) === currentExtension);
-  return sameExtensionAdded.length === 1 ? sameExtensionAdded[0] : null;
+  const addedPath = msg.addedPaths[0];
+  return getDirectoryName(addedPath) === currentDirectory ? addedPath : null;
 }
 
 function shouldRefreshForSession(
   msg: ServerTransportMessage,
   sessionId: string,
-  filePath: string,
 ): boolean {
   switch (msg.type) {
     case "git_panel_state":
@@ -79,9 +79,6 @@ function shouldRefreshForSession(
       return msg.sessionId === sessionId && msg.event === "completed";
     case "worktree_diff_stats":
       return msg.sessionIds.includes(sessionId);
-    case "workspace_files_changed":
-      return msg.sessionIds.includes(sessionId)
-        && (msg.hasMoreChangedPaths || msg.changedPaths.includes(filePath));
     case "replay_events":
       return msg.sessionId === sessionId
         && msg.events.some((event) =>
@@ -184,8 +181,31 @@ export function WorkspaceFileTab({
     void loadFile({ silent: true });
   }, [loadFile]);
 
+  const handleWorkspaceFilesChanged = useCallback((msg: WorkspaceFilesChangedMessage) => {
+    if (!msg.sessionIds.includes(sourceSessionId)) return;
+
+    const renameTarget = findRenameTarget(msg, path);
+    if (renameTarget) {
+      assignSession(
+        panelId,
+        buildWorkspaceFileSessionId(sourceSessionId, kind, renameTarget),
+      );
+      return;
+    }
+
+    if (msg.deletedPaths.includes(path)) {
+      void loadFile();
+      return;
+    }
+
+    if (msg.hasMoreChangedPaths || msg.changedPaths.includes(path)) {
+      refreshFile();
+    }
+  }, [assignSession, kind, loadFile, panelId, path, refreshFile, sourceSessionId]);
+
   useWorkspaceFilesLiveSync({
     enabled: isTabActive && isDocumentVisible,
+    onFilesChanged: handleWorkspaceFilesChanged,
     onRefresh: refreshFile,
     refreshOnTreeChange: false,
     sessionId: sourceSessionId,
@@ -231,25 +251,7 @@ export function WorkspaceFileTab({
     };
 
     const unsubscribe = wsClient.subscribeServerMessages((msg) => {
-      const renameTarget = findRenameTarget(msg, path);
-      if (renameTarget && msg.type === "workspace_files_changed" && msg.sessionIds.includes(sourceSessionId)) {
-        assignSession(
-          panelId,
-          buildWorkspaceFileSessionId(sourceSessionId, kind, renameTarget),
-        );
-        return;
-      }
-
-      if (
-        msg.type === "workspace_files_changed"
-        && msg.sessionIds.includes(sourceSessionId)
-        && msg.deletedPaths.includes(path)
-      ) {
-        void loadFile({ signal: abortController.signal });
-        return;
-      }
-
-      if (shouldRefreshForSession(msg, sourceSessionId, path)) {
+      if (shouldRefreshForSession(msg, sourceSessionId)) {
         scheduleRefresh();
       }
     });
@@ -261,7 +263,7 @@ export function WorkspaceFileTab({
         window.clearTimeout(refreshTimer);
       }
     };
-  }, [assignSession, kind, loadFile, panelId, path, sourceSessionId]);
+  }, [loadFile, sourceSessionId]);
 
   return (
     <WorkspaceCodeView

@@ -1,24 +1,19 @@
 "use client";
 
 import { AlertCircle, FileText, FolderTree, LoaderCircle, Search } from "lucide-react";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import {
   useDocumentVisibility,
   useStableWorkspaceFilesSubscriberId,
   useWorkspaceFilesLiveSync,
 } from "@/hooks/use-workspace-files-live-sync";
+import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { openWorkspaceFileTab } from "@/lib/workspace-tabs/open-workspace-tab";
 import type { WorkspaceExplorerSessionRef } from "@/lib/workspace-tabs/special-session";
 import { TabIdContext } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
-
-interface WorkspaceFilesResponse {
-  files?: string[];
-  truncated?: boolean;
-}
 
 function basename(filePath: string): string {
   const parts = filePath.split("/");
@@ -28,11 +23,6 @@ function basename(filePath: string): string {
 function dirname(filePath: string): string {
   const slash = filePath.lastIndexOf("/");
   return slash >= 0 ? filePath.slice(0, slash) : ".";
-}
-
-function sameStringArray(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((value, index) => value === b[index]);
 }
 
 function EmptyState({
@@ -67,64 +57,14 @@ export function WorkspaceExplorerTab({
   const isTabActive = useTabStore((state) => state.activeTabId === tabId);
   const isDocumentVisible = useDocumentVisibility();
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-explorer-tab");
-  const [files, setFiles] = useState<string[]>([]);
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [truncated, setTruncated] = useState(false);
-  const requestSeqRef = useRef(0);
-  const activeLoadsRef = useRef(0);
-
-  const loadFiles = useCallback(async (options?: {
-    signal?: AbortSignal;
-    silent?: boolean;
-  }) => {
-    const requestSeq = requestSeqRef.current + 1;
-    requestSeqRef.current = requestSeq;
-
-    if (!options?.silent) {
-      setLoading(true);
-      setError(null);
-    }
-
-    activeLoadsRef.current += 1;
-    try {
-      const response = await fetchWithTimeout(
-        `/api/sessions/${encodeURIComponent(explorerRef.sourceSessionId)}/files`,
-        { signal: options?.signal, retries: 1 },
-      );
-      const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
-      if (!response.ok) throw new Error("Failed to load files.");
-
-      if (requestSeqRef.current !== requestSeq) return;
-      const nextFiles = Array.isArray(payload?.files) ? payload.files : [];
-      setFiles((current) => sameStringArray(current, nextFiles) ? current : nextFiles);
-      setTruncated(Boolean(payload?.truncated));
-      setError(null);
-    } catch (error) {
-      if (options?.signal?.aborted || requestSeqRef.current !== requestSeq) return;
-      if (!options?.silent) {
-        setError(isTimeoutError(error)
-          ? "The file list did not load in time."
-          : error instanceof Error ? error.message : "Failed to load files.");
-      }
-    } finally {
-      activeLoadsRef.current -= 1;
-      if (!options?.signal?.aborted && requestSeqRef.current === requestSeq) {
-        setLoading(false);
-      }
-    }
-  }, [explorerRef.sourceSessionId]);
-
-  useEffect(() => {
-    const abortController = new AbortController();
-    void loadFiles({ signal: abortController.signal });
-    return () => abortController.abort();
-  }, [loadFiles]);
-
-  const refreshFiles = useCallback(() => {
-    void loadFiles({ silent: true });
-  }, [loadFiles]);
+  const {
+    error,
+    files,
+    loading,
+    refreshFiles,
+    truncated,
+  } = useWorkspaceFileList(explorerRef.sourceSessionId);
 
   useWorkspaceFilesLiveSync({
     enabled: isTabActive && isDocumentVisible,

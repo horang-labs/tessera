@@ -11,7 +11,7 @@ import {
   LoaderCircle,
   Search,
 } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -19,30 +19,18 @@ import {
   useStableWorkspaceFilesSubscriberId,
   useWorkspaceFilesLiveSync,
 } from "@/hooks/use-workspace-files-live-sync";
+import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import {
   openWorkspaceFileTab,
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
-import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import {
   copyText,
   toAbsoluteWorkspacePath,
 } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import { cn } from "@/lib/utils";
-
-interface WorkspaceFilesResponse {
-  files?: string[];
-  truncated?: boolean;
-  workDir?: string | null;
-}
-
-interface WorkspaceFilePanelState {
-  loading: boolean;
-  error: string | null;
-  truncated: boolean;
-}
 
 interface WorkspaceFileNode {
   type: "file";
@@ -135,11 +123,6 @@ function buildFileTree(filePaths: string[]): WorkspaceTreeNode[] {
   return finalizeDirectory(root).children;
 }
 
-function sameStringArray(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((value, index) => value === b[index]);
-}
-
 function EmptyState({
   title,
   body,
@@ -170,89 +153,18 @@ function EmptyState({
 export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) {
   const isDocumentVisible = useDocumentVisibility();
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
-  const [files, setFiles] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
-  const [workDir, setWorkDir] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
-  const [state, setState] = useState<WorkspaceFilePanelState>(() => ({
-    loading: Boolean(sessionId),
-    error: null,
-    truncated: false,
-  }));
-  const requestSeqRef = useRef(0);
-  const activeLoadsRef = useRef(0);
-
-  const loadFiles = useCallback(async (options?: {
-    signal?: AbortSignal;
-    silent?: boolean;
-  }) => {
-    if (!sessionId) {
-      setFiles([]);
-      setWorkDir(null);
-      setState({ loading: false, error: null, truncated: false });
-      return;
-    }
-
-    const requestSeq = requestSeqRef.current + 1;
-    requestSeqRef.current = requestSeq;
-
-    if (!options?.silent) {
-      setWorkDir(null);
-      setState({ loading: true, error: null, truncated: false });
-    }
-
-    activeLoadsRef.current += 1;
-    try {
-      const response = await fetchWithTimeout(
-        `/api/sessions/${encodeURIComponent(sessionId)}/files`,
-        { signal: options?.signal, retries: 1 },
-      );
-      const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
-      if (!response.ok) throw new Error("Failed to load files.");
-
-      if (requestSeqRef.current !== requestSeq) return;
-      const nextFiles = Array.isArray(payload?.files) ? payload.files : [];
-      setFiles((current) => sameStringArray(current, nextFiles) ? current : nextFiles);
-      setWorkDir(payload?.workDir ?? null);
-      setState({
-        loading: false,
-        error: null,
-        truncated: Boolean(payload?.truncated),
-      });
-    } catch (error) {
-      if (options?.signal?.aborted || requestSeqRef.current !== requestSeq) return;
-      const message = isTimeoutError(error)
-        ? "The file list did not load in time."
-        : error instanceof Error ? error.message : "Failed to load files.";
-      if (options?.silent) {
-        setState((current) => current.loading ? current : {
-          loading: false,
-          error: current.error,
-          truncated: current.truncated,
-        });
-      } else {
-        setState({
-          loading: false,
-          error: message,
-          truncated: false,
-        });
-      }
-    } finally {
-      activeLoadsRef.current -= 1;
-    }
-  }, [sessionId]);
-
-  useEffect(() => {
-    const abortController = new AbortController();
-    void loadFiles({ signal: abortController.signal });
-    return () => abortController.abort();
-  }, [loadFiles]);
-
-  const refreshFiles = useCallback(() => {
-    void loadFiles({ silent: true });
-  }, [loadFiles]);
+  const {
+    error,
+    files,
+    loading,
+    refreshFiles,
+    truncated,
+    workDir,
+  } = useWorkspaceFileList(sessionId);
 
   useWorkspaceFilesLiveSync({
     enabled: Boolean(sessionId) && isDocumentVisible,
@@ -422,7 +334,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               </p>
               <p className="truncate text-[11px] text-(--text-muted)">
                 {files.length.toLocaleString()} files
-                {state.truncated ? " · truncated" : ""}
+                {truncated ? " · truncated" : ""}
               </p>
             </div>
           </div>
@@ -438,12 +350,12 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
         </label>
       </div>
 
-      {state.loading ? (
+      {loading ? (
         <div className="flex h-full items-center justify-center">
           <LoaderCircle className="h-5 w-5 animate-spin text-(--text-muted)" />
         </div>
-      ) : state.error ? (
-        <EmptyState title="Files unavailable" body={state.error} icon="error" />
+      ) : error ? (
+        <EmptyState title="Files unavailable" body={error} icon="error" />
       ) : fileTree.length === 0 ? (
         <EmptyState
           title={query.trim() ? "No matches" : "No files"}
