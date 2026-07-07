@@ -210,7 +210,7 @@ export const TabItem = memo(function TabItem({
   if (specialTitleKey) {
     displayTitle = t(specialTitleKey);
   } else if (activePanelSessionId && isSpecialSession(activePanelSessionId)) {
-    displayTitle = getSpecialSessionTitle(activePanelSessionId) ?? displayTitle;
+    displayTitle = getSpecialSessionTitle(activePanelSessionId, t) ?? displayTitle;
   } else if (tab.title !== null) {
     displayTitle = tab.title;
   } else if (activePanelTerminalId) {
