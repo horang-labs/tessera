@@ -6,7 +6,6 @@ import { CheckCircle, XCircle, AlertTriangle, Info, X } from 'lucide-react';
 import { useNotificationStore, type ActionToast } from '@/stores/notification-store';
 import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
-import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
@@ -15,6 +14,7 @@ import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
+import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 
 const MAX_VISIBLE_TOASTS = 5;
 const ACTION_TOAST_DURATION = 3000;
@@ -127,10 +127,7 @@ export function ToastContainer() {
 
     if (location) {
       // Session already open — switch to correct tab and focus panel
-      if (location.tabId !== tabStore.activeTabId) {
-        tabStore.setActiveTab(location.tabId);
-      }
-      usePanelStore.getState().setActivePanelId(location.panelId);
+      activateSessionPanel(sessionId, { location });
       return;
     }
 

@@ -50,6 +50,7 @@ import {
   isSpecialSession,
 } from "@/lib/constants/special-sessions";
 import { resolveActiveWorkspaceSessionId } from "@/lib/session/active-workspace-session";
+import { activateSessionPanel } from "@/lib/session/focus-session-panel";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -394,7 +395,10 @@ export function ChatLayout() {
       } catch {
         return;
       }
-      if (location !== null) return;
+      if (location !== null) {
+        activateSessionPanel(activeSessionId, { location });
+        return;
+      }
 
       panelState.assignSession(activeTabData?.activePanelId ?? '', activeSessionId);
       useTabStore.getState().syncTabProjectFromSession(panelState.activeTabId, activeSessionId);
@@ -449,15 +453,13 @@ export function ChatLayout() {
       const location = tabStore.findSessionLocation(sessionId);
       if (action === 'pin') {
         if (location) {
-          tabStore.setActiveTab(location.tabId);
-          usePanelStore.getState().setActivePanelId(location.panelId);
+          activateSessionPanel(sessionId, { location });
           tabStore.pinTab(location.tabId);
         } else {
           tabStore.createTabWithSession(sessionId);
         }
       } else if (location) {
-        tabStore.setActiveTab(location.tabId);
-        usePanelStore.getState().setActivePanelId(location.panelId);
+        activateSessionPanel(sessionId, { location });
       } else {
         tabStore.openPreview(sessionId);
       }
