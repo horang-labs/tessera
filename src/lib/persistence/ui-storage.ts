@@ -15,7 +15,11 @@ export function readUiStorageItem(key: string): string | null {
 
   const electronApi = getElectronUiStorageApi();
   if (electronApi?.isElectron && electronApi.uiStorageGetItem) {
-    return electronApi.uiStorageGetItem(key);
+    try {
+      return electronApi.uiStorageGetItem(key);
+    } catch {
+      // Fall back to browser storage below.
+    }
   }
 
   try {
@@ -30,8 +34,12 @@ export function writeUiStorageItem(key: string, value: string): void {
 
   const electronApi = getElectronUiStorageApi();
   if (electronApi?.isElectron && electronApi.uiStorageSetItem) {
-    electronApi.uiStorageSetItem(key, value);
-    return;
+    try {
+      electronApi.uiStorageSetItem(key, value);
+      return;
+    } catch {
+      // Fall back to browser storage below.
+    }
   }
 
   try {
@@ -46,8 +54,12 @@ export function removeUiStorageItem(key: string): void {
 
   const electronApi = getElectronUiStorageApi();
   if (electronApi?.isElectron && electronApi.uiStorageRemoveItem) {
-    electronApi.uiStorageRemoveItem(key);
-    return;
+    try {
+      electronApi.uiStorageRemoveItem(key);
+      return;
+    } catch {
+      // Fall back to browser storage below.
+    }
   }
 
   try {
