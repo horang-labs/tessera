@@ -4,6 +4,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  uiStorageGetItem: (key: string) => ipcRenderer.sendSync('ui-storage-get-item', key) as string | null,
+  uiStorageSetItem: (key: string, value: string) =>
+    ipcRenderer.sendSync('ui-storage-set-item', { key, value }),
+  uiStorageRemoveItem: (key: string) =>
+    ipcRenderer.sendSync('ui-storage-remove-item', key),
   onWindowCloseRequest: (callback: (payload: { requestId: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { requestId?: string }) => {
       if (typeof payload?.requestId === 'string') {
