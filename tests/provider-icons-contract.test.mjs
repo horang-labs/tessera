@@ -53,7 +53,11 @@ test('collection list rows switch between default type icons and provider marks'
 
   assert.match(
     collectionSource,
-    /<FolderGit2[\s\S]*<ProviderLogoMark\s+providerId=\{task\.sessions\[0\]\?\.provider\}[\s\S]*data-testid=\{`collection-task-agent-icon-\$\{task\.id\}`\}/,
+    /const renderWorktreeMark = \(showStatus: boolean[\s\S]*Icon: LucideIcon = FolderGit2/,
+  );
+  assert.match(
+    collectionSource,
+    /data-testid=\{`collection-task-agent-icon-\$\{task\.id\}`\}[\s\S]*<ItemStatusIndicator\s+isProcessing=\{hasProcessingSession\}/,
   );
 
   assert.match(
@@ -75,7 +79,30 @@ test('kanban cards switch between default type icons and provider marks', () => 
 
   assert.match(
     kanbanSource,
-    /<FolderGit2[\s\S]*<ProviderLogoMark\s+providerId=\{task\.sessions\[0\]\?\.provider\}[\s\S]*data-testid=\{`kanban-task-agent-icon-\$\{task\.id\}`\}/,
+    /data-testid=\{`kanban-task-agent-icon-\$\{task\.id\}`\}[\s\S]*<ItemStatusIndicator\s+isProcessing=\{hasProcessingSession\}/,
+  );
+
+  assert.match(
+    kanbanSource,
+    /flex flex-col shrink-0 items-center gap-\[5px\]/,
+  );
+  assert.match(
+    kanbanSource,
+    /showProviderIcons && 'translate-y-\[1px\]'/,
+  );
+  assert.doesNotMatch(
+    kanbanSource,
+    /flex flex-col shrink-0 items-center justify-between/,
+  );
+
+  assert.match(
+    kanbanSource,
+    /\{task\.worktreeBranch \? \([\s\S]*<GitBranch[\s\S]*\{!showProviderIcons && \(\s*<ItemStatusIndicator\s+isProcessing=\{hasProcessingSession\}/,
+  );
+
+  assert.match(
+    kanbanSource,
+    /\{!showProviderIcons && \(\s*<ItemStatusIndicator\s+isProcessing=\{hasProcessingSession\}[\s\S]*placement="corner"/,
   );
 
   assert.match(
