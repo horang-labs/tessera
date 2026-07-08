@@ -8,6 +8,16 @@ export interface TerminalCreateOptions {
   shellKind?: TerminalShellKind;
   cols?: number;
   rows?: number;
+  /**
+   * 셸이 뜨자마자 실행할 명령 (예: "claude"). 미지원 슬래시 명령을
+   * 터미널 fallback으로 처리할 때 사용. 종료 후에는 인터랙티브 셸로 돌아간다.
+   */
+  launchCommand?: string;
+  /**
+   * launchCommand 기동 후 입력창에 프리필할 텍스트(예: "/config").
+   * 출력이 idle 상태가 되면 개행 없이 write되어 자동 실행되지 않는다.
+   */
+  prefillInput?: string;
 }
 
 export interface TerminalResolvedShell {

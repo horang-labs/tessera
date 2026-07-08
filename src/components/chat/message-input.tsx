@@ -12,12 +12,17 @@ import { useSessionStore } from '@/stores/session-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSessionResume } from '@/hooks/use-session-resume';
-import { useSkillPicker } from '@/hooks/use-skill-picker';
+import { useSkillPicker, type SkillInfo } from '@/hooks/use-skill-picker';
 import { SkillPicker } from '@/components/chat/skill-picker';
 import { useFilePicker } from '@/hooks/use-file-picker';
 import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
+import { shouldRouteToTerminalFallback } from '@/lib/terminal/tui-only-commands';
+import {
+  setPendingTerminalLaunch,
+  takePendingTerminalLaunch,
+} from '@/lib/terminal/pending-terminal-launch';
 import { useSettingsStore } from '@/stores/settings-store';
 import {
   applyProviderSessionRuntimeOverrides,
@@ -757,6 +762,28 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     skillPicker,
   ]);
 
+  // 미지원 슬래시 명령(Claude TUI 전용 — 헤드리스에서 동작 불가)을 같은 세션 cwd로
+  // 터미널을 자동 분할해 claude를 띄우고 명령을 프리필한다. 자동 실행하지 않으므로
+  // 사용자가 내용을 확인한 뒤 Enter를 누른다. 패널 생성에 성공하면 true.
+  const openTerminalFallback = useCallback((command: string): boolean => {
+    const panelStore = usePanelStore.getState();
+    const activePanelId = selectActiveTab(panelStore)?.activePanelId;
+    if (!activePanelId) return false;
+    const terminalId = uuidv4();
+    setPendingTerminalLaunch(terminalId, { launchCommand: 'claude', prefillInput: command });
+    const newPanelId = panelStore.createTerminalPanel(activePanelId, terminalId, 'vertical');
+    if (!newPanelId) {
+      takePendingTerminalLaunch(terminalId);
+      return false;
+    }
+    // TODO(i18n): chat.slashTerminalFallback 키로 추출
+    toast.info(`"${command}" 명령은 터미널에서 실행됩니다. 내용을 확인한 뒤 Enter를 누르세요.`);
+    setInputValue('');
+    setDraftInput(sessionId, '');
+    skillPicker.close();
+    return true;
+  }, [sessionId, setDraftInput, skillPicker]);
+
   const handleSend = () => {
     const trimmed = inputValue.trim();
     const hasSelectedSkill = !!skillPicker.selectedSkill;
@@ -788,6 +815,17 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
     // Use chip-selected skill or fallback to manual /skillname parsing
     const parsed = skillPicker.parseForSend(trimmed);
+
+    // 미지원 슬래시 명령(Claude TUI 전용 — 헤드리스에서 동작 불가)은 터미널 fallback으로.
+    if (
+      !parsed
+      && !hasSelectedSkill
+      && session?.provider === 'claude-code'
+      && shouldRouteToTerminalFallback(trimmed)
+    ) {
+      if (openTerminalFallback(trimmed)) return;
+    }
+
     const skillName = parsed?.skillName ?? skillPicker.selectedSkill?.name;
     let textContent = parsed ? parsed.content : trimmed;
 
@@ -880,7 +918,13 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   }, [sendMessage, sessionId, t]);
 
   const handleSkillSelect = useCallback(
-    (skill: { name: string; description: string }) => {
+    (skill: SkillInfo) => {
+      if (skill.terminalFallback) {
+        // 피커에서 클릭한 TUI 전용 명령 → 터미널 fallback으로 실행
+        openTerminalFallback(`/${skill.name}`);
+        textareaRef.current?.focus();
+        return;
+      }
       if (isCodexFastCommandSkill(skill)) {
         executeCodexFastCommand();
         textareaRef.current?.focus();
@@ -901,7 +945,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       setInputValue('');
       textareaRef.current?.focus();
     },
-    [executeCodexFastCommand, executeClaudeFastCommand, insertGoalCommand, skillPicker],
+    [executeCodexFastCommand, executeClaudeFastCommand, insertGoalCommand, skillPicker, openTerminalFallback],
   );
 
   const applyFilePick = useCallback(
@@ -951,7 +995,24 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
+        // TUI 전용 미지원 슬래시 명령은 부분매칭 스킬이 피커에 떠 있어도(예: 이름/설명에
+        // 'config'를 포함하는 명령) 그쪽으로 confirm되지 않도록, Enter 시 먼저 터미널
+        // fallback 경로(handleSend)로 위임한다. (Tab 자동완성은 기존대로 동작)
+        if (
+          e.key === 'Enter'
+          && !e.shiftKey
+          && session?.provider === 'claude-code'
+          && shouldRouteToTerminalFallback(inputValue.trim())
+        ) {
+          openTerminalFallback(inputValue.trim());
+          return;
+        }
         const confirmedSkill = skillPicker.confirm();
+        if (confirmedSkill?.terminalFallback) {
+          // 피커에서 고른 TUI 전용 명령(부분 입력 후 화살표로 선택한 경우 포함) → 터미널 fallback
+          openTerminalFallback(`/${confirmedSkill.name}`);
+          return;
+        }
         if (confirmedSkill && isCodexFastCommandSkill(confirmedSkill)) {
           executeCodexFastCommand();
           return;
@@ -966,6 +1027,14 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         }
         if (confirmedSkill) {
           setInputValue('');
+          return;
+        }
+        // 피커가 열렸지만 매칭된 스킬이 없는 경우(예: 헤드리스 미지원 슬래시 명령
+        // /config, /agents 등)에는 Enter를 일반 전송 경로로 위임한다.
+        // → handleSend가 터미널 fallback 또는 일반 전송을 처리한다. (Tab은 위임 안 함)
+        if (e.key === 'Enter' && !e.shiftKey) {
+          skillPicker.close();
+          handleSend();
         }
         return;
       }

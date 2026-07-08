@@ -338,6 +338,8 @@ export class WebSocketClient {
     shellKind?: 'default' | 'cmd' | 'powershell' | 'wsl';
     cols?: number;
     rows?: number;
+    launchCommand?: string;
+    prefillInput?: string;
   }): boolean {
     return this.sendRequest('terminal_create', args);
   }

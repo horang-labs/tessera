@@ -16,12 +16,15 @@ import {
   CODEX_GOAL_COMMAND_DESCRIPTION,
   CODEX_GOAL_COMMAND_NAME,
 } from '@/lib/chat/codex-goal-command';
+import { getTuiOnlySlashCommands } from '@/lib/terminal/tui-only-commands';
 
 export type SkillInfo = CommandInfo & {
   builtinCommand?:
     | typeof CODEX_FAST_BUILTIN_COMMAND
     | typeof CODEX_GOAL_BUILTIN_COMMAND
     | typeof CLAUDE_FAST_BUILTIN_COMMAND;
+  // 헤드리스 미지원(Claude TUI 전용) 명령 — 선택 시 전송이 아니라 터미널 fallback으로 실행된다.
+  terminalFallback?: boolean;
 };
 
 interface UseSkillPickerReturn {
@@ -91,8 +94,16 @@ export function useSkillPicker(
       }
       merged.push(command);
     }
+    // claude-code: 헤드리스에서 동작 불가한 TUI 전용 명령(/config /agents 등)을 피커에
+    // 함께 노출한다. 선택하면 전송이 아니라 터미널 fallback으로 실행된다(terminalFallback 마커).
+    if (providerId === 'claude-code') {
+      for (const tui of getTuiOnlySlashCommands()) {
+        if (merged.some((candidate) => candidate.name === tui.name)) continue;
+        merged.push({ name: tui.name, description: tui.description, terminalFallback: true });
+      }
+    }
     return merged;
-  }, [builtInCommands, commands]);
+  }, [builtInCommands, commands, providerId]);
   const hasLoadedCommands = commands !== undefined;
   const hasBuiltInCommands = builtInCommands.length > 0;
   const isInactive = isOpen && !hasLoadedCommands && !hasBuiltInCommands && isSessionRunning === false;

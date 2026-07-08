@@ -9,6 +9,10 @@ import { TabIdContext, usePanelStore } from '@/stores/panel-store';
 import { useChatStore } from '@/stores/chat-store';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
+import {
+  setPendingTerminalLaunch,
+  takePendingTerminalLaunch,
+} from '@/lib/terminal/pending-terminal-launch';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 
 interface TerminalPanelProps {
@@ -117,14 +121,20 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
         }
 
         const dimensions = fitAddon.proposeDimensions();
+        // 미지원 슬래시 명령 fallback으로 생성된 터미널이면 1회성 launch/prefill을 소비한다.
+        const pendingLaunch = takePendingTerminalLaunch(terminalId);
         const didCreateTerminal = wsClient.createTerminal({
           terminalId,
           cwd: getInitialTerminalCwd(terminalSessionId),
           sessionId: getSessionSelectionId(terminalSessionId),
           cols: dimensions?.cols,
           rows: dimensions?.rows,
+          launchCommand: pendingLaunch?.launchCommand,
+          prefillInput: pendingLaunch?.prefillInput,
         });
         if (!didCreateTerminal) {
+          // 전송 실패 시 소비한 pending launch를 되돌려 재연결 시 재사용되도록 한다.
+          if (pendingLaunch) setPendingTerminalLaunch(terminalId, pendingLaunch);
           setStatus('starting');
           setSubtitle('Waiting for server connection...');
           return;
