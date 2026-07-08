@@ -2,7 +2,7 @@
 
 import { memo, useState, useCallback, useRef } from 'react';
 import type React from 'react';
-import { FolderGit2, MessageSquare, Plus, Tag, TriangleAlert } from 'lucide-react';
+import { GitBranch, MessageSquare, Plus, Tag, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
@@ -849,9 +849,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         title={stripeLabel ?? undefined}
       >
         {/* Main row: icon + content */}
-        <div className="flex items-start gap-2.5">
-          {/* Provider mark leads; worktree/status icon follows when present */}
-          <span className="mt-[3px] flex shrink-0 items-center gap-1">
+        <div className="flex items-stretch gap-2.5">
+          {/* Provider mark on top (aligned to the title); worktree branch icon
+              pushed to the bottom so it lines up with the meta row (tag / diff). */}
+          <span className="mt-[3px] flex flex-col shrink-0 items-center justify-between pb-0.5">
             {showProviderIcons ? (
               <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                 <ProviderLogoMark
@@ -897,7 +898,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 }
                 className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center"
               >
-                <FolderGit2
+                <GitBranch
                   className={cn(
                     'w-3.5 h-3.5',
                     task.worktreeDeletedAt || task.worktreeMissing
