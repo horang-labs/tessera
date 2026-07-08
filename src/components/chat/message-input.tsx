@@ -781,6 +781,9 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     setInputValue('');
     setDraftInput(sessionId, '');
     skillPicker.close();
+    // confirm()이 terminalFallback 항목을 selectedSkill로 세팅했을 수 있으므로 정리한다.
+    // 안 하면 다음 전송에서 그 명령 이름이 실제 스킬로 잘못 전송된다.
+    skillPicker.clearSkill();
     return true;
   }, [sessionId, setDraftInput, skillPicker]);
 
@@ -821,7 +824,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       !parsed
       && !hasSelectedSkill
       && session?.provider === 'claude-code'
-      && shouldRouteToTerminalFallback(trimmed)
+      && shouldRouteToTerminalFallback(trimmed, skillPicker.sessionCommandNames)
     ) {
       if (openTerminalFallback(trimmed)) return;
     }
@@ -1002,7 +1005,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
           e.key === 'Enter'
           && !e.shiftKey
           && session?.provider === 'claude-code'
-          && shouldRouteToTerminalFallback(inputValue.trim())
+          && shouldRouteToTerminalFallback(inputValue.trim(), skillPicker.sessionCommandNames)
         ) {
           openTerminalFallback(inputValue.trim());
           return;

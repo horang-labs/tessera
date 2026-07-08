@@ -240,8 +240,17 @@ export class TerminalManager {
         if (prefillSent || !prefillInput) return;
         prefillSent = true;
         clearPrefillTimers();
-        terminalProcess.write(prefillInput);
-        logger.debug({ terminalId: options.terminalId }, 'Terminal prefill written');
+        // 개행은 자동 제출, 탭은 TUI 자동완성을 유발하므로 공백으로 치환한다
+        // (자동 실행 방지 불변식). 사용자가 확인 후 직접 Enter를 눌러야 한다.
+        const sanitized = prefillInput.replace(/[\r\n\t]+/g, ' ');
+        try {
+          terminalProcess.write(sanitized);
+          logger.debug({ terminalId: options.terminalId }, 'Terminal prefill written');
+        } catch (err) {
+          // close()가 onExit보다 먼저 와 PTY가 이미 죽은 경우 write가 throw할 수 있다.
+          // setTimeout 콜백에서 던지면 서버 프로세스가 죽으므로 조용히 무시한다.
+          logger.debug({ terminalId: options.terminalId, err }, 'Terminal prefill write skipped (pty gone)');
+        }
       };
       if (prefillInput) {
         prefillHardTimer = setTimeout(sendPrefill, PREFILL_HARD_TIMEOUT_MS);

@@ -1,20 +1,26 @@
 /**
- * Claude Code CLI 슬래시 명령 중 Ink TUI(local-jsx) 위젯이 필요해
- * 헤드리스 stream-json 모드에서 동작 불가능한 명령들.
+ * 헤드리스 stream-json(`initialize.commands`)에 노출되지 않아 Tessera 세션에서
+ * 직접 처리할 수 없는 Claude Code 슬래시 명령들 — 선택 시 터미널 fallback으로
+ * 라우팅해 실제 `claude`에서 실행한다.
  *
- * 출처: claude v2.1.168 네이티브 바이너리 분석.
- *   - type: 'local-jsx' (requires:{ink:!0}) → 헤드리스 필터(UYH)에서 무조건 제외
- *   - type: 'local' & supportsNonInteractive:false → 명시적 차단
- * 이들은 stream-json initialize.commands 목록에 절대 노출되지 않으므로
- * Tessera에서 입력 시 처리할 방법이 없다 → 터미널 fallback으로 라우팅하고,
- * 슬래시 피커에도 함께 노출해 사용자가 선택할 수 있게 한다.
+ * 이 목록은 "터미널로 보낼 후보"의 **보조** 기준이다. 1순위는 세션이 실제 보고한
+ * 명령(store commands = initialize.commands)이며, shouldRouteToTerminalFallback()이
+ * store에 있는 명령은 무조건 제외한다. 따라서 claude 버전이 올라 어떤 명령이
+ * 헤드리스로 옮겨가면(예: 2.1.202의 config/recap/agents가 initialize.commands에 노출)
+ * store에 잡혀 자동으로 이 라우팅에서 빠진다 — 하드코딩과 세션 실측이 어긋나지 않는다.
  *
- * 주의(중요): /model /effort /usage /fast /rename 등은 commands 목록에는 없지만
- * thinClientDispatch:control-request 이거나 Tessera 자체 빌트인(/fast,/goal)이라
- * 세션 컨트롤 UI / control 프로토콜로 이미 네이티브 지원된다.
- * 절대 이 목록에 넣지 말 것 — 넣으면 터미널 fallback으로 잘못 분기된다.
+ * 목록에서 뺀 것:
+ *   - 헤드리스로 이동해 store가 처리(2.1.202+): agents, config, recap
+ *   - 현재-대화-대상이라 새 터미널 세션에선 무의미(빈 히스토리): export, copy,
+ *     resume, rewind, status, focus, plan
  *
- * description은 피커 표시용이며 대부분 바이너리에서 추출했다.
+ * 절대 넣지 말 것: /model /effort /usage /fast /rename 등은 control-request이거나
+ * Tessera 자체 빌트인(/fast, /goal)이라 이미 네이티브 지원된다 — 넣으면 터미널로
+ * 잘못 분기된다.
+ *
+ * 주의: 유지 항목이 전부 Ink 위젯 전용은 아니다(diff/help/skills 등 포함). 공통
+ * 기준은 "현재 claude 빌드의 initialize.commands에 안 나온다"는 점이며, description은
+ * 피커 표시용으로 대부분 claude 바이너리에서 추출했다.
  */
 
 export interface TuiOnlyCommand {
@@ -24,8 +30,7 @@ export interface TuiOnlyCommand {
 
 // canonical 이름(별칭 해석 후) 기준 TUI 전용 명령 목록.
 const TUI_ONLY_COMMANDS: readonly TuiOnlyCommand[] = [
-  // 설정 · 인증 · 관리
-  { name: 'config', description: 'Open settings' },
+  // 설정 · 인증
   { name: 'login', description: 'Sign in to your Anthropic account' },
   { name: 'logout', description: 'Sign out from your Anthropic account' },
   { name: 'permissions', description: 'Manage tool permissions' },
@@ -34,46 +39,36 @@ const TUI_ONLY_COMMANDS: readonly TuiOnlyCommand[] = [
   { name: 'privacy-settings', description: 'View and update your privacy settings' },
   { name: 'keybindings', description: 'Open your keyboard shortcuts file' },
   { name: 'statusline', description: 'Set up a custom status line' },
-  // 세션 · 컨텍스트 탐색 (TUI 피커/뷰 필요)
-  { name: 'resume', description: 'Resume a previous conversation' },
-  { name: 'agents', description: 'Manage agent configurations' },
+  // 관리 (MCP · 훅 · 메모리 · 플러그인)
   { name: 'mcp', description: 'Manage MCP servers' },
   { name: 'memory', description: 'Open a memory file in your editor' },
-  { name: 'plan', description: 'Enable plan mode or view the current session plan' },
-  { name: 'diff', description: 'View uncommitted changes and per-turn diffs' },
-  { name: 'status', description: 'Show session status and diagnostics' },
-  { name: 'export', description: 'Export the current conversation to a file or clipboard' },
-  { name: 'copy', description: 'Copy the last response to the clipboard' },
-  { name: 'rewind', description: 'Rewind the conversation to a checkpoint' },
-  { name: 'recap', description: 'Generate a one-line session recap now' },
-  // 진단 · 도움말 · 확장
-  { name: 'doctor', description: 'Diagnose and verify your installation' },
-  { name: 'help', description: 'Show help and available commands' },
   { name: 'hooks', description: 'View hook configurations for tool events' },
-  { name: 'skills', description: 'List available skills' },
   { name: 'plugin', description: 'Manage plugins and marketplaces' },
   { name: 'reload-plugins', description: 'Activate pending plugin changes in the current session' },
-  { name: 'ide', description: 'Manage IDE integrations and show status' },
+  // 환경 · 통합
   { name: 'add-dir', description: 'Add a new working directory' },
+  { name: 'ide', description: 'Manage IDE integrations and show status' },
   { name: 'install-github-app', description: 'Set up Claude GitHub Actions for a repository' },
+  // 진단 · 도움말 · 도구
+  { name: 'diff', description: 'View uncommitted changes and per-turn diffs' },
+  { name: 'doctor', description: 'Diagnose and verify your installation' },
+  { name: 'help', description: 'Show help and available commands' },
+  { name: 'skills', description: 'List available skills' },
   { name: 'feedback', description: 'Submit feedback, report a bug, or share your conversation' },
   { name: 'release-notes', description: 'View release notes' },
-  // 풀스크린/렌더러 전용 위젯 (v2.1.168 바이너리에서 type:local-jsx, requires:{ink:!0} 확인)
+  // 풀스크린 / 렌더러 전용 위젯
   { name: 'tui', description: 'Set the terminal UI renderer (default | fullscreen)' },
   { name: 'scroll-speed', description: 'Adjust mouse wheel scroll speed' },
-  { name: 'focus', description: 'Toggle focus view: just your prompt, summary, and response' },
   { name: 'powerup', description: 'Interactive lessons with animated demos' },
   { name: 'workflows', description: 'View running workflows' },
 ];
 
 const TUI_ONLY_COMMAND_SET = new Set(TUI_ONLY_COMMANDS.map((c) => c.name));
 
-// 별칭 → canonical (claude 바이너리 aliases 필드 기준)
+// 별칭 → canonical (claude 바이너리 aliases 필드 기준). canonical이 위 목록에 남아
+// 있는 별칭만 유지한다(삭제된 resume/rewind 관련 continue/checkpoint/undo는 제거).
 const SLASH_COMMAND_ALIASES: Readonly<Record<string, string>> = {
-  continue: 'resume',
   'allowed-tools': 'permissions',
-  checkpoint: 'rewind',
-  undo: 'rewind',
   plugins: 'plugin',
   marketplace: 'plugin',
 };
@@ -96,21 +91,30 @@ export function extractSlashCommandName(input: string): string | null {
   return raw.length > 0 ? raw : null;
 }
 
-/**
- * 주어진 슬래시 명령 이름이 헤드리스 미지원(TUI 전용)이라 터미널 fallback이
- * 필요한지 판정한다. 별칭을 canonical로 해석한 뒤 화이트리스트와 비교한다.
- */
-export function isTuiOnlySlashCommand(rawName: string): boolean {
+/** 슬래시 명령 이름을 canonical(별칭 해석 + 소문자)로 정규화한다. */
+function canonicalSlashCommandName(rawName: string): string {
   const lower = rawName.toLowerCase();
-  const canonical = SLASH_COMMAND_ALIASES[lower] ?? lower;
-  return TUI_ONLY_COMMAND_SET.has(canonical);
+  return SLASH_COMMAND_ALIASES[lower] ?? lower;
 }
 
 /**
- * 입력이 터미널 fallback 대상인지 한 번에 판정한다.
- * (슬래시로 시작 + 추출된 명령 이름이 TUI 전용 화이트리스트에 매칭)
+ * 입력이 터미널 fallback 대상인지 판정한다.
+ *  - 1순위: 세션이 실제 보고한 명령(sessionCommandNames = store commands, headless
+ *    지원)에 있으면 절대 터미널로 보내지 않는다 → 버전 드리프트 자동 해소.
+ *  - 2순위: store에 없고, 축소된 TUI 전용 목록에 canonical이 있으면 터미널.
+ * sessionCommandNames는 소문자 이름 집합을 기대한다(호출부에서 정규화).
  */
-export function shouldRouteToTerminalFallback(input: string): boolean {
+export function shouldRouteToTerminalFallback(
+  input: string,
+  sessionCommandNames?: ReadonlySet<string>,
+): boolean {
   const name = extractSlashCommandName(input);
-  return name !== null && isTuiOnlySlashCommand(name);
+  if (name === null) return false;
+  const lower = name.toLowerCase();
+  const canonical = canonicalSlashCommandName(name);
+  // 세션이 headless로 지원한다고 보고한 명령이면(별칭/실이름 어느 쪽이든) 제외.
+  if (sessionCommandNames?.has(lower) || sessionCommandNames?.has(canonical)) {
+    return false;
+  }
+  return TUI_ONLY_COMMAND_SET.has(canonical);
 }
