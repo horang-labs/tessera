@@ -850,9 +850,9 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       >
         {/* Main row: icon + content */}
         <div className="flex items-stretch gap-2.5">
-          {/* Provider mark on top (aligned to the title); worktree branch icon
-              pushed to the bottom so it lines up with the meta row (tag / diff). */}
-          <span className="mt-[3px] flex flex-col shrink-0 items-center justify-between pb-0.5">
+          {/* Provider mark aligns with the first title line; the branch icon sits
+              one text line below it, not at the bottom of the whole card. */}
+          <span className="mt-[3px] flex flex-col shrink-0 items-center gap-[5px]">
             {showProviderIcons ? (
               <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                 <ProviderLogoMark
@@ -861,16 +861,14 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   iconClassName={KANBAN_PROVIDER_ICON_CLASS}
                   data-testid={`kanban-task-agent-icon-${task.id}`}
                 />
-                {!task.worktreeBranch && (
-                  <ItemStatusIndicator
-                    isProcessing={hasProcessingSession}
-                    isAwaitingUser={hasAwaitingUserSession}
-                    hasUnread={hasUnreadSession}
-                    isRunning={hasRunningSession}
-                    placement="corner"
-                    surface="board"
-                  />
-                )}
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="corner"
+                  surface="board"
+                />
               </span>
             ) : !task.worktreeBranch && hasTaskStatus ? (
               <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
@@ -896,7 +894,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                       ? t('task.worktree.missing', { branch: task.worktreeBranch })
                     : task.worktreeBranch
                 }
-                className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                className={cn(
+                  'relative flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                  showProviderIcons && 'translate-y-[1px]',
+                )}
               >
                 <GitBranch
                   className={cn(
@@ -912,14 +913,16 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg)"
                   />
                 )}
-                <ItemStatusIndicator
-                  isProcessing={hasProcessingSession}
-                  isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
-                  placement="corner"
-                  surface="board"
-                />
+                {!showProviderIcons && (
+                  <ItemStatusIndicator
+                    isProcessing={hasProcessingSession}
+                    isAwaitingUser={hasAwaitingUserSession}
+                    hasUnread={hasUnreadSession}
+                    isRunning={hasRunningSession}
+                    placement="corner"
+                    surface="board"
+                  />
+                )}
                 {prMismatch && (
                   <span
                     title={prMismatchReason ?? undefined}
