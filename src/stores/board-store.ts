@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import {
+  readUiStorageItem,
+  removeUiStorageItem,
+  writeUiStorageItem,
+} from '@/lib/persistence/ui-storage';
 
 export type ViewMode = 'list' | 'board';
 
@@ -98,7 +103,7 @@ function isViewMode(value: unknown): value is ViewMode {
 function loadViewMode(): ViewMode {
   if (typeof window === 'undefined') return 'list';
   try {
-    const saved = localStorage.getItem(VIEW_MODE_KEY);
+    const saved = readUiStorageItem(VIEW_MODE_KEY);
     if (isViewMode(saved)) return saved;
     return 'list';
   } catch {
@@ -109,7 +114,7 @@ function loadViewMode(): ViewMode {
 function loadProjectViewModes(): Record<string, ViewMode> {
   if (typeof window === 'undefined') return {};
   try {
-    const parsed = JSON.parse(localStorage.getItem(PROJECT_VIEW_MODES_KEY) ?? '{}') as Record<string, unknown>;
+    const parsed = JSON.parse(readUiStorageItem(PROJECT_VIEW_MODES_KEY) ?? '{}') as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object') return {};
 
     const modes: Record<string, ViewMode> = {};
@@ -127,7 +132,7 @@ function loadProjectViewModes(): Record<string, ViewMode> {
 function saveProjectViewModes(modes: Record<string, ViewMode>): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(PROJECT_VIEW_MODES_KEY, JSON.stringify(modes));
+    writeUiStorageItem(PROJECT_VIEW_MODES_KEY, JSON.stringify(modes));
   } catch {
     // ignore
   }
@@ -136,7 +141,7 @@ function saveProjectViewModes(modes: Record<string, ViewMode>): void {
 function loadCollapsedCollections(): Record<string, boolean> {
   if (typeof window === 'undefined') return {};
   try {
-    const parsed = JSON.parse(localStorage.getItem(COLLAPSED_COLLECTIONS_KEY) ?? '{}') as Record<string, unknown>;
+    const parsed = JSON.parse(readUiStorageItem(COLLAPSED_COLLECTIONS_KEY) ?? '{}') as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object') return {};
 
     const collapsed: Record<string, boolean> = {};
@@ -154,7 +159,7 @@ function loadCollapsedCollections(): Record<string, boolean> {
 function saveCollapsedCollections(collapsed: Record<string, boolean>): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(COLLAPSED_COLLECTIONS_KEY, JSON.stringify(collapsed));
+    writeUiStorageItem(COLLAPSED_COLLECTIONS_KEY, JSON.stringify(collapsed));
   } catch {
     // ignore
   }
@@ -163,7 +168,7 @@ function saveCollapsedCollections(collapsed: Record<string, boolean>): void {
 function loadBooleanRecord(key: string): Record<string, boolean> {
   if (typeof window === 'undefined') return {};
   try {
-    const parsed = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
+    const parsed = JSON.parse(readUiStorageItem(key) ?? '{}') as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object') return {};
 
     const record: Record<string, boolean> = {};
@@ -181,7 +186,7 @@ function loadBooleanRecord(key: string): Record<string, boolean> {
 function saveBooleanRecord(key: string, record: Record<string, boolean>): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(key, JSON.stringify(record));
+    writeUiStorageItem(key, JSON.stringify(record));
   } catch {
     // ignore
   }
@@ -190,7 +195,7 @@ function saveBooleanRecord(key: string, record: Record<string, boolean>): void {
 function loadNullableString(key: string): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    const value = localStorage.getItem(key);
+    const value = readUiStorageItem(key);
     return value && value.length > 0 ? value : null;
   } catch {
     return null;
@@ -201,9 +206,9 @@ function saveNullableString(key: string, value: string | null): void {
   if (typeof window === 'undefined') return;
   try {
     if (value && value.length > 0) {
-      localStorage.setItem(key, value);
+      writeUiStorageItem(key, value);
     } else {
-      localStorage.removeItem(key);
+      removeUiStorageItem(key);
     }
   } catch {
     // ignore
@@ -213,7 +218,7 @@ function saveNullableString(key: string, value: string | null): void {
 function loadBooleanFlag(key: string): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    return localStorage.getItem(key) === 'true';
+    return readUiStorageItem(key) === 'true';
   } catch {
     return false;
   }
@@ -222,7 +227,7 @@ function loadBooleanFlag(key: string): boolean {
 function saveBooleanFlag(key: string, value: boolean): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(key, value ? 'true' : 'false');
+    writeUiStorageItem(key, value ? 'true' : 'false');
   } catch {
     // ignore
   }
@@ -254,7 +259,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
             }
           : state.projectViewModes;
 
-      try { localStorage.setItem(VIEW_MODE_KEY, mode); } catch { /* ignore */ }
+      try { writeUiStorageItem(VIEW_MODE_KEY, mode); } catch { /* ignore */ }
       if (nextProjectViewModes !== state.projectViewModes) {
         saveProjectViewModes(nextProjectViewModes);
       }
@@ -375,7 +380,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
     const { projectViewModes, viewMode } = get();
     saveNullableString(SELECTED_PROJECT_DIR_KEY, dir);
-    try { localStorage.setItem(VIEW_MODE_KEY, viewMode); } catch { /* ignore */ }
+    try { writeUiStorageItem(VIEW_MODE_KEY, viewMode); } catch { /* ignore */ }
     saveProjectViewModes(projectViewModes);
   },
 

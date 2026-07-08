@@ -18,6 +18,7 @@ import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { getSpecialSessionSourceSessionId, isSpecialSession } from '@/lib/constants/special-sessions';
+import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
 import {
   parseMemoryFileSessionId,
   parseWorkspaceFileSessionId,
@@ -818,7 +819,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
     // Step 3: 직렬화 및 저장
     try {
-      localStorage.setItem(TAB_STORE_KEY, JSON.stringify(data));
+      writeUiStorageItem(TAB_STORE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('[tab-store] persistToLocalStorage() failed:', e);
     }
@@ -909,11 +910,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     };
 
     try {
-      const raw = localStorage.getItem(TAB_STORE_KEY);
+      const raw = readUiStorageItem(TAB_STORE_KEY);
 
       if (raw === null) {
         // TAB_STORE_KEY가 없는 경우: 레거시 마이그레이션 또는 fresh init
-        const legacyRaw = localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
+        const legacyRaw = readUiStorageItem(PANEL_LAYOUT_STORAGE_KEY);
         if (legacyRaw !== null) {
           runLegacyMigration(legacyRaw, initializeEmpty, set);
         } else {
@@ -1261,7 +1262,7 @@ function runLegacyMigration(
     };
 
     try {
-      localStorage.setItem(TAB_STORE_KEY, JSON.stringify(migratedStore));
+      writeUiStorageItem(TAB_STORE_KEY, JSON.stringify(migratedStore));
     } catch (e) {
       console.warn('[tab-store] Migration write to localStorage failed:', e);
     }
