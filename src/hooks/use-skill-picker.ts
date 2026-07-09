@@ -21,6 +21,7 @@ import {
   CODEX_GOAL_COMMAND_DESCRIPTION,
   CODEX_GOAL_COMMAND_NAME,
 } from '@/lib/chat/codex-goal-command';
+import { getTuiOnlySlashCommands } from '@/lib/terminal/tui-only-commands';
 
 export type SkillInfo = CommandInfo & {
   builtinCommand?:
@@ -28,6 +29,8 @@ export type SkillInfo = CommandInfo & {
     | typeof CODEX_COMPACT_BUILTIN_COMMAND
     | typeof CODEX_GOAL_BUILTIN_COMMAND
     | typeof CLAUDE_FAST_BUILTIN_COMMAND;
+  // 헤드리스 미지원(Claude TUI 전용) 명령 — 선택 시 전송이 아니라 터미널 fallback으로 실행된다.
+  terminalFallback?: boolean;
 };
 
 interface UseSkillPickerReturn {
@@ -48,6 +51,8 @@ interface UseSkillPickerReturn {
   close: () => void;
   /** Parse input on send: returns { skillName, content } using selectedSkill or manual /prefix */
   parseForSend: (input: string) => { skillName: string; content: string } | null;
+  /** 세션이 실제 보고한 명령(store commands) 이름 집합(소문자). 터미널 라우팅 제외 기준. */
+  sessionCommandNames: ReadonlySet<string>;
 }
 
 export function useSkillPicker(
@@ -101,8 +106,22 @@ export function useSkillPicker(
       }
       merged.push(command);
     }
+    // claude-code: 헤드리스에서 동작 불가한 TUI 전용 명령(/config /agents 등)을 피커에
+    // 함께 노출한다. 선택하면 전송이 아니라 터미널 fallback으로 실행된다(terminalFallback 마커).
+    if (providerId === 'claude-code') {
+      for (const tui of getTuiOnlySlashCommands()) {
+        if (merged.some((candidate) => candidate.name === tui.name)) continue;
+        merged.push({ name: tui.name, description: tui.description, terminalFallback: true });
+      }
+    }
     return merged;
-  }, [builtInCommands, commands]);
+  }, [builtInCommands, commands, providerId]);
+  // 세션이 실제 보고한 명령(store commands)의 이름 집합(소문자). 터미널 라우팅에서
+  // "headless 지원이면 제외" 판정의 1순위 기준으로 message-input에 노출한다.
+  const sessionCommandNames = useMemo<ReadonlySet<string>>(
+    () => new Set((commands ?? []).map((c) => c.name.toLowerCase())),
+    [commands],
+  );
   const hasLoadedCommands = commands !== undefined;
   const hasBuiltInCommands = builtInCommands.length > 0;
   const isInactive = isOpen && !hasLoadedCommands && !hasBuiltInCommands && isSessionRunning === false;
@@ -287,7 +306,9 @@ export function useSkillPicker(
 
   const parseForSend = useCallback(
     (input: string): { skillName: string; content: string } | null => {
-      if (selectedSkill) {
+      // terminalFallback 마커가 selectedSkill로 남아 있으면(confirm 후 미정리) 실제
+      // 스킬로 전송하지 않는다 — null을 반환해 일반 전송/터미널 경로로 위임한다.
+      if (selectedSkill && !selectedSkill.terminalFallback) {
         return { skillName: selectedSkill.name, content: input.trim() };
       }
 
@@ -297,13 +318,15 @@ export function useSkillPicker(
       const spaceIdx = input.indexOf(' ');
       if (spaceIdx === -1) {
         const name = input.slice(1);
-        const match = skills.find((s) => s.name === name);
+        // terminalFallback 항목은 실제 전송 명령이 아니라 터미널 라우팅 마커이므로
+        // 정상 명령 매칭에서 제외한다 — 그래야 handleSend의 `!parsed` fallback이 탄다.
+        const match = skills.find((s) => s.name === name && !s.terminalFallback);
         if (match) return { skillName: match.name, content: '' };
         return null;
       }
 
       const name = input.slice(1, spaceIdx);
-      const match = skills.find((s) => s.name === name);
+      const match = skills.find((s) => s.name === name && !s.terminalFallback);
       if (!match) return null;
 
       const content = input.slice(spaceIdx + 1).trim();
@@ -327,5 +350,6 @@ export function useSkillPicker(
     navigateDown,
     close,
     parseForSend,
+    sessionCommandNames,
   };
 }

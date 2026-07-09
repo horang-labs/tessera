@@ -373,6 +373,8 @@ export async function routeClientTransportMessage({
         shellKind: message.shellKind,
         cols: message.cols,
         rows: message.rows,
+        launchCommand: message.launchCommand,
+        prefillInput: message.prefillInput,
       });
       return;
 

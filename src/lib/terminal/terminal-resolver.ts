@@ -226,18 +226,36 @@ function resolveWindowsNativeTerminalCwd(cwd: string, env: NodeJS.ProcessEnv): s
   return cwd;
 }
 
+// 터미널 fallback에서 셸 -c로 자동 실행을 허용하는 launchCommand allowlist.
+// 서버는 WS 메시지의 launchCommand를 값 검증 없이 받으므로, 여기서 화이트리스트로
+// 제한해 임의 명령이 셸 문자열에 보간되는 것을 차단한다(quoteBashArg와 함께 방어 중첩).
+const ALLOWED_LAUNCH_COMMANDS = new Set(['claude']);
+
 function quoteBashArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildWslTerminalScript(cwd: string): string {
-  return [
+function buildWslTerminalScript(cwd: string, launchCommand?: string): string {
+  const lines = [
     `cd -- ${quoteBashArg(cwd)} 2>/dev/null || cd ~`,
     'shell="${SHELL:-}"',
     'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
     'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(command -v bash 2>/dev/null || command -v sh)"; fi',
-    'exec "$shell" -i',
-  ].join('; ');
+  ];
+  const launch = launchCommand?.trim();
+  if (launch) {
+    // 중요: `wsl.exe -e sh -c`는 non-login·non-interactive 셸이라 ~/.profile·rc가
+    // 소싱되지 않아 사용자 로컬 PATH(~/.local/bin, nvm/volta 등)가 없다 → 여기서 claude를
+    // 바로 실행하면 'command not found'가 된다. 따라서 login+interactive 셸로 감싸
+    // rc/profile를 먼저 소싱한 뒤 실행하고, 종료되면 인터랙티브 셸로 떨어진다.
+    // $shell은 export해 inner 셸이 재사용한다(inner는 작은따옴표라 바깥에서 전개되지 않음).
+    const inner = `${launch}; exec "$WSL_LAUNCH_SHELL" -i`;
+    lines.push('WSL_LAUNCH_SHELL="$shell"; export WSL_LAUNCH_SHELL');
+    lines.push(`exec "$shell" -l -i -c ${quoteBashArg(inner)}`);
+  } else {
+    lines.push('exec "$shell" -i');
+  }
+  return lines.join('; ');
 }
 
 export function resolveAllowedTerminalCwd(options: {
@@ -299,17 +317,21 @@ export function resolveTerminalShell(options: {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   shellKind?: TerminalShellKind;
+  launchCommand?: string;
 }): TerminalResolvedShell {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const shellKind = options.shellKind ?? 'default';
   const cwd = resolveTerminalCwd(options.cwd);
+  const rawLaunch = options.launchCommand?.trim() || undefined;
+  // allowlist 외 값은 무시(undefined로 강등)해 일반 셸로 떨어뜨린다 — 셸 인젝션 차단.
+  const launchCommand = rawLaunch && ALLOWED_LAUNCH_COMMANDS.has(rawLaunch) ? rawLaunch : undefined;
 
   if (shellKind === 'wsl' && platform === 'win32') {
     const wslCwd = toWslPath(cwd) ?? '~';
     return {
       command: 'wsl.exe',
-      args: ['-e', 'sh', '-c', buildWslTerminalScript(wslCwd)],
+      args: ['-e', 'sh', '-c', buildWslTerminalScript(wslCwd, launchCommand)],
       cwd: resolveWindowsProcessCwd(env),
       displayCwd: wslCwd,
     };
@@ -318,20 +340,34 @@ export function resolveTerminalShell(options: {
   if (platform === 'win32') {
     const windowsCwd = resolveWindowsNativeTerminalCwd(cwd, env);
     if (shellKind === 'cmd') {
-      return { command: 'cmd.exe', args: [], cwd: windowsCwd };
+      return {
+        command: 'cmd.exe',
+        args: launchCommand ? ['/k', launchCommand] : [],
+        cwd: windowsCwd,
+      };
     }
 
     return {
       command: env.ComSpec?.toLowerCase().includes('powershell')
         ? env.ComSpec
         : 'powershell.exe',
-      args: ['-NoLogo'],
+      args: launchCommand ? ['-NoLogo', '-NoExit', '-Command', launchCommand] : ['-NoLogo'],
       cwd: windowsCwd,
     };
   }
 
   const command = env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
-  const args = platform === 'darwin' ? ['-l'] : [];
+  const loginArgs = platform === 'darwin' ? ['-l'] : [];
 
-  return { command, args, cwd };
+  if (launchCommand) {
+    // launchCommand(예: claude)를 실행하고, 종료되면 인터랙티브 셸로 떨어진다.
+    // env(PATH)는 buildTerminalEnv가 login-shell 기준으로 병합하므로 claude가 발견된다.
+    return {
+      command,
+      args: [...loginArgs, '-c', `${quoteBashArg(launchCommand)}; exec ${quoteBashArg(command)} -i`],
+      cwd,
+    };
+  }
+
+  return { command, args: loginArgs, cwd };
 }

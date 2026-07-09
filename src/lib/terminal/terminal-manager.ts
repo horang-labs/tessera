@@ -16,6 +16,10 @@ import type { ServerTransportMessage } from '@/lib/ws/message-types';
 
 type SendToUser = (userId: string, message: ServerTransportMessage) => void;
 const MAX_REPLAY_BUFFER_CHARS = 200_000;
+// 슬래시 fallback 프리필 타이밍 휴리스틱 (PTY 실측 기반)
+const PREFILL_IDLE_MS = 700; // 마지막 출력 후 이만큼 조용하면 ready로 간주
+const PREFILL_MIN_OUTPUT_CHARS = 600; // claude 기동 화면이 충분히 그려졌다는 최소 기준
+const PREFILL_HARD_TIMEOUT_MS = 8000; // 어떤 경우에도 이 시간 후엔 강제 프리필
 const TERMINAL_TRACE_PATH = getTesseraDataPath('terminal-debug.log');
 const nodeRequire = createRequire(__filename);
 
@@ -50,6 +54,8 @@ interface TerminalRuntime {
   process: TerminalProcessHandle;
   outputBuffer: string[];
   outputBufferSize: number;
+  // 대기 중인 prefill 타이머를 즉시 취소하는 함수(close 시 write-after-kill 방지).
+  cancelPrefill?: () => void;
 }
 
 async function loadNodePty(): Promise<TerminalPtyFactory> {
@@ -162,6 +168,7 @@ export class TerminalManager {
       const shell = resolveTerminalShell({
         cwd: cwdResolution.cwd,
         shellKind,
+        launchCommand: options.launchCommand,
       });
       traceTerminalStage('resolve-shell:after', {
         terminalId: options.terminalId,
@@ -212,6 +219,43 @@ export class TerminalManager {
       };
       this.terminals.set(key, runtime);
 
+      // 미지원 슬래시 명령 fallback: launchCommand(claude)가 기동된 뒤 입력창이
+      // 준비되면 prefillInput을 개행 없이 write한다(자동 실행 X, 사용자가 Enter).
+      // ready 판정은 출력이 잠시 idle해지는 시점을 휴리스틱으로 감지하고,
+      // 8초 안전장치로 어떤 경우에도 한 번은 프리필되도록 한다.
+      const prefillInput = options.prefillInput && options.prefillInput.length > 0
+        ? options.prefillInput
+        : undefined;
+      let prefillSent = false;
+      let prefillIdleTimer: ReturnType<typeof setTimeout> | null = null;
+      let prefillHardTimer: ReturnType<typeof setTimeout> | null = null;
+      let prefillSeenOutput = 0;
+      const clearPrefillTimers = () => {
+        if (prefillIdleTimer) { clearTimeout(prefillIdleTimer); prefillIdleTimer = null; }
+        if (prefillHardTimer) { clearTimeout(prefillHardTimer); prefillHardTimer = null; }
+      };
+      // close()가 onExit보다 먼저 와도 대기 중인 prefill write가 킬된 PTY로 가지 않도록.
+      runtime.cancelPrefill = clearPrefillTimers;
+      const sendPrefill = () => {
+        if (prefillSent || !prefillInput) return;
+        prefillSent = true;
+        clearPrefillTimers();
+        // 개행은 자동 제출, 탭은 TUI 자동완성을 유발하므로 공백으로 치환한다
+        // (자동 실행 방지 불변식). 사용자가 확인 후 직접 Enter를 눌러야 한다.
+        const sanitized = prefillInput.replace(/[\r\n\t]+/g, ' ');
+        try {
+          terminalProcess.write(sanitized);
+          logger.debug({ terminalId: options.terminalId }, 'Terminal prefill written');
+        } catch (err) {
+          // close()가 onExit보다 먼저 와 PTY가 이미 죽은 경우 write가 throw할 수 있다.
+          // setTimeout 콜백에서 던지면 서버 프로세스가 죽으므로 조용히 무시한다.
+          logger.debug({ terminalId: options.terminalId, err }, 'Terminal prefill write skipped (pty gone)');
+        }
+      };
+      if (prefillInput) {
+        prefillHardTimer = setTimeout(sendPrefill, PREFILL_HARD_TIMEOUT_MS);
+      }
+
       terminalProcess.onData((data) => {
         this.appendBufferedOutput(runtime, data);
         this.sendToUser(options.userId, {
@@ -219,9 +263,23 @@ export class TerminalManager {
           terminalId: options.terminalId,
           data,
         });
+        if (prefillInput && !prefillSent) {
+          prefillSeenOutput += data.length;
+          if (prefillIdleTimer) clearTimeout(prefillIdleTimer);
+          prefillIdleTimer = setTimeout(() => {
+            if (prefillSeenOutput >= PREFILL_MIN_OUTPUT_CHARS) {
+              sendPrefill();
+            } else {
+              // 출력이 임계치 미만이어도 idle은 확인됨 → 짧게 한 번 더 기다린 뒤 강제
+              // 실행한다(출력이 적은 환경에서 8초 hard timeout까지 대기하지 않도록).
+              prefillIdleTimer = setTimeout(sendPrefill, PREFILL_IDLE_MS);
+            }
+          }, PREFILL_IDLE_MS);
+        }
       });
 
       terminalProcess.onExit((event) => {
+        clearPrefillTimers();
         this.terminals.delete(key);
         this.sendToUser(options.userId, {
           type: 'terminal_exit',
@@ -259,6 +317,7 @@ export class TerminalManager {
   close(terminalId: string, userId: string): void {
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime) return;
+    runtime.cancelPrefill?.();
     this.terminals.delete(this.getKey(userId, terminalId));
     runtime.process.kill();
   }

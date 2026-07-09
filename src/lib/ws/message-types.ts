@@ -87,7 +87,7 @@ export type ClientMessage =
   | { type: 'list_providers'; requestId: string }
   | { type: 'refresh_providers'; requestId: string }
   | { type: 'check_cli_status'; requestId: string }
-  | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number }
+  | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number; launchCommand?: string; prefillInput?: string }
   | { type: 'terminal_input'; requestId: string; terminalId: string; data: string }
   | { type: 'terminal_resize'; requestId: string; terminalId: string; cols: number; rows: number }
   | { type: 'terminal_close'; requestId: string; terminalId: string }
