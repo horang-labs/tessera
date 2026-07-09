@@ -39,6 +39,7 @@ interface ApplyManagedParsedMessageSideEffectOptions {
   sideEffect: ParsedMessageSideEffect;
   setIsGenerating: (sessionId: string, generating: boolean) => void;
   autoGenerateTitle: (sessionId: string, userId: string) => void;
+  translateAssistantMessage: (sessionId: string, userId: string) => void;
 }
 
 export function dispatchManagedParsedMessages({
@@ -68,6 +69,7 @@ export function applyManagedParsedMessageSideEffect({
   sideEffect,
   setIsGenerating,
   autoGenerateTitle,
+  translateAssistantMessage,
 }: ApplyManagedParsedMessageSideEffectOptions): void {
   switch (sideEffect.type) {
     case 'set_generating':
@@ -165,7 +167,11 @@ export function applyManagedParsedMessageSideEffect({
       }
       return;
     case 'auto_generate_title':
+      // Fired on every successful turn completion (all providers). Auto-title
+      // self-gates to once-per-session; output translation gates on its own
+      // settings + per-message dedup.
       autoGenerateTitle(sessionId, userId);
+      translateAssistantMessage(sessionId, userId);
       return;
     case 'update_last_assistant_message':
       return;

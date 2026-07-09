@@ -1,14 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { WorkspaceCodeView } from "@/components/workspace/workspace-code-view";
 import { extractGitPanelErrorMessage } from "@/components/git/git-panel-shared";
+import {
+  useDocumentVisibility,
+  useStableWorkspaceFilesSubscriberId,
+  useWorkspaceFilesLiveSync,
+} from "@/hooks/use-workspace-files-live-sync";
+import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { wsClient } from "@/lib/ws/client";
-import { usePanelStore, selectActiveTab, EMPTY_PANELS } from "@/stores/panel-store";
+import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
+import { useTabStore } from "@/stores/tab-store";
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
-import type { WorkspaceFileSessionRef } from "@/lib/workspace-tabs/special-session";
+import {
+  buildWorkspaceFileSessionId,
+  type WorkspaceFileSessionRef,
+} from "@/lib/workspace-tabs/special-session";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
+
+type WorkspaceFilesChangedMessage = Extract<
+  ServerTransportMessage,
+  { type: "workspace_files_changed" }
+>;
 
 interface WorkspaceFileTabState {
   loading: boolean;
@@ -16,11 +31,38 @@ interface WorkspaceFileTabState {
   data: WorkspaceFileData | GitDiffData | null;
 }
 
+const FILE_LOAD_TIMEOUT_MS = 3_000;
+const FILE_LOAD_TIMEOUT_MESSAGE =
+  "The file did not load in time. The workspace filesystem or git may be unresponsive.";
+
 function getFileUrl(ref: WorkspaceFileSessionRef): string {
   const sessionId = encodeURIComponent(ref.sourceSessionId);
   const path = encodeURIComponent(ref.path);
   if (ref.kind === "diff") return `/api/sessions/${sessionId}/git/diff?path=${path}`;
   return `/api/sessions/${sessionId}/file?path=${path}`;
+}
+
+function getDirectoryName(filePath: string): string {
+  const slashIndex = filePath.lastIndexOf("/");
+  return slashIndex === -1 ? "" : filePath.slice(0, slashIndex);
+}
+
+function findRenameTarget(
+  msg: WorkspaceFilesChangedMessage,
+  filePath: string,
+): string | null {
+  if (
+    msg.hasMoreChangedPaths
+    || msg.deletedPaths.length !== 1
+    || msg.addedPaths.length !== 1
+    || msg.deletedPaths[0] !== filePath
+  ) {
+    return null;
+  }
+
+  const currentDirectory = getDirectoryName(filePath);
+  const addedPath = msg.addedPaths[0];
+  return getDirectoryName(addedPath) === currentDirectory ? addedPath : null;
 }
 
 function shouldRefreshForSession(
@@ -57,6 +99,10 @@ export function WorkspaceFileTab({
   panelId: string;
 }) {
   const { kind, path, sourceSessionId } = fileRef;
+  const tabId = useContext(TabIdContext);
+  const isTabActive = useTabStore((state) => state.activeTabId === tabId);
+  const isDocumentVisible = useDocumentVisibility();
+  const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-tab");
   const panelCount = usePanelStore(
     (state) => Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length,
   );
@@ -68,11 +114,16 @@ export function WorkspaceFileTab({
     data: null,
   });
   const requestSeqRef = useRef(0);
+  const activeLoadsRef = useRef(0);
 
   const loadFile = useCallback(async (options?: {
     signal?: AbortSignal;
     silent?: boolean;
   }) => {
+    // A silent refresh must not supersede an in-flight load: bumping the
+    // sequence would discard that load's response while loading stays true.
+    if (options?.silent && activeLoadsRef.current > 0) return;
+
     const requestSeq = requestSeqRef.current + 1;
     requestSeqRef.current = requestSeq;
 
@@ -84,14 +135,18 @@ export function WorkspaceFileTab({
       });
     }
 
+    activeLoadsRef.current += 1;
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         getFileUrl({ type: "workspace-file", sourceSessionId, kind, path }),
-        { signal: options?.signal },
+        { signal: options?.signal, timeoutMs: FILE_LOAD_TIMEOUT_MS, retries: 1 },
       );
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         throw new Error(extractGitPanelErrorMessage(payload, "Failed to load file."));
+      }
+      if (payload === null) {
+        throw new Error("Failed to load file.");
       }
 
       if (requestSeqRef.current !== requestSeq) return;
@@ -102,13 +157,60 @@ export function WorkspaceFileTab({
       });
     } catch (error) {
       if (options?.signal?.aborted || requestSeqRef.current !== requestSeq) return;
-      setState({
-        loading: false,
-        error: error instanceof Error ? error.message : "Failed to load file.",
-        data: null,
-      });
+      const message = isTimeoutError(error)
+        ? FILE_LOAD_TIMEOUT_MESSAGE
+        : error instanceof Error ? error.message : "Failed to load file.";
+      if (options?.silent) {
+        // Keep showing current content when a background refresh fails.
+        setState((current) => (
+          current.data ? current : { loading: false, error: message, data: null }
+        ));
+      } else {
+        setState({
+          loading: false,
+          error: message,
+          data: null,
+        });
+      }
+    } finally {
+      activeLoadsRef.current -= 1;
     }
   }, [kind, path, sourceSessionId]);
+
+  const refreshFile = useCallback(() => {
+    void loadFile({ silent: true });
+  }, [loadFile]);
+
+  const handleWorkspaceFilesChanged = useCallback((msg: WorkspaceFilesChangedMessage) => {
+    if (!msg.sessionIds.includes(sourceSessionId)) return;
+
+    const renameTarget = findRenameTarget(msg, path);
+    if (renameTarget) {
+      assignSession(
+        panelId,
+        buildWorkspaceFileSessionId(sourceSessionId, kind, renameTarget),
+      );
+      return;
+    }
+
+    if (msg.deletedPaths.includes(path)) {
+      void loadFile();
+      return;
+    }
+
+    if (msg.hasMoreChangedPaths || msg.changedPaths.includes(path)) {
+      refreshFile();
+    }
+  }, [assignSession, kind, loadFile, panelId, path, refreshFile, sourceSessionId]);
+
+  useWorkspaceFilesLiveSync({
+    enabled: isTabActive && isDocumentVisible,
+    onFilesChanged: handleWorkspaceFilesChanged,
+    onRefresh: refreshFile,
+    refreshOnTreeChange: false,
+    sessionId: sourceSessionId,
+    subscriberId,
+  });
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -176,6 +278,7 @@ export function WorkspaceFileTab({
           assignSession(panelId, null);
         }
       }}
+      onRetry={() => void loadFile()}
       path={fileRef.path}
       sourceSessionId={sourceSessionId}
     />

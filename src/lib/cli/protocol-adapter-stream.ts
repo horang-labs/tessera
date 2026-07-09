@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import type { SessionReplayEvent } from '../session-replay-types';
 import type { CliMessage } from './types';
 
@@ -10,6 +11,9 @@ export interface ProtocolStreamState {
   thinkingRedactedEmitted: boolean;
   isStreamingText: boolean;
   hasStreamedText: boolean;
+  /** Stable id for the active assistant text run; stamped on every chunk so the
+   *  live message and the flushed assistant_message share one id. Null between runs. */
+  activeAssistantMessageId: string | null;
   processedToolUseIds: Set<string>;
 }
 
@@ -34,6 +38,7 @@ function getOrCreateProtocolStreamState(
       thinkingRedactedEmitted: false,
       isStreamingText: false,
       hasStreamedText: false,
+      activeAssistantMessageId: null,
       processedToolUseIds: new Set(),
     };
     streamState.set(sessionId, state);
@@ -103,6 +108,8 @@ export function buildProtocolStreamReplayEvents({
       if (block.type === 'text') {
         state.isStreamingText = true;
         state.hasStreamedText = true;
+        // New text run -> mint a stable id shared by the live message + flushed assistant_message.
+        state.activeAssistantMessageId = randomUUID();
       }
 
       return [];
@@ -116,11 +123,16 @@ export function buildProtocolStreamReplayEvents({
       if (!state) return [];
 
       if (delta.type === 'text_delta' && delta.text) {
+        // Defensive: a text_delta without a preceding content_block_start for text.
+        if (!state.activeAssistantMessageId) {
+          state.activeAssistantMessageId = randomUUID();
+        }
         return [{
           v: liveEventVersion,
           type: 'assistant_message_chunk',
           timestamp: new Date().toISOString(),
           content: delta.text,
+          messageId: state.activeAssistantMessageId,
         }];
       }
 
@@ -189,6 +201,8 @@ export function buildProtocolStreamReplayEvents({
 
       if (state.isStreamingText) {
         state.isStreamingText = false;
+        // End of this text run; next run mints a fresh id.
+        state.activeAssistantMessageId = null;
       }
 
       return replayEvents;

@@ -143,6 +143,13 @@ export async function probeBinaryAvailable(
  * Matches the first `N.N.N` triple with an optional pre-release suffix.
  * Returns undefined when no triple is found.
  *
+ * Deliberately does NOT fall back to a two-part `N.N` match: every CLI we
+ * target (claude, codex, opencode) emits a three-part version, and a two-part
+ * regex over banner text is ambiguous — `codex (node 18.20, build 0.46)` has
+ * two standalone two-part numbers and left-to-right matching grabs the wrong
+ * one. `version` is display/telemetry only and never gates status, so showing
+ * nothing is strictly better than showing a wrong number.
+ *
  * Examples:
  *   "Claude Code 2.1.114"                      → "2.1.114"
  *   "codex-cli 0.42.0 (build 1234)"            → "0.42.0"

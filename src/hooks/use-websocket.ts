@@ -28,8 +28,9 @@ export function useWebSocket() {
       skillName?: string,
       displayContent?: string | ContentBlock[],
       spawnConfig?: SessionSpawnConfig,
+      options?: { forceTranslateInput?: boolean },
     ) => {
-      wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig);
+      wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
     },
     [],
   );
@@ -65,6 +66,14 @@ export function useWebSocket() {
 
   const cancelGeneration = useCallback((sessionId: string) => {
     wsClient.cancelGeneration(sessionId);
+  }, []);
+
+  const compactSession = useCallback((
+    sessionId: string,
+    spawnConfig?: SessionSpawnConfig,
+    displayContent?: string,
+  ) => {
+    wsClient.compactSession(sessionId, spawnConfig, displayContent);
   }, []);
 
   const setSessionGoal = useCallback((
@@ -112,6 +121,7 @@ export function useWebSocket() {
     retrySession,
     sendInteractiveResponse,
     cancelGeneration,
+    compactSession,
     setSessionGoal,
     refreshSessionGoal,
     clearSessionGoal,

@@ -69,16 +69,8 @@ export function normalizeClaudeModel(model?: string): string | undefined {
     return model;
   }
 
-  switch (model) {
-    case 'opus':
-      return 'claude-opus-4-8[1m]';
-    case 'sonnet':
-      return 'claude-sonnet-4-6';
-    case 'haiku':
-      return 'claude-haiku-4-5-20251001';
-    default:
-      return model;
-  }
+  // No hardcoded aliases: the model list (and its ids) come from the remote config now.
+  return model;
 }
 
 export function getProviderSessionDefaults(
@@ -171,7 +163,7 @@ export function resolveProviderModelOption(
 
     // Claude Code passes --model straight to the CLI, so it accepts any model the
     // CLI understands — including ones not in the curated list (e.g. a new release
-    // that ships before Tessera updates CLAUDE_MODELS). Preserve the custom value as
+    // that ships before the remote config lists it). Preserve the custom value as
     // a synthetic option instead of snapping back to the default, so it survives
     // round-trips through the sticky session defaults. Codex/OpenCode model lists are
     // probed from the CLI, so an unknown model there is invalid and falls through.
@@ -514,14 +506,24 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       showToast: true,
       autoGenerateTitle: true,
     },
+    translate: {
+      enabled: false,
+      sourceLanguage: 'ko',
+      targetLanguage: 'en',
+      input: { provider: 'claude-code', model: '', promptTemplate: '' },
+      output: { provider: 'claude-code', model: '', promptTemplate: '' },
+      sendShortcut: 'meta+enter',
+    },
     theme: 'auto',
     fontSize: DEFAULT_FONT_SCALE,
     enterKeyBehavior: 'send',
     defaultPermissionMode: 'default',
-    defaultModel: 'claude-opus-4-8[1m]',
+    // Empty → resolveProviderModelOption() picks the remote config's default
+    // (isDefault → first). Once the user chooses a model it's persisted here (sticky).
+    defaultModel: '',
     providerDefaults: {
       'claude-code': {
-        model: 'claude-opus-4-8[1m]',
+        model: '',
         reasoningEffort: null,
         sessionMode: 'work',
         accessMode: 'default',
@@ -538,6 +540,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     },
     inactivePanelDimming: 30,
     showProviderIcons: true,
+    showRecentWork: true,
     sttEngine: 'webSpeech',
     geminiApiKey: '',
     favoriteSkills: [],
@@ -613,6 +616,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     defaultModel: normalizedClaudeModel,
     fontSize: normalizeFontScale(raw?.fontSize),
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
+    showRecentWork: raw?.showRecentWork ?? defaults.showRecentWork,
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
     managedWorktreePathTemplate: normalizeManagedWorktreePathTemplate(raw?.managedWorktreePathTemplate),
@@ -621,6 +625,18 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     notifications: {
       ...defaults.notifications,
       ...(raw?.notifications ?? {}),
+    },
+    translate: {
+      ...defaults.translate,
+      ...(raw?.translate ?? {}),
+      input: {
+        ...defaults.translate.input,
+        ...(raw?.translate?.input ?? {}),
+      },
+      output: {
+        ...defaults.translate.output,
+        ...(raw?.translate?.output ?? {}),
+      },
     },
     providerDefaults,
     setup: {

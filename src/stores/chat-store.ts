@@ -95,6 +95,11 @@ export interface ChatState {
   // Messages by session
   messages: Map<string, EnhancedMessage[]>;
 
+  // Workflow cards the user has manually dismissed from the docked status bar,
+  // keyed by CLI task id (globally unique). Dismissal is UI-only and does not
+  // touch the underlying run.
+  dismissedWorkflowTaskIds: Set<string>;
+
   // Assistant text blocks currently waiting for text flush, keyed by session.
   // This drives only the inline streaming dots. It is intentionally separate
   // from turnInFlightBySession, which can stay true during thinking/tools.
@@ -146,10 +151,30 @@ export interface ChatState {
   // Per-session scroll position (preserved across session switches)
   scrollPositions: Map<string, ScrollPositionSnapshot>;
 
+  // Per-session translation view: 'original' shows the agent's source text,
+  // 'translation' (default) shows translatedContent when present.
+  translationView: Map<string, 'original' | 'translation'>;
+
+  // Per-message view override (keyed by messageId). Takes precedence over the
+  // session-wide translationView for that one message (set by the per-message button).
+  messageViewOverride: Map<string, 'original' | 'translation'>;
+
+  // Translate requests deferred until the turn finishes streaming, keyed by
+  // session → set of messageIds. Pressing "translate" while a message is still
+  // streaming would otherwise translate the partial text; we queue and fire once
+  // the turn completes (the message is then fully streamed and persisted).
+  translateQueue: Map<string, Set<string>>;
+
   // Actions
   isHistoryLoaded: (sessionId: string) => boolean;
   setDraftInput: (sessionId: string, text: string) => void;
   getDraftInput: (sessionId: string) => string;
+  getTranslationView: (sessionId: string) => 'original' | 'translation';
+  setTranslationView: (sessionId: string, view: 'original' | 'translation') => void;
+  toggleTranslationView: (sessionId: string) => void;
+  setMessageViewOverride: (messageId: string, view: 'original' | 'translation') => void;
+  enqueueTranslateOnStreamEnd: (sessionId: string, messageId: string) => void;
+  drainTranslateQueue: (sessionId: string) => string[];
   setScrollPosition: (sessionId: string, position: number | ScrollPositionSnapshot) => void;
   getScrollPosition: (sessionId: string) => ScrollPositionSnapshot | undefined;
   setActiveInteractivePrompt: (sessionId: string, prompt: ActiveInteractivePrompt | null) => void;
@@ -182,6 +207,11 @@ export interface ChatState {
     agentContext?: AgentContextEvent[];
     hasOutput?: boolean;
   }) => void;
+  attachMessageTranslation: (sessionId: string, targetMessageId: string, update: {
+    translatedContent?: string;
+    translationStatus?: 'pending' | 'completed' | 'error';
+    translationLang?: string;
+  }) => void;
   setReadOnlyPagination: (sessionId: string, pagination: {
     projectDir: string;
     hasMore: boolean;
@@ -197,6 +227,14 @@ export interface ChatState {
     endTime?: string;
     elapsedMs?: number;
   }) => void;
+  /** Replace a workflow card message (matched by id) with its merged next state. */
+  updateWorkflowMessage: (sessionId: string, messageId: string, message: EnhancedMessage) => void;
+  /** Force-settle a session's still-running workflow cards — used when the CLI
+   *  process dies or the session is stopped without a terminal task_notification,
+   *  which would otherwise leave the card spinning as "running" forever. */
+  settleRunningWorkflows: (sessionId: string, status: 'completed' | 'failed') => void;
+  /** Hide a workflow card from the docked status bar (UI-only; keyed by task id). */
+  dismissWorkflowCard: (taskId: string) => void;
 }
 
 export function isTurnInFlight(state: ChatState, sessionId: string): boolean {
@@ -271,7 +309,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   promptHistory: new Map(),
   historyLoaded: new Set(),
   draftInputs: new Map(),
+  translationView: new Map(),
+  messageViewOverride: new Map(),
+  translateQueue: new Map(),
   scrollPositions: new Map(),
+  dismissedWorkflowTaskIds: new Set(),
 
   isHistoryLoaded: (sessionId) => get().historyLoaded.has(sessionId),
 
@@ -287,6 +329,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   getDraftInput: (sessionId) => get().draftInputs.get(sessionId) || '',
+
+  getTranslationView: (sessionId) => get().translationView.get(sessionId) ?? 'translation',
+  setTranslationView: (sessionId, view) =>
+    set((state) => {
+      const updated = new Map(state.translationView);
+      updated.set(sessionId, view);
+      return { translationView: updated };
+    }),
+  toggleTranslationView: (sessionId) =>
+    set((state) => {
+      const current = state.translationView.get(sessionId) ?? 'translation';
+      const updated = new Map(state.translationView);
+      updated.set(sessionId, current === 'translation' ? 'original' : 'translation');
+      return { translationView: updated };
+    }),
+  setMessageViewOverride: (messageId, view) =>
+    set((state) => {
+      const updated = new Map(state.messageViewOverride);
+      updated.set(messageId, view);
+      return { messageViewOverride: updated };
+    }),
+
+  enqueueTranslateOnStreamEnd: (sessionId, messageId) =>
+    set((state) => {
+      const updated = new Map(state.translateQueue);
+      const ids = new Set(updated.get(sessionId) ?? []);
+      ids.add(messageId);
+      updated.set(sessionId, ids);
+      return { translateQueue: updated };
+    }),
+
+  drainTranslateQueue: (sessionId) => {
+    const ids = get().translateQueue.get(sessionId);
+    if (!ids || ids.size === 0) return [];
+    set((state) => {
+      const updated = new Map(state.translateQueue);
+      updated.delete(sessionId);
+      return { translateQueue: updated };
+    });
+    return [...ids];
+  },
 
   setScrollPosition: (sessionId, position) =>
     set((state) => {
@@ -647,9 +730,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const clearedScrollPositions = new Map(state.scrollPositions);
       clearedScrollPositions.delete(sessionId);
 
+      const clearedTranslateQueue = new Map(state.translateQueue);
+      clearedTranslateQueue.delete(sessionId);
+
       return {
         messages: updatedMessages,
         historyLoaded: clearedHistoryLoaded,
+        translateQueue: clearedTranslateQueue,
         assistantTextBuffers: clearedBuffers,
         assistantTextFlushTimers: clearedTimers,
         activeAssistantTextBySession: updateActiveAssistantTextMap(
@@ -681,6 +768,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return msg;
       });
+      const messages = new Map(state.messages);
+      messages.set(sessionId, updatedMessages);
+      return { messages };
+    }),
+
+  attachMessageTranslation: (sessionId, targetMessageId, update) =>
+    set((state) => {
+      const sessionMessages = state.messages.get(sessionId) || [];
+      let changed = false;
+      const updatedMessages = sessionMessages.map((msg) => {
+        if (msg.id === targetMessageId && 'type' in msg && msg.type === 'text') {
+          changed = true;
+          return { ...msg, ...update };
+        }
+        return msg;
+      });
+      if (!changed) return state;
       const messages = new Map(state.messages);
       messages.set(sessionId, updatedMessages);
       return { messages };
@@ -733,5 +837,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const messages = new Map(state.messages);
       messages.set(sessionId, updatedMessages);
       return { messages };
+    }),
+
+  updateWorkflowMessage: (sessionId, messageId, message) =>
+    set((state) => {
+      const sessionMessages = state.messages.get(sessionId) || [];
+      const idx = sessionMessages.findIndex((m) => m.id === messageId && m.type === 'workflow');
+      if (idx === -1) return state;
+      const updatedMessages = [...sessionMessages];
+      updatedMessages[idx] = message;
+      const messages = new Map(state.messages);
+      messages.set(sessionId, updatedMessages);
+      return { messages };
+    }),
+
+  settleRunningWorkflows: (sessionId, status) =>
+    set((state) => {
+      const sessionMessages = state.messages.get(sessionId);
+      if (!sessionMessages) return state;
+      const now = new Date().toISOString();
+      let changed = false;
+      const updatedMessages = sessionMessages.map((m) => {
+        if (m.type !== 'workflow' || m.status !== 'running') return m;
+        changed = true;
+        return { ...m, status, endedAt: m.endedAt ?? now, rev: m.rev + 1 };
+      });
+      if (!changed) return state;
+      const messages = new Map(state.messages);
+      messages.set(sessionId, updatedMessages);
+      return { messages };
+    }),
+
+  dismissWorkflowCard: (taskId) =>
+    set((state) => {
+      if (state.dismissedWorkflowTaskIds.has(taskId)) return state;
+      const dismissedWorkflowTaskIds = new Set(state.dismissedWorkflowTaskIds);
+      dismissedWorkflowTaskIds.add(taskId);
+      return { dismissedWorkflowTaskIds };
     }),
 }));

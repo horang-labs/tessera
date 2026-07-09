@@ -35,7 +35,6 @@ export interface TelemetryRuntimeContext {
   channel: string;
 }
 
-const INSTALL_ID_KEY = 'tessera:telemetry:install-id';
 const MAX_STRING_LENGTH = 100;
 const MAX_ARRAY_LENGTH = 20;
 
@@ -165,21 +164,6 @@ type PostHogClient = typeof import('posthog-js')['default'];
 
 export function createTelemetrySessionId(): string {
   return randomId();
-}
-
-export function getTelemetryInstallId(): string {
-  if (!isBrowser()) return randomId();
-
-  try {
-    const existing = window.localStorage.getItem(INSTALL_ID_KEY);
-    if (existing) return existing;
-
-    const installId = randomId();
-    window.localStorage.setItem(INSTALL_ID_KEY, installId);
-    return installId;
-  } catch {
-    return randomId();
-  }
 }
 
 export function configureTelemetry(

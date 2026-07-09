@@ -1,16 +1,19 @@
 "use client";
 
 import { AlertCircle, FileText, FolderTree, LoaderCircle, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  useDocumentVisibility,
+  useStableWorkspaceFilesSubscriberId,
+  useWorkspaceFilesLiveSync,
+} from "@/hooks/use-workspace-files-live-sync";
+import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { openWorkspaceFileTab } from "@/lib/workspace-tabs/open-workspace-tab";
 import type { WorkspaceExplorerSessionRef } from "@/lib/workspace-tabs/special-session";
+import { TabIdContext } from "@/stores/panel-store";
+import { useTabStore } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
-
-interface WorkspaceFilesResponse {
-  files?: string[];
-  truncated?: boolean;
-}
 
 function basename(filePath: string): string {
   const parts = filePath.split("/");
@@ -50,36 +53,25 @@ export function WorkspaceExplorerTab({
 }: {
   explorerRef: WorkspaceExplorerSessionRef;
 }) {
-  const [files, setFiles] = useState<string[]>([]);
+  const tabId = useContext(TabIdContext);
+  const isTabActive = useTabStore((state) => state.activeTabId === tabId);
+  const isDocumentVisible = useDocumentVisibility();
+  const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-explorer-tab");
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [truncated, setTruncated] = useState(false);
+  const {
+    error,
+    files,
+    loading,
+    refreshFiles,
+    truncated,
+  } = useWorkspaceFileList(explorerRef.sourceSessionId);
 
-  useEffect(() => {
-    const abortController = new AbortController();
-
-    const loadFiles = async () => {
-      try {
-        const response = await fetch(
-          `/api/sessions/${encodeURIComponent(explorerRef.sourceSessionId)}/files`,
-          { signal: abortController.signal },
-        );
-        const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
-        if (!response.ok) throw new Error("Failed to load files.");
-        setFiles(Array.isArray(payload?.files) ? payload.files : []);
-        setTruncated(Boolean(payload?.truncated));
-      } catch (error) {
-        if (abortController.signal.aborted) return;
-        setError(error instanceof Error ? error.message : "Failed to load files.");
-      } finally {
-        if (!abortController.signal.aborted) setLoading(false);
-      }
-    };
-
-    void loadFiles();
-    return () => abortController.abort();
-  }, [explorerRef.sourceSessionId]);
+  useWorkspaceFilesLiveSync({
+    enabled: isTabActive && isDocumentVisible,
+    onRefresh: refreshFiles,
+    sessionId: explorerRef.sourceSessionId,
+    subscriberId,
+  });
 
   const visibleFiles = useMemo(() => {
     const trimmed = query.trim().toLowerCase();

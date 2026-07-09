@@ -44,6 +44,60 @@ const WINDOWS_TITLEBAR_DIMMED_THEME = {
 } satisfies Record<TitlebarTheme, { color: string; symbolColor: string }>;
 const TESSERA_HOMEPAGE = 'https://github.com/horang-labs/tessera';
 const MAX_SHELL_PATH_LENGTH = 32768;
+const ELECTRON_DEFAULT_PORT = 32123;
+const ELECTRON_PORT_SCAN_LIMIT = 100;
+const UI_STORAGE_PATH = getTesseraDataPath('ui-state.json');
+
+function readUiStorage(): Record<string, string> {
+  try {
+    const raw = fs.readFileSync(UI_STORAGE_PATH, 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+    const state: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof key === 'string' && typeof value === 'string') {
+        state[key] = value;
+      }
+    }
+    return state;
+  } catch {
+    return {};
+  }
+}
+
+function writeUiStorage(state: Record<string, string>): void {
+  try {
+    fs.mkdirSync(path.dirname(UI_STORAGE_PATH), { recursive: true });
+    const tmpPath = `${UI_STORAGE_PATH}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(state), 'utf8');
+    fs.renameSync(tmpPath, UI_STORAGE_PATH);
+  } catch (error) {
+    log('warn', `Failed to write UI storage: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function getUiStorageItem(key: unknown): string | null {
+  if (typeof key !== 'string' || key.length === 0) return null;
+  return readUiStorage()[key] ?? null;
+}
+
+function setUiStorageItem(payload: unknown): void {
+  if (!payload || typeof payload !== 'object') return;
+  const { key, value } = payload as { key?: unknown; value?: unknown };
+  if (typeof key !== 'string' || key.length === 0 || typeof value !== 'string') return;
+  const state = readUiStorage();
+  state[key] = value;
+  writeUiStorage(state);
+}
+
+function removeUiStorageItem(key: unknown): void {
+  if (typeof key !== 'string' || key.length === 0) return;
+  const state = readUiStorage();
+  if (!(key in state)) return;
+  delete state[key];
+  writeUiStorage(state);
+}
 
 function isWindowsStylePath(filesystemPath: string): boolean {
   return (
@@ -123,6 +177,31 @@ function getTitlebarOverlayOptions(theme: TitlebarTheme, options: TitlebarThemeO
 
 function sendMenuCommand(win: BrowserWindow, command: string) {
   win.webContents.send('titlebar-menu-command', { command });
+}
+
+type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close';
+
+function isWindowControlAction(action: unknown): action is WindowControlAction {
+  return action === 'minimize' || action === 'toggle-maximize' || action === 'close';
+}
+
+function getWindowStatePayload(win: BrowserWindow) {
+  return {
+    isMaximized: win.isMaximized(),
+    isFullScreen: win.isFullScreen(),
+  };
+}
+
+function sendWindowState(win: BrowserWindow) {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send('window-state-changed', getWindowStatePayload(win));
+}
+
+function bindWindowStateEvents(win: BrowserWindow) {
+  win.on('maximize', () => sendWindowState(win));
+  win.on('unmaximize', () => sendWindowState(win));
+  win.on('enter-full-screen', () => sendWindowState(win));
+  win.on('leave-full-screen', () => sendWindowState(win));
 }
 
 function buildTitlebarMenuTemplate(
@@ -223,10 +302,6 @@ function buildWebContentsContextMenuTemplate(
       { type: 'separator' },
       { role: 'selectAll', enabled: menuItemEnabled(editFlags.canSelectAll) },
     ];
-  }
-
-  if (editFlags.canSelectAll) {
-    return [{ role: 'selectAll' }];
   }
 
   return [];
@@ -476,16 +551,30 @@ function forceKillProcessTree(proc: ChildProcess): void {
 }
 
 // ── Port allocation ────────────────────────────────────────────────────────
-async function findFreePort(): Promise<number> {
+async function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address() as net.AddressInfo;
-      const port = addr.port;
-      srv.close(() => resolve(port));
+    srv.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE' || error.code === 'EACCES') {
+        resolve(false);
+        return;
+      }
+      reject(error);
     });
-    srv.on('error', reject);
+    srv.listen(port, '127.0.0.1', () => {
+      srv.close(() => resolve(true));
+    });
   });
+}
+
+async function findStablePort(): Promise<number> {
+  for (let offset = 0; offset < ELECTRON_PORT_SCAN_LIMIT; offset += 1) {
+    const candidate = ELECTRON_DEFAULT_PORT + offset;
+    if (await isPortAvailable(candidate)) return candidate;
+  }
+  throw new Error(
+    `No available port found from ${ELECTRON_DEFAULT_PORT} to ${ELECTRON_DEFAULT_PORT + ELECTRON_PORT_SCAN_LIMIT - 1}`
+  );
 }
 
 // ── Server lifecycle ───────────────────────────────────────────────────────
@@ -496,8 +585,8 @@ async function startServer(): Promise<number> {
     return serverPort;
   }
 
-  const port = await findFreePort();
-  log('debug', `Free port found: ${port}`);
+  const port = await findStablePort();
+  log('debug', `Electron server port selected: ${port}`);
 
   return new Promise((resolve, reject) => {
     const isPackaged = app.isPackaged;
@@ -588,12 +677,28 @@ async function stopServer(): Promise<void> {
       resolve();
     });
 
+    const requestSignalShutdown = (reason: string) => {
+      log('warn', `${reason}; sending SIGTERM to server child`);
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // Process may have already exited.
+      }
+    };
+
     try {
-      proc.send({ type: 'shutdown' });
-    } catch {
-      // IPC channel already closed — process may have exited
-      clearTimeout(timeout);
-      resolve();
+      if (proc.connected) {
+        proc.send({ type: 'shutdown' }, (error) => {
+          if (error) {
+            requestSignalShutdown(`Server shutdown IPC failed: ${error.message}`);
+          }
+        });
+      } else {
+        requestSignalShutdown('Server shutdown IPC channel already closed');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      requestSignalShutdown(`Server shutdown IPC threw: ${message}`);
     }
   });
 }
@@ -602,6 +707,7 @@ async function stopServer(): Promise<void> {
 function createWindow(port: number): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
+  const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 
   const win = new BrowserWindow({
@@ -611,6 +717,7 @@ function createWindow(port: number): BrowserWindow {
     minHeight: 600,
     title: 'Tessera',
     show: false,
+    frame: !isLinux,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -619,10 +726,12 @@ function createWindow(port: number): BrowserWindow {
       webSecurity: true,
     },
     autoHideMenuBar: !isMac,
-    backgroundColor: isWindows ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
+    backgroundColor: isWindows || isLinux ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
     titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
+
+  bindWindowStateEvents(win);
 
   if (!isMac) {
     win.removeMenu();
@@ -715,6 +824,7 @@ function createWindow(port: number): BrowserWindow {
 function createPopoutWindow(port: number, route: string): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
+  const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 
   const win = new BrowserWindow({
@@ -724,6 +834,7 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
     minHeight: 400,
     title: 'Tessera Board',
     show: false,
+    frame: !isLinux,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -732,10 +843,12 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
       webSecurity: true,
     },
     autoHideMenuBar: !isMac,
-    backgroundColor: isWindows ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
+    backgroundColor: isWindows || isLinux ? WINDOWS_TITLEBAR_THEME[initialTitlebarTheme].color : undefined,
     titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
+
+  bindWindowStateEvents(win);
 
   if (!isMac) {
     win.removeMenu();
@@ -777,6 +890,17 @@ function broadcastPopoutState(): void {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
+ipcMain.on('ui-storage-get-item', (event, key: unknown) => {
+  event.returnValue = getUiStorageItem(key);
+});
+ipcMain.on('ui-storage-set-item', (event, payload: unknown) => {
+  setUiStorageItem(payload);
+  event.returnValue = true;
+});
+ipcMain.on('ui-storage-remove-item', (event, key: unknown) => {
+  removeUiStorageItem(key);
+  event.returnValue = true;
+});
 ipcMain.handle('shell-open-path', async (_event, rawPath: unknown) => {
   const targetPath = resolveShellPath(rawPath);
   if (!targetPath) return { ok: false, error: 'invalid_path' };
@@ -926,6 +1050,27 @@ ipcMain.handle(
     });
   }
 );
+ipcMain.handle('window-control', (event, action: unknown) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || !isWindowControlAction(action)) return;
+
+  if (action === 'minimize') {
+    win.minimize();
+  } else if (action === 'toggle-maximize') {
+    if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+    sendWindowState(win);
+  } else {
+    win.close();
+  }
+});
+ipcMain.handle('get-window-state', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  return win ? getWindowStatePayload(win) : { isMaximized: false, isFullScreen: false };
+});
 ipcMain.on('set-titlebar-theme', (event, theme: TitlebarTheme, options?: TitlebarThemeOptions) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || process.platform !== 'win32') return;

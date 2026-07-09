@@ -13,9 +13,10 @@
  *  1. Spawn `codex app-server`
  *  2. Write initialize request (id=1, protocolVersion "2025-01-01")
  *  3. Await response id=1 (server confirms protocol)
- *  4. Write thread/start request (id=2)
- *  5. Await response id=2 (server returns threadId)
- *  6. For each user turn: write turn/start notification with user input text
+ *  4. Write initialized notification
+ *  5. Write thread/start request (id=2)
+ *  6. Await response id=2 (server returns threadId)
+ *  7. For each user turn: write turn/start notification with user input text
  */
 
 import { randomUUID } from 'crypto';
@@ -28,6 +29,7 @@ import type {
   SpawnResult,
   ParsedMessage,
   GeneratedTitle,
+  TranslatedText,
   SkillSource,
   SkillInfo,
   CheckStatusOptions,
@@ -55,6 +57,8 @@ import {
 import {
   classifyAuthStatus,
   classifyVersionFailure,
+  isVersionProbeRunnable,
+  synthesizeRunnableStatus,
   summarizeExecProbe,
 } from '../../status-detection';
 import { updateProviderStateWithRetry } from '../../process-manager-side-effects';
@@ -329,7 +333,7 @@ export class CodexAdapter implements CliProvider {
       authProbe,
     };
 
-    if (!versionResult.ok) {
+    if (!isVersionProbeRunnable(versionResult)) {
       return {
         status: 'not_installed',
         detectionReason: classifyVersionFailure(versionResult, commandMetadata.commandSource),
@@ -338,11 +342,11 @@ export class CodexAdapter implements CliProvider {
     }
 
     const version = parseVersion(versionResult.stdout);
-    const authStatus = classifyAuthStatus(loginResult);
+    const finalStatus = synthesizeRunnableStatus(versionResult, classifyAuthStatus(loginResult));
 
     return {
-      status: authStatus.status,
-      detectionReason: authStatus.detectionReason,
+      status: finalStatus.status,
+      detectionReason: finalStatus.detectionReason,
       ...(version ? { version } : {}),
       ...baseTelemetry,
     };
@@ -372,9 +376,10 @@ export class CodexAdapter implements CliProvider {
    *  1. Spawn `codex app-server`
    *  2. Write initialize request (id=1, protocolVersion "2025-01-01")
    *  3. Await response id=1
-   *  4. Write thread/start request (id=2)
-   *  5. Await response id=2, extract threadId
-   *  6. Store threadId on the protocol parser
+   *  4. Write initialized notification
+   *  5. Write thread/start request (id=2)
+   *  6. Await response id=2, extract threadId
+   *  7. Store threadId on the protocol parser
    *
    * The sessionId in SpawnOptions is used to key the parser's per-session state.
    */
@@ -683,6 +688,27 @@ export class CodexAdapter implements CliProvider {
     return response.result?.cleared === true;
   }
 
+  async compactThread(proc: ChildProcess, sessionId: string): Promise<boolean> {
+    const threadId = this._processThreadIds.get(proc);
+    if (!threadId) {
+      throw new Error('Codex thread is not ready');
+    }
+
+    const requestId = this._nextRequestId++;
+    const request: JsonRpcRequest = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'thread/compact/start',
+      params: { threadId },
+    };
+
+    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/compact/start');
+    this._writeStdin(proc, 'compact_start', `${JSON.stringify(request)}\n`);
+    await this._awaitResponse(proc, requestId, 'thread/compact/start');
+    logger.info('CodexAdapter: sent thread/compact/start', { sessionId, threadId });
+    return true;
+  }
+
   // ---------------------------------------------------------------------------
   // CliProvider: parseStdout
   // ---------------------------------------------------------------------------
@@ -961,6 +987,38 @@ export class CodexAdapter implements CliProvider {
   }
 
   // ---------------------------------------------------------------------------
+  // CliProvider: translateText
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Translates the given prompt by spawning `codex exec --json` and returning the
+   * raw agent_message text (NOT JSON-parsed) — translations are multi-line and may
+   * contain quotes/markdown/code, so the raw agent response IS the translation.
+   *
+   * When a model is provided it is injected via `-c model="<model>"`, mirroring the
+   * existing `model_reasoning_effort` config option.
+   *
+   * Returns null on any error/timeout/empty result (fail-open).
+   */
+  async translateText(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<TranslatedText | null> {
+    try {
+      const extra = model ? ['-c', `model="${model}"`] : [];
+      const text = await this._execOneShot(prompt, userId, extra);
+      const t = text.trim();
+      return t ? { text: t } : null;
+    } catch (err) {
+      logger.warn('CodexAdapter: translateText failed', {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Private: JSON-RPC handshake
   // ---------------------------------------------------------------------------
 
@@ -968,11 +1026,12 @@ export class CodexAdapter implements CliProvider {
    * Performs the Codex app-server initialization handshake:
    *  1. Writes initialize request (id=1)
    *  2. Awaits success response with id=1
-   *  3. Determines thread method: thread/resume (if options.resume && options.threadId)
+   *  3. Writes initialized notification
+   *  4. Determines thread method: thread/resume (if options.resume && options.threadId)
    *     or thread/start (new session or fallback when threadId is missing)
-   *  4. Writes the thread request (id=2)
-   *  5. Awaits response with id=2 and extracts threadId
-   *  6. Stores threadId on the protocol parser for the given sessionId
+   *  5. Writes the thread request (id=2)
+   *  6. Awaits response with id=2 and extracts threadId
+   *  7. Stores threadId on the protocol parser for the given sessionId
    *
    * Uses a local nextId counter (starting at 1) to avoid interleaving with the
    * singleton this._nextRequestId used by sendMessage / sendInterrupt.
@@ -1009,7 +1068,15 @@ export class CodexAdapter implements CliProvider {
     await this._awaitResponse(proc, initId, 'initialize', startupTimeoutMs);
     logger.info('CodexAdapter: initialize handshake complete', { sessionId });
 
-    // Step 3: Determine whether to resume an existing thread or start a new one
+    // Step 3: Confirm the initialize handshake per Codex app-server protocol.
+    const initializedNotification: JsonRpcNotification = {
+      jsonrpc: '2.0',
+      method: 'initialized',
+    };
+    this._writeStdin(proc, 'handshake_initialized', `${JSON.stringify(initializedNotification)}\n`);
+    logger.info('CodexAdapter: sent initialized notification', { sessionId });
+
+    // Step 4: Determine whether to resume an existing thread or start a new one
     const isResume = options?.resume === true && !!options?.threadId;
 
     if (options?.resume === true && !options?.threadId) {
@@ -1040,7 +1107,7 @@ export class CodexAdapter implements CliProvider {
       threadParams.sandbox = accessConfig.sandboxMode;
     }
 
-    // Step 4: Send thread/start or thread/resume request
+    // Step 5: Send thread/start or thread/resume request
     const threadReqId = nextId++;
     const threadRequest: JsonRpcRequest = {
       jsonrpc: '2.0',
@@ -1053,7 +1120,7 @@ export class CodexAdapter implements CliProvider {
     this._writeStdin(proc, `handshake_${threadMethod}`, `${JSON.stringify(threadRequest)}\n`);
     logger.info(`CodexAdapter: sent ${threadMethod} request`, { sessionId, id: threadReqId });
 
-    // Step 5: Await thread response and extract threadId
+    // Step 6: Await thread response and extract threadId
     const threadResponse = await this._awaitResponse(proc, threadReqId, threadMethod, startupTimeoutMs);
     const activeModel = extractCodexActiveModel(threadResponse);
     if (activeModel) {
@@ -1064,7 +1131,7 @@ export class CodexAdapter implements CliProvider {
       codexProtocolParser.setSessionModel(sessionId, activeModel);
     }
 
-    // Step 6: Store threadId returned by server (at result.thread.id or result.threadId)
+    // Step 7: Store threadId returned by server (at result.thread.id or result.threadId)
     const serverThreadId = threadResponse?.result?.thread?.id ?? threadResponse?.result?.threadId;
     if (serverThreadId) {
       const tid = String(serverThreadId);
@@ -1191,6 +1258,26 @@ export class CodexAdapter implements CliProvider {
     prompt: string,
     userId?: string,
   ): Promise<GeneratedTitle | null> {
+    const text = await this._execOneShot(prompt, userId);
+    return text ? this._parseGeneratedTitleText(text) : null;
+  }
+
+  /**
+   * Spawns `codex exec --json` headless/read-only with the given prompt and
+   * resolves the raw text of the last agent_message item observed on stdout.
+   *
+   * `extraArgs` are appended after the `model_reasoning_effort` config option,
+   * allowing callers to inject additional `-c key="value"` config (e.g. a model).
+   *
+   * On timeout the last agent text seen so far is resolved. On close, if no agent
+   * text was captured and the exit code is non-zero the promise rejects; otherwise
+   * the (possibly empty) agent text is resolved. A spawn error rejects.
+   */
+  private async _execOneShot(
+    prompt: string,
+    userId?: string,
+    extraArgs: string[] = [],
+  ): Promise<string> {
     const agentEnv = await getAgentEnvironment(userId);
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, userId);
 
@@ -1205,6 +1292,7 @@ export class CodexAdapter implements CliProvider {
           'read-only',
           '-c',
           `model_reasoning_effort="${TITLE_REASONING_EFFORT}"`,
+          ...extraArgs,
         ],
         {
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -1217,14 +1305,13 @@ export class CodexAdapter implements CliProvider {
       let buffer = '';
       let stderr = '';
       let settled = false;
-      let titleFound: GeneratedTitle | null = null;
       let lastAgentText = '';
 
       const timeout = setTimeout(() => {
         if (!settled) {
           settled = true;
           child.kill('SIGTERM');
-          resolve(titleFound);
+          resolve(lastAgentText);
         }
       }, CLI_TIMEOUT_MS);
 
@@ -1251,11 +1338,6 @@ export class CodexAdapter implements CliProvider {
             typeof parsed.item?.text === 'string'
           ) {
             lastAgentText = parsed.item.text;
-            const parsedTitle = this._parseGeneratedTitleText(parsed.item.text);
-            if (parsedTitle) {
-              titleFound = parsedTitle;
-              logger.info('CodexAdapter: generateTitle parsed agent_message', parsedTitle);
-            }
           }
         }
       });
@@ -1280,20 +1362,15 @@ export class CodexAdapter implements CliProvider {
         logger.debug('CodexAdapter: codex exec closed', {
           code,
           stderrLength: stderr.length,
-          titleFound: !!titleFound,
+          hasAgentText: !!lastAgentText,
         });
 
-        if (!titleFound && code !== 0) {
+        if (!lastAgentText && code !== 0) {
           reject(new Error(`codex exec exited with code ${code}: ${stderr.slice(0, 200)}`));
           return;
         }
 
-        if (!titleFound && lastAgentText) {
-          reject(new Error(`Invalid Codex title payload: ${lastAgentText.slice(0, 300)}`));
-          return;
-        }
-
-        resolve(titleFound);
+        resolve(lastAgentText);
       });
 
       child.stdin?.write(prompt);

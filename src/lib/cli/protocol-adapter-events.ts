@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import logger from '../logger';
 import type { SessionReplayEvent } from '../session-replay-types';
 import type { AppServerMessage, ModelUsageEntry } from '../ws/message-types';
@@ -267,6 +268,8 @@ export function buildProtocolResultTextReplayEvent(
     type: 'assistant_message_chunk',
     timestamp: new Date().toISOString(),
     content: resultText,
+    // Non-streamed turn: this single chunk IS the whole message; give it a stable id.
+    messageId: randomUUID(),
   };
 }
 

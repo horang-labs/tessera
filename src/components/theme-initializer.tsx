@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import {
   SETTINGS_STORAGE_KEY,
   SETTINGS_SYNC_CHANNEL,
+  SETTINGS_SYNC_SENDER_ID,
   isSettingsSyncMessage,
   useSettingsStore,
 } from '@/stores/settings-store';
@@ -53,6 +54,9 @@ export default function ThemeInitializer() {
 
     function handleSettingsBroadcast(event: MessageEvent<unknown>) {
       if (!isSettingsSyncMessage(event.data)) return;
+      // Ignore our own broadcast — a same-window sibling BroadcastChannel still
+      // delivers it, and re-applying it mid-edit resets focused settings fields.
+      if (event.data.senderId === SETTINGS_SYNC_SENDER_ID) return;
       applyExternalSettings(event.data.settings);
     }
 

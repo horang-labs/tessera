@@ -9,8 +9,10 @@ import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { SessionGoalUpdate } from '@/types/session-goal';
-import { useChatStore } from '@/stores/chat-store';
+import { v4 as uuidv4 } from 'uuid';
+import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import {
   applyLocalInteractiveResponseStart,
   finalizeInFlightTurn,
@@ -130,19 +132,51 @@ export class WebSocketClient {
     skillName?: string,
     displayContent?: string | ContentBlock[],
     spawnConfig?: SessionSpawnConfig,
+    options?: { forceTranslateInput?: boolean },
   ) {
+    // Stable id shared by the optimistic message and the server record, so the
+    // input-translation result (message_translation) can attach to this exact message.
+    const messageId = uuidv4();
+    const translate = useSettingsStore.getState().settings.translate;
+    const willTranslateInput =
+      !!translate &&
+      (translate.enabled || options?.forceTranslateInput === true) &&
+      !!translate.sourceLanguage &&
+      translate.sourceLanguage !== translate.targetLanguage;
+
     if (!this.sendRequest('send_message', {
       sessionId,
       content,
+      messageId,
       ...(skillName && { skillName }),
       ...(displayContent && { displayContent }),
       ...(spawnConfig && { spawnConfig }),
+      ...(options?.forceTranslateInput && { forceTranslateInput: true }),
     })) {
       console.error('WebSocket not connected');
       return;
     }
 
-    applyOptimisticUserMessage(sessionId, content, skillName, displayContent);
+    applyOptimisticUserMessage(sessionId, content, skillName, displayContent, {
+      messageId,
+      pendingTranslation: willTranslateInput,
+    });
+  }
+
+  /** Request on-demand translation of a specific assistant message. */
+  translateMessage(sessionId: string, messageId: string) {
+    const chat = useChatStore.getState();
+    // If the turn is still streaming, the message text isn't final (nor persisted
+    // server-side) yet. Queue the request and show a "translating…" hint; the turn
+    // finalizer drains the queue once streaming completes (session-client-effects).
+    if (isTurnInFlight(chat, sessionId)) {
+      chat.enqueueTranslateOnStreamEnd(sessionId, messageId);
+      chat.attachMessageTranslation(sessionId, messageId, { translationStatus: 'pending' });
+      return;
+    }
+    if (!this.sendRequest('translate_message', { sessionId, messageId })) {
+      console.error('WebSocket not connected');
+    }
   }
 
   createSession(args: {
@@ -217,6 +251,14 @@ export class WebSocketClient {
   cancelGeneration(sessionId: string) {
     finalizeInFlightTurn(sessionId);
     this.sendRequest('cancel_generation', { sessionId });
+  }
+
+  compactSession(sessionId: string, spawnConfig?: SessionSpawnConfig, displayContent?: string) {
+    this.sendRequest('compact_session', {
+      sessionId,
+      ...(spawnConfig && { spawnConfig }),
+      ...(displayContent && { displayContent }),
+    });
   }
 
   setSessionGoal(
@@ -354,6 +396,14 @@ export class WebSocketClient {
 
   closeTerminal(terminalId: string) {
     this.sendRequest('terminal_close', { terminalId });
+  }
+
+  subscribeWorkspaceFiles(sessionId: string, subscriberId: string): boolean {
+    return this.sendRequest('subscribe_workspace_files', { sessionId, subscriberId });
+  }
+
+  unsubscribeWorkspaceFiles(sessionId: string, subscriberId: string): boolean {
+    return this.sendRequest('unsubscribe_workspace_files', { sessionId, subscriberId });
   }
 
   private sendRequest<T extends ClientMessage['type']>(

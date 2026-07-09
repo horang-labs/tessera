@@ -18,7 +18,11 @@ import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { getSpecialSessionSourceSessionId, isSpecialSession } from '@/lib/constants/special-sessions';
-import { parseWorkspaceFileSessionId } from '@/lib/workspace-tabs/special-session';
+import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
+import {
+  parseMemoryFileSessionId,
+  parseWorkspaceFileSessionId,
+} from '@/lib/workspace-tabs/special-session';
 
 // --- 순수 함수 헬퍼 ---
 
@@ -54,21 +58,25 @@ function getTabActiveSessionId(
   return tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
 }
 
+function isFileLikeSessionId(sessionId: string | null): boolean {
+  if (!sessionId) return false;
+  return parseWorkspaceFileSessionId(sessionId) !== null
+    || parseMemoryFileSessionId(sessionId) !== null;
+}
+
 function isWorkspaceFilePreviewTab(
   tab: Tab,
   panelStore: ReturnType<typeof usePanelStore.getState>,
 ): boolean {
   if (!tab.isPreview) return false;
-  const sessionId = getTabActiveSessionId(tab.id, panelStore);
-  return sessionId ? parseWorkspaceFileSessionId(sessionId) !== null : false;
+  return isFileLikeSessionId(getTabActiveSessionId(tab.id, panelStore));
 }
 
 function isWorkspaceFileTab(
   tabId: string,
   panelStore: ReturnType<typeof usePanelStore.getState>,
 ): boolean {
-  const sessionId = getTabActiveSessionId(tabId, panelStore);
-  return sessionId ? parseWorkspaceFileSessionId(sessionId) !== null : false;
+  return isFileLikeSessionId(getTabActiveSessionId(tabId, panelStore));
 }
 
 function insertTabAfter(tabs: Tab[], newTab: Tab, anchorTabId?: string | null): Tab[] {
@@ -811,7 +819,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
     // Step 3: 직렬화 및 저장
     try {
-      localStorage.setItem(TAB_STORE_KEY, JSON.stringify(data));
+      writeUiStorageItem(TAB_STORE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('[tab-store] persistToLocalStorage() failed:', e);
     }
@@ -902,11 +910,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     };
 
     try {
-      const raw = localStorage.getItem(TAB_STORE_KEY);
+      const raw = readUiStorageItem(TAB_STORE_KEY);
 
       if (raw === null) {
         // TAB_STORE_KEY가 없는 경우: 레거시 마이그레이션 또는 fresh init
-        const legacyRaw = localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
+        const legacyRaw = readUiStorageItem(PANEL_LAYOUT_STORAGE_KEY);
         if (legacyRaw !== null) {
           runLegacyMigration(legacyRaw, initializeEmpty, set);
         } else {
@@ -1254,7 +1262,7 @@ function runLegacyMigration(
     };
 
     try {
-      localStorage.setItem(TAB_STORE_KEY, JSON.stringify(migratedStore));
+      writeUiStorageItem(TAB_STORE_KEY, JSON.stringify(migratedStore));
     } catch (e) {
       console.warn('[tab-store] Migration write to localStorage failed:', e);
     }

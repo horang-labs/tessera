@@ -407,11 +407,44 @@ export class ProcessManager {
 
   /**
    * Update provider-side reasoning effort / thinking intensity for future turns.
+   * Providers implementing updateSessionConfig (Codex/OpenCode) receive the patch;
+   * Claude Code falls through to an apply_flag_settings control_request on stdin
+   * (no restart) — the same mechanism the CLI's own /effort command uses. A null
+   * settings value deletes the key, so 'auto'/null restores the model default.
+   *
+   * 'max' is rejected here: the CLI's effortLevel enum stops at xhigh and silently
+   * drops unknown values (the control_response still reports success), so sending
+   * it would leave the UI and the live process out of sync.
    */
   sendSetReasoningEffort(sessionId: string, reasoningEffort: string | null): boolean {
-    return this.tryUpdateProviderSessionConfig(
+    if (this.tryUpdateProviderSessionConfig(
       sessionId, { reasoningEffort }, 'reasoning effort', { reasoningEffort },
+    )) {
+      return true;
+    }
+    if (reasoningEffort === 'max') {
+      logger.warn({ sessionId }, 'effort "max" is spawn-only for Claude Code; not sending apply_flag_settings');
+      return false;
+    }
+    const settings = reasoningEffort === 'ultracode'
+      ? { ultracode: true, effortLevel: null }
+      : {
+        effortLevel: reasoningEffort && reasoningEffort !== 'auto' ? reasoningEffort : null,
+        ultracode: null,
+      };
+    const sent = this.writeControlRequest(
+      sessionId,
+      { subtype: 'apply_flag_settings', settings },
+      'apply_flag_settings',
     );
+    if (sent) {
+      const info = this.processes.get(sessionId);
+      if (info) {
+        info.reasoningEffort = reasoningEffort;
+      }
+      logger.info({ sessionId, reasoningEffort }, 'apply_flag_settings (effort) sent to CLI');
+    }
+    return sent;
   }
 
   /**
@@ -474,6 +507,15 @@ export class ProcessManager {
     }
 
     return processInfo.provider.clearGoal(processInfo.process, sessionId);
+  }
+
+  async compactSession(sessionId: string): Promise<boolean> {
+    const processInfo = this.getRunningProcessOrWarn(sessionId, 'compact session');
+    if (!processInfo?.provider.compactThread) {
+      return false;
+    }
+
+    return processInfo.provider.compactThread(processInfo.process, sessionId);
   }
 
   /**
@@ -760,6 +802,9 @@ export class ProcessManager {
       },
       autoGenerateTitle: (targetSessionId, targetUserId) => {
         protocolAdapter.maybeAutoGenerateTitle(targetSessionId, targetUserId);
+      },
+      translateAssistantMessage: (targetSessionId, targetUserId) => {
+        protocolAdapter.maybeTranslateAssistantMessage(targetSessionId, targetUserId);
       },
     });
   }

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { buildAgentPromptHistoryItem } from '@/lib/agent-context-summary';
 import { useChatStore } from '@/stores/chat-store';
 import { useUsageStore } from '@/stores/usage-store';
+import { useSessionStore } from '@/stores/session-store';
 import {
   applySessionReplayEvent,
   type SessionReplayState,
@@ -169,7 +170,9 @@ function projectReplayStateTransition(
         chatStore.queueAssistantTextChunk(sessionId, event.content);
       } else {
         chatStore.addMessage(sessionId, {
-          id: uuidv4(),
+          // Use the stable messageId from the stream so this live message and the
+          // flushed/persisted assistant_message share one id (translation attach).
+          id: event.messageId ?? uuidv4(),
           type: 'text',
           role: 'assistant',
           content: '',
@@ -217,6 +220,28 @@ function projectReplayStateTransition(
       }
 
       chatStore.replaceMessages(sessionId, nextState.messages);
+      return;
+    }
+
+    case 'workflow_event': {
+      if (nextState.messages.length > prevState.messages.length) {
+        // Newly created workflow card (pushed to end on first event).
+        appendLastMessageIfPresent(sessionId, nextState);
+      } else {
+        const wfId = `hist-workflow-${event.taskId}`;
+        const updated = nextState.messages.find((message) => message.id === wfId);
+        if (updated && updated.type === 'workflow') {
+          chatStore.updateWorkflowMessage(sessionId, wfId, updated);
+        }
+      }
+      // Mirror "a workflow is running" into the session store so the sidebar,
+      // tab/title and kanban running indicators light up (visual only — does not
+      // disable the composer). Works for any of the user's sessions, not just
+      // the active one, since workflow_event is broadcast per session.
+      const anyRunning = nextState.messages.some(
+        (m) => m.type === 'workflow' && m.status === 'running',
+      );
+      useSessionStore.getState().setSessionWorkflowRunning(sessionId, anyRunning);
       return;
     }
 
@@ -286,6 +311,21 @@ function projectReplayStateTransition(
     case 'usage':
       syncUsageProjection(sessionId, event, nextState);
       return;
+
+    case 'message_translation': {
+      const patch =
+        event.status === 'pending'
+          ? { translationStatus: 'pending' as const }
+          : event.status === 'error'
+            ? { translationStatus: 'error' as const }
+            : {
+                translatedContent: event.content,
+                translationStatus: 'completed' as const,
+                translationLang: event.targetLang,
+              };
+      chatStore.attachMessageTranslation(sessionId, event.targetMessageId, patch);
+      return;
+    }
   }
 }
 

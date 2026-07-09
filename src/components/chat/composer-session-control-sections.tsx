@@ -48,6 +48,9 @@ interface ComposerReasoningEffortMenuProps {
   options: ProviderReasoningEffortOption[];
   selectedEffort: string | null;
   onSelect: (effort: string) => void;
+  /** Disable spawn-only options (requiresRestart) while the session is running. */
+  disableRestartRequired?: boolean;
+  restartRequiredTooltip?: string;
 }
 
 interface ComposerReadonlyReasoningBadgeProps {
@@ -238,25 +241,32 @@ export function ComposerReasoningEffortMenu({
   options,
   selectedEffort,
   onSelect,
+  disableRestartRequired,
+  restartRequiredTooltip,
 }: ComposerReasoningEffortMenuProps) {
   return (
     <>
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          data-composer-menu-item
-          data-selected={selectedEffort === option.value ? 'true' : undefined}
-          onClick={() => onSelect(option.value)}
-          className={cn(
-            'w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-(--sidebar-hover) focus:bg-(--sidebar-hover) focus:outline-none',
-            selectedEffort === option.value ? 'text-(--accent)' : 'text-(--text-primary)',
-          )}
-        >
-          <div className="font-medium">{option.label}</div>
-          <div className="mt-0.5 text-[10px] text-(--text-muted)">{option.description}</div>
-        </button>
-      ))}
+      {options.map((option) => {
+        const isDisabled = disableRestartRequired === true && option.requiresRestart === true;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            data-composer-menu-item
+            data-selected={selectedEffort === option.value ? 'true' : undefined}
+            disabled={isDisabled}
+            title={isDisabled ? restartRequiredTooltip : undefined}
+            onClick={() => onSelect(option.value)}
+            className={cn(
+              'w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-(--sidebar-hover) focus:bg-(--sidebar-hover) focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
+              selectedEffort === option.value ? 'text-(--accent)' : 'text-(--text-primary)',
+            )}
+          >
+            <div className="font-medium">{option.label}</div>
+            <div className="mt-0.5 text-[10px] text-(--text-muted)">{option.description}</div>
+          </button>
+        );
+      })}
     </>
   );
 }

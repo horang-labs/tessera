@@ -24,10 +24,16 @@ export interface FileReadImageToolResult {
   kind: 'file_read';
   contentType: 'image';
   path?: string;
-  base64: string;
-  mimeType: string;
-  originalSize: number;
-  dimensions: {
+  /**
+   * Same-origin URL that serves the image bytes lazily (e.g. Codex `view_image`
+   * and live Claude Code image reads, where the tool result carries no base64).
+   * When present the renderer fetches the image instead of decoding `base64`.
+   */
+  url?: string;
+  base64?: string;
+  mimeType?: string;
+  originalSize?: number;
+  dimensions?: {
     originalWidth: number;
     originalHeight: number;
     displayWidth: number;

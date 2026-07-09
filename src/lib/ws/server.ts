@@ -1,5 +1,6 @@
 import { WebSocketServer as WSServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
+import { randomUUID } from 'crypto';
 import { ServerTransportMessage } from './message-types';
 import { processManager } from '../cli/process-manager';
 import { protocolAdapter } from '../cli/protocol-adapter';
@@ -15,6 +16,7 @@ import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
 import { terminalManager } from '../terminal/shared-terminal-manager';
+import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import { getGeneratingTitleSessionIds } from './title-generation-state';
 import {
   logReceivedClientTransportMessage,
@@ -24,6 +26,7 @@ import {
 } from './server-message-routing';
 
 interface AuthenticatedWebSocket extends WebSocket {
+  connectionId?: string;
   userId?: string;
   username?: string;
   isAlive?: boolean; // For ping/pong tracking
@@ -170,6 +173,7 @@ export class WebSocketServer {
     }
 
     ws.userId = userId;
+    ws.connectionId = randomUUID();
 
     // Add to connection set for this user
     if (!this.connections.has(userId)) {
@@ -194,6 +198,9 @@ export class WebSocketServer {
     });
 
     ws.on('close', () => {
+      if (ws.connectionId) {
+        workspaceFileWatchManager.unsubscribeConnection(ws.connectionId);
+      }
       const wsSet = this.connections.get(userId);
       if (wsSet) {
         wsSet.delete(ws);
@@ -302,6 +309,7 @@ export class WebSocketServer {
       }
 
       await routeClientTransportMessage({
+        connectionId: ws.connectionId!,
         userId,
         message,
         sendToUser: this.sendToUser.bind(this),

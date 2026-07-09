@@ -273,7 +273,7 @@ export function renderToolCallResult({
     case 'command_execution':
       return <BashResult result={normalizedResult as CommandExecutionToolResult} />;
     case 'file_read':
-      return <ReadResult result={normalizedResult as FileReadToolResult} filePath={toolParams.file_path} />;
+      return <ReadResult result={normalizedResult as FileReadToolResult} filePath={toolParams.file_path ?? toolParams.path} />;
     case 'file_change': {
       const result = normalizedResult as FileChangeToolResult;
       const diffToolName = result.operation === 'create'

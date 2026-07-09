@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Bot, FileText, GitCommitHorizontal, X } from "lucide-react";
+import { Bot, Brain, FileText, GitCommitHorizontal, X } from "lucide-react";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
+import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
+import { useSessionStore } from "@/stores/session-store";
+import { supportsMemoryPanel } from "@/lib/memory/memory-provider";
 import type { GitChangedFile } from "@/types/git";
 import { AgentContextPanel } from "./agent-context-panel";
 import {
@@ -19,9 +22,11 @@ import {
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
+import { MemoryPanel } from "@/components/memory/memory-panel";
 import { cn } from "@/lib/utils";
+import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
 
-type GitPanelTab = "git" | "files" | "agent";
+type GitPanelTab = "git" | "files" | "agent" | "memory";
 
 function GitPanelTabButton({
   active,
@@ -41,14 +46,14 @@ function GitPanelTabButton({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "flex h-6 flex-1 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+        "flex h-6 min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
         active
           ? "bg-(--sidebar-bg) text-(--text-primary) shadow-sm"
           : "text-(--text-muted) hover:text-(--text-primary)",
       )}
     >
       {icon}
-      <span>{children}</span>
+      <span className="truncate">{children}</span>
     </button>
   );
 }
@@ -57,7 +62,7 @@ export function GitPanel({
   sessionId,
   width,
   className,
-  closeLabel = "Close right Git panel",
+  closeLabel,
   onClose,
 }: {
   sessionId: string | null;
@@ -66,10 +71,25 @@ export function GitPanel({
   closeLabel?: string;
   onClose?: () => void;
 }) {
-  const isWindowsElectron = useElectronPlatform() === "win32";
+  const { t } = useI18n();
+  const electronPlatform = useElectronPlatform();
+  const isWindowsElectron = electronPlatform === "win32";
+  const isLinuxElectron = electronPlatform === "linux";
   const controller = useGitPanelController(sessionId);
   const [activePanelTab, setActivePanelTab] = useState<GitPanelTab>("git");
   const openedTelemetryRef = useRef(false);
+  const resolvedCloseLabel = closeLabel ?? t("chat.closeGitPanel");
+
+  const sessionProvider = useSessionStore((state) =>
+    sessionId ? state.getSession(sessionId)?.provider?.trim() ?? null : null,
+  );
+  const showMemoryTab = supportsMemoryPanel(sessionProvider);
+
+  // Derive the visible tab instead of forcing state: if the stored selection
+  // is Context but this session can't show it, fall back to Git for rendering
+  // while preserving the selection for supported providers.
+  const effectivePanelTab: GitPanelTab =
+    !showMemoryTab && activePanelTab === "memory" ? "git" : activePanelTab;
 
   useEffect(() => {
     openedTelemetryRef.current = false;
@@ -185,45 +205,56 @@ export function GitPanel({
       )}
       style={{ width: typeof width === "number" ? `${width}px` : width }}
     >
-      {isWindowsElectron ? (
-        <div className="electron-drag h-[40px] shrink-0 border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)" />
+      {isWindowsElectron || isLinuxElectron ? (
+        <div className="electron-drag flex h-[40px] shrink-0 items-stretch justify-end border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)">
+          {isLinuxElectron ? <ElectronWindowControls /> : null}
+        </div>
       ) : null}
 
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-(--chat-header-border) px-2">
         <div
           role="tablist"
-          aria-label="Right panel"
+          aria-label={t("gitPanel.tabs.rightPanel")}
           className="flex h-7 min-w-0 flex-1 items-center gap-0.5 rounded-md bg-(--sidebar-hover) p-0.5"
         >
           <GitPanelTabButton
-            active={activePanelTab === "git"}
+            active={effectivePanelTab === "git"}
             icon={<GitCommitHorizontal className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("git")}
           >
-            Git
+            {t("gitPanel.tabs.git")}
           </GitPanelTabButton>
           <GitPanelTabButton
-            active={activePanelTab === "files"}
+            active={effectivePanelTab === "files"}
             icon={<FileText className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("files")}
           >
-            Files
+            {t("gitPanel.tabs.files")}
           </GitPanelTabButton>
           <GitPanelTabButton
-            active={activePanelTab === "agent"}
+            active={effectivePanelTab === "agent"}
             icon={<Bot className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("agent")}
           >
-            Agent
+            {t("gitPanel.tabs.tools")}
           </GitPanelTabButton>
+          {showMemoryTab ? (
+            <GitPanelTabButton
+              active={effectivePanelTab === "memory"}
+              icon={<Brain className="h-3.5 w-3.5" />}
+              onClick={() => handlePanelTabChange("memory")}
+            >
+              {t("gitPanel.tabs.context")}
+            </GitPanelTabButton>
+          ) : null}
         </div>
         {onClose ? (
           <button
             type="button"
             onClick={onClose}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-            aria-label={closeLabel}
-            title={closeLabel}
+            aria-label={resolvedCloseLabel}
+            title={resolvedCloseLabel}
             data-testid="git-panel-close-btn"
           >
             <X className="h-4 w-4" />
@@ -239,16 +270,20 @@ export function GitPanel({
         onCopyBranch={controller.copyBranch}
         onCopyWorktreePath={controller.copyWorktreePath}
         onOpenExternal={controller.openExternal}
-        showDetails={activePanelTab === "git"}
+        showDetails={effectivePanelTab === "git"}
       />
 
-      {activePanelTab === "files" ? (
+      {effectivePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
           <WorkspaceFilePanel key={sessionId ?? "no-session"} sessionId={sessionId} />
         </div>
-      ) : activePanelTab === "agent" ? (
+      ) : effectivePanelTab === "agent" ? (
         <div className="min-h-0 flex-1">
           <AgentContextPanel sessionId={sessionId} />
+        </div>
+      ) : effectivePanelTab === "memory" ? (
+        <div className="min-h-0 flex-1">
+          <MemoryPanel key={sessionId ?? "no-session"} sessionId={sessionId} />
         </div>
       ) : (
         <>

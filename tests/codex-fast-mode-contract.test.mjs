@@ -51,7 +51,7 @@ test('Codex /fast is intercepted by the composer as a service tier toggle', () =
   assert.match(messageInputSource, /CODEX_FAST_COMMAND/);
   assert.match(messageInputSource, /CODEX_FAST_SERVICE_TIER/);
   assert.match(messageInputSource, /trimmed === CODEX_FAST_COMMAND/);
-  assert.match(messageInputSource, /session\?\.provider\?\.trim\(\) !== 'codex'/);
+  assert.match(messageInputSource, /sessionProviderId !== 'codex'/);
   assert.match(messageInputSource, /updateSessionRuntimeConfig\(sessionId, \{ serviceTier: nextServiceTier \}\)/);
   assert.match(messageInputSource, /setServiceTier\(sessionId, nextServiceTier\)/);
   assert.ok(

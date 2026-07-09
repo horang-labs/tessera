@@ -1,5 +1,10 @@
+import type { MemoryTargetKind } from "@/types/memory";
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
 export const WORKSPACE_EXPLORER_SESSION_PREFIX = "__workspace-explorer__|" as const;
 export const WORKSPACE_FILE_SESSION_PREFIX = "__workspace-file__|" as const;
+export const MEMORY_FILE_SESSION_PREFIX = "__memory-file__|" as const;
 
 export type WorkspaceFileTabKind = "file" | "diff";
 
@@ -13,6 +18,14 @@ export interface WorkspaceFileSessionRef {
   sourceSessionId: string;
   kind: WorkspaceFileTabKind;
   path: string;
+}
+
+export interface MemoryFileSessionRef {
+  type: "memory-file";
+  sourceSessionId: string;
+  memoryKind: MemoryTargetKind;
+  /** Memory file name or provider-relative memory path. */
+  fileName: string;
 }
 
 export function buildWorkspaceExplorerSessionId(sourceSessionId: string): string {
@@ -64,20 +77,70 @@ export function parseWorkspaceFileSessionId(
   }
 }
 
-export function parseWorkspaceSpecialSessionId(
-  sessionId: string,
-): WorkspaceExplorerSessionRef | WorkspaceFileSessionRef | null {
-  return parseWorkspaceExplorerSessionId(sessionId) ?? parseWorkspaceFileSessionId(sessionId);
+export function buildMemoryFileSessionId(
+  sourceSessionId: string,
+  memoryKind: MemoryTargetKind,
+  fileName: string,
+): string {
+  return `${MEMORY_FILE_SESSION_PREFIX}${encodeURIComponent(sourceSessionId)}|${encodeURIComponent(memoryKind)}|${encodeURIComponent(fileName)}`;
 }
 
-export function getWorkspaceSpecialSessionTitle(sessionId: string): string | null {
+function parseMemoryTargetKind(value: string): MemoryTargetKind | null {
+  return value === "memory" || value === "global-guideline" || value === "project-guideline"
+    ? value
+    : null;
+}
+
+export function parseMemoryFileSessionId(
+  sessionId: string,
+): MemoryFileSessionRef | null {
+  if (!sessionId.startsWith(MEMORY_FILE_SESSION_PREFIX)) return null;
+  const [encodedSourceSessionId, encodedKind, encodedFileName] = sessionId
+    .slice(MEMORY_FILE_SESSION_PREFIX.length)
+    .split("|");
+  if (!encodedSourceSessionId || !encodedKind || !encodedFileName) return null;
+  try {
+    const memoryKind = parseMemoryTargetKind(decodeURIComponent(encodedKind));
+    if (!memoryKind) return null;
+    return {
+      type: "memory-file",
+      sourceSessionId: decodeURIComponent(encodedSourceSessionId),
+      memoryKind,
+      fileName: decodeURIComponent(encodedFileName),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function parseWorkspaceSpecialSessionId(
+  sessionId: string,
+): WorkspaceExplorerSessionRef | WorkspaceFileSessionRef | MemoryFileSessionRef | null {
+  return parseWorkspaceExplorerSessionId(sessionId)
+    ?? parseWorkspaceFileSessionId(sessionId)
+    ?? parseMemoryFileSessionId(sessionId);
+}
+
+export function getWorkspaceSpecialSessionTitle(sessionId: string, t?: Translate): string | null {
   const explorer = parseWorkspaceExplorerSessionId(sessionId);
-  if (explorer) return "Files";
+  if (explorer) return t ? t("gitPanel.tabs.files") : "Files";
+
+  const memory = parseMemoryFileSessionId(sessionId);
+  if (memory) {
+    const name = memory.fileName.split(/[\\/]/).filter(Boolean).pop() || memory.fileName;
+    if (memory.memoryKind === "global-guideline") {
+      return `${name} · ${t ? t("memoryPanel.fileTab.globalScope") : "Global"}`;
+    }
+    if (memory.memoryKind === "project-guideline") {
+      return `${name} · ${t ? t("memoryPanel.fileTab.projectScope") : "Project"}`;
+    }
+    return name;
+  }
 
   const file = parseWorkspaceFileSessionId(sessionId);
   if (!file) return null;
   const name = file.path.split("/").pop() || file.path;
-  return file.kind === "diff" ? `${name} diff` : name;
+  return file.kind === "diff" ? `${name} ${t ? t("gitPanel.tabs.diff") : "diff"}` : name;
 }
 
 export function getWorkspaceSpecialSourceSessionId(sessionId: string): string | null {

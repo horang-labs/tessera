@@ -3,11 +3,11 @@ import type React from 'react';
 import { useSessionStore } from '@/stores/session-store';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useSelectionStore } from '@/stores/selection-store';
-import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { wsClient } from '@/lib/ws/client';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
+import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import type { UnifiedSession } from '@/types/chat';
 
 interface PopoutElectronApi {
@@ -108,18 +108,9 @@ export function useSessionClickHandlers(options?: {
 
       // 2. Cross-tab location search (BR-SIDEBAR-004: replaces isInAnotherPanel)
       const location = useTabStore.getState().findSessionLocation(session.id);
-      const currentActiveTabId = useTabStore.getState().activeTabId;
 
       if (location) {
-        if (location.tabId !== currentActiveTabId) {
-          // CASE B1 — Session found in ANOTHER tab (BR-SIDEBAR-005)
-          // Order matters: setActiveTab BEFORE setActivePanelId (BR-EDGE-003)
-          useTabStore.getState().setActiveTab(location.tabId);
-          usePanelStore.getState().setActivePanelId(location.panelId);
-        } else {
-          // CASE B2 — Session found in ACTIVE TAB (BR-SIDEBAR-006)
-          usePanelStore.getState().setActivePanelId(location.panelId);
-        }
+        activateSessionPanel(session.id, { location });
         return;
       }
 
@@ -141,7 +132,7 @@ export function useSessionClickHandlers(options?: {
       const location = tabStore.findSessionLocation(session.id);
       if (location) {
         // 이미 열려있으면 해당 탭으로 이동 + 고정
-        tabStore.setActiveTab(location.tabId);
+        activateSessionPanel(session.id, { location });
         tabStore.pinTab(location.tabId);
       } else {
         // 새 고정 탭으로 열기

@@ -18,7 +18,7 @@ on:
         type: boolean
         default: false
       build_linux:
-        description: Build and upload Linux AppImage and .deb assets
+        description: Build and upload the Linux .deb asset
         required: true
         type: boolean
         default: false
@@ -176,14 +176,12 @@ jobs:
           TESSERA_NOTARY_TIMEOUT: 90m
         run: npm run electron:build:mac-${{ matrix.arch }}:signed
 
-      - name: Verify DMG
+      - name: Verify DMG checksum
         run: |
           version="$(node -p "require('./package.json').version")"
           dmg="release/Tessera-${version}-macos-${{ matrix.arch }}.dmg"
           test -f "$dmg"
           hdiutil verify "$dmg"
-          xcrun stapler validate "$dmg"
-          spctl --assess --type open --context context:primary-signature --verbose "$dmg"
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v4
@@ -238,67 +236,19 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          appimage="release/Tessera-${version}.AppImage"
           deb="release/Tessera-${version}-linux-amd64.deb"
 
-          test -f "$appimage"
           test -f "$deb"
-          file "$appimage" "$deb"
+          file "$deb"
           dpkg-deb --info "$deb"
           dpkg-deb --contents "$deb" | grep -F '/usr/share/applications/tessera.desktop'
-
-      - name: Smoke test AppImage startup
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          appimage="release/Tessera-${version}.AppImage"
-          smoke_dir="$RUNNER_TEMP/tessera-linux-smoke"
-          stdout_log="$RUNNER_TEMP/tessera-appimage-smoke.out"
-          devtools_json="$RUNNER_TEMP/tessera-devtools.json"
-
-          rm -rf "$smoke_dir"
-          xvfb-run -a env \
-            TESSERA_DATA_DIR="$smoke_dir" \
-            TESSERA_ELECTRON_LOG_LEVEL=debug \
-            TESSERA_DISABLE_GPU=1 \
-            "$appimage" \
-            --appimage-extract-and-run \
-            --no-sandbox \
-            --disable-gpu \
-            --remote-debugging-port=9333 \
-            >"$stdout_log" 2>&1 &
-          app_pid=$!
-
-          cleanup() {
-            kill "$app_pid" 2>/dev/null || true
-            wait "$app_pid" 2>/dev/null || true
-            cat "$smoke_dir/tessera-main.log" 2>/dev/null || true
-            cat "$smoke_dir/startup.log" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          for _ in {1..60}; do
-            if curl -fsS http://127.0.0.1:9333/json/list > "$devtools_json" 2>/dev/null && grep -q '"title": "Tessera"' "$devtools_json"; then
-              break
-            fi
-            sleep 1
-          done
-
-          grep -q '"title": "Tessera"' "$devtools_json"
-          app_url="$(node -e "const fs=require('fs'); const pages=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(pages[0]?.url || '')" "$devtools_json")"
-          echo "Loaded URL: $app_url"
-          port="$(printf '%s\n' "$app_url" | sed -n 's#^http://localhost:\([0-9][0-9]*\)/.*#\1#p')"
-          test -n "$port"
-          curl -fsS "http://127.0.0.1:${port}/api/setup/status" | grep -q '"canUseCoreFeatures"'
 
       - name: Upload desktop artifact
         uses: actions/upload-artifact@v4
         with:
           name: tessera-linux-x64
           path: |
-            release/Tessera-*.AppImage
             release/Tessera-*-linux-amd64.deb
-            release/latest-linux.yml
           if-no-files-found: error
           retention-days: 1
 

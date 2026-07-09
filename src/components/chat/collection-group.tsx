@@ -20,7 +20,7 @@ import {
 } from '@/stores/chat-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useSessionStore, selectAnyRunningWorkflow } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useTaskStore } from '@/stores/task-store';
@@ -187,6 +187,7 @@ export interface CollectionGroupProps {
   groupIdOverride?: string;
   headerLabel?: string;
   hideHeaderActions?: boolean;
+  disableAutoExpand?: boolean;
 }
 
 export const CollectionGroup = memo(function CollectionGroup({
@@ -235,6 +236,7 @@ export const CollectionGroup = memo(function CollectionGroup({
   groupIdOverride,
   headerLabel,
   hideHeaderActions = false,
+  disableAutoExpand = false,
 }: CollectionGroupProps) {
   const { t } = useI18n();
   const isUncategorized = collection === null && !groupIdOverride;
@@ -265,7 +267,9 @@ export const CollectionGroup = memo(function CollectionGroup({
       return snapshot.isRunning;
     }),
   );
-  const hasProcessingSession = useChatStore(selectAnyTurnInFlight(collectionSessionIds));
+  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(collectionSessionIds));
+  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(collectionSessionIds));
+  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
   const hasUnreadSession = useSessionStore((state) =>
     collectionSessionSnapshots.some((snapshot) => {
       if (snapshot.id === activeSessionId) return false;
@@ -287,7 +291,7 @@ export const CollectionGroup = memo(function CollectionGroup({
   });
 
   useEffect(() => {
-    if (hideHeader) return;
+    if (hideHeader || disableAutoExpand) return;
     if (activeSessionId && collapsed && collectionGroupContainsSession({ tasks, chats }, activeSessionId)) {
       setCollectionCollapsed(collectionScopeId, false);
     }

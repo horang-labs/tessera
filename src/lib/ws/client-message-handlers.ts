@@ -24,6 +24,7 @@ import { i18n } from '@/lib/i18n';
 import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
@@ -68,6 +69,11 @@ export function handleIncomingServerMessage({
     case 'session_stopped':
       sessionStore.markSessionStopped(msg.sessionId);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      // The session was stopped, so any workflow still flagged running can no
+      // longer emit its terminal task_notification — settle it instead of
+      // leaving the card spinning forever.
+      chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
+      sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       useCommandStore.getState().clearSession(msg.sessionId);
       return { wasReconnect };
 
@@ -133,6 +139,13 @@ export function handleIncomingServerMessage({
     case 'cli_down':
       applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      // The CLI parser now synthesizes a failed workflow_event on exit
+      // (protocol-parser.handleProcessExit), which is the durable fix. This
+      // in-memory settle is a belt-and-suspenders backup covering the rare case
+      // where that event is missed/reordered, so the live view never shows a
+      // card spinning past the session's death.
+      chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
+      sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       sessionStore.updateSessionStatus(msg.sessionId, 'error');
       chatStore.addMessage(msg.sessionId, {
         id: uuidv4(),
@@ -171,6 +184,10 @@ export function handleIncomingServerMessage({
         planType: msg.planType,
         updatedAt: msg.updatedAt,
       });
+      return { wasReconnect };
+
+    case 'model_config_updated':
+      invalidateProviderSessionOptionsClientCache(msg.providerId);
       return { wasReconnect };
 
     case 'commands_ready':

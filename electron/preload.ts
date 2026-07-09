@@ -4,6 +4,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  uiStorageGetItem: (key: string) => ipcRenderer.sendSync('ui-storage-get-item', key) as string | null,
+  uiStorageSetItem: (key: string, value: string) =>
+    ipcRenderer.sendSync('ui-storage-set-item', { key, value }),
+  uiStorageRemoveItem: (key: string) =>
+    ipcRenderer.sendSync('ui-storage-remove-item', key),
   onWindowCloseRequest: (callback: (payload: { requestId: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { requestId?: string }) => {
       if (typeof payload?.requestId === 'string') {
@@ -26,6 +31,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
     section: 'file' | 'edit' | 'view' | 'window' | 'help',
     anchor: { x: number; y: number }
   ) => ipcRenderer.invoke('titlebar-popup-menu', section, anchor),
+  controlWindow: (action: 'minimize' | 'toggle-maximize' | 'close') =>
+    ipcRenderer.invoke('window-control', action),
+  getWindowState: () => ipcRenderer.invoke('get-window-state'),
+  onWindowStateChanged: (
+    callback: (state: { isMaximized: boolean; isFullScreen: boolean }) => void
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { isMaximized?: boolean; isFullScreen?: boolean }
+    ) => {
+      callback({
+        isMaximized: payload?.isMaximized === true,
+        isFullScreen: payload?.isFullScreen === true,
+      });
+    };
+    ipcRenderer.on('window-state-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('window-state-changed', listener);
+    };
+  },
   openBoardWindow: (payload?: { projectDir?: string | null; collectionFilter?: string | null }) =>
     ipcRenderer.invoke('open-board-window', payload),
   closeBoardPopouts: () => ipcRenderer.invoke('close-board-popouts'),

@@ -48,8 +48,11 @@ next-env.d.ts
 
 # IDE / Tools
 .claude/
+.playwright-cli/
+_bmad-output/
 aidlc-docs/
 prd-doc/
+prd-docs/
 /.superpowers/
 
 # Worktrees

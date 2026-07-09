@@ -35,6 +35,7 @@ export function applyOptimisticUserMessage(
   content: string | ContentBlock[],
   skillName?: string,
   displayContent?: string | ContentBlock[],
+  options?: { messageId?: string; pendingTranslation?: boolean },
 ): void {
   const resolvedDisplayContent = buildUserMessageDisplayContent(
     displayContent ?? content,
@@ -43,11 +44,14 @@ export function applyOptimisticUserMessage(
   const chatStore = useChatStore.getState();
 
   chatStore.addMessage(sessionId, {
-    id: uuidv4(),
+    id: options?.messageId ?? uuidv4(),
     type: 'text',
     role: 'user',
     content: resolvedDisplayContent,
     timestamp: new Date().toISOString(),
+    // When input translation will run, show a "translating…" state until the
+    // message_translation event arrives and attaches the sent (translated) text.
+    ...(options?.pendingTranslation ? { translationStatus: 'pending' as const } : {}),
   });
 
   const sessionStore = useSessionStore.getState();

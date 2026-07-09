@@ -10,12 +10,14 @@ import {
   ExternalLink,
   FolderGit2,
   FolderInput,
+  GitBranch,
   MessageSquare,
   Pencil,
   Plus,
   Sparkles,
   Trash2,
   TriangleAlert,
+  type LucideIcon,
 } from 'lucide-react';
 import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useInlineRename } from '@/hooks/use-inline-rename';
@@ -35,7 +37,7 @@ import { useCollectionStore } from '@/stores/collection-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useSessionStore, selectHasRunningWorkflow, selectAnyRunningWorkflow } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
 import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
@@ -481,7 +483,9 @@ function SubSessionRow({
   const isActive = sess.id === activeSessionId;
   const isSelected = useSelectionStore((state) => state.selectedIds.has(sess.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
-  const isProcessing = useChatStore(selectIsTurnInFlight(sess.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(sess.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(sess.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(sess.id));
   const liveIsRunning = useSessionStore((state) => {
     for (const project of state.projects) {
@@ -716,7 +720,9 @@ export function TaskItemRow({
       return false;
     }),
   );
-  const hasProcessingSession = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(taskSessionIds));
+  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
   const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
   const hasUnreadSession = useSessionStore((state) =>
     !isTaskActive &&
@@ -818,6 +824,69 @@ export function TaskItemRow({
     );
   }, [isRenaming, onSessionDoubleClick, task.sessions]);
 
+  // Worktree mark (git branch icon + PR-mismatch / missing badges). Rendered on
+  // the leading side when provider icons are off (it's the task's primary mark),
+  // or trailing when provider icons are on — keeping the leading slot a single
+  // icon so task titles align with chat titles. `showStatus` attaches the
+  // status dot; only the leading placement carries it (trailing gets it on the
+  // provider mark instead).
+  const renderWorktreeMark = (showStatus: boolean, className?: string, Icon: LucideIcon = FolderGit2) => {
+    if (!task.worktreeBranch) return null;
+    return (
+      <span
+        title={task.worktreeMissing ? t('task.worktree.missing', { branch: task.worktreeBranch }) : task.worktreeBranch}
+        className={cn('relative flex shrink-0 items-center', className)}
+      >
+        <Icon
+          className={cn(
+            'h-3.5 w-3.5',
+            task.worktreeMissing
+              ? 'text-(--status-error-text) opacity-70'
+              : getWorktreeIconClass(task.workflowStatus),
+          )}
+        />
+        {showStatus && (
+          <ItemStatusIndicator
+            isProcessing={hasProcessingSession}
+            isAwaitingUser={hasAwaitingUserSession}
+            hasUnread={hasUnreadSession}
+            isRunning={hasRunningSession}
+            placement="corner"
+            surface="sidebar"
+          />
+        )}
+        {(() => {
+          // Skip mismatch badge when PR sync is unsupported — we have no
+          // reliable prStatus to compare against the column.
+          const mismatch = task.prUnsupported
+            ? null
+            : detectPrMismatch(task.workflowStatus, task.prStatus);
+          if (!mismatch) return null;
+          const reason = prMismatchTooltip(mismatch, task.prStatus?.number, t);
+          return (
+            <span
+              title={reason}
+              aria-label={reason}
+              className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--sidebar-bg) cursor-help"
+              data-testid="task-pr-mismatch-badge"
+            >
+              <TriangleAlert
+                className="h-full w-full text-(--status-warning-text)"
+                strokeWidth={2.5}
+              />
+            </span>
+          );
+        })()}
+        {task.worktreeMissing && (
+          <span
+            aria-hidden
+            className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--sidebar-bg)"
+          />
+        )}
+      </span>
+    );
+  };
+
   return (
     <div className="task-item-container" data-item-id={task.id}>
       {dropIndicatorBefore && (
@@ -858,19 +927,14 @@ export function TaskItemRow({
         data-session-id={task.sessions[0]?.id}
         data-testid={`collection-task-${task.id}`}
       >
-        <span className="flex shrink-0 items-center gap-1">
-          {task.worktreeBranch ? (
-            <span
-              title={task.worktreeMissing ? t('task.worktree.missing', { branch: task.worktreeBranch }) : task.worktreeBranch}
-              className="relative flex shrink-0 items-center"
-            >
-              <FolderGit2
-                className={cn(
-                  'h-3.5 w-3.5',
-                  task.worktreeMissing
-                    ? 'text-(--status-error-text) opacity-70'
-                    : getWorktreeIconClass(task.workflowStatus),
-                )}
+        <span className="flex shrink-0 items-center">
+          {showProviderIcons ? (
+            <span className="relative flex shrink-0 items-center">
+              <ProviderLogoMark
+                providerId={task.sessions[0]?.provider}
+                className={COLLECTION_PROVIDER_MARK_CLASS}
+                iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
+                data-testid={`collection-task-agent-icon-${task.id}`}
               />
               <ItemStatusIndicator
                 isProcessing={hasProcessingSession}
@@ -880,56 +944,10 @@ export function TaskItemRow({
                 placement="corner"
                 surface="sidebar"
               />
-              {(() => {
-                // Skip mismatch badge when PR sync is unsupported — we have no
-                // reliable prStatus to compare against the column.
-                const mismatch = task.prUnsupported
-                  ? null
-                  : detectPrMismatch(task.workflowStatus, task.prStatus);
-                if (!mismatch) return null;
-                const reason = prMismatchTooltip(mismatch, task.prStatus?.number, t);
-                return (
-                  <span
-                    title={reason}
-                    aria-label={reason}
-                    className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--sidebar-bg) cursor-help"
-                    data-testid="task-pr-mismatch-badge"
-                  >
-                    <TriangleAlert
-                      className="h-full w-full text-(--status-warning-text)"
-                      strokeWidth={2.5}
-                    />
-                  </span>
-                );
-              })()}
-              {task.worktreeMissing && (
-                <span
-                  aria-hidden
-                  className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--sidebar-bg)"
-                />
-              )}
             </span>
-          ) : null}
-          {showProviderIcons ? (
-            <span className="relative flex shrink-0 items-center">
-              <ProviderLogoMark
-                providerId={task.sessions[0]?.provider}
-                className={COLLECTION_PROVIDER_MARK_CLASS}
-                iconClassName={COLLECTION_PROVIDER_ICON_CLASS}
-                data-testid={`collection-task-agent-icon-${task.id}`}
-              />
-              {!task.worktreeBranch && (
-                <ItemStatusIndicator
-                  isProcessing={hasProcessingSession}
-                  isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
-                  placement="corner"
-                  surface="sidebar"
-                />
-              )}
-            </span>
-          ) : !task.worktreeBranch && hasTaskStatus ? (
+          ) : task.worktreeBranch ? (
+            renderWorktreeMark(true)
+          ) : hasTaskStatus ? (
             <span className="relative flex w-3.5 shrink-0 items-center justify-center">
               <ItemStatusIndicator
                 isProcessing={hasProcessingSession}
@@ -970,14 +988,20 @@ export function TaskItemRow({
           )}
         </div>
 
+        {/* Diff stats + worktree mark grouped tight on the trailing edge: a
+            single gap to the title, minimal internal spacing, so the title keeps
+            as much width as possible. Worktree stays pinned last so it never
+            shifts when the diff appears or changes digit count. */}
         {!isRenaming && (
-          <DiffStatsBadge
-            stats={task.diffStats}
+          <span
             className={cn(
-              'mr-1 transition-opacity duration-150',
+              'flex shrink-0 items-center gap-1.5 transition-opacity duration-150',
               isHovered ? 'opacity-0' : 'opacity-100',
             )}
-          />
+          >
+            <DiffStatsBadge stats={task.diffStats} />
+            {showProviderIcons && renderWorktreeMark(false, undefined, GitBranch)}
+          </span>
         )}
 
         <div
@@ -1149,7 +1173,9 @@ export function ChatItemRow({
   const isSelected = useSelectionStore((state) => state.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const [isHovered, setIsHovered] = useState(false);
-  const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
   const liveIsRunning = useSessionStore((state) => state.getSession(session.id)?.isRunning ?? session.isRunning);
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(session.id));

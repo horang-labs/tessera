@@ -26,11 +26,13 @@
  */
 
 import os from 'os';
+import { randomUUID } from 'crypto';
 import type { ParsedMessage } from '../types';
 import { CODEX_THREAD_ID_RE } from '../../../validation/path';
 import logger from '../../../logger';
 import { inferToolCallKindFromToolName, type ToolCallKind } from '@/types/tool-call-kind';
 import type { CommandExecutionToolResult } from '@/types/tool-result';
+import { buildImageToolResult, isImagePath } from '@/lib/tool-results/tool-image';
 import type { AskUserQuestionItem, AskUserQuestionOption } from '@/types/cli-jsonl-schemas';
 import { buildCodexRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import { buildToolDisplay } from '@/lib/tool-display';
@@ -239,6 +241,13 @@ interface SessionState {
     status: 'started' | 'completed' | 'failed';
     startTimestamp: string;
   }>;
+
+  /**
+   * Last compact boundary emitted by any Codex compact event shape. Recent
+   * duplicates are suppressed because different Codex versions may emit both
+   * item-level compaction records and thread-level compacted notifications.
+   */
+  lastCompactBoundaryAtMs: number;
 }
 
 // =============================================================================
@@ -1214,6 +1223,9 @@ export class CodexProtocolParser {
       case 'thread/started':
         return this.handleThreadStarted(sessionId, params);
 
+      case 'thread/compacted':
+        return this.handleThreadCompacted(sessionId, params);
+
       case 'thread/goal/updated':
         return this.handleThreadGoalUpdated(sessionId, params);
 
@@ -1328,6 +1340,10 @@ export class CodexProtocolParser {
         sessionId,
         role: 'assistant',
         content: text,
+        // Stable id per delta; the first delta of a contiguous text run wins on both
+        // the client (chunk merge) and the history buffer (||=), so the live message
+        // and the flushed assistant_message share one id (translation attach).
+        messageId: randomUUID(),
       },
     }];
   }
@@ -1724,6 +1740,15 @@ export class CodexProtocolParser {
       }];
     }
 
+    if (itemType === 'contextCompaction') {
+      return this.buildCompactBoundaryMessages(sessionId, {
+        source: itemType,
+        itemId,
+        threadId: params.threadId ?? item.threadId,
+        turnId: params.turnId ?? item.turnId,
+      });
+    }
+
     if (!this.isDisplayOnlyCodexItem(itemType)) {
       const status = this.normalizeCodexItemStatus(item.status, 'completed');
       return [this.buildGenericCodexItemToolCallMessage(sessionId, item, status, timestamp, false)];
@@ -1747,6 +1772,14 @@ export class CodexProtocolParser {
     const itemType = typeof item.type === 'string' && item.type.trim()
       ? item.type.trim()
       : 'unknown';
+    if (itemType === 'compaction' || itemType === 'context_compaction') {
+      return this.buildCompactBoundaryMessages(sessionId, {
+        source: itemType,
+        threadId: params.threadId ?? item.threadId,
+        turnId: params.turnId ?? item.turnId,
+      });
+    }
+
     if (DISPLAY_ONLY_RAW_RESPONSE_ITEM_TYPES.has(itemType)) {
       logger.debug('Codex: rawResponseItem/completed display-only item suppressed', { sessionId, itemType });
       return [];
@@ -2091,6 +2124,14 @@ export class CodexProtocolParser {
     const { toolName, toolParams } = this.buildGenericCodexItemMetadata(item);
     const output = status === 'running' ? undefined : this.buildGenericCodexItemOutput(item);
 
+    // `view_image` (imageView) injects a local file into context with no image
+    // bytes in the result — render it inline by serving the file at `path`.
+    const isImageView = toolParams.itemType === 'imageView' || toolName === 'ViewImage';
+    const toolKind: ToolCallKind | undefined = isImageView ? 'file_read' : undefined;
+    const imageToolUseResult = isImageView && status === 'completed' && itemId && isImagePath(toolParams.path)
+      ? buildImageToolResult(sessionId, itemId)
+      : undefined;
+
     logger.info('Codex: generic item mapped to tool_call', {
       sessionId,
       itemId,
@@ -2105,10 +2146,12 @@ export class CodexProtocolParser {
         sessionId,
         toolUseId: itemId,
         toolName,
+        ...(toolKind !== undefined ? { toolKind } : {}),
         toolParams,
         status,
         output: status === 'error' ? undefined : output,
         error: status === 'error' ? output || `${toolName} failed` : undefined,
+        ...(imageToolUseResult !== undefined ? { toolUseResult: imageToolUseResult } : {}),
         timestamp,
       },
       sideEffect: addPending
@@ -2486,6 +2529,73 @@ export class CodexProtocolParser {
       sideEffect: {
         type: 'update_provider_state',
         providerState: { threadId: rawThreadId },
+      },
+    }];
+  }
+
+  private handleThreadCompacted(sessionId: string, params: Record<string, any>): ParsedMessage[] {
+    return this.buildCompactBoundaryMessages(sessionId, {
+      source: 'thread/compacted',
+      threadId: params.threadId,
+      turnId: params.turnId,
+    });
+  }
+
+  private buildCompactBoundaryMessages(
+    sessionId: string,
+    metadata: {
+      itemId?: unknown;
+      source: string;
+      threadId?: unknown;
+      turnId?: unknown;
+    },
+  ): ParsedMessage[] {
+    const state = this.getOrCreateState(sessionId);
+    const now = Date.now();
+    if (now - state.lastCompactBoundaryAtMs < 5_000) {
+      logger.debug('Codex: duplicate compact boundary suppressed', {
+        sessionId,
+        source: metadata.source,
+      });
+      return [];
+    }
+    state.lastCompactBoundaryAtMs = now;
+
+    const threadId = typeof metadata.threadId === 'string' && metadata.threadId.trim()
+      ? metadata.threadId.trim()
+      : state.threadId;
+    const turnId = typeof metadata.turnId === 'string' && metadata.turnId.trim()
+      ? metadata.turnId.trim()
+      : undefined;
+    const itemId = typeof metadata.itemId === 'string' && metadata.itemId.trim()
+      ? metadata.itemId.trim()
+      : undefined;
+
+    logger.info('Codex: thread compacted', {
+      sessionId,
+      threadId,
+      turnId,
+      source: metadata.source,
+    });
+
+    return [{
+      serverMessage: {
+        type: 'system',
+        sessionId,
+        message: 'Context compacted',
+        severity: 'info',
+        subtype: 'compact_boundary',
+        metadata: {
+          compactMetadata: {
+            trigger: 'manual',
+            provider: 'codex',
+            source: metadata.source,
+            ...(threadId ? { threadId } : {}),
+            ...(turnId ? { turnId } : {}),
+            ...(itemId ? { itemId } : {}),
+          },
+        },
+        timestamp: new Date().toISOString(),
       },
     }];
   }
@@ -3037,6 +3147,7 @@ export class CodexProtocolParser {
         currentModel: null,
         commandProgress: new Map(),
         mcpStartupServers: new Map(),
+        lastCompactBoundaryAtMs: 0,
       };
       this.sessionStates.set(sessionId, state);
     }

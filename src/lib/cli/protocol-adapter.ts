@@ -21,6 +21,7 @@ import {
   handleProtocolProgressMessage,
   handleProtocolResultMessage,
 } from './protocol-adapter-turn-lifecycle';
+import { maybeTranslateAssistantMessage, translateAssistantMessageById } from '../session/output-translation';
 import type { ContentBlock } from '../ws/message-types';
 import logger from '../logger';
 import type { AppServerMessage, ServerTransportMessage } from '../ws/message-types';
@@ -33,6 +34,9 @@ export class ProtocolAdapter {
 
   /** Sessions that have already triggered auto-title (prevents repeated DB reads) */
   private autoTitleTriggered = new Set<string>();
+
+  /** Assistant messages already translated, keyed `${sessionId}:${messageId}` (exactly-once). */
+  private translationTriggered = new Set<string>();
 
   /**
    * Per-session contextWindowSize cache.
@@ -281,6 +285,33 @@ export class ProtocolAdapter {
       sessionId,
       userId,
     );
+  }
+
+  /**
+   * Trigger background EN->user-language translation of the finalized assistant message,
+   * if the user enabled translation. Fire-and-forget; errors are logged, never thrown.
+   */
+  maybeTranslateAssistantMessage(sessionId: string, userId: string): void {
+    maybeTranslateAssistantMessage({
+      translationTriggered: this.translationTriggered,
+      sendReplayEvent: this.sendReplayEvent.bind(this),
+      sessionId,
+      userId,
+    });
+  }
+
+  /**
+   * On-demand translation of a specific assistant message (per-message button).
+   * Works regardless of the auto-translate toggle and re-translates if needed.
+   */
+  translateMessageById(sessionId: string, userId: string, messageId: string): void {
+    translateAssistantMessageById({
+      translationTriggered: this.translationTriggered,
+      sendReplayEvent: this.sendReplayEvent.bind(this),
+      sessionId,
+      userId,
+      messageId,
+    });
   }
 
   // ─── stream_event handlers (--include-partial-messages) ────────────

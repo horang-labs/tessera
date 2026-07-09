@@ -13,6 +13,7 @@
  *   parseStdout(sessionId: string, line: string): ParsedMessage[]
  */
 
+import { randomUUID } from 'crypto';
 import type { ParsedMessage } from '../types';
 import type { CliCommandInfo, CliMessage } from '../../types';
 import { KNOWN_IGNORED_MESSAGE_TYPES } from '../../protocol-message-types';
@@ -25,6 +26,7 @@ import logger from '../../../logger';
 import type { ToolCallKind } from '@/types/tool-call-kind';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
 import { normalizeToolResult } from '@/lib/tool-results/normalize-tool-result';
+import { buildImageToolResult, isImagePath } from '@/lib/tool-results/tool-image';
 import { buildToolDisplay } from '@/lib/tool-display';
 
 // =============================================================================
@@ -39,6 +41,9 @@ interface SessionStreamState {
   /** True if we already emitted an isRedacted:true update for the active block. */
   thinkingRedactedEmitted: boolean;
   isStreamingText: boolean;
+  /** Stable id for the active assistant text run, shared by the live message + the
+   *  flushed assistant_message so translations attach by id. Null between text runs. */
+  activeAssistantMessageId: string | null;
   /** True if stream_event text deltas were sent this turn. */
   hasStreamedText: boolean;
   /** Dedup: track tool_use IDs already sent to prevent duplicate tool_call messages. */
@@ -99,6 +104,15 @@ export class ClaudeCodeProtocolParser {
   private lastTodoSnapshots = new Map<string, Array<{ content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string }>>();
 
   /**
+   * Per-session set of background-task ids known to be dynamic workflows.
+   * Populated on `task_started` (task_type === 'local_workflow') so later
+   * `task_updated` / `task_notification` events — which look identical for
+   * non-workflow background tasks — are only forwarded as workflow events
+   * when they belong to a tracked workflow run.
+   */
+  private workflowTaskIds = new Map<string, Set<string>>();
+
+  /**
    * Per-session last assistant message (used for notification preview).
    */
   private lastAssistantMessage = new Map<string, string>();
@@ -145,6 +159,28 @@ export class ClaudeCodeProtocolParser {
   handleProcessExit(sessionId: string, exitCode: number): ParsedMessage[] {
     logger.error('Handling process exit', { sessionId, exitCode });
 
+    // Any workflow still tracked here never received its terminal
+    // task_notification — the CLI died mid-run. Synthesize a failed terminal
+    // event for each so the card stops spinning as "running". This goes through
+    // the normal workflow_event pipeline, so it is broadcast to the live client
+    // AND persisted to session history — the reduced replay on reconnect/reload
+    // then shows the card as failed instead of reverting to a stuck "running".
+    const pendingWorkflows = this.workflowTaskIds.get(sessionId);
+    const now = new Date().toISOString();
+    const workflowTerminations: ParsedMessage[] = pendingWorkflows
+      ? [...pendingWorkflows].map((taskId) => ({
+          serverMessage: {
+            type: 'workflow_event' as const,
+            sessionId,
+            kind: 'updated' as const,
+            taskId,
+            status: 'failed',
+            endTime: Date.now(),
+            timestamp: now,
+          },
+        }))
+      : [];
+
     this.streamState.delete(sessionId);
     this.contextWindowSizeCache.delete(sessionId);
     this.pendingToolCalls.delete(sessionId);
@@ -152,15 +188,19 @@ export class ClaudeCodeProtocolParser {
     this.lastAssistantMessage.delete(sessionId);
     this.lastAssistantModel.delete(sessionId);
     this.lastTodoSnapshots.delete(sessionId);
+    this.workflowTaskIds.delete(sessionId);
 
-    return [{
-      serverMessage: {
-        type: 'cli_down',
-        sessionId,
-        exitCode,
-        message: `Claude Code Down (exit code: ${exitCode})`,
+    return [
+      ...workflowTerminations,
+      {
+        serverMessage: {
+          type: 'cli_down',
+          sessionId,
+          exitCode,
+          message: `Claude Code Down (exit code: ${exitCode})`,
+        },
       },
-    }];
+    ];
   }
 
   // ---------------------------------------------------------------------------
@@ -326,9 +366,131 @@ export class ClaudeCodeProtocolParser {
         outcome: msg.message?.outcome,
       });
       return [];
+    } else if (
+      msg.subtype === 'task_started' ||
+      msg.subtype === 'task_progress' ||
+      msg.subtype === 'task_updated' ||
+      msg.subtype === 'task_notification'
+    ) {
+      return this.parseWorkflowTaskMessage(sessionId, msg);
     } else {
       return this.parseSystemMessage(sessionId, msg);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Handler: dynamic workflow background-task lifecycle
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Translates the CLI's `system/task_*` background-task stream into
+   * `workflow_event` server messages — but only for dynamic workflows
+   * (Workflow tool, ultracode). Non-workflow background tasks (run_in_background
+   * subagents/bash) share the same subtypes; those are dropped here (they were
+   * already invisible as empty info system messages).
+   */
+  private parseWorkflowTaskMessage(sessionId: string, msg: CliMessage): ParsedMessage[] {
+    const raw = msg as any;
+    const taskId: string | undefined = raw.task_id;
+    if (typeof taskId !== 'string' || !taskId) {
+      return [];
+    }
+
+    let known = this.workflowTaskIds.get(sessionId);
+
+    if (raw.subtype === 'task_started') {
+      const isWorkflow = raw.task_type === 'local_workflow' || typeof raw.workflow_name === 'string';
+      if (!isWorkflow) {
+        return [];
+      }
+      if (!known) {
+        known = new Set<string>();
+        this.workflowTaskIds.set(sessionId, known);
+      }
+      known.add(taskId);
+      return [{
+        serverMessage: {
+          type: 'workflow_event',
+          sessionId,
+          kind: 'started',
+          taskId,
+          toolUseId: typeof raw.tool_use_id === 'string' ? raw.tool_use_id : undefined,
+          workflowName: typeof raw.workflow_name === 'string' ? raw.workflow_name : undefined,
+          description: typeof raw.description === 'string' ? raw.description : undefined,
+          timestamp: new Date().toISOString(),
+        },
+      }];
+    }
+
+    // progress/updated/notification only matter for tracked workflow runs.
+    if (!known?.has(taskId)) {
+      // task_progress also identifies a workflow by carrying workflow_progress,
+      // even if we missed task_started (e.g. mid-stream resume).
+      if (raw.subtype === 'task_progress' && Array.isArray(raw.workflow_progress)) {
+        if (!known) {
+          known = new Set<string>();
+          this.workflowTaskIds.set(sessionId, known);
+        }
+        known.add(taskId);
+      } else {
+        return [];
+      }
+    }
+
+    if (raw.subtype === 'task_progress') {
+      const progress = Array.isArray(raw.workflow_progress) ? raw.workflow_progress : [];
+      const usage = raw.usage && typeof raw.usage === 'object' ? {
+        totalTokens: raw.usage.total_tokens,
+        toolUses: raw.usage.tool_uses,
+        durationMs: raw.usage.duration_ms,
+      } : undefined;
+      return [{
+        serverMessage: {
+          type: 'workflow_event',
+          sessionId,
+          kind: 'progress',
+          taskId,
+          progress,
+          usage,
+          timestamp: new Date().toISOString(),
+        },
+      }];
+    }
+
+    if (raw.subtype === 'task_updated') {
+      const patch = raw.patch && typeof raw.patch === 'object' ? raw.patch : {};
+      return [{
+        serverMessage: {
+          type: 'workflow_event',
+          sessionId,
+          kind: 'updated',
+          taskId,
+          status: typeof patch.status === 'string' ? patch.status : undefined,
+          endTime: typeof patch.end_time === 'number' ? patch.end_time : undefined,
+          timestamp: new Date().toISOString(),
+        },
+      }];
+    }
+
+    // task_notification (terminal)
+    const usage = raw.usage && typeof raw.usage === 'object' ? {
+      totalTokens: raw.usage.total_tokens,
+      toolUses: raw.usage.tool_uses,
+      durationMs: raw.usage.duration_ms,
+    } : undefined;
+    known.delete(taskId);
+    return [{
+      serverMessage: {
+        type: 'workflow_event',
+        sessionId,
+        kind: 'notification',
+        taskId,
+        status: typeof raw.status === 'string' ? raw.status : undefined,
+        outputFile: typeof raw.output_file === 'string' ? raw.output_file : undefined,
+        usage,
+        timestamp: new Date().toISOString(),
+      },
+    }];
   }
 
   // ---------------------------------------------------------------------------
@@ -648,7 +810,16 @@ export class ClaudeCodeProtocolParser {
       outputLength: output?.length || 0,
     });
 
-    const syntheticToolUseResult = synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
+    // Image reads (e.g. Read of a .png) arrive on stdout as image content blocks
+    // with no text output, so synthesis yields nothing renderable. Serve the file
+    // lazily instead of dropping the image.
+    const imageToolUseResult = !isError
+      && pendingTool.toolKind === 'file_read'
+      && isImagePath(pendingTool.toolParams?.file_path)
+      ? buildImageToolResult(sessionId, toolUseId)
+      : undefined;
+
+    const effectiveToolUseResult = imageToolUseResult ?? synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
       output,
       error: isError ? output : undefined,
       isError,
@@ -671,7 +842,7 @@ export class ClaudeCodeProtocolParser {
         status: isError ? 'error' : 'completed',
         output: isError ? undefined : output,
         error: isError ? output : undefined,
-        ...(syntheticToolUseResult !== undefined ? { toolUseResult: syntheticToolUseResult } : {}),
+        ...(effectiveToolUseResult !== undefined ? { toolUseResult: effectiveToolUseResult } : {}),
         toolUseId,
         timestamp: new Date().toISOString(),
       },
@@ -712,6 +883,10 @@ export class ClaudeCodeProtocolParser {
         continue;
       }
 
+      const isImageRead = !toolResult.isError
+        && pendingTool.toolKind === 'file_read'
+        && isImagePath(pendingTool.toolParams?.file_path);
+
       const toolUseResult = rawToolUseResult
         ? normalizeToolResult(
             pendingTool.toolKind,
@@ -720,12 +895,14 @@ export class ClaudeCodeProtocolParser {
               toolName: pendingTool.toolName,
             }),
           )
-        : synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
-            output: toolResult.output,
-            error: toolResult.isError ? toolResult.output : undefined,
-            isError: toolResult.isError,
-            previousTodos: this.lastTodoSnapshots.get(sessionId),
-          });
+        : isImageRead
+          ? buildImageToolResult(sessionId, toolResult.toolUseId)
+          : synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
+              output: toolResult.output,
+              error: toolResult.isError ? toolResult.output : undefined,
+              isError: toolResult.isError,
+              previousTodos: this.lastTodoSnapshots.get(sessionId),
+            });
 
       sessionPending!.delete(toolResult.toolUseId);
 
@@ -1026,6 +1203,7 @@ export class ClaudeCodeProtocolParser {
           sessionId,
           role: 'assistant',
           content: resultText,
+          messageId: randomUUID(),
         },
       });
     }
@@ -1181,6 +1359,7 @@ export class ClaudeCodeProtocolParser {
         hasReceivedThinkingDelta: false,
         thinkingRedactedEmitted: false,
         isStreamingText: false,
+        activeAssistantMessageId: null,
         hasStreamedText: false,
         processedToolUseIds: new Set(),
         activeToolUseBlock: null,
@@ -1216,6 +1395,8 @@ export class ClaudeCodeProtocolParser {
     } else if (block.type === 'text') {
       state.isStreamingText = true;
       state.hasStreamedText = true;
+      // New text run -> mint a stable id shared by the live message + flushed assistant_message.
+      state.activeAssistantMessageId = randomUUID();
 
       return [{
         serverMessage: {
@@ -1223,6 +1404,7 @@ export class ClaudeCodeProtocolParser {
           sessionId,
           role: 'assistant',
           content: '',
+          messageId: state.activeAssistantMessageId,
         },
       }];
     }
@@ -1253,12 +1435,16 @@ export class ClaudeCodeProtocolParser {
     if (!state) return [];
 
     if (delta.type === 'text_delta' && delta.text) {
+      if (!state.activeAssistantMessageId) {
+        state.activeAssistantMessageId = randomUUID();
+      }
       return [{
         serverMessage: {
           type: 'message',
           sessionId,
           role: 'assistant',
           content: delta.text,
+          messageId: state.activeAssistantMessageId,
         },
       }];
     } else if (delta.type === 'thinking_delta' && delta.thinking && state.activeThinkingId) {
@@ -1329,6 +1515,8 @@ export class ClaudeCodeProtocolParser {
 
     if (state.isStreamingText) {
       state.isStreamingText = false;
+      // End of this text run; next run mints a fresh id.
+      state.activeAssistantMessageId = null;
     }
 
     if (state.activeToolUseBlock) {

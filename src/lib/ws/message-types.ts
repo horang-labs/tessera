@@ -66,12 +66,14 @@ export type SessionSpawnConfig = {
 export type ClientMessage =
   | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'close_session'; requestId: string; sessionId: string }
-  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig }
+  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string }
+  | { type: 'translate_message'; requestId: string; sessionId: string; messageId: string }
   | ({ type: 'resume_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'retry_session'; requestId: string; sessionId: string }
   | { type: 'interactive_response'; requestId: string; sessionId: string; toolUseId: string; response: string }
   | { type: 'mark_as_read'; requestId: string; sessionId: string } // NEW - for FEAT-002
   | { type: 'cancel_generation'; requestId: string; sessionId: string }
+  | { type: 'compact_session'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }
   | { type: 'set_session_goal'; requestId: string; sessionId: string; update: SessionGoalUpdate; spawnConfig?: SessionSpawnConfig; displayContent?: string }
   | { type: 'refresh_session_goal'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }
   | { type: 'clear_session_goal'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }
@@ -88,12 +90,14 @@ export type ClientMessage =
   | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number; launchCommand?: string; prefillInput?: string }
   | { type: 'terminal_input'; requestId: string; terminalId: string; data: string }
   | { type: 'terminal_resize'; requestId: string; terminalId: string; cols: number; rows: number }
-  | { type: 'terminal_close'; requestId: string; terminalId: string };
+  | { type: 'terminal_close'; requestId: string; terminalId: string }
+  | { type: 'subscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string }
+  | { type: 'unsubscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string };
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions';
 
 export type ReplaySourceServerMessage =
-  | { type: 'message'; sessionId: string; role: 'assistant'; content: string }
+  | { type: 'message'; sessionId: string; role: 'assistant'; content: string; messageId?: string }
   | {
       type: 'user_message';
       sessionId: string;
@@ -150,6 +154,25 @@ export type ReplaySourceServerMessage =
       hookEvent: string;
       data: Record<string, any>;
       progressType?: string;
+      timestamp: string;
+    }
+  | {
+      type: 'workflow_event';
+      sessionId: string;
+      kind: 'started' | 'progress' | 'updated' | 'notification';
+      taskId: string;
+      toolUseId?: string;
+      workflowName?: string;
+      description?: string;
+      /** Delta batch of phase/agent/log entries (kind === 'progress'). */
+      progress?: import('@/types/cli-jsonl-schemas').WorkflowProgressEntry[];
+      usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+      /** Status from task_updated.patch / task_notification. */
+      status?: string;
+      /** Run end time (epoch ms) from task_updated.patch. */
+      endTime?: number;
+      /** Final output file (kind === 'notification'). */
+      outputFile?: string;
       timestamp: string;
     }
   | {
@@ -302,6 +325,7 @@ export type AppServerMessage =
   | { type: 'session_goal_updated'; sessionId: string; goal: SessionGoal }
   | { type: 'session_goal_cleared'; sessionId: string }
   | ({ type: 'rate_limit_update' } & ProviderRateLimitsSnapshot)
+  | { type: 'model_config_updated'; providerId: 'claude-code' }
   | {
       type: 'providers_list';
       requestId: string;
@@ -368,6 +392,26 @@ export type AppServerMessage =
       type: 'git_panel_state';
       sessionId: string;
       data: import('@/types/git').GitPanelData;
+    }
+  | {
+      type: 'workspace_files_changed';
+      workDir: string;
+      sessionIds: string[];
+      version: number;
+      treeChanged: boolean;
+      changedPaths: string[];
+      addedPaths: string[];
+      deletedPaths: string[];
+      hasMoreChangedPaths: boolean;
+    }
+  | {
+      type: 'workspace_file_watch_status';
+      sessionId: string;
+      subscriberId: string;
+      status: 'starting' | 'active' | 'fallback';
+      version?: number;
+      workDir?: string;
+      reason?: string;
     }
   | {
       type: 'session_mutated';

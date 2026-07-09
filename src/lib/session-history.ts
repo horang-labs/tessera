@@ -1,6 +1,7 @@
 import fs from 'fs';
 import * as fsp from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import type { ContentBlock, ServerMessage, ServerTransportMessage } from './ws/message-types';
 import type { EnhancedMessage } from '@/types/chat';
 import { groupMessages } from '@/lib/chat/group-messages';
@@ -33,6 +34,8 @@ interface PendingThinkingState {
 interface SessionBufferState {
   assistantTimestamp?: string;
   assistantContent: string;
+  /** Stable id for the buffered assistant run (from the first chunk's messageId). */
+  assistantMessageId?: string;
   thinking?: PendingThinkingState;
 }
 
@@ -124,13 +127,19 @@ class SessionHistoryStore {
     return getSessionHistoryModifiedAt(sessionId);
   }
 
-  recordUserMessage(sessionId: string, content: string | ContentBlock[], timestamp = new Date().toISOString()): void {
+  recordUserMessage(
+    sessionId: string,
+    content: string | ContentBlock[],
+    timestamp = new Date().toISOString(),
+    messageId?: string,
+  ): void {
     this.flushBufferedContent(sessionId);
     this.appendEvent(sessionId, {
       v: HISTORY_VERSION,
       type: 'user_message',
       timestamp,
       content,
+      ...(messageId ? { messageId } : {}),
     });
   }
 
@@ -172,6 +181,7 @@ class SessionHistoryStore {
 
         const state = this.getOrCreateBuffer(sessionId);
         state.assistantTimestamp ||= new Date().toISOString();
+        state.assistantMessageId ||= message.messageId;
         state.assistantContent += message.content;
         return;
       }
@@ -394,6 +404,19 @@ class SessionHistoryStore {
     return null;
   }
 
+  /** Returns the recorded toolParams for a tool call, used to re-derive on-disk paths server-side. */
+  async readToolCallParams(sessionId: string, toolUseId: string): Promise<Record<string, any> | null> {
+    this.flushSession(sessionId);
+    const events = await this.readEvents(sessionId);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (event.type === 'tool_call' && event.toolUseId === toolUseId) {
+        return event.toolParams ?? null;
+      }
+    }
+    return null;
+  }
+
   async readUsage(sessionId: string): Promise<PersistedUsage | null> {
     const replayState = await this.readReplayState(sessionId, { lazyToolOutput: true });
     return replayState.usage;
@@ -435,10 +458,12 @@ class SessionHistoryStore {
       type: 'assistant_message',
       timestamp: state.assistantTimestamp || new Date().toISOString(),
       content: state.assistantContent,
+      messageId: state.assistantMessageId || randomUUID(),
     });
 
     state.assistantContent = '';
     state.assistantTimestamp = undefined;
+    state.assistantMessageId = undefined;
   }
 
   private flushThinking(sessionId: string, endTime?: string): void {
@@ -488,6 +513,7 @@ class SessionHistoryStore {
       case 'assistant_message_chunk': {
         const state = this.getOrCreateBuffer(sessionId);
         state.assistantTimestamp ||= event.timestamp || new Date().toISOString();
+        state.assistantMessageId ||= event.messageId;
         state.assistantContent += event.content;
         return;
       }
@@ -540,6 +566,7 @@ class SessionHistoryStore {
       case 'tool_call':
       case 'system':
       case 'progress_hook':
+      case 'workflow_event':
       case 'interactive_prompt':
       case 'interactive_prompt_response':
         this.flushBufferedContent(sessionId);
@@ -549,6 +576,13 @@ class SessionHistoryStore {
       case 'context_usage':
       case 'usage':
         this.appendEvent(sessionId, event);
+        return;
+
+      case 'message_translation':
+        // Persist only completed translations; 'pending'/'error' are live-only UI signals.
+        if (!event.status || event.status === 'completed') {
+          this.appendEvent(sessionId, event);
+        }
         return;
 
       case 'interactive_prompt_cleared':

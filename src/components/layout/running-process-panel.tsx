@@ -11,6 +11,7 @@ import { useTabStore } from '@/stores/tab-store';
 import { wsClient } from '@/lib/ws/client';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
+import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 
 interface RunningProcessPanelProps {
   /** Dropdown open direction: 'down' (header) or 'right' (vertical strip) */
@@ -106,13 +107,10 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
     const tabStore = useTabStore.getState();
     const existing = tabStore.findSessionLocation(sessionId);
     if (existing) {
-      tabStore.setActiveTab(existing.tabId);
+      activateSessionPanel(sessionId, { location: existing });
     } else {
       tabStore.createTab(sessionId);
     }
-
-    // Set as active session
-    useSessionStore.getState().setActiveSession(sessionId);
 
     setIsOpen(false);
   }, []);

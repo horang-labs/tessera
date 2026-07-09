@@ -6,12 +6,14 @@ import * as dbSessions from '../db/sessions';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
 import { bindTerminalSender } from '../terminal/shared-terminal-manager';
+import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { ProviderMeta } from '../cli/providers/types';
 import {
   clearUnreadFromWebSocket,
   clearSessionGoalFromWebSocket,
   closeSessionFromWebSocket,
+  compactSessionFromWebSocket,
   createSessionFromWebSocket,
   refreshSessionGoalFromWebSocket,
   resumeSessionFromWebSocket,
@@ -21,11 +23,13 @@ import {
   sendInteractiveResponseFromWebSocket,
   sendSessionMessageFromWebSocket,
   setSessionGoalFromWebSocket,
+  translateMessageFromWebSocket,
 } from './server-session-actions';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 
 interface RouteClientTransportMessageOptions {
+  connectionId: string;
   message: ClientMessage;
   sendToUser: WsSendToUser;
   userId: string;
@@ -96,6 +100,7 @@ export function verifyClientSessionAccess(
 }
 
 export async function routeClientTransportMessage({
+  connectionId,
   message,
   sendToUser,
   userId,
@@ -137,6 +142,17 @@ export async function routeClientTransportMessage({
         displayContent: message.displayContent,
         skillName: message.skillName,
         spawnConfig: message.spawnConfig,
+        forceTranslateInput: message.forceTranslateInput,
+        messageId: message.messageId,
+      });
+      return;
+
+    case 'translate_message':
+      translateMessageFromWebSocket({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        messageId: message.messageId,
       });
       return;
 
@@ -196,6 +212,16 @@ export async function routeClientTransportMessage({
         userId,
         'cancel_generation requested',
       );
+      return;
+
+    case 'compact_session':
+      await compactSessionFromWebSocket({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        spawnConfig: message.spawnConfig,
+        displayContent: message.displayContent,
+      });
       return;
 
     case 'set_session_goal':
@@ -362,6 +388,24 @@ export async function routeClientTransportMessage({
 
     case 'terminal_close':
       bindTerminalSender(sendToUser).close(message.terminalId, userId);
+      return;
+
+    case 'subscribe_workspace_files':
+      await workspaceFileWatchManager.subscribe({
+        connectionId,
+        sendToUser,
+        sessionId: message.sessionId,
+        subscriberId: message.subscriberId,
+        userId,
+      });
+      return;
+
+    case 'unsubscribe_workspace_files':
+      workspaceFileWatchManager.unsubscribe({
+        connectionId,
+        sessionId: message.sessionId,
+        subscriberId: message.subscriberId,
+      });
       return;
 
     default:

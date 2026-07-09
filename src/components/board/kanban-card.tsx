@@ -2,7 +2,7 @@
 
 import { memo, useState, useCallback, useRef } from 'react';
 import type React from 'react';
-import { FolderGit2, MessageSquare, Plus, Tag, TriangleAlert } from 'lucide-react';
+import { GitBranch, MessageSquare, Plus, Tag, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
@@ -19,7 +19,7 @@ import {
 } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useSessionStore, selectHasRunningWorkflow, selectAnyRunningWorkflow } from '@/stores/session-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
@@ -67,11 +67,17 @@ function formatRelativeTime(
 }
 
 /** Collection name label with Tag icon (matching list view) */
-function CollectionLabel({ collectionId, isActive }: { collectionId?: string; isActive?: boolean }) {
+function CollectionLabel({ collectionId, isActive }: { collectionId?: string | null; isActive?: boolean }) {
+  const { t } = useI18n();
+  const collectionsByProject = useCollectionStore((state) => state.collectionsByProject);
   const config = collectionId
-    ? useCollectionStore.getState().getCollectionConfig(collectionId)
+    ? Object.values(collectionsByProject)
+        .flat()
+        .find((collection) => collection.id === collectionId)
     : null;
-  if (!config) return null;
+  const label = collectionId ? config?.label : t('task.creation.noCollection');
+
+  if (!label) return null;
 
   return (
     <span className={cn(
@@ -79,7 +85,7 @@ function CollectionLabel({ collectionId, isActive }: { collectionId?: string; is
       isActive ? 'text-(--text-primary) opacity-55' : 'text-(--text-muted)',
     )}>
       <Tag className="w-2.5 h-2.5" />
-      {config.label}
+      {label}
     </span>
   );
 }
@@ -135,7 +141,9 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const collections = useCollectionStore((state) => state.collections);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
-  const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
   const isGeneratingTitle = useSessionStore((s) => s.generatingTitleIds.has(session.id));
   const isJustDropped = useBoardStore((s) => s.justDroppedId === session.id);
@@ -596,7 +604,9 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       return false;
     })
   );
-  const hasProcessingSession = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(taskSessionIds));
+  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(taskSessionIds));
+  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
   const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
   const hasUnreadSession = useSessionStore((state) =>
     !isActive && taskSessionIds.some((id) => {
@@ -839,9 +849,39 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         title={stripeLabel ?? undefined}
       >
         {/* Main row: icon + content */}
-        <div className="flex items-start gap-2.5">
-          {/* Worktree/status icon first when present, provider mark otherwise leads */}
-          <span className="mt-[3px] flex shrink-0 items-center gap-1">
+        <div className="flex items-stretch gap-2.5">
+          {/* Provider mark aligns with the first title line; the branch icon sits
+              one text line below it, not at the bottom of the whole card. */}
+          <span className="mt-[3px] flex flex-col shrink-0 items-center gap-[5px]">
+            {showProviderIcons ? (
+              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <ProviderLogoMark
+                  providerId={task.sessions[0]?.provider}
+                  className={KANBAN_PROVIDER_MARK_CLASS}
+                  iconClassName={KANBAN_PROVIDER_ICON_CLASS}
+                  data-testid={`kanban-task-agent-icon-${task.id}`}
+                />
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="corner"
+                  surface="board"
+                />
+              </span>
+            ) : !task.worktreeBranch && hasTaskStatus ? (
+              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <ItemStatusIndicator
+                  isProcessing={hasProcessingSession}
+                  isAwaitingUser={hasAwaitingUserSession}
+                  hasUnread={hasUnreadSession}
+                  isRunning={hasRunningSession}
+                  placement="inline"
+                  surface="board"
+                />
+              </span>
+            ) : null}
             {task.worktreeBranch ? (
               <span
                 title={
@@ -854,9 +894,12 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                       ? t('task.worktree.missing', { branch: task.worktreeBranch })
                     : task.worktreeBranch
                 }
-                className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                className={cn(
+                  'relative flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                  showProviderIcons && 'translate-y-[1px]',
+                )}
               >
-                <FolderGit2
+                <GitBranch
                   className={cn(
                     'w-3.5 h-3.5',
                     task.worktreeDeletedAt || task.worktreeMissing
@@ -870,14 +913,16 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg)"
                   />
                 )}
-                <ItemStatusIndicator
-                  isProcessing={hasProcessingSession}
-                  isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
-                  placement="corner"
-                  surface="board"
-                />
+                {!showProviderIcons && (
+                  <ItemStatusIndicator
+                    isProcessing={hasProcessingSession}
+                    isAwaitingUser={hasAwaitingUserSession}
+                    hasUnread={hasUnreadSession}
+                    isRunning={hasRunningSession}
+                    placement="corner"
+                    surface="board"
+                  />
+                )}
                 {prMismatch && (
                   <span
                     title={prMismatchReason ?? undefined}
@@ -891,37 +936,6 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     />
                   </span>
                 )}
-              </span>
-            ) : null}
-            {showProviderIcons ? (
-              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                <ProviderLogoMark
-                  providerId={task.sessions[0]?.provider}
-                  className={KANBAN_PROVIDER_MARK_CLASS}
-                  iconClassName={KANBAN_PROVIDER_ICON_CLASS}
-                  data-testid={`kanban-task-agent-icon-${task.id}`}
-                />
-                {!task.worktreeBranch && (
-                  <ItemStatusIndicator
-                    isProcessing={hasProcessingSession}
-                    isAwaitingUser={hasAwaitingUserSession}
-                    hasUnread={hasUnreadSession}
-                    isRunning={hasRunningSession}
-                    placement="corner"
-                    surface="board"
-                  />
-                )}
-              </span>
-            ) : !task.worktreeBranch && hasTaskStatus ? (
-              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                <ItemStatusIndicator
-                  isProcessing={hasProcessingSession}
-                  isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
-                  placement="inline"
-                  surface="board"
-                />
               </span>
             ) : null}
             {prMismatch && !task.worktreeBranch && (
@@ -1145,7 +1159,9 @@ function KanbanSubSessionItem({
   const [isHovered, setIsHovered] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
-  const isProcessing = useChatStore(selectIsTurnInFlight(session.id));
+  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
+  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
+  const isProcessing = isProcessingTurn || isWorkflowRunning;
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const liveSession = useSessionStore((state) => state.getSession(session.id));

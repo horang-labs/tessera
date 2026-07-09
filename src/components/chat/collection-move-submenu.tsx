@@ -6,6 +6,8 @@ import type { Collection } from '@/types/collection';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 
+const SUBMENU_CLOSE_DELAY_MS = 180;
+
 interface CollectionMoveSubmenuProps {
   collections: Collection[];
   currentCollectionId: string | null;
@@ -30,9 +32,29 @@ export function CollectionMoveSubmenu({
   const [openToLeft, setOpenToLeft] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const openSubmenu = useCallback(() => setIsOpen(true), []);
-  const closeSubmenu = useCallback(() => setIsOpen(false), []);
+  const clearCloseTimeout = useCallback(() => {
+    if (closeTimeoutRef.current !== null) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  }, []);
+
+  const openSubmenu = useCallback(() => {
+    clearCloseTimeout();
+    setIsOpen(true);
+  }, [clearCloseTimeout]);
+
+  const closeSubmenu = useCallback(() => {
+    clearCloseTimeout();
+    closeTimeoutRef.current = setTimeout(() => {
+      closeTimeoutRef.current = null;
+      setIsOpen(false);
+    }, SUBMENU_CLOSE_DELAY_MS);
+  }, [clearCloseTimeout]);
+
+  useEffect(() => clearCloseTimeout, [clearCloseTimeout]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -65,6 +87,7 @@ export function CollectionMoveSubmenu({
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          clearCloseTimeout();
           setIsOpen((prev) => !prev);
         }}
         data-testid={`${testIdPrefix}-move-to`}
@@ -80,9 +103,12 @@ export function CollectionMoveSubmenu({
           role="menu"
           className={cn(
             'absolute top-0 z-10 min-w-[180px] rounded-lg border border-(--divider) bg-(--sidebar-bg) p-1.5',
+            'before:absolute before:top-0 before:h-full before:w-2 before:content-[""]',
             'shadow-[0_8px_32px_rgba(0,0,0,0.24),0_2px_8px_rgba(0,0,0,0.16)]',
-            openToLeft ? 'right-full mr-1' : 'left-full ml-1',
+            openToLeft ? 'right-full mr-1 before:-right-2' : 'left-full ml-1 before:-left-2',
           )}
+          onMouseEnter={openSubmenu}
+          onMouseLeave={closeSubmenu}
           data-testid={`${testIdPrefix}-move-to-menu`}
         >
           {collections.map((collection) => (

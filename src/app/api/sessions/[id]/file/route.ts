@@ -12,6 +12,7 @@ import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-wor
 
 const MAX_TEXT_FILE_BYTES = 512 * 1024;
 const MAX_RAW_FILE_BYTES = 25 * 1024 * 1024;
+const FS_OPERATION_TIMEOUT_MS = 2_000;
 
 class WorkspaceFileError extends Error {
   constructor(
@@ -21,6 +22,32 @@ class WorkspaceFileError extends Error {
   ) {
     super(message);
   }
+}
+
+// fs calls against the workspace can block indefinitely on hung network,
+// FUSE, or WSL mounts; respond with 504 instead of never responding. The
+// underlying syscall cannot be cancelled, but the HTTP response must not
+// wait for it.
+function withFsDeadline<T>(operation: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new WorkspaceFileError(
+        "filesystem_timeout",
+        "The workspace filesystem did not respond in time",
+        504,
+      ));
+    }, FS_OPERATION_TIMEOUT_MS);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 type PathModule = typeof path.win32 | typeof path.posix;
@@ -49,8 +76,9 @@ async function resolveRequestedFile(root: string, rawPath: string): Promise<{
 
   let rootRealPath: string;
   try {
-    rootRealPath = await fs.realpath(root);
-  } catch {
+    rootRealPath = await withFsDeadline(fs.realpath(root));
+  } catch (error) {
+    if (error instanceof WorkspaceFileError) throw error;
     throw new WorkspaceFileError("missing_work_dir", "Session working directory is unavailable", 422);
   }
 
@@ -61,8 +89,9 @@ async function resolveRequestedFile(root: string, rawPath: string): Promise<{
 
   let absolutePath: string;
   try {
-    absolutePath = await fs.realpath(candidatePath);
-  } catch {
+    absolutePath = await withFsDeadline(fs.realpath(candidatePath));
+  } catch (error) {
+    if (error instanceof WorkspaceFileError) throw error;
     throw new WorkspaceFileError("file_not_found", "File not found", 404);
   }
 
@@ -148,7 +177,7 @@ export async function GET(
 
     const rawPath = request.nextUrl.searchParams.get("path") ?? "";
     const { absolutePath, relativePath } = await resolveRequestedFile(root, rawPath);
-    const fileStat = await fs.stat(absolutePath);
+    const fileStat = await withFsDeadline(fs.stat(absolutePath));
     if (!fileStat.isFile()) {
       throw new WorkspaceFileError("invalid_file_path", "Path is not a file", 400);
     }
@@ -158,7 +187,7 @@ export async function GET(
         throw new WorkspaceFileError("file_too_large", "File is too large to preview", 413);
       }
 
-      const buffer = await fs.readFile(absolutePath);
+      const buffer = await withFsDeadline(fs.readFile(absolutePath));
       return new NextResponse(buffer, {
         headers: {
           "Content-Type": inferContentType(relativePath),
@@ -169,15 +198,17 @@ export async function GET(
     }
 
     const readLength = Math.min(fileStat.size, MAX_TEXT_FILE_BYTES + 1);
-    const handle = await fs.open(absolutePath, "r");
+    const handle = await withFsDeadline(fs.open(absolutePath, "r"));
     let buffer = Buffer.alloc(readLength);
     let bytesRead = 0;
     try {
-      const result = await handle.read(buffer, 0, readLength, 0);
+      const result = await withFsDeadline(handle.read(buffer, 0, readLength, 0));
       bytesRead = result.bytesRead;
       buffer = buffer.subarray(0, bytesRead);
     } finally {
-      await handle.close();
+      // Do not tie the response to close(): it can hang on the same stalled
+      // mounts the deadline above protects against.
+      void handle.close().catch(() => {});
     }
 
     const binary = isLikelyBinary(buffer);

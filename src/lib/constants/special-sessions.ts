@@ -4,6 +4,8 @@ import {
   parseWorkspaceSpecialSessionId,
 } from '@/lib/workspace-tabs/special-session';
 
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
 /**
  * Special session IDs for non-chat panel content.
  * These IDs are never stored in the session store —
@@ -20,10 +22,10 @@ export function isSpecialSession(sessionId: string | null): boolean {
 }
 
 /** Get display title for a special session ID */
-export function getSpecialSessionTitle(sessionId: string): string | null {
+export function getSpecialSessionTitle(sessionId: string, t?: Translate): string | null {
   if (sessionId === SKILLS_DASHBOARD_SESSION_ID) return 'Skills Dashboard';
   if (sessionId === ARCHIVE_DASHBOARD_SESSION_ID) return 'Archive';
-  return getWorkspaceSpecialSessionTitle(sessionId);
+  return getWorkspaceSpecialSessionTitle(sessionId, t);
 }
 
 /** Get i18n title key for a special session ID */
