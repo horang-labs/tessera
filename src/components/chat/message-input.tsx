@@ -1,6 +1,14 @@
 'use client';
 
-import { useRef, useEffect, useCallback, useMemo, useState, type KeyboardEvent } from 'react';
+import {
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type SetStateAction,
+} from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { MessageSquarePlus, MessageSquareShare, Mic, Paperclip, SendHorizontal, Square, Target } from 'lucide-react';
 import {
@@ -12,18 +20,40 @@ import { useSessionStore } from '@/stores/session-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSessionResume } from '@/hooks/use-session-resume';
+import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSkillPicker, type SkillInfo } from '@/hooks/use-skill-picker';
 import { SkillPicker } from '@/components/chat/skill-picker';
 import { useFilePicker } from '@/hooks/use-file-picker';
 import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
+import { useTaskStore } from '@/stores/task-store';
 import { shouldRouteToTerminalFallback } from '@/lib/terminal/tui-only-commands';
 import {
   setPendingTerminalLaunch,
   takePendingTerminalLaunch,
 } from '@/lib/terminal/pending-terminal-launch';
+import {
+  consumeTerminalLaunchResult,
+  takeTerminalLaunchResultsForSession,
+  TERMINAL_LAUNCH_RESULT_EVENT,
+  type TerminalLaunchResultDetail,
+} from '@/lib/terminal/terminal-launch-result';
+import {
+  clearClientTerminalHandoff,
+  hasClientTerminalHandoff,
+  markClientTerminalHandoff,
+} from '@/lib/terminal/client-terminal-handoff-state';
+import {
+  consumeTerminalLaunchDraft,
+  recordTerminalDraftEdit,
+  registerTerminalLaunchDraft,
+  shouldClearTerminalLaunchDraft,
+} from '@/lib/terminal/terminal-launch-draft-state';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useGitStore } from '@/stores/git-store';
+import { useUsageStore } from '@/stores/usage-store';
+import { buildStatusDisplayModel } from '@/lib/status-display/build-status-display';
 import { matchShortcut, formatShortcut } from '@/lib/keyboard-shortcut';
 import {
   applyProviderSessionRuntimeOverrides,
@@ -90,8 +120,10 @@ import {
 } from '@/lib/chat/session-goal-command-event';
 import {
   classifyCodexSlashCommand,
+  isCodexSlashCommandAvailable,
   isReservedCodexSlashCommandName,
 } from '@/lib/chat/codex-slash-command-registry';
+import { dispatchCodexNativeUiAction } from '@/lib/chat/codex-native-command-events';
 import { SessionGoalControl } from './session-goal-control';
 import {
   MessageInputAttachmentStrip,
@@ -180,10 +212,49 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const { t } = useI18n();
   const setDraftInput = useChatStore((state) => state.setDraftInput);
   const [inputValue, setInputValue] = useState(() => useChatStore.getState().getDraftInput(sessionId));
+  // Attachment/reference/voice completion can update the local composer after a
+  // terminal launch but before its prefill ACK. Record that intent synchronously
+  // (before React commits the state update) so an older ACK cannot clear it.
+  const setInputValueFromProgrammaticEdit = useCallback((value: SetStateAction<string>) => {
+    recordTerminalDraftEdit(sessionId);
+    setInputValue(value);
+  }, [sessionId]);
   const clearInput = useCallback(() => {
     setInputValue('');
     setDraftInput(sessionId, '');
   }, [sessionId, setDraftInput]);
+
+  useEffect(() => {
+    const applyTerminalLaunchResult = (detail: TerminalLaunchResultDetail) => {
+      if (!detail || detail.sourceSessionId !== sessionId) return;
+      const pendingDraft = consumeTerminalLaunchDraft(detail.terminalId);
+      if (detail.status === 'error') {
+        toast.error(detail.message ?? t('chat.codexSlashTerminalOpenFailed'));
+        return;
+      }
+
+      const draft = useChatStore.getState().getDraftInput(sessionId);
+      if (
+        pendingDraft
+        && shouldClearTerminalLaunchDraft(pendingDraft, draft)
+      ) {
+        setInputValue('');
+        setDraftInput(sessionId, '');
+      }
+      toast.info(t('chat.slashTerminalFallback', { command: detail.commandInput }));
+    };
+    const handleTerminalLaunchResult = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalLaunchResultDetail>).detail;
+      if (!detail || detail.sourceSessionId !== sessionId) return;
+      consumeTerminalLaunchResult(detail.terminalId);
+      applyTerminalLaunchResult(detail);
+    };
+    window.addEventListener(TERMINAL_LAUNCH_RESULT_EVENT, handleTerminalLaunchResult);
+    for (const detail of takeTerminalLaunchResultsForSession(sessionId)) {
+      applyTerminalLaunchResult(detail);
+    }
+    return () => window.removeEventListener(TERMINAL_LAUNCH_RESULT_EVENT, handleTerminalLaunchResult);
+  }, [sessionId, setDraftInput, t]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -236,7 +307,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     refreshSessionGoal,
     clearSessionGoal,
   } = useWebSocket();
-  const { resumeAndSend } = useSessionResume();
+  const { resumeAndSend, isResuming } = useSessionResume();
+  const { createSession, renameSession } = useSessionCrud();
   const enterKeyBehavior = useSettingsStore(
     (state) => state.settings.enterKeyBehavior ?? 'send'
   );
@@ -246,6 +318,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const fontSize = useSettingsStore((state) => state.settings.fontSize);
   const sttEngine = useSettingsStore((state) => state.settings.sttEngine);
   const settings = useSettingsStore((state) => state.settings);
+  const serverPlatform = useSettingsStore((state) => state.serverHostInfo?.platform ?? null);
   const agentEnvironment = settings.agentEnvironment;
   const updateSettings = useSettingsStore((state) => state.updateSettings);
   const isElectron = useElectronPlatform() !== null;
@@ -269,6 +342,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     sessionProviderId || undefined,
     sessionIsRunning,
     sessionProviderId !== 'codex' || codexFastTier !== null,
+    serverPlatform,
+    agentEnvironment,
   );
   const filePicker = useFilePicker(sessionId);
   const goalEditSnapshotRef = useRef<SessionGoal | null>(null);
@@ -294,7 +369,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
           ? `${CODEX_GOAL_COMMAND} `
         : `${CODEX_GOAL_COMMAND} ${inputValue.trimStart()}`;
 
-    setInputValue(nextValue);
+    setInputValueFromProgrammaticEdit(nextValue);
     setDraftInput(sessionId, nextValue);
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
@@ -302,7 +377,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       textarea.focus();
       textarea.setSelectionRange(nextValue.length, nextValue.length);
     });
-  }, [filePicker, inputValue, sessionProviderId, sessionId, setDraftInput, skillPicker]);
+  }, [filePicker, inputValue, sessionProviderId, sessionId, setDraftInput, setInputValueFromProgrammaticEdit, skillPicker]);
 
   const beginGoalEdit = useCallback((): boolean => {
     if (sessionProviderId !== 'codex') return false;
@@ -318,7 +393,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
     const prefix = `${CODEX_GOAL_COMMAND} `;
     const nextValue = `${prefix}${sessionGoal.objective}`;
-    setInputValue(nextValue);
+    setInputValueFromProgrammaticEdit(nextValue);
     setDraftInput(sessionId, nextValue);
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
@@ -327,7 +402,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       textarea.setSelectionRange(prefix.length, nextValue.length);
     });
     return true;
-  }, [filePicker, sessionGoal, sessionId, sessionProviderId, setDraftInput, skillPicker, t]);
+  }, [filePicker, sessionGoal, sessionId, sessionProviderId, setDraftInput, setInputValueFromProgrammaticEdit, skillPicker, t]);
 
   useEffect(() => {
     const handleGoalCommandInsert = (event: Event) => {
@@ -354,7 +429,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const getInputValue = useCallback(() => inputValue, [inputValue]);
   const sessionRefs = useSessionRefs({
     textareaRef,
-    setInputValue,
+    setInputValue: setInputValueFromProgrammaticEdit,
     getInputValue,
   });
   const {
@@ -386,13 +461,13 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     syncAttachmentsWithText,
   } = useMessageInputAttachments({
     textareaRef,
-    setInputValue,
+    setInputValue: setInputValueFromProgrammaticEdit,
     t,
   });
   const MAX_CHARS = 10000;
   const MAX_ROWS = 5;
 
-  const isInputUnavailable = isReadOnly || isDisabled;
+  const isInputUnavailable = isReadOnly || isDisabled || isResuming;
   const isGenerating = sessionStatus === 'running' && (
     isTurnInFlight || hasActiveAssistantText
   );
@@ -445,16 +520,16 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       const suffix = currentValue.slice(cursorPos);
       const separator = prefix.length > 0 && !prefix.endsWith(' ') ? ' ' : '';
       const newValue = prefix + separator + text + suffix;
-      setInputValue(newValue);
+      setInputValueFromProgrammaticEdit(newValue);
       requestAnimationFrame(() => {
         const newPos = cursorPos + separator.length + text.length;
         textarea.setSelectionRange(newPos, newPos);
         textarea.focus();
       });
     } else {
-      setInputValue((prev) => (prev ? prev + ' ' + text : text));
+      setInputValueFromProgrammaticEdit((prev) => (prev ? prev + ' ' + text : text));
     }
-  }, []);
+  }, [setInputValueFromProgrammaticEdit]);
 
   const voiceInput = useVoiceInput({ onTranscribed: handleVoiceTranscribed });
   const {
@@ -518,7 +593,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     }
 
     if (base !== inputValue) {
-      setInputValue(base);
+      setInputValueFromProgrammaticEdit(base);
     }
 
     prevPendingRef.current = voicePendingInterim;
@@ -618,6 +693,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   }, [canUseVoice, voiceKey, sessionId, toggleVoiceRecording]);
   const handleInputChange = useCallback(
     (value: string) => {
+      recordTerminalDraftEdit(sessionId);
       setInputValue(value);
       setDraftInput(sessionId, value);
       skillPicker.onInputChange(value);
@@ -642,7 +718,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const insertWorkspaceFileReference = useCallback((filePath: string) => {
     const textarea = textareaRef.current;
     if (!textarea) {
-      setInputValue((prev) => {
+      setInputValueFromProgrammaticEdit((prev) => {
         const { nextValue } = insertWorkspaceFileReferenceAtCursor(prev, prev.length, filePath);
         setDraftInput(sessionId, nextValue);
         return nextValue;
@@ -659,14 +735,14 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       filePath,
     );
 
-    setInputValue(nextValue);
+    setInputValueFromProgrammaticEdit(nextValue);
     setDraftInput(sessionId, nextValue);
     filePicker.close();
     requestAnimationFrame(() => {
       textarea.setSelectionRange(nextCursorPos, nextCursorPos);
       textarea.focus();
     });
-  }, [filePicker, sessionId, setDraftInput]);
+  }, [filePicker, sessionId, setDraftInput, setInputValueFromProgrammaticEdit]);
 
   const handleWrapperDragEnter = useCallback((e: React.DragEvent) => {
     if (isWorkspaceFileDrag(e)) {
@@ -971,6 +1047,64 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     t,
   ]);
 
+  const openTerminalFallback = useCallback((
+    command: string,
+    provider: 'claude-code' | 'codex' = sessionProviderId === 'codex' ? 'codex' : 'claude-code',
+    locksSourceSession = false,
+  ): boolean => {
+    const panelStore = usePanelStore.getState();
+    const activeTab = selectActiveTab(panelStore);
+    const activePanelId = activeTab?.activePanelId;
+    const activePanel = activePanelId ? activeTab?.panels[activePanelId] : undefined;
+    if (!activePanelId || !activePanel) return false;
+    const terminalId = uuidv4();
+    registerTerminalLaunchDraft(
+      terminalId,
+      sessionId,
+      useChatStore.getState().getDraftInput(sessionId),
+    );
+    setPendingTerminalLaunch(terminalId, {
+      intent: {
+        kind: provider === 'codex' ? 'codex-slash' : 'claude-slash',
+        commandInput: command,
+      },
+      sourceSessionId: sessionId,
+      locksSourceSession,
+    });
+    if (locksSourceSession) {
+      markClientTerminalHandoff(terminalId, sessionId);
+    }
+    let newPanelId: string | null;
+    if (activePanel.sessionId === null && !activePanel.terminalId) {
+      // Reuse a terminal panel that the user just closed, but keep the command
+      // tied to this composer instead of inheriting the empty panel's null session.
+      panelStore.assignTerminal(activePanelId, terminalId, sessionId);
+      newPanelId = activePanelId;
+    } else {
+      // The terminal panel becomes active after launch. If another slash command
+      // is entered from the still-visible composer, split from its session panel
+      // so the server always receives the correct session id.
+      const sourcePanelId = Object.values(activeTab.panels)
+        .find((panel) => panel.sessionId === sessionId)?.id ?? activePanelId;
+      newPanelId = panelStore.createTerminalPanel(sourcePanelId, terminalId, 'vertical');
+    }
+    if (!newPanelId) {
+      takePendingTerminalLaunch(terminalId);
+      consumeTerminalLaunchDraft(terminalId);
+      clearClientTerminalHandoff(terminalId);
+      return false;
+    }
+    if (provider === 'claude-code') {
+      setInputValue('');
+      setDraftInput(sessionId, '');
+    }
+    skillPicker.close();
+    // confirm()이 terminalFallback 항목을 selectedSkill로 세팅했을 수 있으므로 정리한다.
+    // 안 하면 다음 전송에서 그 명령 이름이 실제 스킬로 잘못 전송된다.
+    skillPicker.clearSkill();
+    return true;
+  }, [sessionId, sessionProviderId, setDraftInput, skillPicker]);
+
   const dispatchCodexSlashCommand = useCallback((
     commandInput: string,
     source: 'send' | 'picker' = 'send',
@@ -979,14 +1113,42 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
     const match = classifyCodexSlashCommand(commandInput);
     if (!match) return false;
-    if (match.support === 'unsupported') {
-      goalEditSnapshotRef.current = null;
+    goalEditSnapshotRef.current = null;
+
+    if (!isCodexSlashCommandAvailable(match.canonicalName, {
+      platform: serverPlatform,
+      agentEnvironment,
+    })) {
+      toast.info(t('chat.codexSlashPlatformUnavailable', { command: `/${match.name}` }));
+      return true;
+    }
+    if (match.support === 'hidden') {
       toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
+      return true;
+    }
+    if (match.support.startsWith('terminal-')) {
+      if (match.args
+        && (match.terminalMode === 'fork-current' || match.terminalMode === 'resume-picker')) {
+        toast.info(t('chat.codexSlashUnsupported', { command: commandInput }));
+        return true;
+      }
+      const locksSourceSession = match.support === 'terminal-handoff'
+        || match.terminalMode === 'fork-current'
+        || match.terminalMode === 'resume-picker';
+      if (locksSourceSession
+        && (isGenerating || activePrompt || hasClientTerminalHandoff(sessionId))) {
+        toast.info(t('chat.codexSlashTerminalBusy', { command: `/${match.name}` }));
+        return true;
+      }
+      if (!openTerminalFallback(commandInput, 'codex', locksSourceSession)) {
+        toast.error(t('chat.codexSlashTerminalOpenFailed'));
+      }
+      // Official commands never fall through into a normal Codex turn, even
+      // when the local panel could not be created.
       return true;
     }
 
     if (match.nativeCommand === 'fast') {
-      goalEditSnapshotRef.current = null;
       if (match.args) {
         toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
         return true;
@@ -994,7 +1156,6 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return executeCodexFastCommand();
     }
     if (match.nativeCommand === 'compact') {
-      goalEditSnapshotRef.current = null;
       if (match.args) {
         toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
         return true;
@@ -1006,46 +1167,136 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         insertGoalCommand();
         return true;
       }
-      const normalizedInput = match.args
+      return executeCodexGoalCommand(match.args
         ? `${CODEX_GOAL_COMMAND} ${match.args}`
-        : CODEX_GOAL_COMMAND;
-      return executeCodexGoalCommand(normalizedInput);
+        : CODEX_GOAL_COMMAND);
     }
 
-    return false;
+    if (match.nativeCommand === 'model' || match.nativeCommand === 'permissions') {
+      dispatchCodexNativeUiAction(sessionId, match.nativeCommand);
+      clearInput();
+      skillPicker.close();
+      skillPicker.clearSkill();
+      return true;
+    } else if (match.nativeCommand === 'plan') {
+      dispatchCodexNativeUiAction(sessionId, 'plan');
+      if (match.args) {
+        setInputValueFromProgrammaticEdit(match.args);
+        setDraftInput(sessionId, match.args);
+      } else {
+        clearInput();
+      }
+    } else if (match.nativeCommand === 'skills') {
+      setInputValueFromProgrammaticEdit('/');
+      setDraftInput(sessionId, '/');
+      skillPicker.openSkillsOnly();
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return true;
+    } else if (match.nativeCommand === 'mention') {
+      setInputValueFromProgrammaticEdit('@');
+      setDraftInput(sessionId, '@');
+      filePicker.onInputChange('@', 1);
+    } else if (match.nativeCommand === 'diff') {
+      useGitStore.getState().open();
+      clearInput();
+    } else if (match.nativeCommand === 'copy') {
+      const latest = [...(useChatStore.getState().messages.get(sessionId) ?? [])]
+        .reverse()
+        .find((message) => message.type === 'text' && message.role === 'assistant');
+      const text = latest?.type === 'text'
+        ? typeof latest.content === 'string'
+          ? latest.content
+          : latest.content
+              .filter((block) => block.type === 'text')
+              .map((block) => block.text)
+              .join('\n')
+        : '';
+      if (text && navigator.clipboard) {
+        void navigator.clipboard.writeText(text)
+          .then(() => toast.success(t('chat.codexSlashCopied')))
+          .catch(() => toast.error(t('chat.codexSlashCopyFailed')));
+      } else {
+        toast.info(t('chat.codexSlashNothingToCopy'));
+      }
+      clearInput();
+    } else if (match.nativeCommand === 'status') {
+      toast.info(t('chat.codexSlashStatus', {
+        model: session?.model ?? selectedModel ?? '-',
+        status: session?.status ?? '-',
+        cwd: session?.workDir ?? '-',
+      }));
+      clearInput();
+    } else if (match.nativeCommand === 'usage') {
+      const usage = useUsageStore.getState().sessionUsage.get(sessionId);
+      const statusUsage = buildStatusDisplayModel({
+        providerId: 'codex',
+        usage,
+        configuredModel: session?.model ?? selectedModel,
+      }).usage;
+      toast.info(statusUsage?.hasData
+        ? t('chat.codexSlashUsage', {
+            current: statusUsage.currentUsage,
+            window: statusUsage.hasContextWindow ? statusUsage.contextWindow : '-',
+            percent: statusUsage.usedPercent,
+          })
+        : t('chat.codexSlashUsageUnavailable'));
+      clearInput();
+    } else if (match.nativeCommand === 'rename') {
+      if (match.args) void renameSession(sessionId, match.args);
+      else {
+        clearInput();
+        skillPicker.close();
+        skillPicker.clearSkill();
+        dispatchCodexNativeUiAction(sessionId, 'rename');
+        return true;
+      }
+      clearInput();
+    } else if (match.nativeCommand === 'archive') {
+      if (session?.taskId) {
+        void useTaskStore.getState().toggleTaskArchive(session.taskId, true);
+      } else {
+        useSessionStore.getState().toggleArchive(sessionId, true);
+      }
+      clearInput();
+    } else if (match.nativeCommand === 'new' || match.nativeCommand === 'clear') {
+      void createSession({
+        providerId: 'codex',
+        workDir: session?.workDir,
+        parentProjectId: session?.projectDir,
+        collectionId: session?.collectionId ?? undefined,
+      });
+      clearInput();
+    } else {
+      return false;
+    }
+
+    skillPicker.close();
+    skillPicker.clearSkill();
+    requestAnimationFrame(() => textareaRef.current?.focus());
+    return true;
   }, [
+    activePrompt,
+    agentEnvironment,
+    clearInput,
+    createSession,
     executeCodexCompactCommand,
     executeCodexFastCommand,
     executeCodexGoalCommand,
+    filePicker,
     insertGoalCommand,
+    isGenerating,
+    openTerminalFallback,
+    renameSession,
+    selectedModel,
+    serverPlatform,
+    session,
+    sessionId,
     sessionProviderId,
+    setDraftInput,
+    setInputValueFromProgrammaticEdit,
+    skillPicker,
     t,
   ]);
-
-  // 미지원 슬래시 명령(Claude TUI 전용 — 헤드리스에서 동작 불가)을 같은 세션 cwd로
-  // 터미널을 자동 분할해 claude를 띄우고 명령을 프리필한다. 자동 실행하지 않으므로
-  // 사용자가 내용을 확인한 뒤 Enter를 누른다. 패널 생성에 성공하면 true.
-  const openTerminalFallback = useCallback((command: string): boolean => {
-    const panelStore = usePanelStore.getState();
-    const activePanelId = selectActiveTab(panelStore)?.activePanelId;
-    if (!activePanelId) return false;
-    const terminalId = uuidv4();
-    setPendingTerminalLaunch(terminalId, { launchCommand: 'claude', prefillInput: command });
-    const newPanelId = panelStore.createTerminalPanel(activePanelId, terminalId, 'vertical');
-    if (!newPanelId) {
-      takePendingTerminalLaunch(terminalId);
-      return false;
-    }
-    // TODO(i18n): chat.slashTerminalFallback 키로 추출
-    toast.info(`"${command}" 명령은 터미널에서 실행됩니다. 내용을 확인한 뒤 Enter를 누르세요.`);
-    setInputValue('');
-    setDraftInput(sessionId, '');
-    skillPicker.close();
-    // confirm()이 terminalFallback 항목을 selectedSkill로 세팅했을 수 있으므로 정리한다.
-    // 안 하면 다음 전송에서 그 명령 이름이 실제 스킬로 잘못 전송된다.
-    skillPicker.clearSkill();
-    return true;
-  }, [sessionId, setDraftInput, skillPicker]);
 
   const handleSend = (sendOptions?: { forceTranslate?: boolean }) => {
     const forceTranslateInput = sendOptions?.forceTranslate === true;
@@ -1096,6 +1347,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     // ordinary `/goal <objective>` is treated as a fresh set operation.
     goalEditSnapshotRef.current = null;
 
+    if (hasClientTerminalHandoff(sessionId)) {
+      toast.info(t('chat.codexTerminalHandoffActive'));
+      return;
+    }
+
     // Use chip-selected skill or fallback to manual /skillname parsing
     const parsed = skillPicker.parseForSend(trimmed);
 
@@ -1131,24 +1387,24 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     });
 
     if (shouldResumeSession && session && 'projectDir' in session) {
-      const optimisticMessage = {
-        id: `temp-${uuidv4()}`,
-        type: 'text' as const,
-        role: 'user' as const,
-        content: displayContent,
-        timestamp: new Date().toISOString(),
-      };
-      addMessage(sessionId, optimisticMessage);
-
-      addMessage(sessionId, {
-        id: `system-resume-${uuidv4()}`,
-        type: 'text' as const,
-        role: 'system' as const,
-        content: t('chat.resumingSession'),
-        timestamp: new Date().toISOString(),
+      void resumeAndSend(
+        sessionId,
+        session.projectDir,
+        sendContent,
+        skillName,
+        displayContent,
+        { forceTranslateInput },
+      ).then((didSend) => {
+        if (!didSend) return;
+        clearInput();
+        clearAttachments();
+        clearSessionRefs();
+        skillPicker.clearSkill();
+      }).catch(() => {
+        // Resume failures, including an active terminal handoff, intentionally
+        // preserve the draft and attachments for a retry after the conflict ends.
       });
-
-      resumeAndSend(sessionId, session.projectDir, sendContent, skillName, displayContent, { forceTranslateInput });
+      return;
     } else {
       // First-time send for a session without a live CLI: attach composer defaults
       // so the server can spawn with the picked model / reasoning / permission mode.
@@ -1202,6 +1458,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
   const handleSkillSelect = useCallback(
     (skill: SkillInfo) => {
+      if (sessionProviderId === 'codex' && isReservedCodexSlashCommandName(skill.name)) {
+        dispatchCodexSlashCommand(`/${skill.name}`, 'picker');
+        textareaRef.current?.focus();
+        return;
+      }
       if (skill.terminalFallback) {
         // 피커에서 클릭한 TUI 전용 명령 → 터미널 fallback으로 실행
         openTerminalFallback(`/${skill.name}`);
@@ -1233,7 +1494,13 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       setInputValue('');
       textareaRef.current?.focus();
     },
-    [dispatchCodexSlashCommand, executeClaudeFastCommand, skillPicker, openTerminalFallback],
+    [
+      dispatchCodexSlashCommand,
+      executeClaudeFastCommand,
+      openTerminalFallback,
+      sessionProviderId,
+      skillPicker,
+    ],
   );
 
   const applyFilePick = useCallback(
@@ -1243,7 +1510,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         | null,
     ) => {
       if (!result) return;
-      setInputValue(result.newValue);
+      setInputValueFromProgrammaticEdit(result.newValue);
       setDraftInput(sessionId, result.newValue);
       requestAnimationFrame(() => {
         const ta = textareaRef.current;
@@ -1257,7 +1524,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         }
       });
     },
-    [addSessionRef, sessionId, setDraftInput],
+    [addSessionRef, sessionId, setDraftInput, setInputValueFromProgrammaticEdit],
   );
 
   const handleFilePickerSelect = useCallback(
@@ -1308,7 +1575,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         const confirmedSkill = skillPicker.confirm();
         if (confirmedSkill?.terminalFallback) {
           // 피커에서 고른 TUI 전용 명령(부분 입력 후 화살표로 선택한 경우 포함) → 터미널 fallback
-          openTerminalFallback(`/${confirmedSkill.name}`);
+          if (sessionProviderId === 'codex') {
+            dispatchCodexSlashCommand(`/${confirmedSkill.name}`, 'picker');
+          } else {
+            openTerminalFallback(`/${confirmedSkill.name}`);
+          }
           return;
         }
         if (confirmedSkill && isCodexFastCommandSkill(confirmedSkill)) {
@@ -1543,6 +1814,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
             isOpen={skillPicker.isOpen}
             isLoading={skillPicker.isLoading}
             isInactive={skillPicker.isInactive}
+            isEmpty={skillPicker.isEmpty}
             skills={skillPicker.filteredSkills}
             selectedIndex={skillPicker.selectedIndex}
             onSelect={handleSkillSelect}

@@ -382,6 +382,17 @@ export interface I18nMessages {
     inputPrompt: string;
     resumingSession: string;
     codexSlashUnsupported: string;
+    slashTerminalFallback: string;
+    codexSlashPlatformUnavailable: string;
+    codexSlashTerminalBusy: string;
+    codexTerminalHandoffActive: string;
+    codexSlashTerminalOpenFailed: string;
+    codexSlashCopied: string;
+    codexSlashCopyFailed: string;
+    codexSlashNothingToCopy: string;
+    codexSlashStatus: string;
+    codexSlashUsage: string;
+    codexSlashUsageUnavailable: string;
     codexFastUnavailable: string;
     codexFastEnabled: string;
     codexFastDisabled: string;
@@ -439,6 +450,7 @@ export interface I18nMessages {
     referencesLoading: string;
     noReferenceMatches: string;
     skillPickerInactive: string;
+    skillPickerEmpty: string;
     skillsLoading: string;
     sessionStopped: string;
     sessionDefaultTitle: string;

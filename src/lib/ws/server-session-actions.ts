@@ -19,6 +19,7 @@ import { buildUserMessageDisplayContent } from '../chat/build-user-message-displ
 import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh';
 import { SettingsManager } from '../settings/manager';
 import { translateMessageText } from '../session/message-translator';
+import { isSessionHandedOffToTerminal } from '../terminal/terminal-handoff-lock';
 import type {
   ClientMessage,
   ContentBlock,
@@ -653,6 +654,15 @@ async function ensureSessionProcess({
   sendToUser: WsSendToUser;
   spawnConfig?: SessionSpawnConfig;
 }): Promise<boolean> {
+  if (isSessionHandedOffToTerminal(sessionId)) {
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'session_handed_off_to_terminal',
+      message: 'This Codex session is currently controlled by a terminal.',
+    });
+    return false;
+  }
   if (processManager.getProcess(sessionId)?.status === 'running') {
     return true;
   }
@@ -756,6 +766,15 @@ export async function resumeSessionFromWebSocket({
   sessionId,
   userId,
 }: ResumeSessionActionOptions): Promise<void> {
+  if (isSessionHandedOffToTerminal(sessionId)) {
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'session_handed_off_to_terminal',
+      message: 'Close the Codex terminal before resuming this session in Tessera.',
+    });
+    return;
+  }
   try {
     const sessionRecord = dbSessions.getSession(sessionId);
     const result = await sessionOrchestrator.resumeSession(userId, sessionId, {

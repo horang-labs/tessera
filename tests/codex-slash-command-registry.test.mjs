@@ -44,12 +44,13 @@ test('aliases and dynamic fast resolve before skills while unknown slash text re
   assert.equal(registry.classifyCodexSlashCommand('/foo hello'), null);
 });
 
-test('classification separates recognition from Tessera native support', () => {
+test('classification separates native, terminal, and hidden routes', () => {
   assert.deepEqual(registry.classifyCodexSlashCommand('/fork now'), {
     name: 'fork',
     canonicalName: 'fork',
     args: 'now',
-    support: 'unsupported',
+    support: 'terminal-direct',
+    terminalMode: 'fork-current',
   });
   assert.deepEqual(registry.classifyCodexSlashCommand('/fast'), {
     name: 'fast',
@@ -59,6 +60,39 @@ test('classification separates recognition from Tessera native support', () => {
     nativeCommand: 'fast',
   });
   assert.equal(registry.classifyCodexSlashCommand('/goooal edit')?.nativeCommand, 'goal');
+  assert.equal(registry.classifyCodexSlashCommand('/review')?.support, 'terminal-handoff');
+  assert.equal(registry.classifyCodexSlashCommand('/logout')?.support, 'hidden');
+  assert.equal(registry.classifyCodexSlashCommand('/pet')?.support, 'terminal-direct');
+  assert.equal(registry.classifyCodexSlashCommand('/clean')?.support, 'hidden');
+});
+
+test('canonical commands are fully partitioned and picker hides unsafe/platform routes', () => {
+  assert.deepEqual(registry.CODEX_0_144_1_ROUTE_COUNTS, {
+    native: 15,
+    terminalDirect: 19,
+    terminalHandoff: 10,
+    hidden: 11,
+  });
+  assert.equal(
+    Object.values(registry.CODEX_0_144_1_ROUTE_COUNTS).reduce((sum, value) => sum + value, 0),
+    55,
+  );
+  const macPicker = registry.getCodexSlashCommandsForPicker({
+    platform: 'darwin',
+    agentEnvironment: 'native',
+  });
+  assert.equal(macPicker.length, 40, 'compact/goal are separate built-ins and Windows commands are gated');
+  assert.ok(macPicker.some((item) => item.name === 'model' && item.support === 'native'));
+  assert.ok(macPicker.some((item) => item.name === 'mcp' && item.support === 'terminal-direct'));
+  assert.ok(macPicker.some((item) => item.name === 'app' && item.support === 'terminal-handoff'));
+  assert.ok(!macPicker.some((item) => item.name === 'delete'));
+  assert.ok(!macPicker.some((item) => item.name === 'setup-default-sandbox'));
+  const windowsPicker = registry.getCodexSlashCommandsForPicker({
+    platform: 'win32',
+    agentEnvironment: 'native',
+  });
+  assert.equal(windowsPicker.length, 42);
+  assert.ok(windowsPicker.some((item) => item.name === 'setup-default-sandbox'));
 });
 
 test('composer and server reserve official commands before skills, translation, history, or turns', () => {
@@ -78,4 +112,13 @@ test('composer and server reserve official commands before skills, translation, 
   assert.ok(guardIndex < serverActionsSource.indexOf('ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig })'));
   assert.ok(guardIndex < serverActionsSource.indexOf('translateOutgoingContent(content, userId'));
   assert.ok(guardIndex < serverActionsSource.indexOf('sessionHistory.recordUserMessage(sessionId, resolvedDisplayContent'));
+});
+
+test('/skills keeps provider results separate from reserved Codex commands and renders empty state', () => {
+  assert.match(
+    skillPickerSource,
+    /skillsOnlyMode\s*\?\s*\(commands \?\? \[\]\)\.filter\(\(command\) => !isReservedCodexSlashCommandName\(command\.name\)\)/,
+  );
+  assert.match(skillPickerSource, /const isEmpty = isOpen && skillsOnlyMode && hasLoadedCommands/);
+  assert.match(messageInputSource, /isEmpty=\{skillPicker\.isEmpty\}/);
 });

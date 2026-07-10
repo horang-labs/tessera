@@ -1,9 +1,9 @@
 /**
  * Codex TUI slash-command namespace pinned to codex-cli 0.144.1.
  *
- * Recognition and Tessera support are intentionally separate: every official
- * name is reserved before skill parsing, while only the commands with native
- * app-server implementations are dispatched by Tessera.
+ * Recognition and execution are intentionally separate. Official names are
+ * reserved before skill/prompt handling, then routed to a Tessera control, a
+ * Codex terminal escape hatch, or an explicit hidden/unsupported result.
  */
 export const CODEX_0_144_1_SLASH_COMMAND_NAMES = [
   'model',
@@ -63,12 +63,38 @@ export const CODEX_0_144_1_SLASH_COMMAND_NAMES = [
   'debug-m-update',
 ] as const;
 
+export type CodexCanonicalSlashCommand = typeof CODEX_0_144_1_SLASH_COMMAND_NAMES[number];
+
 export const CODEX_0_144_1_SLASH_COMMAND_ALIASES = {
   clean: 'stop',
   pet: 'pets',
 } as const;
 
-export type CodexNativeSlashCommand = 'fast' | 'compact' | 'goal';
+export type CodexSlashCommandSupport =
+  | 'native'
+  | 'terminal-direct'
+  | 'terminal-handoff'
+  | 'hidden';
+
+export type CodexNativeSlashCommand =
+  | 'fast'
+  | 'compact'
+  | 'goal'
+  | 'model'
+  | 'permissions'
+  | 'skills'
+  | 'rename'
+  | 'new'
+  | 'archive'
+  | 'plan'
+  | 'copy'
+  | 'diff'
+  | 'mention'
+  | 'status'
+  | 'usage'
+  | 'clear';
+
+export type CodexTerminalMode = 'tui' | 'resume-picker' | 'fork-current';
 
 export interface CodexSlashCommandMatch {
   /** Command name exactly as typed, without the leading slash. */
@@ -77,9 +103,66 @@ export interface CodexSlashCommandMatch {
   canonicalName: string;
   /** Remaining text after the command token. */
   args: string;
-  support: 'native' | 'unsupported';
+  support: CodexSlashCommandSupport;
   nativeCommand?: CodexNativeSlashCommand;
+  terminalMode?: CodexTerminalMode;
 }
+
+export interface CodexSlashCommandAvailability {
+  platform?: string | null;
+  agentEnvironment?: string | null;
+}
+
+export interface CodexSlashCommandPickerItem {
+  name: CodexCanonicalSlashCommand;
+  description: string;
+  support: Exclude<CodexSlashCommandSupport, 'hidden'>;
+}
+
+const NATIVE_COMMANDS = new Set<CodexCanonicalSlashCommand>([
+  'model', 'permissions', 'skills', 'rename', 'new', 'archive', 'compact',
+  'plan', 'goal', 'copy', 'diff', 'mention', 'status', 'usage', 'clear',
+]);
+
+const TERMINAL_DIRECT_COMMANDS = new Set<CodexCanonicalSlashCommand>([
+  'ide', 'keymap', 'vim', 'setup-default-sandbox', 'sandbox-add-read-dir',
+  'experimental', 'import', 'hooks', 'resume', 'fork', 'init', 'debug-config',
+  'title', 'statusline', 'theme', 'pets', 'mcp', 'plugins', 'apps',
+]);
+
+const TERMINAL_HANDOFF_COMMANDS = new Set<CodexCanonicalSlashCommand>([
+  'memories', 'app', 'agent', 'side', 'btw', 'raw', 'feedback', 'subagents',
+  'review', 'personality',
+]);
+
+const HIDDEN_COMMANDS = new Set<CodexCanonicalSlashCommand>([
+  'approve', 'delete', 'logout', 'quit', 'exit', 'rollout', 'ps', 'stop',
+  'test-approval', 'debug-m-drop', 'debug-m-update',
+]);
+
+const WINDOWS_NATIVE_ONLY_COMMANDS = new Set<CodexCanonicalSlashCommand>([
+  'setup-default-sandbox', 'sandbox-add-read-dir',
+]);
+
+const COMMAND_DESCRIPTIONS: Partial<Record<CodexCanonicalSlashCommand, string>> = {
+  model: 'Choose the model used by this Tessera session',
+  permissions: 'Open Tessera access controls',
+  skills: 'Browse skills available to this Codex session',
+  rename: 'Rename this Tessera session',
+  new: 'Start a new Tessera session in this project',
+  archive: 'Archive this Tessera session',
+  plan: 'Switch this Tessera session to plan mode',
+  copy: 'Copy the latest assistant response',
+  diff: 'Open the Tessera Git diff panel',
+  mention: 'Open the workspace reference picker',
+  status: 'Show the current Tessera session status',
+  usage: 'Show the current Tessera context and usage',
+  clear: 'Start a new session without deleting this history',
+  resume: 'Continue a saved task in a Codex terminal',
+  fork: 'Fork this Codex thread in a terminal',
+  review: 'Hand this thread off to Codex review in a terminal',
+  personality: 'Choose a Codex personality in a terminal',
+};
 
 const OFFICIAL_COMMAND_NAMES = new Set<string>(CODEX_0_144_1_SLASH_COMMAND_NAMES);
 const OFFICIAL_COMMAND_ALIASES = new Map<string, string>(
@@ -91,6 +174,20 @@ function isGoalAlias(name: string): boolean {
     ? name.slice(1, -2)
     : '';
   return repeatedOs.length > 0 && /^o+$/.test(repeatedOs);
+}
+
+function commandSupport(command: CodexCanonicalSlashCommand): CodexSlashCommandSupport {
+  if (NATIVE_COMMANDS.has(command)) return 'native';
+  if (TERMINAL_DIRECT_COMMANDS.has(command)) return 'terminal-direct';
+  if (TERMINAL_HANDOFF_COMMANDS.has(command)) return 'terminal-handoff';
+  return 'hidden';
+}
+
+function terminalMode(command: CodexCanonicalSlashCommand): CodexTerminalMode | undefined {
+  if (command === 'resume') return 'resume-picker';
+  if (command === 'fork') return 'fork-current';
+  if (commandSupport(command).startsWith('terminal-')) return 'tui';
+  return undefined;
 }
 
 export function resolveCodexSlashCommandName(name: string): string | null {
@@ -105,6 +202,31 @@ export function isReservedCodexSlashCommandName(name: string): boolean {
   return resolveCodexSlashCommandName(name) !== null;
 }
 
+export function isCodexSlashCommandAvailable(
+  canonicalName: string,
+  availability: CodexSlashCommandAvailability = {},
+): boolean {
+  if (!WINDOWS_NATIVE_ONLY_COMMANDS.has(canonicalName as CodexCanonicalSlashCommand)) {
+    return true;
+  }
+  return availability.platform === 'win32' && availability.agentEnvironment === 'native';
+}
+
+export function getCodexSlashCommandsForPicker(
+  availability: CodexSlashCommandAvailability = {},
+): CodexSlashCommandPickerItem[] {
+  return CODEX_0_144_1_SLASH_COMMAND_NAMES.flatMap((name) => {
+    const support = commandSupport(name);
+    if (support === 'hidden' || name === 'compact' || name === 'goal') return [];
+    if (!isCodexSlashCommandAvailable(name, availability)) return [];
+    return [{
+      name,
+      description: COMMAND_DESCRIPTIONS[name] ?? `Run /${name} in ${support === 'native' ? 'Tessera' : 'a Codex terminal'}`,
+      support,
+    }];
+  });
+}
+
 export function classifyCodexSlashCommand(input: string): CodexSlashCommandMatch | null {
   const trimmedStart = input.trimStart();
   if (!trimmedStart.startsWith('/')) return null;
@@ -116,20 +238,25 @@ export function classifyCodexSlashCommand(input: string): CodexSlashCommandMatch
   if (!canonicalName) return null;
 
   const args = tokenEnd === -1 ? '' : trimmedStart.slice(tokenEnd).trim();
-  if (canonicalName === 'fast' || canonicalName === 'compact' || canonicalName === 'goal') {
-    return {
-      name,
-      canonicalName,
-      args,
-      support: 'native',
-      nativeCommand: canonicalName,
-    };
+  if (canonicalName === 'fast') {
+    return { name, canonicalName, args, support: 'native', nativeCommand: 'fast' };
   }
 
+  const canonicalCommand = canonicalName as CodexCanonicalSlashCommand;
+  const support = commandSupport(canonicalCommand);
   return {
     name,
     canonicalName,
     args,
-    support: 'unsupported',
+    support,
+    ...(support === 'native' ? { nativeCommand: canonicalCommand as CodexNativeSlashCommand } : {}),
+    ...(support.startsWith('terminal-') ? { terminalMode: terminalMode(canonicalCommand) } : {}),
   };
 }
+
+export const CODEX_0_144_1_ROUTE_COUNTS = {
+  native: NATIVE_COMMANDS.size,
+  terminalDirect: TERMINAL_DIRECT_COMMANDS.size,
+  terminalHandoff: TERMINAL_HANDOFF_COMMANDS.size,
+  hidden: HIDDEN_COMMANDS.size,
+} as const;

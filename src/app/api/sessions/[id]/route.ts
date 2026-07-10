@@ -4,6 +4,7 @@ import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { getSession } from '@/lib/db/sessions';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
+import { isTerminalHandoffConflictError } from '@/lib/terminal/terminal-handoff-lock';
 
 /**
  * DELETE /api/sessions/[id]
@@ -52,6 +53,13 @@ export async function DELETE(
       sessionId,
       error: err,
       }, 'Delete session API error');
+
+    if (isTerminalHandoffConflictError(err)) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: 409 },
+      );
+    }
 
     // BR-DEL-001: Permission denied or not found
     if (err.message.includes('not found') || err.message.includes('permission denied')) {

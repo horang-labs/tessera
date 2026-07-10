@@ -135,7 +135,7 @@ export function useSessionResume() {
           sessionStore.setActiveSession(sessionId);
           sessionStore.markSessionReadOnly(sessionId, true);
           toast.warning(i18n.t('notifications.sessionReadOnlyWarning'));
-          return;
+          return false;
         }
 
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
@@ -157,6 +157,7 @@ export function useSessionResume() {
         }
 
         toast.success(i18n.t('notifications.sessionResumed'));
+        return true;
       } catch (err) {
         toast.error(i18n.t('errors.sessionResumeFailed'));
         console.error('Resume and send error:', err);

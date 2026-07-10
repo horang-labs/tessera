@@ -25,6 +25,7 @@ import { createGitRunner } from '../worktrees/git-runner';
 import { isManagedWorktreePath, removeManagedWorktree } from '../worktrees/managed';
 import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import { clearCachedSessionPr } from '../github/session-pr-sync';
+import { withTesseraSessionOperation } from '../terminal/terminal-handoff-lock';
 
 const MAX_SESSIONS = 20;
 
@@ -96,12 +97,14 @@ export class SessionOrchestrator {
     sessionId: string,
     options: SessionResumeOptions = {}
   ): Promise<SessionResumeResult> {
-    return resumeSessionWithLifecycle({
-      options,
-      processManager: this.processManager,
-      sessionId,
-      userId,
-    });
+    return withTesseraSessionOperation(sessionId, () =>
+      resumeSessionWithLifecycle({
+        options,
+        processManager: this.processManager,
+        sessionId,
+        userId,
+      })
+    );
   }
 
   /**
@@ -132,60 +135,62 @@ export class SessionOrchestrator {
    * @throws Error if session not found or permission denied
    */
   async deleteSession(userId: string, sessionId: string): Promise<void> {
-    try {
-      const session = dbSessions.getSession(sessionId);
-      if (!session) {
-        throw new Error('Session not found');
-      }
-
-      // Kill process if running
-      const activeProcesses = this.processManager.getUserProcesses(userId);
-      const isRunning = activeProcesses.some((p) => p.sessionId === sessionId);
-
-      if (isRunning) {
-        logger.info({ userId, sessionId }, 'Terminating CLI process before deletion');
-        await this.processManager.closeSession(sessionId);
-      }
-
-      const sourceProjectDir =
-        (session.project_id ? dbProjects.getProject(session.project_id)?.decoded_path : undefined)
-        ?? (path.isAbsolute(session.project_id) ? session.project_id : null);
-
-      if (
-        session.worktree_branch &&
-        session.work_dir &&
-        !session.worktree_deleted_at &&
-        sourceProjectDir &&
-        (session.worktree_managed === 1 || isManagedWorktreePath(session.work_dir))
-      ) {
-        // Only remove the physical worktree if no other sessions share the same work_dir
-        const otherCount = dbSessions.countOtherSessionsByWorkDir(session.work_dir, sessionId);
-        if (otherCount === 0) {
-          const runGit = createGitRunner(await getAgentEnvironment(userId));
-          await removeManagedWorktree(sourceProjectDir, session.work_dir, runGit);
-          logger.info({ userId, sessionId, worktreePath: session.work_dir }, 'Managed worktree removed');
-        } else {
-          logger.info(
-            { userId, sessionId, worktreePath: session.work_dir, otherSessionCount: otherCount },
-            'Skipped worktree removal — other sessions still reference it'
-          );
+    return withTesseraSessionOperation(sessionId, async () => {
+      try {
+        const session = dbSessions.getSession(sessionId);
+        if (!session) {
+          throw new Error('Session not found');
         }
+
+        // Kill process if running
+        const activeProcesses = this.processManager.getUserProcesses(userId);
+        const isRunning = activeProcesses.some((p) => p.sessionId === sessionId);
+
+        if (isRunning) {
+          logger.info({ userId, sessionId }, 'Terminating CLI process before deletion');
+          await this.processManager.closeSession(sessionId);
+        }
+
+        const sourceProjectDir =
+          (session.project_id ? dbProjects.getProject(session.project_id)?.decoded_path : undefined)
+          ?? (path.isAbsolute(session.project_id) ? session.project_id : null);
+
+        if (
+          session.worktree_branch &&
+          session.work_dir &&
+          !session.worktree_deleted_at &&
+          sourceProjectDir &&
+          (session.worktree_managed === 1 || isManagedWorktreePath(session.work_dir))
+        ) {
+          // Only remove the physical worktree if no other sessions share the same work_dir
+          const otherCount = dbSessions.countOtherSessionsByWorkDir(session.work_dir, sessionId);
+          if (otherCount === 0) {
+            const runGit = createGitRunner(await getAgentEnvironment(userId));
+            await removeManagedWorktree(sourceProjectDir, session.work_dir, runGit);
+            logger.info({ userId, sessionId, worktreePath: session.work_dir }, 'Managed worktree removed');
+          } else {
+            logger.info(
+              { userId, sessionId, worktreePath: session.work_dir, otherSessionCount: otherCount },
+              'Skipped worktree removal — other sessions still reference it'
+            );
+          }
+        }
+        await sessionHistory.deleteSession(sessionId);
+
+        dbSessions.deleteSession(sessionId);
+        clearCachedSessionPr(sessionId);
+
+        logger.info({ userId, sessionId }, 'Session deleted successfully');
+      } catch (err) {
+        logger.error({
+          userId,
+          sessionId,
+          error: err,
+          }, 'Failed to delete session');
+
+        throw err;
       }
-      await sessionHistory.deleteSession(sessionId);
-
-      dbSessions.deleteSession(sessionId);
-      clearCachedSessionPr(sessionId);
-
-      logger.info({ userId, sessionId }, 'Session deleted successfully');
-    } catch (err) {
-      logger.error({
-        userId,
-        sessionId,
-        error: err,
-        }, 'Failed to delete session');
-
-      throw err;
-    }
+    });
   }
 
   /**

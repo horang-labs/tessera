@@ -41,6 +41,10 @@ import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { UnifiedSession } from '@/types/chat';
 import {
+  CODEX_NATIVE_COMMAND_EVENT,
+  type CodexNativeCommandEventDetail,
+} from '@/lib/chat/codex-native-command-events';
+import {
   ComposerModelMenu,
   ComposerReadonlyReasoningBadge,
   ComposerReasoningEffortMenu,
@@ -527,6 +531,7 @@ function ComposerSessionControlsInner({
   const [model, setModel] = useState(initialModel);
   const [requestedReasoningEffort, setRequestedReasoningEffort] = useState<string | null>(initialReasoningEffort);
   const [modelOpenRequest, setModelOpenRequest] = useState(0);
+  const [accessOpenRequest, setAccessOpenRequest] = useState(0);
   const [reasoningOpenRequest, setReasoningOpenRequest] = useState(0);
 
   const updateSettings = useSettingsStore((state) => state.updateSettings);
@@ -585,6 +590,28 @@ function ComposerSessionControlsInner({
     applySessionControls(nextSessionMode, accessMode);
     focusSessionInput(sessionId);
   }, [accessMode, applySessionControls, providerIdForSticky, sessionId, sessionMode]);
+
+  const activatePlanMode = useCallback(() => {
+    if (sessionMode === 'plan') {
+      focusSessionInput(sessionId);
+      return;
+    }
+    setSessionMode('plan');
+    applySessionControls('plan', accessMode);
+    focusSessionInput(sessionId);
+  }, [accessMode, applySessionControls, sessionId, sessionMode]);
+
+  useEffect(() => {
+    const handleNativeCommand = (event: Event) => {
+      const detail = (event as CustomEvent<CodexNativeCommandEventDetail>).detail;
+      if (!detail || detail.sessionId !== sessionId) return;
+      if (detail.action === 'model') setModelOpenRequest((value) => value + 1);
+      if (detail.action === 'permissions') setAccessOpenRequest((value) => value + 1);
+      if (detail.action === 'plan') activatePlanMode();
+    };
+    window.addEventListener(CODEX_NATIVE_COMMAND_EVENT, handleNativeCommand);
+    return () => window.removeEventListener(CODEX_NATIVE_COMMAND_EVENT, handleNativeCommand);
+  }, [activatePlanMode, sessionId]);
 
   const handleFastModeToggle = useCallback(() => {
     if (isCodexProvider(providerIdForSticky)) {
@@ -887,6 +914,7 @@ function ComposerSessionControlsInner({
           menuWidth={300}
           disabled={isAccessDisabled}
           title={accessDisabledTitle}
+          openRequest={accessOpenRequest}
         >
           {(close) => (
             <ComposerSessionControlMenu

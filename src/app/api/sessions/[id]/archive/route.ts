@@ -6,6 +6,7 @@ import { pruneExpiredArchivedWorktrees, restoreArchivedChat } from '@/lib/archiv
 import { SettingsManager } from '@/lib/settings/manager';
 import { getSession } from '@/lib/db/sessions';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
+import { isTerminalHandoffConflictError } from '@/lib/terminal/terminal-handoff-lock';
 
 /**
  * PATCH /api/sessions/[id]/archive
@@ -73,10 +74,18 @@ export async function PATCH(
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update archive status';
-    const status = message === 'Session not found' ? 404 : 400;
+    const handoffConflict = isTerminalHandoffConflictError(err);
+    const status = handoffConflict
+      ? 409
+      : message === 'Session not found'
+        ? 404
+        : 400;
     logger.error({ sessionId, error: err }, 'Failed to update archive status');
     return NextResponse.json(
-      { error: message },
+      {
+        error: message,
+        ...(handoffConflict ? { code: err.code } : {}),
+      },
       { status }
     );
   }

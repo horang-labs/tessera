@@ -27,6 +27,7 @@ import {
   routeManagedProcessStdoutLine,
 } from './process-manager-runtime';
 import { gracefulKillProcess } from './process-termination';
+import { isSessionHandedOffToTerminal } from '../terminal/terminal-handoff-lock';
 
 type SessionLifecycle = 'spawned' | 'resumed';
 type ControlResponsePayload =
@@ -199,6 +200,10 @@ export class ProcessManager {
     lifecycle: SessionLifecycle,
   ): Promise<boolean> {
     try {
+      if (isSessionHandedOffToTerminal(sessionId)) {
+        logger.warn({ sessionId, userId }, 'Blocked CLI spawn while session is handed off to terminal');
+        return false;
+      }
       const { process: cliProcess, ok, error } = await provider.spawn(cwd, spawnOptions);
 
       if (!ok) {
@@ -207,6 +212,14 @@ export class ProcessManager {
           userId,
           error: error || undefined,
         }, `CLI process failed to ${lifecycle === 'spawned' ? 'spawn' : 'resume'}`);
+        return false;
+      }
+
+      // A handoff can win while provider.spawn() is awaiting app-server
+      // initialization. Never register the late process beside the TUI owner.
+      if (isSessionHandedOffToTerminal(sessionId)) {
+        await gracefulKillProcess(sessionId, cliProcess);
+        logger.warn({ sessionId, userId }, 'Discarded late CLI spawn after terminal handoff');
         return false;
       }
 
@@ -687,6 +700,10 @@ export class ProcessManager {
     reasoningEffort?: string | null,
     extraSpawnOptions?: Partial<SpawnOptions>,
   ): Promise<string | null> {
+    if (isSessionHandedOffToTerminal(sessionId)) {
+      logger.warn({ sessionId, userId }, 'Blocked session resume while handed off to terminal');
+      return null;
+    }
     await this.replaceExistingProcess(sessionId);
     const cwd = workDir || process.cwd();
     const resumed = await this.spawnAndRegisterSession(
