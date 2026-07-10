@@ -501,6 +501,14 @@ export interface I18nMessages {
       budgetLimited: string;
       complete: string;
     };
+    statusBar: {
+      active: string;
+      paused: string;
+      blocked: string;
+      usageLimited: string;
+      budgetLimited: string;
+      complete: string;
+    };
   };
   notifications: {
     title: string;

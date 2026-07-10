@@ -503,6 +503,14 @@ export const ko: I18nMessages = {
       budgetLimited: '예산 제한',
       complete: '완료',
     },
+    statusBar: {
+      active: 'Goal 진행 중 ({{duration}})',
+      paused: 'Goal 일시정지 (/goal resume)',
+      blocked: 'Goal 차단됨',
+      usageLimited: 'Goal 사용량 제한',
+      budgetLimited: 'Goal 미완료 ({{duration}})',
+      complete: 'Goal 달성 ({{duration}})',
+    },
   },
   notifications: {
     title: '알림',

@@ -501,6 +501,14 @@ export const en: I18nMessages = {
       budgetLimited: 'Budget',
       complete: 'Complete',
     },
+    statusBar: {
+      active: 'Pursuing goal ({{duration}})',
+      paused: 'Goal paused (/goal resume)',
+      blocked: 'Goal blocked',
+      usageLimited: 'Goal usage limited',
+      budgetLimited: 'Goal unmet ({{duration}})',
+      complete: 'Goal achieved ({{duration}})',
+    },
   },
   notifications: {
     title: 'Notifications',

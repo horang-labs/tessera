@@ -501,6 +501,14 @@ export const zh: I18nMessages = {
       budgetLimited: '预算受限',
       complete: '已完成',
     },
+    statusBar: {
+      active: 'Goal 进行中 ({{duration}})',
+      paused: 'Goal 已暂停 (/goal resume)',
+      blocked: 'Goal 已阻止',
+      usageLimited: 'Goal 使用量受限',
+      budgetLimited: 'Goal 未完成 ({{duration}})',
+      complete: 'Goal 已完成 ({{duration}})',
+    },
   },
   notifications: {
     title: '通知',

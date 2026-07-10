@@ -501,6 +501,14 @@ export const ja: I18nMessages = {
       budgetLimited: '予算制限',
       complete: '完了',
     },
+    statusBar: {
+      active: 'Goal 実行中 ({{duration}})',
+      paused: 'Goal 一時停止 (/goal resume)',
+      blocked: 'Goal ブロック中',
+      usageLimited: 'Goal 使用量制限',
+      budgetLimited: 'Goal 未達成 ({{duration}})',
+      complete: 'Goal 達成 ({{duration}})',
+    },
   },
   notifications: {
     title: '通知',
