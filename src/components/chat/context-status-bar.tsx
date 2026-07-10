@@ -119,6 +119,10 @@ function getGoalStatusText(goal: SessionGoal): string {
       return `Pursuing goal (${formatGoalDuration(goal.timeUsedSeconds)})`;
     case 'paused':
       return 'Goal paused (/goal resume)';
+    case 'blocked':
+      return 'Goal blocked';
+    case 'usageLimited':
+      return 'Goal usage limited';
     case 'budgetLimited':
       return `Goal unmet (${formatGoalDuration(goal.timeUsedSeconds)})`;
     case 'complete':
@@ -132,6 +136,10 @@ function goalStatusColor(goal: SessionGoal): string {
       return 'text-emerald-300';
     case 'paused':
       return 'text-amber-300';
+    case 'blocked':
+      return 'text-rose-300';
+    case 'usageLimited':
+      return 'text-orange-300';
     case 'budgetLimited':
       return 'text-sky-300';
     case 'complete':

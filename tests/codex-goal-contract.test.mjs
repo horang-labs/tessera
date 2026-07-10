@@ -136,10 +136,11 @@ test('/goal is intercepted by the composer and exposed in UI affordances', () =>
   assert.match(goalCommandSource, /parseCodexGoalCommand/);
   assert.match(goalCommandSource, /kind: 'inspect'/);
   assert.match(goalCommandSource, /normalized === 'clear'/);
+  assert.match(goalCommandSource, /normalized === 'edit'/);
   assert.match(goalCommandSource, /normalized === 'pause'/);
   assert.match(goalCommandSource, /normalized === 'resume'/);
   assert.doesNotMatch(goalCommandSource, /normalized === 'complete'/);
-  assert.match(messageInputSource, /parseCodexGoalCommand\(trimmed\)/);
+  assert.match(messageInputSource, /parseCodexGoalCommand\(commandInput\)/);
   assert.match(messageInputSource, /insertGoalCommand/);
   assert.match(messageInputSource, /formatGoalStatusMessage\(sessionGoal\)/);
   assert.doesNotMatch(messageInputSource, /const \[isGoalMode, setIsGoalMode\]/);
@@ -148,11 +149,18 @@ test('/goal is intercepted by the composer and exposed in UI affordances', () =>
   assert.match(messageInputSource, /value=\{inputValue\}/);
   assert.match(messageInputSource, /id: `temp-goal-\$\{uuidv4\(\)\}`/);
   assert.match(messageInputSource, /role: 'user'/);
-  assert.match(messageInputSource, /setSessionGoal\(sessionId, command\.update, buildSpawnConfigForCurrentSession\(\), displayContent\)/);
+  assert.match(messageInputSource, /buildCodexGoalEditUpdate\(sessionGoal, command\.update\.objective\)/);
+  assert.match(messageInputSource, /parseCodexGoalEditObjective\(commandInput\)/);
+  assert.match(messageInputSource, /codexGoalObjectiveRequired/);
+  assert.match(messageInputSource, /codexGoalChanged/);
+  assert.match(messageInputSource, /sessionGoal\.createdAt !== editSnapshot\.createdAt/);
+  assert.match(messageInputSource, /sessionGoal\.objective !== editSnapshot\.objective/);
+  assert.match(messageInputSource, /setSessionGoal\(sessionId, update, buildSpawnConfigForCurrentSession\(\), displayContent\)/);
   assert.match(messageInputSource, /<SessionGoalControl[\s\S]*variant="composer"/);
   assert.match(headerSource, /<SessionGoalControl sessionId=\{sessionId\} variant="header" \/>/);
   assert.match(goalCommandEventSource, /SESSION_GOAL_COMMAND_INSERT_EVENT/);
-  assert.match(goalControlSource, /emitSessionGoalCommandInsert\(sessionId\)/);
+  assert.match(goalCommandEventSource, /SESSION_GOAL_COMMAND_EDIT_EVENT/);
+  assert.match(goalControlSource, /emitSessionGoalCommandEdit\(sessionId\)/);
   assert.match(goalControlSource, /'session-goal-header-trigger'/);
   assert.match(goalControlSource, /'session-goal-composer-trigger'/);
   assert.match(goalControlSource, /data-testid="session-goal-popover"/);
@@ -163,6 +171,17 @@ test('/goal is intercepted by the composer and exposed in UI affordances', () =>
   assert.match(messageInputSource, /data-testid="send-during-generation-btn"/);
   assert.match(contextStatusBarSource, /Pursuing goal/);
   assert.match(contextStatusBarSource, /Goal paused \(\/goal resume\)/);
+});
+
+test('goal normalization preserves the full Codex status contract and edit rules', () => {
+  assert.match(goalCommandSource, /goal\.status === 'budgetLimited' \|\| goal\.status === 'complete'/);
+  assert.match(goalCommandSource, /tokenBudget: goal\.tokenBudget/);
+  assert.match(codexAdapterSource, /'blocked', 'usageLimited', 'budgetLimited'/);
+  assert.match(codexParserSource, /'blocked', 'usageLimited', 'budgetLimited'/);
+  assert.match(dbSessionsSource, /'blocked', 'usageLimited', 'budgetLimited'/);
+  assert.match(goalControlSource, /usageLimited/);
+  assert.match(goalControlSource, /goal\.status === 'blocked'/);
+  assert.match(goalControlSource, /goal\.status === 'usageLimited'/);
 });
 
 test('goal auto turns use the normal running composer lifecycle', () => {

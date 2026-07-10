@@ -1,4 +1,10 @@
-export type SessionGoalStatus = 'active' | 'paused' | 'budgetLimited' | 'complete';
+export type SessionGoalStatus =
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'usageLimited'
+  | 'budgetLimited'
+  | 'complete';
 
 export interface SessionGoal {
   threadId: string;

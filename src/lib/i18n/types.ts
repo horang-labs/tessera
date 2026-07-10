@@ -381,6 +381,15 @@ export interface I18nMessages {
     responseSent: string;
     inputPrompt: string;
     resumingSession: string;
+    codexSlashUnsupported: string;
+    codexFastUnavailable: string;
+    codexFastEnabled: string;
+    codexFastDisabled: string;
+    codexCompactDuringTurn: string;
+    codexGoalEditMissing: string;
+    codexGoalChanged: string;
+    codexGoalObjectiveRequired: string;
+    codexGoalTooLong: string;
     cancelHint: string;
     cancelButton: string;
     attachFile: string;
@@ -487,6 +496,8 @@ export interface I18nMessages {
     status: {
       active: string;
       paused: string;
+      blocked: string;
+      usageLimited: string;
       budgetLimited: string;
       complete: string;
     };

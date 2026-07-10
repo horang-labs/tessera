@@ -514,6 +514,10 @@ export class ProcessManager {
     if (!processInfo?.provider.compactThread) {
       return false;
     }
+    if (processInfo.isGenerating) {
+      logger.warn({ sessionId }, 'Refusing to compact while a turn is in progress');
+      return false;
+    }
 
     return processInfo.provider.compactThread(processInfo.process, sessionId);
   }

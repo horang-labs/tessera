@@ -22,6 +22,7 @@ import {
   CODEX_GOAL_COMMAND_NAME,
 } from '@/lib/chat/codex-goal-command';
 import { getTuiOnlySlashCommands } from '@/lib/terminal/tui-only-commands';
+import { isReservedCodexSlashCommandName } from '@/lib/chat/codex-slash-command-registry';
 
 export type SkillInfo = CommandInfo & {
   builtinCommand?:
@@ -59,6 +60,7 @@ export function useSkillPicker(
   sessionId?: string,
   providerId?: string,
   isSessionRunning?: boolean,
+  codexFastAvailable = true,
 ): UseSkillPickerReturn {
   const [isOpen, setIsOpen] = useState(false);
   const [filteredSkills, setFilteredSkills] = useState<SkillInfo[]>([]);
@@ -73,11 +75,11 @@ export function useSkillPicker(
   const builtInCommands = useMemo<SkillInfo[]>(
     () => {
       if (providerId === 'codex') {
-        return [{
+        return [...(codexFastAvailable ? [{
           name: CODEX_FAST_COMMAND_NAME,
           description: CODEX_FAST_COMMAND_DESCRIPTION,
           builtinCommand: CODEX_FAST_BUILTIN_COMMAND,
-        }, {
+        } as SkillInfo] : []), {
           name: CODEX_COMPACT_COMMAND_NAME,
           description: CODEX_COMPACT_COMMAND_DESCRIPTION,
           builtinCommand: CODEX_COMPACT_BUILTIN_COMMAND,
@@ -96,11 +98,14 @@ export function useSkillPicker(
       }
       return [];
     },
-    [providerId],
+    [codexFastAvailable, providerId],
   );
   const availableCommands = useMemo<SkillInfo[]>(() => {
     const merged = [...builtInCommands];
     for (const command of commands ?? []) {
+      if (providerId === 'codex' && isReservedCodexSlashCommandName(command.name)) {
+        continue;
+      }
       if (merged.some((candidate) => candidate.name === command.name)) {
         continue;
       }

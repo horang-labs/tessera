@@ -11,11 +11,16 @@ const lifecycle = read('../src/lib/session/session-orchestrator-lifecycle.ts');
 const restCreate = read('../src/app/api/sessions/route.ts');
 const wsActions = read('../src/lib/ws/server-session-actions.ts');
 
-test('schema declares model + reasoning_effort columns and bumps the version', () => {
-  // v27 after merging dev (dev took v26 for chat_workflow_status).
-  assert.match(schema, /SCHEMA_VERSION = 27/);
+test('schema declares model, reasoning effort, and service tier columns', () => {
+  assert.match(schema, /SCHEMA_VERSION = 28/);
   assert.match(schema, /model\s+TEXT/);
   assert.match(schema, /reasoning_effort TEXT/);
+  assert.match(schema, /service_tier\s+TEXT/);
+});
+
+test('database adds service_tier via migration v28 and the idempotent guard', () => {
+  assert.match(database, /fromVersion < 28/);
+  assert.match(database, /addColumnIfMissing\(db, 'sessions', 'service_tier'/);
 });
 
 test('database adds the columns via migration v27 and the idempotent guard', () => {
@@ -28,6 +33,7 @@ test('session creation persists model + reasoningEffort', () => {
   // persistence forwards them to createSession
   assert.match(persistence, /model: options\.model/);
   assert.match(persistence, /reasoningEffort: options\.reasoningEffort/);
+  assert.match(persistence, /serviceTier: options\.serviceTier/);
   // both create entry points pass them in
   assert.match(restCreate, /persistCreatedSessionRecord\([\s\S]*model,[\s\S]*reasoningEffort,[\s\S]*\}\)/);
   assert.match(wsActions, /persistCreatedSessionRecord\([\s\S]*model,[\s\S]*reasoningEffort,[\s\S]*\}\)/);
@@ -37,10 +43,14 @@ test('resume falls back to the persisted model/effort when the caller omits them
   // This is what makes WS-resume / retry / cold-restart preserve ultracode.
   assert.match(lifecycle, /options\.model \?\? session\.model/);
   assert.match(lifecycle, /session\.reasoning_effort/);
+  assert.match(lifecycle, /session\.service_tier/);
+  assert.match(lifecycle, /modelOptions\.find\(\(option\) => option\.value === requestedModel\)/);
+  assert.match(lifecycle, /if \(!modelOption\) \{[\s\S]*return options;/);
 });
 
 test('API mapping exposes model + reasoningEffort for stopped sessions', () => {
   const sessions = read('../src/lib/db/sessions.ts');
   assert.match(sessions, /model: row\.model \?\? undefined/);
   assert.match(sessions, /reasoningEffort: row\.reasoning_effort \?\? undefined/);
+  assert.match(sessions, /serviceTier: row\.service_tier \?\? undefined/);
 });

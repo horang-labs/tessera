@@ -325,8 +325,8 @@ export class WebSocketClient {
     this.sendRequest('set_reasoning_effort', { sessionId, reasoningEffort });
   }
 
-  setServiceTier(sessionId: string, serviceTier: string | null) {
-    this.sendRequest('set_service_tier', { sessionId, serviceTier });
+  setServiceTier(sessionId: string, serviceTier: string | null, persist = true) {
+    this.sendRequest('set_service_tier', { sessionId, serviceTier, persist });
   }
 
   setFastMode(sessionId: string, fastMode: boolean | null) {

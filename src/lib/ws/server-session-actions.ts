@@ -11,6 +11,10 @@ import { sessionHistory } from '../session-history';
 import { persistCreatedSessionRecord } from '../session/session-persistence';
 import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import { buildCodexSkillContent } from '../chat/build-codex-skill-content';
+import {
+  classifyCodexSlashCommand,
+  isReservedCodexSlashCommandName,
+} from '../chat/codex-slash-command-registry';
 import { buildUserMessageDisplayContent } from '../chat/build-user-message-display-content';
 import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh';
 import { SettingsManager } from '../settings/manager';
@@ -177,6 +181,7 @@ export async function createSessionFromWebSocket({
       providerId: resolvedProviderId,
       model,
       reasoningEffort,
+      serviceTier,
     });
 
     sendToUser(userId, {
@@ -340,6 +345,31 @@ export async function sendSessionMessageFromWebSocket({
   const contentType =
     typeof content === 'string' ? 'string' : `ContentBlock[${content.length}]`;
   logger.debug({ userId, sessionId, contentType, skillName }, 'WebSocket send_message received');
+
+  const existingProcess = processManager.getProcess(sessionId);
+  const providerId = existingProcess?.provider.getProviderId()
+    ?? dbSessions.getSession(sessionId)?.provider;
+  const commandText = typeof content === 'string'
+    ? content
+    : content
+        .filter((block): block is TextContentBlock => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n');
+  const reservedCommand = classifyCodexSlashCommand(commandText);
+  if (
+    providerId === 'codex'
+    && (reservedCommand || (skillName && isReservedCodexSlashCommandName(skillName)))
+  ) {
+    const commandName = reservedCommand?.name ?? skillName ?? '';
+    logger.warn({ sessionId, commandName }, 'Blocked reserved Codex slash command from send_message');
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'codex_slash_command_reserved',
+      message: `Codex command "/${commandName}" must be handled by a native Tessera command.`,
+    });
+    return;
+  }
 
   // No live process exists yet. Rehydrate via the resume path before delivering
   // the message so persisted provider state remains authoritative.
@@ -555,7 +585,16 @@ export async function compactSessionFromWebSocket({
     const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
     if (!ok) return;
 
-    recordCompactCommandDisplayContent(sessionId, displayContent);
+    if (processManager.getProcess(sessionId)?.isGenerating) {
+      sendToUser(userId, {
+        type: 'error',
+        sessionId,
+        code: 'session_compact_in_progress',
+        message: 'Wait for the current turn to finish before compacting.',
+      });
+      return;
+    }
+
     const compacted = await processManager.compactSession(sessionId);
     if (!compacted) {
       sendToUser(userId, {
@@ -567,6 +606,7 @@ export async function compactSessionFromWebSocket({
       return;
     }
 
+    recordCompactCommandDisplayContent(sessionId, displayContent);
     logger.info({ sessionId, userId }, 'Session compaction requested');
   } catch (err) {
     logger.error({ sessionId, userId, error: err }, 'Failed to compact session');

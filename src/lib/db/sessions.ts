@@ -16,6 +16,7 @@ export interface SessionRow {
   provider_state: string | null;
   model: string | null;
   reasoning_effort: string | null;
+  service_tier: string | null;
   workflow_status?: string | null;
   work_dir: string | null;
   worktree_branch: string | null;
@@ -126,6 +127,7 @@ export function createSession(
     collectionId?: string;
     model?: string;
     reasoningEffort?: string | null;
+    serviceTier?: string | null;
   } = {}
 ): void {
   const db = getDb();
@@ -137,10 +139,10 @@ export function createSession(
   `).run(projectId);
   db.prepare(`
     INSERT INTO sessions (
-      id, project_id, title, provider, model, reasoning_effort, work_dir, worktree_managed,
+      id, project_id, title, provider, model, reasoning_effort, service_tier, work_dir, worktree_managed,
       task_id, collection_id, sort_order, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     id,
     projectId,
@@ -148,6 +150,7 @@ export function createSession(
     provider,
     options.model ?? null,
     options.reasoningEffort ?? null,
+    options.serviceTier ?? null,
     options.workDir ?? null,
     options.worktreeManaged ? 1 : 0,
     options.taskId ?? null,
@@ -243,7 +246,7 @@ export function softDeleteSession(id: string): void {
  */
 export function updateSession(
   id: string,
-  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'model' | 'reasoning_effort' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'chat_workflow_status' | 'collection_id'>>,
+  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'model' | 'reasoning_effort' | 'service_tier' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'chat_workflow_status' | 'collection_id'>>,
   options?: { skipTimestamp?: boolean }
 ): void {
   const db = getDb();
@@ -254,6 +257,7 @@ export function updateSession(
   if (patch.has_custom_title !== undefined) { sets.push('has_custom_title = ?'); values.push(patch.has_custom_title); }
   if (patch.model !== undefined) { sets.push('model = ?'); values.push(patch.model); }
   if (patch.reasoning_effort !== undefined) { sets.push('reasoning_effort = ?'); values.push(patch.reasoning_effort); }
+  if (patch.service_tier !== undefined) { sets.push('service_tier = ?'); values.push(patch.service_tier); }
   if (patch.work_dir !== undefined) { sets.push('work_dir = ?'); values.push(patch.work_dir); }
   if (patch.worktree_branch !== undefined) { sets.push('worktree_branch = ?'); values.push(patch.worktree_branch); }
   if (patch.worktree_managed !== undefined) { sets.push('worktree_managed = ?'); values.push(patch.worktree_managed); }
@@ -493,6 +497,7 @@ export function mapSessionRowToApi(
     provider: row.provider,
     model: row.model ?? undefined,
     reasoningEffort: row.reasoning_effort ?? undefined,
+    serviceTier: row.service_tier ?? undefined,
     goal: extractSessionGoal(row.provider_state) ?? undefined,
     taskId: row.task_id ?? undefined,
     collectionId: row.collection_id ?? undefined,
@@ -539,7 +544,7 @@ export function extractSessionGoal(providerState: string | null): SessionGoal | 
     if (
       typeof value.threadId !== 'string' ||
       typeof value.objective !== 'string' ||
-      !['active', 'paused', 'budgetLimited', 'complete'].includes(String(value.status))
+      !['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'].includes(String(value.status))
     ) {
       return null;
     }

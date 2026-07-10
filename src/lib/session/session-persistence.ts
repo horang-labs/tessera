@@ -15,6 +15,7 @@ interface PersistCreatedSessionRecordOptions {
   worktreeManaged?: boolean;
   model?: string;
   reasoningEffort?: string | null;
+  serviceTier?: string | null;
 }
 
 interface PersistedSessionProject {
@@ -62,6 +63,7 @@ export function persistCreatedSessionRecord(
       collectionId: options.collectionId,
       model: options.model,
       reasoningEffort: options.reasoningEffort,
+      serviceTier: options.serviceTier,
     },
   );
 

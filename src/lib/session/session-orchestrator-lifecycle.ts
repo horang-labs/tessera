@@ -10,6 +10,7 @@ import {
   resolveProviderModelOption,
   resolveProviderReasoningEffort,
 } from '../settings/provider-defaults';
+import { resolveCodexServiceTierForModel } from '../chat/codex-fast-command';
 import type {
   SessionCreateOptions,
   SessionCreateResult,
@@ -41,13 +42,9 @@ interface ResumeSessionWithLifecycleOptions {
 async function resolveRuntimeModelDefaults(
   providerId: string,
   userId: string,
-  options: Pick<SessionResumeOptions, 'model' | 'reasoningEffort'>,
-): Promise<Pick<SessionResumeOptions, 'model' | 'reasoningEffort'>> {
+  options: Pick<SessionResumeOptions, 'model' | 'reasoningEffort' | 'serviceTier'>,
+): Promise<Pick<SessionResumeOptions, 'model' | 'reasoningEffort' | 'serviceTier'>> {
   if (providerId !== 'codex' && providerId !== 'opencode') {
-    return options;
-  }
-
-  if (providerId === 'codex' && options.model && options.reasoningEffort) {
     return options;
   }
 
@@ -59,9 +56,13 @@ async function resolveRuntimeModelDefaults(
     const sessionOptions = await getProviderSessionOptions(providerId, userId);
     const requestedModel = options.model;
     const requestedReasoningEffort = options.reasoningEffort;
-    const modelOption = resolveProviderModelOption(providerId, sessionOptions, requestedModel);
+    const modelOption = providerId === 'codex' && requestedModel
+      ? sessionOptions.modelOptions.find((option) => option.value === requestedModel) ?? null
+      : resolveProviderModelOption(providerId, sessionOptions, requestedModel);
 
     if (!modelOption) {
+      // Preserve an explicitly selected Codex model rather than silently snapping
+      // it to the first catalog entry. Codex core validates both the model and tier.
       return options;
     }
 
@@ -73,6 +74,9 @@ async function resolveRuntimeModelDefaults(
         modelOption,
         requestedReasoningEffort,
       ),
+      serviceTier: providerId === 'codex'
+        ? resolveCodexServiceTierForModel(options.serviceTier, modelOption)
+        : options.serviceTier,
     };
   } catch (error) {
     logger.warn({
@@ -196,6 +200,9 @@ export async function resumeSessionWithLifecycle({
     reasoningEffort: options.reasoningEffort !== undefined
       ? options.reasoningEffort
       : (session.reasoning_effort ?? undefined),
+    serviceTier: options.serviceTier !== undefined
+      ? options.serviceTier
+      : (session.service_tier ?? undefined),
   };
 
   // Persist a deliberate change (e.g. the user picked a new model/effort before
@@ -211,6 +218,14 @@ export async function resumeSessionWithLifecycle({
         ...(options.model !== undefined ? { model: options.model } : {}),
         ...(options.reasoningEffort !== undefined ? { reasoning_effort: options.reasoningEffort } : {}),
       },
+      { skipTimestamp: true },
+    );
+  }
+
+  if (providerId === 'codex' && options.serviceTier !== undefined) {
+    dbSessions.updateSession(
+      sessionId,
+      { service_tier: options.serviceTier },
       { skipTimestamp: true },
     );
   }
@@ -233,7 +248,7 @@ export async function resumeSessionWithLifecycle({
       collaborationMode: options.collaborationMode,
       approvalPolicy: options.approvalPolicy,
       sandboxMode: options.sandboxMode,
-      serviceTier: options.serviceTier,
+      serviceTier: runtimeDefaults.serviceTier,
       fastMode: options.fastMode,
     },
   );
@@ -264,8 +279,8 @@ export async function resumeSessionWithLifecycle({
         collaborationMode: options.collaborationMode,
         approvalPolicy: options.approvalPolicy,
         sandboxMode: options.sandboxMode,
-        serviceTier: options.serviceTier,
-      fastMode: options.fastMode,
+        serviceTier: runtimeDefaults.serviceTier,
+        fastMode: options.fastMode,
       },
     );
   }
@@ -292,8 +307,8 @@ export async function resumeSessionWithLifecycle({
         collaborationMode: options.collaborationMode,
         approvalPolicy: options.approvalPolicy,
         sandboxMode: options.sandboxMode,
-        serviceTier: options.serviceTier,
-      fastMode: options.fastMode,
+        serviceTier: runtimeDefaults.serviceTier,
+        fastMode: options.fastMode,
       },
     );
   }
@@ -306,7 +321,7 @@ export async function resumeSessionWithLifecycle({
       status: 'running',
       model: runtimeDefaults.model,
       reasoningEffort: runtimeDefaults.reasoningEffort,
-      serviceTier: options.serviceTier,
+      serviceTier: optionsWithPersisted.serviceTier,
       fastMode: options.fastMode,
       sessionMode: options.sessionMode,
       accessMode: options.accessMode,

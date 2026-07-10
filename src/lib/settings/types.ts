@@ -27,6 +27,8 @@ export interface GitConfig {
 export interface ProviderSessionDefaults {
   model?: string;
   reasoningEffort?: string | null;
+  /** Codex service-tier preference. `default` is an explicit Fast opt-out. */
+  serviceTier?: string | null;
   sessionMode?: ProviderSessionMode;
   accessMode?: ProviderSessionAccessMode;
   /** Claude Code high-speed serving toggle. Defaults off (opt-in; uses more credits). */

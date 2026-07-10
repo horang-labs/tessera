@@ -27,6 +27,8 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { matchShortcut, formatShortcut } from '@/lib/keyboard-shortcut';
 import {
   applyProviderSessionRuntimeOverrides,
+  buildProviderSessionDefaultsUpdate,
+  getProviderSessionDefaultsWithOptions,
   getProviderSessionRuntimeConfig,
 } from '@/lib/settings/provider-defaults';
 import { hasConversationHistory, shouldResumeBeforeSend } from '@/lib/chat/session-send-routing';
@@ -51,14 +53,17 @@ import {
 import { PanelSplitPicker } from './panel-split-picker';
 import { ComposerSessionControls } from './composer-session-controls';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
+import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { exportSessionReference, formatContinueConversationPrompt } from '@/lib/session/session-reference';
 import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import type { Collection } from '@/types/collection';
 import { insertWorkspaceFileReferenceAtCursor } from '@/lib/chat/workspace-file-reference';
 import {
+  CODEX_DEFAULT_SERVICE_TIER,
   CODEX_FAST_COMMAND,
-  CODEX_FAST_SERVICE_TIER,
+  getCodexFastServiceTier,
+  getCodexFastToggleServiceTier,
   isCodexFastCommandSkill,
 } from '@/lib/chat/codex-fast-command';
 import {
@@ -69,14 +74,24 @@ import {
   isClaudeFastCommandSkill,
 } from '@/lib/chat/claude-fast-command';
 import {
+  buildCodexGoalEditUpdate,
+  CODEX_GOAL_MAX_OBJECTIVE_LENGTH,
   CODEX_GOAL_COMMAND,
+  countCodexGoalObjectiveCharacters,
   isCodexGoalCommandSkill,
   parseCodexGoalCommand,
+  parseCodexGoalEditObjective,
 } from '@/lib/chat/codex-goal-command';
 import {
+  getSessionGoalCommandEditSessionId,
   getSessionGoalCommandInsertSessionId,
+  SESSION_GOAL_COMMAND_EDIT_EVENT,
   SESSION_GOAL_COMMAND_INSERT_EVENT,
 } from '@/lib/chat/session-goal-command-event';
+import {
+  classifyCodexSlashCommand,
+  isReservedCodexSlashCommandName,
+} from '@/lib/chat/codex-slash-command-registry';
 import { SessionGoalControl } from './session-goal-control';
 import {
   MessageInputAttachmentStrip,
@@ -109,10 +124,10 @@ function formatGoalStatusMessage(goal: SessionGoal | null | undefined): string {
   }
 
   const commands = goal.status === 'active'
-    ? '/goal pause, /goal clear'
-    : goal.status === 'paused'
-      ? '/goal resume, /goal clear'
-      : '/goal clear';
+    ? '/goal edit, /goal pause, /goal clear'
+    : goal.status === 'paused' || goal.status === 'blocked' || goal.status === 'usageLimited'
+      ? '/goal edit, /goal resume, /goal clear'
+      : '/goal edit, /goal clear';
   return [
     `Goal | Status: ${goal.status}`,
     `Objective: ${goal.objective}`,
@@ -132,6 +147,10 @@ function goalStatusLabel(
       return t('goal.status.active');
     case 'paused':
       return t('goal.status.paused');
+    case 'blocked':
+      return t('goal.status.blocked');
+    case 'usageLimited':
+      return t('goal.status.usageLimited');
     case 'budgetLimited':
       return t('goal.status.budgetLimited');
     case 'complete':
@@ -146,6 +165,10 @@ function goalStatusDotClass(goal: SessionGoal, isRunning: boolean): string {
       return 'bg-emerald-300';
     case 'paused':
       return 'bg-amber-300';
+    case 'blocked':
+      return 'bg-rose-300';
+    case 'usageLimited':
+      return 'bg-orange-300';
     case 'budgetLimited':
       return 'bg-sky-300';
     case 'complete':
@@ -202,6 +225,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const sessionCollectionId = session?.collectionId ?? null;
   const sessionServiceTier = session?.serviceTier;
   const sessionFastMode = session?.fastMode;
+  const sessionGoal = session?.goal ?? null;
   const {
     sendMessage,
     cancelGeneration,
@@ -221,11 +245,36 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   );
   const fontSize = useSettingsStore((state) => state.settings.fontSize);
   const sttEngine = useSettingsStore((state) => state.settings.sttEngine);
+  const settings = useSettingsStore((state) => state.settings);
+  const agentEnvironment = settings.agentEnvironment;
+  const updateSettings = useSettingsStore((state) => state.updateSettings);
   const isElectron = useElectronPlatform() !== null;
 
   const sessionIsRunning = session?.isRunning ?? false;
-  const skillPicker = useSkillPicker(sessionId, sessionProviderId || undefined, sessionIsRunning);
+  const providerSessionOptions = useProviderSessionOptions(
+    sessionProviderId || undefined,
+    agentEnvironment,
+  );
+  const providerDefaultsWithOptions = getProviderSessionDefaultsWithOptions(
+    settings,
+    sessionProviderId,
+    providerSessionOptions.data,
+  );
+  const selectedModel = session?.model ?? providerDefaultsWithOptions.model;
+  const selectedModelOption = providerSessionOptions.data?.modelOptions
+    .find((option) => option.value === selectedModel) ?? null;
+  const codexFastTier = getCodexFastServiceTier(selectedModelOption);
+  const skillPicker = useSkillPicker(
+    sessionId,
+    sessionProviderId || undefined,
+    sessionIsRunning,
+    sessionProviderId !== 'codex' || codexFastTier !== null,
+  );
   const filePicker = useFilePicker(sessionId);
+  const goalEditSnapshotRef = useRef<SessionGoal | null>(null);
+  useEffect(() => {
+    goalEditSnapshotRef.current = null;
+  }, [sessionId]);
   const insertGoalCommand = useCallback(() => {
     if (sessionProviderId !== 'codex') {
       return;
@@ -234,6 +283,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     skillPicker.clearSkill();
     skillPicker.close();
     filePicker.close();
+    goalEditSnapshotRef.current = null;
 
     const trimmed = inputValue.trim();
     const nextValue = !trimmed
@@ -254,6 +304,31 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     });
   }, [filePicker, inputValue, sessionProviderId, sessionId, setDraftInput, skillPicker]);
 
+  const beginGoalEdit = useCallback((): boolean => {
+    if (sessionProviderId !== 'codex') return false;
+    if (!sessionGoal) {
+      toast.info(t('chat.codexGoalEditMissing'));
+      return true;
+    }
+
+    skillPicker.clearSkill();
+    skillPicker.close();
+    filePicker.close();
+    goalEditSnapshotRef.current = { ...sessionGoal };
+
+    const prefix = `${CODEX_GOAL_COMMAND} `;
+    const nextValue = `${prefix}${sessionGoal.objective}`;
+    setInputValue(nextValue);
+    setDraftInput(sessionId, nextValue);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(prefix.length, nextValue.length);
+    });
+    return true;
+  }, [filePicker, sessionGoal, sessionId, sessionProviderId, setDraftInput, skillPicker, t]);
+
   useEffect(() => {
     const handleGoalCommandInsert = (event: Event) => {
       if (getSessionGoalCommandInsertSessionId(event) !== sessionId) {
@@ -261,10 +336,20 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       }
       insertGoalCommand();
     };
+    const handleGoalCommandEdit = (event: Event) => {
+      if (getSessionGoalCommandEditSessionId(event) !== sessionId) {
+        return;
+      }
+      beginGoalEdit();
+    };
 
     window.addEventListener(SESSION_GOAL_COMMAND_INSERT_EVENT, handleGoalCommandInsert);
-    return () => window.removeEventListener(SESSION_GOAL_COMMAND_INSERT_EVENT, handleGoalCommandInsert);
-  }, [insertGoalCommand, sessionId]);
+    window.addEventListener(SESSION_GOAL_COMMAND_EDIT_EVENT, handleGoalCommandEdit);
+    return () => {
+      window.removeEventListener(SESSION_GOAL_COMMAND_INSERT_EVENT, handleGoalCommandInsert);
+      window.removeEventListener(SESSION_GOAL_COMMAND_EDIT_EVENT, handleGoalCommandEdit);
+    };
+  }, [beginGoalEdit, insertGoalCommand, sessionId]);
 
   const getInputValue = useCallback(() => inputValue, [inputValue]);
   const sessionRefs = useSessionRefs({
@@ -311,7 +396,6 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const isGenerating = sessionStatus === 'running' && (
     isTurnInFlight || hasActiveAssistantText
   );
-  const sessionGoal = session?.goal ?? null;
   const isGoalRunning = Boolean(sessionGoal?.status === 'active' && isGenerating);
   const goalComposerLabel = sessionGoal
     ? `Goal ${goalStatusLabel(sessionGoal, t)}${isGoalRunning ? ` · ${t('status.running')}` : ''}`
@@ -658,33 +742,48 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return false;
     }
 
-    const nextServiceTier = sessionServiceTier === CODEX_FAST_SERVICE_TIER
-      ? null
-      : CODEX_FAST_SERVICE_TIER;
-    updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
-    if (sessionIsRunning) {
-      setServiceTier(sessionId, nextServiceTier);
+    const nextServiceTier = getCodexFastToggleServiceTier(
+      sessionServiceTier,
+      selectedModelOption,
+    );
+    if (!codexFastTier || !nextServiceTier) {
+      toast.info(t('chat.codexFastUnavailable'));
+      return true;
     }
+
+    if (!sessionIsRunning) {
+      void updateSettings(buildProviderSessionDefaultsUpdate(
+        useSettingsStore.getState().settings,
+        'codex',
+        { serviceTier: nextServiceTier },
+      ));
+    }
+    updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
+    setServiceTier(sessionId, nextServiceTier);
     clearInput();
     clearAttachments();
     clearSessionRefs();
     skillPicker.clearSkill();
     toast.info(
-      nextServiceTier
-        ? 'Codex fast mode enabled'
-        : 'Codex fast mode disabled',
+      nextServiceTier === CODEX_DEFAULT_SERVICE_TIER
+        ? t('chat.codexFastDisabled')
+        : t('chat.codexFastEnabled'),
     );
     return true;
   }, [
     clearAttachments,
     clearInput,
     clearSessionRefs,
+    codexFastTier,
+    selectedModelOption,
     sessionProviderId,
     sessionServiceTier,
     sessionId,
     sessionIsRunning,
     setServiceTier,
     skillPicker,
+    t,
+    updateSettings,
     updateSessionRuntimeConfig,
   ]);
 
@@ -694,6 +793,10 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     }
     if (isDisabled || isReadOnly) {
       return false;
+    }
+    if (isGenerating) {
+      toast.info(t('chat.codexCompactDuringTurn'));
+      return true;
     }
 
     const displayContent = CODEX_COMPACT_COMMAND;
@@ -718,10 +821,12 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     clearSessionRefs,
     compactSession,
     isDisabled,
+    isGenerating,
     isReadOnly,
     sessionProviderId,
     sessionId,
     skillPicker,
+    t,
   ]);
 
   const executeClaudeFastCommand = useCallback((): boolean => {
@@ -762,9 +867,56 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return false;
     }
 
-    const command = parseCodexGoalCommand(commandInput);
+    const editSnapshot = goalEditSnapshotRef.current;
+    const editObjective = editSnapshot ? parseCodexGoalEditObjective(commandInput) : null;
+    if (editSnapshot && editObjective === '') {
+      toast.info(t('chat.codexGoalObjectiveRequired'));
+      return true;
+    }
+
+    const command = editSnapshot && editObjective !== null
+      ? { kind: 'set' as const, update: { objective: editObjective } }
+      : parseCodexGoalCommand(commandInput);
     if (!command) {
       return false;
+    }
+
+    if (command.kind === 'edit') {
+      return beginGoalEdit();
+    }
+
+    if (
+      command.kind === 'set'
+      && typeof command.update.objective === 'string'
+      && countCodexGoalObjectiveCharacters(command.update.objective) > CODEX_GOAL_MAX_OBJECTIVE_LENGTH
+    ) {
+      toast.info(t('chat.codexGoalTooLong', { count: CODEX_GOAL_MAX_OBJECTIVE_LENGTH }));
+      return true;
+    }
+    if (
+      command.kind === 'set'
+      && typeof command.update.objective === 'string'
+      && editSnapshot
+      && !sessionGoal
+    ) {
+      goalEditSnapshotRef.current = null;
+      toast.info(t('chat.codexGoalEditMissing'));
+      return true;
+    }
+    if (
+      command.kind === 'set'
+      && typeof command.update.objective === 'string'
+      && editSnapshot
+      && sessionGoal
+      && (
+        sessionGoal.threadId !== editSnapshot.threadId
+        || sessionGoal.createdAt !== editSnapshot.createdAt
+        || sessionGoal.objective !== editSnapshot.objective
+      )
+    ) {
+      goalEditSnapshotRef.current = null;
+      toast.info(t('chat.codexGoalChanged'));
+      return true;
     }
 
     const displayContent = commandInput.trim();
@@ -788,9 +940,15 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     } else if (command.kind === 'clear') {
       clearSessionGoal(sessionId, buildSpawnConfigForCurrentSession(), displayContent);
     } else {
-      setSessionGoal(sessionId, command.update, buildSpawnConfigForCurrentSession(), displayContent);
+      const update = editSnapshot
+        && sessionGoal
+        && typeof command.update.objective === 'string'
+        ? buildCodexGoalEditUpdate(sessionGoal, command.update.objective)
+        : command.update;
+      setSessionGoal(sessionId, update, buildSpawnConfigForCurrentSession(), displayContent);
     }
 
+    goalEditSnapshotRef.current = null;
     clearInput();
     clearAttachments();
     clearSessionRefs();
@@ -798,6 +956,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     return true;
   }, [
     addMessage,
+    beginGoalEdit,
     clearAttachments,
     clearInput,
     clearSessionRefs,
@@ -809,6 +968,58 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     sessionId,
     setSessionGoal,
     skillPicker,
+    t,
+  ]);
+
+  const dispatchCodexSlashCommand = useCallback((
+    commandInput: string,
+    source: 'send' | 'picker' = 'send',
+  ): boolean => {
+    if (sessionProviderId !== 'codex') return false;
+
+    const match = classifyCodexSlashCommand(commandInput);
+    if (!match) return false;
+    if (match.support === 'unsupported') {
+      goalEditSnapshotRef.current = null;
+      toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
+      return true;
+    }
+
+    if (match.nativeCommand === 'fast') {
+      goalEditSnapshotRef.current = null;
+      if (match.args) {
+        toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
+        return true;
+      }
+      return executeCodexFastCommand();
+    }
+    if (match.nativeCommand === 'compact') {
+      goalEditSnapshotRef.current = null;
+      if (match.args) {
+        toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
+        return true;
+      }
+      return executeCodexCompactCommand();
+    }
+    if (match.nativeCommand === 'goal') {
+      if (source === 'picker' && !match.args) {
+        insertGoalCommand();
+        return true;
+      }
+      const normalizedInput = match.args
+        ? `${CODEX_GOAL_COMMAND} ${match.args}`
+        : CODEX_GOAL_COMMAND;
+      return executeCodexGoalCommand(normalizedInput);
+    }
+
+    return false;
+  }, [
+    executeCodexCompactCommand,
+    executeCodexFastCommand,
+    executeCodexGoalCommand,
+    insertGoalCommand,
+    sessionProviderId,
+    t,
   ]);
 
   // 미지원 슬래시 명령(Claude TUI 전용 — 헤드리스에서 동작 불가)을 같은 세션 cwd로
@@ -851,28 +1062,39 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     if (isDisabled) return;
     if (isReadOnly) return;
 
-    if (
+    if (sessionProviderId === 'claude-code' && (
       hasSelectedFastCommand
       || (trimmed === CODEX_FAST_COMMAND && !hasSelectedSkill)
-    ) {
-      if (executeCodexFastCommand() || executeClaudeFastCommand()) return;
+    )) {
+      if (executeClaudeFastCommand()) return;
     }
 
-    if (
-      hasSelectedCompactCommand
-      || (trimmed === CODEX_COMPACT_COMMAND && !hasSelectedSkill)
-    ) {
-      if (executeCodexCompactCommand()) return;
+    if (sessionProviderId === 'codex') {
+      let commandInput: string | null = null;
+      if (hasSelectedFastCommand) {
+        commandInput = CODEX_FAST_COMMAND;
+      } else if (hasSelectedCompactCommand) {
+        commandInput = CODEX_COMPACT_COMMAND;
+      } else if (hasSelectedGoalCommand) {
+        commandInput = trimmed ? `${CODEX_GOAL_COMMAND} ${trimmed}` : CODEX_GOAL_COMMAND;
+      } else if (
+        hasSelectedSkill
+        && skillPicker.selectedSkill
+        && isReservedCodexSlashCommandName(skillPicker.selectedSkill.name)
+      ) {
+        commandInput = trimmed
+          ? `/${skillPicker.selectedSkill.name} ${trimmed}`
+          : `/${skillPicker.selectedSkill.name}`;
+      } else if (!hasSelectedSkill) {
+        commandInput = trimmed;
+      }
+
+      if (commandInput && dispatchCodexSlashCommand(commandInput)) return;
     }
 
-    if (hasSelectedGoalCommand) {
-      const commandInput = trimmed ? `${CODEX_GOAL_COMMAND} ${trimmed}` : CODEX_GOAL_COMMAND;
-      if (executeCodexGoalCommand(commandInput)) return;
-    }
-
-    if (!hasSelectedSkill && parseCodexGoalCommand(trimmed)) {
-      if (executeCodexGoalCommand(trimmed)) return;
-    }
+    // Leaving the goal command flow cancels the local edit marker so a later
+    // ordinary `/goal <objective>` is treated as a fresh set operation.
+    goalEditSnapshotRef.current = null;
 
     // Use chip-selected skill or fallback to manual /skillname parsing
     const parsed = skillPicker.parseForSend(trimmed);
@@ -987,7 +1209,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         return;
       }
       if (isCodexFastCommandSkill(skill)) {
-        executeCodexFastCommand();
+        dispatchCodexSlashCommand(CODEX_FAST_COMMAND, 'picker');
         textareaRef.current?.focus();
         return;
       }
@@ -997,12 +1219,12 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         return;
       }
       if (isCodexCompactCommandSkill(skill)) {
-        executeCodexCompactCommand();
+        dispatchCodexSlashCommand(CODEX_COMPACT_COMMAND, 'picker');
         textareaRef.current?.focus();
         return;
       }
       if (isCodexGoalCommandSkill(skill)) {
-        insertGoalCommand();
+        dispatchCodexSlashCommand(CODEX_GOAL_COMMAND, 'picker');
         textareaRef.current?.focus();
         return;
       }
@@ -1011,7 +1233,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       setInputValue('');
       textareaRef.current?.focus();
     },
-    [executeCodexCompactCommand, executeCodexFastCommand, executeClaudeFastCommand, insertGoalCommand, skillPicker, openTerminalFallback],
+    [dispatchCodexSlashCommand, executeClaudeFastCommand, skillPicker, openTerminalFallback],
   );
 
   const applyFilePick = useCallback(
@@ -1061,6 +1283,16 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
+        // An exact Codex built-in always owns its slash namespace, even when
+        // an unrelated skill happens to fuzzy-match the same picker query.
+        if (
+          sessionProviderId === 'codex'
+          && classifyCodexSlashCommand(inputValue.trim())
+        ) {
+          skillPicker.close();
+          dispatchCodexSlashCommand(inputValue.trim(), 'picker');
+          return;
+        }
         // TUI 전용 미지원 슬래시 명령은 부분매칭 스킬이 피커에 떠 있어도(예: 이름/설명에
         // 'config'를 포함하는 명령) 그쪽으로 confirm되지 않도록, Enter 시 먼저 터미널
         // fallback 경로(handleSend)로 위임한다. (Tab 자동완성은 기존대로 동작)
@@ -1080,7 +1312,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
           return;
         }
         if (confirmedSkill && isCodexFastCommandSkill(confirmedSkill)) {
-          executeCodexFastCommand();
+          dispatchCodexSlashCommand(CODEX_FAST_COMMAND, 'picker');
           return;
         }
         if (confirmedSkill && isClaudeFastCommandSkill(confirmedSkill)) {
@@ -1088,11 +1320,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
           return;
         }
         if (confirmedSkill && isCodexCompactCommandSkill(confirmedSkill)) {
-          executeCodexCompactCommand();
+          dispatchCodexSlashCommand(CODEX_COMPACT_COMMAND, 'picker');
           return;
         }
         if (confirmedSkill && isCodexGoalCommandSkill(confirmedSkill)) {
-          insertGoalCommand();
+          dispatchCodexSlashCommand(CODEX_GOAL_COMMAND, 'picker');
           return;
         }
         if (confirmedSkill) {
@@ -1198,11 +1430,6 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         return;
       }
 
-      if (!e.shiftKey && !e.ctrlKey && !e.metaKey && inputValue.trim() === CODEX_FAST_COMMAND) {
-        e.preventDefault();
-        if (executeCodexFastCommand() || executeClaudeFastCommand()) return;
-      }
-
       if (enterKeyBehavior === 'send') {
         if (!e.shiftKey) {
           e.preventDefault();
@@ -1244,7 +1471,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
                     disabled={isInputUnavailable || !!activePrompt}
                     onInsertCommand={insertGoalCommand}
                   />
-                  <ComposerSessionControls sessionId={sessionId} variant="inline" />
+                  <ComposerSessionControls
+                    sessionId={sessionId}
+                    variant="inline"
+                    providerSessionOptions={providerSessionOptions}
+                  />
                   <div ref={quickCreateTriggerRef} className="relative shrink-0">
                     <button
                       type="button"

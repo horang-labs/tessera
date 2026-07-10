@@ -307,17 +307,44 @@ export async function routeClientTransportMessage({
       return;
 
     case 'set_service_tier':
-      runProcessManagerControlAction({
-        userId,
-        sendToUser,
+      if (!processManager.getProcess(message.sessionId)) {
+        if (message.persist !== false) {
+          dbSessions.updateSession(
+            message.sessionId,
+            { service_tier: message.serviceTier },
+            { skipTimestamp: true },
+          );
+        }
+        logger.info({
+          sessionId: message.sessionId,
+          serviceTier: message.serviceTier,
+          persisted: message.persist !== false,
+        }, 'Stored service tier for an inactive session');
+        return;
+      }
+
+      if (!processManager.sendSetServiceTier(message.sessionId, message.serviceTier)) {
+        sendToUser(userId, {
+          type: 'error',
+          sessionId: message.sessionId,
+          code: 'set_service_tier_failed',
+          message: 'Failed to set service tier',
+        });
+        return;
+      }
+
+      if (message.persist !== false) {
+        dbSessions.updateSession(
+          message.sessionId,
+          { service_tier: message.serviceTier },
+          { skipTimestamp: true },
+        );
+      }
+      logger.info({
         sessionId: message.sessionId,
-        action: (sessionId) =>
-          processManager.sendSetServiceTier(sessionId, message.serviceTier),
-        errorCode: 'set_service_tier_failed',
-        errorMessage: 'Failed to set service tier',
-        logMessage: 'Set service tier requested',
-        logMetadata: { serviceTier: message.serviceTier },
-      });
+        serviceTier: message.serviceTier,
+        persisted: message.persist !== false,
+      }, 'Set service tier requested');
       return;
 
     case 'set_fast_mode':

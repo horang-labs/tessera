@@ -49,14 +49,19 @@ const composerSessionControlsSource = fs.readFileSync(
 
 test('Codex /fast is intercepted by the composer as a service tier toggle', () => {
   assert.match(messageInputSource, /CODEX_FAST_COMMAND/);
-  assert.match(messageInputSource, /CODEX_FAST_SERVICE_TIER/);
-  assert.match(messageInputSource, /trimmed === CODEX_FAST_COMMAND/);
+  assert.match(messageInputSource, /getCodexFastToggleServiceTier/);
+  assert.match(messageInputSource, /dispatchCodexSlashCommand/);
   assert.match(messageInputSource, /sessionProviderId !== 'codex'/);
   assert.match(messageInputSource, /updateSessionRuntimeConfig\(sessionId, \{ serviceTier: nextServiceTier \}\)/);
   assert.match(messageInputSource, /setServiceTier\(sessionId, nextServiceTier\)/);
   assert.ok(
-    messageInputSource.indexOf('trimmed === CODEX_FAST_COMMAND') <
+    messageInputSource.indexOf('dispatchCodexSlashCommand(commandInput)') <
       messageInputSource.indexOf('const parsed = skillPicker.parseForSend(trimmed);'),
+  );
+  assert.doesNotMatch(
+    messageInputSource,
+    /serviceTier: resolveCodexServiceTierForModel/,
+    'spawn config must preserve the preference; lifecycle sanitizes runtime application',
   );
 });
 
@@ -66,15 +71,17 @@ test('Codex /fast is exposed through the slash command palette', () => {
   assert.match(skillPickerHookSource, /providerId === 'codex'/);
   assert.match(skillPickerHookSource, /availableCommands/);
   assert.match(messageInputSource, /isCodexFastCommandSkill\(confirmedSkill\)/);
-  assert.match(messageInputSource, /executeCodexFastCommand\(\)/);
-  assert.match(messageInputSource, /inputValue\.trim\(\) === CODEX_FAST_COMMAND/);
+  assert.match(messageInputSource, /dispatchCodexSlashCommand\(CODEX_FAST_COMMAND, 'picker'\)/);
+  assert.match(skillPickerHookSource, /codexFastAvailable/);
 });
 
-test('Codex fast mode is always visible to the left of the Plan control as a toggle', () => {
-  assert.match(composerSessionControlsSource, /CODEX_FAST_SERVICE_TIER/);
-  assert.match(composerSessionControlsSource, /session\.serviceTier === CODEX_FAST_SERVICE_TIER/);
-  // Fast mode is now provider-general; the Codex branch must still enable the toggle.
-  assert.match(composerSessionControlsSource, /const canToggleFastMode = isCodexProvider\(providerIdForSticky\)/);
+test('Codex fast mode is visible only when the selected model advertises a Fast tier', () => {
+  assert.match(composerSessionControlsSource, /getCodexFastServiceTier\(selectedModelOption\)/);
+  assert.match(composerSessionControlsSource, /getCodexFastToggleServiceTier/);
+  assert.match(composerSessionControlsSource, /codexFastTier !== null/);
+  assert.match(composerSessionControlsSource, /isCodexFastModeEnabled/);
+  assert.match(composerSessionControlsSource, /if \(runtimeServiceTier !== undefined\)/);
+  assert.doesNotMatch(composerSessionControlsSource, /runtimeServiceTier \?\? null/);
   assert.match(composerSessionControlsSource, /testId="fast-mode-toggle"/);
   assert.match(composerSessionControlsSource, /pressed=\{isFastModeEnabled\}/);
   assert.match(composerSessionControlsSource, /controlId="service-tier"/);
@@ -115,11 +122,11 @@ test('composer running state omits the Running text label', () => {
 
 test('service tier updates have websocket and process-manager control paths', () => {
   assert.match(wsMessageTypesSource, /type: 'set_service_tier'/);
-  assert.match(wsClientSource, /setServiceTier\(sessionId: string, serviceTier: string \| null\)/);
-  assert.match(wsClientSource, /this\.sendRequest\('set_service_tier', \{ sessionId, serviceTier \}\)/);
+  assert.match(wsClientSource, /setServiceTier\(sessionId: string, serviceTier: string \| null, persist = true\)/);
+  assert.match(wsClientSource, /this\.sendRequest\('set_service_tier', \{ sessionId, serviceTier, persist \}\)/);
   assert.match(wsHookSource, /setServiceTier/);
   assert.match(routingSource, /case 'set_service_tier':/);
-  assert.match(routingSource, /processManager\.sendSetServiceTier\(sessionId, message\.serviceTier\)/);
+  assert.match(routingSource, /processManager\.sendSetServiceTier\(message\.sessionId, message\.serviceTier\)/);
   assert.match(processManagerSource, /sendSetServiceTier\(sessionId: string, serviceTier: string \| null\): boolean/);
   assert.match(processManagerSource, /this\.tryUpdateProviderSessionConfig\(\s*sessionId, \{ serviceTier \}/);
 });
@@ -137,5 +144,6 @@ test('session runtime state and Codex model metadata preserve service tiers', ()
   assert.match(sessionStoreSource, /serviceTier: 'serviceTier' in s \? s\.serviceTier : undefined/);
   assert.match(sessionStoreSource, /serviceTier: runtimeConfig\.serviceTier/);
   assert.match(providerOptionsSource, /buildCodexServiceTiers\(model\.serviceTiers\)/);
+  assert.match(providerOptionsSource, /defaultServiceTier: model\.defaultServiceTier/);
   assert.match(providerOptionsSource, /value = String\(tier\.id \?\? ''\)\.trim\(\)/);
 });

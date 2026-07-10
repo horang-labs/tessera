@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pencil, Pause, Play, Target, Trash2 } from 'lucide-react';
 import { Tooltip } from '@/components/ui/tooltip';
-import { emitSessionGoalCommandInsert } from '@/lib/chat/session-goal-command-event';
+import {
+  emitSessionGoalCommandEdit,
+  emitSessionGoalCommandInsert,
+} from '@/lib/chat/session-goal-command-event';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { selectHasActiveAssistantText, selectIsTurnInFlight, useChatStore } from '@/stores/chat-store';
@@ -27,6 +30,8 @@ interface SessionGoalControlProps {
 const STATUS_CLASS: Record<SessionGoalStatus, string> = {
   active: 'border-emerald-400/35 bg-emerald-400/10 text-emerald-300',
   paused: 'border-amber-400/35 bg-amber-400/10 text-amber-300',
+  blocked: 'border-rose-400/35 bg-rose-400/10 text-rose-300',
+  usageLimited: 'border-orange-400/35 bg-orange-400/10 text-orange-300',
   budgetLimited: 'border-sky-400/35 bg-sky-400/10 text-sky-300',
   complete: 'border-(--divider) bg-(--sidebar-hover) text-(--text-secondary)',
 };
@@ -40,6 +45,10 @@ function getGoalStatusLabel(
       return t('goal.status.active');
     case 'paused':
       return t('goal.status.paused');
+    case 'blocked':
+      return t('goal.status.blocked');
+    case 'usageLimited':
+      return t('goal.status.usageLimited');
     case 'budgetLimited':
       return t('goal.status.budgetLimited');
     case 'complete':
@@ -198,7 +207,7 @@ export function SessionGoalControl({
             <button
               type="button"
               onClick={() => {
-                emitSessionGoalCommandInsert(sessionId);
+                emitSessionGoalCommandEdit(sessionId);
                 setIsOpen(false);
               }}
               className="inline-flex h-7 items-center gap-1 rounded-md border border-(--divider) px-2 text-[11px] text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
@@ -219,7 +228,11 @@ export function SessionGoalControl({
                 <Pause className="h-3 w-3" />
                 {t('goal.pause')}
               </button>
-            ) : goal.status === 'paused' ? (
+            ) : (
+              goal.status === 'paused'
+              || goal.status === 'blocked'
+              || goal.status === 'usageLimited'
+            ) ? (
               <button
                 type="button"
                 onClick={() => {
