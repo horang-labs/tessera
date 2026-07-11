@@ -18,6 +18,7 @@ import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
 
 interface SessionCreateOptions {
@@ -40,6 +41,7 @@ export function useSessionCrud() {
   const [isClosing, setIsClosing] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+  const [isForking, setIsForking] = useState(false);
 
   const requestSessionDelete = useCallback((sessionId: string) => {
     return fetchWithClientId(`/api/sessions/${sessionId}`, { method: 'DELETE' });
@@ -290,7 +292,7 @@ export function useSessionCrud() {
    * Delete a session
    */
   const deleteSession = useCallback(
-    async (sessionId: string) => {
+    async (sessionId: string): Promise<boolean> => {
       try {
         const response = await requestSessionDelete(sessionId);
 
@@ -299,7 +301,7 @@ export function useSessionCrud() {
 
           if (error.code === 'EACCES' || error.code === 'EBUSY') {
             toast.error(error.error || t('errors.deleteSessionFailed'));
-            return;
+            return false;
           }
 
           throw new Error(error.error || t('errors.deleteSessionFailed'));
@@ -308,12 +310,97 @@ export function useSessionCrud() {
         removeSessionFromStores(sessionId);
 
         toast.success(t('notifications.sessionDeleted'));
+        return true;
       } catch (err) {
         toast.error(t('errors.deleteSessionFailed'));
         console.error('Delete session error:', err);
+        return false;
       }
     },
     [removeSessionFromStores, requestSessionDelete, t]
+  );
+
+  /** Fork a persisted Codex thread into a new, history-hydrated Tessera tab. */
+  const forkSession = useCallback(
+    async (sourceSessionId: string): Promise<string | null> => {
+      if (isForking) return null;
+      const tabStore = useTabStore.getState();
+      const sourceTabId = tabStore.findSessionLocation(sourceSessionId)?.tabId
+        ?? tabStore.activeTabId;
+      setIsForking(true);
+      try {
+        const response = await fetchWithClientId(`/api/sessions/${sourceSessionId}/fork`, {
+          method: 'POST',
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to fork Codex session');
+        }
+
+        const forkedSession: UnifiedSession = {
+          id: result.sessionId,
+          title: result.title,
+          projectDir: result.projectDir,
+          workDir: result.workDir,
+          isRunning: false,
+          hasStarted: true,
+          status: 'completed',
+          createdAt: result.createdAt,
+          lastModified: result.createdAt,
+          archived: false,
+          sortOrder: 0,
+          worktreeBranch: result.worktreeBranch,
+          provider: 'codex',
+          model: result.model,
+          reasoningEffort: result.reasoningEffort,
+          serviceTier: result.serviceTier,
+          taskId: result.taskId,
+          collectionId: result.collectionId,
+          hasCustomTitle: true,
+        };
+        // A sidebar single-click opens a preview tab, which is intentionally not
+        // persisted. Forking makes the source meaningful workspace state, so pin
+        // it before opening the child and keep their relative tab order stable.
+        useTabStore.getState().pinTab(sourceTabId);
+        sessionStore.addSession(forkedSession, { activate: false });
+
+        // Create and activate the child tab only after its session exists. Keeping
+        // addSession non-activating prevents the active-session bridge (including
+        // cross-window sync) from replacing the source tab first.
+        useTabStore.getState().createTab(result.sessionId, { insertAfterTabId: sourceTabId });
+
+        try {
+          const historyResponse = await fetch(`/api/sessions/${result.sessionId}/messages?limit=500`);
+          restoreSessionReplay(
+            result.sessionId,
+            historyResponse.ok ? await historyResponse.json() : { messages: [] },
+          );
+        } catch (historyError) {
+          // The fork is already durable. Leave the child open and allow the
+          // normal history loader/reload path to hydrate it later.
+          restoreSessionReplay(result.sessionId, { messages: [] });
+          console.warn('Fork history hydration failed:', historyError);
+        }
+
+        toast.success(t('notifications.sessionCreated', { title: result.title }));
+
+        if (result.taskId) {
+          void useTaskStore.getState().loadTasks(result.projectDir, {
+            setCurrent: useTaskStore.getState().currentProjectId === result.projectDir,
+          });
+        }
+        return result.sessionId;
+      } catch (error) {
+        // The composer owns draft clearing and intentionally keeps it intact
+        // when this returns null.
+        toast.error(error instanceof Error ? error.message : t('errors.createSessionFailed'));
+        console.error('Fork session error:', error);
+        return null;
+      } finally {
+        setIsForking(false);
+      }
+    },
+    [isForking, sessionStore, t],
   );
 
   /**
@@ -450,6 +537,7 @@ export function useSessionCrud() {
     createSession,
     closeSession,
     deleteSession,
+    forkSession,
     deleteProject,
     renameSession,
     autoGenerateTitle,
@@ -459,6 +547,7 @@ export function useSessionCrud() {
     isClosing,
     isRenaming,
     isGeneratingTitle,
+    isForking,
 
     activeSessionId: sessionStore.activeSessionId,
   };

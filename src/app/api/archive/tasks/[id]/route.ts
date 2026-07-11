@@ -8,7 +8,10 @@ import {
 import { SettingsManager } from '@/lib/settings/manager';
 import * as dbTasks from '@/lib/db/tasks';
 import logger from '@/lib/logger';
-import { isTerminalHandoffConflictError } from '@/lib/terminal/terminal-handoff-lock';
+import {
+  isSessionOperationConflictError,
+  isTerminalHandoffConflictError,
+} from '@/lib/terminal/terminal-handoff-lock';
 import {
   broadcastSessionMutation,
   broadcastTaskMutation,
@@ -41,7 +44,7 @@ export async function PATCH(
 
   try {
     const projectId = dbTasks.getTask(id)?.projectId;
-    await setTaskArchived(id, archived);
+    await setTaskArchived(id, archived, auth.userId);
     if (archived) {
       const settings = await SettingsManager.load(auth.userId);
       if (settings.autoDeleteArchivedWorktrees) {
@@ -57,7 +60,7 @@ export async function PATCH(
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update task archive state';
-    const handoffConflict = isTerminalHandoffConflictError(error);
+    const handoffConflict = isTerminalHandoffConflictError(error) || isSessionOperationConflictError(error);
     logger.error({ taskId: id, error: message }, 'Failed to update task archive state');
     return NextResponse.json(
       {
@@ -92,7 +95,7 @@ export async function DELETE(
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete archived task';
-    const handoffConflict = isTerminalHandoffConflictError(error);
+    const handoffConflict = isTerminalHandoffConflictError(error) || isSessionOperationConflictError(error);
     logger.error({ taskId: id, error: message }, 'Failed to delete archived task');
     return NextResponse.json(
       {

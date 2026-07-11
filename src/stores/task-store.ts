@@ -479,15 +479,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const existingTask = get().getTask(id);
     if (!existingTask) return false;
 
-    if (archived) {
-      for (const session of existingTask.sessions) {
-        if (session.isRunning) {
-          const { wsClient } = await import('@/lib/ws/client');
-          wsClient.stopSession(session.id);
-        }
-      }
-    }
-
     const projectId = existingTask.projectId;
     const previousProjectTasks = get().getTasksForProject(projectId);
     const linkedSessionIds = existingTask.sessions.map((session) => session.id);

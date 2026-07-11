@@ -19,7 +19,12 @@ import { buildUserMessageDisplayContent } from '../chat/build-user-message-displ
 import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh';
 import { SettingsManager } from '../settings/manager';
 import { translateMessageText } from '../session/message-translator';
-import { isSessionHandedOffToTerminal } from '../terminal/terminal-handoff-lock';
+import {
+  isSessionHandedOffToTerminal,
+  isSessionOperationConflictError,
+  isTerminalHandoffConflictError,
+  withTesseraSessionOperation,
+} from '../terminal/terminal-handoff-lock';
 import type {
   ClientMessage,
   ContentBlock,
@@ -332,7 +337,7 @@ async function translateOutgoingContent(
   return { content: newContent, sentContent: translated, attempted: true, sourceLang, targetLang };
 }
 
-export async function sendSessionMessageFromWebSocket({
+async function sendSessionMessageFromWebSocketUnlocked({
   content,
   displayContent,
   sendToUser,
@@ -443,6 +448,27 @@ export async function sendSessionMessageFromWebSocket({
   const command = skillText ? `/${skillName} ${skillText}` : `/${skillName}`;
   processManager.sendMessage(sessionId, command);
   logger.info({ sessionId, skillName, command: command.slice(0, 100) }, 'Skill command sent to CLI');
+}
+
+export async function sendSessionMessageFromWebSocket(
+  options: SendSessionMessageActionOptions,
+): Promise<void> {
+  try {
+    await withTesseraSessionOperation(options.sessionId, () =>
+      sendSessionMessageFromWebSocketUnlocked(options)
+    );
+  } catch (error) {
+    if (isTerminalHandoffConflictError(error) || isSessionOperationConflictError(error)) {
+      options.sendToUser(options.userId, {
+        type: 'error',
+        sessionId: options.sessionId,
+        code: error.code,
+        message: error.message,
+      });
+      return;
+    }
+    throw error;
+  }
 }
 
 interface TranslateMessageActionOptions extends SessionActionOptions {

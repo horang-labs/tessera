@@ -15,11 +15,14 @@ import {
   beginTesseraSessionOperations,
   endTesseraSessionOperations,
   TerminalHandoffConflictError,
+  withExclusiveTesseraSessionOperation,
+  withExclusiveTesseraSessionOperations,
   withTesseraSessionOperation,
   withTesseraSessionOperations,
 } from '@/lib/terminal/terminal-handoff-lock';
 import type { SessionRow } from '@/lib/db/sessions';
 import type { TaskEntity } from '@/types/task-entity';
+import { syncCodexThreadsArchived } from '@/lib/session/codex-thread-lifecycle';
 
 export type ArchiveItemKind = 'chat' | 'task';
 export type WorktreeArchiveStatus = 'none' | 'present' | 'deleted' | 'missing';
@@ -263,8 +266,8 @@ export async function listArchiveItems(options: ArchiveListOptions = {}): Promis
   };
 }
 
-export async function restoreArchivedChat(sessionId: string): Promise<void> {
-  return withTesseraSessionOperation(sessionId, async () => {
+export async function restoreArchivedChat(sessionId: string, userId?: string): Promise<void> {
+  return withExclusiveTesseraSessionOperation(sessionId, async () => {
     const session = dbSessions.getSession(sessionId);
     if (!session || session.deleted) {
       throw new Error('Session not found');
@@ -278,17 +281,31 @@ export async function restoreArchivedChat(sessionId: string): Promise<void> {
       throw new Error('Cannot restore because the worktree is unavailable');
     }
 
-    dbSessions.updateSession(sessionId, { archived: 0, archived_at: null });
+    await syncCodexThreadsArchived([session], false, userId);
+    try {
+      dbSessions.updateSession(sessionId, { archived: 0, archived_at: null });
+    } catch (error) {
+      try {
+        await syncCodexThreadsArchived([session], true, userId);
+      } catch (compensationError) {
+        logger.error({ sessionId, error: compensationError }, 'Failed to compensate Codex unarchive state');
+      }
+      throw error;
+    }
+
   });
 }
 
-export async function setTaskArchived(taskId: string, archived: boolean): Promise<void> {
+export async function setTaskArchived(taskId: string, archived: boolean, userId?: string): Promise<void> {
   const task = dbTasks.getTask(taskId, processManager.getActiveSessionIds());
   if (!task) {
     throw new Error('Task not found');
   }
 
-  return withTesseraSessionOperations(task.sessions.map((session) => session.id), async () => {
+  const sessionRows = task.sessions
+    .map((session) => dbSessions.getSession(session.id))
+    .filter((session): session is SessionRow => Boolean(session));
+  return withExclusiveTesseraSessionOperations(task.sessions.map((session) => session.id), async () => {
     if (!archived) {
       const worktreeStatus = await getWorktreeStatus(task.workDir, task.worktreeDeletedAt);
       if (!task.workDir || worktreeStatus !== 'present') {
@@ -296,7 +313,28 @@ export async function setTaskArchived(taskId: string, archived: boolean): Promis
       }
     }
 
-    dbTasks.setTaskArchived(taskId, archived);
+    await syncCodexThreadsArchived(sessionRows, archived, userId);
+    try {
+      dbTasks.setTaskArchived(taskId, archived);
+    } catch (error) {
+      try {
+        await syncCodexThreadsArchived(sessionRows, !archived, userId);
+      } catch (compensationError) {
+        logger.error({ taskId, archived, error: compensationError }, 'Failed to compensate task Codex archive state');
+      }
+      throw error;
+    }
+
+    if (archived) {
+      for (const session of task.sessions) {
+        if (!processManager.getProcess(session.id)) continue;
+        try {
+          await processManager.closeSession(session.id);
+        } catch (error) {
+          logger.warn({ taskId, sessionId: session.id, error }, 'Task archived but a session process did not stop cleanly');
+        }
+      }
+    }
   });
 }
 
@@ -309,13 +347,11 @@ export async function permanentlyDeleteArchivedTask(userId: string, taskId: stri
     throw new Error('Task is not archived');
   }
 
-  return withTesseraSessionOperations(task.sessions.map((session) => session.id), async () => {
-    for (const session of task.sessions) {
-      await sessionOrchestrator.deleteSession(userId, session.id);
-    }
+  for (const session of task.sessions) {
+    await sessionOrchestrator.deleteSession(userId, session.id);
+  }
 
-    dbTasks.deleteTask(taskId);
-  });
+  dbTasks.deleteTask(taskId);
 }
 
 export async function removeArchivedTaskWorktree(taskId: string, userId?: string): Promise<void> {

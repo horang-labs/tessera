@@ -4,7 +4,10 @@ import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { getSession } from '@/lib/db/sessions';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
-import { isTerminalHandoffConflictError } from '@/lib/terminal/terminal-handoff-lock';
+import {
+  isSessionOperationConflictError,
+  isTerminalHandoffConflictError,
+} from '@/lib/terminal/terminal-handoff-lock';
 
 /**
  * DELETE /api/sessions/[id]
@@ -54,7 +57,7 @@ export async function DELETE(
       error: err,
       }, 'Delete session API error');
 
-    if (isTerminalHandoffConflictError(err)) {
+    if (isTerminalHandoffConflictError(err) || isSessionOperationConflictError(err)) {
       return NextResponse.json(
         { error: err.message, code: err.code },
         { status: 409 },

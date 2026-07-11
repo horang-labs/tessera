@@ -52,8 +52,6 @@ import {
 } from '@/lib/terminal/terminal-launch-draft-state';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useGitStore } from '@/stores/git-store';
-import { useUsageStore } from '@/stores/usage-store';
-import { buildStatusDisplayModel } from '@/lib/status-display/build-status-display';
 import { matchShortcut, formatShortcut } from '@/lib/keyboard-shortcut';
 import {
   applyProviderSessionRuntimeOverrides,
@@ -82,6 +80,7 @@ import {
 } from '@/lib/dnd/panel-session-drag';
 import { PanelSplitPicker } from './panel-split-picker';
 import { ComposerSessionControls } from './composer-session-controls';
+import { DeleteSessionDialog } from './delete-session-dialog';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
 import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
@@ -212,6 +211,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const { t } = useI18n();
   const setDraftInput = useChatStore((state) => state.setDraftInput);
   const [inputValue, setInputValue] = useState(() => useChatStore.getState().getDraftInput(sessionId));
+  const [deleteRequested, setDeleteRequested] = useState(false);
   // Attachment/reference/voice completion can update the local composer after a
   // terminal launch but before its prefill ACK. Record that intent synchronously
   // (before React commits the state update) so an older ACK cannot clear it.
@@ -308,7 +308,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     clearSessionGoal,
   } = useWebSocket();
   const { resumeAndSend, isResuming } = useSessionResume();
-  const { createSession, renameSession } = useSessionCrud();
+  const { createSession, deleteSession, forkSession, renameSession } = useSessionCrud();
   const enterKeyBehavior = useSettingsStore(
     (state) => state.settings.enterKeyBehavior ?? 'send'
   );
@@ -1127,14 +1127,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return true;
     }
     if (match.support.startsWith('terminal-')) {
-      if (match.args
-        && (match.terminalMode === 'fork-current' || match.terminalMode === 'resume-picker')) {
+      if (match.args && match.terminalMode === 'resume-picker') {
         toast.info(t('chat.codexSlashUnsupported', { command: commandInput }));
         return true;
       }
-      const locksSourceSession = match.support === 'terminal-handoff'
-        || match.terminalMode === 'fork-current'
-        || match.terminalMode === 'resume-picker';
+      const locksSourceSession = match.support === 'terminal-handoff';
       if (locksSourceSession
         && (isGenerating || activePrompt || hasClientTerminalHandoff(sessionId))) {
         toast.info(t('chat.codexSlashTerminalBusy', { command: `/${match.name}` }));
@@ -1170,6 +1167,39 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return executeCodexGoalCommand(match.args
         ? `${CODEX_GOAL_COMMAND} ${match.args}`
         : CODEX_GOAL_COMMAND);
+    }
+    if (match.nativeCommand === 'fork') {
+      if (match.args) {
+        toast.info(t('chat.codexSlashUnsupported', { command: commandInput }));
+        return true;
+      }
+      if (
+        isGenerating
+        || activePrompt
+        || hasClientTerminalHandoff(sessionId)
+      ) {
+        toast.info(t('chat.codexSlashTerminalBusy', { command: `/${match.name}` }));
+        return true;
+      }
+      void forkSession(sessionId).then((forkedSessionId) => {
+        if (!forkedSessionId) return;
+        if (useChatStore.getState().getDraftInput(sessionId).trim() === commandInput.trim()) {
+          clearInput();
+        }
+        skillPicker.close();
+        skillPicker.clearSkill();
+      });
+      return true;
+    }
+    if (match.nativeCommand === 'delete') {
+      if (match.args) {
+        toast.info(t('chat.codexSlashUnsupported', { command: commandInput }));
+        return true;
+      }
+      setDeleteRequested(true);
+      skillPicker.close();
+      skillPicker.clearSkill();
+      return true;
     }
 
     if (match.nativeCommand === 'model' || match.nativeCommand === 'permissions') {
@@ -1226,21 +1256,6 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         cwd: session?.workDir ?? '-',
       }));
       clearInput();
-    } else if (match.nativeCommand === 'usage') {
-      const usage = useUsageStore.getState().sessionUsage.get(sessionId);
-      const statusUsage = buildStatusDisplayModel({
-        providerId: 'codex',
-        usage,
-        configuredModel: session?.model ?? selectedModel,
-      }).usage;
-      toast.info(statusUsage?.hasData
-        ? t('chat.codexSlashUsage', {
-            current: statusUsage.currentUsage,
-            window: statusUsage.hasContextWindow ? statusUsage.contextWindow : '-',
-            percent: statusUsage.usedPercent,
-          })
-        : t('chat.codexSlashUsageUnavailable'));
-      clearInput();
     } else if (match.nativeCommand === 'rename') {
       if (match.args) void renameSession(sessionId, match.args);
       else {
@@ -1279,6 +1294,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     agentEnvironment,
     clearInput,
     createSession,
+    forkSession,
     executeCodexCompactCommand,
     executeCodexFastCommand,
     executeCodexGoalCommand,
@@ -1726,6 +1742,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     !isInjectingCurrentSession;
 
   return (
+    <>
     <div className="pb-2 pt-0">
       <div className={cn('w-full', isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-4')}>
         <MessageRowShell>
@@ -2062,5 +2079,17 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         </MessageRowShell>
       </div>
     </div>
+    <DeleteSessionDialog
+      session={session ?? null}
+      isOpen={deleteRequested}
+      onCancel={() => setDeleteRequested(false)}
+      onConfirm={async () => {
+        const deleted = await deleteSession(sessionId);
+        if (deleted) {
+          setDeleteRequested(false);
+        }
+      }}
+    />
+    </>
   );
 }

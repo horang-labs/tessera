@@ -16,6 +16,7 @@ interface PersistCreatedSessionRecordOptions {
   model?: string;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
+  providerState?: string | null;
 }
 
 interface PersistedSessionProject {
@@ -64,6 +65,7 @@ export function persistCreatedSessionRecord(
       model: options.model,
       reasoningEffort: options.reasoningEffort,
       serviceTier: options.serviceTier,
+      providerState: options.providerState,
     },
   );
 
@@ -75,7 +77,7 @@ export function persistCreatedSessionRecord(
     );
   }
 
-  if (options.taskId && options.worktreeBranch) {
+  if (options.worktreeBranch) {
     dbSessions.updateSession(options.sessionId, {
       worktree_branch: options.worktreeBranch,
       worktree_managed: options.worktreeManaged ? 1 : 0,

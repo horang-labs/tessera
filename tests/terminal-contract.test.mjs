@@ -92,7 +92,7 @@ test('Codex terminal launch is classified and resolved on the server', () => {
   assert.match(terminalLaunchIntentSource, /resolveProviderCliCommand\('codex', 'codex'/);
   assert.match(terminalLaunchIntentSource, /extractThreadId\(session\.provider_state\)/);
   assert.match(terminalLaunchIntentSource, /CODEX_THREAD_ID_RE\.test\(threadId\)/);
-  assert.match(terminalLaunchIntentSource, /shellPrefillArgv: \{ program, args: \['fork', threadId\] \}/);
+  assert.doesNotMatch(terminalLaunchIntentSource, /args: \['fork', threadId\]/);
   assert.match(terminalLaunchIntentSource, /args: \['resume', threadId\]/);
   assert.match(terminalLaunchIntentSource, /isCodexSlashCommandAvailable/);
 });
@@ -117,9 +117,10 @@ test('resume, delete, archive, restore, and worktree cleanup hold atomic handoff
   assert.match(sessionOrchestratorSource, /withTesseraSessionOperation\(sessionId/);
   assert.match(sessionOrchestratorSource, /resumeSessionWithLifecycle/);
   assert.match(sessionOrchestratorSource, /removeManagedWorktree/);
-  assert.match(sessionArchiveSource, /withTesseraSessionOperation\(sessionId/);
-  assert.match(archiveServiceSource, /withTesseraSessionOperation\(sessionId/);
-  assert.match(archiveServiceSource, /withTesseraSessionOperations\(task\.sessions\.map/);
+  assert.match(sessionOrchestratorSource, /withExclusiveTesseraSessionOperation\(sessionId/);
+  assert.match(sessionArchiveSource, /withExclusiveTesseraSessionOperation\(sessionId/);
+  assert.match(archiveServiceSource, /withExclusiveTesseraSessionOperation\(sessionId/);
+  assert.match(archiveServiceSource, /withExclusiveTesseraSessionOperations\(task\.sessions\.map/);
   assert.match(archiveServiceSource, /beginTesseraSessionOperations\(item\.sessions\.map/);
   assert.match(archiveServiceSource, /endTesseraSessionOperations\(acquired\)/);
   assert.match(sessionArchiveRouteSource, /isTerminalHandoffConflictError/);

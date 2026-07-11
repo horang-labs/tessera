@@ -1,6 +1,8 @@
 import * as dbSessions from '../db/sessions';
+import { processManager } from '../cli/process-manager';
 import logger from '../logger';
-import { withTesseraSessionOperation } from '../terminal/terminal-handoff-lock';
+import { withExclusiveTesseraSessionOperation } from '../terminal/terminal-handoff-lock';
+import { syncCodexThreadsArchived } from './codex-thread-lifecycle';
 
 export interface ArchiveSessionResult {
   cleanupError?: string;
@@ -12,8 +14,9 @@ export interface ArchiveSessionResult {
 export async function archiveSession(
   sessionId: string,
   archived: boolean,
+  userId?: string,
 ): Promise<ArchiveSessionResult> {
-  return withTesseraSessionOperation(sessionId, () => {
+  return withExclusiveTesseraSessionOperation(sessionId, async () => {
     const session = dbSessions.getSession(sessionId);
     if (!session) {
       throw new Error('Session not found');
@@ -22,11 +25,29 @@ export async function archiveSession(
       throw new Error('Task sessions must be archived through their task');
     }
 
-    const archivedAt = archived ? new Date().toISOString() : null;
-    dbSessions.updateSession(sessionId, {
-      archived: archived ? 1 : 0,
-      archived_at: archivedAt,
-    });
+    await syncCodexThreadsArchived([session], archived, userId);
+    try {
+      const archivedAt = archived ? new Date().toISOString() : null;
+      dbSessions.updateSession(sessionId, {
+        archived: archived ? 1 : 0,
+        archived_at: archivedAt,
+      });
+    } catch (error) {
+      try {
+        await syncCodexThreadsArchived([session], !archived, userId);
+      } catch (compensationError) {
+        logger.error({ sessionId, archived, error: compensationError }, 'Failed to compensate Codex archive state');
+      }
+      throw error;
+    }
+
+    if (archived && processManager.getProcess(sessionId)) {
+      try {
+        await processManager.closeSession(sessionId);
+      } catch (error) {
+        logger.warn({ sessionId, error }, 'Session archived but its Codex process did not stop cleanly');
+      }
+    }
 
     logger.info({ sessionId, projectId: session.project_id, archived }, 'Session archive state updated');
 

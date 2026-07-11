@@ -128,6 +128,7 @@ export function createSession(
     model?: string;
     reasoningEffort?: string | null;
     serviceTier?: string | null;
+    providerState?: string | null;
   } = {}
 ): void {
   const db = getDb();
@@ -139,15 +140,16 @@ export function createSession(
   `).run(projectId);
   db.prepare(`
     INSERT INTO sessions (
-      id, project_id, title, provider, model, reasoning_effort, service_tier, work_dir, worktree_managed,
+      id, project_id, title, provider, provider_state, model, reasoning_effort, service_tier, work_dir, worktree_managed,
       task_id, collection_id, sort_order, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     id,
     projectId,
     title,
     provider,
+    options.providerState ?? null,
     options.model ?? null,
     options.reasoningEffort ?? null,
     options.serviceTier ?? null,

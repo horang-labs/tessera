@@ -8,6 +8,7 @@ interface TerminalHandoffState {
   locksBySession: Map<string, TerminalHandoffLock>;
   sessionsByTerminal: Map<string, string>;
   activeTesseraOperations: Map<string, number>;
+  exclusiveTesseraOperations: Set<string>;
 }
 
 // API routes and the custom WebSocket server can load separate compiled module
@@ -21,8 +22,15 @@ const state = globalState[TERMINAL_HANDOFF_STATE_KEY]
     locksBySession: new Map<string, TerminalHandoffLock>(),
     sessionsByTerminal: new Map<string, string>(),
     activeTesseraOperations: new Map<string, number>(),
+    exclusiveTesseraOperations: new Set<string>(),
   });
-const { locksBySession, sessionsByTerminal, activeTesseraOperations } = state;
+state.exclusiveTesseraOperations ??= new Set<string>();
+const {
+  locksBySession,
+  sessionsByTerminal,
+  activeTesseraOperations,
+  exclusiveTesseraOperations,
+} = state;
 
 export class TerminalHandoffConflictError extends Error {
   readonly code = 'session_handed_off_to_terminal';
@@ -31,6 +39,26 @@ export class TerminalHandoffConflictError extends Error {
     super('Close the Codex terminal before changing this Tessera session.');
     this.name = 'TerminalHandoffConflictError';
   }
+}
+
+export class SessionOperationConflictError extends Error {
+  readonly code = 'session_busy';
+
+  constructor() {
+    super('Wait for the current session operation to finish and try again.');
+    this.name = 'SessionOperationConflictError';
+  }
+}
+
+export function isSessionOperationConflictError(
+  error: unknown,
+): error is SessionOperationConflictError {
+  return error instanceof SessionOperationConflictError
+    || (
+      error instanceof Error
+      && 'code' in error
+      && error.code === 'session_busy'
+    );
 }
 
 export function isTerminalHandoffConflictError(
@@ -49,7 +77,10 @@ function terminalKey(userId: string, terminalId: string): string {
 }
 
 export function acquireTerminalHandoffLock(lock: TerminalHandoffLock): boolean {
-  if ((activeTesseraOperations.get(lock.sessionId) ?? 0) > 0) {
+  if (
+    (activeTesseraOperations.get(lock.sessionId) ?? 0) > 0
+    || exclusiveTesseraOperations.has(lock.sessionId)
+  ) {
     return false;
   }
   const key = terminalKey(lock.userId, lock.terminalId);
@@ -67,9 +98,34 @@ export function acquireTerminalHandoffLock(lock: TerminalHandoffLock): boolean {
 }
 
 export function beginTesseraSessionOperation(sessionId: string): boolean {
-  if (locksBySession.has(sessionId)) return false;
+  if (locksBySession.has(sessionId) || exclusiveTesseraOperations.has(sessionId)) return false;
   activeTesseraOperations.set(sessionId, (activeTesseraOperations.get(sessionId) ?? 0) + 1);
   return true;
+}
+
+export function beginExclusiveTesseraSessionOperation(sessionId: string): boolean {
+  if (
+    locksBySession.has(sessionId)
+    || exclusiveTesseraOperations.has(sessionId)
+    || (activeTesseraOperations.get(sessionId) ?? 0) > 0
+  ) {
+    return false;
+  }
+  exclusiveTesseraOperations.add(sessionId);
+  return true;
+}
+
+export function beginExclusiveTesseraSessionOperations(sessionIds: Iterable<string>): string[] | null {
+  const acquired: string[] = [];
+  for (const sessionId of new Set(sessionIds)) {
+    if (!sessionId) continue;
+    if (!beginExclusiveTesseraSessionOperation(sessionId)) {
+      endExclusiveTesseraSessionOperations(acquired);
+      return null;
+    }
+    acquired.push(sessionId);
+  }
+  return acquired;
 }
 
 /**
@@ -106,19 +162,59 @@ export function endTesseraSessionOperations(sessionIds: Iterable<string>): void 
   }
 }
 
+export function endExclusiveTesseraSessionOperation(sessionId: string): void {
+  exclusiveTesseraOperations.delete(sessionId);
+}
+
+export function endExclusiveTesseraSessionOperations(sessionIds: Iterable<string>): void {
+  for (const sessionId of sessionIds) {
+    endExclusiveTesseraSessionOperation(sessionId);
+  }
+}
+
 export async function withTesseraSessionOperations<T>(
   sessionIds: Iterable<string>,
   operation: () => Promise<T> | T,
 ): Promise<T> {
-  const acquired = beginTesseraSessionOperations(sessionIds);
+  const ids = [...new Set(sessionIds)].filter(Boolean);
+  const acquired = beginTesseraSessionOperations(ids);
   if (!acquired) {
-    throw new TerminalHandoffConflictError();
+    if (ids.some((sessionId) => locksBySession.has(sessionId))) {
+      throw new TerminalHandoffConflictError();
+    }
+    throw new SessionOperationConflictError();
   }
   try {
     return await operation();
   } finally {
     endTesseraSessionOperations(acquired);
   }
+}
+
+export async function withExclusiveTesseraSessionOperations<T>(
+  sessionIds: Iterable<string>,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  const ids = [...new Set(sessionIds)].filter(Boolean);
+  const acquired = beginExclusiveTesseraSessionOperations(ids);
+  if (!acquired) {
+    if (ids.some((sessionId) => locksBySession.has(sessionId))) {
+      throw new TerminalHandoffConflictError();
+    }
+    throw new SessionOperationConflictError();
+  }
+  try {
+    return await operation();
+  } finally {
+    endExclusiveTesseraSessionOperations(acquired);
+  }
+}
+
+export function withExclusiveTesseraSessionOperation<T>(
+  sessionId: string,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  return withExclusiveTesseraSessionOperations([sessionId], operation);
 }
 
 export function withTesseraSessionOperation<T>(

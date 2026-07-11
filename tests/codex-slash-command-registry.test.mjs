@@ -49,8 +49,8 @@ test('classification separates native, terminal, and hidden routes', () => {
     name: 'fork',
     canonicalName: 'fork',
     args: 'now',
-    support: 'terminal-direct',
-    terminalMode: 'fork-current',
+    support: 'native',
+    nativeCommand: 'fork',
   });
   assert.deepEqual(registry.classifyCodexSlashCommand('/fast'), {
     name: 'fast',
@@ -61,17 +61,19 @@ test('classification separates native, terminal, and hidden routes', () => {
   });
   assert.equal(registry.classifyCodexSlashCommand('/goooal edit')?.nativeCommand, 'goal');
   assert.equal(registry.classifyCodexSlashCommand('/review')?.support, 'terminal-handoff');
-  assert.equal(registry.classifyCodexSlashCommand('/logout')?.support, 'hidden');
-  assert.equal(registry.classifyCodexSlashCommand('/pet')?.support, 'terminal-direct');
+  assert.equal(registry.classifyCodexSlashCommand('/logout')?.support, 'terminal-direct');
+  assert.equal(registry.classifyCodexSlashCommand('/usage')?.support, 'terminal-direct');
+  assert.equal(registry.classifyCodexSlashCommand('/delete')?.nativeCommand, 'delete');
+  assert.equal(registry.classifyCodexSlashCommand('/pet')?.support, 'hidden');
   assert.equal(registry.classifyCodexSlashCommand('/clean')?.support, 'hidden');
 });
 
 test('canonical commands are fully partitioned and picker hides unsafe/platform routes', () => {
   assert.deepEqual(registry.CODEX_0_144_1_ROUTE_COUNTS, {
-    native: 15,
-    terminalDirect: 19,
-    terminalHandoff: 10,
-    hidden: 11,
+    native: 16,
+    terminalDirect: 13,
+    terminalHandoff: 8,
+    hidden: 18,
   });
   assert.equal(
     Object.values(registry.CODEX_0_144_1_ROUTE_COUNTS).reduce((sum, value) => sum + value, 0),
@@ -81,17 +83,20 @@ test('canonical commands are fully partitioned and picker hides unsafe/platform 
     platform: 'darwin',
     agentEnvironment: 'native',
   });
-  assert.equal(macPicker.length, 40, 'compact/goal are separate built-ins and Windows commands are gated');
+  assert.equal(macPicker.length, 33, 'compact/goal are separate built-ins and Windows commands are gated');
   assert.ok(macPicker.some((item) => item.name === 'model' && item.support === 'native'));
   assert.ok(macPicker.some((item) => item.name === 'mcp' && item.support === 'terminal-direct'));
-  assert.ok(macPicker.some((item) => item.name === 'app' && item.support === 'terminal-handoff'));
-  assert.ok(!macPicker.some((item) => item.name === 'delete'));
+  assert.ok(macPicker.some((item) => item.name === 'review' && item.support === 'terminal-handoff'));
+  assert.ok(macPicker.some((item) => item.name === 'fork' && item.support === 'native'));
+  assert.ok(macPicker.some((item) => item.name === 'delete' && item.support === 'native'));
+  assert.ok(macPicker.some((item) => item.name === 'usage' && item.support === 'terminal-direct'));
+  assert.ok(!macPicker.some((item) => item.name === 'theme'));
   assert.ok(!macPicker.some((item) => item.name === 'setup-default-sandbox'));
   const windowsPicker = registry.getCodexSlashCommandsForPicker({
     platform: 'win32',
     agentEnvironment: 'native',
   });
-  assert.equal(windowsPicker.length, 42);
+  assert.equal(windowsPicker.length, 35);
   assert.ok(windowsPicker.some((item) => item.name === 'setup-default-sandbox'));
 });
 

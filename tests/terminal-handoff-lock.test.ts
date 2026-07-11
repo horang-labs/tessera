@@ -5,6 +5,8 @@ import {
   assertSessionNotHandedOffToTerminal,
   beginTesseraSessionOperation,
   beginTesseraSessionOperations,
+  beginExclusiveTesseraSessionOperation,
+  endExclusiveTesseraSessionOperation,
   endTesseraSessionOperation,
   isSessionHandedOffToTerminal,
   isTerminalHandoffConflictError,
@@ -13,6 +15,7 @@ import {
   releaseTerminalHandoffsForUser,
   TerminalHandoffConflictError,
   withTesseraSessionOperation,
+  withExclusiveTesseraSessionOperation,
 } from '../src/lib/terminal/terminal-handoff-lock';
 
 test('handoff lock is a bijection between one session and one terminal', () => {
@@ -84,6 +87,28 @@ test('an async Tessera operation keeps handoff excluded until it settles', async
   assert.equal(await operation, 'done');
   assert.equal(acquireTerminalHandoffLock({ sessionId, terminalId, userId }), true);
   releaseTerminalHandoffByTerminal(userId, terminalId);
+});
+
+test('exclusive lifecycle operations reject concurrent sends, mutations, and handoffs', async () => {
+  const sessionId = 'exclusive-operation-session-1';
+  const userId = 'exclusive-operation-user-1';
+  const terminalId = 'exclusive-operation-terminal-1';
+  let finishOperation!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    finishOperation = resolve;
+  });
+
+  const operation = withExclusiveTesseraSessionOperation(sessionId, async () => {
+    await barrier;
+  });
+  assert.equal(beginTesseraSessionOperation(sessionId), false);
+  assert.equal(beginExclusiveTesseraSessionOperation(sessionId), false);
+  assert.equal(acquireTerminalHandoffLock({ sessionId, terminalId, userId }), false);
+
+  finishOperation();
+  await operation;
+  assert.equal(beginExclusiveTesseraSessionOperation(sessionId), true);
+  endExclusiveTesseraSessionOperation(sessionId);
 });
 
 test('multi-session Tessera acquisition rolls back when one session is handed off', () => {

@@ -25,7 +25,14 @@ import { createGitRunner } from '../worktrees/git-runner';
 import { isManagedWorktreePath, removeManagedWorktree } from '../worktrees/managed';
 import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import { clearCachedSessionPr } from '../github/session-pr-sync';
-import { withTesseraSessionOperation } from '../terminal/terminal-handoff-lock';
+import {
+  withExclusiveTesseraSessionOperation,
+  withTesseraSessionOperation,
+} from '../terminal/terminal-handoff-lock';
+import {
+  syncCodexThreadDelete,
+  syncCodexThreadName,
+} from './codex-thread-lifecycle';
 
 const MAX_SESSIONS = 20;
 
@@ -120,11 +127,32 @@ export class SessionOrchestrator {
       throw new Error('Title too long (max 100 characters)');
     }
 
-    // Persist to DB
-    dbSessions.updateSession(sessionId, { title: newTitle, has_custom_title: 1 });
-    syncSingleSessionTaskTitleFromSession(sessionId, newTitle);
+    return withExclusiveTesseraSessionOperation(sessionId, async () => {
+      const session = dbSessions.getSession(sessionId);
+      if (!session || session.deleted) {
+        throw new Error('Session not found');
+      }
 
-    logger.info({ userId, sessionId, newTitle }, 'Session renamed');
+      await syncCodexThreadName(session, newTitle, userId);
+      try {
+        dbSessions.updateSession(sessionId, { title: newTitle, has_custom_title: 1 });
+        syncSingleSessionTaskTitleFromSession(sessionId, newTitle);
+      } catch (error) {
+        dbSessions.updateSession(sessionId, {
+          title: session.title,
+          has_custom_title: session.has_custom_title,
+        });
+        syncSingleSessionTaskTitleFromSession(sessionId, session.title);
+        try {
+          await syncCodexThreadName(session, session.title, userId);
+        } catch (compensationError) {
+          logger.error({ sessionId, error: compensationError }, 'Failed to compensate Codex thread rename');
+        }
+        throw error;
+      }
+
+      logger.info({ userId, sessionId, newTitle }, 'Session renamed');
+    });
   }
 
   /**
@@ -135,7 +163,7 @@ export class SessionOrchestrator {
    * @throws Error if session not found or permission denied
    */
   async deleteSession(userId: string, sessionId: string): Promise<void> {
-    return withTesseraSessionOperation(sessionId, async () => {
+    return withExclusiveTesseraSessionOperation(sessionId, async () => {
       try {
         const session = dbSessions.getSession(sessionId);
         if (!session) {
@@ -150,6 +178,11 @@ export class SessionOrchestrator {
           logger.info({ userId, sessionId }, 'Terminating CLI process before deletion');
           await this.processManager.closeSession(sessionId);
         }
+
+        // Remote-first: a failed Codex delete must preserve local metadata and
+        // canonical history so the stopped session can still be resumed.
+        await syncCodexThreadDelete(session, userId);
+        dbSessions.softDeleteSession(sessionId);
 
         const sourceProjectDir =
           (session.project_id ? dbProjects.getProject(session.project_id)?.decoded_path : undefined)
@@ -166,8 +199,12 @@ export class SessionOrchestrator {
           const otherCount = dbSessions.countOtherSessionsByWorkDir(session.work_dir, sessionId);
           if (otherCount === 0) {
             const runGit = createGitRunner(await getAgentEnvironment(userId));
-            await removeManagedWorktree(sourceProjectDir, session.work_dir, runGit);
-            logger.info({ userId, sessionId, worktreePath: session.work_dir }, 'Managed worktree removed');
+            try {
+              await removeManagedWorktree(sourceProjectDir, session.work_dir, runGit);
+              logger.info({ userId, sessionId, worktreePath: session.work_dir }, 'Managed worktree removed');
+            } catch (error) {
+              logger.warn({ userId, sessionId, worktreePath: session.work_dir, error }, 'Session deleted but worktree cleanup failed');
+            }
           } else {
             logger.info(
               { userId, sessionId, worktreePath: session.work_dir, otherSessionCount: otherCount },
@@ -175,10 +212,17 @@ export class SessionOrchestrator {
             );
           }
         }
-        await sessionHistory.deleteSession(sessionId);
-
-        dbSessions.deleteSession(sessionId);
+        try {
+          await sessionHistory.deleteSession(sessionId);
+        } catch (error) {
+          logger.warn({ userId, sessionId, error }, 'Session deleted but history cleanup failed');
+        }
         clearCachedSessionPr(sessionId);
+        try {
+          dbSessions.deleteSession(sessionId);
+        } catch (error) {
+          logger.warn({ userId, sessionId, error }, 'Session soft-deleted but database cleanup failed');
+        }
 
         logger.info({ userId, sessionId }, 'Session deleted successfully');
       } catch (err) {

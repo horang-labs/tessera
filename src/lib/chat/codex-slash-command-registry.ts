@@ -86,15 +86,16 @@ export type CodexNativeSlashCommand =
   | 'rename'
   | 'new'
   | 'archive'
+  | 'delete'
+  | 'fork'
   | 'plan'
   | 'copy'
   | 'diff'
   | 'mention'
   | 'status'
-  | 'usage'
   | 'clear';
 
-export type CodexTerminalMode = 'tui' | 'resume-picker' | 'fork-current';
+export type CodexTerminalMode = 'tui' | 'resume-picker';
 
 export interface CodexSlashCommandMatch {
   /** Command name exactly as typed, without the leading slash. */
@@ -120,24 +121,25 @@ export interface CodexSlashCommandPickerItem {
 }
 
 const NATIVE_COMMANDS = new Set<CodexCanonicalSlashCommand>([
-  'model', 'permissions', 'skills', 'rename', 'new', 'archive', 'compact',
-  'plan', 'goal', 'copy', 'diff', 'mention', 'status', 'usage', 'clear',
+  'model', 'permissions', 'skills', 'rename', 'new', 'archive', 'delete', 'fork',
+  'compact', 'plan', 'goal', 'copy', 'diff', 'mention', 'status', 'clear',
 ]);
 
 const TERMINAL_DIRECT_COMMANDS = new Set<CodexCanonicalSlashCommand>([
-  'ide', 'keymap', 'vim', 'setup-default-sandbox', 'sandbox-add-read-dir',
-  'experimental', 'import', 'hooks', 'resume', 'fork', 'init', 'debug-config',
-  'title', 'statusline', 'theme', 'pets', 'mcp', 'plugins', 'apps',
+  'setup-default-sandbox', 'sandbox-add-read-dir', 'experimental', 'import',
+  'hooks', 'resume', 'init', 'usage', 'debug-config', 'mcp', 'apps', 'plugins',
+  'logout',
 ]);
 
 const TERMINAL_HANDOFF_COMMANDS = new Set<CodexCanonicalSlashCommand>([
-  'memories', 'app', 'agent', 'side', 'btw', 'raw', 'feedback', 'subagents',
-  'review', 'personality',
+  'memories', 'review', 'agent', 'side', 'btw', 'feedback', 'personality',
+  'subagents',
 ]);
 
 const HIDDEN_COMMANDS = new Set<CodexCanonicalSlashCommand>([
-  'approve', 'delete', 'logout', 'quit', 'exit', 'rollout', 'ps', 'stop',
-  'test-approval', 'debug-m-drop', 'debug-m-update',
+  'ide', 'keymap', 'vim', 'approve', 'app', 'raw', 'title', 'statusline',
+  'theme', 'pets', 'quit', 'exit', 'rollout', 'ps', 'stop', 'test-approval',
+  'debug-m-drop', 'debug-m-update',
 ]);
 
 const WINDOWS_NATIVE_ONLY_COMMANDS = new Set<CodexCanonicalSlashCommand>([
@@ -151,15 +153,16 @@ const COMMAND_DESCRIPTIONS: Partial<Record<CodexCanonicalSlashCommand, string>> 
   rename: 'Rename this Tessera session',
   new: 'Start a new Tessera session in this project',
   archive: 'Archive this Tessera session',
+  delete: 'Delete this Tessera session and its Codex thread',
+  fork: 'Fork this Codex thread into a new Tessera session',
   plan: 'Switch this Tessera session to plan mode',
   copy: 'Copy the latest assistant response',
   diff: 'Open the Tessera Git diff panel',
   mention: 'Open the workspace reference picker',
   status: 'Show the current Tessera session status',
-  usage: 'Show the current Tessera context and usage',
   clear: 'Start a new session without deleting this history',
   resume: 'Continue a saved task in a Codex terminal',
-  fork: 'Fork this Codex thread in a terminal',
+  usage: 'Show Codex account usage in a terminal',
   review: 'Hand this thread off to Codex review in a terminal',
   personality: 'Choose a Codex personality in a terminal',
 };
@@ -185,7 +188,6 @@ function commandSupport(command: CodexCanonicalSlashCommand): CodexSlashCommandS
 
 function terminalMode(command: CodexCanonicalSlashCommand): CodexTerminalMode | undefined {
   if (command === 'resume') return 'resume-picker';
-  if (command === 'fork') return 'fork-current';
   if (commandSupport(command).startsWith('terminal-')) return 'tui';
   return undefined;
 }

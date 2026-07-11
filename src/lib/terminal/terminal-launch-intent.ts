@@ -168,10 +168,7 @@ export async function resolveTerminalLaunchIntent(options: {
       'platform_unavailable',
     );
   }
-  if (
-    match.args
-    && (match.terminalMode === 'resume-picker' || match.terminalMode === 'fork-current')
-  ) {
+  if (match.args && match.terminalMode === 'resume-picker') {
     throw new TerminalLaunchIntentError(
       `/${match.name} does not accept arguments in Tessera's terminal route.`,
       'command_args_unsupported',
@@ -189,27 +186,8 @@ export async function resolveTerminalLaunchIntent(options: {
   const cwd = readSessionLaunchCwd(options.sessionId);
 
   if (match.terminalMode === 'resume-picker') {
-    await acquireTerminalSessionLease({
-      sessionId: options.sessionId,
-      terminalId: options.terminalId,
-      userId: options.userId,
-    });
     return {
       shellPrefillArgv: { program, args: ['resume'] },
-      handoffSessionId: options.sessionId,
-      cwd,
-    };
-  }
-  if (match.terminalMode === 'fork-current') {
-    const threadId = readCodexThreadId(options.sessionId);
-    await acquireTerminalSessionLease({
-      sessionId: options.sessionId,
-      terminalId: options.terminalId,
-      userId: options.userId,
-    });
-    return {
-      shellPrefillArgv: { program, args: ['fork', threadId] },
-      handoffSessionId: options.sessionId,
       cwd,
     };
   }
