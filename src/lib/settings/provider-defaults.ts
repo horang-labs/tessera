@@ -23,7 +23,7 @@ import {
   DEFAULT_PROFILE_DISPLAY_NAME,
 } from './profile-defaults';
 
-export const FONT_SCALE_OPTIONS = [0.8125, 0.875, 0.9375, 1] as const;
+export const FONT_SCALE_OPTIONS = [0.8125, 0.875, 1, 1.25] as const;
 export const DEFAULT_FONT_SCALE = 0.875;
 type ClaudeAccessMode = Extract<
   ProviderSessionAccessMode,
@@ -49,6 +49,11 @@ export function normalizeFontScale(raw: unknown): number {
   }
   if (raw >= 2) {
     return DEFAULT_FONT_SCALE;
+  }
+  // Preserve the semantic "large" choice for users upgrading from the old
+  // preset list, where 0.9375 sat exactly between the new medium and large.
+  if (raw === 0.9375) {
+    return 1;
   }
   let best: number = FONT_SCALE_OPTIONS[0];
   let bestDelta = Math.abs(raw - best);
