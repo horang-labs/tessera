@@ -23,8 +23,9 @@ const themeScript = `
     var theme = settings.theme || 'auto';
     var isDark = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     if (isDark) document.documentElement.classList.add('dark');
-    var scales = [0.8125, 0.875, 0.9375, 1];
+    var scales = [0.8125, 0.875, 1, 1.25];
     var raw = typeof settings.fontSize === 'number' ? settings.fontSize : 0.875;
+    if (raw === 0.9375) raw = 1;
     var scale = 0.875;
     if (raw < 2) {
       var best = scales[0];

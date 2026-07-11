@@ -43,6 +43,8 @@ export function ItemStatusIndicator({
     return null;
   }
 
+  const isEnlargedSidebarCorner = surface === 'sidebar' && placement === 'corner';
+
   const ringClass =
     placement === 'inline'
       ? ''
@@ -54,9 +56,10 @@ export function ItemStatusIndicator({
     return (
       <span
         className={cn(
-          getPlacementClassName(placement, false),
+          getPlacementClassName(placement, false, isEnlargedSidebarCorner),
           ringClass,
-          'h-[7px] w-[7px] rounded-full bg-[#facc15] attention-dot-blink',
+          isEnlargedSidebarCorner ? 'h-[10px] w-[10px]' : 'h-[7px] w-[7px]',
+          'rounded-full bg-[#facc15] attention-dot-blink',
         )}
       />
     );
@@ -66,9 +69,10 @@ export function ItemStatusIndicator({
     return (
       <span
         className={cn(
-          getPlacementClassName(placement, false),
+          getPlacementClassName(placement, false, isEnlargedSidebarCorner),
           ringClass,
-          'h-[6px] w-[6px] rounded-full bg-[#facc15]',
+          isEnlargedSidebarCorner ? 'h-[9px] w-[9px]' : 'h-[6px] w-[6px]',
+          'rounded-full bg-[#facc15]',
         )}
       />
     );
@@ -78,9 +82,10 @@ export function ItemStatusIndicator({
     return (
       <span
         className={cn(
-          getPlacementClassName(placement, true),
+          getPlacementClassName(placement, true, isEnlargedSidebarCorner),
           ringClass,
-          'h-[7px] w-[7px] animate-spin rounded-full border border-(--success) border-t-transparent',
+          isEnlargedSidebarCorner ? 'h-[10px] w-[10px]' : 'h-[7px] w-[7px]',
+          'animate-spin rounded-full border border-(--success) border-t-transparent',
         )}
       />
     );
@@ -89,9 +94,10 @@ export function ItemStatusIndicator({
   return (
     <span
       className={cn(
-        getPlacementClassName(placement, false),
+        getPlacementClassName(placement, false, isEnlargedSidebarCorner),
         ringClass,
-        'h-[5px] w-[5px] rounded-full bg-(--success)',
+        isEnlargedSidebarCorner ? 'h-[8px] w-[8px]' : 'h-[5px] w-[5px]',
+        'rounded-full bg-(--success)',
       )}
     />
   );
@@ -300,11 +306,14 @@ export function OverflowMenuButton({
 function getPlacementClassName(
   placement: ItemStatusPlacement,
   isProcessing: boolean,
+  isEnlargedSidebarCorner: boolean,
 ): string {
   switch (placement) {
     case 'corner':
       // Industry-standard: top-left of the icon (like Gmail/Jira unread dots).
-      return 'absolute -top-0.5 -left-0.5';
+      return isEnlargedSidebarCorner
+        ? 'absolute -top-1 -left-1'
+        : 'absolute -top-0.5 -left-0.5';
     case 'leading':
       return cn(
         'absolute top-1/2 z-[1] -translate-y-1/2',
