@@ -52,20 +52,43 @@ function renderStatusIndicator({
 }
 
 test('sidebar corner status indicators render enlarged sizes and offset', () => {
-  assert.match(renderStatusIndicator({ isAwaitingUser: true }), /h-\[10px\].*w-\[10px\]/);
-  assert.match(renderStatusIndicator({ hasUnread: true }), /h-\[9px\].*w-\[9px\]/);
-  assert.match(renderStatusIndicator({ isProcessing: true }), /h-\[10px\].*w-\[10px\]/);
-  assert.match(renderStatusIndicator({ isRunning: true }), /h-\[8px\].*w-\[8px\]/);
+  const awaiting = renderStatusIndicator({ isAwaitingUser: true });
+  const unread = renderStatusIndicator({ hasUnread: true });
+  const processing = renderStatusIndicator({ isProcessing: true });
+  const running = renderStatusIndicator({ isRunning: true });
+
+  assert.match(awaiting, /h-\[0\.75rem\].*w-\[0\.75rem\]/);
+  assert.match(unread, /h-\[0\.6875rem\].*w-\[0\.6875rem\]/);
+  assert.match(processing, /h-\[0\.75rem\].*w-\[0\.75rem\]/);
+  assert.match(running, /h-\[0\.625rem\].*w-\[0\.625rem\]/);
   assert.match(renderStatusIndicator({ isRunning: true }), /-top-1 -left-1/);
+
+  for (const rootFontSize of [16, 20]) {
+    const expectedSpinnerSize = rootFontSize === 16 ? 12 : 15;
+    assert.equal(0.75 * rootFontSize, expectedSpinnerSize);
+  }
 });
 
 test('board and non-corner status indicators keep their original sizing', () => {
-  const boardSpinner = renderStatusIndicator({ isProcessing: true, surface: 'board' });
-  const leadingSpinner = renderStatusIndicator({ isProcessing: true, placement: 'leading' });
+  const statusCases = [
+    [{ isAwaitingUser: true }, 7],
+    [{ hasUnread: true }, 6],
+    [{ isProcessing: true }, 7],
+    [{ isRunning: true }, 5],
+  ];
 
-  assert.match(boardSpinner, /h-\[7px\].*w-\[7px\]/);
-  assert.match(boardSpinner, /-top-0\.5 -left-0\.5/);
-  assert.doesNotMatch(boardSpinner, /h-\[10px\]/);
-  assert.match(leadingSpinner, /h-\[7px\].*w-\[7px\]/);
-  assert.doesNotMatch(leadingSpinner, /h-\[10px\]/);
+  for (const [status, expectedSize] of statusCases) {
+    const boardCorner = renderStatusIndicator({ ...status, surface: 'board' });
+    assert.match(boardCorner, new RegExp(`h-\\[${expectedSize}px\\].*w-\\[${expectedSize}px\\]`));
+    assert.match(boardCorner, /-top-0\.5 -left-0\.5/);
+    assert.doesNotMatch(boardCorner, /h-\[[0-9.]+rem\]/);
+
+    for (const placement of ['leading', 'inline']) {
+      for (const surface of ['sidebar', 'board']) {
+        const nonCorner = renderStatusIndicator({ ...status, placement, surface });
+        assert.match(nonCorner, new RegExp(`h-\\[${expectedSize}px\\].*w-\\[${expectedSize}px\\]`));
+        assert.doesNotMatch(nonCorner, /h-\[[0-9.]+rem\]/);
+      }
+    }
+  }
 });

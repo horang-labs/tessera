@@ -58,7 +58,7 @@ export function ItemStatusIndicator({
         className={cn(
           getPlacementClassName(placement, false, isEnlargedSidebarCorner),
           ringClass,
-          isEnlargedSidebarCorner ? 'h-[10px] w-[10px]' : 'h-[7px] w-[7px]',
+          isEnlargedSidebarCorner ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
           'rounded-full bg-[#facc15] attention-dot-blink',
         )}
       />
@@ -71,7 +71,7 @@ export function ItemStatusIndicator({
         className={cn(
           getPlacementClassName(placement, false, isEnlargedSidebarCorner),
           ringClass,
-          isEnlargedSidebarCorner ? 'h-[9px] w-[9px]' : 'h-[6px] w-[6px]',
+          isEnlargedSidebarCorner ? 'h-[0.6875rem] w-[0.6875rem]' : 'h-[6px] w-[6px]',
           'rounded-full bg-[#facc15]',
         )}
       />
@@ -84,7 +84,7 @@ export function ItemStatusIndicator({
         className={cn(
           getPlacementClassName(placement, true, isEnlargedSidebarCorner),
           ringClass,
-          isEnlargedSidebarCorner ? 'h-[10px] w-[10px]' : 'h-[7px] w-[7px]',
+          isEnlargedSidebarCorner ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
           'animate-spin rounded-full border border-(--success) border-t-transparent',
         )}
       />
@@ -96,7 +96,7 @@ export function ItemStatusIndicator({
       className={cn(
         getPlacementClassName(placement, false, isEnlargedSidebarCorner),
         ringClass,
-        isEnlargedSidebarCorner ? 'h-[8px] w-[8px]' : 'h-[5px] w-[5px]',
+        isEnlargedSidebarCorner ? 'h-[0.625rem] w-[0.625rem]' : 'h-[5px] w-[5px]',
         'rounded-full bg-(--success)',
       )}
     />
