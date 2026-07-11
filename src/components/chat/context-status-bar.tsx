@@ -10,6 +10,7 @@ import { buildStatusDisplayModel } from '@/lib/status-display/build-status-displ
 import { Tooltip } from '@/components/ui/tooltip';
 import type { ModelUsageEntry } from '@/lib/ws/message-types';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 import type { SessionGoal } from '@/types/session-goal';
 
 interface ContextStatusBarProps {
@@ -113,16 +114,24 @@ function formatGoalDuration(seconds: number): string {
   return `${safeSeconds}s`;
 }
 
-function getGoalStatusText(goal: SessionGoal): string {
+function getGoalStatusText(
+  goal: SessionGoal,
+  t: ReturnType<typeof useI18n>['t'],
+): string {
+  const duration = formatGoalDuration(goal.timeUsedSeconds);
   switch (goal.status) {
     case 'active':
-      return `Pursuing goal (${formatGoalDuration(goal.timeUsedSeconds)})`;
+      return t('goal.statusBar.active', { duration });
     case 'paused':
-      return 'Goal paused (/goal resume)';
+      return t('goal.statusBar.paused');
+    case 'blocked':
+      return t('goal.statusBar.blocked');
+    case 'usageLimited':
+      return t('goal.statusBar.usageLimited');
     case 'budgetLimited':
-      return `Goal unmet (${formatGoalDuration(goal.timeUsedSeconds)})`;
+      return t('goal.statusBar.budgetLimited', { duration });
     case 'complete':
-      return `Goal achieved (${formatGoalDuration(goal.timeUsedSeconds)})`;
+      return t('goal.statusBar.complete', { duration });
   }
 }
 
@@ -132,6 +141,10 @@ function goalStatusColor(goal: SessionGoal): string {
       return 'text-emerald-300';
     case 'paused':
       return 'text-amber-300';
+    case 'blocked':
+      return 'text-rose-300';
+    case 'usageLimited':
+      return 'text-orange-300';
     case 'budgetLimited':
       return 'text-sky-300';
     case 'complete':
@@ -140,6 +153,7 @@ function goalStatusColor(goal: SessionGoal): string {
 }
 
 export function ContextStatusBar({ sessionId, isReadOnly }: ContextStatusBarProps) {
+  const { t } = useI18n();
   const providerId = useSessionStore((s) => s.getSession(sessionId)?.provider?.trim() ?? null);
   const goal = useSessionStore((s) => s.getSession(sessionId)?.goal ?? null);
   const usage = useUsageStore((s) => s.sessionUsage.get(sessionId));
@@ -265,7 +279,7 @@ export function ContextStatusBar({ sessionId, isReadOnly }: ContextStatusBarProp
             className={cn('min-w-0 truncate', goalStatusColor(goal))}
             title={goal.objective}
           >
-            {getGoalStatusText(goal)}
+            {getGoalStatusText(goal, t)}
           </span>
         </>
       )}

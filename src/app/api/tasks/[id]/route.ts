@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { processManager } from '@/lib/cli/process-manager';
 import * as dbTasks from '@/lib/db/tasks';
+import * as dbSessions from '@/lib/db/sessions';
 import { collectionExists } from '@/lib/db/collections';
 import logger from '@/lib/logger';
 import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
@@ -13,6 +14,12 @@ import {
   broadcastTaskMutation,
   getOriginClientIdFromRequest,
 } from '@/lib/ws/mutation-broadcast';
+import { syncCodexThreadName } from '@/lib/session/codex-thread-lifecycle';
+import {
+  isSessionOperationConflictError,
+  isTerminalHandoffConflictError,
+  withExclusiveTesseraSessionOperation,
+} from '@/lib/terminal/terminal-handoff-lock';
 
 /**
  * GET /api/tasks/[id]
@@ -123,12 +130,36 @@ export async function PATCH(
   }
 
   try {
-    dbTasks.updateTask(id, patch as any);
-    if (typeof patch.title === 'string') {
-      syncSingleSessionSessionTitleFromTask(id, patch.title, {
-        hasCustomTitle: true,
-        skipTimestamp: true,
-      });
+    const linkedSession = typeof patch.title === 'string' && task.sessions.length === 1
+      ? dbSessions.getSession(task.sessions[0].id)
+      : undefined;
+    const applyPatch = async () => {
+      if (linkedSession && typeof patch.title === 'string') {
+        await syncCodexThreadName(linkedSession, patch.title, auth.userId);
+      }
+      try {
+        dbTasks.updateTask(id, patch as any);
+        if (typeof patch.title === 'string') {
+          syncSingleSessionSessionTitleFromTask(id, patch.title, {
+            hasCustomTitle: true,
+            skipTimestamp: true,
+          });
+        }
+      } catch (error) {
+        if (linkedSession && typeof patch.title === 'string') {
+          try {
+            await syncCodexThreadName(linkedSession, linkedSession.title, auth.userId);
+          } catch (compensationError) {
+            logger.error({ id, sessionId: linkedSession.id, error: compensationError }, 'Failed to compensate task-linked Codex rename');
+          }
+        }
+        throw error;
+      }
+    };
+    if (linkedSession) {
+      await withExclusiveTesseraSessionOperation(linkedSession.id, applyPatch);
+    } else {
+      await applyPatch();
     }
     logger.info({ taskId: id, ...patch }, 'Task updated');
     const originClientId = getOriginClientIdFromRequest(req);
@@ -147,6 +178,9 @@ export async function PATCH(
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
     logger.error({ id, error: err }, 'Failed to update task');
+    if (isTerminalHandoffConflictError(err) || isSessionOperationConflictError(err)) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
+    }
     return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
   }
 }
@@ -195,6 +229,9 @@ export async function DELETE(
     });
   } catch (err: unknown) {
     logger.error({ id, error: err }, 'Failed to delete task');
+    if (isTerminalHandoffConflictError(err) || isSessionOperationConflictError(err)) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
+    }
     return NextResponse.json({ error: 'Failed to delete task' }, { status: 500 });
   }
 }

@@ -10,6 +10,7 @@ interface SkillPickerProps {
   isOpen: boolean;
   isLoading?: boolean;
   isInactive?: boolean;
+  isEmpty?: boolean;
   skills: SkillInfo[];
   selectedIndex: number;
   onSelect: (skill: SkillInfo) => void;
@@ -20,6 +21,7 @@ export function SkillPicker({
   isOpen,
   isLoading,
   isInactive,
+  isEmpty,
   skills,
   selectedIndex,
   onSelect,
@@ -62,7 +64,7 @@ export function SkillPicker({
     };
   }, [isOpen, onClose]);
 
-  if (!isOpen || (skills.length === 0 && !isLoading && !isInactive)) return null;
+  if (!isOpen || (skills.length === 0 && !isLoading && !isInactive && !isEmpty)) return null;
 
   return (
     <div
@@ -95,6 +97,12 @@ export function SkillPicker({
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
           <span className="text-xs">{t('chat.skillsLoading')}</span>
+        </div>
+      )}
+
+      {isEmpty && skills.length === 0 && (
+        <div className="px-3 py-4 text-xs text-(--text-muted)">
+          {t('chat.skillPickerEmpty')}
         </div>
       )}
 

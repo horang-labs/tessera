@@ -11,8 +11,18 @@ import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
 import logger from '@/lib/logger';
 import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
 import { pathExists } from '@/lib/filesystem/path-exists';
+import {
+  beginTesseraSessionOperations,
+  endTesseraSessionOperations,
+  TerminalHandoffConflictError,
+  withExclusiveTesseraSessionOperation,
+  withExclusiveTesseraSessionOperations,
+  withTesseraSessionOperation,
+  withTesseraSessionOperations,
+} from '@/lib/terminal/terminal-handoff-lock';
 import type { SessionRow } from '@/lib/db/sessions';
 import type { TaskEntity } from '@/types/task-entity';
+import { syncCodexThreadsArchived } from '@/lib/session/codex-thread-lifecycle';
 
 export type ArchiveItemKind = 'chat' | 'task';
 export type WorktreeArchiveStatus = 'none' | 'present' | 'deleted' | 'missing';
@@ -256,37 +266,76 @@ export async function listArchiveItems(options: ArchiveListOptions = {}): Promis
   };
 }
 
-export async function restoreArchivedChat(sessionId: string): Promise<void> {
-  const session = dbSessions.getSession(sessionId);
-  if (!session || session.deleted) {
-    throw new Error('Session not found');
-  }
-  if (session.task_id) {
-    throw new Error('Task sessions must be restored through their task');
-  }
+export async function restoreArchivedChat(sessionId: string, userId?: string): Promise<void> {
+  return withExclusiveTesseraSessionOperation(sessionId, async () => {
+    const session = dbSessions.getSession(sessionId);
+    if (!session || session.deleted) {
+      throw new Error('Session not found');
+    }
+    if (session.task_id) {
+      throw new Error('Task sessions must be restored through their task');
+    }
 
-  const worktreeStatus = await getWorktreeStatus(session.work_dir, session.worktree_deleted_at);
-  if (session.work_dir && worktreeStatus !== 'present') {
-    throw new Error('Cannot restore because the worktree is unavailable');
-  }
+    const worktreeStatus = await getWorktreeStatus(session.work_dir, session.worktree_deleted_at);
+    if (session.work_dir && worktreeStatus !== 'present') {
+      throw new Error('Cannot restore because the worktree is unavailable');
+    }
 
-  dbSessions.updateSession(sessionId, { archived: 0, archived_at: null });
+    await syncCodexThreadsArchived([session], false, userId);
+    try {
+      dbSessions.updateSession(sessionId, { archived: 0, archived_at: null });
+    } catch (error) {
+      try {
+        await syncCodexThreadsArchived([session], true, userId);
+      } catch (compensationError) {
+        logger.error({ sessionId, error: compensationError }, 'Failed to compensate Codex unarchive state');
+      }
+      throw error;
+    }
+
+  });
 }
 
-export async function setTaskArchived(taskId: string, archived: boolean): Promise<void> {
+export async function setTaskArchived(taskId: string, archived: boolean, userId?: string): Promise<void> {
   const task = dbTasks.getTask(taskId, processManager.getActiveSessionIds());
   if (!task) {
     throw new Error('Task not found');
   }
 
-  if (!archived) {
-    const worktreeStatus = await getWorktreeStatus(task.workDir, task.worktreeDeletedAt);
-    if (!task.workDir || worktreeStatus !== 'present') {
-      throw new Error('Cannot restore because the worktree is unavailable');
+  const sessionRows = task.sessions
+    .map((session) => dbSessions.getSession(session.id))
+    .filter((session): session is SessionRow => Boolean(session));
+  return withExclusiveTesseraSessionOperations(task.sessions.map((session) => session.id), async () => {
+    if (!archived) {
+      const worktreeStatus = await getWorktreeStatus(task.workDir, task.worktreeDeletedAt);
+      if (!task.workDir || worktreeStatus !== 'present') {
+        throw new Error('Cannot restore because the worktree is unavailable');
+      }
     }
-  }
 
-  dbTasks.setTaskArchived(taskId, archived);
+    await syncCodexThreadsArchived(sessionRows, archived, userId);
+    try {
+      dbTasks.setTaskArchived(taskId, archived);
+    } catch (error) {
+      try {
+        await syncCodexThreadsArchived(sessionRows, !archived, userId);
+      } catch (compensationError) {
+        logger.error({ taskId, archived, error: compensationError }, 'Failed to compensate task Codex archive state');
+      }
+      throw error;
+    }
+
+    if (archived) {
+      for (const session of task.sessions) {
+        if (!processManager.getProcess(session.id)) continue;
+        try {
+          await processManager.closeSession(session.id);
+        } catch (error) {
+          logger.warn({ taskId, sessionId: session.id, error }, 'Task archived but a session process did not stop cleanly');
+        }
+      }
+    }
+  });
 }
 
 export async function permanentlyDeleteArchivedTask(userId: string, taskId: string): Promise<void> {
@@ -327,7 +376,11 @@ export async function removeArchivedTaskWorktree(taskId: string, userId?: string
   if (item.sessions.some((session) => activeIds.has(session.id))) {
     throw new Error('Cannot delete worktree while sessions are running');
   }
-  const removed = await removeArchivedWorktree(item, await createArchiveGitRunner(userId));
+  const removed = await removeArchivedWorktree(
+    item,
+    await createArchiveGitRunner(userId),
+    true,
+  );
   if (!removed) {
     throw new Error('Failed to remove worktree');
   }
@@ -376,49 +429,62 @@ export async function removeArchivedWorktrees(
 async function removeArchivedWorktree(
   item: ArchiveItem,
   runGit?: GitRunner,
+  throwOnHandoffConflict = false,
 ): Promise<boolean> {
   if (!item.workDir || !item.archivedAt || item.worktreeDeletedAt) return false;
   if (!item.worktreeManaged) return false;
   if (item.worktreeStatus === 'deleted') return false;
 
-  const activeIds = processManager.getActiveSessionIds();
-  if (item.sessions.some((session) => activeIds.has(session.id))) {
+  const acquired = beginTesseraSessionOperations(item.sessions.map((session) => session.id));
+  if (!acquired) {
+    if (throwOnHandoffConflict) {
+      throw new TerminalHandoffConflictError();
+    }
     return false;
   }
 
-  const deletedAt = new Date().toISOString();
-  if (item.worktreeStatus === 'present') {
-    const sourceProjectDir = resolveSourceProjectDir(item.projectId);
-    if (!sourceProjectDir) {
-      throw new Error('Failed to resolve source project for managed worktree cleanup');
+  try {
+    const activeIds = processManager.getActiveSessionIds();
+    if (item.sessions.some((session) => activeIds.has(session.id))) {
+      return false;
     }
-    try {
-      if (runGit) {
-        await removeManagedWorktree(sourceProjectDir, item.workDir, runGit);
-      } else {
-        await removeManagedWorktree(sourceProjectDir, item.workDir);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const worktreeStillExists = await pathExists(item.workDir);
-      if (!isStaleManagedWorktreeRemovalError(message) && worktreeStillExists) {
-        throw error;
-      }
-      if (worktreeStillExists) {
-        await fs.rm(await resolvePathForHostFilesystem(item.workDir), {
-          recursive: true,
-          force: true,
-        });
-      }
-    }
-  }
 
-  if (item.kind === 'task') {
-    dbTasks.setTaskWorktreeDeletedAt(item.id, deletedAt);
-  } else {
-    dbSessions.setSessionWorktreeDeletedAt(item.id, deletedAt);
+    const deletedAt = new Date().toISOString();
+    if (item.worktreeStatus === 'present') {
+      const sourceProjectDir = resolveSourceProjectDir(item.projectId);
+      if (!sourceProjectDir) {
+        throw new Error('Failed to resolve source project for managed worktree cleanup');
+      }
+      try {
+        if (runGit) {
+          await removeManagedWorktree(sourceProjectDir, item.workDir, runGit);
+        } else {
+          await removeManagedWorktree(sourceProjectDir, item.workDir);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const worktreeStillExists = await pathExists(item.workDir);
+        if (!isStaleManagedWorktreeRemovalError(message) && worktreeStillExists) {
+          throw error;
+        }
+        if (worktreeStillExists) {
+          await fs.rm(await resolvePathForHostFilesystem(item.workDir), {
+            recursive: true,
+            force: true,
+          });
+        }
+      }
+    }
+
+    if (item.kind === 'task') {
+      dbTasks.setTaskWorktreeDeletedAt(item.id, deletedAt);
+    } else {
+      dbSessions.setSessionWorktreeDeletedAt(item.id, deletedAt);
+    }
+    return true;
+  } finally {
+    endTesseraSessionOperations(acquired);
   }
-  return true;
 }
 
 export async function pruneExpiredArchivedWorktrees(

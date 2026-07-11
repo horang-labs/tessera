@@ -1,6 +1,14 @@
 'use client';
 
-import { useRef, useEffect, useCallback, useMemo, useState, type KeyboardEvent } from 'react';
+import {
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type SetStateAction,
+} from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { MessageSquarePlus, MessageSquareShare, Mic, Paperclip, SendHorizontal, Square, Target } from 'lucide-react';
 import {
@@ -12,21 +20,43 @@ import { useSessionStore } from '@/stores/session-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSessionResume } from '@/hooks/use-session-resume';
+import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSkillPicker, type SkillInfo } from '@/hooks/use-skill-picker';
 import { SkillPicker } from '@/components/chat/skill-picker';
 import { useFilePicker } from '@/hooks/use-file-picker';
 import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
+import { useTaskStore } from '@/stores/task-store';
 import { shouldRouteToTerminalFallback } from '@/lib/terminal/tui-only-commands';
 import {
   setPendingTerminalLaunch,
   takePendingTerminalLaunch,
 } from '@/lib/terminal/pending-terminal-launch';
+import {
+  consumeTerminalLaunchResult,
+  takeTerminalLaunchResultsForSession,
+  TERMINAL_LAUNCH_RESULT_EVENT,
+  type TerminalLaunchResultDetail,
+} from '@/lib/terminal/terminal-launch-result';
+import {
+  clearClientTerminalHandoff,
+  hasClientTerminalHandoff,
+  markClientTerminalHandoff,
+} from '@/lib/terminal/client-terminal-handoff-state';
+import {
+  consumeTerminalLaunchDraft,
+  recordTerminalDraftEdit,
+  registerTerminalLaunchDraft,
+  shouldClearTerminalLaunchDraft,
+} from '@/lib/terminal/terminal-launch-draft-state';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useGitStore } from '@/stores/git-store';
 import { matchShortcut, formatShortcut } from '@/lib/keyboard-shortcut';
 import {
   applyProviderSessionRuntimeOverrides,
+  buildProviderSessionDefaultsUpdate,
+  getProviderSessionDefaultsWithOptions,
   getProviderSessionRuntimeConfig,
 } from '@/lib/settings/provider-defaults';
 import { hasConversationHistory, shouldResumeBeforeSend } from '@/lib/chat/session-send-routing';
@@ -50,15 +80,19 @@ import {
 } from '@/lib/dnd/panel-session-drag';
 import { PanelSplitPicker } from './panel-split-picker';
 import { ComposerSessionControls } from './composer-session-controls';
+import { DeleteSessionDialog } from './delete-session-dialog';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
+import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { exportSessionReference, formatContinueConversationPrompt } from '@/lib/session/session-reference';
 import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import type { Collection } from '@/types/collection';
 import { insertWorkspaceFileReferenceAtCursor } from '@/lib/chat/workspace-file-reference';
 import {
+  CODEX_DEFAULT_SERVICE_TIER,
   CODEX_FAST_COMMAND,
-  CODEX_FAST_SERVICE_TIER,
+  getCodexFastServiceTier,
+  getCodexFastToggleServiceTier,
   isCodexFastCommandSkill,
 } from '@/lib/chat/codex-fast-command';
 import {
@@ -69,14 +103,26 @@ import {
   isClaudeFastCommandSkill,
 } from '@/lib/chat/claude-fast-command';
 import {
+  buildCodexGoalEditUpdate,
+  CODEX_GOAL_MAX_OBJECTIVE_LENGTH,
   CODEX_GOAL_COMMAND,
+  countCodexGoalObjectiveCharacters,
   isCodexGoalCommandSkill,
   parseCodexGoalCommand,
+  parseCodexGoalEditObjective,
 } from '@/lib/chat/codex-goal-command';
 import {
+  getSessionGoalCommandEditSessionId,
   getSessionGoalCommandInsertSessionId,
+  SESSION_GOAL_COMMAND_EDIT_EVENT,
   SESSION_GOAL_COMMAND_INSERT_EVENT,
 } from '@/lib/chat/session-goal-command-event';
+import {
+  classifyCodexSlashCommand,
+  isCodexSlashCommandAvailable,
+  isReservedCodexSlashCommandName,
+} from '@/lib/chat/codex-slash-command-registry';
+import { dispatchCodexNativeUiAction } from '@/lib/chat/codex-native-command-events';
 import { SessionGoalControl } from './session-goal-control';
 import {
   MessageInputAttachmentStrip,
@@ -109,10 +155,10 @@ function formatGoalStatusMessage(goal: SessionGoal | null | undefined): string {
   }
 
   const commands = goal.status === 'active'
-    ? '/goal pause, /goal clear'
-    : goal.status === 'paused'
-      ? '/goal resume, /goal clear'
-      : '/goal clear';
+    ? '/goal edit, /goal pause, /goal clear'
+    : goal.status === 'paused' || goal.status === 'blocked' || goal.status === 'usageLimited'
+      ? '/goal edit, /goal resume, /goal clear'
+      : '/goal edit, /goal clear';
   return [
     `Goal | Status: ${goal.status}`,
     `Objective: ${goal.objective}`,
@@ -132,6 +178,10 @@ function goalStatusLabel(
       return t('goal.status.active');
     case 'paused':
       return t('goal.status.paused');
+    case 'blocked':
+      return t('goal.status.blocked');
+    case 'usageLimited':
+      return t('goal.status.usageLimited');
     case 'budgetLimited':
       return t('goal.status.budgetLimited');
     case 'complete':
@@ -146,6 +196,10 @@ function goalStatusDotClass(goal: SessionGoal, isRunning: boolean): string {
       return 'bg-emerald-300';
     case 'paused':
       return 'bg-amber-300';
+    case 'blocked':
+      return 'bg-rose-300';
+    case 'usageLimited':
+      return 'bg-orange-300';
     case 'budgetLimited':
       return 'bg-sky-300';
     case 'complete':
@@ -157,10 +211,50 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const { t } = useI18n();
   const setDraftInput = useChatStore((state) => state.setDraftInput);
   const [inputValue, setInputValue] = useState(() => useChatStore.getState().getDraftInput(sessionId));
+  const [deleteRequested, setDeleteRequested] = useState(false);
+  // Attachment/reference/voice completion can update the local composer after a
+  // terminal launch but before its prefill ACK. Record that intent synchronously
+  // (before React commits the state update) so an older ACK cannot clear it.
+  const setInputValueFromProgrammaticEdit = useCallback((value: SetStateAction<string>) => {
+    recordTerminalDraftEdit(sessionId);
+    setInputValue(value);
+  }, [sessionId]);
   const clearInput = useCallback(() => {
     setInputValue('');
     setDraftInput(sessionId, '');
   }, [sessionId, setDraftInput]);
+
+  useEffect(() => {
+    const applyTerminalLaunchResult = (detail: TerminalLaunchResultDetail) => {
+      if (!detail || detail.sourceSessionId !== sessionId) return;
+      const pendingDraft = consumeTerminalLaunchDraft(detail.terminalId);
+      if (detail.status === 'error') {
+        toast.error(detail.message ?? t('chat.codexSlashTerminalOpenFailed'));
+        return;
+      }
+
+      const draft = useChatStore.getState().getDraftInput(sessionId);
+      if (
+        pendingDraft
+        && shouldClearTerminalLaunchDraft(pendingDraft, draft)
+      ) {
+        setInputValue('');
+        setDraftInput(sessionId, '');
+      }
+      toast.info(t('chat.slashTerminalFallback', { command: detail.commandInput }));
+    };
+    const handleTerminalLaunchResult = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalLaunchResultDetail>).detail;
+      if (!detail || detail.sourceSessionId !== sessionId) return;
+      consumeTerminalLaunchResult(detail.terminalId);
+      applyTerminalLaunchResult(detail);
+    };
+    window.addEventListener(TERMINAL_LAUNCH_RESULT_EVENT, handleTerminalLaunchResult);
+    for (const detail of takeTerminalLaunchResultsForSession(sessionId)) {
+      applyTerminalLaunchResult(detail);
+    }
+    return () => window.removeEventListener(TERMINAL_LAUNCH_RESULT_EVENT, handleTerminalLaunchResult);
+  }, [sessionId, setDraftInput, t]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -202,6 +296,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const sessionCollectionId = session?.collectionId ?? null;
   const sessionServiceTier = session?.serviceTier;
   const sessionFastMode = session?.fastMode;
+  const sessionGoal = session?.goal ?? null;
   const {
     sendMessage,
     cancelGeneration,
@@ -212,7 +307,8 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     refreshSessionGoal,
     clearSessionGoal,
   } = useWebSocket();
-  const { resumeAndSend } = useSessionResume();
+  const { resumeAndSend, isResuming } = useSessionResume();
+  const { createSession, deleteSession, forkSession, renameSession } = useSessionCrud();
   const enterKeyBehavior = useSettingsStore(
     (state) => state.settings.enterKeyBehavior ?? 'send'
   );
@@ -221,11 +317,39 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   );
   const fontSize = useSettingsStore((state) => state.settings.fontSize);
   const sttEngine = useSettingsStore((state) => state.settings.sttEngine);
+  const settings = useSettingsStore((state) => state.settings);
+  const serverPlatform = useSettingsStore((state) => state.serverHostInfo?.platform ?? null);
+  const agentEnvironment = settings.agentEnvironment;
+  const updateSettings = useSettingsStore((state) => state.updateSettings);
   const isElectron = useElectronPlatform() !== null;
 
   const sessionIsRunning = session?.isRunning ?? false;
-  const skillPicker = useSkillPicker(sessionId, sessionProviderId || undefined, sessionIsRunning);
+  const providerSessionOptions = useProviderSessionOptions(
+    sessionProviderId || undefined,
+    agentEnvironment,
+  );
+  const providerDefaultsWithOptions = getProviderSessionDefaultsWithOptions(
+    settings,
+    sessionProviderId,
+    providerSessionOptions.data,
+  );
+  const selectedModel = session?.model ?? providerDefaultsWithOptions.model;
+  const selectedModelOption = providerSessionOptions.data?.modelOptions
+    .find((option) => option.value === selectedModel) ?? null;
+  const codexFastTier = getCodexFastServiceTier(selectedModelOption);
+  const skillPicker = useSkillPicker(
+    sessionId,
+    sessionProviderId || undefined,
+    sessionIsRunning,
+    sessionProviderId !== 'codex' || codexFastTier !== null,
+    serverPlatform,
+    agentEnvironment,
+  );
   const filePicker = useFilePicker(sessionId);
+  const goalEditSnapshotRef = useRef<SessionGoal | null>(null);
+  useEffect(() => {
+    goalEditSnapshotRef.current = null;
+  }, [sessionId]);
   const insertGoalCommand = useCallback(() => {
     if (sessionProviderId !== 'codex') {
       return;
@@ -234,6 +358,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     skillPicker.clearSkill();
     skillPicker.close();
     filePicker.close();
+    goalEditSnapshotRef.current = null;
 
     const trimmed = inputValue.trim();
     const nextValue = !trimmed
@@ -244,7 +369,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
           ? `${CODEX_GOAL_COMMAND} `
         : `${CODEX_GOAL_COMMAND} ${inputValue.trimStart()}`;
 
-    setInputValue(nextValue);
+    setInputValueFromProgrammaticEdit(nextValue);
     setDraftInput(sessionId, nextValue);
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
@@ -252,7 +377,32 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       textarea.focus();
       textarea.setSelectionRange(nextValue.length, nextValue.length);
     });
-  }, [filePicker, inputValue, sessionProviderId, sessionId, setDraftInput, skillPicker]);
+  }, [filePicker, inputValue, sessionProviderId, sessionId, setDraftInput, setInputValueFromProgrammaticEdit, skillPicker]);
+
+  const beginGoalEdit = useCallback((): boolean => {
+    if (sessionProviderId !== 'codex') return false;
+    if (!sessionGoal) {
+      toast.info(t('chat.codexGoalEditMissing'));
+      return true;
+    }
+
+    skillPicker.clearSkill();
+    skillPicker.close();
+    filePicker.close();
+    goalEditSnapshotRef.current = { ...sessionGoal };
+
+    const prefix = `${CODEX_GOAL_COMMAND} `;
+    const nextValue = `${prefix}${sessionGoal.objective}`;
+    setInputValueFromProgrammaticEdit(nextValue);
+    setDraftInput(sessionId, nextValue);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(prefix.length, nextValue.length);
+    });
+    return true;
+  }, [filePicker, sessionGoal, sessionId, sessionProviderId, setDraftInput, setInputValueFromProgrammaticEdit, skillPicker, t]);
 
   useEffect(() => {
     const handleGoalCommandInsert = (event: Event) => {
@@ -261,15 +411,25 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       }
       insertGoalCommand();
     };
+    const handleGoalCommandEdit = (event: Event) => {
+      if (getSessionGoalCommandEditSessionId(event) !== sessionId) {
+        return;
+      }
+      beginGoalEdit();
+    };
 
     window.addEventListener(SESSION_GOAL_COMMAND_INSERT_EVENT, handleGoalCommandInsert);
-    return () => window.removeEventListener(SESSION_GOAL_COMMAND_INSERT_EVENT, handleGoalCommandInsert);
-  }, [insertGoalCommand, sessionId]);
+    window.addEventListener(SESSION_GOAL_COMMAND_EDIT_EVENT, handleGoalCommandEdit);
+    return () => {
+      window.removeEventListener(SESSION_GOAL_COMMAND_INSERT_EVENT, handleGoalCommandInsert);
+      window.removeEventListener(SESSION_GOAL_COMMAND_EDIT_EVENT, handleGoalCommandEdit);
+    };
+  }, [beginGoalEdit, insertGoalCommand, sessionId]);
 
   const getInputValue = useCallback(() => inputValue, [inputValue]);
   const sessionRefs = useSessionRefs({
     textareaRef,
-    setInputValue,
+    setInputValue: setInputValueFromProgrammaticEdit,
     getInputValue,
   });
   const {
@@ -301,17 +461,16 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     syncAttachmentsWithText,
   } = useMessageInputAttachments({
     textareaRef,
-    setInputValue,
+    setInputValue: setInputValueFromProgrammaticEdit,
     t,
   });
   const MAX_CHARS = 10000;
   const MAX_ROWS = 5;
 
-  const isInputUnavailable = isReadOnly || isDisabled;
+  const isInputUnavailable = isReadOnly || isDisabled || isResuming;
   const isGenerating = sessionStatus === 'running' && (
     isTurnInFlight || hasActiveAssistantText
   );
-  const sessionGoal = session?.goal ?? null;
   const isGoalRunning = Boolean(sessionGoal?.status === 'active' && isGenerating);
   const goalComposerLabel = sessionGoal
     ? `Goal ${goalStatusLabel(sessionGoal, t)}${isGoalRunning ? ` · ${t('status.running')}` : ''}`
@@ -361,16 +520,16 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       const suffix = currentValue.slice(cursorPos);
       const separator = prefix.length > 0 && !prefix.endsWith(' ') ? ' ' : '';
       const newValue = prefix + separator + text + suffix;
-      setInputValue(newValue);
+      setInputValueFromProgrammaticEdit(newValue);
       requestAnimationFrame(() => {
         const newPos = cursorPos + separator.length + text.length;
         textarea.setSelectionRange(newPos, newPos);
         textarea.focus();
       });
     } else {
-      setInputValue((prev) => (prev ? prev + ' ' + text : text));
+      setInputValueFromProgrammaticEdit((prev) => (prev ? prev + ' ' + text : text));
     }
-  }, []);
+  }, [setInputValueFromProgrammaticEdit]);
 
   const voiceInput = useVoiceInput({ onTranscribed: handleVoiceTranscribed });
   const {
@@ -434,7 +593,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     }
 
     if (base !== inputValue) {
-      setInputValue(base);
+      setInputValueFromProgrammaticEdit(base);
     }
 
     prevPendingRef.current = voicePendingInterim;
@@ -534,6 +693,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   }, [canUseVoice, voiceKey, sessionId, toggleVoiceRecording]);
   const handleInputChange = useCallback(
     (value: string) => {
+      recordTerminalDraftEdit(sessionId);
       setInputValue(value);
       setDraftInput(sessionId, value);
       skillPicker.onInputChange(value);
@@ -558,7 +718,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
   const insertWorkspaceFileReference = useCallback((filePath: string) => {
     const textarea = textareaRef.current;
     if (!textarea) {
-      setInputValue((prev) => {
+      setInputValueFromProgrammaticEdit((prev) => {
         const { nextValue } = insertWorkspaceFileReferenceAtCursor(prev, prev.length, filePath);
         setDraftInput(sessionId, nextValue);
         return nextValue;
@@ -575,14 +735,14 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       filePath,
     );
 
-    setInputValue(nextValue);
+    setInputValueFromProgrammaticEdit(nextValue);
     setDraftInput(sessionId, nextValue);
     filePicker.close();
     requestAnimationFrame(() => {
       textarea.setSelectionRange(nextCursorPos, nextCursorPos);
       textarea.focus();
     });
-  }, [filePicker, sessionId, setDraftInput]);
+  }, [filePicker, sessionId, setDraftInput, setInputValueFromProgrammaticEdit]);
 
   const handleWrapperDragEnter = useCallback((e: React.DragEvent) => {
     if (isWorkspaceFileDrag(e)) {
@@ -658,33 +818,48 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return false;
     }
 
-    const nextServiceTier = sessionServiceTier === CODEX_FAST_SERVICE_TIER
-      ? null
-      : CODEX_FAST_SERVICE_TIER;
-    updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
-    if (sessionIsRunning) {
-      setServiceTier(sessionId, nextServiceTier);
+    const nextServiceTier = getCodexFastToggleServiceTier(
+      sessionServiceTier,
+      selectedModelOption,
+    );
+    if (!codexFastTier || !nextServiceTier) {
+      toast.info(t('chat.codexFastUnavailable'));
+      return true;
     }
+
+    if (!sessionIsRunning) {
+      void updateSettings(buildProviderSessionDefaultsUpdate(
+        useSettingsStore.getState().settings,
+        'codex',
+        { serviceTier: nextServiceTier },
+      ));
+    }
+    updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
+    setServiceTier(sessionId, nextServiceTier);
     clearInput();
     clearAttachments();
     clearSessionRefs();
     skillPicker.clearSkill();
     toast.info(
-      nextServiceTier
-        ? 'Codex fast mode enabled'
-        : 'Codex fast mode disabled',
+      nextServiceTier === CODEX_DEFAULT_SERVICE_TIER
+        ? t('chat.codexFastDisabled')
+        : t('chat.codexFastEnabled'),
     );
     return true;
   }, [
     clearAttachments,
     clearInput,
     clearSessionRefs,
+    codexFastTier,
+    selectedModelOption,
     sessionProviderId,
     sessionServiceTier,
     sessionId,
     sessionIsRunning,
     setServiceTier,
     skillPicker,
+    t,
+    updateSettings,
     updateSessionRuntimeConfig,
   ]);
 
@@ -694,6 +869,10 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     }
     if (isDisabled || isReadOnly) {
       return false;
+    }
+    if (isGenerating) {
+      toast.info(t('chat.codexCompactDuringTurn'));
+      return true;
     }
 
     const displayContent = CODEX_COMPACT_COMMAND;
@@ -718,10 +897,12 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     clearSessionRefs,
     compactSession,
     isDisabled,
+    isGenerating,
     isReadOnly,
     sessionProviderId,
     sessionId,
     skillPicker,
+    t,
   ]);
 
   const executeClaudeFastCommand = useCallback((): boolean => {
@@ -762,9 +943,56 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       return false;
     }
 
-    const command = parseCodexGoalCommand(commandInput);
+    const editSnapshot = goalEditSnapshotRef.current;
+    const editObjective = editSnapshot ? parseCodexGoalEditObjective(commandInput) : null;
+    if (editSnapshot && editObjective === '') {
+      toast.info(t('chat.codexGoalObjectiveRequired'));
+      return true;
+    }
+
+    const command = editSnapshot && editObjective !== null
+      ? { kind: 'set' as const, update: { objective: editObjective } }
+      : parseCodexGoalCommand(commandInput);
     if (!command) {
       return false;
+    }
+
+    if (command.kind === 'edit') {
+      return beginGoalEdit();
+    }
+
+    if (
+      command.kind === 'set'
+      && typeof command.update.objective === 'string'
+      && countCodexGoalObjectiveCharacters(command.update.objective) > CODEX_GOAL_MAX_OBJECTIVE_LENGTH
+    ) {
+      toast.info(t('chat.codexGoalTooLong', { count: CODEX_GOAL_MAX_OBJECTIVE_LENGTH }));
+      return true;
+    }
+    if (
+      command.kind === 'set'
+      && typeof command.update.objective === 'string'
+      && editSnapshot
+      && !sessionGoal
+    ) {
+      goalEditSnapshotRef.current = null;
+      toast.info(t('chat.codexGoalEditMissing'));
+      return true;
+    }
+    if (
+      command.kind === 'set'
+      && typeof command.update.objective === 'string'
+      && editSnapshot
+      && sessionGoal
+      && (
+        sessionGoal.threadId !== editSnapshot.threadId
+        || sessionGoal.createdAt !== editSnapshot.createdAt
+        || sessionGoal.objective !== editSnapshot.objective
+      )
+    ) {
+      goalEditSnapshotRef.current = null;
+      toast.info(t('chat.codexGoalChanged'));
+      return true;
     }
 
     const displayContent = commandInput.trim();
@@ -788,9 +1016,15 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     } else if (command.kind === 'clear') {
       clearSessionGoal(sessionId, buildSpawnConfigForCurrentSession(), displayContent);
     } else {
-      setSessionGoal(sessionId, command.update, buildSpawnConfigForCurrentSession(), displayContent);
+      const update = editSnapshot
+        && sessionGoal
+        && typeof command.update.objective === 'string'
+        ? buildCodexGoalEditUpdate(sessionGoal, command.update.objective)
+        : command.update;
+      setSessionGoal(sessionId, update, buildSpawnConfigForCurrentSession(), displayContent);
     }
 
+    goalEditSnapshotRef.current = null;
     clearInput();
     clearAttachments();
     clearSessionRefs();
@@ -798,6 +1032,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     return true;
   }, [
     addMessage,
+    beginGoalEdit,
     clearAttachments,
     clearInput,
     clearSessionRefs,
@@ -809,32 +1044,275 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     sessionId,
     setSessionGoal,
     skillPicker,
+    t,
   ]);
 
-  // 미지원 슬래시 명령(Claude TUI 전용 — 헤드리스에서 동작 불가)을 같은 세션 cwd로
-  // 터미널을 자동 분할해 claude를 띄우고 명령을 프리필한다. 자동 실행하지 않으므로
-  // 사용자가 내용을 확인한 뒤 Enter를 누른다. 패널 생성에 성공하면 true.
-  const openTerminalFallback = useCallback((command: string): boolean => {
+  const openTerminalFallback = useCallback((
+    command: string,
+    provider: 'claude-code' | 'codex' = sessionProviderId === 'codex' ? 'codex' : 'claude-code',
+    locksSourceSession = false,
+  ): boolean => {
     const panelStore = usePanelStore.getState();
-    const activePanelId = selectActiveTab(panelStore)?.activePanelId;
-    if (!activePanelId) return false;
+    const activeTab = selectActiveTab(panelStore);
+    const activePanelId = activeTab?.activePanelId;
+    const activePanel = activePanelId ? activeTab?.panels[activePanelId] : undefined;
+    if (!activePanelId || !activePanel) return false;
     const terminalId = uuidv4();
-    setPendingTerminalLaunch(terminalId, { launchCommand: 'claude', prefillInput: command });
-    const newPanelId = panelStore.createTerminalPanel(activePanelId, terminalId, 'vertical');
+    registerTerminalLaunchDraft(
+      terminalId,
+      sessionId,
+      useChatStore.getState().getDraftInput(sessionId),
+    );
+    setPendingTerminalLaunch(terminalId, {
+      intent: {
+        kind: provider === 'codex' ? 'codex-slash' : 'claude-slash',
+        commandInput: command,
+      },
+      sourceSessionId: sessionId,
+      locksSourceSession,
+    });
+    if (locksSourceSession) {
+      markClientTerminalHandoff(terminalId, sessionId);
+    }
+    let newPanelId: string | null;
+    if (activePanel.sessionId === null && !activePanel.terminalId) {
+      // Reuse a terminal panel that the user just closed, but keep the command
+      // tied to this composer instead of inheriting the empty panel's null session.
+      panelStore.assignTerminal(activePanelId, terminalId, sessionId);
+      newPanelId = activePanelId;
+    } else {
+      // The terminal panel becomes active after launch. If another slash command
+      // is entered from the still-visible composer, split from its session panel
+      // so the server always receives the correct session id.
+      const sourcePanelId = Object.values(activeTab.panels)
+        .find((panel) => panel.sessionId === sessionId)?.id ?? activePanelId;
+      newPanelId = panelStore.createTerminalPanel(sourcePanelId, terminalId, 'vertical');
+    }
     if (!newPanelId) {
       takePendingTerminalLaunch(terminalId);
+      consumeTerminalLaunchDraft(terminalId);
+      clearClientTerminalHandoff(terminalId);
       return false;
     }
-    // TODO(i18n): chat.slashTerminalFallback 키로 추출
-    toast.info(`"${command}" 명령은 터미널에서 실행됩니다. 내용을 확인한 뒤 Enter를 누르세요.`);
-    setInputValue('');
-    setDraftInput(sessionId, '');
+    if (provider === 'claude-code') {
+      setInputValue('');
+      setDraftInput(sessionId, '');
+    }
     skillPicker.close();
     // confirm()이 terminalFallback 항목을 selectedSkill로 세팅했을 수 있으므로 정리한다.
     // 안 하면 다음 전송에서 그 명령 이름이 실제 스킬로 잘못 전송된다.
     skillPicker.clearSkill();
     return true;
-  }, [sessionId, setDraftInput, skillPicker]);
+  }, [sessionId, sessionProviderId, setDraftInput, skillPicker]);
+
+  const dispatchCodexSlashCommand = useCallback((
+    commandInput: string,
+    source: 'send' | 'picker' = 'send',
+  ): boolean => {
+    if (sessionProviderId !== 'codex') return false;
+
+    const match = classifyCodexSlashCommand(commandInput);
+    if (!match) return false;
+    goalEditSnapshotRef.current = null;
+
+    if (!isCodexSlashCommandAvailable(match.canonicalName, {
+      platform: serverPlatform,
+      agentEnvironment,
+    })) {
+      toast.info(t('chat.codexSlashPlatformUnavailable', { command: `/${match.name}` }));
+      return true;
+    }
+    if (match.support === 'hidden') {
+      toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
+      return true;
+    }
+    if (match.support.startsWith('terminal-')) {
+      if (match.args && match.terminalMode === 'resume-picker') {
+        toast.info(t('chat.codexSlashUnsupported', { command: commandInput }));
+        return true;
+      }
+      const locksSourceSession = match.support === 'terminal-handoff';
+      if (locksSourceSession
+        && (isGenerating || activePrompt || hasClientTerminalHandoff(sessionId))) {
+        toast.info(t('chat.codexSlashTerminalBusy', { command: `/${match.name}` }));
+        return true;
+      }
+      if (!openTerminalFallback(commandInput, 'codex', locksSourceSession)) {
+        toast.error(t('chat.codexSlashTerminalOpenFailed'));
+      }
+      // Official commands never fall through into a normal Codex turn, even
+      // when the local panel could not be created.
+      return true;
+    }
+
+    if (match.nativeCommand === 'fast') {
+      if (match.args) {
+        toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
+        return true;
+      }
+      return executeCodexFastCommand();
+    }
+    if (match.nativeCommand === 'compact') {
+      if (match.args) {
+        toast.info(t('chat.codexSlashUnsupported', { command: `/${match.name}` }));
+        return true;
+      }
+      return executeCodexCompactCommand();
+    }
+    if (match.nativeCommand === 'goal') {
+      if (source === 'picker' && !match.args) {
+        insertGoalCommand();
+        return true;
+      }
+      return executeCodexGoalCommand(match.args
+        ? `${CODEX_GOAL_COMMAND} ${match.args}`
+        : CODEX_GOAL_COMMAND);
+    }
+    if (match.nativeCommand === 'fork') {
+      if (match.args) {
+        toast.info(t('chat.codexSlashUnsupported', { command: commandInput }));
+        return true;
+      }
+      if (
+        isGenerating
+        || activePrompt
+        || hasClientTerminalHandoff(sessionId)
+      ) {
+        toast.info(t('chat.codexSlashTerminalBusy', { command: `/${match.name}` }));
+        return true;
+      }
+      void forkSession(sessionId).then((forkedSessionId) => {
+        if (!forkedSessionId) return;
+        if (useChatStore.getState().getDraftInput(sessionId).trim() === commandInput.trim()) {
+          clearInput();
+        }
+        skillPicker.close();
+        skillPicker.clearSkill();
+      });
+      return true;
+    }
+    if (match.nativeCommand === 'delete') {
+      if (match.args) {
+        toast.info(t('chat.codexSlashUnsupported', { command: commandInput }));
+        return true;
+      }
+      setDeleteRequested(true);
+      skillPicker.close();
+      skillPicker.clearSkill();
+      return true;
+    }
+
+    if (match.nativeCommand === 'model' || match.nativeCommand === 'permissions') {
+      dispatchCodexNativeUiAction(sessionId, match.nativeCommand);
+      clearInput();
+      skillPicker.close();
+      skillPicker.clearSkill();
+      return true;
+    } else if (match.nativeCommand === 'plan') {
+      dispatchCodexNativeUiAction(sessionId, 'plan');
+      if (match.args) {
+        setInputValueFromProgrammaticEdit(match.args);
+        setDraftInput(sessionId, match.args);
+      } else {
+        clearInput();
+      }
+    } else if (match.nativeCommand === 'skills') {
+      setInputValueFromProgrammaticEdit('/');
+      setDraftInput(sessionId, '/');
+      skillPicker.openSkillsOnly();
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return true;
+    } else if (match.nativeCommand === 'mention') {
+      setInputValueFromProgrammaticEdit('@');
+      setDraftInput(sessionId, '@');
+      filePicker.onInputChange('@', 1);
+    } else if (match.nativeCommand === 'diff') {
+      useGitStore.getState().open();
+      clearInput();
+    } else if (match.nativeCommand === 'copy') {
+      const latest = [...(useChatStore.getState().messages.get(sessionId) ?? [])]
+        .reverse()
+        .find((message) => message.type === 'text' && message.role === 'assistant');
+      const text = latest?.type === 'text'
+        ? typeof latest.content === 'string'
+          ? latest.content
+          : latest.content
+              .filter((block) => block.type === 'text')
+              .map((block) => block.text)
+              .join('\n')
+        : '';
+      if (text && navigator.clipboard) {
+        void navigator.clipboard.writeText(text)
+          .then(() => toast.success(t('chat.codexSlashCopied')))
+          .catch(() => toast.error(t('chat.codexSlashCopyFailed')));
+      } else {
+        toast.info(t('chat.codexSlashNothingToCopy'));
+      }
+      clearInput();
+    } else if (match.nativeCommand === 'status') {
+      toast.info(t('chat.codexSlashStatus', {
+        model: session?.model ?? selectedModel ?? '-',
+        status: session?.status ?? '-',
+        cwd: session?.workDir ?? '-',
+      }));
+      clearInput();
+    } else if (match.nativeCommand === 'rename') {
+      if (match.args) void renameSession(sessionId, match.args);
+      else {
+        clearInput();
+        skillPicker.close();
+        skillPicker.clearSkill();
+        dispatchCodexNativeUiAction(sessionId, 'rename');
+        return true;
+      }
+      clearInput();
+    } else if (match.nativeCommand === 'archive') {
+      if (session?.taskId) {
+        void useTaskStore.getState().toggleTaskArchive(session.taskId, true);
+      } else {
+        useSessionStore.getState().toggleArchive(sessionId, true);
+      }
+      clearInput();
+    } else if (match.nativeCommand === 'new' || match.nativeCommand === 'clear') {
+      void createSession({
+        providerId: 'codex',
+        workDir: session?.workDir,
+        parentProjectId: session?.projectDir,
+        collectionId: session?.collectionId ?? undefined,
+      });
+      clearInput();
+    } else {
+      return false;
+    }
+
+    skillPicker.close();
+    skillPicker.clearSkill();
+    requestAnimationFrame(() => textareaRef.current?.focus());
+    return true;
+  }, [
+    activePrompt,
+    agentEnvironment,
+    clearInput,
+    createSession,
+    forkSession,
+    executeCodexCompactCommand,
+    executeCodexFastCommand,
+    executeCodexGoalCommand,
+    filePicker,
+    insertGoalCommand,
+    isGenerating,
+    openTerminalFallback,
+    renameSession,
+    selectedModel,
+    serverPlatform,
+    session,
+    sessionId,
+    sessionProviderId,
+    setDraftInput,
+    setInputValueFromProgrammaticEdit,
+    skillPicker,
+    t,
+  ]);
 
   const handleSend = (sendOptions?: { forceTranslate?: boolean }) => {
     const forceTranslateInput = sendOptions?.forceTranslate === true;
@@ -851,27 +1329,43 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     if (isDisabled) return;
     if (isReadOnly) return;
 
-    if (
+    if (sessionProviderId === 'claude-code' && (
       hasSelectedFastCommand
       || (trimmed === CODEX_FAST_COMMAND && !hasSelectedSkill)
-    ) {
-      if (executeCodexFastCommand() || executeClaudeFastCommand()) return;
+    )) {
+      if (executeClaudeFastCommand()) return;
     }
 
-    if (
-      hasSelectedCompactCommand
-      || (trimmed === CODEX_COMPACT_COMMAND && !hasSelectedSkill)
-    ) {
-      if (executeCodexCompactCommand()) return;
+    if (sessionProviderId === 'codex') {
+      let commandInput: string | null = null;
+      if (hasSelectedFastCommand) {
+        commandInput = CODEX_FAST_COMMAND;
+      } else if (hasSelectedCompactCommand) {
+        commandInput = CODEX_COMPACT_COMMAND;
+      } else if (hasSelectedGoalCommand) {
+        commandInput = trimmed ? `${CODEX_GOAL_COMMAND} ${trimmed}` : CODEX_GOAL_COMMAND;
+      } else if (
+        hasSelectedSkill
+        && skillPicker.selectedSkill
+        && isReservedCodexSlashCommandName(skillPicker.selectedSkill.name)
+      ) {
+        commandInput = trimmed
+          ? `/${skillPicker.selectedSkill.name} ${trimmed}`
+          : `/${skillPicker.selectedSkill.name}`;
+      } else if (!hasSelectedSkill) {
+        commandInput = trimmed;
+      }
+
+      if (commandInput && dispatchCodexSlashCommand(commandInput)) return;
     }
 
-    if (hasSelectedGoalCommand) {
-      const commandInput = trimmed ? `${CODEX_GOAL_COMMAND} ${trimmed}` : CODEX_GOAL_COMMAND;
-      if (executeCodexGoalCommand(commandInput)) return;
-    }
+    // Leaving the goal command flow cancels the local edit marker so a later
+    // ordinary `/goal <objective>` is treated as a fresh set operation.
+    goalEditSnapshotRef.current = null;
 
-    if (!hasSelectedSkill && parseCodexGoalCommand(trimmed)) {
-      if (executeCodexGoalCommand(trimmed)) return;
+    if (hasClientTerminalHandoff(sessionId)) {
+      toast.info(t('chat.codexTerminalHandoffActive'));
+      return;
     }
 
     // Use chip-selected skill or fallback to manual /skillname parsing
@@ -909,24 +1403,24 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     });
 
     if (shouldResumeSession && session && 'projectDir' in session) {
-      const optimisticMessage = {
-        id: `temp-${uuidv4()}`,
-        type: 'text' as const,
-        role: 'user' as const,
-        content: displayContent,
-        timestamp: new Date().toISOString(),
-      };
-      addMessage(sessionId, optimisticMessage);
-
-      addMessage(sessionId, {
-        id: `system-resume-${uuidv4()}`,
-        type: 'text' as const,
-        role: 'system' as const,
-        content: t('chat.resumingSession'),
-        timestamp: new Date().toISOString(),
+      void resumeAndSend(
+        sessionId,
+        session.projectDir,
+        sendContent,
+        skillName,
+        displayContent,
+        { forceTranslateInput },
+      ).then((didSend) => {
+        if (!didSend) return;
+        clearInput();
+        clearAttachments();
+        clearSessionRefs();
+        skillPicker.clearSkill();
+      }).catch(() => {
+        // Resume failures, including an active terminal handoff, intentionally
+        // preserve the draft and attachments for a retry after the conflict ends.
       });
-
-      resumeAndSend(sessionId, session.projectDir, sendContent, skillName, displayContent, { forceTranslateInput });
+      return;
     } else {
       // First-time send for a session without a live CLI: attach composer defaults
       // so the server can spawn with the picked model / reasoning / permission mode.
@@ -980,6 +1474,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
   const handleSkillSelect = useCallback(
     (skill: SkillInfo) => {
+      if (sessionProviderId === 'codex' && isReservedCodexSlashCommandName(skill.name)) {
+        dispatchCodexSlashCommand(`/${skill.name}`, 'picker');
+        textareaRef.current?.focus();
+        return;
+      }
       if (skill.terminalFallback) {
         // 피커에서 클릭한 TUI 전용 명령 → 터미널 fallback으로 실행
         openTerminalFallback(`/${skill.name}`);
@@ -987,7 +1486,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         return;
       }
       if (isCodexFastCommandSkill(skill)) {
-        executeCodexFastCommand();
+        dispatchCodexSlashCommand(CODEX_FAST_COMMAND, 'picker');
         textareaRef.current?.focus();
         return;
       }
@@ -997,12 +1496,12 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         return;
       }
       if (isCodexCompactCommandSkill(skill)) {
-        executeCodexCompactCommand();
+        dispatchCodexSlashCommand(CODEX_COMPACT_COMMAND, 'picker');
         textareaRef.current?.focus();
         return;
       }
       if (isCodexGoalCommandSkill(skill)) {
-        insertGoalCommand();
+        dispatchCodexSlashCommand(CODEX_GOAL_COMMAND, 'picker');
         textareaRef.current?.focus();
         return;
       }
@@ -1011,7 +1510,13 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       setInputValue('');
       textareaRef.current?.focus();
     },
-    [executeCodexCompactCommand, executeCodexFastCommand, executeClaudeFastCommand, insertGoalCommand, skillPicker, openTerminalFallback],
+    [
+      dispatchCodexSlashCommand,
+      executeClaudeFastCommand,
+      openTerminalFallback,
+      sessionProviderId,
+      skillPicker,
+    ],
   );
 
   const applyFilePick = useCallback(
@@ -1021,7 +1526,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         | null,
     ) => {
       if (!result) return;
-      setInputValue(result.newValue);
+      setInputValueFromProgrammaticEdit(result.newValue);
       setDraftInput(sessionId, result.newValue);
       requestAnimationFrame(() => {
         const ta = textareaRef.current;
@@ -1035,7 +1540,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         }
       });
     },
-    [addSessionRef, sessionId, setDraftInput],
+    [addSessionRef, sessionId, setDraftInput, setInputValueFromProgrammaticEdit],
   );
 
   const handleFilePickerSelect = useCallback(
@@ -1061,6 +1566,16 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
+        // An exact Codex built-in always owns its slash namespace, even when
+        // an unrelated skill happens to fuzzy-match the same picker query.
+        if (
+          sessionProviderId === 'codex'
+          && classifyCodexSlashCommand(inputValue.trim())
+        ) {
+          skillPicker.close();
+          dispatchCodexSlashCommand(inputValue.trim(), 'picker');
+          return;
+        }
         // TUI 전용 미지원 슬래시 명령은 부분매칭 스킬이 피커에 떠 있어도(예: 이름/설명에
         // 'config'를 포함하는 명령) 그쪽으로 confirm되지 않도록, Enter 시 먼저 터미널
         // fallback 경로(handleSend)로 위임한다. (Tab 자동완성은 기존대로 동작)
@@ -1076,11 +1591,15 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         const confirmedSkill = skillPicker.confirm();
         if (confirmedSkill?.terminalFallback) {
           // 피커에서 고른 TUI 전용 명령(부분 입력 후 화살표로 선택한 경우 포함) → 터미널 fallback
-          openTerminalFallback(`/${confirmedSkill.name}`);
+          if (sessionProviderId === 'codex') {
+            dispatchCodexSlashCommand(`/${confirmedSkill.name}`, 'picker');
+          } else {
+            openTerminalFallback(`/${confirmedSkill.name}`);
+          }
           return;
         }
         if (confirmedSkill && isCodexFastCommandSkill(confirmedSkill)) {
-          executeCodexFastCommand();
+          dispatchCodexSlashCommand(CODEX_FAST_COMMAND, 'picker');
           return;
         }
         if (confirmedSkill && isClaudeFastCommandSkill(confirmedSkill)) {
@@ -1088,11 +1607,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
           return;
         }
         if (confirmedSkill && isCodexCompactCommandSkill(confirmedSkill)) {
-          executeCodexCompactCommand();
+          dispatchCodexSlashCommand(CODEX_COMPACT_COMMAND, 'picker');
           return;
         }
         if (confirmedSkill && isCodexGoalCommandSkill(confirmedSkill)) {
-          insertGoalCommand();
+          dispatchCodexSlashCommand(CODEX_GOAL_COMMAND, 'picker');
           return;
         }
         if (confirmedSkill) {
@@ -1198,11 +1717,6 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         return;
       }
 
-      if (!e.shiftKey && !e.ctrlKey && !e.metaKey && inputValue.trim() === CODEX_FAST_COMMAND) {
-        e.preventDefault();
-        if (executeCodexFastCommand() || executeClaudeFastCommand()) return;
-      }
-
       if (enterKeyBehavior === 'send') {
         if (!e.shiftKey) {
           e.preventDefault();
@@ -1228,6 +1742,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     !isInjectingCurrentSession;
 
   return (
+    <>
     <div className="pb-2 pt-0">
       <div className={cn('w-full', isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-4')}>
         <MessageRowShell>
@@ -1244,7 +1759,11 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
                     disabled={isInputUnavailable || !!activePrompt}
                     onInsertCommand={insertGoalCommand}
                   />
-                  <ComposerSessionControls sessionId={sessionId} variant="inline" />
+                  <ComposerSessionControls
+                    sessionId={sessionId}
+                    variant="inline"
+                    providerSessionOptions={providerSessionOptions}
+                  />
                   <div ref={quickCreateTriggerRef} className="relative shrink-0">
                     <button
                       type="button"
@@ -1312,6 +1831,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
             isOpen={skillPicker.isOpen}
             isLoading={skillPicker.isLoading}
             isInactive={skillPicker.isInactive}
+            isEmpty={skillPicker.isEmpty}
             skills={skillPicker.filteredSkills}
             selectedIndex={skillPicker.selectedIndex}
             onSelect={handleSkillSelect}
@@ -1559,5 +2079,17 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
         </MessageRowShell>
       </div>
     </div>
+    <DeleteSessionDialog
+      session={session ?? null}
+      isOpen={deleteRequested}
+      onCancel={() => setDeleteRequested(false)}
+      onConfirm={async () => {
+        const deleted = await deleteSession(sessionId);
+        if (deleted) {
+          setDeleteRequested(false);
+        }
+      }}
+    />
+    </>
   );
 }

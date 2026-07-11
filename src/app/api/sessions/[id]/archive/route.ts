@@ -6,6 +6,10 @@ import { pruneExpiredArchivedWorktrees, restoreArchivedChat } from '@/lib/archiv
 import { SettingsManager } from '@/lib/settings/manager';
 import { getSession } from '@/lib/db/sessions';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
+import {
+  isSessionOperationConflictError,
+  isTerminalHandoffConflictError,
+} from '@/lib/terminal/terminal-handoff-lock';
 
 /**
  * PATCH /api/sessions/[id]/archive
@@ -52,8 +56,8 @@ export async function PATCH(
 
   try {
     const result = archived
-      ? await archiveSession(sessionId, true)
-      : (await restoreArchivedChat(sessionId), { ok: true, worktreeRemoved: false });
+      ? await archiveSession(sessionId, true, auth.userId)
+      : (await restoreArchivedChat(sessionId, auth.userId), { ok: true, worktreeRemoved: false });
 
     if (archived) {
       const settings = await SettingsManager.load(auth.userId);
@@ -73,10 +77,18 @@ export async function PATCH(
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update archive status';
-    const status = message === 'Session not found' ? 404 : 400;
+    const mutationConflict = isTerminalHandoffConflictError(err) || isSessionOperationConflictError(err);
+    const status = mutationConflict
+      ? 409
+      : message === 'Session not found'
+        ? 404
+        : 400;
     logger.error({ sessionId, error: err }, 'Failed to update archive status');
     return NextResponse.json(
-      { error: message },
+      {
+        error: message,
+        ...(mutationConflict ? { code: err.code } : {}),
+      },
       { status }
     );
   }

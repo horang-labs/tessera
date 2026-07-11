@@ -7,7 +7,6 @@ import { tinykeys } from 'tinykeys';
 import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
-import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
 import { wsClient } from '@/lib/ws/client';
 import type { PermissionMode } from '@/lib/ws/message-types';
@@ -30,12 +29,21 @@ import {
   resolveProviderRuntimeControls,
 } from '@/lib/settings/provider-defaults';
 import { composeOpenCodeModelId } from '@/lib/cli/providers/opencode/session-config';
-import { CODEX_FAST_SERVICE_TIER } from '@/lib/chat/codex-fast-command';
+import {
+  getCodexFastServiceTier,
+  getCodexFastToggleServiceTier,
+  isCodexFastModeEnabled,
+  resolveCodexServiceTierForModel,
+} from '@/lib/chat/codex-fast-command';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { UnifiedSession } from '@/types/chat';
+import {
+  CODEX_NATIVE_COMMAND_EVENT,
+  type CodexNativeCommandEventDetail,
+} from '@/lib/chat/codex-native-command-events';
 import {
   ComposerModelMenu,
   ComposerReadonlyReasoningBadge,
@@ -368,6 +376,10 @@ function ComposerControlDropdown({
 interface ComposerSessionControlsProps {
   sessionId: string;
   variant?: 'block' | 'inline';
+  providerSessionOptions: {
+    data: ProviderSessionOptions | null;
+    isLoading: boolean;
+  };
 }
 
 interface ComposerSessionControlsInnerProps {
@@ -519,6 +531,7 @@ function ComposerSessionControlsInner({
   const [model, setModel] = useState(initialModel);
   const [requestedReasoningEffort, setRequestedReasoningEffort] = useState<string | null>(initialReasoningEffort);
   const [modelOpenRequest, setModelOpenRequest] = useState(0);
+  const [accessOpenRequest, setAccessOpenRequest] = useState(0);
   const [reasoningOpenRequest, setReasoningOpenRequest] = useState(0);
 
   const updateSettings = useSettingsStore((state) => state.updateSettings);
@@ -532,6 +545,7 @@ function ComposerSessionControlsInner({
   const sessionOptions = providerSessionOptions.data;
   const selectedModelOption = sessionOptions?.modelOptions.find((option) => option.value === model) ?? null;
   const reasoningOptions = selectedModelOption?.supportedReasoningEfforts ?? [];
+  const codexFastTier = getCodexFastServiceTier(selectedModelOption);
   const currentModelSupportsFastMode = Boolean(selectedModelOption?.supportsFastMode);
   const reasoningEffort = resolveReasoningEffort(
     providerIdForSticky,
@@ -577,15 +591,47 @@ function ComposerSessionControlsInner({
     focusSessionInput(sessionId);
   }, [accessMode, applySessionControls, providerIdForSticky, sessionId, sessionMode]);
 
+  const activatePlanMode = useCallback(() => {
+    if (sessionMode === 'plan') {
+      focusSessionInput(sessionId);
+      return;
+    }
+    setSessionMode('plan');
+    applySessionControls('plan', accessMode);
+    focusSessionInput(sessionId);
+  }, [accessMode, applySessionControls, sessionId, sessionMode]);
+
+  useEffect(() => {
+    const handleNativeCommand = (event: Event) => {
+      const detail = (event as CustomEvent<CodexNativeCommandEventDetail>).detail;
+      if (!detail || detail.sessionId !== sessionId) return;
+      if (detail.action === 'model') setModelOpenRequest((value) => value + 1);
+      if (detail.action === 'permissions') setAccessOpenRequest((value) => value + 1);
+      if (detail.action === 'plan') activatePlanMode();
+    };
+    window.addEventListener(CODEX_NATIVE_COMMAND_EVENT, handleNativeCommand);
+    return () => window.removeEventListener(CODEX_NATIVE_COMMAND_EVENT, handleNativeCommand);
+  }, [activatePlanMode, sessionId]);
+
   const handleFastModeToggle = useCallback(() => {
     if (isCodexProvider(providerIdForSticky)) {
-      const nextServiceTier = session.serviceTier === CODEX_FAST_SERVICE_TIER
-        ? null
-        : CODEX_FAST_SERVICE_TIER;
-      updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
-      if (session.isRunning) {
-        wsClient.setServiceTier(sessionId, nextServiceTier);
+      const currentModelOption = providerSessionOptions.data?.modelOptions
+        .find((option) => option.value === model) ?? null;
+      const fastTier = getCodexFastServiceTier(currentModelOption);
+      const nextServiceTier = getCodexFastToggleServiceTier(
+        session.serviceTier,
+        currentModelOption,
+      );
+      if (!fastTier || !nextServiceTier) return;
+      if (!session.isRunning) {
+        void updateSettings(buildProviderSessionDefaultsUpdate(
+          useSettingsStore.getState().settings,
+          providerIdForSticky,
+          { serviceTier: nextServiceTier },
+        ));
       }
+      updateSessionRuntimeConfig(sessionId, { serviceTier: nextServiceTier });
+      wsClient.setServiceTier(sessionId, nextServiceTier);
       focusSessionInput(sessionId);
       return;
     }
@@ -600,12 +646,13 @@ function ComposerSessionControlsInner({
     }
   }, [
     currentModelSupportsFastMode,
+    model,
     providerIdForSticky,
-    session.isRunning,
-    session.serviceTier,
-    session.fastMode,
+    providerSessionOptions.data,
+    session,
     sessionId,
     updateSessionRuntimeConfig,
+    updateSettings,
   ]);
 
   const handleAccessModeChange = (nextAccessMode: ProviderSessionAccessMode) => {
@@ -647,6 +694,15 @@ function ComposerSessionControlsInner({
         sessionId,
         buildProviderModelControlValue(providerIdForSticky, nextModel, nextReasoningEffort),
       );
+      if (isCodexProvider(providerIdForSticky)) {
+        const runtimeServiceTier = resolveCodexServiceTierForModel(
+          session.serviceTier,
+          nextModelOption,
+        );
+        if (runtimeServiceTier !== undefined) {
+          wsClient.setServiceTier(sessionId, runtimeServiceTier, false);
+        }
+      }
       const nextEffortRequiresRestart = nextModelOption?.supportedReasoningEfforts
         .find((option) => option.value === nextReasoningEffort)?.requiresRestart === true;
       if (
@@ -728,9 +784,9 @@ function ComposerSessionControlsInner({
   );
   const isInline = variant === 'inline';
   const isFastModeEnabled =
-    (isCodexProvider(providerIdForSticky) && session.serviceTier === CODEX_FAST_SERVICE_TIER)
+    (isCodexProvider(providerIdForSticky) && isCodexFastModeEnabled(session.serviceTier, selectedModelOption))
     || (isClaudeCodeProvider(providerIdForSticky) && session.fastMode === true);
-  const canToggleFastMode = isCodexProvider(providerIdForSticky)
+  const canToggleFastMode = (isCodexProvider(providerIdForSticky) && codexFastTier !== null)
     || (isClaudeCodeProvider(providerIdForSticky) && currentModelSupportsFastMode);
   const fastModeToggleTitle = resolveFastModeToggleTitle(isFastModeEnabled, providerIdForSticky);
   // A session spawned with a spawn-only effort (Claude max → --effort flag) can't
@@ -858,6 +914,7 @@ function ComposerSessionControlsInner({
           menuWidth={300}
           disabled={isAccessDisabled}
           title={accessDisabledTitle}
+          openRequest={accessOpenRequest}
         >
           {(close) => (
             <ComposerSessionControlMenu
@@ -941,11 +998,14 @@ function ComposerSessionControlsInner({
   );
 }
 
-export function ComposerSessionControls({ sessionId, variant = 'block' }: ComposerSessionControlsProps) {
+export function ComposerSessionControls({
+  sessionId,
+  variant = 'block',
+  providerSessionOptions,
+}: ComposerSessionControlsProps) {
   const session = useSessionStore((state) => state.getSession(sessionId));
   const settings = useSettingsStore((state) => state.settings);
   const providerId = session?.provider?.trim();
-  const providerSessionOptions = useProviderSessionOptions(providerId, settings.agentEnvironment);
   const resolvedProviderId = providerId ?? '';
   const providerDefaultsWithOptions = getProviderSessionDefaultsWithOptions(
     settings,

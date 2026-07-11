@@ -60,11 +60,28 @@ test('Codex /compact is a built-in composer command, not a Codex skill send', ()
   assert.match(skillPickerSource, /CODEX_COMPACT_BUILTIN_COMMAND/);
   assert.match(skillPickerSource, /providerId === 'codex'/);
   assert.match(messageInputSource, /isCodexCompactCommandSkill\(skillPicker\.selectedSkill\)/);
-  assert.match(messageInputSource, /trimmed === CODEX_COMPACT_COMMAND/);
+  assert.match(messageInputSource, /dispatchCodexSlashCommand\(CODEX_COMPACT_COMMAND, 'picker'\)/);
   assert.match(messageInputSource, /executeCodexCompactCommand\(\)/);
   assert.ok(
-    messageInputSource.indexOf('trimmed === CODEX_COMPACT_COMMAND') <
+    messageInputSource.indexOf('dispatchCodexSlashCommand(commandInput)') <
       messageInputSource.indexOf('const parsed = skillPicker.parseForSend(trimmed);'),
+  );
+});
+
+test('Codex compact is rejected at every active-turn boundary before history or RPC', () => {
+  assert.match(messageInputSource, /if \(isGenerating\)[\s\S]*codexCompactDuringTurn/);
+  assert.match(wsActionsSource, /getProcess\(sessionId\)\?\.isGenerating/);
+  assert.ok(
+    wsActionsSource.indexOf("code: 'session_compact_in_progress'") <
+      wsActionsSource.indexOf('recordCompactCommandDisplayContent(sessionId, displayContent)'),
+  );
+  assert.match(processManagerSource, /Refusing to compact while a turn is in progress/);
+  assert.match(codexAdapterSource, /getActiveTurnId\(sessionId\)/);
+  assert.match(codexAdapterSource, /_compactingProcesses\.has\(proc\)/);
+  assert.match(codexAdapterSource, /_compactingProcesses\.delete\(proc\)/);
+  assert.ok(
+    codexAdapterSource.indexOf('getActiveTurnId(sessionId)') <
+      codexAdapterSource.indexOf("method: 'thread/compact/start'"),
   );
 });
 

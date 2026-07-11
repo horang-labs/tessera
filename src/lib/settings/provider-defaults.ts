@@ -100,6 +100,7 @@ export function getProviderSessionDefaults(
   return {
     model,
     reasoningEffort,
+    serviceTier: providerDefaults?.serviceTier,
     sessionMode,
     accessMode,
   };
@@ -299,6 +300,7 @@ export function getProviderSessionRuntimeConfig(
   return {
     model: defaults.model,
     reasoningEffort: defaults.reasoningEffort ?? null,
+    ...(defaults.serviceTier !== undefined && { serviceTier: defaults.serviceTier }),
     sessionMode: defaults.sessionMode,
     accessMode: defaults.accessMode,
     ...(defaults.fastMode !== undefined && { fastMode: defaults.fastMode }),

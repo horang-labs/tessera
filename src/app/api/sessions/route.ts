@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
         worktreeManaged: Boolean(normalizedWorktreeBranch),
         model,
         reasoningEffort,
+        serviceTier,
       });
 
       broadcastSessionMutation(userId, {

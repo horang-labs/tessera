@@ -11,10 +11,20 @@ import { sessionHistory } from '../session-history';
 import { persistCreatedSessionRecord } from '../session/session-persistence';
 import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import { buildCodexSkillContent } from '../chat/build-codex-skill-content';
+import {
+  classifyCodexSlashCommand,
+  isReservedCodexSlashCommandName,
+} from '../chat/codex-slash-command-registry';
 import { buildUserMessageDisplayContent } from '../chat/build-user-message-display-content';
 import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh';
 import { SettingsManager } from '../settings/manager';
 import { translateMessageText } from '../session/message-translator';
+import {
+  isSessionHandedOffToTerminal,
+  isSessionOperationConflictError,
+  isTerminalHandoffConflictError,
+  withTesseraSessionOperation,
+} from '../terminal/terminal-handoff-lock';
 import type {
   ClientMessage,
   ContentBlock,
@@ -177,6 +187,7 @@ export async function createSessionFromWebSocket({
       providerId: resolvedProviderId,
       model,
       reasoningEffort,
+      serviceTier,
     });
 
     sendToUser(userId, {
@@ -326,7 +337,7 @@ async function translateOutgoingContent(
   return { content: newContent, sentContent: translated, attempted: true, sourceLang, targetLang };
 }
 
-export async function sendSessionMessageFromWebSocket({
+async function sendSessionMessageFromWebSocketUnlocked({
   content,
   displayContent,
   sendToUser,
@@ -340,6 +351,31 @@ export async function sendSessionMessageFromWebSocket({
   const contentType =
     typeof content === 'string' ? 'string' : `ContentBlock[${content.length}]`;
   logger.debug({ userId, sessionId, contentType, skillName }, 'WebSocket send_message received');
+
+  const existingProcess = processManager.getProcess(sessionId);
+  const providerId = existingProcess?.provider.getProviderId()
+    ?? dbSessions.getSession(sessionId)?.provider;
+  const commandText = typeof content === 'string'
+    ? content
+    : content
+        .filter((block): block is TextContentBlock => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n');
+  const reservedCommand = classifyCodexSlashCommand(commandText);
+  if (
+    providerId === 'codex'
+    && (reservedCommand || (skillName && isReservedCodexSlashCommandName(skillName)))
+  ) {
+    const commandName = reservedCommand?.name ?? skillName ?? '';
+    logger.warn({ sessionId, commandName }, 'Blocked reserved Codex slash command from send_message');
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'codex_slash_command_reserved',
+      message: `Codex command "/${commandName}" must be handled by a native Tessera command.`,
+    });
+    return;
+  }
 
   // No live process exists yet. Rehydrate via the resume path before delivering
   // the message so persisted provider state remains authoritative.
@@ -412,6 +448,27 @@ export async function sendSessionMessageFromWebSocket({
   const command = skillText ? `/${skillName} ${skillText}` : `/${skillName}`;
   processManager.sendMessage(sessionId, command);
   logger.info({ sessionId, skillName, command: command.slice(0, 100) }, 'Skill command sent to CLI');
+}
+
+export async function sendSessionMessageFromWebSocket(
+  options: SendSessionMessageActionOptions,
+): Promise<void> {
+  try {
+    await withTesseraSessionOperation(options.sessionId, () =>
+      sendSessionMessageFromWebSocketUnlocked(options)
+    );
+  } catch (error) {
+    if (isTerminalHandoffConflictError(error) || isSessionOperationConflictError(error)) {
+      options.sendToUser(options.userId, {
+        type: 'error',
+        sessionId: options.sessionId,
+        code: error.code,
+        message: error.message,
+      });
+      return;
+    }
+    throw error;
+  }
 }
 
 interface TranslateMessageActionOptions extends SessionActionOptions {
@@ -555,7 +612,16 @@ export async function compactSessionFromWebSocket({
     const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
     if (!ok) return;
 
-    recordCompactCommandDisplayContent(sessionId, displayContent);
+    if (processManager.getProcess(sessionId)?.isGenerating) {
+      sendToUser(userId, {
+        type: 'error',
+        sessionId,
+        code: 'session_compact_in_progress',
+        message: 'Wait for the current turn to finish before compacting.',
+      });
+      return;
+    }
+
     const compacted = await processManager.compactSession(sessionId);
     if (!compacted) {
       sendToUser(userId, {
@@ -567,6 +633,7 @@ export async function compactSessionFromWebSocket({
       return;
     }
 
+    recordCompactCommandDisplayContent(sessionId, displayContent);
     logger.info({ sessionId, userId }, 'Session compaction requested');
   } catch (err) {
     logger.error({ sessionId, userId, error: err }, 'Failed to compact session');
@@ -613,6 +680,15 @@ async function ensureSessionProcess({
   sendToUser: WsSendToUser;
   spawnConfig?: SessionSpawnConfig;
 }): Promise<boolean> {
+  if (isSessionHandedOffToTerminal(sessionId)) {
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'session_handed_off_to_terminal',
+      message: 'This Codex session is currently controlled by a terminal.',
+    });
+    return false;
+  }
   if (processManager.getProcess(sessionId)?.status === 'running') {
     return true;
   }
@@ -716,6 +792,15 @@ export async function resumeSessionFromWebSocket({
   sessionId,
   userId,
 }: ResumeSessionActionOptions): Promise<void> {
+  if (isSessionHandedOffToTerminal(sessionId)) {
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'session_handed_off_to_terminal',
+      message: 'Close the Codex terminal before resuming this session in Tessera.',
+    });
+    return;
+  }
   try {
     const sessionRecord = dbSessions.getSession(sessionId);
     const result = await sessionOrchestrator.resumeSession(userId, sessionId, {

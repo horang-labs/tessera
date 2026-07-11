@@ -6,6 +6,15 @@ import * as dbSessions from '../db/sessions';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
 import { bindTerminalSender } from '../terminal/shared-terminal-manager';
+import {
+  resolveTerminalLaunchIntent,
+  TerminalLaunchIntentError,
+} from '../terminal/terminal-launch-intent';
+import {
+  beginTesseraSessionOperation,
+  endTesseraSessionOperation,
+  releaseTerminalHandoffByTerminal,
+} from '../terminal/terminal-handoff-lock';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { ProviderMeta } from '../cli/providers/types';
@@ -105,7 +114,26 @@ export async function routeClientTransportMessage({
   sendToUser,
   userId,
 }: RouteClientTransportMessageOptions): Promise<void> {
-  switch (message.type) {
+  const unguardedSessionMessage = message.type === 'terminal_create'
+    || message.type === 'subscribe_workspace_files'
+    || message.type === 'unsubscribe_workspace_files'
+    || message.type === 'mark_as_read'
+    || message.type === 'get_commands';
+  const guardedSessionId = !unguardedSessionMessage && 'sessionId' in message
+    ? message.sessionId
+    : null;
+  if (guardedSessionId && !beginTesseraSessionOperation(guardedSessionId)) {
+    sendToUser(userId, {
+      type: 'error',
+      sessionId: guardedSessionId,
+      code: 'session_handed_off_to_terminal',
+      message: 'Close the Codex terminal before using this session in Tessera.',
+    });
+    return;
+  }
+
+  try {
+    switch (message.type) {
     case 'create_session':
       await createSessionFromWebSocket({
         userId,
@@ -307,17 +335,44 @@ export async function routeClientTransportMessage({
       return;
 
     case 'set_service_tier':
-      runProcessManagerControlAction({
-        userId,
-        sendToUser,
+      if (!processManager.getProcess(message.sessionId)) {
+        if (message.persist !== false) {
+          dbSessions.updateSession(
+            message.sessionId,
+            { service_tier: message.serviceTier },
+            { skipTimestamp: true },
+          );
+        }
+        logger.info({
+          sessionId: message.sessionId,
+          serviceTier: message.serviceTier,
+          persisted: message.persist !== false,
+        }, 'Stored service tier for an inactive session');
+        return;
+      }
+
+      if (!processManager.sendSetServiceTier(message.sessionId, message.serviceTier)) {
+        sendToUser(userId, {
+          type: 'error',
+          sessionId: message.sessionId,
+          code: 'set_service_tier_failed',
+          message: 'Failed to set service tier',
+        });
+        return;
+      }
+
+      if (message.persist !== false) {
+        dbSessions.updateSession(
+          message.sessionId,
+          { service_tier: message.serviceTier },
+          { skipTimestamp: true },
+        );
+      }
+      logger.info({
         sessionId: message.sessionId,
-        action: (sessionId) =>
-          processManager.sendSetServiceTier(sessionId, message.serviceTier),
-        errorCode: 'set_service_tier_failed',
-        errorMessage: 'Failed to set service tier',
-        logMessage: 'Set service tier requested',
-        logMetadata: { serviceTier: message.serviceTier },
-      });
+        serviceTier: message.serviceTier,
+        persisted: message.persist !== false,
+      }, 'Set service tier requested');
       return;
 
     case 'set_fast_mode':
@@ -365,17 +420,87 @@ export async function routeClientTransportMessage({
       return;
 
     case 'terminal_create':
-      await bindTerminalSender(sendToUser).create({
-        userId,
-        terminalId: message.terminalId,
-        cwd: message.cwd,
-        sessionId: message.sessionId,
-        shellKind: message.shellKind,
-        cols: message.cols,
-        rows: message.rows,
-        launchCommand: message.launchCommand,
-        prefillInput: message.prefillInput,
-      });
+      const terminalManager = bindTerminalSender(sendToUser);
+      const launchReservation = message.launchIntent
+        ? terminalManager.reserveTerminalLaunch(message.terminalId, userId) ?? undefined
+        : undefined;
+      if (message.launchIntent && !launchReservation) {
+        if (terminalManager.attach(
+          message.terminalId,
+          userId,
+          message.cols,
+          message.rows,
+        )) {
+          return;
+        }
+        sendToUser(userId, {
+          type: 'terminal_error',
+          terminalId: message.terminalId,
+          message: 'This terminal is already running or starting.',
+        });
+        return;
+      }
+      let acquiredHandoff = false;
+      try {
+        const launchSpec = message.launchIntent
+          ? await resolveTerminalLaunchIntent({
+              intent: message.launchIntent,
+              sessionId: message.sessionId,
+              terminalId: message.terminalId,
+              userId,
+            })
+          : undefined;
+        acquiredHandoff = Boolean(launchSpec?.handoffSessionId);
+        if (launchReservation && !terminalManager.isTerminalLaunchReserved(launchReservation)) {
+          throw new TerminalLaunchIntentError(
+            'Terminal startup was cancelled.',
+            'terminal_cancelled',
+          );
+        }
+        if (launchSpec?.handoffSessionId) {
+          await closeSessionFromWebSocket({
+            userId,
+            sendToUser,
+            sessionId: launchSpec.handoffSessionId,
+            eventType: 'session_stopped',
+            logMessage: 'Session handed off to Codex terminal',
+          });
+        }
+        if (launchReservation && !terminalManager.isTerminalLaunchReserved(launchReservation)) {
+          throw new TerminalLaunchIntentError(
+            'Terminal startup was cancelled.',
+            'terminal_cancelled',
+          );
+        }
+        await terminalManager.create({
+          userId,
+          terminalId: message.terminalId,
+          cwd: launchSpec?.cwd ?? message.cwd,
+          sessionId: message.sessionId,
+          // Launch intents use the server-side environment; only ordinary raw
+          // terminals may accept a client-selected shell.
+          shellKind: launchSpec ? undefined : message.shellKind,
+          cols: message.cols,
+          rows: message.rows,
+          launchSpec,
+        }, launchReservation);
+      } catch (error) {
+        if (acquiredHandoff) {
+          releaseTerminalHandoffByTerminal(userId, message.terminalId);
+        }
+        logger.warn({ error, terminalId: message.terminalId }, 'Rejected terminal launch intent');
+        sendToUser(userId, {
+          type: 'terminal_error',
+          terminalId: message.terminalId,
+          message: error instanceof TerminalLaunchIntentError
+            ? error.message
+            : 'Failed to prepare terminal command.',
+        });
+      } finally {
+        if (launchReservation) {
+          terminalManager.releaseTerminalLaunchReservation(launchReservation);
+        }
+      }
       return;
 
     case 'terminal_input':
@@ -408,8 +533,13 @@ export async function routeClientTransportMessage({
       });
       return;
 
-    default:
-      logUnknownClientTransportMessage(userId, message);
+      default:
+        logUnknownClientTransportMessage(userId, message);
+    }
+  } finally {
+    if (guardedSessionId) {
+      endTesseraSessionOperation(guardedSessionId);
+    }
   }
 }
 

@@ -59,6 +59,9 @@ export function buildCodexModelOptions(result: CodexModelResponse): ProviderMode
       defaultReasoningEffort: model.defaultReasoningEffort ?? reasoningEfforts[0]?.value ?? null,
       supportedReasoningEfforts: reasoningEfforts,
       ...(serviceTiers.length > 0 && { serviceTiers }),
+      ...(model.defaultServiceTier !== undefined && {
+        defaultServiceTier: model.defaultServiceTier,
+      }),
     });
   }
 
