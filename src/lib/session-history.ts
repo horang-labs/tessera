@@ -44,6 +44,7 @@ interface SessionHistoryPage {
   usage: PersistedUsage | null;
   contextUsage: PersistedContextUsage | null;
   activeInteractivePrompt: SessionReplayState['activeInteractivePrompt'];
+  todoSnapshot: SessionReplayState['todoSnapshot'];
   hasMore: boolean;
   nextBeforeBytes: number;
 }

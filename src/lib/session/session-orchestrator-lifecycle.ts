@@ -24,6 +24,7 @@ interface ResumeReplayState {
   usage: SessionResumeResult['usage'];
   contextUsage: SessionResumeResult['contextUsage'];
   activeInteractivePrompt: SessionResumeResult['activeInteractivePrompt'];
+  todoSnapshot: SessionResumeResult['todoSnapshot'];
 }
 
 interface CreateSessionWithLifecycleOptions {
@@ -165,6 +166,7 @@ export async function resumeSessionWithLifecycle({
         usage: replayState.usage,
         contextUsage: replayState.contextUsage,
         activeInteractivePrompt: replayState.activeInteractivePrompt,
+        todoSnapshot: replayState.todoSnapshot,
       };
     }
     useResume = !!threadId;
@@ -184,6 +186,7 @@ export async function resumeSessionWithLifecycle({
         usage: replayState.usage,
         contextUsage: replayState.contextUsage,
         activeInteractivePrompt: replayState.activeInteractivePrompt,
+        todoSnapshot: replayState.todoSnapshot,
       };
     }
     useResume = !!opencodeSessionId;
@@ -348,6 +351,7 @@ export async function resumeSessionWithLifecycle({
     usage: replayState.usage,
     contextUsage: replayState.contextUsage,
     activeInteractivePrompt: replayState.activeInteractivePrompt,
+    todoSnapshot: replayState.todoSnapshot,
   };
 }
 
@@ -362,5 +366,6 @@ async function loadReadOnlyReplayState(sessionId: string): Promise<ResumeReplayS
     usage: null,
     contextUsage: null,
     activeInteractivePrompt: null,
+    todoSnapshot: [],
   };
 }

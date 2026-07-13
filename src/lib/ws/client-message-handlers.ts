@@ -73,6 +73,7 @@ export function handleIncomingServerMessage({
       // longer emit its terminal task_notification — settle it instead of
       // leaving the card spinning forever.
       chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
+      chatStore.setTodoSnapshot(msg.sessionId, []);
       sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       useCommandStore.getState().clearSession(msg.sessionId);
       return { wasReconnect };
@@ -145,6 +146,7 @@ export function handleIncomingServerMessage({
       // where that event is missed/reordered, so the live view never shows a
       // card spinning past the session's death.
       chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
+      chatStore.setTodoSnapshot(msg.sessionId, []);
       sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       sessionStore.updateSessionStatus(msg.sessionId, 'error');
       chatStore.addMessage(msg.sessionId, {
@@ -162,6 +164,7 @@ export function handleIncomingServerMessage({
         usage: msg.usage,
         contextUsage: msg.contextUsage,
         activeInteractivePrompt: msg.activeInteractivePrompt,
+        todoSnapshot: msg.todoSnapshot,
       });
       return { wasReconnect };
 
@@ -436,6 +439,9 @@ function handleSessionListMessage(
       if (hasActivePrompt) {
         stopTurnInFlight(session.id);
       }
+    }
+    if ('todoSnapshot' in session) {
+      chatStore.setTodoSnapshot(session.id, session.todoSnapshot ?? []);
     }
     if (session.isGenerating && !hasActivePrompt) {
       generatingSessionIds.push(session.id);

@@ -6,6 +6,8 @@ const appUrl = process.env.TESSERA_E2E_APP_URL ?? 'http://127.0.0.1:3191/chat';
 const workspaceRoot = process.env.TESSERA_E2E_WORKSPACE_ROOT ?? process.cwd();
 const screenshotPath = process.env.TESSERA_E2E_SCREENSHOT
   ?? '/tmp/tessera-claude-task-todo-success.png';
+const completedScreenshotPath = process.env.TESSERA_E2E_COMPLETED_SCREENSHOT
+  ?? '/tmp/tessera-claude-task-todo-completed.png';
 const fixturePath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   'fixtures/mock-claude-task-cli.mjs',
@@ -25,6 +27,7 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   let createdSessionId;
   let originalClaudeOverride;
+  let settingsConfigured = false;
 
   try {
     await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -41,6 +44,7 @@ async function main() {
         },
       },
     }), 'configure mock Claude');
+    settingsConfigured = true;
 
     const created = await expectOk(await page.request.post(apiUrl('/api/sessions'), {
       data: {
@@ -57,13 +61,45 @@ async function main() {
     await sidebarRow.waitFor({ timeout: 30_000 });
     await sidebarRow.click();
 
-    const input = page.locator(`textarea[data-session-input=${JSON.stringify(created.sessionId)}]`);
+    const input = page.locator(`textarea[data-session-input=${JSON.stringify(created.sessionId)}]:visible`);
     await input.waitFor({ timeout: 30_000 });
     await input.fill('Create and complete a visible task checklist');
     await input.press('Enter');
 
-    const activePanel = page.locator('[role="tabpanel"]:visible');
+    let activePanel = page.locator('[role="tabpanel"]:visible');
+    let todoBar = activePanel.getByTestId('todo-status-bar');
+    await todoBar.waitFor({ timeout: 30_000 });
+    await page.waitForFunction(() => (
+      document.querySelectorAll('[data-testid="todo-status-bar"] [data-status="pending"]').length === 3
+    ), undefined, { timeout: 10_000 });
+    for (const subject of [
+      'Inspect Claude task events',
+      'Translate tasks into todos',
+      'Verify the checklist UI',
+    ]) {
+      await todoBar.getByText(subject).waitFor({ timeout: 10_000 });
+    }
+
+    await todoBar.getByText('Inspecting Claude task events').waitFor({ timeout: 10_000 });
+    await todoBar.locator('[data-status="in_progress"]').waitFor({ timeout: 10_000 });
+
+    // A full reload exercises the history projection while tool outputs remain lazy.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.getByTestId('chat-layout').waitFor({ timeout: 30_000 });
+    await page.getByTestId(`collection-chat-${created.sessionId}`).first().click();
+    activePanel = page.locator('[role="tabpanel"]:visible');
+    todoBar = activePanel.getByTestId('todo-status-bar');
+    await todoBar.getByText('Inspecting Claude task events').waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+
+    // A partial completion stays visible because other tasks are still active.
+    await todoBar.locator('[data-status="completed"]').first().waitFor({ timeout: 20_000 });
+    await todoBar.waitFor({ state: 'visible' });
+
     await activePanel.getByText('Task checklist verified.').waitFor({ timeout: 30_000 });
+    await todoBar.waitFor({ state: 'hidden', timeout: 10_000 });
+
+    // Existing tool rows and the structured detail panel continue to work.
     await activePanel.getByTestId('tool-call-summary-bar').last().click();
     const lastUpdate = activePanel.getByTestId('tool-call-row-TaskUpdate').last();
     await lastUpdate.click();
@@ -78,23 +114,30 @@ async function main() {
       await detail.getByText(subject).waitFor({ timeout: 10_000 });
     }
 
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    process.stdout.write(JSON.stringify({ screenshotPath, sessionId: created.sessionId }, null, 2) + '\n');
+    await page.screenshot({ path: completedScreenshotPath, fullPage: true });
+    process.stdout.write(JSON.stringify({
+      screenshotPath,
+      completedScreenshotPath,
+      sessionId: created.sessionId,
+    }, null, 2) + '\n');
   } catch (error) {
     await page.screenshot({ path: '/tmp/tessera-claude-task-todo-failure.png', fullPage: true }).catch(() => {});
     throw error;
   } finally {
     if (createdSessionId) {
-      await page.request.delete(apiUrl(`/api/sessions/${encodeURIComponent(createdSessionId)}`)).catch(() => {});
+      await expectOk(
+        await page.request.delete(apiUrl(`/api/sessions/${encodeURIComponent(createdSessionId)}`)),
+        'delete E2E session',
+      );
     }
-    const latest = await page.request.get(apiUrl('/api/settings')).then(expectOk).catch(() => undefined);
-    if (latest?.settings) {
+    if (settingsConfigured) {
+      const latest = await expectOk(await page.request.get(apiUrl('/api/settings')), 'read cleanup settings');
       const cliCommandOverrides = { ...(latest.settings.cliCommandOverrides ?? {}) };
       if (originalClaudeOverride === undefined) delete cliCommandOverrides['claude-code'];
       else cliCommandOverrides['claude-code'] = originalClaudeOverride;
-      await page.request.put(apiUrl('/api/settings'), {
+      await expectOk(await page.request.put(apiUrl('/api/settings'), {
         data: { ...latest.settings, cliCommandOverrides },
-      }).catch(() => {});
+      }), 'restore settings');
     }
     await browser.close();
   }

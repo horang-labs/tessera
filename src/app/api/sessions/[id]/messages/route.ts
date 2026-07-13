@@ -10,6 +10,7 @@ function buildEmptyHistoryResponse(sessionId: string): NextResponse {
     sessionId,
     messages: [],
     activeInteractivePrompt: null,
+    todoSnapshot: [],
     pagination: { hasMore: false, nextBeforeBytes: 0 },
   });
 }
@@ -87,6 +88,7 @@ export async function GET(
       ...(beforeBytes === undefined && result.usage ? { usage: result.usage } : {}),
       ...(beforeBytes === undefined && result.contextUsage ? { contextUsage: result.contextUsage } : {}),
       ...(beforeBytes === undefined ? { activeInteractivePrompt: result.activeInteractivePrompt } : {}),
+      ...(beforeBytes === undefined ? { todoSnapshot: result.todoSnapshot } : {}),
     });
   } catch (err) {
     logger.error({

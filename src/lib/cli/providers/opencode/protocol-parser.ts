@@ -1089,8 +1089,10 @@ function synthesizeOpenCodeTodoResult(
   rawOutput: Record<string, any> | undefined,
   previousTodos: TodoItem[],
 ): CanonicalToolResultValue | undefined {
-  const nextTodos = extractOpenCodeTodos(toolParams, rawOutput);
-  if (nextTodos.length === 0) return undefined;
+  const rawTodos = extractRawOpenCodeTodos(toolParams, rawOutput);
+  if (!Array.isArray(rawTodos)) return undefined;
+  const nextTodos = normalizeOpenCodeTodos(rawTodos);
+  if (rawTodos.length > 0 && nextTodos.length === 0) return undefined;
   return {
     kind: 'todo_update',
     previous: previousTodos,
@@ -1147,13 +1149,16 @@ function extractOpenCodeTodos(
   toolParams: Record<string, any>,
   rawOutput?: Record<string, any>,
 ): TodoItem[] {
-  const rawTodos = Array.isArray(rawOutput?.metadata?.todos)
-      ? rawOutput.metadata.todos
-      : Array.isArray(toolParams.todos)
-        ? toolParams.todos
-        : parseTodosFromOutput(toStringValue(rawOutput?.output));
+  return normalizeOpenCodeTodos(extractRawOpenCodeTodos(toolParams, rawOutput));
+}
 
-  return normalizeOpenCodeTodos(rawTodos);
+function extractRawOpenCodeTodos(
+  toolParams: Record<string, any>,
+  rawOutput?: Record<string, any>,
+): unknown {
+  if (Array.isArray(rawOutput?.metadata?.todos)) return rawOutput.metadata.todos;
+  if (Array.isArray(toolParams.todos)) return toolParams.todos;
+  return parseTodosFromOutput(toStringValue(rawOutput?.output));
 }
 
 function hasOpenCodeTodoPayload(
@@ -1190,11 +1195,11 @@ function normalizeTodoStatus(status: unknown): TodoItem['status'] {
 }
 
 function parseTodosFromOutput(output: string): unknown {
-  if (!output.trim()) return [];
+  if (!output.trim()) return undefined;
   try {
     return JSON.parse(output);
   } catch {
-    return [];
+    return undefined;
   }
 }
 

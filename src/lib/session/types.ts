@@ -70,6 +70,7 @@ export interface SessionResumeResult {
   usage?: PersistedUsage | null;
   contextUsage?: PersistedContextUsage | null;
   activeInteractivePrompt?: ActiveInteractivePrompt | null;
+  todoSnapshot?: import('@/types/cli-jsonl-schemas').TodoItem[];
 }
 
 /**

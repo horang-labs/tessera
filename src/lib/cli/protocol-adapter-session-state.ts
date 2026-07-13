@@ -87,8 +87,11 @@ export function finalizeProtocolPendingToolCall(
   sessionId: string,
   toolUseId: string,
   pendingTool: PendingToolCall,
+  isError = false,
 ): void {
-  const nextTodos = extractTodoSnapshot(pendingTool.toolKind, pendingTool.toolParams);
+  const nextTodos = isError
+    ? undefined
+    : extractTodoSnapshot(pendingTool.toolKind, pendingTool.toolParams);
   if (nextTodos) {
     lastTodoSnapshots.set(sessionId, nextTodos);
   }

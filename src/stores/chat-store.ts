@@ -4,6 +4,7 @@ import type { EnhancedMessage, ConnectionStatus, ActiveInteractivePrompt } from 
 import type { AgentContextEvent } from '@/types/agent-context';
 import type { ToolCallKind } from '@/types/tool-call-kind';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
+import type { TodoItem } from '@/types/cli-jsonl-schemas';
 
 const STREAM_FLUSH_BASE_MS = 60;
 const STREAM_FLUSH_MEDIUM_MS = 110;
@@ -100,6 +101,10 @@ export interface ChatState {
   // touch the underlying run.
   dismissedWorkflowTaskIds: Set<string>;
 
+  // Latest successful canonical todo snapshot for each session. The docked todo
+  // bar reads this projection instead of depending on the paginated message list.
+  todoSnapshots: Map<string, TodoItem[]>;
+
   // Assistant text blocks currently waiting for text flush, keyed by session.
   // This drives only the inline streaming dots. It is intentionally separate
   // from turnInFlightBySession, which can stay true during thinking/tools.
@@ -178,6 +183,7 @@ export interface ChatState {
   setScrollPosition: (sessionId: string, position: number | ScrollPositionSnapshot) => void;
   getScrollPosition: (sessionId: string) => ScrollPositionSnapshot | undefined;
   setActiveInteractivePrompt: (sessionId: string, prompt: ActiveInteractivePrompt | null) => void;
+  setTodoSnapshot: (sessionId: string, snapshot: TodoItem[]) => void;
   recordPromptHistoryItem: (sessionId: string, item: AgentPromptHistoryItem) => void;
   resolvePromptHistoryItem: (sessionId: string, promptId: string) => void;
   setTurnInFlight: (sessionId: string, inFlight: boolean) => void;
@@ -314,8 +320,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   translateQueue: new Map(),
   scrollPositions: new Map(),
   dismissedWorkflowTaskIds: new Set(),
+  todoSnapshots: new Map(),
 
   isHistoryLoaded: (sessionId) => get().historyLoaded.has(sessionId),
+
+  setTodoSnapshot: (sessionId, snapshot) =>
+    set((state) => {
+      const updated = new Map(state.todoSnapshots);
+      if (snapshot.length === 0) {
+        updated.delete(sessionId);
+      } else {
+        updated.set(sessionId, snapshot.map((todo) => ({ ...todo })));
+      }
+      return { todoSnapshots: updated };
+    }),
 
   setDraftInput: (sessionId, text) =>
     set((state) => {
@@ -687,11 +705,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updatedPagination.delete(sessionId);
       const updatedPromptHistory = new Map(state.promptHistory);
       updatedPromptHistory.delete(sessionId);
+      const updatedTodoSnapshots = new Map(state.todoSnapshots);
+      updatedTodoSnapshots.delete(sessionId);
       return {
         messages: updatedMessages,
         historyLoaded: updatedHistoryLoaded,
         readOnlyPagination: updatedPagination,
         promptHistory: updatedPromptHistory,
+        todoSnapshots: updatedTodoSnapshots,
       };
     }),
 
@@ -733,6 +754,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const clearedTranslateQueue = new Map(state.translateQueue);
       clearedTranslateQueue.delete(sessionId);
 
+      const clearedTodoSnapshots = new Map(state.todoSnapshots);
+      clearedTodoSnapshots.delete(sessionId);
+
       return {
         messages: updatedMessages,
         historyLoaded: clearedHistoryLoaded,
@@ -754,6 +778,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         promptHistory: clearedPromptHistory,
         draftInputs: clearedDrafts,
         scrollPositions: clearedScrollPositions,
+        todoSnapshots: clearedTodoSnapshots,
       };
     }),
 

@@ -739,6 +739,7 @@ async function ensureSessionProcess({
       usage: result.usage,
       contextUsage: result.contextUsage,
       activeInteractivePrompt: result.activeInteractivePrompt,
+      todoSnapshot: result.todoSnapshot,
     });
     sendToUser(userId, {
       type: 'error',
@@ -824,6 +825,7 @@ export async function resumeSessionFromWebSocket({
         usage: result.usage,
         contextUsage: result.contextUsage,
         activeInteractivePrompt: result.activeInteractivePrompt,
+        todoSnapshot: result.todoSnapshot,
       });
       logger.info({ userId, sessionId, messageCount: result.messages.length }, 'Session resumed (read_only)');
       return;
@@ -841,6 +843,7 @@ export async function resumeSessionFromWebSocket({
         usage: replayState.usage,
         contextUsage: replayState.contextUsage,
         activeInteractivePrompt: replayState.activeInteractivePrompt,
+        todoSnapshot: replayState.todoSnapshot,
       });
       logger.info({ userId, sessionId, messageCount: replayState.messages.length }, 'Session resumed');
       return;
@@ -1571,6 +1574,7 @@ function sendSessionHistoryToUser({
   sessionId,
   usage,
   userId,
+  todoSnapshot,
 }: {
   activeInteractivePrompt?: SessionHistoryMessage['activeInteractivePrompt'];
   contextUsage?: SessionHistoryMessage['contextUsage'];
@@ -1579,6 +1583,7 @@ function sendSessionHistoryToUser({
   sessionId: string;
   usage?: SessionHistoryMessage['usage'];
   userId: string;
+  todoSnapshot?: SessionHistoryMessage['todoSnapshot'];
 }): void {
   sendToUser(userId, {
     type: 'session_history',
@@ -1587,5 +1592,6 @@ function sendSessionHistoryToUser({
     usage,
     contextUsage,
     activeInteractivePrompt,
+    todoSnapshot,
   });
 }
