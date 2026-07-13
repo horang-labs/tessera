@@ -187,7 +187,7 @@ export function handleProtocolToolResultMessage({
     outputLength: output.length,
   }, 'Tool result received');
 
-  finalizeProtocolPendingToolCall(lastTodoSnapshots, sessionId, toolUseId, pendingTool);
+  finalizeProtocolPendingToolCall(lastTodoSnapshots, sessionId, toolUseId, pendingTool, isError);
 }
 
 export function handleProtocolUserMessage({
@@ -243,6 +243,7 @@ export function handleProtocolUserMessage({
       sessionId,
       toolResult.toolUseId,
       pendingTool,
+      toolResult.isError,
     );
   }
 }

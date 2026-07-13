@@ -68,6 +68,9 @@ function deriveReplayStateFromStores(sessionId: string): SessionReplayState {
   const interactivePromptMap = chatStore.activeInteractivePrompt instanceof Map
     ? chatStore.activeInteractivePrompt
     : new Map<string, SessionReplayState['activeInteractivePrompt']>();
+  const todoSnapshotMap = chatStore.todoSnapshots instanceof Map
+    ? chatStore.todoSnapshots
+    : new Map<string, SessionReplayState['todoSnapshot']>();
 
   const baseMessages = messageMap.get(sessionId) || [];
   const pendingAssistantText = assistantTextBufferMap.get(sessionId) || '';
@@ -88,6 +91,7 @@ function deriveReplayStateFromStores(sessionId: string): SessionReplayState {
     usage: derivePersistedUsage(sessionId),
     contextUsage: derivePersistedContextUsage(sessionId),
     activeInteractivePrompt: interactivePromptMap.get(sessionId) || null,
+    todoSnapshot: todoSnapshotMap.get(sessionId) || [],
   };
 }
 
@@ -246,6 +250,9 @@ function projectReplayStateTransition(
     }
 
     case 'tool_call': {
+      if (nextState.todoSnapshot !== prevState.todoSnapshot) {
+        chatStore.setTodoSnapshot(sessionId, nextState.todoSnapshot);
+      }
       if (nextState.messages.length > prevState.messages.length) {
         appendLastMessageIfPresent(sessionId, nextState);
         return;

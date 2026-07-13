@@ -236,6 +236,7 @@ export class WebSocketServer {
         isGenerating: p.isGenerating,
         createdAt: p.createdAt.toISOString(),
         activeInteractivePrompt: replayState?.activeInteractivePrompt ?? null,
+        todoSnapshot: replayState?.todoSnapshot ?? [],
       };
     }));
     this.sendToConnection(ws, userId, {

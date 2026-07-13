@@ -1,6 +1,7 @@
 import { useChatStore } from '@/stores/chat-store';
 import { useUsageStore } from '@/stores/usage-store';
 import type { ActiveInteractivePrompt, EnhancedMessage } from '@/types/chat';
+import type { TodoItem } from '@/types/cli-jsonl-schemas';
 
 import type { ModelUsageEntry } from '@/lib/ws/message-types';
 
@@ -29,12 +30,14 @@ export interface SessionReplayPayload {
   usage?: ReplayUsage | null;
   contextUsage?: ReplayContextUsage | null;
   activeInteractivePrompt?: ActiveInteractivePrompt | null;
+  todoSnapshot?: TodoItem[];
 }
 
 export function restoreSessionReplay(sessionId: string, replay: SessionReplayPayload): void {
   const chatStore = useChatStore.getState();
   chatStore.loadHistory(sessionId, replay.messages);
   chatStore.setActiveInteractivePrompt(sessionId, replay.activeInteractivePrompt ?? null);
+  chatStore.setTodoSnapshot(sessionId, replay.todoSnapshot ?? []);
 
   const usageStore = useUsageStore.getState();
   usageStore.clearUsage(sessionId);

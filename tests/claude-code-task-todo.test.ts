@@ -254,6 +254,14 @@ test('legacy TodoWrite remains compatible', () => {
   ];
 
   startTool(parser, session, 'todo-1', 'TodoWrite', { todos });
-  const todo = completedTodo(finishTool(parser, session, 'todo-1', 'Todos updated'));
+  let todo = completedTodo(finishTool(parser, session, 'todo-1', 'Todos updated'));
   assert.deepEqual(todo?.next, todos);
+
+  startTool(parser, session, 'todo-clear', 'TodoWrite', { todos: [] });
+  todo = completedTodo(finishTool(parser, session, 'todo-clear', 'Todos cleared'));
+  assert.deepEqual(todo, {
+    kind: 'todo_update',
+    previous: todos,
+    next: [],
+  });
 });
