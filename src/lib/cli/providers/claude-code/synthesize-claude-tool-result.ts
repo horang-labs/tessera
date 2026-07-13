@@ -23,6 +23,25 @@ interface SynthesizeClaudeToolResultOptions {
   previousTodos?: TodoItem[];
 }
 
+export interface ClaudeTaskTodo extends TodoItem {
+  id: string;
+}
+
+export interface ApplyClaudeTaskToolResultOptions {
+  isError?: boolean;
+  output?: string;
+  previousTasks?: ReadonlyMap<string, ClaudeTaskTodo>;
+  previousTodos?: TodoItem[];
+  rawToolUseResult?: unknown;
+  toolName: string;
+  toolParams: Record<string, any>;
+}
+
+export interface AppliedClaudeTaskToolResult {
+  nextTasks: Map<string, ClaudeTaskTodo>;
+  todoUpdate: TodoUpdateToolResult;
+}
+
 function toStringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -53,6 +72,194 @@ function normalizeTodos(rawTodos: unknown): TodoItem[] {
       status: todo.status === 'completed' || todo.status === 'in_progress' ? todo.status : 'pending',
       ...(typeof todo.activeForm === 'string' ? { activeForm: todo.activeForm } : {}),
     }));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseStructuredCandidates(rawToolUseResult: unknown, output: string): unknown[] {
+  const candidates: unknown[] = [];
+  for (const value of [rawToolUseResult, output]) {
+    if (isRecord(value)) {
+      candidates.push(value);
+      continue;
+    }
+    if (typeof value !== 'string' || !value.trim()) continue;
+    try {
+      candidates.push(JSON.parse(value));
+    } catch {
+      // Claude may also emit a human-readable output alongside structured data.
+    }
+  }
+  return candidates;
+}
+
+function unwrapTaskResult(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  for (const key of ['tool_use_result', 'toolUseResult', 'result']) {
+    if (isRecord(value[key])) return value[key] as Record<string, unknown>;
+  }
+  return value;
+}
+
+function taskIdFrom(value: unknown): string {
+  if (!isRecord(value)) return '';
+  const id = value.id ?? value.taskId ?? value.task_id;
+  return typeof id === 'string' || typeof id === 'number' ? String(id).trim() : '';
+}
+
+function normalizeTask(value: unknown): ClaudeTaskTodo | undefined {
+  if (!isRecord(value)) return undefined;
+  const id = taskIdFrom(value);
+  const content = toStringValue(value.subject ?? value.content).trim();
+  if (!id || !content) return undefined;
+
+  return {
+    id,
+    content,
+    status: value.status === 'completed' || value.status === 'in_progress'
+      ? value.status
+      : 'pending',
+    ...(typeof value.activeForm === 'string' ? { activeForm: value.activeForm } : {}),
+  };
+}
+
+function taskTodos(tasks: ReadonlyMap<string, ClaudeTaskTodo>): TodoItem[] {
+  return [...tasks.values()].map(({ content, status, activeForm }) => ({
+    content,
+    status,
+    ...(activeForm ? { activeForm } : {}),
+  }));
+}
+
+function hasFailedTaskResult(result: Record<string, unknown> | undefined): boolean {
+  return result?.success === false || result?.isError === true || result?.is_error === true;
+}
+
+function isUsableTaskResult(toolName: string, result: Record<string, unknown>): boolean {
+  if (toolName === 'taskcreate') return !!(taskIdFrom(result.task) || taskIdFrom(result));
+  if (toolName === 'tasklist') return Array.isArray(result.tasks);
+  if (toolName === 'taskget') return Object.hasOwn(result, 'task');
+  return result.success === true
+    || !!taskIdFrom(result.task)
+    || !!taskIdFrom(result)
+    || Array.isArray(result.updatedFields)
+    || isRecord(result.statusChange);
+}
+
+function selectTaskResult(
+  toolName: string,
+  rawToolUseResult: unknown,
+  output: string,
+): Record<string, unknown> | undefined {
+  const candidates = parseStructuredCandidates(rawToolUseResult, output)
+    .map(unwrapTaskResult)
+    .filter((candidate): candidate is Record<string, unknown> => candidate !== undefined);
+  return candidates.find(hasFailedTaskResult)
+    ?? candidates.find((candidate) => isUsableTaskResult(toolName, candidate));
+}
+
+export function isClaudeTaskToolResultFailure(rawToolUseResult: unknown, output: string): boolean {
+  return parseStructuredCandidates(rawToolUseResult, output)
+    .map(unwrapTaskResult)
+    .some(hasFailedTaskResult);
+}
+
+/**
+ * Apply one completed Claude Task* tool call to its session-scoped task map.
+ * Returns undefined for errors, malformed results, and unknown update ids so
+ * callers can preserve the previous snapshot without emitting a misleading UI.
+ */
+export function applyClaudeTaskToolResult(
+  options: ApplyClaudeTaskToolResultOptions,
+): AppliedClaudeTaskToolResult | undefined {
+  const normalizedName = options.toolName.toLowerCase();
+  if (!['taskcreate', 'taskupdate', 'tasklist', 'taskget'].includes(normalizedName)) {
+    return undefined;
+  }
+  if (options.isError) return undefined;
+
+  const result = selectTaskResult(
+    normalizedName,
+    options.rawToolUseResult,
+    options.output ?? '',
+  );
+  if (hasFailedTaskResult(result)) return undefined;
+
+  const previousTasks = options.previousTasks ?? new Map<string, ClaudeTaskTodo>();
+  const nextTasks = new Map(previousTasks);
+
+  if (normalizedName === 'taskcreate') {
+    const task = normalizeTask(result?.task) ?? normalizeTask(result);
+    const id = task?.id || taskIdFrom(result);
+    const content = task?.content || toStringValue(options.toolParams.subject ?? options.toolParams.content).trim();
+    if (!id || !content) return undefined;
+    const activeForm = task?.activeForm
+      ?? (typeof options.toolParams.activeForm === 'string' ? options.toolParams.activeForm : undefined);
+    nextTasks.set(id, {
+      id,
+      content,
+      status: task?.status ?? 'pending',
+      ...(activeForm ? { activeForm } : {}),
+    });
+  } else if (normalizedName === 'taskupdate') {
+    const id = taskIdFrom(options.toolParams) || taskIdFrom(result?.task) || taskIdFrom(result);
+    if (!id || !nextTasks.has(id)) return undefined;
+
+    const statusChange = isRecord(result?.statusChange) ? result.statusChange : undefined;
+    const expectedPreviousStatus = statusChange?.from;
+    if (typeof expectedPreviousStatus === 'string'
+      && nextTasks.get(id)?.status !== expectedPreviousStatus) return undefined;
+
+    if (options.toolParams.status === 'deleted') {
+      nextTasks.delete(id);
+    } else {
+      const current = nextTasks.get(id)!;
+      const returnedTask = normalizeTask(result?.task);
+      const status = options.toolParams.status === 'completed' || options.toolParams.status === 'in_progress'
+        ? options.toolParams.status
+        : options.toolParams.status === 'pending'
+          ? 'pending'
+          : returnedTask?.status ?? current.status;
+      const content = toStringValue(options.toolParams.subject ?? options.toolParams.content).trim()
+        || returnedTask?.content
+        || current.content;
+      const activeForm = typeof options.toolParams.activeForm === 'string'
+        ? options.toolParams.activeForm
+        : returnedTask?.activeForm ?? current.activeForm;
+      nextTasks.set(id, {
+        id,
+        content,
+        status,
+        ...(activeForm ? { activeForm } : {}),
+      });
+    }
+  } else if (normalizedName === 'tasklist') {
+    if (!result || !Array.isArray(result.tasks)) return undefined;
+    const normalizedTasks = result.tasks.map(normalizeTask);
+    if (normalizedTasks.some((task) => task === undefined)) return undefined;
+    const taskIds = normalizedTasks.map((task) => task!.id);
+    if (new Set(taskIds).size !== taskIds.length) return undefined;
+    nextTasks.clear();
+    for (const task of normalizedTasks) {
+      if (task) nextTasks.set(task.id, task);
+    }
+  } else {
+    if (!result || result.task == null) return undefined;
+    const task = normalizeTask(result.task);
+    if (!task) return undefined;
+    nextTasks.set(task.id, task);
+  }
+
+  return {
+    nextTasks,
+    todoUpdate: {
+      kind: 'todo_update',
+      previous: options.previousTodos ?? taskTodos(previousTasks),
+      next: taskTodos(nextTasks),
+    },
+  };
 }
 
 function normalizeAskUserQuestions(rawQuestions: unknown): AskUserQuestionItem[] {
@@ -256,6 +463,10 @@ export function mapClaudeToolNameToToolKind(toolName: string): ToolCallKind | un
     case 'webfetch':
       return 'web_fetch';
     case 'todowrite':
+    case 'taskcreate':
+    case 'taskupdate':
+    case 'tasklist':
+    case 'taskget':
       return 'todo_update';
     default:
       return undefined;

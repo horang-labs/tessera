@@ -47,6 +47,10 @@ export function inferToolCallKindFromToolName(toolName: string): ToolCallKind | 
     case 'webfetch':
       return 'web_fetch';
     case 'todowrite':
+    case 'taskcreate':
+    case 'taskupdate':
+    case 'tasklist':
+    case 'taskget':
       return 'todo_update';
     default:
       return undefined;
