@@ -11,6 +11,7 @@ import type {
 import type {
   WorkflowAgentEntry,
   WorkflowPhaseEntry,
+  TodoItem,
 } from '@/types/cli-jsonl-schemas';
 import { isRenderableEnhancedMessage } from '@/lib/chat/renderability';
 import type {
@@ -25,6 +26,8 @@ export interface SessionReplayState {
   usage: PersistedUsage | null;
   contextUsage: PersistedContextUsage | null;
   activeInteractivePrompt: ActiveInteractivePrompt | null;
+  /** Latest successful canonical todo snapshot, independent of message pagination. */
+  todoSnapshot: TodoItem[];
 }
 
 function makeTextMessage(
@@ -42,7 +45,37 @@ export function createEmptySessionReplayState(): SessionReplayState {
     usage: null,
     contextUsage: null,
     activeInteractivePrompt: null,
+    todoSnapshot: [],
   };
+}
+
+function canonicalTodoSnapshot(value: unknown): TodoItem[] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const result = value as Record<string, unknown>;
+  if (result.kind !== 'todo_update' || !Array.isArray(result.next)) return null;
+
+  const snapshot: TodoItem[] = [];
+  for (const raw of result.next) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const todo = raw as Record<string, unknown>;
+    if (
+      typeof todo.content !== 'string' ||
+      !todo.content.trim() ||
+      (todo.status !== 'pending' && todo.status !== 'in_progress' && todo.status !== 'completed') ||
+      (todo.activeForm !== undefined && typeof todo.activeForm !== 'string')
+    ) {
+      return null;
+    }
+    const activeForm = typeof todo.activeForm === 'string' ? todo.activeForm.trim() : '';
+    snapshot.push({
+      content: todo.content.trim(),
+      status: todo.status,
+      ...(activeForm
+        ? { activeForm }
+        : {}),
+    });
+  }
+  return snapshot;
 }
 
 function makeCompletedThinkingMessageId(state: SessionReplayState, thinkingId?: string): string {
@@ -335,6 +368,7 @@ export function applySessionReplayEvent(
     usage: currentState.usage,
     contextUsage: currentState.contextUsage,
     activeInteractivePrompt: currentState.activeInteractivePrompt,
+    todoSnapshot: currentState.todoSnapshot,
   };
 
   switch (event.type) {
@@ -458,9 +492,14 @@ export function applySessionReplayEvent(
       return state;
     }
 
-    case 'tool_call':
+    case 'tool_call': {
+      if (event.status === 'completed') {
+        const snapshot = canonicalTodoSnapshot(event.toolUseResult);
+        if (snapshot) state.todoSnapshot = snapshot;
+      }
       upsertToolCallMessage(state, sessionId, event, options);
       return state;
+    }
 
     case 'workflow_event':
       upsertWorkflowMessage(state, sessionId, event);

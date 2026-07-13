@@ -359,8 +359,12 @@ function synthesizeTodoWriteResult(
   toolParams: Record<string, any>,
   previousTodos?: TodoItem[],
 ): TodoUpdateToolResult | undefined {
+  if (!Array.isArray(toolParams.todos)) return undefined;
   const newTodos = normalizeTodos(toolParams.todos);
-  if (newTodos.length === 0) return undefined;
+  if (toolParams.todos.length > 0 && (
+    newTodos.length !== toolParams.todos.length ||
+    newTodos.some((todo) => !todo.content.trim())
+  )) return undefined;
   return {
     kind: 'todo_update',
     previous: previousTodos ?? [],
@@ -514,6 +518,11 @@ export function extractTodoSnapshot(
     return undefined;
   }
 
+  if (!Array.isArray(toolParams.todos)) return undefined;
   const todos = normalizeTodos(toolParams.todos);
-  return todos.length > 0 ? todos : undefined;
+  if (toolParams.todos.length > 0 && (
+    todos.length !== toolParams.todos.length ||
+    todos.some((todo) => !todo.content.trim())
+  )) return undefined;
+  return todos;
 }

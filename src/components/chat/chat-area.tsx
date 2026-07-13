@@ -11,6 +11,7 @@ import { Header } from "./header";
 import { MessageList } from "./message-list";
 import { MessageInput } from "./message-input";
 import { WorkflowStatusBar } from "./workflow/workflow-status-bar";
+import { TodoStatusBar } from "./todo/todo-status-bar";
 import { InteractivePromptOverlay } from "./interactive-prompt-overlay";
 import { MessageSquare, AlertCircle, X as XIcon } from "lucide-react";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
@@ -170,7 +171,10 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
 
       {!isReadOnly && <InteractivePromptOverlay sessionId={sessionId} />}
 
-      <WorkflowStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
+      <div className="max-h-[45vh] overflow-y-auto">
+        <WorkflowStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
+        <TodoStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
+      </div>
 
       <MessageInput
         sessionId={sessionId}

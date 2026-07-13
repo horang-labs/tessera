@@ -305,6 +305,7 @@ export type AppServerMessage =
         contextWindowSize?: number;
       } | null;
       activeInteractivePrompt?: import('@/types/chat').ActiveInteractivePrompt | null;
+      todoSnapshot?: import('@/types/cli-jsonl-schemas').TodoItem[];
     }
   | {
       type: 'session_list';
@@ -314,6 +315,7 @@ export type AppServerMessage =
         isGenerating: boolean;
         createdAt: string;
         activeInteractivePrompt?: import('@/types/chat').ActiveInteractivePrompt | null;
+        todoSnapshot?: import('@/types/cli-jsonl-schemas').TodoItem[];
       }>;
       titleGeneratingSessionIds?: string[];
     }

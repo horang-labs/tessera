@@ -68,14 +68,18 @@ async function runTaskTurn() {
   toolResult('list-snapshot', {
     tasks: tasks.map(([id, subject]) => ({ id, subject, status: 'pending' })),
   });
+  await delay(1_000);
 
   assistantTool('update-1-active', 'TaskUpdate', { taskId: '1', status: 'in_progress', activeForm: 'Inspecting Claude task events' });
   await delay(120);
   toolResult('update-1-active', { success: true, taskId: '1' });
+  // Leave enough time for the E2E browser to reload and prove the active
+  // projection is restored from canonical history, not the visible message page.
+  await delay(8_000);
 
   for (const [id] of tasks) {
     assistantTool(`update-${id}-done`, 'TaskUpdate', { taskId: id, status: 'completed' });
-    await delay(120);
+    await delay(500);
     toolResult(`update-${id}-done`, { success: true, taskId: id });
   }
 
