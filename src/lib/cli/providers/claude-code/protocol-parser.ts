@@ -21,7 +21,14 @@ import { buildModelUsageEntries, pickPrimaryModelName } from '../../protocol-ada
 import { parseContentBlocks, extractToolResultOutput, extractOutputString } from '../../message-parser';
 import { hookHandler } from '../../hook-handler';
 import { truncateToolResult } from '../../truncate-tool-result';
-import { extractTodoSnapshot, mapClaudeToolNameToToolKind, synthesizeClaudeToolResult } from './synthesize-claude-tool-result';
+import {
+  applyClaudeTaskToolResult,
+  extractTodoSnapshot,
+  isClaudeTaskToolResultFailure,
+  mapClaudeToolNameToToolKind,
+  synthesizeClaudeToolResult,
+  type ClaudeTaskTodo,
+} from './synthesize-claude-tool-result';
 import logger from '../../../logger';
 import type { ToolCallKind } from '@/types/tool-call-kind';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
@@ -102,6 +109,9 @@ export class ClaudeCodeProtocolParser {
 
   /** Per-session TodoWrite snapshot for synthesizing rich todo diffs without CLI JSONL. */
   private lastTodoSnapshots = new Map<string, Array<{ content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string }>>();
+
+  /** Per-session Claude Task* state, keyed by the ids returned by the CLI. */
+  private taskTodoSnapshots = new Map<string, Map<string, ClaudeTaskTodo>>();
 
   /**
    * Per-session set of background-task ids known to be dynamic workflows.
@@ -188,6 +198,7 @@ export class ClaudeCodeProtocolParser {
     this.lastAssistantMessage.delete(sessionId);
     this.lastAssistantModel.delete(sessionId);
     this.lastTodoSnapshots.delete(sessionId);
+    this.taskTodoSnapshots.delete(sessionId);
     this.workflowTaskIds.delete(sessionId);
 
     return [
@@ -773,6 +784,7 @@ export class ClaudeCodeProtocolParser {
     const isError = msg.message?.is_error || false;
     const rawContent = msg.message?.content;
     const output = extractOutputString(rawContent);
+    const rawToolUseResult = extractClaudeToolUseResult(msg);
 
     const sessionPending = this.pendingToolCalls.get(sessionId);
     const pendingTool = sessionPending?.get(toolUseId);
@@ -819,16 +831,33 @@ export class ClaudeCodeProtocolParser {
       ? buildImageToolResult(sessionId, toolUseId)
       : undefined;
 
-    const effectiveToolUseResult = imageToolUseResult ?? synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
-      output,
-      error: isError ? output : undefined,
+    const appliedTaskResult = applyClaudeTaskToolResult({
       isError,
+      output,
+      previousTasks: this.taskTodoSnapshots.get(sessionId),
       previousTodos: this.lastTodoSnapshots.get(sessionId),
+      rawToolUseResult,
+      toolName: pendingTool.toolName,
+      toolParams: pendingTool.toolParams,
     });
+    const isTaskTodoTool = isClaudeTaskTodoTool(pendingTool.toolName);
+    const effectiveIsError = isError
+      || (isTaskTodoTool && isClaudeTaskToolResultFailure(rawToolUseResult, output));
+    const effectiveToolUseResult = imageToolUseResult
+      ?? appliedTaskResult?.todoUpdate
+      ?? (isTaskTodoTool ? undefined : synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
+          output,
+          error: isError ? output : undefined,
+          isError,
+          previousTodos: this.lastTodoSnapshots.get(sessionId),
+        }));
 
-    const nextTodos = extractTodoSnapshot(pendingTool.toolKind, pendingTool.toolParams);
-    if (nextTodos) {
-      this.lastTodoSnapshots.set(sessionId, nextTodos);
+    if (appliedTaskResult) {
+      this.taskTodoSnapshots.set(sessionId, appliedTaskResult.nextTasks);
+      this.lastTodoSnapshots.set(sessionId, appliedTaskResult.todoUpdate.next);
+    } else if (!effectiveIsError) {
+      const nextTodos = extractTodoSnapshot(pendingTool.toolKind, pendingTool.toolParams);
+      if (nextTodos) this.lastTodoSnapshots.set(sessionId, nextTodos);
     }
 
     return [{
@@ -839,9 +868,9 @@ export class ClaudeCodeProtocolParser {
         ...(pendingTool.toolKind !== undefined ? { toolKind: pendingTool.toolKind } : {}),
         toolParams: pendingTool.toolParams,
         ...(pendingTool.toolDisplay !== undefined ? { toolDisplay: pendingTool.toolDisplay } : {}),
-        status: isError ? 'error' : 'completed',
-        output: isError ? undefined : output,
-        error: isError ? output : undefined,
+        status: effectiveIsError ? 'error' : 'completed',
+        output: effectiveIsError ? undefined : output,
+        error: effectiveIsError ? output : undefined,
         ...(effectiveToolUseResult !== undefined ? { toolUseResult: effectiveToolUseResult } : {}),
         toolUseId,
         timestamp: new Date().toISOString(),
@@ -864,7 +893,8 @@ export class ClaudeCodeProtocolParser {
     const content = msg.message?.content;
     if (!Array.isArray(content)) return [];
 
-    const rawToolUseResult = (msg as any).toolUseResult;
+    const rawToolUseResult = extractClaudeToolUseResult(msg);
+    const toolResultCount = content.filter((block) => extractToolResultOutput(block) !== undefined).length;
     const results: ParsedMessage[] = [];
 
     for (const block of content) {
@@ -886,29 +916,48 @@ export class ClaudeCodeProtocolParser {
       const isImageRead = !toolResult.isError
         && pendingTool.toolKind === 'file_read'
         && isImagePath(pendingTool.toolParams?.file_path);
+      const resultRawToolUseResult = toolResultCount === 1 ? rawToolUseResult : undefined;
 
-      const toolUseResult = rawToolUseResult
-        ? normalizeToolResult(
-            pendingTool.toolKind,
-            truncateToolResult(rawToolUseResult, {
-              sessionId,
-              toolName: pendingTool.toolName,
-            }),
-          )
-        : isImageRead
-          ? buildImageToolResult(sessionId, toolResult.toolUseId)
-          : synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
-              output: toolResult.output,
-              error: toolResult.isError ? toolResult.output : undefined,
-              isError: toolResult.isError,
-              previousTodos: this.lastTodoSnapshots.get(sessionId),
-            });
+      const appliedTaskResult = applyClaudeTaskToolResult({
+        isError: toolResult.isError,
+        output: toolResult.output,
+        previousTasks: this.taskTodoSnapshots.get(sessionId),
+        previousTodos: this.lastTodoSnapshots.get(sessionId),
+        rawToolUseResult: resultRawToolUseResult,
+        toolName: pendingTool.toolName,
+        toolParams: pendingTool.toolParams,
+      });
+      const isTaskTodoTool = isClaudeTaskTodoTool(pendingTool.toolName);
+      const effectiveIsError = toolResult.isError
+        || (isTaskTodoTool && isClaudeTaskToolResultFailure(resultRawToolUseResult, toolResult.output));
+      const toolUseResult = appliedTaskResult?.todoUpdate
+        ?? (isTaskTodoTool
+          ? undefined
+          : resultRawToolUseResult
+            ? normalizeToolResult(
+                pendingTool.toolKind,
+                truncateToolResult(resultRawToolUseResult, {
+                  sessionId,
+                  toolName: pendingTool.toolName,
+                }),
+              )
+            : isImageRead
+              ? buildImageToolResult(sessionId, toolResult.toolUseId)
+              : synthesizeClaudeToolResult(pendingTool.toolKind, pendingTool.toolParams, {
+                  output: toolResult.output,
+                  error: toolResult.isError ? toolResult.output : undefined,
+                  isError: toolResult.isError,
+                  previousTodos: this.lastTodoSnapshots.get(sessionId),
+                }));
 
       sessionPending!.delete(toolResult.toolUseId);
 
-      const nextTodos = extractTodoSnapshot(pendingTool.toolKind, pendingTool.toolParams);
-      if (nextTodos) {
-        this.lastTodoSnapshots.set(sessionId, nextTodos);
+      if (appliedTaskResult) {
+        this.taskTodoSnapshots.set(sessionId, appliedTaskResult.nextTasks);
+        this.lastTodoSnapshots.set(sessionId, appliedTaskResult.todoUpdate.next);
+      } else if (!effectiveIsError) {
+        const nextTodos = extractTodoSnapshot(pendingTool.toolKind, pendingTool.toolParams);
+        if (nextTodos) this.lastTodoSnapshots.set(sessionId, nextTodos);
       }
 
       logger.debug('Tool result from user message', {
@@ -916,7 +965,7 @@ export class ClaudeCodeProtocolParser {
         toolName: pendingTool.toolName,
         toolUseId: toolResult.toolUseId,
         isError: toolResult.isError,
-        hasToolUseResult: !!rawToolUseResult,
+        hasToolUseResult: !!resultRawToolUseResult,
         outputLength: toolResult.output?.length || 0,
       });
 
@@ -928,10 +977,10 @@ export class ClaudeCodeProtocolParser {
           ...(pendingTool.toolKind !== undefined ? { toolKind: pendingTool.toolKind } : {}),
           toolParams: pendingTool.toolParams,
           ...(pendingTool.toolDisplay !== undefined ? { toolDisplay: pendingTool.toolDisplay } : {}),
-          status: toolResult.isError ? 'error' : 'completed',
-          output: toolResult.isError ? undefined : toolResult.output,
-          error: toolResult.isError ? toolResult.output : undefined,
-          toolUseResult,
+          status: effectiveIsError ? 'error' : 'completed',
+          output: effectiveIsError ? undefined : toolResult.output,
+          error: effectiveIsError ? toolResult.output : undefined,
+          ...(toolUseResult !== undefined ? { toolUseResult } : {}),
           toolUseId: toolResult.toolUseId,
           timestamp: new Date().toISOString(),
         },
@@ -1562,6 +1611,18 @@ function buildStreamToolUseBlock(block: NonNullable<SessionStreamState['activeTo
     name: block.name,
     input,
   };
+}
+
+function isClaudeTaskTodoTool(toolName: string): boolean {
+  return ['taskcreate', 'taskupdate', 'tasklist', 'taskget'].includes(toolName.toLowerCase());
+}
+
+function extractClaudeToolUseResult(msg: CliMessage): unknown {
+  const raw = msg as any;
+  return raw.tool_use_result
+    ?? raw.toolUseResult
+    ?? raw.message?.tool_use_result
+    ?? raw.message?.toolUseResult;
 }
 
 function buildClaudeSystemWarning(

@@ -7,6 +7,7 @@ import {
   FileEdit,
   FileText,
   Globe,
+  ListTodo,
   MessageCircleQuestion,
   Search,
   Terminal,
@@ -83,6 +84,8 @@ export function getToolIcon(toolName: string, toolKind?: ToolCallKind): ReactNod
       return <Bot className="h-3.5 w-3.5" />;
     case 'question_prompt':
       return <MessageCircleQuestion className="h-3.5 w-3.5" />;
+    case 'todo_update':
+      return <ListTodo className="h-3.5 w-3.5" />;
     default:
       return <Code2 className="h-3.5 w-3.5" />;
   }
@@ -122,6 +125,23 @@ export function getToolSummary(
     }
 
     return `${toolParams.todos.length} tasks`;
+  }
+
+  if (effectiveKind === 'todo_update') {
+    const normalizedName = toolName.toLowerCase();
+    if (normalizedName === 'taskcreate') {
+      return toolParams.subject || toolParams.content || 'Create task';
+    }
+    if (normalizedName === 'taskupdate') {
+      const taskId = toolParams.taskId || toolParams.task_id || toolParams.id;
+      const detail = toolParams.subject || toolParams.activeForm || toolParams.status;
+      return detail || (taskId ? `Task ${taskId}` : 'Update task');
+    }
+    if (normalizedName === 'tasklist') return 'List tasks';
+    if (normalizedName === 'taskget') {
+      const taskId = toolParams.taskId || toolParams.task_id || toolParams.id;
+      return taskId ? `Task ${taskId}` : 'Get task';
+    }
   }
 
   if (effectiveKind === 'subagent_task' && toolParams.subagent_type) {
