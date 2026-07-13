@@ -214,7 +214,7 @@ function normalizeCodexGoal(raw: unknown): SessionGoal | null {
   if (
     typeof goal.threadId !== 'string' ||
     typeof goal.objective !== 'string' ||
-    !['active', 'paused', 'budgetLimited', 'complete'].includes(String(goal.status))
+    !['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'].includes(String(goal.status))
   ) {
     return null;
   }
@@ -251,6 +251,7 @@ export class CodexAdapter implements CliProvider {
   private _processThreadIds = new WeakMap<ChildProcess, string>();
   private _processRuntimeConfig = new WeakMap<ChildProcess, CodexRuntimeConfig>();
   private _processRawLogs = new WeakMap<ChildProcess, CliRawLogSink>();
+  private _compactingProcesses = new WeakSet<ChildProcess>();
 
   private _attachRawLog(
     proc: ChildProcess,
@@ -689,24 +690,38 @@ export class CodexAdapter implements CliProvider {
   }
 
   async compactThread(proc: ChildProcess, sessionId: string): Promise<boolean> {
-    const threadId = this._processThreadIds.get(proc);
-    if (!threadId) {
-      throw new Error('Codex thread is not ready');
+    if (codexProtocolParser.getActiveTurnId(sessionId)) {
+      logger.warn('CodexAdapter: refusing thread/compact/start during an active turn', { sessionId });
+      return false;
+    }
+    if (this._compactingProcesses.has(proc)) {
+      logger.warn('CodexAdapter: refusing concurrent thread/compact/start', { sessionId });
+      return false;
     }
 
-    const requestId = this._nextRequestId++;
-    const request: JsonRpcRequest = {
-      jsonrpc: '2.0',
-      id: requestId,
-      method: 'thread/compact/start',
-      params: { threadId },
-    };
+    this._compactingProcesses.add(proc);
+    try {
+      const threadId = this._processThreadIds.get(proc);
+      if (!threadId) {
+        throw new Error('Codex thread is not ready');
+      }
 
-    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/compact/start');
-    this._writeStdin(proc, 'compact_start', `${JSON.stringify(request)}\n`);
-    await this._awaitResponse(proc, requestId, 'thread/compact/start');
-    logger.info('CodexAdapter: sent thread/compact/start', { sessionId, threadId });
-    return true;
+      const requestId = this._nextRequestId++;
+      const request: JsonRpcRequest = {
+        jsonrpc: '2.0',
+        id: requestId,
+        method: 'thread/compact/start',
+        params: { threadId },
+      };
+
+      codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/compact/start');
+      this._writeStdin(proc, 'compact_start', `${JSON.stringify(request)}\n`);
+      await this._awaitResponse(proc, requestId, 'thread/compact/start');
+      logger.info('CodexAdapter: sent thread/compact/start', { sessionId, threadId });
+      return true;
+    } finally {
+      this._compactingProcesses.delete(proc);
+    }
   }
 
   // ---------------------------------------------------------------------------

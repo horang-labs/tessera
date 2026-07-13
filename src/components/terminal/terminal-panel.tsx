@@ -9,6 +9,13 @@ import { TabIdContext, usePanelStore } from '@/stores/panel-store';
 import { useChatStore } from '@/stores/chat-store';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
+import {
+  setPendingTerminalLaunch,
+  takePendingTerminalLaunch,
+  type PendingTerminalLaunch,
+} from '@/lib/terminal/pending-terminal-launch';
+import { dispatchTerminalLaunchResult } from '@/lib/terminal/terminal-launch-result';
+import { clearClientTerminalHandoff } from '@/lib/terminal/client-terminal-handoff-state';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 
 interface TerminalPanelProps {
@@ -29,6 +36,7 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<any>(null);
   const fitAddonRef = useRef<any>(null);
+  const pendingLaunchRef = useRef<PendingTerminalLaunch | null>(null);
   const closeRequestedRef = useRef(false);
   const [status, setStatus] = useState<'starting' | 'running' | 'exited' | 'error'>('starting');
   const [subtitle, setSubtitle] = useState('Starting terminal...');
@@ -44,6 +52,7 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
 
   const handleCloseTerminal = useCallback(() => {
     closeRequestedRef.current = true;
+    clearClientTerminalHandoff(terminalId);
     wsClient.closeTerminal(terminalId);
     assignTerminal(panelId, null);
   }, [assignTerminal, panelId, terminalId]);
@@ -61,20 +70,76 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
         return;
       }
 
+      if (message.type === 'terminal_prefill_written') {
+        const pendingLaunch = pendingLaunchRef.current;
+        if (pendingLaunch?.sourceSessionId) {
+          pendingLaunchRef.current = null;
+          dispatchTerminalLaunchResult({
+            terminalId,
+            sourceSessionId: pendingLaunch.sourceSessionId,
+            commandInput: pendingLaunch.intent.commandInput,
+            status: 'started',
+          });
+        }
+        return;
+      }
+
+      if (message.type === 'terminal_prefill_cancelled') {
+        const pendingLaunch = pendingLaunchRef.current;
+        if (!pendingLaunch?.locksSourceSession) {
+          clearClientTerminalHandoff(terminalId);
+        }
+        if (pendingLaunch?.sourceSessionId) {
+          pendingLaunchRef.current = null;
+          dispatchTerminalLaunchResult({
+            terminalId,
+            sourceSessionId: pendingLaunch.sourceSessionId,
+            commandInput: pendingLaunch.intent.commandInput,
+            status: 'error',
+            message: message.message,
+          });
+        }
+        return;
+      }
+
       if (message.type === 'terminal_output') {
         terminalRef.current?.write(message.data);
         return;
       }
 
       if (message.type === 'terminal_exit') {
+        clearClientTerminalHandoff(terminalId);
         setStatus('exited');
         setSubtitle(`Terminal exited with code ${message.exitCode}`);
+        const pendingLaunch = pendingLaunchRef.current;
+        if (pendingLaunch?.sourceSessionId) {
+          pendingLaunchRef.current = null;
+          dispatchTerminalLaunchResult({
+            terminalId,
+            sourceSessionId: pendingLaunch.sourceSessionId,
+            commandInput: pendingLaunch.intent.commandInput,
+            status: 'error',
+            message: 'The terminal exited before the command was ready. Your draft was kept.',
+          });
+        }
         return;
       }
 
       if (message.type === 'terminal_error') {
+        clearClientTerminalHandoff(terminalId);
         setStatus('error');
         setSubtitle(message.message);
+        const pendingLaunch = pendingLaunchRef.current;
+        if (pendingLaunch?.sourceSessionId) {
+          pendingLaunchRef.current = null;
+          dispatchTerminalLaunchResult({
+            terminalId,
+            sourceSessionId: pendingLaunch.sourceSessionId,
+            commandInput: pendingLaunch.intent.commandInput,
+            status: 'error',
+            message: message.message,
+          });
+        }
       }
     });
 
@@ -117,14 +182,21 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
         }
 
         const dimensions = fitAddon.proposeDimensions();
+        // 미지원 슬래시 명령 fallback으로 생성된 터미널이면 1회성 launch/prefill을 소비한다.
+        const pendingLaunch = takePendingTerminalLaunch(terminalId);
+        pendingLaunchRef.current = pendingLaunch ?? null;
         const didCreateTerminal = wsClient.createTerminal({
           terminalId,
           cwd: getInitialTerminalCwd(terminalSessionId),
           sessionId: getSessionSelectionId(terminalSessionId),
           cols: dimensions?.cols,
           rows: dimensions?.rows,
+          launchIntent: pendingLaunch?.intent,
         });
         if (!didCreateTerminal) {
+          // 전송 실패 시 소비한 pending launch를 되돌려 재연결 시 재사용되도록 한다.
+          if (pendingLaunch) setPendingTerminalLaunch(terminalId, pendingLaunch);
+          pendingLaunchRef.current = null;
           setStatus('starting');
           setSubtitle('Waiting for server connection...');
           return;
@@ -151,10 +223,16 @@ export function TerminalPanel({ panelId, terminalId, terminalSessionId }: Termin
       disposed = true;
       unsubscribe();
       resizeObserver?.disconnect();
+      const unresolvedLaunch = pendingLaunchRef.current;
+      if (unresolvedLaunch && isTerminalAssignedToAnyPanel(terminalId)) {
+        setPendingTerminalLaunch(terminalId, unresolvedLaunch);
+      }
+      pendingLaunchRef.current = null;
       terminalRef.current?.dispose?.();
       terminalRef.current = null;
       fitAddonRef.current = null;
       if (!closeRequestedRef.current && !isTerminalAssignedToAnyPanel(terminalId)) {
+        clearClientTerminalHandoff(terminalId);
         wsClient.closeTerminal(terminalId);
       }
     };

@@ -12,6 +12,12 @@ interface WorkspaceMonacoEditorProps {
   mode: "file" | "diff";
   path: string;
   readOnly?: boolean;
+  /**
+   * Fired with the full editor value on user edits. When provided, keep the
+   * `content` prop in sync with the latest emitted value (or leave it at the
+   * loaded original): passing a different string resets the editor content.
+   */
+  onChange?: (value: string) => void;
 }
 
 type MonacoApi = typeof import("monaco-editor");
@@ -196,13 +202,18 @@ export function WorkspaceMonacoEditor({
   mode,
   path,
   readOnly = true,
+  onChange,
 }: WorkspaceMonacoEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MonacoEditor | null>(null);
   const modelRef = useRef<MonacoModel | null>(null);
   const monacoRef = useRef<MonacoApi | null>(null);
-  const latestPropsRef = useRef({ content, language, mode, path, readOnly });
+  const latestPropsRef = useRef({ content, language, mode, path, readOnly, onChange });
   const latestThemeRef = useRef("tessera-light");
+  // Last value emitted through onChange. The sync effect below runs with a
+  // possibly stale `content` prop while the user keeps typing; skipping
+  // self-originated values prevents it from reverting those keystrokes.
+  const lastEmittedValueRef = useRef<string | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const isDark = useIsDark();
@@ -213,8 +224,8 @@ export function WorkspaceMonacoEditor({
   const theme = isDark ? "tessera-dark" : "tessera-light";
 
   useEffect(() => {
-    latestPropsRef.current = { content, language, mode, path, readOnly };
-  }, [content, language, mode, path, readOnly]);
+    latestPropsRef.current = { content, language, mode, path, readOnly, onChange };
+  }, [content, language, mode, path, readOnly, onChange]);
 
   useEffect(() => {
     latestThemeRef.current = theme;
@@ -261,6 +272,14 @@ export function WorkspaceMonacoEditor({
           wordWrap: "off",
         });
 
+        // Editor-level listener survives model swaps; it fires for
+        // programmatic setValue too, so consumers must compare values.
+        editor.onDidChangeModelContent(() => {
+          const value = editor.getValue();
+          lastEmittedValueRef.current = value;
+          latestPropsRef.current.onChange?.(value);
+        });
+
         monacoRef.current = monaco;
         modelRef.current = model;
         editorRef.current = editor;
@@ -296,12 +315,13 @@ export function WorkspaceMonacoEditor({
     if (shouldReplaceModel) {
       const nextModel = monaco.editor.createModel(content, monacoLanguage, nextUri);
       modelRef.current = nextModel;
+      lastEmittedValueRef.current = content;
       editor.setModel(nextModel);
       currentModel?.dispose();
       return;
     }
 
-    if (currentModel.getValue() !== content) {
+    if (currentModel.getValue() !== content && content !== lastEmittedValueRef.current) {
       currentModel.setValue(content);
     }
   }, [content, mode, monacoLanguage, path]);

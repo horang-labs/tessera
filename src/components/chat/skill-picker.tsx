@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { Terminal as TerminalIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SkillInfo } from '@/hooks/use-skill-picker';
 import { useI18n } from '@/lib/i18n';
@@ -9,6 +10,7 @@ interface SkillPickerProps {
   isOpen: boolean;
   isLoading?: boolean;
   isInactive?: boolean;
+  isEmpty?: boolean;
   skills: SkillInfo[];
   selectedIndex: number;
   onSelect: (skill: SkillInfo) => void;
@@ -19,6 +21,7 @@ export function SkillPicker({
   isOpen,
   isLoading,
   isInactive,
+  isEmpty,
   skills,
   selectedIndex,
   onSelect,
@@ -61,7 +64,7 @@ export function SkillPicker({
     };
   }, [isOpen, onClose]);
 
-  if (!isOpen || (skills.length === 0 && !isLoading && !isInactive)) return null;
+  if (!isOpen || (skills.length === 0 && !isLoading && !isInactive && !isEmpty)) return null;
 
   return (
     <div
@@ -97,6 +100,12 @@ export function SkillPicker({
         </div>
       )}
 
+      {isEmpty && skills.length === 0 && (
+        <div className="px-3 py-4 text-xs text-(--text-muted)">
+          {t('chat.skillPickerEmpty')}
+        </div>
+      )}
+
       {skills.map((skill, idx) => (
         <button
           key={`${skill.name}-${idx}`}
@@ -113,7 +122,15 @@ export function SkillPicker({
               : 'text-(--text-primary) hover:bg-(--sidebar-hover)',
           )}
         >
-          <span className="text-sm font-semibold">/{skill.name}</span>
+          <span className="text-sm font-semibold flex items-center gap-1.5">
+            /{skill.name}
+            {skill.terminalFallback && (
+              <span className="inline-flex items-center gap-0.5 rounded bg-(--accent-dim)/30 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-(--accent-light)">
+                <TerminalIcon className="h-2.5 w-2.5" />
+                Terminal
+              </span>
+            )}
+          </span>
           {skill.description && (
             <span className={cn(
               'text-xs line-clamp-1',

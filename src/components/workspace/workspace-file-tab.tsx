@@ -1,15 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { WorkspaceCodeView } from "@/components/workspace/workspace-code-view";
 import { extractGitPanelErrorMessage } from "@/components/git/git-panel-shared";
+import {
+  useDocumentVisibility,
+  useStableWorkspaceFilesSubscriberId,
+  useWorkspaceFilesLiveSync,
+} from "@/hooks/use-workspace-files-live-sync";
 import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { wsClient } from "@/lib/ws/client";
-import { usePanelStore, selectActiveTab, EMPTY_PANELS } from "@/stores/panel-store";
+import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
+import { useTabStore } from "@/stores/tab-store";
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
-import type { WorkspaceFileSessionRef } from "@/lib/workspace-tabs/special-session";
+import {
+  buildWorkspaceFileSessionId,
+  type WorkspaceFileSessionRef,
+} from "@/lib/workspace-tabs/special-session";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
+
+type WorkspaceFilesChangedMessage = Extract<
+  ServerTransportMessage,
+  { type: "workspace_files_changed" }
+>;
 
 interface WorkspaceFileTabState {
   loading: boolean;
@@ -26,6 +40,29 @@ function getFileUrl(ref: WorkspaceFileSessionRef): string {
   const path = encodeURIComponent(ref.path);
   if (ref.kind === "diff") return `/api/sessions/${sessionId}/git/diff?path=${path}`;
   return `/api/sessions/${sessionId}/file?path=${path}`;
+}
+
+function getDirectoryName(filePath: string): string {
+  const slashIndex = filePath.lastIndexOf("/");
+  return slashIndex === -1 ? "" : filePath.slice(0, slashIndex);
+}
+
+function findRenameTarget(
+  msg: WorkspaceFilesChangedMessage,
+  filePath: string,
+): string | null {
+  if (
+    msg.hasMoreChangedPaths
+    || msg.deletedPaths.length !== 1
+    || msg.addedPaths.length !== 1
+    || msg.deletedPaths[0] !== filePath
+  ) {
+    return null;
+  }
+
+  const currentDirectory = getDirectoryName(filePath);
+  const addedPath = msg.addedPaths[0];
+  return getDirectoryName(addedPath) === currentDirectory ? addedPath : null;
 }
 
 function shouldRefreshForSession(
@@ -62,6 +99,10 @@ export function WorkspaceFileTab({
   panelId: string;
 }) {
   const { kind, path, sourceSessionId } = fileRef;
+  const tabId = useContext(TabIdContext);
+  const isTabActive = useTabStore((state) => state.activeTabId === tabId);
+  const isDocumentVisible = useDocumentVisibility();
+  const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-tab");
   const panelCount = usePanelStore(
     (state) => Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length,
   );
@@ -135,6 +176,41 @@ export function WorkspaceFileTab({
       activeLoadsRef.current -= 1;
     }
   }, [kind, path, sourceSessionId]);
+
+  const refreshFile = useCallback(() => {
+    void loadFile({ silent: true });
+  }, [loadFile]);
+
+  const handleWorkspaceFilesChanged = useCallback((msg: WorkspaceFilesChangedMessage) => {
+    if (!msg.sessionIds.includes(sourceSessionId)) return;
+
+    const renameTarget = findRenameTarget(msg, path);
+    if (renameTarget) {
+      assignSession(
+        panelId,
+        buildWorkspaceFileSessionId(sourceSessionId, kind, renameTarget),
+      );
+      return;
+    }
+
+    if (msg.deletedPaths.includes(path)) {
+      void loadFile();
+      return;
+    }
+
+    if (msg.hasMoreChangedPaths || msg.changedPaths.includes(path)) {
+      refreshFile();
+    }
+  }, [assignSession, kind, loadFile, panelId, path, refreshFile, sourceSessionId]);
+
+  useWorkspaceFilesLiveSync({
+    enabled: isTabActive && isDocumentVisible,
+    onFilesChanged: handleWorkspaceFilesChanged,
+    onRefresh: refreshFile,
+    refreshOnTreeChange: false,
+    sessionId: sourceSessionId,
+    subscriberId,
+  });
 
   useEffect(() => {
     const abortController = new AbortController();

@@ -9,6 +9,10 @@ import { SettingsManager } from '@/lib/settings/manager';
 import * as dbTasks from '@/lib/db/tasks';
 import logger from '@/lib/logger';
 import {
+  isSessionOperationConflictError,
+  isTerminalHandoffConflictError,
+} from '@/lib/terminal/terminal-handoff-lock';
+import {
   broadcastSessionMutation,
   broadcastTaskMutation,
   getOriginClientIdFromRequest,
@@ -40,7 +44,7 @@ export async function PATCH(
 
   try {
     const projectId = dbTasks.getTask(id)?.projectId;
-    await setTaskArchived(id, archived);
+    await setTaskArchived(id, archived, auth.userId);
     if (archived) {
       const settings = await SettingsManager.load(auth.userId);
       if (settings.autoDeleteArchivedWorktrees) {
@@ -56,8 +60,15 @@ export async function PATCH(
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update task archive state';
+    const handoffConflict = isTerminalHandoffConflictError(error) || isSessionOperationConflictError(error);
     logger.error({ taskId: id, error: message }, 'Failed to update task archive state');
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: message,
+        ...(handoffConflict ? { code: error.code } : {}),
+      },
+      { status: handoffConflict ? 409 : 400 },
+    );
   }
 }
 
@@ -84,7 +95,14 @@ export async function DELETE(
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete archived task';
+    const handoffConflict = isTerminalHandoffConflictError(error) || isSessionOperationConflictError(error);
     logger.error({ taskId: id, error: message }, 'Failed to delete archived task');
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: message,
+        ...(handoffConflict ? { code: error.code } : {}),
+      },
+      { status: handoffConflict ? 409 : 500 },
+    );
   }
 }

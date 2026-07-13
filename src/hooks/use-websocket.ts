@@ -105,8 +105,8 @@ export function useWebSocket() {
     wsClient.stopSession(sessionId);
   }, []);
 
-  const setServiceTier = useCallback((sessionId: string, serviceTier: string | null) => {
-    wsClient.setServiceTier(sessionId, serviceTier);
+  const setServiceTier = useCallback((sessionId: string, serviceTier: string | null, persist = true) => {
+    wsClient.setServiceTier(sessionId, serviceTier, persist);
   }, []);
 
   const setFastMode = useCallback((sessionId: string, fastMode: boolean | null) => {

@@ -49,7 +49,7 @@ function useAdjacentTabs(): { left: AdjacentTab | null; right: AdjacentTab | nul
       let title = t('chat.newTabDefault');
       if (sessionId && isSpecialSession(sessionId)) {
         const titleKey = getSpecialSessionTitleKey(sessionId);
-        title = titleKey ? t(titleKey) : getSpecialSessionTitle(sessionId) ?? t('chat.newTabDefault');
+        title = titleKey ? t(titleKey) : getSpecialSessionTitle(sessionId, t) ?? t('chat.newTabDefault');
       } else if (tab.title) {
         title = tab.title;
       }
@@ -124,7 +124,7 @@ const SideNavTitle = memo(function SideNavTitle({
 }) {
   const { t } = useI18n();
   const titleKey = sessionId ? getSpecialSessionTitleKey(sessionId) : null;
-  const specialTitle = sessionId ? getSpecialSessionTitle(sessionId) : null;
+  const specialTitle = sessionId ? getSpecialSessionTitle(sessionId, t) : null;
   const session = useSessionStore(
     useCallback(
       (state) => (sessionId && !isSpecialSession(sessionId) ? state.getSession(sessionId) : undefined),

@@ -8,6 +8,7 @@ interface GitPanelUIState {
   drawerHeight: number
 
   toggle: () => void
+  open: () => void
   close: () => void
   setPanelWidth: (width: number) => void
   setDrawerOpen: (open: boolean) => void
@@ -24,6 +25,7 @@ export const useGitStore = create<GitPanelUIState>()(
       drawerHeight: 320,
 
       toggle: () => set({ isOpen: !get().isOpen }),
+      open: () => set({ isOpen: true }),
       close: () => set({ isOpen: false }),
       setPanelWidth: (width) => set({ panelWidth: width }),
       setDrawerOpen: (open) => set({ drawerOpen: open }),

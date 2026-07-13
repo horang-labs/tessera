@@ -5,12 +5,12 @@ import { createPortal } from 'react-dom';
 import { CheckCircle, AlertTriangle, Inbox } from 'lucide-react';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
-import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
-import { useBoardStore } from '@/stores/board-store';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { useSessionNavigation } from '@/hooks/use-session-navigation';
 
 interface NotificationCenterProps {
   isOpen: boolean;
@@ -54,6 +54,7 @@ function NotificationCenterContent({
   const markAsRead = useNotificationStore((state) => state.markAsRead);
   const getSession = useSessionStore((state) => state.getSession);
   const setActiveSession = useSessionStore((state) => state.setActiveSession);
+  const { viewSession } = useSessionNavigation();
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -81,15 +82,7 @@ function NotificationCenterContent({
     useSessionStore.getState().clearUnreadCount(sessionId);
     wsClient.sendMarkAsRead(sessionId);
 
-    // Switch to the session's project if different from current
     const session = getSession(sessionId);
-    if (session) {
-      const currentProjectDir = useBoardStore.getState().selectedProjectDir;
-      if (session.projectDir && session.projectDir !== currentProjectDir) {
-        useBoardStore.getState().setSelectedProjectDir(session.projectDir);
-        useTabStore.getState().switchProject(session.projectDir);
-      }
-    }
 
     // Tab-aware session focus: use findSessionLocation (same as sidebar click handler)
     const tabStore = useTabStore.getState();
@@ -97,13 +90,15 @@ function NotificationCenterContent({
 
     if (location) {
       // Session already open — switch to correct tab and focus panel
-      if (location.tabId !== tabStore.activeTabId) {
-        tabStore.setActiveTab(location.tabId);
-      }
-      usePanelStore.getState().setActivePanelId(location.panelId);
+      activateSessionPanel(sessionId, { location });
     } else {
-      // Session not in any tab/panel — let bridge effect assign it
-      setActiveSession(sessionId);
+      // Session not in any tab/panel — open it without changing the project filter.
+      if (session) {
+        tabStore.openPreview(sessionId);
+        void viewSession(session);
+      } else {
+        setActiveSession(sessionId);
+      }
     }
 
     onClose();

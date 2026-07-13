@@ -4,6 +4,10 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { getSession } from '@/lib/db/sessions';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
+import {
+  isSessionOperationConflictError,
+  isTerminalHandoffConflictError,
+} from '@/lib/terminal/terminal-handoff-lock';
 
 /**
  * PATCH /api/sessions/[id]/rename - Rename a session
@@ -46,6 +50,13 @@ export async function PATCH(
       return NextResponse.json(
         { error: 'Title too long (max 100 characters)' },
         { status: 400 }
+      );
+    }
+
+    if (isTerminalHandoffConflictError(err) || isSessionOperationConflictError(err)) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: 409 },
       );
     }
 

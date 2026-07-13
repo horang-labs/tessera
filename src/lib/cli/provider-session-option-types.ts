@@ -27,6 +27,8 @@ export interface ProviderModelOption {
   defaultReasoningEffort?: string | null;
   supportedReasoningEfforts: ProviderReasoningEffortOption[];
   serviceTiers?: ProviderServiceTierOption[];
+  /** Catalog default service tier id for this model. */
+  defaultServiceTier?: string | null;
   /** Claude models that support the fast-mode (high-speed) toggle. */
   supportsFastMode?: boolean;
 }
@@ -93,6 +95,7 @@ export interface CodexModelEntry {
     name?: string;
     description?: string;
   }>;
+  defaultServiceTier?: string | null;
 }
 
 export interface CodexModelResponse {

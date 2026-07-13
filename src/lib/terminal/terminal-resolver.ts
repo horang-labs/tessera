@@ -5,7 +5,12 @@ import { execFileSync } from 'child_process';
 import { getProject, getVisibleProjects } from '@/lib/db/projects';
 import { getSession } from '@/lib/db/sessions';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
-import type { TerminalCwdResolution, TerminalResolvedShell, TerminalShellKind } from './types';
+import type {
+  TerminalCwdResolution,
+  TerminalLaunchSpec,
+  TerminalResolvedShell,
+  TerminalShellKind,
+} from './types';
 
 export function resolveTerminalCwd(candidate?: string | null): string {
   if (candidate) {
@@ -230,21 +235,63 @@ function quoteBashArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildWslTerminalScript(cwd: string): string {
-  return [
+function buildPosixCommand(program: string, args: string[]): string {
+  return [program, ...args].map(quoteBashArg).join(' ');
+}
+
+function quotePowerShellArg(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function buildPowerShellCommand(program: string, args: string[]): string {
+  return `& ${[program, ...args].map(quotePowerShellArg).join(' ')}`;
+}
+
+function quoteCmdArg(value: string): string {
+  return `"${value.replace(/(["^&|<>])/g, '^$1')}"`;
+}
+
+function buildCmdCommand(program: string, args: string[]): string {
+  return [program, ...args].map(quoteCmdArg).join(' ');
+}
+
+function getLaunchArgv(launchSpec?: TerminalLaunchSpec): { program: string; args: string[] } | null {
+  const program = launchSpec?.program?.trim();
+  if (!program) return null;
+  return { program, args: launchSpec?.args ?? [] };
+}
+
+function buildWslTerminalScript(cwd: string, launchSpec?: TerminalLaunchSpec): string {
+  const lines = [
     `cd -- ${quoteBashArg(cwd)} 2>/dev/null || cd ~`,
     'shell="${SHELL:-}"',
     'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
     'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(command -v bash 2>/dev/null || command -v sh)"; fi',
-    'exec "$shell" -i',
-  ].join('; ');
+  ];
+  const launch = getLaunchArgv(launchSpec);
+  if (launch) {
+    // 중요: `wsl.exe -e sh -c`는 non-login·non-interactive 셸이라 ~/.profile·rc가
+    // 소싱되지 않아 사용자 로컬 PATH(~/.local/bin, nvm/volta 등)가 없다 → 여기서 claude를
+    // 바로 실행하면 'command not found'가 된다. 따라서 login+interactive 셸로 감싸
+    // rc/profile를 먼저 소싱한 뒤 실행한다. TUI 종료 후 셸로 떨어지지 않아야
+    // 지연된 slash prefill이 우연히 셸 명령으로 해석되지 않는다.
+    // $shell은 export해 inner 셸이 재사용한다(inner는 작은따옴표라 바깥에서 전개되지 않음).
+    const inner = `exec ${buildPosixCommand(launch.program, launch.args)}`;
+    lines.push('WSL_LAUNCH_SHELL="$shell"; export WSL_LAUNCH_SHELL');
+    lines.push(`exec "$shell" -l -i -c ${quoteBashArg(inner)}`);
+  } else {
+    lines.push('exec "$shell" -i');
+  }
+  return lines.join('; ');
 }
 
 export function resolveAllowedTerminalCwd(options: {
   cwd?: string | null;
   sessionId?: string | null;
+  allowFallback?: boolean;
 }): TerminalCwdResolution {
   const requestedCwd = options.cwd?.trim();
+  const allowFallback = options.allowFallback !== false;
   const allowedRoots: string[] = [];
   const seenRoots = new Set<string>();
 
@@ -264,6 +311,9 @@ export function resolveAllowedTerminalCwd(options: {
   }
 
   if (!requestedCwd) {
+    if (!allowFallback) {
+      return { ok: false, message: 'This command requires the session workspace to be available.' };
+    }
     const fallbackCwd = resolveFirstExistingAllowedRoot(allowedRoots);
     if (fallbackCwd) {
       return { ok: true, cwd: fallbackCwd };
@@ -274,6 +324,9 @@ export function resolveAllowedTerminalCwd(options: {
 
   const resolvedCandidate = resolveExistingDirectory(requestedCwd, allowedRoots);
   if (!resolvedCandidate) {
+    if (!allowFallback) {
+      return { ok: false, message: 'The session workspace no longer exists. The command was not opened.' };
+    }
     const fallbackCwd = resolveFirstExistingAllowedRoot(allowedRoots);
     if (fallbackCwd) {
       return { ok: true, cwd: fallbackCwd };
@@ -299,17 +352,19 @@ export function resolveTerminalShell(options: {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   shellKind?: TerminalShellKind;
+  launchSpec?: TerminalLaunchSpec;
 }): TerminalResolvedShell {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const shellKind = options.shellKind ?? 'default';
   const cwd = resolveTerminalCwd(options.cwd);
+  const launch = getLaunchArgv(options.launchSpec);
 
   if (shellKind === 'wsl' && platform === 'win32') {
     const wslCwd = toWslPath(cwd) ?? '~';
     return {
       command: 'wsl.exe',
-      args: ['-e', 'sh', '-c', buildWslTerminalScript(wslCwd)],
+      args: ['-e', 'sh', '-c', buildWslTerminalScript(wslCwd, options.launchSpec)],
       cwd: resolveWindowsProcessCwd(env),
       displayCwd: wslCwd,
     };
@@ -318,20 +373,53 @@ export function resolveTerminalShell(options: {
   if (platform === 'win32') {
     const windowsCwd = resolveWindowsNativeTerminalCwd(cwd, env);
     if (shellKind === 'cmd') {
-      return { command: 'cmd.exe', args: [], cwd: windowsCwd };
+      return {
+        command: 'cmd.exe',
+        args: launch ? ['/c', buildCmdCommand(launch.program, launch.args)] : [],
+        cwd: windowsCwd,
+      };
     }
 
     return {
       command: env.ComSpec?.toLowerCase().includes('powershell')
         ? env.ComSpec
         : 'powershell.exe',
-      args: ['-NoLogo'],
+      args: launch
+        ? ['-NoLogo', '-Command', buildPowerShellCommand(launch.program, launch.args)]
+        : ['-NoLogo'],
       cwd: windowsCwd,
     };
   }
 
   const command = env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
-  const args = platform === 'darwin' ? ['-l'] : [];
+  const loginArgs = platform === 'darwin' ? ['-l'] : [];
 
-  return { command, args, cwd };
+  if (launch) {
+    return {
+      command,
+      args: [
+        ...loginArgs,
+        '-c',
+        `exec ${buildPosixCommand(launch.program, launch.args)}`,
+      ],
+      cwd,
+    };
+  }
+
+  return { command, args: loginArgs, cwd };
+}
+
+export function formatTerminalShellPrefill(options: {
+  program: string;
+  args: string[];
+  platform?: NodeJS.Platform;
+  shellKind?: TerminalShellKind;
+}): string {
+  const platform = options.platform ?? process.platform;
+  if (platform !== 'win32' || options.shellKind === 'wsl') {
+    return buildPosixCommand(options.program, options.args);
+  }
+  return options.shellKind === 'cmd'
+    ? buildCmdCommand(options.program, options.args)
+    : buildPowerShellCommand(options.program, options.args);
 }

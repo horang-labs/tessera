@@ -6,7 +6,6 @@ import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
 import { useTaskStore } from './task-store';
 import { toast } from './notification-store';
-import { wsClient } from '@/lib/ws/client';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 
@@ -29,7 +28,7 @@ export interface SessionState {
 
   // Actions - Session management
   setActiveSession: (sessionId: string | null) => void;
-  addSession: (session: UnifiedSession) => void;
+  addSession: (session: UnifiedSession, options?: { activate?: boolean }) => void;
   removeSession: (sessionId: string) => void;
   upsertSession: (session: UnifiedSession) => void;
   removeProject: (encodedDir: string) => void;
@@ -508,7 +507,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  addSession: (session: UnifiedSession) =>
+  addSession: (session: UnifiedSession, options) =>
     set((state) => {
       // Normalize projectDir — handle undefined from WebSocket messages missing workDir
       const projectDir = session.projectDir || 'unknown';
@@ -542,7 +541,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         };
         return {
           projects: [...state.projects, newProject],
-          activeSessionId: session.id,
+          activeSessionId: options?.activate === false ? state.activeSessionId : session.id,
         };
       }
 
@@ -559,7 +558,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       return {
         projects: updatedProjects,
-        activeSessionId: session.id,
+        activeSessionId: options?.activate === false ? state.activeSessionId : session.id,
       };
     }),
 
@@ -1063,15 +1062,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   toggleArchive: (sessionId, archived) => {
     const session = get().getSession(sessionId);
 
-    // Auto-stop CLI process when archiving
-    if (archived) {
-      if (session?.isRunning) {
-        wsClient.stopSession(sessionId);
-      }
-    }
-
     // Capture previous value for rollback
     const prevArchived = session?.archived;
+    const prevArchivedAt = session?.archivedAt;
 
     // Optimistic update
     set((state) => ({
@@ -1120,7 +1113,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               ...project,
               sessions: project.sessions.map((s) =>
                 s.id === sessionId
-                  ? { ...s, archived: prevArchived, isReadOnly: prevArchived ? true : false }
+                  ? {
+                      ...s,
+                      archived: prevArchived,
+                      archivedAt: prevArchivedAt,
+                      isReadOnly: prevArchived ? true : false,
+                    }
                   : s
               ),
             })),

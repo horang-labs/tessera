@@ -7,7 +7,7 @@ import type { SessionReplayEvent } from '@/lib/session-replay-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
-import type { TerminalShellKind } from '@/lib/terminal/types';
+import type { TerminalLaunchIntent, TerminalShellKind } from '@/lib/terminal/types';
 import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
 
 // ========== ContentBlock 타입 정의 (클립보드 이미지 붙여넣기) ==========
@@ -80,17 +80,19 @@ export type ClientMessage =
   | ({ type: 'set_permission_mode'; requestId: string; sessionId: string; mode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'set_model'; requestId: string; sessionId: string; model: string }
   | { type: 'set_reasoning_effort'; requestId: string; sessionId: string; reasoningEffort: string | null }
-  | { type: 'set_service_tier'; requestId: string; sessionId: string; serviceTier: string | null }
+  | { type: 'set_service_tier'; requestId: string; sessionId: string; serviceTier: string | null; persist?: boolean }
   | { type: 'set_fast_mode'; requestId: string; sessionId: string; fastMode: boolean | null }
   | { type: 'stop_session'; requestId: string; sessionId: string }
   | { type: 'get_commands'; requestId: string; sessionId: string }
   | { type: 'list_providers'; requestId: string }
   | { type: 'refresh_providers'; requestId: string }
   | { type: 'check_cli_status'; requestId: string }
-  | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number }
+  | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number; launchIntent?: TerminalLaunchIntent }
   | { type: 'terminal_input'; requestId: string; terminalId: string; data: string }
   | { type: 'terminal_resize'; requestId: string; terminalId: string; cols: number; rows: number }
-  | { type: 'terminal_close'; requestId: string; terminalId: string };
+  | { type: 'terminal_close'; requestId: string; terminalId: string }
+  | { type: 'subscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string }
+  | { type: 'unsubscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string };
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions';
 
@@ -241,6 +243,8 @@ export type AppServerMessage =
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
   | { type: 'terminal_started'; terminalId: string; cwd: string; shell: string }
+  | { type: 'terminal_prefill_written'; terminalId: string }
+  | { type: 'terminal_prefill_cancelled'; terminalId: string; message: string }
   | { type: 'terminal_output'; terminalId: string; data: string }
   | { type: 'terminal_exit'; terminalId: string; exitCode: number; signal?: number }
   | { type: 'terminal_error'; terminalId: string; message: string }
@@ -390,6 +394,26 @@ export type AppServerMessage =
       type: 'git_panel_state';
       sessionId: string;
       data: import('@/types/git').GitPanelData;
+    }
+  | {
+      type: 'workspace_files_changed';
+      workDir: string;
+      sessionIds: string[];
+      version: number;
+      treeChanged: boolean;
+      changedPaths: string[];
+      addedPaths: string[];
+      deletedPaths: string[];
+      hasMoreChangedPaths: boolean;
+    }
+  | {
+      type: 'workspace_file_watch_status';
+      sessionId: string;
+      subscriberId: string;
+      status: 'starting' | 'active' | 'fallback';
+      version?: number;
+      workDir?: string;
+      reason?: string;
     }
   | {
       type: 'session_mutated';

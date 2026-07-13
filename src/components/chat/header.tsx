@@ -17,6 +17,10 @@ import { ProviderBadge } from './provider-brand';
 import { setPanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { MessageSearchBar } from './message-search-bar';
 import { SessionGoalControl } from './session-goal-control';
+import {
+  CODEX_NATIVE_COMMAND_EVENT,
+  type CodexNativeCommandEventDetail,
+} from '@/lib/chat/codex-native-command-events';
 
 interface HeaderProps {
   sessionId: string;
@@ -146,6 +150,17 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
     setTitleInputWidth(nextMinWidth + 16);
     setIsEditingTitle(true);
   }, [session?.title]);
+
+  useEffect(() => {
+    const handleNativeCommand = (event: Event) => {
+      const detail = (event as CustomEvent<CodexNativeCommandEventDetail>).detail;
+      if (detail?.sessionId === sessionId && detail.action === 'rename') {
+        handleRenameFromMenu();
+      }
+    };
+    window.addEventListener(CODEX_NATIVE_COMMAND_EVENT, handleNativeCommand);
+    return () => window.removeEventListener(CODEX_NATIVE_COMMAND_EVENT, handleNativeCommand);
+  }, [handleRenameFromMenu, sessionId]);
 
   const handleTitleButtonClick = useCallback(() => {
     if (suppressTitleClickAfterDragRef.current) return;

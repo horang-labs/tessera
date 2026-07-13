@@ -433,6 +433,15 @@ class SessionHistoryStore {
     }
   }
 
+  /**
+   * Flush and clone a session's canonical JSONL into an independent file.
+   * The destination is created exclusively so a concurrent fork can never
+   * overwrite history that has already started receiving events.
+   */
+  async cloneSession(sourceSessionId: string, destinationSessionId: string): Promise<boolean> {
+    return cloneSessionHistoryWithStore(this, sourceSessionId, destinationSessionId);
+  }
+
   private getOrCreateBuffer(sessionId: string): SessionBufferState {
     let state = this.buffers.get(sessionId);
     if (!state) {
@@ -744,6 +753,51 @@ const historyGlobal = globalThis as unknown as Record<symbol, SessionHistoryStor
 
 export const sessionHistory =
   historyGlobal[HISTORY_KEY] || (historyGlobal[HISTORY_KEY] = new SessionHistoryStore());
+
+async function cloneSessionHistoryWithStore(
+  store: Pick<SessionHistoryStore, 'flushSession' | 'getHistoryPath'>,
+  sourceSessionId: string,
+  destinationSessionId: string,
+): Promise<boolean> {
+  if (!sourceSessionId || !destinationSessionId || sourceSessionId === destinationSessionId) {
+    throw new Error('Source and destination sessions must be distinct.');
+  }
+
+  store.flushSession(sourceSessionId);
+  ensureHistoryDir();
+  const sourcePath = store.getHistoryPath(sourceSessionId);
+  const destinationPath = store.getHistoryPath(destinationSessionId);
+
+  try {
+    await fsp.copyFile(sourcePath, destinationPath, fs.constants.COPYFILE_EXCL);
+    await fsp.chmod(destinationPath, 0o600);
+    return true;
+  } catch (error: any) {
+    if (error?.code === 'ENOENT' && error?.path === sourcePath) {
+      return false;
+    }
+    try {
+      await fsp.unlink(destinationPath);
+    } catch (cleanupError: any) {
+      if (cleanupError?.code !== 'ENOENT') {
+        logger.warn({
+          sourceSessionId,
+          destinationSessionId,
+          error: cleanupError?.message || String(cleanupError),
+        }, 'Failed to remove partial fork history');
+      }
+    }
+    throw error;
+  }
+}
+
+/** HMR-safe wrapper: the global singleton may predate a newly added prototype method. */
+export function cloneSessionHistory(
+  sourceSessionId: string,
+  destinationSessionId: string,
+): Promise<boolean> {
+  return cloneSessionHistoryWithStore(sessionHistory, sourceSessionId, destinationSessionId);
+}
 
 export type {
   PersistedContextUsage,

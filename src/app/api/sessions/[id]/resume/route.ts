@@ -3,6 +3,7 @@ import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { resolveSessionWorkspaceRoot } from '@/lib/session/session-workspace-root';
 import logger from '@/lib/logger';
+import { isTerminalHandoffConflictError } from '@/lib/terminal/terminal-handoff-lock';
 
 /**
  * POST /api/sessions/[id]/resume - Resume a session
@@ -66,6 +67,12 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (err: any) {
+    if (isTerminalHandoffConflictError(err)) {
+      return NextResponse.json(
+        { error: err.code, detail: err.message },
+        { status: 409 },
+      );
+    }
     if (err.message.includes('Session not found')) {
       return NextResponse.json(
         { error: 'Session not found' },

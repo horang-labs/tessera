@@ -9,6 +9,7 @@ import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { SessionGoalUpdate } from '@/types/session-goal';
+import type { TerminalLaunchIntent } from '@/lib/terminal/types';
 import { v4 as uuidv4 } from 'uuid';
 import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
@@ -325,8 +326,8 @@ export class WebSocketClient {
     this.sendRequest('set_reasoning_effort', { sessionId, reasoningEffort });
   }
 
-  setServiceTier(sessionId: string, serviceTier: string | null) {
-    this.sendRequest('set_service_tier', { sessionId, serviceTier });
+  setServiceTier(sessionId: string, serviceTier: string | null, persist = true) {
+    this.sendRequest('set_service_tier', { sessionId, serviceTier, persist });
   }
 
   setFastMode(sessionId: string, fastMode: boolean | null) {
@@ -380,6 +381,7 @@ export class WebSocketClient {
     shellKind?: 'default' | 'cmd' | 'powershell' | 'wsl';
     cols?: number;
     rows?: number;
+    launchIntent?: TerminalLaunchIntent;
   }): boolean {
     return this.sendRequest('terminal_create', args);
   }
@@ -394,6 +396,14 @@ export class WebSocketClient {
 
   closeTerminal(terminalId: string) {
     this.sendRequest('terminal_close', { terminalId });
+  }
+
+  subscribeWorkspaceFiles(sessionId: string, subscriberId: string): boolean {
+    return this.sendRequest('subscribe_workspace_files', { sessionId, subscriberId });
+  }
+
+  unsubscribeWorkspaceFiles(sessionId: string, subscriberId: string): boolean {
+    return this.sendRequest('unsubscribe_workspace_files', { sessionId, subscriberId });
   }
 
   private sendRequest<T extends ClientMessage['type']>(

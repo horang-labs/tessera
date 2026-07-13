@@ -3,9 +3,11 @@
 import { usePanelStore } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import {
+  buildMemoryFileSessionId,
   buildWorkspaceFileSessionId,
   type WorkspaceFileTabKind,
 } from "./special-session";
+import type { MemoryTargetKind } from "@/types/memory";
 
 function focusOrCreateSpecialTab(
   specialSessionId: string,
@@ -43,7 +45,32 @@ export function previewWorkspaceFileTab(
   kind: WorkspaceFileTabKind,
   filePath: string,
 ): void {
-  const specialSessionId = buildWorkspaceFileSessionId(sourceSessionId, kind, filePath);
+  previewSpecialFileTab(buildWorkspaceFileSessionId(sourceSessionId, kind, filePath));
+}
+
+export function openMemoryFileTab(
+  sourceSessionId: string,
+  memoryKind: MemoryTargetKind,
+  fileName: string,
+): void {
+  focusOrCreateSpecialTab(
+    buildMemoryFileSessionId(sourceSessionId, memoryKind, fileName),
+    {
+      pinExistingPreview: true,
+      insertAfterTabId: useTabStore.getState().activeTabId,
+    },
+  );
+}
+
+export function previewMemoryFileTab(
+  sourceSessionId: string,
+  memoryKind: MemoryTargetKind,
+  fileName: string,
+): void {
+  previewSpecialFileTab(buildMemoryFileSessionId(sourceSessionId, memoryKind, fileName));
+}
+
+function previewSpecialFileTab(specialSessionId: string): void {
   const tabStore = useTabStore.getState();
   const existing = tabStore.findSessionLocation(specialSessionId);
   if (existing) {

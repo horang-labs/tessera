@@ -133,7 +133,7 @@ function normalizeCodexGoal(raw: unknown): SessionGoal | null {
   if (
     typeof goal.threadId !== 'string' ||
     typeof goal.objective !== 'string' ||
-    !['active', 'paused', 'budgetLimited', 'complete'].includes(status)
+    !['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'].includes(status)
   ) {
     return null;
   }

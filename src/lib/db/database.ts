@@ -216,6 +216,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'worktree_managed', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'sessions', 'model', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
 }
 
@@ -966,6 +967,11 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     addColumnIfMissing(db, 'sessions', 'model', 'TEXT');
     addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
     logger.info('Migration v27 applied: sessions.model + sessions.reasoning_effort columns added');
+  }
+
+  if (fromVersion < 28) {
+    addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
+    logger.info('Migration v28 applied: sessions.service_tier column added');
   }
 }
 

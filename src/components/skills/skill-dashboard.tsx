@@ -92,6 +92,9 @@ export function SkillDashboard() {
   const [analysisModelChoice, setAnalysisModelChoice] = useState('');
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const defaultAnalysisModelChoice =
+    claudeModels.find((m) => m.isDefault)?.value ?? claudeModels[0]?.value ?? '';
+  const selectedAnalysisModelChoice = analysisModelChoice || defaultAnalysisModelChoice;
 
   useEffect(() => {
     if (!modelMenuOpen) return;
@@ -102,19 +105,13 @@ export function SkillDashboard() {
     return () => document.removeEventListener('mousedown', handler);
   }, [modelMenuOpen]);
 
-  useEffect(() => {
-    if (!analysisModelChoice && claudeModels.length > 0) {
-      setAnalysisModelChoice(claudeModels.find((m) => m.isDefault)?.value ?? claudeModels[0].value);
-    }
-  }, [claudeModels, analysisModelChoice]);
-
   const handleRefreshAnalysis = useCallback(() => {
     fetch('/api/skills/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: analysisModelChoice }),
+      body: JSON.stringify({ model: selectedAnalysisModelChoice }),
     }).catch(console.error);
-  }, [analysisModelChoice]);
+  }, [selectedAnalysisModelChoice]);
 
   const handleCancelAnalysis = useCallback(() => {
     fetch('/api/skills/analyze', { method: 'DELETE' }).catch(console.error);
@@ -209,7 +206,7 @@ export function SkillDashboard() {
                       'disabled:opacity-50 disabled:cursor-not-allowed',
                     )}
                   >
-                    {claudeModels.find((m) => m.value === analysisModelChoice)?.label ?? analysisModelChoice}
+                    {claudeModels.find((m) => m.value === selectedAnalysisModelChoice)?.label ?? selectedAnalysisModelChoice}
                     <ChevronDown className="w-3 h-3" />
                   </button>
                   {modelMenuOpen && (
@@ -220,7 +217,7 @@ export function SkillDashboard() {
                           onClick={() => { setAnalysisModelChoice(m.value); setModelMenuOpen(false); }}
                           className={cn(
                             'w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-(--sidebar-hover)',
-                            analysisModelChoice === m.value ? 'text-(--accent) font-medium' : 'text-(--text-secondary)',
+                            selectedAnalysisModelChoice === m.value ? 'text-(--accent) font-medium' : 'text-(--text-secondary)',
                           )}
                         >
                           {m.label}
