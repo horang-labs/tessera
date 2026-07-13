@@ -71,6 +71,9 @@ export type CliMessage = {
   response?: CliControlResponsePayload;
   event?: CliStreamEventPayload;
   parent_tool_use_id?: string | null;
+  /** Structured tool result envelope (Claude has emitted both spellings). */
+  tool_use_result?: unknown;
+  toolUseResult?: unknown;
 };
 
 /**
