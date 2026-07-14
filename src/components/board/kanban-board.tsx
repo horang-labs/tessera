@@ -86,7 +86,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const selectedProjectDir = useBoardStore((s) => s.selectedProjectDir);
   const activeCollectionFilter = useBoardStore((s) => s.activeCollectionFilter);
   const setCollectionFilter = useBoardStore((s) => s.setCollectionFilter);
-  const kanbanAddMenuColumn = useBoardStore((s) => s.kanbanAddMenuColumn);
 
   // Collection store
   const collectionsByProject = useCollectionStore((s) => s.collectionsByProject);
@@ -687,27 +686,29 @@ export const KanbanBoard = memo(function KanbanBoard() {
     useBoardStore.getState().setDropIndicator(null);
   }, [filteredChats, scopeProjectIds]);
 
-  // Kanban add card menu toggle
-  const handleToggleAddMenu = useCallback(function handleToggleAddMenu() {
-    const store = useBoardStore.getState();
-    store.setKanbanAddMenuColumn(store.kanbanAddMenuColumn === 'chat' ? null : 'chat');
+  const [quickCreateTarget, setQuickCreateTarget] = useState<{
+    column: 'chat' | WorkflowStatus;
+    projectId: string;
+  } | null>(null);
+
+  const handleToggleQuickCreate = useCallback((
+    column: 'chat' | WorkflowStatus,
+    projectId: string,
+  ) => {
+    setQuickCreateTarget((current) => (
+      current?.column === column && current.projectId === projectId
+        ? null
+        : { column, projectId }
+    ));
   }, []);
 
-  const handleCloseAddMenu = useCallback(() => {
-    useBoardStore.getState().setKanbanAddMenuColumn(null);
+  const handleCloseQuickCreate = useCallback(() => {
+    setQuickCreateTarget(null);
   }, []);
-
-  const [quickCreateStatus, setQuickCreateStatus] = useState<WorkflowStatus | null>(null);
 
   const handlePortfolioProjectFilter = useCallback((projectId: string | null) => {
-    setQuickCreateStatus(null);
-    useBoardStore.getState().setKanbanAddMenuColumn(null);
+    setQuickCreateTarget(null);
     setPortfolioProjectFilter(projectId);
-  }, []);
-
-  const handleCreateTaskInStatus = useCallback((status: WorkflowStatus) => {
-    useBoardStore.getState().setKanbanAddMenuColumn(null);
-    setQuickCreateStatus((current) => (current === status ? null : status));
   }, []);
 
   // Context menu handlers for kanban chat cards
@@ -1000,22 +1001,19 @@ export const KanbanBoard = memo(function KanbanBoard() {
               status={status}
               tasks={tasksByStatus[status]}
               chats={workflowChatsByStatus[status]}
+              collection={activeCollection}
+              collections={collections}
               collectionsByProject={scopeData.collectionsByProject}
               projects={visibleProjects}
               groupByProject={isAllProjects}
-              canCreate={selectedProject !== null}
+              createProject={selectedProject}
               sessionsByTaskId={sessionsByTaskId}
               activeSessionId={selectionSessionId}
-              onCreateTask={() => handleCreateTaskInStatus(status)}
-              isQuickCreateOpen={quickCreateStatus === status}
-              quickCreateConfig={selectedProject ? {
-                collection: activeCollection,
-                collections,
-                projectDir: selectedProject.decodedPath,
-                projectId: selectedProject.encodedDir,
-                allowCollectionSelection: activeCollection === null,
-                onClose: () => setQuickCreateStatus(null),
-              } : undefined}
+              quickCreateProjectId={
+                quickCreateTarget?.column === status ? quickCreateTarget.projectId : null
+              }
+              onToggleQuickCreate={handleToggleQuickCreate}
+              onCloseQuickCreate={handleCloseQuickCreate}
               onSessionClick={handleChatClick}
               onSessionDoubleClick={handleChatDoubleClick}
               onChatDragStart={handleChatDragStart}
@@ -1049,11 +1047,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
             collectionsByProject={scopeData.collectionsByProject}
             projects={visibleProjects}
             groupByProject={isAllProjects}
-            canCreate={selectedProject !== null}
-            projectId={selectedProject?.encodedDir ?? ''}
-            projectDir={selectedProject?.decodedPath ?? ''}
+            createProject={selectedProject}
             activeSessionId={selectionSessionId}
-            isAddMenuOpen={kanbanAddMenuColumn === 'chat'}
+            quickCreateProjectId={
+              quickCreateTarget?.column === 'chat' ? quickCreateTarget.projectId : null
+            }
             onCardDragStart={handleChatDragStart}
             onCardDragEnd={handleChatDragEnd}
             onCardDragOver={handleChatSessionDragOver}
@@ -1062,8 +1060,8 @@ export const KanbanBoard = memo(function KanbanBoard() {
             onColumnDrop={handleChatColumnDrop}
             onCardClick={handleChatClick}
             onCardDoubleClick={handleChatDoubleClick}
-            onToggleAddMenu={handleToggleAddMenu}
-            onCloseAddMenu={handleCloseAddMenu}
+            onToggleQuickCreate={handleToggleQuickCreate}
+            onCloseQuickCreate={handleCloseQuickCreate}
             onCardStatusChange={handleCardStatusChange}
             onCardArchive={handleCardArchive}
             onCardUnarchive={handleCardUnarchive}

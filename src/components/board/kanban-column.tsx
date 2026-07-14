@@ -20,12 +20,94 @@ import type { Collection } from '@/types/collection';
 import { CollectionQuickCreateSheet } from '@/components/chat/collection-quick-create-sheet';
 import { KanbanChatCard, KanbanTaskCard } from './kanban-card';
 
+type KanbanQuickCreateColumn = 'chat' | WorkflowStatus;
+
+function KanbanQuickCreateButton({
+  project,
+  column,
+  collection,
+  collections,
+  isOpen,
+  onToggle,
+  onClose,
+  testId,
+}: {
+  project: ProjectGroup | null;
+  column: KanbanQuickCreateColumn;
+  collection: Collection | null;
+  collections: Collection[];
+  isOpen: boolean;
+  onToggle: (column: KanbanQuickCreateColumn, projectId: string) => void;
+  onClose: () => void;
+  testId: string;
+}) {
+  const { t } = useI18n();
+  const addMenuRef = useRef<HTMLDivElement>(null);
+  const isChatColumn = column === 'chat';
+
+  return (
+    <div
+      ref={addMenuRef}
+      className="relative shrink-0"
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        disabled={project === null}
+        title={project === null ? t('task.board.selectProjectToCreate') : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (project) onToggle(column, project.encodedDir);
+        }}
+        className={cn(
+          'flex h-5 w-5 items-center justify-center rounded-[5px]',
+          'border-none bg-transparent transition-all',
+          'text-(--text-muted) hover:text-(--accent-light)',
+          'hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)]',
+          'cursor-pointer disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-(--text-muted)',
+        )}
+        aria-label={isChatColumn ? t('task.newChat.label') : t('task.newChat.newTask')}
+        data-testid={testId}
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+      {isOpen && project && (
+        <CollectionQuickCreateSheet
+          collection={collection}
+          collections={collections}
+          projectDir={project.decodedPath}
+          projectId={project.encodedDir}
+          initialMode={isChatColumn ? 'chat' : 'task'}
+          availableModes={isChatColumn ? ['chat'] : ['task']}
+          workflowStatus={isChatColumn ? undefined : column}
+          allowCollectionSelection={collection === null}
+          scopeId={`kanban-${column}`}
+          anchorRef={addMenuRef}
+          onClose={onClose}
+        />
+      )}
+    </div>
+  );
+}
+
 function PortfolioProjectHeader({
   project,
   count,
+  column,
+  collection,
+  collections,
+  isQuickCreateOpen,
+  onToggleQuickCreate,
+  onCloseQuickCreate,
 }: {
   project: ProjectGroup;
   count: number;
+  column: KanbanQuickCreateColumn;
+  collection: Collection | null;
+  collections: Collection[];
+  isQuickCreateOpen: boolean;
+  onToggleQuickCreate: (column: KanbanQuickCreateColumn, projectId: string) => void;
+  onCloseQuickCreate: () => void;
 }) {
   return (
     <div
@@ -41,6 +123,16 @@ function PortfolioProjectHeader({
         {project.displayName}
       </span>
       <span className="text-[0.625rem] tabular-nums text-(--text-muted)">{count}</span>
+      <KanbanQuickCreateButton
+        project={project}
+        column={column}
+        collection={collection}
+        collections={collections}
+        isOpen={isQuickCreateOpen}
+        onToggle={onToggleQuickCreate}
+        onClose={onCloseQuickCreate}
+        testId={`kanban-project-add-${column}-${project.encodedDir}`}
+      />
     </div>
   );
 }
@@ -56,11 +148,9 @@ interface KanbanChatColumnProps {
   collectionsByProject: Record<string, Collection[]>;
   projects: ProjectGroup[];
   groupByProject: boolean;
-  canCreate: boolean;
-  projectId: string;
-  projectDir: string;
+  createProject: ProjectGroup | null;
   activeSessionId: string | null;
-  isAddMenuOpen: boolean;
+  quickCreateProjectId: string | null;
   onCardDragStart: (sessionId: string, e: React.DragEvent) => void;
   onCardDragEnd: (e: React.DragEvent) => void;
   onCardDragOver: (sessionId: string, status: string, e: React.DragEvent) => void;
@@ -69,8 +159,8 @@ interface KanbanChatColumnProps {
   onColumnDrop: (status: string, e: React.DragEvent) => void;
   onCardClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
   onCardDoubleClick: (session: UnifiedSession) => void;
-  onToggleAddMenu: () => void;
-  onCloseAddMenu: () => void;
+  onToggleQuickCreate: (column: KanbanQuickCreateColumn, projectId: string) => void;
+  onCloseQuickCreate: () => void;
   // Context menu actions
   onCardStatusChange?: (taskId: string, status: string) => void;
   onCardArchive?: (taskId: string) => void;
@@ -91,11 +181,9 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
   collectionsByProject,
   projects,
   groupByProject,
-  canCreate,
-  projectId,
-  projectDir,
+  createProject,
   activeSessionId,
-  isAddMenuOpen,
+  quickCreateProjectId,
   onCardDragStart,
   onCardDragEnd,
   onCardDragOver,
@@ -104,8 +192,8 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
   onColumnDrop,
   onCardClick,
   onCardDoubleClick,
-  onToggleAddMenu,
-  onCloseAddMenu,
+  onToggleQuickCreate,
+  onCloseQuickCreate,
   onCardStatusChange,
   onCardArchive,
   onCardUnarchive,
@@ -118,19 +206,16 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
   onCardStopProcess,
 }: KanbanChatColumnProps) {
   const { t } = useI18n();
-  const addMenuRef = useRef<HTMLDivElement>(null);
   const isDragOver = useBoardStore((s) => s.dragOverStatus === 'chat' && s.draggingTaskId !== null);
   const dropIndicator = useBoardStore((s) => s.dropIndicator);
   const chatGroups = useMemo(() => {
     if (!groupByProject) {
       return [{ project: null, chats }];
     }
-    return projects
-      .map((project) => ({
-        project,
-        chats: chats.filter((session) => session.projectDir === project.encodedDir),
-      }))
-      .filter((group) => group.chats.length > 0);
+    return projects.map((project) => ({
+      project,
+      chats: chats.filter((session) => session.projectDir === project.encodedDir),
+    }));
   }, [chats, groupByProject, projects]);
 
   return (
@@ -157,46 +242,18 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
         <span className="text-[0.625rem] font-semibold tabular-nums px-[7px] py-px rounded-[10px] bg-(--board-count-bg) text-(--board-count-text)">
           {chats.length}
         </span>
-        {/* Add button with dropdown */}
-        <div ref={addMenuRef} className="relative shrink-0">
-          <button
-            type="button"
-            disabled={!canCreate}
-            title={!canCreate ? t('task.board.selectProjectToCreate') : undefined}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleAddMenu();
-            }}
-            className={cn(
-              'w-5 h-5 flex items-center justify-center rounded-[5px]',
-              'border-none bg-transparent',
-              'text-(--text-muted) hover:text-(--accent-light)',
-              'hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)]',
-              'transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-(--text-muted)',
-            )}
-            aria-label={t('task.newChat.label')}
-            data-testid="kanban-column-add-btn"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-          {isAddMenuOpen && canCreate && (
-            <div data-testid="kanban-column-add-menu">
-              <CollectionQuickCreateSheet
-                collection={collection}
-                collections={collections}
-                projectId={projectId}
-                projectDir={projectDir}
-                onClose={onCloseAddMenu}
-                allowedModes={['chat']}
-                allowCollectionSelection={collection === null}
-                scopeId="kanban-chat"
-                boundaryRef={addMenuRef}
-                anchorRef={addMenuRef}
-                className="left-0 right-auto top-8"
-              />
-            </div>
-          )}
-        </div>
+        {!groupByProject && (
+          <KanbanQuickCreateButton
+            project={createProject}
+            column="chat"
+            collection={collection}
+            collections={collections}
+            isOpen={quickCreateProjectId === createProject?.encodedDir}
+            onToggle={onToggleQuickCreate}
+            onClose={onCloseQuickCreate}
+            testId="kanban-column-add-btn"
+          />
+        )}
       </div>
 
       {/* Cards */}
@@ -216,7 +273,16 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
           {chatGroups.map((group, groupIndex) => (
             <Fragment key={group.project?.encodedDir ?? `single-${groupIndex}`}>
               {group.project && (
-                <PortfolioProjectHeader project={group.project} count={group.chats.length} />
+                <PortfolioProjectHeader
+                  project={group.project}
+                  count={group.chats.length}
+                  column="chat"
+                  collection={collection}
+                  collections={collectionsByProject[group.project.encodedDir] ?? collections}
+                  isQuickCreateOpen={quickCreateProjectId === group.project.encodedDir}
+                  onToggleQuickCreate={onToggleQuickCreate}
+                  onCloseQuickCreate={onCloseQuickCreate}
+                />
               )}
               <div className="flex flex-col gap-1.5">
                 {group.chats.map((session) => (
@@ -267,23 +333,17 @@ interface KanbanWorkflowColumnProps {
   status: WorkflowStatus;
   tasks: TaskEntity[];
   chats: UnifiedSession[];
+  collection: Collection | null;
+  collections: Collection[];
   collectionsByProject: Record<string, Collection[]>;
   projects: ProjectGroup[];
   groupByProject: boolean;
-  canCreate: boolean;
+  createProject: ProjectGroup | null;
   sessionsByTaskId: Record<string, UnifiedSession[]>;
   activeSessionId: string | null;
-  onCreateTask?: () => void;
-  isQuickCreateOpen?: boolean;
-  quickCreateSheet?: React.ReactNode;
-  quickCreateConfig?: {
-    collection: Collection | null;
-    collections: Collection[];
-    projectDir: string;
-    projectId: string;
-    allowCollectionSelection: boolean;
-    onClose: () => void;
-  };
+  quickCreateProjectId: string | null;
+  onToggleQuickCreate: (column: KanbanQuickCreateColumn, projectId: string) => void;
+  onCloseQuickCreate: () => void;
   onSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
   onSessionDoubleClick: (session: UnifiedSession) => void;
   onChatDragStart: (sessionId: string, e: React.DragEvent) => void;
@@ -309,16 +369,17 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   status,
   tasks,
   chats,
+  collection,
+  collections,
   collectionsByProject,
   projects,
   groupByProject,
-  canCreate,
+  createProject,
   sessionsByTaskId,
   activeSessionId,
-  onCreateTask,
-  isQuickCreateOpen,
-  quickCreateSheet,
-  quickCreateConfig,
+  quickCreateProjectId,
+  onToggleQuickCreate,
+  onCloseQuickCreate,
   onSessionClick,
   onSessionDoubleClick,
   onChatDragStart,
@@ -340,7 +401,6 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   onTaskRenameComplete,
 }: KanbanWorkflowColumnProps) {
   const { t } = useI18n();
-  const addMenuRef = useRef<HTMLDivElement>(null);
   const config = WORKFLOW_STATUS_CONFIG[status];
   const tasksWithLiveSessions = useMemo(
     () => mergeTasksWithLiveSessions(tasks, Object.values(sessionsByTaskId).flat()),
@@ -350,13 +410,11 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     if (!groupByProject) {
       return [{ project: null, tasks: tasksWithLiveSessions, chats }];
     }
-    return projects
-      .map((project) => ({
-        project,
-        tasks: tasksWithLiveSessions.filter((task) => task.projectId === project.encodedDir),
-        chats: chats.filter((session) => session.projectDir === project.encodedDir),
-      }))
-      .filter((group) => group.tasks.length + group.chats.length > 0);
+    return projects.map((project) => ({
+      project,
+      tasks: tasksWithLiveSessions.filter((task) => task.projectId === project.encodedDir),
+      chats: chats.filter((session) => session.projectDir === project.encodedDir),
+    }));
   }, [chats, groupByProject, projects, tasksWithLiveSessions]);
   // DnD: highlight when a task card is dragged over this column
   const isDragOver = useBoardStore((s) => s.dragOverStatus === status && s.draggingTaskId !== null);
@@ -665,46 +723,18 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
           {tasksWithLiveSessions.length + chats.length}
         </span>
 
-        <div
-          ref={addMenuRef}
-          className="relative shrink-0"
-          onMouseDown={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            disabled={!canCreate}
-            title={!canCreate ? t('task.board.selectProjectToCreate') : undefined}
-            onClick={onCreateTask}
-            className={cn(
-              'w-5 h-5 flex items-center justify-center rounded-[5px] shrink-0',
-              'border-none bg-transparent transition-all',
-              'text-(--text-muted) hover:text-(--accent-light)',
-              'hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)]',
-              'cursor-pointer disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-(--text-muted)',
-            )}
-            aria-label={t('task.newChat.newTask')}
-            data-testid="kanban-workflow-column-add-btn"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-          {isQuickCreateOpen && canCreate && quickCreateConfig ? (
-            <CollectionQuickCreateSheet
-              collection={quickCreateConfig.collection}
-              collections={quickCreateConfig.collections}
-              projectDir={quickCreateConfig.projectDir}
-              projectId={quickCreateConfig.projectId}
-              initialMode="task"
-              availableModes={['task']}
-              workflowStatus={status}
-              allowCollectionSelection={quickCreateConfig.allowCollectionSelection}
-              scopeId={`kanban-${status}`}
-              anchorRef={addMenuRef}
-              onClose={quickCreateConfig.onClose}
-            />
-          ) : (
-            isQuickCreateOpen && canCreate && quickCreateSheet
-          )}
-        </div>
+        {!groupByProject && (
+          <KanbanQuickCreateButton
+            project={createProject}
+            column={status}
+            collection={collection}
+            collections={collections}
+            isOpen={quickCreateProjectId === createProject?.encodedDir}
+            onToggle={onToggleQuickCreate}
+            onClose={onCloseQuickCreate}
+            testId="kanban-workflow-column-add-btn"
+          />
+        )}
       </div>
 
       {/* Cards */}
@@ -723,6 +753,12 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                 <PortfolioProjectHeader
                   project={group.project}
                   count={group.tasks.length + group.chats.length}
+                  column={status}
+                  collection={collection}
+                  collections={collectionsByProject[group.project.encodedDir] ?? collections}
+                  isQuickCreateOpen={quickCreateProjectId === group.project.encodedDir}
+                  onToggleQuickCreate={onToggleQuickCreate}
+                  onCloseQuickCreate={onCloseQuickCreate}
                 />
               )}
               <div className="flex flex-col gap-1.5">
