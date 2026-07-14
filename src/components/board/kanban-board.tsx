@@ -560,12 +560,24 @@ export const KanbanBoard = memo(function KanbanBoard() {
     const draggingSession = useSessionStore.getState().getSession(draggingSessionId);
     const targetSession = useSessionStore.getState().getSession(sessionId);
     const draggingStatus = draggingSession?.workflowStatus ?? 'chat';
-    if (
-      draggingStatus !== status ||
-      !draggingSession ||
-      !targetSession ||
-      draggingSession.projectDir !== targetSession.projectDir
-    ) {
+    if (!draggingSession || !targetSession) {
+      if (useBoardStore.getState().dropIndicator) {
+        useBoardStore.getState().setDropIndicator(null);
+      }
+      return;
+    }
+
+    if (draggingSession.projectDir !== targetSession.projectDir) {
+      if (useBoardStore.getState().dropIndicator) {
+        useBoardStore.getState().setDropIndicator(null);
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'none';
+      return;
+    }
+
+    if (draggingStatus !== status) {
       if (useBoardStore.getState().dropIndicator) {
         useBoardStore.getState().setDropIndicator(null);
       }

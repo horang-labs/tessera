@@ -376,12 +376,24 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     const taskStore = useTaskStore.getState();
     const draggingTask = taskStore.getTask(draggingTaskId);
     const targetTask = taskStore.getTask(taskId);
-    if (
-      !draggingTask ||
-      !targetTask ||
-      draggingTask.workflowStatus !== status ||
-      draggingTask.projectId !== targetTask.projectId
-    ) {
+    if (!draggingTask || !targetTask) {
+      if (useBoardStore.getState().dropIndicator) {
+        useBoardStore.getState().setDropIndicator(null);
+      }
+      return;
+    }
+
+    if (draggingTask.projectId !== targetTask.projectId) {
+      if (useBoardStore.getState().dropIndicator) {
+        useBoardStore.getState().setDropIndicator(null);
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'none';
+      return;
+    }
+
+    if (draggingTask.workflowStatus !== status) {
       if (useBoardStore.getState().dropIndicator) {
         useBoardStore.getState().setDropIndicator(null);
       }
