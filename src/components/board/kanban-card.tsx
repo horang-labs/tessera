@@ -24,6 +24,7 @@ import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
 import type { UnifiedSession } from '@/types/chat';
+import type { Collection } from '@/types/collection';
 import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
@@ -67,13 +68,19 @@ function formatRelativeTime(
 }
 
 /** Collection name label with Tag icon (matching list view) */
-function CollectionLabel({ collectionId, isActive }: { collectionId?: string | null; isActive?: boolean }) {
+function CollectionLabel({
+  collectionId,
+  projectId,
+  isActive,
+}: {
+  collectionId?: string | null;
+  projectId: string;
+  isActive?: boolean;
+}) {
   const { t } = useI18n();
   const collectionsByProject = useCollectionStore((state) => state.collectionsByProject);
   const config = collectionId
-    ? Object.values(collectionsByProject)
-        .flat()
-        .find((collection) => collection.id === collectionId)
+    ? collectionsByProject[projectId]?.find((collection) => collection.id === collectionId)
     : null;
   const label = collectionId ? config?.label : t('task.creation.noCollection');
 
@@ -114,6 +121,7 @@ interface KanbanChatCardProps {
   onMoveToProject?: (taskId: string) => void;
   onMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onStopProcess?: (sessionId: string) => void;
+  collections?: Collection[];
 }
 
 export const KanbanChatCard = memo(function KanbanChatCard({
@@ -136,9 +144,11 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   onMoveToProject,
   onMoveToCollection,
   onStopProcess,
+  collections: scopedCollections,
 }: KanbanChatCardProps) {
   const { t } = useI18n();
-  const collections = useCollectionStore((state) => state.collections);
+  const currentProjectCollections = useCollectionStore((state) => state.collections);
+  const collections = scopedCollections ?? currentProjectCollections;
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
@@ -387,7 +397,11 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 </span>
               )}
 
-              <CollectionLabel collectionId={session.collectionId} isActive={isActive && !isSelected} />
+              <CollectionLabel
+                collectionId={session.collectionId}
+                projectId={session.projectDir}
+                isActive={isActive && !isSelected}
+              />
               <DiffStatsBadge stats={session.diffStats} className="ml-auto" />
             </div>
           </div>
@@ -985,7 +999,11 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
 
             {/* Meta row: collection + status indicators */}
             <div className="flex items-center gap-2 min-w-0 mt-1">
-              <CollectionLabel collectionId={task.collectionId} isActive={isActive} />
+              <CollectionLabel
+                collectionId={task.collectionId}
+                projectId={task.projectId}
+                isActive={isActive}
+              />
               <span className="ml-auto inline-flex items-center gap-1.5">
                 <TaskPrBadge
                   workflowStatus={task.workflowStatus}

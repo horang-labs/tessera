@@ -1050,6 +1050,7 @@ export const zh: I18nMessages = {
       totalTasks: '{{count}} 个任务',
       running: '{{count}} 个运行中',
       emptyColumn: '拖放到此处',
+      selectProjectToCreate: '请先在上方选择要创建工作的项目',
       viewList: '列表视图',
       viewBoard: '看板视图',
       viewListShort: '列表',

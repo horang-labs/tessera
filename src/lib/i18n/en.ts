@@ -1050,6 +1050,7 @@ export const en: I18nMessages = {
       totalTasks: '{{count}} tasks',
       running: '{{count}} running',
       emptyColumn: 'Drop here',
+      selectProjectToCreate: 'Select a project above to create work',
       viewList: 'List view',
       viewBoard: 'Board view',
       viewListShort: 'List',

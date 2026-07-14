@@ -18,12 +18,18 @@ import {
   tryForwardClickToMainWindow,
 } from '@/hooks/use-session-click-handlers';
 import { getKanbanMultiSessionDragIds, setKanbanChatDragData } from '@/lib/dnd/panel-session-drag';
+import {
+  collectKanbanScopeData,
+  getKanbanScopeProjectIds,
+  resolveKanbanScope,
+} from '@/lib/kanban/board-scope';
 import { WORKFLOW_STATUS_ORDER } from '@/types/task-entity';
 import type { WorkflowStatus, TaskEntity } from '@/types/task-entity';
 import { TASK_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
 import type { UnifiedSession } from '@/types/chat';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 import { CollectionFilterBar } from './collection-filter-bar';
+import { PortfolioFilterBar } from './portfolio-filter-bar';
 import { KanbanChatColumn, KanbanWorkflowColumn } from './kanban-column';
 import { KanbanScrollControls } from './kanban-scroll-controls';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
@@ -83,20 +89,42 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const kanbanAddMenuColumn = useBoardStore((s) => s.kanbanAddMenuColumn);
 
   // Collection store
-  const collections = useCollectionStore((s) =>
-    selectedProjectDir ? s.collectionsByProject[selectedProjectDir] ?? EMPTY_COLLECTIONS : EMPTY_COLLECTIONS
-  );
-  const collectionsLoadedForProject = useCollectionStore((s) =>
-    selectedProjectDir ? Boolean(s.loadedProjects[selectedProjectDir]) : false
-  );
+  const collectionsByProject = useCollectionStore((s) => s.collectionsByProject);
+  const loadedCollectionProjects = useCollectionStore((s) => s.loadedProjects);
 
   // Task store
-  const tasks = useTaskStore((s) => s.tasks);
+  const tasksByProject = useTaskStore((s) => s.tasksByProject);
   // Session store
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const selectionSessionId = getSessionSelectionId(activeSessionId);
   const projects = useSessionStore((s) => s.projects);
   const scrollPositionKey = getKanbanScrollPositionKey(selectedProjectDir, activeCollectionFilter);
+  const [portfolioProjectFilter, setPortfolioProjectFilter] = useState<string | null>(null);
+  const scope = useMemo(
+    () => resolveKanbanScope(selectedProjectDir, projects),
+    [projects, selectedProjectDir],
+  );
+  const scopeProjectIdsKey = JSON.stringify(getKanbanScopeProjectIds(scope));
+  const scopeProjectIds = useMemo(
+    () => JSON.parse(scopeProjectIdsKey) as string[],
+    [scopeProjectIdsKey],
+  );
+  const isAllProjects = scope?.kind === 'all-projects';
+  const scopeData = useMemo(
+    () => collectKanbanScopeData(scope, projects, tasksByProject, collectionsByProject),
+    [collectionsByProject, projects, scope, tasksByProject],
+  );
+  const focusedProjectId = isAllProjects
+    ? portfolioProjectFilter
+    : scope?.kind === 'project'
+      ? scope.projectId
+      : null;
+  const collections = focusedProjectId
+    ? collectionsByProject[focusedProjectId] ?? EMPTY_COLLECTIONS
+    : EMPTY_COLLECTIONS;
+  const collectionsLoadedForProject = focusedProjectId
+    ? Boolean(loadedCollectionProjects[focusedProjectId])
+    : false;
 
   useEffect(function keepKanbanViewportAnchoredOnResize() {
     const scrollArea = scrollAreaRef.current;
@@ -281,27 +309,52 @@ export const KanbanBoard = memo(function KanbanBoard() {
     };
   }, [scrollPositionKey]);
 
-  // Load collections on mount
+  // Load project-scoped board data without exposing the All Projects sentinel
+  // to APIs that require a real project ID.
   useEffect(() => {
-    if (!selectedProjectDir) return;
-    void useCollectionStore.getState().loadCollections(selectedProjectDir);
-  }, [selectedProjectDir]);
+    if (scopeProjectIds.length === 0) return;
+    const setCurrent = !isAllProjects;
+    void Promise.all(
+      scopeProjectIds.flatMap((projectId) => [
+        useCollectionStore.getState().loadCollections(projectId, { setCurrent }),
+        useTaskStore.getState().loadTasks(projectId, { setCurrent }),
+      ]),
+    );
+  }, [isAllProjects, scopeProjectIds]);
 
-  // Load tasks when project changes
   useEffect(() => {
-    if (selectedProjectDir) {
-      useTaskStore.getState().loadTasks(selectedProjectDir);
+    if (!isAllProjects) {
+      setPortfolioProjectFilter(null);
+      return;
     }
-  }, [selectedProjectDir]);
+    if (
+      portfolioProjectFilter &&
+      !scopeProjectIds.includes(portfolioProjectFilter)
+    ) {
+      setPortfolioProjectFilter(null);
+    }
+  }, [isAllProjects, portfolioProjectFilter, scopeProjectIds]);
+
+  useEffect(() => {
+    if (isAllProjects && activeCollectionFilter) {
+      setCollectionFilter(null);
+    }
+  }, [activeCollectionFilter, isAllProjects, setCollectionFilter]);
 
   // Session CRUD
   const { deleteSession, generateTitle, renameSession } = useSessionCrud();
 
-  // Get all sessions for the selected project
+  // Get sessions and tasks for the active board scope. The optional portfolio
+  // filter narrows the aggregate without changing the selected project scope.
   const allSessions = useMemo(() => {
-    const project = projects.find((p) => p.encodedDir === selectedProjectDir);
-    return project?.sessions ?? [];
-  }, [projects, selectedProjectDir]);
+    if (!portfolioProjectFilter || !isAllProjects) return scopeData.sessions;
+    return scopeData.sessions.filter((session) => session.projectDir === portfolioProjectFilter);
+  }, [isAllProjects, portfolioProjectFilter, scopeData.sessions]);
+
+  const tasks = useMemo(() => {
+    if (!portfolioProjectFilter || !isAllProjects) return scopeData.tasks;
+    return scopeData.tasks.filter((task) => task.projectId === portfolioProjectFilter);
+  }, [isAllProjects, portfolioProjectFilter, scopeData.tasks]);
 
   // Standalone chat sessions: no taskId, not archived. Chats without a
   // workflowStatus stay in the Chat column; positioned chats render below
@@ -368,8 +421,14 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, [activeCollectionFilter, collections, collectionsLoadedForProject, setCollectionFilter]);
 
   const selectedProject = useMemo(() => {
-    return projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
-  }, [projects, selectedProjectDir]);
+    if (!focusedProjectId) return null;
+    return projects.find((project) => project.encodedDir === focusedProjectId) ?? null;
+  }, [focusedProjectId, projects]);
+
+  const visibleProjects = useMemo(() => {
+    if (!isAllProjects || !portfolioProjectFilter) return scopeData.projects;
+    return scopeData.projects.filter((project) => project.encodedDir === portfolioProjectFilter);
+  }, [isAllProjects, portfolioProjectFilter, scopeData.projects]);
 
   const activeCollection = useMemo(() => {
     if (!activeCollectionFilter) return null;
@@ -430,21 +489,36 @@ export const KanbanBoard = memo(function KanbanBoard() {
     // Match the rendered board order exactly so Shift+Click range selection
     // uses the same primary session IDs and intra-task session ordering.
     for (const status of WORKFLOW_STATUS_ORDER) {
-      for (const task of mergedTasksByStatus[status]) {
-        const sessions = task.sessions;
-        for (const s of sessions) {
-          ids.push(s.id);
+      if (isAllProjects) {
+        for (const project of visibleProjects) {
+          for (const task of mergedTasksByStatus[status]) {
+            if (task.projectId !== project.encodedDir) continue;
+            for (const session of task.sessions) {
+              ids.push(session.id);
+            }
+          }
+          for (const session of workflowChatsByStatus[status]) {
+            if (session.projectDir === project.encodedDir) {
+              ids.push(session.id);
+            }
+          }
+        }
+      } else {
+        for (const task of mergedTasksByStatus[status]) {
+          for (const session of task.sessions) {
+            ids.push(session.id);
+          }
+        }
+        for (const session of workflowChatsByStatus[status]) {
+          ids.push(session.id);
         }
       }
-      for (const s of workflowChatsByStatus[status]) {
-        ids.push(s.id);
-      }
     }
-    for (const s of filteredChats) {
-      ids.push(s.id);
+    for (const session of filteredChats) {
+      ids.push(session.id);
     }
     return ids;
-  }, [filteredChats, mergedTasksByStatus, workflowChatsByStatus]);
+  }, [filteredChats, isAllProjects, mergedTasksByStatus, visibleProjects, workflowChatsByStatus]);
 
   // Click handlers
   const { handleSessionClick, handleSessionDoubleClick } = useSessionClickHandlers({ orderedIds });
@@ -484,8 +558,14 @@ export const KanbanBoard = memo(function KanbanBoard() {
     }
 
     const draggingSession = useSessionStore.getState().getSession(draggingSessionId);
+    const targetSession = useSessionStore.getState().getSession(sessionId);
     const draggingStatus = draggingSession?.workflowStatus ?? 'chat';
-    if (draggingStatus !== status) {
+    if (
+      draggingStatus !== status ||
+      !draggingSession ||
+      !targetSession ||
+      draggingSession.projectDir !== targetSession.projectDir
+    ) {
       if (useBoardStore.getState().dropIndicator) {
         useBoardStore.getState().setDropIndicator(null);
       }
@@ -537,7 +617,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
     const session = sessionId ? useSessionStore.getState().getSession(sessionId) : undefined;
     const multiSessionIds = getKanbanMultiSessionDragIds(e.dataTransfer);
 
-    if (selectedProjectDir && multiSessionIds.length > 1) {
+    if (multiSessionIds.length > 1) {
       const sessionStore = useSessionStore.getState();
       let movedCount = 0;
 
@@ -546,7 +626,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
         if (
           !selectedSession ||
           selectedSession.taskId ||
-          selectedSession.projectDir !== selectedProjectDir ||
+          !scopeProjectIds.includes(selectedSession.projectDir) ||
           !selectedSession.workflowStatus
         ) {
           continue;
@@ -567,11 +647,13 @@ export const KanbanBoard = memo(function KanbanBoard() {
       return;
     }
 
-    if (selectedProjectDir && sessionId && session?.workflowStatus) {
+    if (sessionId && session?.workflowStatus) {
       useSessionStore.getState().updateChatWorkflowStatus(sessionId, null);
       useBoardStore.getState().flashDrop(sessionId);
-    } else if (selectedProjectDir && sessionId) {
-      const ids = filteredChats.map((session) => session.id);
+    } else if (sessionId && session) {
+      const ids = filteredChats
+        .filter((item) => item.projectDir === session.projectDir)
+        .map((item) => item.id);
       const filtered = ids.filter((id) => id !== sessionId);
 
       if (indicator) {
@@ -584,14 +666,14 @@ export const KanbanBoard = memo(function KanbanBoard() {
         filtered.push(sessionId);
       }
 
-      useSessionStore.getState().reorderProjectSessions(selectedProjectDir, filtered);
+      useSessionStore.getState().reorderProjectSessions(session.projectDir, filtered);
       useBoardStore.getState().flashDrop(sessionId);
     }
 
     useBoardStore.getState().setDragging(null);
     useBoardStore.getState().setDragOver(null);
     useBoardStore.getState().setDropIndicator(null);
-  }, [filteredChats, selectedProjectDir]);
+  }, [filteredChats, scopeProjectIds]);
 
   // Kanban add card menu toggle
   const handleToggleAddMenu = useCallback(function handleToggleAddMenu() {
@@ -604,6 +686,12 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, []);
 
   const [quickCreateStatus, setQuickCreateStatus] = useState<WorkflowStatus | null>(null);
+
+  const handlePortfolioProjectFilter = useCallback((projectId: string | null) => {
+    setQuickCreateStatus(null);
+    useBoardStore.getState().setKanbanAddMenuColumn(null);
+    setPortfolioProjectFilter(projectId);
+  }, []);
 
   const handleCreateTaskInStatus = useCallback((status: WorkflowStatus) => {
     useBoardStore.getState().setKanbanAddMenuColumn(null);
@@ -867,12 +955,19 @@ export const KanbanBoard = memo(function KanbanBoard() {
       className="flex flex-col h-full w-full bg-(--board-bg) overflow-hidden"
       data-testid="kanban-board"
     >
-      {/* Collection filter bar */}
-      <CollectionFilterBar
-        collections={collections}
-        activeFilter={activeCollectionFilter}
-        onFilter={setCollectionFilter}
-      />
+      {isAllProjects ? (
+        <PortfolioFilterBar
+          projects={scopeData.projects}
+          activeProjectId={portfolioProjectFilter}
+          onProjectFilter={handlePortfolioProjectFilter}
+        />
+      ) : (
+        <CollectionFilterBar
+          collections={collections}
+          activeFilter={activeCollectionFilter}
+          onFilter={setCollectionFilter}
+        />
+      )}
 
       {/* Horizontal scroll container */}
       <div
@@ -893,6 +988,10 @@ export const KanbanBoard = memo(function KanbanBoard() {
               status={status}
               tasks={tasksByStatus[status]}
               chats={workflowChatsByStatus[status]}
+              collectionsByProject={scopeData.collectionsByProject}
+              projects={visibleProjects}
+              groupByProject={isAllProjects}
+              canCreate={selectedProject !== null}
               sessionsByTaskId={sessionsByTaskId}
               activeSessionId={selectionSessionId}
               onCreateTask={() => handleCreateTaskInStatus(status)}
@@ -935,6 +1034,10 @@ export const KanbanBoard = memo(function KanbanBoard() {
             chats={filteredChats}
             collection={activeCollection}
             collections={collections}
+            collectionsByProject={scopeData.collectionsByProject}
+            projects={visibleProjects}
+            groupByProject={isAllProjects}
+            canCreate={selectedProject !== null}
             projectId={selectedProject?.encodedDir ?? ''}
             projectDir={selectedProject?.decodedPath ?? ''}
             activeSessionId={selectionSessionId}
@@ -971,7 +1074,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
           anchorRect={taskMenuAnchor.rect}
           currentStatus={taskMenuAnchor.task.workflowStatus}
           isArchived={false}
-          collections={collections}
+          collections={collectionsByProject[taskMenuAnchor.task.projectId] ?? EMPTY_COLLECTIONS}
           currentCollectionId={taskMenuAnchor.task.collectionId ?? null}
           onStatusChange={handleTaskStatusChange}
           onMoveToCollection={handleTaskMoveToCollection}
