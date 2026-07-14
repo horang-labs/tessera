@@ -207,12 +207,12 @@ export const TabItem = memo(function TabItem({
   // Derive display values
   // Active tab: use live panel-store data; inactive tab: use snapshot
   let displayTitle = t('chat.newTabDefault');
-  if (specialTitleKey) {
+  if (tab.title !== null) {
+    displayTitle = tab.title;
+  } else if (specialTitleKey) {
     displayTitle = t(specialTitleKey);
   } else if (activePanelSessionId && isSpecialSession(activePanelSessionId)) {
     displayTitle = getSpecialSessionTitle(activePanelSessionId, t) ?? displayTitle;
-  } else if (tab.title !== null) {
-    displayTitle = tab.title;
   } else if (activePanelTerminalId) {
     displayTitle = 'Terminal';
   } else if (activePanelSessionId && session) {
@@ -322,11 +322,13 @@ export const TabItem = memo(function TabItem({
 
   const commitTitleEdit = useCallback(() => {
     const nextTitle = titleInput.trim();
-    if (nextTitle && nextTitle !== displayTitle) {
+    if (!nextTitle && tab.title !== null) {
+      useTabStore.getState().renameTab(tab.id, null);
+    } else if (nextTitle && nextTitle !== displayTitle) {
       useTabStore.getState().renameTab(tab.id, nextTitle);
     }
     setIsEditingTitle(false);
-  }, [displayTitle, tab.id, titleInput]);
+  }, [displayTitle, tab.id, tab.title, titleInput]);
 
   const cancelTitleEdit = useCallback(() => {
     setTitleInput(displayTitle);
@@ -542,6 +544,7 @@ export const TabItem = memo(function TabItem({
           aria-label={t('chat.renameTab', { title: displayTitle })}
           className="h-6 min-w-0 flex-1 rounded border border-(--input-border) bg-(--input-bg) px-1.5 text-sm font-medium text-(--text-primary) outline-none focus:ring-1 focus:ring-(--accent)"
           data-testid="tab-title-input"
+          data-tab-title-editor="true"
           autoFocus
         />
       ) : (

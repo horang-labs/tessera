@@ -16,6 +16,7 @@ function queryPanelElement(panelId: string): HTMLElement | null {
 function focusPanelControlNow(panelId: string): void {
   const panelEl = queryPanelElement(panelId);
   if (!panelEl || panelEl.dataset.active !== 'true') return;
+  if (document.activeElement?.getAttribute('data-tab-title-editor') === 'true') return;
 
   const prompt = panelEl.querySelector<HTMLElement>('[data-interactive-prompt]');
   if (prompt) {

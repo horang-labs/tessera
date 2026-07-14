@@ -168,9 +168,10 @@ export interface TabStoreActions {
   pinTab(tabId: string): void;
 
   /**
-   * 탭에 수동 지정 이름을 저장한다.
+   * 탭에 수동 지정 이름을 저장하고 프리뷰를 고정한다.
+   * null이면 파생 제목으로 되돌린다.
    */
-  renameTab(tabId: string, title: string): void;
+  renameTab(tabId: string, title: string | null): void;
 
   /**
    * 탭이 표시하는 세션을 기준으로 탭의 프로젝트 소유권을 보정.

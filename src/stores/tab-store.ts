@@ -734,13 +734,15 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     });
   },
 
-  renameTab: (tabId: string, title: string): void => {
+  renameTab: (tabId: string, title: string | null): void => {
     const state = get();
     if (!state.tabs.some((tab) => tab.id === tabId)) return;
 
     set({
       tabs: state.tabs.map((tab): Tab =>
-        tab.id === tabId ? { ...tab, title } : tab,
+        tab.id === tabId
+          ? { ...tab, title, isPreview: title === null ? tab.isPreview : false }
+          : tab,
       ),
     });
   },
