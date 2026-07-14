@@ -39,7 +39,7 @@ export interface TabSnapshot {
  *
  * 불변 조건:
  * - INV-TAB-01: id는 생성 후 불변
- * - INV-TAB-02: MVP에서 title은 항상 null
+ * - INV-TAB-02: title은 null이거나 사용자가 지정한 탭 이름
  *
  * 주의: 패널 상태는 panel-store.tabPanels[tab.id]에서 읽어야 함.
  * snapshot 필드는 제거됨 — panel-store가 단일 진실 공급원(SSOT).
@@ -49,7 +49,7 @@ export interface Tab {
   readonly id: string;
   /** 이 탭이 속한 프로젝트. null이면 모든 프로젝트에서 보이는 전역 탭. */
   projectDir: string | null;
-  /** 수동 지정 탭 이름. MVP에서는 항상 null (P1 기능). */
+  /** 수동 지정 탭 이름. null이면 활성 패널의 제목을 사용한다. */
   title: string | null;
   /** 프리뷰 탭 여부. 채팅 프리뷰와 파일 프리뷰는 서로 다른 슬롯으로 재사용됨. */
   isPreview: boolean;
@@ -166,6 +166,11 @@ export interface TabStoreActions {
    * 프리뷰 탭을 고정 탭으로 변환 (isPreview → false).
    */
   pinTab(tabId: string): void;
+
+  /**
+   * 탭에 수동 지정 이름을 저장한다.
+   */
+  renameTab(tabId: string, title: string): void;
 
   /**
    * 탭이 표시하는 세션을 기준으로 탭의 프로젝트 소유권을 보정.

@@ -734,6 +734,17 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     });
   },
 
+  renameTab: (tabId: string, title: string): void => {
+    const state = get();
+    if (!state.tabs.some((tab) => tab.id === tabId)) return;
+
+    set({
+      tabs: state.tabs.map((tab): Tab =>
+        tab.id === tabId ? { ...tab, title } : tab,
+      ),
+    });
+  },
+
   syncTabProjectFromSession: (tabId: string, sessionId: string | null): void => {
     const state = get();
     const tab = state.tabs.find((item) => item.id === tabId);

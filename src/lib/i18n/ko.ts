@@ -472,6 +472,7 @@ export const ko: I18nMessages = {
     newTabDefault: '새 탭',
     openGitPanel: '오른쪽 Git 패널 열기',
     closeGitPanel: '오른쪽 Git 패널 닫기',
+    renameTab: '탭 이름 변경: {{title}}',
     closeTab: '탭 닫기: {{title}}',
     closeOtherTabs: '다른 탭 모두 닫기',
     closeTabsToLeft: '왼쪽 탭 모두 닫기',

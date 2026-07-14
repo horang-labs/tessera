@@ -298,15 +298,52 @@ export const TabItem = memo(function TabItem({
   const hoverActivateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressClickAfterDragRef = useRef(false);
   const [isSessionDragHover, setIsSessionDragHover] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleInput, setTitleInput] = useState(displayTitle);
 
   // Event handlers — all stable references via useCallback
 
   const handleClick = useCallback(
     function handleClick() {
-      if (suppressClickAfterDragRef.current) return;
+      if (suppressClickAfterDragRef.current || isEditingTitle) return;
       onActivate(tab.id);
     },
-    [onActivate, tab.id],
+    [isEditingTitle, onActivate, tab.id],
+  );
+
+  const handleDoubleClick = useCallback(
+    function handleDoubleClick(e: React.MouseEvent) {
+      e.stopPropagation();
+      setTitleInput(displayTitle);
+      setIsEditingTitle(true);
+    },
+    [displayTitle],
+  );
+
+  const commitTitleEdit = useCallback(() => {
+    const nextTitle = titleInput.trim();
+    if (nextTitle && nextTitle !== displayTitle) {
+      useTabStore.getState().renameTab(tab.id, nextTitle);
+    }
+    setIsEditingTitle(false);
+  }, [displayTitle, tab.id, titleInput]);
+
+  const cancelTitleEdit = useCallback(() => {
+    setTitleInput(displayTitle);
+    setIsEditingTitle(false);
+  }, [displayTitle]);
+
+  const handleTitleInputKeyDown = useCallback(
+    function handleTitleInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitTitleEdit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelTitleEdit();
+      }
+    },
+    [cancelTitleEdit, commitTitleEdit],
   );
 
   const handleCloseMouseDown = useCallback(
@@ -438,7 +475,7 @@ export const TabItem = memo(function TabItem({
 
   return (
     <div
-      draggable
+      draggable={!isEditingTitle}
       role="tab"
       aria-selected={isActive}
       aria-controls={`${tab.id}-panel`}
@@ -459,6 +496,7 @@ export const TabItem = memo(function TabItem({
         isSessionDragHover && !isDragOver && 'border-b-(--accent) bg-(--accent)/10',
       )}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
@@ -490,9 +528,27 @@ export const TabItem = memo(function TabItem({
       ) : null}
 
       {/* Title area — truncated with ellipsis (BR-UI-022) */}
-      <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
-        {label}
-      </span>
+      {isEditingTitle ? (
+        <input
+          type="text"
+          value={titleInput}
+          onChange={(e) => setTitleInput(e.target.value)}
+          onBlur={commitTitleEdit}
+          onKeyDown={handleTitleInputKeyDown}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label={t('chat.renameTab', { title: displayTitle })}
+          className="h-6 min-w-0 flex-1 rounded border border-(--input-border) bg-(--input-bg) px-1.5 text-sm font-medium text-(--text-primary) outline-none focus:ring-1 focus:ring-(--accent)"
+          data-testid="tab-title-input"
+          autoFocus
+        />
+      ) : (
+        <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
+          {label}
+        </span>
+      )}
 
       {/* Close button — always visible (BR-UI-024) */}
       <ShortcutTooltip id="close-tab" label={t('shortcut.closeTab')}>

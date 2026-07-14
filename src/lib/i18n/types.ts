@@ -464,6 +464,7 @@ export interface I18nMessages {
     newTabDefault: string;
     openGitPanel: string;
     closeGitPanel: string;
+    renameTab: string;
     closeTab: string;
     closeOtherTabs: string;
     closeTabsToLeft: string;
