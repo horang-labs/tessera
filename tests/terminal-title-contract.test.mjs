@@ -22,6 +22,10 @@ const generateTitleRouteSource = fs.readFileSync(
   new URL('../src/app/api/sessions/[id]/generate-title/route.ts', import.meta.url),
   'utf8',
 );
+const hookReceiverSource = fs.readFileSync(
+  new URL('../src/lib/cli/hook-receiver.ts', import.meta.url),
+  'utf8',
+);
 
 test('Claude title generation uses a title-only system prompt', () => {
   assert.match(claudeAdapterSource, /const TITLE_SYSTEM_PROMPT/);
@@ -41,4 +45,12 @@ test('automatic title fallback remains eligible for a later Stop retry', () => {
   assert.match(autoTitleSource, /catch \(error: any\) \{\s*autoTitleTriggered\.delete\(sessionId\)/);
   assert.match(clientMessageHandlersSource, /msg\.hasCustomTitle \?\? true/);
   assert.doesNotMatch(generateTitleRouteSource, /fallbackToFirstUserMessage/);
+});
+
+test('terminal prompts apply the immediate local title before the Stop event', () => {
+  assert.match(
+    hookReceiverSource,
+    /event === 'UserPromptSubmit'[\s\S]*applyImmediateSessionTitle\(entry\.sessionId, prompt\)/,
+  );
+  assert.match(hookReceiverSource, /type: 'session_title_updated'[\s\S]*silent: true/);
 });

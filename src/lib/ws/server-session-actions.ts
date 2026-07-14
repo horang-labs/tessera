@@ -6,10 +6,9 @@ import type { AskUserQuestionItem } from '@/types/cli-jsonl-schemas';
 import * as dbSessions from '../db/sessions';
 import logger from '../logger';
 import { sessionOrchestrator } from '../session/session-orchestrator';
-import { generateSessionTitle } from '../session/title-generator';
+import { applyImmediateSessionTitle } from '../session/immediate-session-title';
 import { sessionHistory } from '../session-history';
 import { persistCreatedSessionRecord } from '../session/session-persistence';
-import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import { buildCodexSkillContent } from '../chat/build-codex-skill-content';
 import {
   classifyCodexSlashCommand,
@@ -58,13 +57,6 @@ const CODEX_REQUEST_USER_INPUT_TOOL_NAME = 'CodexRequestUserInput';
 const CODEX_MCP_ELICITATION_TOOL_NAME = 'CodexMcpElicitation';
 const CODEX_PERMISSIONS_REQUEST_TOOL_NAME = 'CodexPermissionsRequest';
 const LIVE_EVENT_VERSION = 1;
-
-const AUTO_TITLE_PLACEHOLDER_TITLES = new Set([
-  'New Task',
-  '새 태스크',
-  '新しいタスク',
-  '新建任务',
-]);
 
 type SessionControlRequest = Pick<
   Extract<ClientMessage, { sessionId: string }>,
@@ -422,7 +414,7 @@ async function sendSessionMessageFromWebSocketUnlocked({
     await translateOutgoingContent(content, userId, forceTranslateInput === true);
 
   sessionHistory.recordUserMessage(sessionId, resolvedDisplayContent, undefined, messageId);
-  await maybeAutoSetSessionTitle(sessionId, resolvedDisplayContent);
+  maybeAutoSetSessionTitle(sessionId, resolvedDisplayContent);
 
   // Attach the translated (sent) text to the user's message as a message_translation
   // event — resolving the optimistic "translating…" state on the client. Persisted via
@@ -966,31 +958,11 @@ export function runProcessManagerControlAction({
   logger.info({ userId, sessionId, success, ...logMetadata }, logMessage);
 }
 
-function isAutoTitlePlaceholderTitle(title: string): boolean {
-  const normalized = title.trim();
-  return normalized.startsWith('Session ') || AUTO_TITLE_PLACEHOLDER_TITLES.has(normalized);
-}
-
-async function maybeAutoSetSessionTitle(
+function maybeAutoSetSessionTitle(
   sessionId: string,
   displayContent: string | ContentBlock[],
-): Promise<void> {
+): void {
   try {
-    const dbSession = dbSessions.getSession(sessionId);
-    if (
-      !dbSession ||
-      dbSession.has_custom_title ||
-      !isAutoTitlePlaceholderTitle(dbSession.title)
-    ) {
-      return;
-    }
-
-    const events = await sessionHistory.readEvents(sessionId);
-    const userMessageCount = events.filter((event) => event.type === 'user_message').length;
-    if (userMessageCount !== 1) {
-      return;
-    }
-
     const titleText =
       typeof displayContent === 'string'
         ? displayContent
@@ -998,11 +970,7 @@ async function maybeAutoSetSessionTitle(
             .filter((block): block is TextContentBlock => block.type === 'text')
             .map((block) => block.text)
             .join(' ');
-    const autoTitle = generateSessionTitle(titleText);
-    if (autoTitle) {
-      dbSessions.updateSession(sessionId, { title: autoTitle }, { skipTimestamp: true });
-      syncSingleSessionTaskTitleFromSession(sessionId, autoTitle);
-    }
+    applyImmediateSessionTitle(sessionId, titleText);
   } catch (err) {
     logger.warn({ sessionId, error: err }, 'Failed to auto-set session title');
   }

@@ -44,8 +44,8 @@ export const ko: I18nMessages = {
     notifications: '알림 설정',
     sound: '사운드',
     toast: '토스트 알림',
-    autoGenerateTitle: '타이틀 자동 생성',
-    autoGenerateTitleDesc: '첫 번째 응답 완료 후 AI 타이틀을 자동으로 생성합니다',
+    aiTitleRefinement: 'AI 제목 개선',
+    aiTitleRefinementDesc: '즉시 생성된 로컬 제목을 첫 응답 후 AI 제목으로 바꿉니다',
     translate: {
       title: '번역',
       enabled: '자동 번역',

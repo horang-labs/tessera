@@ -44,8 +44,8 @@ export const ja: I18nMessages = {
     notifications: '通知設定',
     sound: 'サウンド',
     toast: 'トースト通知',
-    autoGenerateTitle: 'タイトル自動生成',
-    autoGenerateTitleDesc: '最初の応答後にAIタイトルを自動生成します',
+    aiTitleRefinement: 'AIによるタイトル改善',
+    aiTitleRefinementDesc: '即時生成されたローカルタイトルを最初の応答後にAIタイトルへ置き換えます',
     translate: {
       title: '翻訳',
       enabled: '自動翻訳',

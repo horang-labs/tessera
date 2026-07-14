@@ -44,8 +44,8 @@ export const zh: I18nMessages = {
     notifications: '通知设置',
     sound: '声音',
     toast: '提示通知',
-    autoGenerateTitle: '自动生成标题',
-    autoGenerateTitleDesc: '首次回复后自动生成AI标题',
+    aiTitleRefinement: 'AI 标题优化',
+    aiTitleRefinementDesc: '首次回复后，用 AI 标题替换即时生成的本地标题',
     translate: {
       title: '翻译',
       enabled: '自动翻译',

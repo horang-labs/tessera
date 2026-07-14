@@ -44,8 +44,8 @@ export const en: I18nMessages = {
     notifications: 'Notifications',
     sound: 'Sound',
     toast: 'Toast Notifications',
-    autoGenerateTitle: 'Auto-generate Title',
-    autoGenerateTitleDesc: 'Automatically generate AI title after first response',
+    aiTitleRefinement: 'AI title refinement',
+    aiTitleRefinementDesc: 'Replace the instant local title with an AI title after the first response',
     translate: {
       title: 'Translation',
       enabled: 'Auto-translate',

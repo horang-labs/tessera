@@ -505,6 +505,9 @@ function handleSessionTitleUpdatedMessage(
 
   sessionStore.updateSessionTitle(msg.sessionId, nextTitle, msg.hasCustomTitle ?? true);
   useTaskStore.getState().syncLinkedTaskTitle(msg.sessionId, nextTitle);
+  if (msg.silent) {
+    return;
+  }
   useNotificationStore.getState().showToastWithAction(
     `"${nextTitle}"`,
     'success',
