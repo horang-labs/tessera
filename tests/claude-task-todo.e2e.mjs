@@ -8,6 +8,8 @@ const screenshotPath = process.env.TESSERA_E2E_SCREENSHOT
   ?? '/tmp/tessera-claude-task-todo-success.png';
 const completedScreenshotPath = process.env.TESSERA_E2E_COMPLETED_SCREENSHOT
   ?? '/tmp/tessera-claude-task-todo-completed.png';
+const collapsedScreenshotPath = process.env.TESSERA_E2E_COLLAPSED_SCREENSHOT
+  ?? '/tmp/tessera-claude-task-todo-collapsed.png';
 const fixturePath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   'fixtures/mock-claude-task-cli.mjs',
@@ -27,6 +29,7 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   let createdSessionId;
   let originalClaudeOverride;
+  let originalAgentEnvironment;
   let settingsConfigured = false;
 
   try {
@@ -35,12 +38,15 @@ async function main() {
 
     const current = await expectOk(await page.request.get(apiUrl('/api/settings')), 'read settings');
     originalClaudeOverride = current.settings.cliCommandOverrides?.['claude-code'];
+    originalAgentEnvironment = current.settings.agentEnvironment;
+    // Register the mock for both environments so it applies regardless of the
+    // agentEnvironment stored in the (possibly shared) dev settings.
     await expectOk(await page.request.put(apiUrl('/api/settings'), {
       data: {
         ...current.settings,
         cliCommandOverrides: {
           ...(current.settings.cliCommandOverrides ?? {}),
-          'claude-code': { native: fixturePath },
+          'claude-code': { native: fixturePath, wsl: fixturePath },
         },
       },
     }), 'configure mock Claude');
@@ -83,12 +89,28 @@ async function main() {
     await todoBar.getByText('Inspecting Claude task events').waitFor({ timeout: 10_000 });
     await todoBar.locator('[data-status="in_progress"]').waitFor({ timeout: 10_000 });
 
-    // A full reload exercises the history projection while tool outputs remain lazy.
+    // Collapsing hides the item list but keeps the header summary visible (#151).
+    await todoBar.getByTestId('todo-status-toggle').click();
+    await activePanel.locator('[data-testid="todo-status-bar"][data-collapsed="true"]')
+      .waitFor({ timeout: 5_000 });
+    await todoBar.getByTestId('todo-status-item').first().waitFor({ state: 'hidden', timeout: 5_000 });
+    await todoBar.getByTestId('todo-status-collapsed-summary').waitFor({ timeout: 5_000 });
+    await page.screenshot({ path: collapsedScreenshotPath, fullPage: true });
+
+    // A full reload exercises the history projection while tool outputs remain
+    // lazy, and the collapsed preference must survive it via localStorage.
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByTestId('chat-layout').waitFor({ timeout: 30_000 });
     await page.getByTestId(`collection-chat-${created.sessionId}`).first().click();
     activePanel = page.locator('[role="tabpanel"]:visible');
     todoBar = activePanel.getByTestId('todo-status-bar');
+    await todoBar.getByTestId('todo-status-collapsed-summary').waitFor({ timeout: 10_000 });
+    await activePanel.locator('[data-testid="todo-status-bar"][data-collapsed="true"]')
+      .waitFor({ timeout: 5_000 });
+
+    // Expanding restores the full list and the original assertions still hold.
+    await todoBar.getByTestId('todo-status-toggle').click();
+    await todoBar.getByTestId('todo-status-item').first().waitFor({ timeout: 5_000 });
     await todoBar.getByText('Inspecting Claude task events').waitFor({ timeout: 10_000 });
     await page.screenshot({ path: screenshotPath, fullPage: true });
 
@@ -117,6 +139,7 @@ async function main() {
     await page.screenshot({ path: completedScreenshotPath, fullPage: true });
     process.stdout.write(JSON.stringify({
       screenshotPath,
+      collapsedScreenshotPath,
       completedScreenshotPath,
       sessionId: created.sessionId,
     }, null, 2) + '\n');
@@ -136,7 +159,11 @@ async function main() {
       if (originalClaudeOverride === undefined) delete cliCommandOverrides['claude-code'];
       else cliCommandOverrides['claude-code'] = originalClaudeOverride;
       await expectOk(await page.request.put(apiUrl('/api/settings'), {
-        data: { ...latest.settings, cliCommandOverrides },
+        data: {
+          ...latest.settings,
+          agentEnvironment: originalAgentEnvironment ?? latest.settings.agentEnvironment,
+          cliCommandOverrides,
+        },
       }), 'restore settings');
     }
     await browser.close();
