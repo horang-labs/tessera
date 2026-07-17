@@ -29,6 +29,27 @@ import type {
 const COMMAND_MAX_BUFFER = 4 * 1024 * 1024;
 const MAX_SYNTHETIC_DIFF_BYTES = 64 * 1024;
 const COMMAND_TIMEOUT_MS = 10_000;
+// Upper bound on how many changed-file rows we serialize to the client and
+// render. When something like an unignored `.venv` produces tens of thousands
+// of untracked files, sending and rendering them all freezes the git panel;
+// we cap the list and surface the true total via `changedFilesTruncated`.
+const MAX_CHANGED_FILES = 1000;
+// `git status -z` emits one NUL per path (renames/copies emit two). Once we've
+// streamed past this many NULs we already have more than enough entries to know
+// the list overflows `MAX_CHANGED_FILES`, so we kill git before it walks the
+// rest of a huge untracked tree (e.g. an unignored `.venv`).
+const STATUS_STREAM_NUL_LIMIT = (MAX_CHANGED_FILES + 1) * 2;
+
+interface ChangedFilesResult {
+  files: GitChangedFile[];
+  /**
+   * Total changed-file count. Omitted when the status stream was cut short
+   * early (`truncated` via `stoppedEarly`), in which case the true total is
+   * unknown — only that it exceeds what we display.
+   */
+  total?: number;
+  truncated: boolean;
+}
 
 export class GitPanelError extends Error {
   readonly code:
@@ -132,6 +153,131 @@ async function runOptionalCommand(
     if (error instanceof GitPanelError && error.status === 504) throw error;
     return null;
   }
+}
+
+interface StreamedStatus {
+  stdout: string;
+  stoppedEarly: boolean;
+}
+
+// Stream `git status -z`, counting NUL delimiters as they arrive. Once we pass
+// `nulLimit` we kill the git process group instead of letting it enumerate a
+// massive untracked tree and buffer megabytes we'd only throw away. Returns
+// whatever was collected plus whether we stopped it early.
+async function runStatusStreaming(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+  nulLimit: number,
+): Promise<StreamedStatus> {
+  return new Promise((resolve, reject) => {
+    const options: SpawnOptions = {
+      cwd: workDir,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    };
+    const child = spawnCli(
+      "git",
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      options,
+      agentEnvironment,
+    );
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let nulCount = 0;
+    let stoppedEarly = false;
+    let settled = false;
+
+    const killGroup = () => {
+      try {
+        // detached spawn makes the command a group leader on POSIX; kill the
+        // whole group so wedged grandchildren die with it.
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    };
+
+    const finish = (result: StreamedStatus) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      resolve(result);
+    };
+
+    const killTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      killGroup();
+      reject(
+        new GitPanelError(
+          "command_timeout",
+          `git status did not respond within ${COMMAND_TIMEOUT_MS / 1000}s and was terminated`,
+          504,
+        ),
+      );
+    }, COMMAND_TIMEOUT_MS);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      if (stoppedEarly) return;
+      for (let i = 0; i < chunk.length; i++) {
+        if (chunk[i] === 0) nulCount++;
+      }
+      if (nulCount > nulLimit) {
+        stoppedEarly = true;
+        killGroup();
+        // Grandchildren holding the stdout pipe can delay "close"; resolve with
+        // what we have shortly after killing rather than waiting out the timeout.
+        setTimeout(() => {
+          finish({
+            stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+            stoppedEarly: true,
+          });
+        }, 500);
+      }
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (stderrChunks.length < 64) stderrChunks.push(chunk);
+    });
+
+    child.on("close", (code) => {
+      if (stoppedEarly) {
+        finish({
+          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+          stoppedEarly: true,
+        });
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      if (code === 0) {
+        resolve({ stdout, stoppedEarly: false });
+        return;
+      }
+      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+      reject(
+        new GitPanelError("command_failed", stderr || "Failed to run git status", 500),
+      );
+    });
+
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      reject(
+        new GitPanelError(
+          "command_failed",
+          error.message || "Failed to run git status",
+          500,
+        ),
+      );
+    });
+  });
 }
 
 interface GitSessionContext {
@@ -407,21 +553,22 @@ function getFetchRemoteName(upstream: string | null): string {
 async function getChangedFiles(
   workDir: string,
   agentEnvironment: AgentEnvironment,
-): Promise<GitChangedFile[]> {
-  const [statusRaw, fileDiffStats] = await Promise.all([
-    runOptionalCommand(
-      "git",
-      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-      workDir,
-      agentEnvironment,
-    ),
+): Promise<ChangedFilesResult> {
+  const [status, fileDiffStats] = await Promise.all([
+    runStatusStreaming(workDir, agentEnvironment, STATUS_STREAM_NUL_LIMIT),
     computeWorktreeFileDiffStats(workDir, agentEnvironment),
   ]);
   const statsByPath = fileDiffStats ?? new Map();
-  return parseGitStatus(statusRaw ?? "").map((file) => {
+  const parsed = parseGitStatus(status.stdout);
+  const truncated = status.stoppedEarly || parsed.length > MAX_CHANGED_FILES;
+  const limited = truncated ? parsed.slice(0, MAX_CHANGED_FILES) : parsed;
+  const files = limited.map((file) => {
     const diffStats = statsByPath.get(file.path);
     return diffStats ? { ...file, diffStats } : file;
   });
+  // When we killed git early the parsed count is only a lower bound, so leave
+  // `total` unset — the client shows "first N, many more" instead of a wrong number.
+  return { files, total: status.stoppedEarly ? undefined : parsed.length, truncated };
 }
 
 function ensurePathInsideRepo(repoRoot: string, relativePath: string): string {
@@ -588,7 +735,9 @@ export async function getGitPanelData(
       .split("\n")
       .map((b) => b.trim())
       .filter((b) => b && !b.includes("HEAD")),
-    changedFiles,
+    changedFiles: changedFiles.files,
+    changedFilesTotal: changedFiles.total,
+    changedFilesTruncated: changedFiles.truncated,
     recentCommits: parseRecentCommits(recentCommitsRaw ?? ""),
     github,
     diffStats: sessionContext.worktreeBranch
@@ -611,9 +760,12 @@ export async function getGitChangedFilesData(
   const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
   await resolveRepoRoot(workDir, agentEnvironment);
 
+  const changedFiles = await getChangedFiles(workDir, agentEnvironment);
   return {
     sessionId,
-    changedFiles: await getChangedFiles(workDir, agentEnvironment),
+    changedFiles: changedFiles.files,
+    changedFilesTotal: changedFiles.total,
+    changedFilesTruncated: changedFiles.truncated,
   };
 }
 
@@ -645,7 +797,7 @@ export async function getGitDiffData(
   const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
   const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
   const changedFiles = await getChangedFiles(workDir, agentEnvironment);
-  const fileEntry = changedFiles.find((file) => file.path === relativePath);
+  const fileEntry = changedFiles.files.find((file) => file.path === relativePath);
 
   if (!fileEntry) {
     throw new GitPanelError(

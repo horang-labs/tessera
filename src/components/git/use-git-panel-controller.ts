@@ -38,6 +38,11 @@ interface GitPanelSessionCacheEntry {
 
 const PANEL_CACHE_LIMIT = 20;
 const GIT_PANEL_POLL_INTERVAL_MS = 5000;
+// Upper bound and slow-scan multiplier for adaptive polling: after a slow scan
+// (e.g. a huge repo) we wait roughly `elapsed * BACKOFF` before the next tick so
+// we never re-poll on top of an unfinished scan, capped at MAX.
+const GIT_PANEL_POLL_MAX_INTERVAL_MS = 60_000;
+const GIT_PANEL_POLL_SLOW_BACKOFF = 3;
 const gitPanelSessionCache = new Map<string, GitPanelSessionCacheEntry>();
 
 async function writeClipboardText(value: string | null | undefined) {
@@ -193,6 +198,8 @@ export function useGitPanelController(sessionId: string | null) {
         applyGitPanelData(sessionId, {
           ...current,
           changedFiles: changedFilesPayload.changedFiles,
+          changedFilesTotal: changedFilesPayload.changedFilesTotal,
+          changedFilesTruncated: changedFilesPayload.changedFilesTruncated,
         });
       }
     } catch (nextError) {
@@ -265,13 +272,45 @@ export function useGitPanelController(sessionId: string | null) {
     if (!sessionId || isTransientSessionId(sessionId)) return;
     if (typeof document === "undefined" || typeof window === "undefined") return;
 
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void loadChangedFiles();
-      }
-    }, GIT_PANEL_POLL_INTERVAL_MS);
+    let cancelled = false;
+    let timer: number | undefined;
+    let inFlight = false;
 
-    return () => window.clearInterval(timer);
+    const schedule = (delayMs: number) => {
+      if (cancelled) return;
+      timer = window.setTimeout(runTick, delayMs);
+    };
+
+    const runTick = async () => {
+      if (cancelled) return;
+      if (document.visibilityState !== "visible" || inFlight) {
+        schedule(GIT_PANEL_POLL_INTERVAL_MS);
+        return;
+      }
+      inFlight = true;
+      const startedAt = performance.now();
+      try {
+        await loadChangedFiles();
+      } finally {
+        inFlight = false;
+        const elapsed = performance.now() - startedAt;
+        const nextDelay = Math.min(
+          GIT_PANEL_POLL_MAX_INTERVAL_MS,
+          Math.max(
+            GIT_PANEL_POLL_INTERVAL_MS,
+            Math.round(elapsed * GIT_PANEL_POLL_SLOW_BACKOFF),
+          ),
+        );
+        schedule(nextDelay);
+      }
+    };
+
+    schedule(GIT_PANEL_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [loadChangedFiles, sessionId]);
 
   const panelData = useMemo<GitPanelData | null>(() => {

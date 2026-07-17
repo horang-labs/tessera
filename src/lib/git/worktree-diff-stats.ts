@@ -13,6 +13,38 @@ import type {
 
 const UNTRACKED_MAX_BYTES = 512 * 1024;
 
+// Beyond this many untracked files (e.g. an accidentally-unignored `.venv` or
+// `node_modules`), skip the per-file line-count I/O entirely. Reading every file
+// to count newlines would otherwise open thousands of descriptors at once and
+// stall the event loop (or hit EMFILE). We still report the count of new files.
+const UNTRACKED_LINECOUNT_MAX_FILES = 1000;
+// Cap concurrent file reads so even a large-but-under-limit untracked set can't
+// exhaust file descriptors.
+const NEWLINE_COUNT_CONCURRENCY = 16;
+
+// Map over items with a bounded number of in-flight async calls.
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index]);
+    }
+  };
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 async function runGit(
   workDir: string,
   args: string[],
@@ -185,18 +217,24 @@ export async function computeWorktreeDiffStats(
     let changedFiles = numstat.changedFiles;
     const deletedFiles = nameStatus.deletedFiles;
 
-    const untrackedCounts = await Promise.all(
-      untracked.paths.map((relPath) =>
-        countFileNewlinesCapped(pathModule.join(resolved, relPath)),
-      ),
-    );
-
     let newFiles = 0;
-    for (const count of untrackedCounts) {
-      newFiles += 1;
-      changedFiles += 1;
-      if (count !== null) {
-        added += count;
+    if (untracked.paths.length > UNTRACKED_LINECOUNT_MAX_FILES) {
+      // Too many untracked files to read individually — count them without
+      // folding their line totals into `added`.
+      newFiles = untracked.paths.length;
+      changedFiles += untracked.paths.length;
+    } else {
+      const untrackedCounts = await mapWithConcurrency(
+        untracked.paths,
+        NEWLINE_COUNT_CONCURRENCY,
+        (relPath) => countFileNewlinesCapped(pathModule.join(resolved, relPath)),
+      );
+      for (const count of untrackedCounts) {
+        newFiles += 1;
+        changedFiles += 1;
+        if (count !== null) {
+          added += count;
+        }
       }
     }
 
@@ -231,15 +269,24 @@ export async function computeWorktreeFileDiffStats(
     if (!numstat || !untracked) return null;
 
     const files = new Map(numstat.files);
-    const untrackedCounts = await Promise.all(
-      untracked.paths.map(async (relPath) => ({
-        relPath,
-        count: await countFileNewlinesCapped(pathModule.join(resolved, relPath)),
-      })),
-    );
-
-    for (const { relPath, count } of untrackedCounts) {
-      files.set(relPath, { added: count ?? 0, removed: 0 });
+    if (untracked.paths.length > UNTRACKED_LINECOUNT_MAX_FILES) {
+      // Too many untracked files to read individually — record them with an
+      // unknown (zero) added count rather than opening every file.
+      for (const relPath of untracked.paths) {
+        files.set(relPath, { added: 0, removed: 0 });
+      }
+    } else {
+      const untrackedCounts = await mapWithConcurrency(
+        untracked.paths,
+        NEWLINE_COUNT_CONCURRENCY,
+        async (relPath) => ({
+          relPath,
+          count: await countFileNewlinesCapped(pathModule.join(resolved, relPath)),
+        }),
+      );
+      for (const { relPath, count } of untrackedCounts) {
+        files.set(relPath, { added: count ?? 0, removed: 0 });
+      }
     }
 
     return files;

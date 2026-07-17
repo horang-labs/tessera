@@ -659,7 +659,9 @@ export function GitPanelContentSection({
                 Changed files
               </span>
               <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
-                {changedFileCount}
+                {data.changedFilesTruncated
+                  ? (data.changedFilesTotal ?? `${changedFileCount}+`)
+                  : changedFileCount}
               </span>
             </div>
             <ScrollArea className="flex-1">
@@ -779,6 +781,15 @@ export function GitPanelContentSection({
                 })}
               </div>
             </ScrollArea>
+            {data.changedFilesTruncated ? (
+              <div className="px-2 pb-1 text-[10px] leading-snug text-(--text-muted)">
+                {data.changedFilesTotal != null
+                  ? `Showing ${changedFileCount} of ${data.changedFilesTotal} changed files. `
+                  : `Showing the first ${changedFileCount} changed files; the repository has many more. `}
+                Add large or generated folders (e.g. .venv, node_modules) to
+                .gitignore to see the rest.
+              </div>
+            ) : null}
           </div>
         )
       )}
