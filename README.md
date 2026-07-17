@@ -7,7 +7,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](#license)
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/7557zmY8x)
 
-> 💬 **Come hang out on our [Discord](https://discord.gg/kP8vz8eud)!** Feel free to drop by — if you share anything that feels rough or could be better, we'd really appreciate it.
+> 💬 **Come hang out on our [Discord](https://discord.gg/7557zmY8x)!** Feel free to drop by — if you share anything that feels rough or could be better, we'd really appreciate it.
 
 Tessera helps you run Claude Code, Codex, and OpenCode side by side without losing track of sessions, files, branches, diffs, or pull requests.
 
