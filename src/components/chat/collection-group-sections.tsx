@@ -867,14 +867,9 @@ export function TaskItemRow({
             <span
               title={reason}
               aria-label={reason}
-              className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--sidebar-bg) cursor-help"
+              className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--sidebar-bg) cursor-help"
               data-testid="task-pr-mismatch-badge"
-            >
-              <TriangleAlert
-                className="h-full w-full text-(--status-warning-text)"
-                strokeWidth={2.5}
-              />
-            </span>
+            />
           );
         })()}
         {task.worktreeMissing && (
