@@ -8,7 +8,12 @@ import { flushRecompute } from './worktree-diff-stats-cache';
 
 export function getManagedSessionWorkDir(sessionId: string): string | null {
   const session = dbSessions.getSession(sessionId);
-  if (!session?.work_dir || !session.worktree_branch) return null;
+  // Any session with a work_dir gets live diff recompute (file-watch +
+  // per-tool + turn-end), not just worktree-branch-bound ones. Standalone
+  // chats working inside a git worktree keep their diff badge up to date the
+  // same way. computeWorktreeDiffStats returns null for non-git dirs, so this
+  // is safe for plain work_dirs.
+  if (!session?.work_dir) return null;
   return session.work_dir;
 }
 
@@ -38,7 +43,7 @@ export async function refreshSessionDiffState(
     }
   }
 
-  if (session.work_dir && session.worktree_branch) {
+  if (session.work_dir) {
     await runOperation(
       'worktree_diff_stats',
       flushRecompute(session.work_dir, userId),
