@@ -35,6 +35,9 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
   // one is the panel-store's "active" panel; gating autoscroll on isPanelActive
   // froze the unfocused panel's viewport during streaming (issue #16).
   const isViewActive = useTabStore((state) => state.activeTabId === tabId);
+  const isPreviewTab = useTabStore(
+    (state) => state.tabs.find((tab) => tab.id === tabId)?.isPreview ?? false,
+  );
   const { windowedMessages, hasMore, loadMore, isLoadingMore } =
     useWindowedMessages(sessionId);
   const isSinglePanel = usePanelStore(
@@ -172,10 +175,11 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
         {isTerminalSession ? (
           terminalId && sessionProvider ? (
             <TerminalPanel
+              key={terminalId}
               panelId={panelId}
               terminalId={terminalId}
               terminalSessionId={sessionId}
-              sessionOwned
+              runtimeOwnership={isPreviewTab ? 'session-preview' : 'session-retained'}
               launch={{ providerId: sessionProvider, sessionId }}
             />
           ) : null

@@ -415,8 +415,12 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
   },
 
   closePanel: (panelId) => {
+    get().closePanelInTab(get().activeTabId, panelId);
+  },
+
+  closePanelInTab: (tabId, panelId) => {
     const state = get();
-    const tabData = state.tabPanels[state.activeTabId];
+    const tabData = state.tabPanels[tabId];
     if (!tabData) return;
 
     // Guard: 마지막 패널 보호
@@ -443,14 +447,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     set({
       tabPanels: {
         ...state.tabPanels,
-        [state.activeTabId]: newTabData,
+        [tabId]: newTabData,
       },
     });
 
     assertInvariants(newTabData);
 
     // 활성 패널 닫기인 경우만 session-store 동기화
-    if (isClosingActive) {
+    if (tabId === state.activeTabId && isClosingActive) {
       const newSessionId = newPanels[newActivePanelId]?.sessionId ?? null;
       useSessionStore.getState().setActiveSession(newSessionId);
     }

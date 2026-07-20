@@ -1,0 +1,1 @@
+export const RATE_LIMIT_REFRESH_INTERVAL_MS = 60_000;

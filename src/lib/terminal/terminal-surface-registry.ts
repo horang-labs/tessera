@@ -13,7 +13,16 @@ import {
 } from './pending-terminal-launch';
 import { dispatchTerminalLaunchResult } from './terminal-launch-result';
 import { clearClientTerminalHandoff } from './client-terminal-handoff-state';
-import type { TesseraTerminalTheme } from './terminal-theme';
+import {
+  getTerminalTheme,
+  getTerminalThemePresets,
+  type TesseraTerminalTheme,
+} from './terminal-theme';
+import type {
+  TerminalAppearance,
+  TerminalColorSchemeMode,
+  TerminalLaunchIntent,
+} from './types';
 import {
   detectTerminalClientPlatform,
   isTerminalPasteShortcut,
@@ -31,8 +40,18 @@ import {
   type TerminalScrollTarget,
 } from './terminal-scroll-controller';
 import { LayoutSettleRunner } from './layout-settle-runner';
-import type { TerminalScrollMetrics } from './terminal-scrollbar-geometry';
 import { createTerminalExternalLinkHandlers } from './terminal-external-link';
+import {
+  QuietTerminalRenderRecovery,
+  TerminalBackgroundSgrDetector,
+  resetAndRefreshTerminalRenderers,
+} from './terminal-render-recovery';
+import {
+  deferTerminalPtyResizeFlushIfHeld,
+  queueTerminalPtyResizeIfHeld,
+  TERMINAL_RESIZE_SETTLE_DELAY_MS,
+  type TerminalPtyResizeRequest,
+} from './terminal-pty-resize-hold';
 
 export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
 
@@ -40,17 +59,21 @@ export interface TerminalSurfaceSnapshot {
   status: TerminalSurfaceStatus;
   subtitle: string;
   isAtBottom: boolean;
-  scrollMetrics: TerminalScrollMetrics;
+  appearanceMode: TerminalColorSchemeMode;
+  themeRestartRequired: boolean;
+  themeRestartAllowed: boolean;
 }
 
 export interface TerminalSurfaceOptions {
   registryKey: string;
   terminalId: string;
   theme: TesseraTerminalTheme;
+  appearanceMode: TerminalColorSchemeMode;
   fontSize: number;
   cwd?: string | null;
   sessionId?: string | null;
   launch?: { providerId: string; sessionId: string };
+  previewOwned?: boolean;
 }
 
 type XtermLike = TerminalScrollTarget & {
@@ -78,7 +101,20 @@ type FitAddonLike = {
 };
 
 const surfaces = new Map<string, TerminalSurface>();
+function recoverAllTerminalRenderers(): void {
+  resetAndRefreshTerminalRenderers(surfaces.values());
+}
+const sharedTerminalRenderRecovery = new QuietTerminalRenderRecovery(
+  recoverAllTerminalRenderers,
+);
 let parkingLot: HTMLElement | null = null;
+
+/**
+ * How long a surface stays hot (xterm/WebGL alive) after its tab goes
+ * inactive, or after its host unmounts, before it cold-parks: see
+ * `TerminalSurface.coldPark`.
+ */
+const COLD_PARK_DELAY_MS = 30_000;
 
 function getParkingLot(): HTMLElement {
   if (parkingLot?.isConnected) return parkingLot;
@@ -100,6 +136,16 @@ function getParkingLot(): HTMLElement {
   return element;
 }
 
+function isModifierOnlyKey(key: string): boolean {
+  return key === 'Shift'
+    || key === 'Control'
+    || key === 'Alt'
+    || key === 'Meta'
+    || key === 'CapsLock'
+    || key === 'NumLock'
+    || key === 'ScrollLock';
+}
+
 /**
  * Browser-side terminal surface with a lifetime independent from React.
  *
@@ -116,14 +162,21 @@ export class TerminalSurface {
     status: 'starting',
     subtitle: 'Starting terminal...',
     isAtBottom: true,
-    scrollMetrics: { baseY: 0, viewportY: 0, rows: 1 },
+    appearanceMode: 'dark',
+    themeRestartRequired: false,
+    themeRestartAllowed: false,
   };
   private actualTerminalId: string;
   private theme: TesseraTerminalTheme;
+  private appearanceMode: TerminalColorSchemeMode;
+  private requestedTheme: { theme: TesseraTerminalTheme; mode: TerminalColorSchemeMode } | null = null;
+  private themeRestartLaunchIntent: TerminalLaunchIntent | null = null;
+  private themeRestartPending = false;
   private fontSize: number;
   private terminal: XtermLike | null = null;
   private fitAddon: FitAddonLike | null = null;
-  private webglAddon: { dispose(): void } | null = null;
+  private webglAddon: { clearTextureAtlas(): void; dispose(): void } | null = null;
+  private readonly backgroundSgrDetector = new TerminalBackgroundSgrDetector();
   private inputDisposable: { dispose(): void } | null = null;
   private scrollDisposable: { dispose(): void } | null = null;
   private scrollController: TerminalScrollController | null = null;
@@ -132,6 +185,7 @@ export class TerminalSurface {
   private pendingScrollStateFrameId: number | null = null;
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
+  private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
   private clipboardPasteQueue: Promise<void> = Promise.resolve();
   private root: HTMLDivElement | null = null;
   private intendedHost: HTMLElement | null = null;
@@ -141,11 +195,15 @@ export class TerminalSurface {
   private pendingFitClaim = false;
   private resizeSettleTimerId: number | null = null;
   private initializePromise: Promise<boolean> | null = null;
+  private coldParkTimerId: number | null = null;
   private attachedConnectionGeneration = 0;
   private pendingLaunch: PendingTerminalLaunch | null = null;
   private serverGeneration: number | null = null;
   private lastSequence = 0;
   private replaying = false;
+  private onInput: (() => void) | null = null;
+  private terminalInputOriginArmed = false;
+  private terminalInputOriginEpoch = 0;
   private disposed = false;
   private autoConnect = true;
   private sessionWasPresent = false;
@@ -153,6 +211,8 @@ export class TerminalSurface {
 
   constructor(private readonly options: TerminalSurfaceOptions) {
     this.theme = { ...options.theme };
+    this.appearanceMode = options.appearanceMode;
+    this.state = { ...this.state, appearanceMode: options.appearanceMode };
     this.fontSize = options.fontSize;
     this.actualTerminalId = options.terminalId;
     this.unsubscribeMessages = wsClient.subscribeServerMessages((message) => {
@@ -182,12 +242,35 @@ export class TerminalSurface {
 
   getSnapshot = (): TerminalSurfaceSnapshot => this.state;
 
-  setTheme(theme: TesseraTerminalTheme): void {
-    this.theme = { ...theme };
-    if (!this.terminal) return;
-    // xterm repaints its current buffer when the theme option changes; the
-    // long-lived surface and its PTY attachment remain intact.
-    this.terminal.options.theme = this.theme;
+  setTheme(theme: TesseraTerminalTheme, mode: TerminalColorSchemeMode): void {
+    this.requestedTheme = { theme: { ...theme }, mode };
+    if (this.attachedConnectionGeneration > 0 && this.state.status === 'running') {
+      const sent = wsClient.setTerminalAppearance(
+        this.actualTerminalId,
+        this.surfaceId,
+        this.toAppearance(theme, mode),
+      );
+      if (sent) return;
+    }
+    this.applyTheme(theme, mode);
+    this.setThemeRestartRequired(false);
+  }
+
+  restartForTheme(): void {
+    if (
+      this.disposed
+      || !this.requestedTheme
+      || !this.state.themeRestartRequired
+      || !this.state.themeRestartAllowed
+    ) return;
+    const { theme, mode } = this.requestedTheme;
+    this.applyTheme(theme, mode);
+    this.setThemeRestartRequired(false);
+    this.themeRestartPending = true;
+    this.autoConnect = true;
+    this.replaying = false;
+    this.updateState('starting', 'Restarting terminal to apply theme...');
+    wsClient.closeTerminal(this.actualTerminalId);
   }
 
   setFontSize(fontSize: number): void {
@@ -198,8 +281,13 @@ export class TerminalSurface {
     this.requestStableFit(false);
   }
 
+  setInputListener(listener: (() => void) | null): void {
+    this.onInput = listener;
+  }
+
   async mount(host: HTMLElement): Promise<void> {
     if (this.disposed) return;
+    this.cancelColdPark();
     this.intendedHost = host;
     if (!(await this.initialize())) return;
     if (this.disposed || this.intendedHost !== host || !this.root || !this.fitAddon) return;
@@ -213,7 +301,7 @@ export class TerminalSurface {
       this.resizeSettleTimerId = window.setTimeout(() => {
         this.resizeSettleTimerId = null;
         this.requestStableFit(false);
-      }, 150);
+      }, TERMINAL_RESIZE_SETTLE_DELAY_MS);
     });
     this.resizeObserver.observe(host);
 
@@ -235,6 +323,7 @@ export class TerminalSurface {
     if (this.root && !this.disposed) {
       getParkingLot().appendChild(this.root);
     }
+    this.scheduleColdPark();
   }
 
   async ensureConnected(): Promise<boolean> {
@@ -252,6 +341,9 @@ export class TerminalSurface {
     const dimensions = this.getDimensions();
     const pendingLaunch = takePendingTerminalLaunch(this.options.terminalId);
     if (pendingLaunch) this.pendingLaunch = pendingLaunch;
+    if (pendingLaunch?.locksSourceSession && pendingLaunch.intent) {
+      this.themeRestartLaunchIntent = pendingLaunch.intent;
+    }
     const sent = wsClient.createTerminal({
       terminalId: this.actualTerminalId,
       surfaceId: this.surfaceId,
@@ -259,13 +351,15 @@ export class TerminalSurface {
       sessionId: this.options.sessionId,
       cols: dimensions?.cols,
       rows: dimensions?.rows,
-      colorQueryColors: {
+      appearance: {
+        mode: this.appearanceMode,
         foreground: this.theme.foreground,
         background: this.theme.background,
       },
       launchIntent: pendingLaunch?.intent,
       prefillInput: pendingLaunch?.prefillInput,
       launch: pendingLaunch?.launch ?? this.options.launch,
+      previewOwnerToken: this.options.previewOwned ? this.surfaceId : undefined,
     });
 
     if (!sent) {
@@ -287,12 +381,36 @@ export class TerminalSurface {
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
   }
 
+  /** Ask the server to close only a runtime created by this preview token. */
+  releasePreviewRuntime(): void {
+    if (this.disposed) return;
+    wsClient.releasePreviewTerminal({
+      terminalId: this.actualTerminalId,
+      sessionId: this.options.sessionId,
+      previewOwnerToken: this.surfaceId,
+    });
+    this.dispose();
+  }
+
+  disposeIfUnmounted(): void {
+    if (this.mountedHost === null) this.dispose();
+  }
+
   scrollToBottom(): void {
     this.scrollController?.scrollToBottom();
   }
 
   matchesTerminal(terminalId: string): boolean {
     return this.options.terminalId === terminalId || this.actualTerminalId === terminalId;
+  }
+
+  resetWebglTextureAtlas(): void {
+    this.webglAddon?.clearTextureAtlas();
+  }
+
+  refreshTerminalViewport(): void {
+    if (!this.terminal) return;
+    this.terminal.refresh(0, Math.max(0, this.terminal.rows - 1));
   }
 
   close(): void {
@@ -316,6 +434,25 @@ export class TerminalSurface {
     return this.ensureConnected();
   }
 
+  /**
+   * Tracks whether this surface's tab is the active one. LRU keeps up to
+   * five inactive tabs mounted (visibility: hidden) rather than unmounting
+   * them, so `mount`/`unmount` never fire on a tab switch — this is the
+   * signal that actually starts/cancels the cold-park timer for that case.
+   */
+  setHostVisible(visible: boolean): void {
+    if (this.disposed) return;
+    if (!visible) {
+      this.scheduleColdPark();
+      return;
+    }
+    this.cancelColdPark();
+    if (!this.terminal && this.mountedHost) void this.mount(this.mountedHost);
+    requestAnimationFrame(() => {
+      if (!this.disposed && this.isMountedHostVisible()) recoverAllTerminalRenderers();
+    });
+  }
+
   activate(): void {
     if (this.disposed || !this.isMountedHostVisible()) return;
     requestAnimationFrame(() => {
@@ -328,11 +465,36 @@ export class TerminalSurface {
   dispose(options: { detach?: boolean } = {}): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.cancelColdPark();
     if (options.detach !== false && this.attachedConnectionGeneration > 0) {
       wsClient.detachTerminal(this.actualTerminalId, this.surfaceId);
     }
     this.unsubscribeMessages();
     this.unsubscribeSessionStore?.();
+    this.releaseRenderResources();
+    if (surfaces.get(this.options.registryKey) === this) {
+      surfaces.delete(this.options.registryKey);
+    }
+  }
+
+  /**
+   * Releases xterm/WebGL/DOM resources for a surface whose tab has been
+   * hidden for COLD_PARK_DELAY_MS, without disposing the surface itself:
+   * the server-side PTY detaches from this surface but keeps running,
+   * `mountedHost` is left in place, and the surface stays registered.
+   * `setHostVisible(true)` reinitializes and reattaches, replaying the
+   * terminal_snapshot the server already holds for the still-live PTY.
+   */
+  private coldPark(): void {
+    if (this.disposed || !this.terminal) return;
+    if (this.attachedConnectionGeneration > 0) {
+      wsClient.detachTerminal(this.actualTerminalId, this.surfaceId);
+      this.attachedConnectionGeneration = 0;
+    }
+    this.releaseRenderResources();
+  }
+
+  private releaseRenderResources(): void {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.cancelPendingFit();
@@ -352,6 +514,10 @@ export class TerminalSurface {
       this.root.removeEventListener('paste', this.pasteListener, true);
     }
     this.pasteListener = null;
+    if (this.root && this.compositionEndListener) {
+      this.root.removeEventListener('compositionend', this.compositionEndListener, true);
+    }
+    this.compositionEndListener = null;
     try {
       this.webglAddon?.dispose();
     } catch {
@@ -364,9 +530,6 @@ export class TerminalSurface {
     this.terminal = null;
     this.root?.remove();
     this.root = null;
-    if (surfaces.get(this.options.registryKey) === this) {
-      surfaces.delete(this.options.registryKey);
-    }
   }
 
   private async initialize(): Promise<boolean> {
@@ -416,6 +579,10 @@ export class TerminalSurface {
         allowProposedApi: true,
         minimumContrastRatio: 4.5,
         scrollback: 5_000,
+        scrollbar: {
+          showScrollbar: true,
+          width: 7,
+        },
         fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", monospace',
         fontSize: this.fontSize,
         theme: this.theme,
@@ -439,12 +606,20 @@ export class TerminalSurface {
           } catch {
             // already torn down
           }
-          this.webglAddon = null;
-          try {
-            this.terminal?.refresh(0, Math.max(0, (this.terminal?.rows ?? 1) - 1));
-          } catch {
-            // The surface may have been disposed while the context was lost.
-          }
+          if (this.webglAddon === webglAddon) this.webglAddon = null;
+
+          // DOM and WebGL renderers can calculate slightly different cell
+          // metrics. Wait until the DOM renderer owns the screen, then refit
+          // the stable grid so panel bounds and PTY dimensions stay aligned.
+          requestAnimationFrame(() => {
+            if (this.disposed || this.terminal !== terminal) return;
+            this.fitAndResize(false, true);
+            try {
+              terminal.refresh(0, Math.max(0, terminal.rows - 1));
+            } catch {
+              // The renderer may be torn down during the recovery frame.
+            }
+          });
         });
         terminal.loadAddon(webglAddon);
         this.webglAddon = webglAddon;
@@ -491,6 +666,7 @@ export class TerminalSurface {
         ) {
           event.preventDefault();
           event.stopPropagation();
+          this.notifyTerminalInput();
           this.enqueueClipboardPaste(() => (
             this.pasteDesktopClipboard(terminal, electronClipboard as ElectronTerminalClipboardApi)
           ));
@@ -498,11 +674,17 @@ export class TerminalSurface {
         }
 
         const action = resolveTerminalInputAction(event, inputContext);
-        if (action === null) return true;
+        if (action === null) {
+          if (event.type === 'keydown' && !event.isComposing && !isModifierOnlyKey(event.key)) {
+            this.armTerminalInputOrigin();
+          }
+          return true;
+        }
 
         event.preventDefault();
         event.stopPropagation();
         if (action.type === 'send-input') {
+          this.notifyTerminalInput();
           this.sendInput(action.data);
         } else if (action.position === 'top') {
           scrollController.scrollToTop();
@@ -512,6 +694,10 @@ export class TerminalSurface {
         return false;
       });
       this.inputDisposable = terminal.onData((data) => {
+        if (this.terminalInputOriginArmed) {
+          this.terminalInputOriginArmed = false;
+          this.notifyTerminalInput();
+        }
         this.sendInput(data);
       });
       this.scrollDisposable = terminal.onScroll(() => {
@@ -520,7 +706,10 @@ export class TerminalSurface {
       });
       this.syncScrollStateFromController();
       this.pasteListener = (event) => {
-        if (event.clipboardData?.getData('text/plain')) return;
+        if (event.clipboardData?.getData('text/plain')) {
+          this.armTerminalInputOrigin();
+          return;
+        }
         const imageFile = Array.from(event.clipboardData?.items ?? [])
           .find((item) => item.kind === 'file' && item.type.startsWith('image/'))
           ?.getAsFile();
@@ -528,9 +717,14 @@ export class TerminalSurface {
 
         event.preventDefault();
         event.stopPropagation();
+        this.notifyTerminalInput();
         this.enqueueClipboardPaste(() => this.pasteBrowserClipboardImage(terminal, imageFile));
       };
       root.addEventListener('paste', this.pasteListener, true);
+      this.compositionEndListener = (event) => {
+        if (event.data) this.notifyTerminalInput();
+      };
+      root.addEventListener('compositionend', this.compositionEndListener, true);
     } catch (error) {
       this.updateState(
         'error',
@@ -567,6 +761,20 @@ export class TerminalSurface {
       .catch((error: unknown) => {
         this.reportClipboardPasteError(error);
       });
+  }
+
+  private notifyTerminalInput(): void {
+    this.onInput?.();
+  }
+
+  private armTerminalInputOrigin(): void {
+    this.terminalInputOriginArmed = true;
+    const epoch = ++this.terminalInputOriginEpoch;
+    queueMicrotask(() => {
+      if (this.terminalInputOriginEpoch === epoch) {
+        this.terminalInputOriginArmed = false;
+      }
+    });
   }
 
   private reportClipboardPasteError(error: unknown): void {
@@ -610,7 +818,36 @@ export class TerminalSurface {
         this.serverGeneration = message.generation;
         this.lastSequence = 0;
       }
+      if (message.appearance) this.applyServerAppearance(message.appearance);
       this.updateState('running', `${message.shell} - ${message.cwd}`);
+      const requested = this.requestedTheme;
+      if (
+        requested
+        && message.appearance
+        && (
+          requested.mode !== message.appearance.mode
+          || requested.theme.foreground !== message.appearance.foreground
+          || requested.theme.background !== message.appearance.background
+        )
+      ) {
+        wsClient.setTerminalAppearance(
+          this.actualTerminalId,
+          this.surfaceId,
+          this.toAppearance(requested.theme, requested.mode),
+        );
+      }
+      return;
+    }
+
+    if (message.type === 'terminal_appearance') {
+      if (message.restartIntent) this.themeRestartLaunchIntent = message.restartIntent;
+      this.applyServerAppearance(message.appearance);
+      const hasSafeRestartRecipe = Boolean(this.options.launch || this.themeRestartLaunchIntent);
+      this.setThemeRestartState(
+        message.restartRequired,
+        message.restartAllowed && hasSafeRestartRecipe,
+      );
+      if (!message.restartRequired) this.requestedTheme = null;
       return;
     }
 
@@ -623,6 +860,7 @@ export class TerminalSurface {
       this.lastSequence = message.seq;
       this.replaying = true;
       const restorePoint = this.scrollController?.captureRestorePoint();
+      const shouldRecoverRenderer = this.backgroundSgrDetector.consume(message.data);
       this.terminal?.reset();
       this.terminal?.write(message.data, () => {
         if (restorePoint) this.scrollController?.restore(restorePoint);
@@ -630,6 +868,7 @@ export class TerminalSurface {
           this.replaying = false;
         }
         this.scheduleSurfaceScrollStateSync();
+        if (shouldRecoverRenderer) this.recoverRendererAfterBackgroundRedraw();
       });
       return;
     }
@@ -638,9 +877,11 @@ export class TerminalSurface {
       if (message.generation !== this.serverGeneration || message.seq <= this.lastSequence) return;
       this.lastSequence = message.seq;
       const restorePoint = this.scrollController?.captureRestorePoint();
+      const shouldRecoverRenderer = this.backgroundSgrDetector.consume(message.data);
       this.terminal?.write(message.data, () => {
         if (restorePoint) this.scrollController?.restore(restorePoint);
         this.scheduleSurfaceScrollStateSync();
+        if (shouldRecoverRenderer) this.recoverRendererAfterBackgroundRedraw();
       });
       return;
     }
@@ -648,11 +889,37 @@ export class TerminalSurface {
     if (message.type === 'terminal_exit') {
       if (message.generation !== this.serverGeneration) return;
       this.attachedConnectionGeneration = 0;
+      if (this.themeRestartPending) {
+        this.themeRestartPending = false;
+        if (this.themeRestartLaunchIntent) {
+          setPendingTerminalLaunch(this.options.terminalId, {
+            intent: this.themeRestartLaunchIntent,
+            locksSourceSession: true,
+          });
+        }
+        this.serverGeneration = null;
+        this.lastSequence = 0;
+        this.replaying = false;
+        this.terminal?.reset();
+        this.scrollController?.scrollToBottom();
+        void this.ensureConnected();
+        return;
+      }
       this.autoConnect = false;
       this.replaying = false;
       clearClientTerminalHandoff(this.options.terminalId);
       this.updateState('exited', `Terminal exited with code ${message.exitCode}`);
       this.finishPendingLaunch('error', `Terminal exited with code ${message.exitCode}`);
+    }
+  }
+
+  private recoverRendererAfterBackgroundRedraw(): void {
+    // A synchronous repaint repairs stale cells immediately. The shared atlas
+    // reset waits for streaming output to settle so it cannot flicker mid-frame.
+    try {
+      this.refreshTerminalViewport();
+    } finally {
+      sharedTerminalRenderRecovery.request();
     }
   }
 
@@ -730,6 +997,7 @@ export class TerminalSurface {
   }
 
   private requestStableFit(claim: boolean): void {
+    deferTerminalPtyResizeFlushIfHeld();
     this.pendingFitClaim ||= claim;
     if (this.pendingFitFrameId !== null || !this.isMountedHostVisible()) return;
 
@@ -766,6 +1034,20 @@ export class TerminalSurface {
     waitForStableGrid();
   }
 
+  private scheduleColdPark(): void {
+    if (this.coldParkTimerId !== null || this.disposed) return;
+    this.coldParkTimerId = window.setTimeout(() => {
+      this.coldParkTimerId = null;
+      this.coldPark();
+    }, COLD_PARK_DELAY_MS);
+  }
+
+  private cancelColdPark(): void {
+    if (this.coldParkTimerId === null) return;
+    window.clearTimeout(this.coldParkTimerId);
+    this.coldParkTimerId = null;
+  }
+
   private cancelPendingFit(): void {
     if (this.pendingFitFrameId !== null) cancelAnimationFrame(this.pendingFitFrameId);
     this.pendingFitFrameId = null;
@@ -784,13 +1066,22 @@ export class TerminalSurface {
       }
       const dimensions = this.getDimensions();
       if (dimensions && this.attachedConnectionGeneration > 0) {
-        wsClient.resizeTerminal(
-          this.actualTerminalId,
-          this.surfaceId,
-          dimensions.cols,
-          dimensions.rows,
-          claim,
-        );
+        const connectionGeneration = this.attachedConnectionGeneration;
+        const request: TerminalPtyResizeRequest = { ...dimensions, claim };
+        const send = (pendingRequest: TerminalPtyResizeRequest) => {
+          if (
+            this.disposed
+            || connectionGeneration !== this.attachedConnectionGeneration
+          ) return;
+          wsClient.resizeTerminal(
+            this.actualTerminalId,
+            this.surfaceId,
+            pendingRequest.cols,
+            pendingRequest.rows,
+            pendingRequest.claim,
+          );
+        };
+        if (!queueTerminalPtyResizeIfHeld(this.surfaceId, request, send)) send(request);
       }
     } catch {
       // A zero-sized panel can briefly make FitAddon unable to calculate cells.
@@ -826,23 +1117,60 @@ export class TerminalSurface {
     this.notifyListeners();
   }
 
+  private toAppearance(
+    theme: TesseraTerminalTheme,
+    mode: TerminalColorSchemeMode,
+  ): TerminalAppearance {
+    return {
+      mode,
+      foreground: theme.foreground,
+      background: theme.background,
+    };
+  }
+
+  private applyServerAppearance(appearance: TerminalAppearance): void {
+    const requested = this.requestedTheme?.mode === appearance.mode
+      && this.requestedTheme.theme.foreground === appearance.foreground
+      && this.requestedTheme.theme.background === appearance.background
+      ? this.requestedTheme.theme
+      : null;
+    const matchingPreset = getTerminalThemePresets(appearance.mode).find(({ theme }) => (
+      theme.foreground === appearance.foreground
+      && theme.background === appearance.background
+    ));
+    this.applyTheme(
+      requested ?? matchingPreset?.theme ?? getTerminalTheme(appearance.mode === 'dark'),
+      appearance.mode,
+    );
+  }
+
+  private applyTheme(theme: TesseraTerminalTheme, mode: TerminalColorSchemeMode): void {
+    this.theme = { ...theme };
+    this.appearanceMode = mode;
+    if (this.terminal) this.terminal.options.theme = this.theme;
+    if (this.state.appearanceMode !== mode) {
+      this.state = { ...this.state, appearanceMode: mode };
+      this.notifyListeners();
+    }
+  }
+
+  private setThemeRestartRequired(themeRestartRequired: boolean): void {
+    this.setThemeRestartState(themeRestartRequired, false);
+  }
+
+  private setThemeRestartState(themeRestartRequired: boolean, themeRestartAllowed: boolean): void {
+    if (
+      this.state.themeRestartRequired === themeRestartRequired
+      && this.state.themeRestartAllowed === themeRestartAllowed
+    ) return;
+    this.state = { ...this.state, themeRestartRequired, themeRestartAllowed };
+    this.notifyListeners();
+  }
+
   private syncScrollStateFromController(): void {
     const isAtBottom = this.scrollController?.getSnapshot().isAtBottom ?? true;
-    const activeBuffer = this.terminal?.buffer.active;
-    const scrollMetrics: TerminalScrollMetrics = activeBuffer && this.terminal
-      ? {
-          baseY: activeBuffer.baseY,
-          viewportY: activeBuffer.viewportY,
-          rows: this.terminal.rows,
-        }
-      : this.state.scrollMetrics;
-    if (
-      this.state.isAtBottom === isAtBottom
-      && this.state.scrollMetrics.baseY === scrollMetrics.baseY
-      && this.state.scrollMetrics.viewportY === scrollMetrics.viewportY
-      && this.state.scrollMetrics.rows === scrollMetrics.rows
-    ) return;
-    this.state = { ...this.state, isAtBottom, scrollMetrics };
+    if (this.state.isAtBottom === isAtBottom) return;
+    this.state = { ...this.state, isAtBottom };
     this.notifyListeners();
   }
 

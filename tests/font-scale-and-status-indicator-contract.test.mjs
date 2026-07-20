@@ -41,6 +41,7 @@ function renderStatusIndicator({
   isAwaitingUser = false,
   isProcessing = false,
   isRunning = false,
+  sessionKind,
   placement = 'corner',
   surface = 'sidebar',
 } = {}) {
@@ -49,10 +50,23 @@ function renderStatusIndicator({
     isAwaitingUser,
     isProcessing,
     isRunning,
+    sessionKind,
     placement,
     surface,
   }));
 }
+
+test('PTY processing can outrank unread without changing the GUI default', () => {
+  const gui = renderStatusIndicator({ hasUnread: true, isProcessing: true });
+  const pty = renderStatusIndicator({
+    hasUnread: true,
+    isProcessing: true,
+    sessionKind: 'terminal',
+  });
+
+  assert.doesNotMatch(gui, /animate-spin/);
+  assert.match(pty, /animate-spin/);
+});
 
 test('sidebar corner status indicators render enlarged sizes and offset', () => {
   const awaiting = renderStatusIndicator({ isAwaitingUser: true });

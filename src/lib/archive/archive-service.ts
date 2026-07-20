@@ -3,8 +3,10 @@ import path from 'path';
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import * as dbTasks from '@/lib/db/tasks';
-import { processManager } from '@/lib/cli/process-manager';
-import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
+import {
+  closeSessionRuntimes,
+  getActiveSessionIds,
+} from '@/lib/session/active-session-runtime';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { isManagedWorktreePath, removeManagedWorktree } from '@/lib/worktrees/managed';
@@ -327,14 +329,9 @@ export async function setTaskArchived(taskId: string, archived: boolean, userId?
     }
 
     if (archived) {
-      for (const session of task.sessions) {
-        if (!processManager.getProcess(session.id)) continue;
-        try {
-          await processManager.closeSession(session.id);
-        } catch (error) {
-          logger.warn({ taskId, sessionId: session.id, error }, 'Task archived but a session process did not stop cleanly');
-        }
-      }
+      await Promise.all(
+        task.sessions.map((session) => closeSessionRuntimes(session.id, userId)),
+      );
     }
   });
 }

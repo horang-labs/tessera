@@ -19,6 +19,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useSessionPrStore } from '@/stores/session-pr-store';
 import { useSkillAnalysisStore } from '@/stores/skill-analysis-store';
 import { useTaskStore } from '@/stores/task-store';
+import { useTabStore } from '@/stores/tab-store';
 import { useUsageStore } from '@/stores/usage-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { i18n } from '@/lib/i18n';
@@ -106,12 +107,13 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'session_state': {
-      const changed = useTerminalSessionStore.getState().applySessionState(msg);
       const runtimeIsRunning = sessionStore.getSession(msg.sessionId)?.isRunning;
-      if (msg.status === 'running' && runtimeIsRunning !== false) {
-        startTurnInFlight(msg.sessionId);
-      } else {
-        stopTurnInFlight(msg.sessionId);
+      const changed = msg.status === 'running' && runtimeIsRunning === false
+        ? false
+        : useTerminalSessionStore.getState().applySessionState(msg);
+      if (changed && msg.status === 'running') {
+        const location = useTabStore.getState().findSessionLocation(msg.sessionId);
+        if (location) useTabStore.getState().pinTab(location.tabId);
       }
       if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
         handleTerminalSessionStateMessage(msg, sessionStore.activeSessionId);
@@ -122,7 +124,8 @@ export function handleIncomingServerMessage({
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
       if (!msg.running) {
-        stopTurnInFlight(msg.sessionId);
+        useTerminalSessionStore.getState().markRuntimeStopped(msg.sessionId);
+        retireStoppedTerminalSessionSurface(msg.sessionId);
       }
       return { wasReconnect };
 
@@ -132,7 +135,8 @@ export function handleIncomingServerMessage({
       for (const project of sessionStore.projects) {
         for (const session of project.sessions) {
           if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
-            stopTurnInFlight(session.id);
+            useTerminalSessionStore.getState().markRuntimeStopped(session.id);
+            retireStoppedTerminalSessionSurface(session.id);
           }
         }
       }
@@ -315,6 +319,12 @@ export function handleIncomingServerMessage({
     default:
       return { wasReconnect };
   }
+}
+
+function retireStoppedTerminalSessionSurface(sessionId: string): void {
+  const session = useSessionStore.getState().getSession(sessionId);
+  if (session?.kind !== 'terminal' || session.archived) return;
+  useTabStore.getState().retireSessionSurface(sessionId);
 }
 
 function replayEventsIndicateActiveTurn(

@@ -4,6 +4,7 @@ import type { WorkflowStatus } from '@/types/task-entity';
 import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
 import { useTaskStore } from './task-store';
+import { useTabStore } from './tab-store';
 import { toast } from './notification-store';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
@@ -1136,6 +1137,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
         if (!response.ok) {
           throw new Error('Failed to update archive status');
+        }
+
+        if (archived) {
+          useTabStore.getState().retireSessionSurface(sessionId);
         }
 
         if (result.cleanupError) {

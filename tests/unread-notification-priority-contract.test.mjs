@@ -24,25 +24,37 @@ test('late replay events do not restart unread completed sessions', () => {
   assert.match(replayCase, /shouldStartTurnFromReplayEvents\(sessionStore, msg\.sessionId, msg\.events\)/);
 });
 
-test('session status dot renders unread before processing', () => {
+test('session status dot keeps GUI unread priority with a PTY processing exception', () => {
+  const processingPolicy = workItemPrimitivesSource.indexOf('const showsProcessing');
   const unreadBranch = workItemPrimitivesSource.indexOf('if (hasUnread)');
-  const processingBranch = workItemPrimitivesSource.indexOf('if (isProcessing)');
 
+  assert.notEqual(processingPolicy, -1);
   assert.notEqual(unreadBranch, -1);
-  assert.notEqual(processingBranch, -1);
-  assert.ok(unreadBranch < processingBranch, 'hasUnread must be checked before isProcessing');
+  assert.match(
+    workItemPrimitivesSource,
+    /showsProcessing = isProcessing && \(sessionKind === 'terminal' \|\| !hasUnread\)/,
+  );
+  assert.ok(processingPolicy < unreadBranch, 'status priority must be resolved before rendering unread');
 });
 
-test('kanban stripes render unread before processing', () => {
-  const chatUnreadBranch = kanbanCardSource.indexOf(': hasUnread\n      ?');
+test('kanban stripes keep GUI unread priority while PTY processing takes precedence', () => {
+  const chatUnreadBranch = kanbanCardSource.indexOf(': visibleUnread\n      ?');
   const chatProcessingBranch = kanbanCardSource.indexOf(': isProcessing\n        ?');
-  const taskUnreadBranch = kanbanCardSource.indexOf(': hasUnreadSession\n      ?');
+  const taskUnreadBranch = kanbanCardSource.indexOf(': visibleTaskUnread\n      ?');
   const taskProcessingBranch = kanbanCardSource.indexOf(': hasProcessingSession\n        ?');
 
   assert.notEqual(chatUnreadBranch, -1);
   assert.notEqual(chatProcessingBranch, -1);
   assert.notEqual(taskUnreadBranch, -1);
   assert.notEqual(taskProcessingBranch, -1);
+  assert.match(
+    kanbanCardSource,
+    /visibleUnread = session\.kind === 'terminal' && isProcessing \? false : hasUnread/,
+  );
+  assert.match(
+    kanbanCardSource,
+    /visibleTaskUnread = hasTerminalProcessingSession \? false : hasUnreadSession/,
+  );
   assert.ok(chatUnreadBranch < chatProcessingBranch, 'chat card unread stripe must precede processing stripe');
   assert.ok(taskUnreadBranch < taskProcessingBranch, 'task card unread stripe must precede processing stripe');
 });

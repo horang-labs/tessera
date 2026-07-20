@@ -12,14 +12,12 @@ import { useCollectionStore } from '@/stores/collection-store';
 import { useBoardStore } from '@/stores/board-store';
 import {
   selectAnyAwaitingUserPrompt,
-  selectAnyTurnInFlight,
   selectIsAwaitingUserPrompt,
-  selectIsTurnInFlight,
   useChatStore,
 } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore, selectHasRunningWorkflow, selectAnyRunningWorkflow } from '@/stores/session-store';
+import { useSessionStore } from '@/stores/session-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
@@ -42,6 +40,11 @@ import {
 import { DiffStatsBadge } from '@/components/chat/diff-stats-badge';
 import { ProviderLogoMark } from '@/components/chat/provider-brand';
 import { TaskPrBadge, detectPrMismatch, prMismatchTooltip } from '@/components/chat/task-pr-badge';
+import {
+  useIsSessionProcessing,
+  useSessionProcessingSummary,
+} from '@/hooks/use-session-processing';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 // --- Helpers ---
 
@@ -151,9 +154,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const collections = scopedCollections ?? currentProjectCollections;
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
-  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
-  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
-  const isProcessing = isProcessingTurn || isWorkflowRunning;
+  const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
   const isGeneratingTitle = useSessionStore((s) => s.generatingTitleIds.has(session.id));
   const isJustDropped = useBoardStore((s) => s.justDroppedId === session.id);
@@ -183,22 +184,24 @@ export const KanbanChatCard = memo(function KanbanChatCard({
     ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
   const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
+  const runtimePresentation = resolveSessionRuntimePresentation(session);
+  const visibleUnread = session.kind === 'terminal' && isProcessing ? false : hasUnread;
   const stripeClass = isAwaitingUser
     ? 'task-stripe task-stripe-attention'
-    : hasUnread
+    : visibleUnread
       ? 'task-stripe task-stripe-unread'
       : isProcessing
         ? 'task-stripe task-stripe-processing'
-        : session.isRunning
+        : runtimePresentation.showRunning
           ? 'task-stripe task-stripe-running'
           : null;
   const stripeLabel = isAwaitingUser
     ? t('status.inputRequired')
-    : hasUnread
+    : visibleUnread
       ? t('status.unreadNotification')
       : isProcessing
         ? t('status.processing')
-        : session.isRunning
+        : runtimePresentation.showRunning
           ? t('status.sessionRunning')
           : null;
   const titleAnimationKey = isGeneratingTitle
@@ -334,7 +337,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                   isProcessing={isProcessing}
                   isAwaitingUser={isAwaitingUser}
                   hasUnread={hasUnread}
-                  isRunning={session.isRunning}
+                  isRunning={runtimePresentation.showRunning}
+                  sessionKind={session.kind}
                   placement="corner"
                   surface="board"
                 />
@@ -367,7 +371,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                   isProcessing={isProcessing}
                   isAwaitingUser={isAwaitingUser}
                   hasUnread={hasUnread}
-                  isRunning={session.isRunning}
+                  isRunning={runtimePresentation.showRunning}
+                  sessionKind={session.kind}
                   placement="corner"
                   surface="board"
                 />
@@ -443,7 +448,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
               : undefined,
           }}
         >
-          {session.isRunning && onStopProcess && (
+          {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
               onClick={(e) => {
                 e.stopPropagation();
@@ -511,9 +516,9 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           onDelete={handleDelete}
           onOpenInNewTab={handleOpenInNewTab}
           onGenerateTitle={onGenerateTitle ? () => onGenerateTitle(session.id) : undefined}
-          isRunning={session.isRunning}
+          isRunning={runtimePresentation.showRunning}
           onMoveToProject={onMoveToProject ? handleMoveToProject : undefined}
-          onStopProcess={session.isRunning ? handleStopProcess : undefined}
+          onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}
@@ -626,20 +631,25 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       provider: taskSession.provider,
       lastModified: taskSession.lastModified,
       isRunning: taskSession.isRunning,
+      kind: taskSession.kind,
     } as UnifiedSession;
   }, [liveProjects]);
-  const hasRunningSession = useSessionStore((state) =>
+  const hasVisibleRuntimeSession = useSessionStore((state) =>
     taskSessionIds.some((id) => {
       for (const p of state.projects) {
         const s = p.sessions.find((ss) => ss.id === id);
-        if (s) return s.isRunning;
+        if (s) return resolveSessionRuntimePresentation(s).showRunning;
       }
-      return false;
+      const snapshot = task.sessions.find((session) => session.id === id);
+      return snapshot
+        ? resolveSessionRuntimePresentation(snapshot).showRunning
+        : false;
     })
   );
-  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(taskSessionIds));
-  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(taskSessionIds));
-  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
+  const {
+    hasProcessingSession,
+    hasTerminalProcessingSession,
+  } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
   const hasUnreadSession = useSessionStore((state) =>
     !isActive && taskSessionIds.some((id) => {
@@ -651,28 +661,30 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       return false;
     })
   );
-  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasRunningSession;
+  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasVisibleRuntimeSession;
+
+  const visibleTaskUnread = hasTerminalProcessingSession ? false : hasUnreadSession;
 
   // Left-edge status stripe — mirrors the session dot so the signal
-  // travels on two channels. Priority: awaiting user input > unread > processing > running.
+  // travels on two channels. PTY processing outranks stale unread state.
   // Applied as a card-level class so the stroke follows `rounded-lg`
   // corners instead of drawing a straight line past them.
   const stripeClass = hasAwaitingUserSession
     ? 'task-stripe task-stripe-attention'
-    : hasUnreadSession
+    : visibleTaskUnread
       ? 'task-stripe task-stripe-unread'
       : hasProcessingSession
         ? 'task-stripe task-stripe-processing'
-        : hasRunningSession
+        : hasVisibleRuntimeSession
           ? 'task-stripe task-stripe-running'
           : null;
   const stripeLabel = hasAwaitingUserSession
     ? t('status.inputRequired')
-    : hasUnreadSession
+    : visibleTaskUnread
       ? t('status.unreadNotification')
       : hasProcessingSession
         ? t('status.processing')
-        : hasRunningSession
+        : hasVisibleRuntimeSession
           ? t('status.sessionRunning')
           : null;
 
@@ -729,7 +741,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
 
     for (const session of task.sessions) {
       const liveSession = useSessionStore.getState().getSession(session.id);
-      if (liveSession?.isRunning ?? session.isRunning) {
+      if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onSessionStopProcess?.(session.id);
       }
     }
@@ -898,7 +910,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   isProcessing={hasProcessingSession}
                   isAwaitingUser={hasAwaitingUserSession}
                   hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
+                  isRunning={hasVisibleRuntimeSession}
+                  sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                   placement="corner"
                   surface="board"
                 />
@@ -909,7 +922,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   isProcessing={hasProcessingSession}
                   isAwaitingUser={hasAwaitingUserSession}
                   hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
+                  isRunning={hasVisibleRuntimeSession}
+                  sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                   placement="inline"
                   surface="board"
                 />
@@ -951,7 +965,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     isProcessing={hasProcessingSession}
                     isAwaitingUser={hasAwaitingUserSession}
                     hasUnread={hasUnreadSession}
-                    isRunning={hasRunningSession}
+                    isRunning={hasVisibleRuntimeSession}
+                    sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                     placement="corner"
                     surface="board"
                   />
@@ -1047,7 +1062,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
               : undefined,
           }}
         >
-          {hasRunningSession && onSessionStopProcess && (
+          {hasVisibleRuntimeSession && onSessionStopProcess && (
             <StopProcessButton
               onClick={handleStopProcess}
               className="p-0.5 rounded text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
@@ -1188,14 +1203,16 @@ function KanbanSubSessionItem({
   const [isHovered, setIsHovered] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
-  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
-  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
-  const isProcessing = isProcessingTurn || isWorkflowRunning;
+  const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const liveSession = useSessionStore((state) => state.getSession(session.id));
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(session.id));
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
+  const runtimePresentation = resolveSessionRuntimePresentation({
+    kind: liveSession?.kind ?? session.kind,
+    isRunning: liveIsRunning,
+  });
   const liveUnreadCount = liveSession?.unreadCount ?? 0;
   const hasLiveUnread = !isActive && liveUnreadCount > 0;
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
@@ -1207,7 +1224,7 @@ function KanbanSubSessionItem({
       onOpenInNewTab ||
       onGenerateTitle ||
       onMoveToProject ||
-      (liveIsRunning && onStopProcess),
+      (runtimePresentation.canStop && onStopProcess),
   );
 
   const {
@@ -1304,7 +1321,8 @@ function KanbanSubSessionItem({
               isProcessing={isProcessing}
               isAwaitingUser={isAwaitingUser}
               hasUnread={hasLiveUnread}
-              isRunning={liveIsRunning}
+              isRunning={runtimePresentation.showRunning}
+              sessionKind={liveSession?.kind ?? session.kind}
               placement="corner"
               surface="board"
             />
@@ -1315,7 +1333,8 @@ function KanbanSubSessionItem({
               isProcessing={isProcessing}
               isAwaitingUser={isAwaitingUser}
               hasUnread={hasLiveUnread}
-              isRunning={liveIsRunning}
+              isRunning={runtimePresentation.showRunning}
+              sessionKind={liveSession?.kind ?? session.kind}
               placement="leading"
               surface="board"
             />
@@ -1361,9 +1380,9 @@ function KanbanSubSessionItem({
           onDelete={handleDelete}
           onOpenInNewTab={onOpenInNewTab ? handleOpenInNewTab : undefined}
           onGenerateTitle={onGenerateTitle ? handleGenerateTitle : undefined}
-          isRunning={liveIsRunning}
+          isRunning={runtimePresentation.showRunning}
           onMoveToProject={onMoveToProject ? handleMoveToProject : undefined}
-          onStopProcess={liveIsRunning && onStopProcess ? handleStopProcess : undefined}
+          onStopProcess={runtimePresentation.canStop && onStopProcess ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}

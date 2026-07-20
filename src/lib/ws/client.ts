@@ -8,7 +8,7 @@ import type {
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
-import type { TerminalColorQueryColors, TerminalLaunchIntent } from '@/lib/terminal/types';
+import type { TerminalAppearance, TerminalLaunchIntent } from '@/lib/terminal/types';
 import { v4 as uuidv4 } from 'uuid';
 import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
@@ -35,6 +35,11 @@ export class WebSocketClient {
   private wasReconnect = false;
   private connectionGeneration = 0;
   private readonly pendingTerminalCloses = new Set<string>();
+  private readonly pendingPreviewReleases = new Map<string, {
+    terminalId: string;
+    sessionId?: string | null;
+    previewOwnerToken: string;
+  }>();
 
   connect(userId: string) {
     // Skip if already connected/connecting with same user
@@ -67,6 +72,10 @@ export class WebSocketClient {
           this.sendRequest('terminal_close', { terminalId });
         }
         this.pendingTerminalCloses.clear();
+        for (const release of this.pendingPreviewReleases.values()) {
+          this.sendRequest('terminal_release_preview', release);
+        }
+        this.pendingPreviewReleases.clear();
         useChatStore.getState().setConnectionStatus('connected', 0);
         // Prime the SSoT provider list so UIs mounted later read it synchronously.
         useProvidersStore.getState().fetch();
@@ -360,10 +369,11 @@ export class WebSocketClient {
     shellKind?: 'default' | 'cmd' | 'powershell' | 'wsl';
     cols?: number;
     rows?: number;
-    colorQueryColors?: TerminalColorQueryColors;
+    appearance?: TerminalAppearance;
     launchIntent?: TerminalLaunchIntent;
     prefillInput?: string;
     launch?: { providerId: string; sessionId: string };
+    previewOwnerToken?: string;
   }): boolean {
     // A deliberate restart supersedes a close queued during a disconnect.
     this.pendingTerminalCloses.delete(args.terminalId);
@@ -374,8 +384,26 @@ export class WebSocketClient {
     return this.sendRequest('terminal_detach', { terminalId, surfaceId });
   }
 
+  releasePreviewTerminal(args: {
+    terminalId: string;
+    sessionId?: string | null;
+    previewOwnerToken: string;
+  }): boolean {
+    const sent = this.sendRequest('terminal_release_preview', args);
+    if (!sent) this.pendingPreviewReleases.set(args.previewOwnerToken, args);
+    return sent;
+  }
+
   sendTerminalInput(terminalId: string, surfaceId: string, data: string): boolean {
     return this.sendRequest('terminal_input', { terminalId, surfaceId, data });
+  }
+
+  setTerminalAppearance(
+    terminalId: string,
+    surfaceId: string,
+    appearance: TerminalAppearance,
+  ): boolean {
+    return this.sendRequest('terminal_set_appearance', { terminalId, surfaceId, appearance });
   }
 
   resizeTerminal(

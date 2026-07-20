@@ -107,6 +107,48 @@ test('closing a terminal while its PTY dependency loads cancels the spawn', asyn
   ), true);
 });
 
+test('releasing a preview during startup cancels only its owned spawn', async () => {
+  let resolveLoader: ((factory: TerminalPtyFactory) => void) | undefined;
+  let spawnCount = 0;
+  const loader = new Promise<TerminalPtyFactory>((resolve) => {
+    resolveLoader = resolve;
+  });
+  const manager = new TerminalManager(() => {}, () => loader);
+  const creation = manager.create({
+    terminalId: 'preview-terminal',
+    userId: 'preview-user',
+    connectionId: 'disconnected-connection',
+    surfaceId: 'preview-surface',
+    previewOwnerToken: 'preview-owner',
+    cwd: process.cwd(),
+  });
+
+  await manager.releasePreview(
+    'preview-terminal',
+    'preview-user',
+    null,
+    'different-preview',
+  );
+  assert.equal(manager.hasOrIsOpening('preview-terminal', 'preview-user'), true);
+
+  const release = manager.releasePreview(
+    'preview-terminal',
+    'preview-user',
+    null,
+    'preview-owner',
+  );
+  resolveLoader?.({
+    spawn() {
+      spawnCount += 1;
+      throw new Error('released preview must not spawn');
+    },
+  });
+  await Promise.all([creation, release]);
+
+  assert.equal(spawnCount, 0);
+  assert.equal(manager.hasOrIsOpening('preview-terminal', 'preview-user'), false);
+});
+
 test('closing a running handoff keeps its lease until PTY exit confirmation', () => {
   const userId = 'closing-user';
   const terminalId = 'closing-terminal';
@@ -199,7 +241,10 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
   internals.terminals.set(`${userId}:${terminalId}`, runtime);
 
   manager.close(terminalId, userId);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  const deadline = Date.now() + 250;
+  while (isSessionHandedOffToTerminal(sessionId) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 
   assert.equal(signals[0], undefined);
   assert.equal(signals.length, 2);

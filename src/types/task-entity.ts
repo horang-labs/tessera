@@ -82,6 +82,8 @@ export interface TaskSession {
   provider?: string;
   lastModified: string;
   isRunning: boolean;
+  /** Fixed execution surface inherited from the linked session. */
+  kind?: 'chat' | 'terminal';
 }
 
 export function generateTaskId(): string {

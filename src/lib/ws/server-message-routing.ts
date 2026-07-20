@@ -3,6 +3,7 @@ import { cliProviderRegistry } from '../cli/providers/registry';
 import { getAgentEnvironment } from '../cli/spawn-cli';
 import { processManager } from '../cli/process-manager';
 import * as dbSessions from '../db/sessions';
+import { sessionHistory } from '../session-history';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
 import { bindTerminalSender } from '../terminal/shared-terminal-manager';
@@ -20,7 +21,7 @@ import { buildProviderTerminalLaunch } from '../terminal/provider-launch';
 import { createCodexOverlay } from '../terminal/codex-overlay';
 import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
 import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
-import type { TerminalLaunchSpec } from '../terminal/types';
+import type { TerminalCreateOptions, TerminalLaunchSpec } from '../terminal/types';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { ProviderMeta } from '../cli/providers/types';
@@ -499,14 +500,18 @@ export async function routeClientTransportMessage({
       let providerId: string | undefined;
       let launchEnv: Record<string, string> | undefined;
       let launchObserverDisposer: (() => void) | undefined;
+      let appearanceChangePolicy: TerminalCreateOptions['appearanceChangePolicy'];
+      let canRestartForAppearance: TerminalCreateOptions['canRestartForAppearance'];
       let acquiredHandoff = false;
 
       if (!terminalExists && isStructuredClaude && structured) {
         providerId = 'claude-code';
         const settingsJson = buildClaudeHookSettingsJson();
-        const resume = dbSessions.isTerminalLaunched(
-          dbSessions.getSession(structured.sessionId)?.provider_state ?? null,
-        );
+        // Claude emits SessionStart as soon as its empty TUI opens, but does not
+        // persist a resumable conversation until the first prompt is submitted.
+        // Tessera records that prompt synchronously, so canonical history is the
+        // resume boundary; a mere prior PTY launch is not.
+        const resume = await sessionHistory.historyExists(structured.sessionId);
         const built = buildProviderTerminalLaunch({
           providerId: 'claude-code',
           sessionId: structured.sessionId,
@@ -570,6 +575,7 @@ export async function routeClientTransportMessage({
         }
       } else if (!terminalExists && message.launchIntent) {
         try {
+          providerId = message.launchIntent.kind === 'codex-slash' ? 'codex' : 'claude-code';
           launchSpec = await resolveTerminalLaunchIntent({
             intent: message.launchIntent,
             sessionId: message.sessionId,
@@ -601,6 +607,20 @@ export async function routeClientTransportMessage({
         }
       }
 
+      if (!terminalExists && providerId) {
+        const appearanceProvider = cliProviderRegistry.getProvider(providerId);
+        appearanceChangePolicy = appearanceProvider.getTerminalAppearanceChangePolicy();
+        if (appearanceChangePolicy === 'restart' && structured) {
+          canRestartForAppearance = () => appearanceProvider.canResumeTerminalAfterRestart?.(
+            dbSessions.getSession(structured.sessionId)?.provider_state ?? null,
+          ) ?? false;
+        } else if (appearanceChangePolicy === 'restart' && launchSpec?.handoffSessionId) {
+          // A handoff intent already validated a stable provider thread id and
+          // can safely resolve the same resume recipe again after PTY exit.
+          canRestartForAppearance = () => true;
+        }
+      }
+
       // paneToken sessionId: slash-fallback은 ambient(chat) id라 상태 오귀속 방지 위해 null.
       const tokenSessionId = (
         isStructuredClaude || isStructuredCodex || isStructuredOpenCode
@@ -614,6 +634,7 @@ export async function routeClientTransportMessage({
           userId,
           connectionId,
           surfaceId: message.surfaceId,
+          previewOwnerToken: message.previewOwnerToken,
           terminalId,
           cwd: message.cwd,
           sessionId,
@@ -623,7 +644,10 @@ export async function routeClientTransportMessage({
           launchSpec,
           paneToken,
           providerId,
-          colorQueryColors: message.colorQueryColors,
+          appearanceChangePolicy,
+          canRestartForAppearance,
+          appearanceRestartIntent: launchSpec?.handoffSessionId ? message.launchIntent : undefined,
+          appearance: message.appearance,
           launchEnv,
           launchObserverDisposer,
         });
@@ -632,8 +656,6 @@ export async function routeClientTransportMessage({
         if (acquiredHandoff) releaseTerminalHandoffByTerminal(userId, terminalId);
         throw error;
       }
-      // markTerminalLaunched는 여기서 안 한다(brick finding): create()가 실패를 삼키므로,
-      // 실제 claude가 세션을 persist한 시점 = SessionStart hook 수신 시(S4)에 마커를 찍는다.
       return;
     }
 
@@ -646,6 +668,15 @@ export async function routeClientTransportMessage({
       );
       return;
 
+    case 'terminal_release_preview':
+      await bindTerminalSender(sendToConnection).releasePreview(
+        message.terminalId,
+        userId,
+        message.sessionId,
+        message.previewOwnerToken,
+      );
+      return;
+
     case 'terminal_input':
       bindTerminalSender(sendToConnection).write(
         message.terminalId,
@@ -653,6 +684,16 @@ export async function routeClientTransportMessage({
         connectionId,
         message.surfaceId,
         message.data,
+      );
+      return;
+
+    case 'terminal_set_appearance':
+      bindTerminalSender(sendToConnection).setAppearance(
+        message.terminalId,
+        userId,
+        connectionId,
+        message.surfaceId,
+        message.appearance,
       );
       return;
 

@@ -1,6 +1,11 @@
+import type { TerminalAppearanceChangePolicy } from '@/lib/cli/providers/types';
+
 export type TerminalShellKind = 'default' | 'cmd' | 'powershell' | 'wsl';
 
-export interface TerminalColorQueryColors {
+export type TerminalColorSchemeMode = 'light' | 'dark';
+
+export interface TerminalAppearance {
+  mode: TerminalColorSchemeMode;
   foreground: string;
   background: string;
 }
@@ -29,6 +34,8 @@ export interface TerminalCreateOptions {
   userId: string;
   connectionId: string;
   surfaceId: string;
+  /** Token that may conditionally release a runtime created by a transient preview. */
+  previewOwnerToken?: string;
   cwd?: string | null;
   sessionId?: string | null;
   shellKind?: TerminalShellKind;
@@ -39,8 +46,14 @@ export interface TerminalCreateOptions {
   paneToken?: string;
   /** Native agent provider launched inside this PTY. */
   providerId?: string;
-  /** Renderer-resolved colors used to answer an agent's startup OSC queries. */
-  colorQueryColors?: TerminalColorQueryColors;
+  /** Provider-declared behavior for light/dark changes in an already-running TUI. */
+  appearanceChangePolicy?: TerminalAppearanceChangePolicy;
+  /** Whether closing this runtime can be followed by a same-session resume. */
+  canRestartForAppearance?: () => boolean;
+  /** Revalidated client-safe recipe for recreating a handoff runtime after exit. */
+  appearanceRestartIntent?: TerminalLaunchIntent;
+  /** Renderer-resolved appearance advertised to terminal applications. */
+  appearance?: TerminalAppearance;
   /** Disposes provider resources created before PTY spawn. */
   launchObserverDisposer?: () => void;
   /** Server-owned environment overrides for the provider process. */

@@ -4,7 +4,6 @@ import { wsServer } from '@/lib/ws/server';
 import {
   markCodexTerminalSession,
   markOpenCodeTerminalSession,
-  markTerminalLaunched,
 } from '@/lib/db/sessions';
 import { sessionHistory } from '@/lib/session-history';
 import { maybeAutoGenerateProtocolTitle } from './protocol-adapter-auto-title';
@@ -147,7 +146,6 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       : isOpenCode
         ? mapEventToStatus(event, payload)
         : mapClaudeEventToStatus(entry.terminalId, event, payload);
-    // brick finding: launched 마커는 SessionStart 수신 시 찍는다 = agent가 세션을 실제 persist한 시점.
     if (event === 'SessionStart' && entry.sessionId) {
       if (isCodex) {
         // codex rollout id를 provider_state에 캡처(resume용) + launched 마커 + kind.
@@ -158,9 +156,8 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         if (providerSessionId) {
           markOpenCodeTerminalSession(entry.sessionId, providerSessionId);
         }
-      } else {
-        markTerminalLaunched(entry.sessionId);
       }
+      terminalManager.refreshAppearanceRestartAvailability(entry.sessionId, entry.userId);
     }
     // 첫 프롬프트에서 동기 로컬 제목을 즉시 적용한다. 같은 프롬프트를 history에도
     // 기록해 사용자가 AI 개선을 켠 경우 Stop 시점의 선택적 생성 입력으로 활용한다.

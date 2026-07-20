@@ -20,7 +20,7 @@ export function PanelDivider({
 }: PanelDividerProps) {
   const isHorizontal = direction === 'horizontal';
 
-  const { isDragging, handleMouseDown } = usePanelResize({
+  const { isDragging, handlePointerDown } = usePanelResize({
     direction,
     initialRatio,
     minRatio: 0.15,
@@ -42,7 +42,7 @@ export function PanelDivider({
         isDragging && '[&>div]:bg-(--accent) [&>div]:shadow-[0_0_6px_var(--accent)]',
         !isDragging && 'hover:[&>div]:bg-(--accent) hover:[&>div]:shadow-[0_0_4px_var(--accent)]'
       )}
-      onMouseDown={handleMouseDown}
+      onPointerDown={handlePointerDown}
     >
       {/* Visual 1px line centered in the hit area */}
       <div

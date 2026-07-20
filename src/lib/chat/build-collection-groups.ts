@@ -2,6 +2,7 @@ import type { Collection } from '@/types/collection';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 export interface CollectionGroupData {
   collectionId: string | null;
@@ -19,15 +20,18 @@ export function collectionGroupContainsSession(
     || group.tasks.some((task) => task.sessions.some((session) => session.id === sessionId));
 }
 
-export function taskHasRunningSession(task: Pick<TaskEntity, 'sessions'>): boolean {
-  return task.sessions.some((session) => session.isRunning);
+export function taskHasVisibleRuntimeSession(task: Pick<TaskEntity, 'sessions'>): boolean {
+  return task.sessions.some((session) =>
+    resolveSessionRuntimePresentation(session).showRunning
+  );
 }
 
 export function collectionGroupRunningItemCount(
   group: Pick<CollectionGroupData, 'tasks' | 'chats'>,
 ): number {
-  return group.chats.filter((session) => session.isRunning).length
-    + group.tasks.filter(taskHasRunningSession).length;
+  return group.chats.filter((session) =>
+    resolveSessionRuntimePresentation(session).showRunning
+  ).length + group.tasks.filter(taskHasVisibleRuntimeSession).length;
 }
 
 export function countRunningCollectionGroupItems(groups: CollectionGroupData[]): number {
@@ -40,14 +44,14 @@ export function getRunningCollectionGroupSessionIds(groups: CollectionGroupData[
   for (const group of groups) {
     for (const task of group.tasks) {
       for (const session of task.sessions) {
-        if (session.isRunning) {
+        if (resolveSessionRuntimePresentation(session).canStop) {
           sessionIds.add(session.id);
         }
       }
     }
 
     for (const chat of group.chats) {
-      if (chat.isRunning) {
+      if (resolveSessionRuntimePresentation(chat).canStop) {
         sessionIds.add(chat.id);
       }
     }
@@ -60,8 +64,10 @@ export function filterCollectionGroupsByRunning(groups: CollectionGroupData[]): 
   return groups
     .map((group) => ({
       collectionId: group.collectionId,
-      tasks: group.tasks.filter(taskHasRunningSession),
-      chats: group.chats.filter((session) => session.isRunning),
+      tasks: group.tasks.filter(taskHasVisibleRuntimeSession),
+      chats: group.chats.filter((session) =>
+        resolveSessionRuntimePresentation(session).showRunning
+      ),
     }))
     .filter((group) => group.tasks.length + group.chats.length > 0);
 }

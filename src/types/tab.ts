@@ -187,6 +187,11 @@ export interface TabStoreActions {
   findSessionLocation(sessionId: string): { tabId: string; panelId: string } | null;
 
   /**
+   * 세션의 화면을 정리한다. 단일 패널 탭은 닫고, 분할 탭은 해당 패널만 제거한다.
+   */
+  retireSessionSurface(sessionId: string): void;
+
+  /**
    * 활성 탭의 현재 상태를 TabSnapshot으로 반환.
    * 항상 panel-store의 live 상태를 읽음 (stale 스냅샷 아님).
    */

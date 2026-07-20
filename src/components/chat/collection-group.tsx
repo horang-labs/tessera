@@ -15,12 +15,11 @@ import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { useBoardStore } from '@/stores/board-store';
 import {
   selectAnyAwaitingUserPrompt,
-  selectAnyTurnInFlight,
   useChatStore,
 } from '@/stores/chat-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
-import { useSessionStore, selectAnyRunningWorkflow } from '@/stores/session-store';
+import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useTaskStore } from '@/stores/task-store';
@@ -38,6 +37,8 @@ import {
 } from './collection-group-sections';
 import { DeleteTaskDialog } from './delete-task-dialog';
 import { ItemStatusIndicator } from './work-item-primitives';
+import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) {
   try {
@@ -258,19 +259,20 @@ export const CollectionGroup = memo(function CollectionGroup({
     () => collectionSessionSnapshots.map((session) => session.id),
     [collectionSessionSnapshots],
   );
-  const hasLiveSession = useSessionStore((state) =>
+  const hasVisibleRuntimeSession = useSessionStore((state) =>
     collectionSessionSnapshots.some((snapshot) => {
       for (const project of state.projects) {
         const liveSession = project.sessions.find((session) => session.id === snapshot.id);
-        if (liveSession) return liveSession.isRunning;
+        if (liveSession) return resolveSessionRuntimePresentation(liveSession).showRunning;
       }
 
-      return snapshot.isRunning;
+      return resolveSessionRuntimePresentation(snapshot).showRunning;
     }),
   );
-  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(collectionSessionIds));
-  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(collectionSessionIds));
-  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
+  const {
+    hasProcessingSession,
+    hasTerminalProcessingSession,
+  } = useSessionProcessingSummary(collectionSessionSnapshots);
   const hasUnreadSession = useSessionStore((state) =>
     collectionSessionSnapshots.some((snapshot) => {
       if (snapshot.id === activeSessionId) return false;
@@ -285,8 +287,9 @@ export const CollectionGroup = memo(function CollectionGroup({
   );
   const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(collectionSessionIds));
   const collectionIndicatorStatus = getPrioritizedCollectionIndicatorStatus({
-    hasLiveSession,
+    hasVisibleRuntimeSession,
     hasProcessingSession,
+    hasTerminalProcessingSession,
     hasUnreadSession,
     hasAwaitingUserSession,
   });
@@ -325,8 +328,13 @@ export const CollectionGroup = memo(function CollectionGroup({
         : undefined;
       const isRunning =
         type === 'chat'
-          ? useSessionStore.getState().getSession(id)?.isRunning ?? false
-          : task?.sessions.some((session) => session.isRunning) ?? false;
+          ? resolveSessionRuntimePresentation(
+              useSessionStore.getState().getSession(id) ?? chatById.get(id) ?? { isRunning: false },
+            ).canStop
+          : task?.sessions.some((session) => {
+              const liveSession = useSessionStore.getState().getSession(session.id);
+              return resolveSessionRuntimePresentation(liveSession ?? session).canStop;
+            }) ?? false;
 
       const session = type === 'chat'
         ? useSessionStore.getState().getSession(id) ?? chatById.get(id)
@@ -433,7 +441,7 @@ export const CollectionGroup = memo(function CollectionGroup({
     const task = useTaskStore.getState().getTask(contextMenu.targetId) ?? taskById.get(contextMenu.targetId);
     for (const session of task?.sessions ?? []) {
       const liveSession = useSessionStore.getState().getSession(session.id);
-      if (liveSession?.isRunning ?? session.isRunning) {
+      if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onSessionStopProcess(session.id);
       }
     }

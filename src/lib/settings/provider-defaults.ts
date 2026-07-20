@@ -22,6 +22,7 @@ import {
   DEFAULT_PROFILE_AVATAR_DATA_URL,
   DEFAULT_PROFILE_DISPLAY_NAME,
 } from './profile-defaults';
+import { normalizeTerminalThemePresetId } from '@/lib/terminal/terminal-theme';
 
 export const FONT_SCALE_OPTIONS = [0.8125, 1, 1.1875, 1.375] as const;
 export const DEFAULT_FONT_SCALE = 0.8125;
@@ -524,6 +525,8 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       sendShortcut: 'meta+enter',
     },
     theme: 'auto',
+    terminalThemeLightPreset: 'lifted-neutral',
+    terminalThemeDarkPreset: 'neutral-charcoal',
     fontSize: DEFAULT_FONT_SCALE,
     enterKeyBehavior: 'send',
     defaultPermissionMode: 'default',
@@ -624,6 +627,14 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     ...raw,
     agentExecutionMode: raw?.agentExecutionMode === 'gui' ? 'gui' : 'pty',
     defaultModel: normalizedClaudeModel,
+    terminalThemeLightPreset: normalizeTerminalThemePresetId(
+      'light',
+      raw?.terminalThemeLightPreset,
+    ),
+    terminalThemeDarkPreset: normalizeTerminalThemePresetId(
+      'dark',
+      raw?.terminalThemeDarkPreset,
+    ),
     fontSize: normalizeFontScale(raw?.fontSize),
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
     showRecentWork: raw?.showRecentWork ?? defaults.showRecentWork,

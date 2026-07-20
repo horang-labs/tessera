@@ -3,6 +3,10 @@ import type { ShortcutId } from '@/lib/keyboard/registry';
 import type { GitActionId } from '@/lib/git/action-templates';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type {
+  TerminalDarkThemePresetId,
+  TerminalLightThemePresetId,
+} from '@/lib/terminal/terminal-theme';
 
 export type Language = 'en' | 'ko' | 'zh' | 'ja';
 export type Theme = 'light' | 'dark' | 'auto';
@@ -67,6 +71,8 @@ export interface UserSettings {
     sendShortcut: string;
   };
   theme: Theme;
+  terminalThemeLightPreset: TerminalLightThemePresetId;
+  terminalThemeDarkPreset: TerminalDarkThemePresetId;
   fontSize: number;
   enterKeyBehavior: EnterKeyBehavior;
   defaultPermissionMode: PermissionMode;

@@ -472,7 +472,10 @@ function mergeWhitelistedLoginEnvironment(
       continue;
     }
 
-    if (isAllowedLoginEnvironmentKey(key)) {
+    // Account-wide Codex work may intentionally replace a PTY session overlay.
+    // Keep the existing login-shell precedence for every other supplemental key.
+    if (isAllowedLoginEnvironmentKey(key)
+      && (key !== 'CODEX_HOME' || !Object.hasOwn(target, key))) {
       target[key] = value;
     }
   }

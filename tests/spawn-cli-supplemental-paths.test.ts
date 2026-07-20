@@ -39,3 +39,27 @@ test('macOS: PATH includes Homebrew dirs when present', { skip: getRuntimePlatfo
   const env = buildSpawnEnvironment({ HOME: process.env.HOME, PATH: '/nowhere' }, emptyCache());
   assert.ok(typeof env.PATH === 'string');
 });
+
+test('explicit CODEX_HOME overrides only its login-shell supplement', () => {
+  const cache = emptyCache();
+  cache.loginShell = process.env.SHELL || '/bin/sh';
+  cache.didResolveLoginShell = true;
+  cache.loginShellEnvironment = {
+    CODEX_HOME: '/tmp/tessera/codex-overlay/session-123',
+    HTTPS_PROXY: 'https://login-shell-proxy.test',
+  };
+  cache.didResolveLoginShellEnvironment = true;
+  cache.didResolveLoginShellPath = true;
+
+  const env = buildSpawnEnvironment(
+    {
+      CODEX_HOME: '/tmp/codex-account-home',
+      HTTPS_PROXY: 'https://parent-process-proxy.test',
+      PATH: '/nowhere',
+    },
+    cache,
+  );
+
+  assert.equal(env.CODEX_HOME, '/tmp/codex-account-home');
+  assert.equal(env.HTTPS_PROXY, 'https://login-shell-proxy.test');
+});

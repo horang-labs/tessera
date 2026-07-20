@@ -20,6 +20,8 @@ import SettingsButton from '@/components/settings/settings-button';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useI18n } from '@/lib/i18n';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { ProviderUsageRail } from './provider-usage-rail';
 
 interface ProjectStripProps {
   onAddProject: () => void;
@@ -98,7 +100,9 @@ export function ProjectStrip({
   const runningCounts = useMemo(() => {
     const map = new Map<string, number>();
     for (const p of projects) {
-      const count = p.sessions.filter((s) => s.isRunning).length;
+      const count = p.sessions.filter((session) =>
+        resolveSessionRuntimePresentation(session).showRunning
+      ).length;
       if (count > 0) map.set(p.encodedDir, count);
     }
     return map;
@@ -210,13 +214,13 @@ export function ProjectStrip({
         </div>
       </ScrollArea>
 
-      {!hideManagementActions && (
-        <div className="w-6 mx-auto border-t border-(--divider)" />
-      )}
+      <div className="w-6 mx-auto border-t border-(--divider)" />
+      <ProviderUsageRail />
 
       {/* Global action icons */}
       {!hideManagementActions && (
       <div className="flex flex-col items-center shrink-0">
+        <div className="w-6 border-t border-(--divider)" />
         <NotificationBell direction="right" />
         <Tooltip content={t('skill.dashboardTitle')} delay={300}>
           <Button

@@ -8,6 +8,7 @@ import { wsClient } from '@/lib/ws/client';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { resolveSessionTabOpenMode } from '@/lib/terminal/terminal-preview-policy';
 import type { UnifiedSession } from '@/types/chat';
 
 interface PopoutElectronApi {
@@ -108,15 +109,24 @@ export function useSessionClickHandlers(options?: {
 
       // 2. Cross-tab location search (BR-SIDEBAR-004: replaces isInAnotherPanel)
       const location = useTabStore.getState().findSessionLocation(session.id);
+      const openMode = resolveSessionTabOpenMode(session);
 
       if (location) {
         activateSessionPanel(session.id, { location });
+        if (openMode === 'pinned') {
+          useTabStore.getState().pinTab(location.tabId);
+        }
         return;
       }
 
       // CASE B3 — Session NOT found anywhere (BR-SIDEBAR-007)
-      // 싱글클릭은 항상 프리뷰 탭으로 열기 (빈 패널이든 세션이 있든)
-      useTabStore.getState().openPreview(session.id);
+      // GUI and stopped PTY sessions use preview. A PTY runtime that is already
+      // alive opens pinned so replacing its view can never terminate it.
+      if (openMode === 'pinned') {
+        useTabStore.getState().createTabWithSession(session.id);
+      } else {
+        useTabStore.getState().openPreview(session.id);
+      }
       await viewSession(session);
     },
     [unreadSessionIds, clearUnreadCount, viewSession, options?.orderedIds]

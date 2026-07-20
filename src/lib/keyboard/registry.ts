@@ -11,8 +11,6 @@ export interface ShortcutDefinition {
 export const SHORTCUT_REGISTRY = {
   'new-tab':        { default: '$mod+Alt+t',          category: 'tab',   descKey: 'shortcut.newTab' },
   'close-tab':      { default: '$mod+Alt+w',          category: 'tab',   descKey: 'shortcut.closeTab' },
-  'next-tab':       { default: '$mod+Alt+ArrowRight', category: 'tab',   descKey: 'shortcut.nextTab' },
-  'prev-tab':       { default: '$mod+Alt+ArrowLeft',  category: 'tab',   descKey: 'shortcut.prevTab' },
   'toggle-sidebar': { default: '$mod+Alt+b',          category: 'view',  descKey: 'shortcut.toggleSidebar' },
   'toggle-view':    { default: '$mod+Alt+k',          category: 'view',  descKey: 'shortcut.toggleView' },
   'split-right':    { default: '$mod+Alt+\\',         category: 'panel', descKey: 'shortcut.splitRight' },

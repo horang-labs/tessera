@@ -15,18 +15,20 @@ import { revokePaneTokensForTerminal } from './pane-token-registry';
 import { cleanupCodexOverlayForTerminal } from './codex-overlay';
 import { TerminalHeadlessModel } from './terminal-headless-model';
 import { normalizeTerminalColorEnv } from './terminal-color-env';
-import { createTerminalStartupColorQueryBridge } from './terminal-startup-color-query';
+import { createTerminalAppearanceController } from './terminal-appearance-controller';
 import {
   ownsTerminalHandoffLock,
   releaseTerminalHandoffByTerminal,
 } from './terminal-handoff-lock';
 import type {
   TerminalCreateOptions,
+  TerminalAppearance,
   TerminalProcessHandle,
   TerminalPtyFactory,
   TerminalShellKind,
 } from './types';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import { shouldReleasePreviewRuntime } from './terminal-preview-policy';
 
 type SendToConnection = (connectionId: string, message: ServerTransportMessage) => void;
 type TerminalSessionStateMessage = Extract<ServerTransportMessage, { type: 'session_state' }>;
@@ -151,7 +153,12 @@ interface TerminalRuntime {
   exitEvent?: { exitCode: number; signal?: number };
   cwd: string;
   shell: string;
+  appearanceChangePolicy: NonNullable<TerminalCreateOptions['appearanceChangePolicy']>;
+  canRestartForAppearance?: () => boolean;
+  appearanceRestartIntent?: TerminalCreateOptions['appearanceRestartIntent'];
+  appearanceRestartPending: boolean;
   process: TerminalProcessHandle;
+  appearanceController?: ReturnType<typeof createTerminalAppearanceController>;
   model: TerminalHeadlessModel;
   cols: number;
   rows: number;
@@ -174,6 +181,7 @@ interface TerminalRuntime {
   cancelPrefill?: () => void;
   disposeSessionObservers: Array<() => void>;
   lastSessionState?: TerminalSessionStateMessage;
+  previewOwnerToken?: string;
 }
 
 export interface TerminalManagerOptions {
@@ -263,6 +271,7 @@ export class TerminalManager {
   private readonly openingTerminals = new Map<string, Promise<TerminalRuntime>>();
   private readonly openingByTerminalKey = new Map<string, Promise<TerminalRuntime>>();
   private readonly openingSessionByTerminalKey = new Map<string, string | null>();
+  private readonly openingPreviewOwnerByTerminalKey = new Map<string, string>();
   private readonly sessionBindings = new Map<string, string>();
   private readonly generationByTerminal = new Map<string, number>();
   private readonly disconnectedConnections = new Set<string>();
@@ -343,6 +352,9 @@ export class TerminalManager {
         this.openingTerminals.set(openingKey, opening);
         this.openingByTerminalKey.set(key, opening);
         this.openingSessionByTerminalKey.set(key, resolvedOptions.sessionId ?? null);
+        if (resolvedOptions.previewOwnerToken) {
+          this.openingPreviewOwnerByTerminalKey.set(key, resolvedOptions.previewOwnerToken);
+        }
         void opening.finally(() => {
           if (this.openingTerminals.get(openingKey) === opening) {
             this.openingTerminals.delete(openingKey);
@@ -350,6 +362,7 @@ export class TerminalManager {
           if (this.openingByTerminalKey.get(key) === opening) {
             this.openingByTerminalKey.delete(key);
             this.openingSessionByTerminalKey.delete(key);
+            this.openingPreviewOwnerByTerminalKey.delete(key);
           }
           this.cancelledOpeningKeys.delete(key);
         }).catch(() => {});
@@ -519,6 +532,10 @@ export class TerminalManager {
         ended: false,
         cwd: shell.displayCwd ?? shell.cwd,
         shell: shell.command,
+        appearanceChangePolicy: options.appearanceChangePolicy ?? 'live',
+        canRestartForAppearance: options.canRestartForAppearance,
+        appearanceRestartIntent: options.appearanceRestartIntent,
+        appearanceRestartPending: false,
         process: processHandle,
         model,
         cols,
@@ -534,7 +551,14 @@ export class TerminalManager {
         disposeSessionObservers: options.launchObserverDisposer
           ? [options.launchObserverDisposer]
           : [],
+        previewOwnerToken: options.previewOwnerToken,
       };
+      if (options.appearance) {
+        runtime.appearanceController = createTerminalAppearanceController(
+          options.appearance,
+          (reply) => processHandle.write(reply),
+        );
+      }
       this.terminals.set(key, runtime);
       if (runtime.sessionId) {
         this.sessionBindings.set(
@@ -547,16 +571,6 @@ export class TerminalManager {
           running: true,
         });
       }
-
-      // Agent TUIs probe terminal colors immediately and can time out before
-      // the new browser surface receives its first output frame. Answer only
-      // during startup, then let xterm remain the protocol authority.
-      const startupColorBridge = options.launchSpec && options.colorQueryColors
-        ? createTerminalStartupColorQueryBridge(
-            options.colorQueryColors,
-            (reply) => processHandle.write(reply),
-          )
-        : null;
 
       // 미지원 슬래시 명령 fallback: provider TUI가 기동된 뒤 입력창이
       // 준비되면 prefillInput을 개행 없이 write한다(자동 실행 X, 사용자가 Enter).
@@ -623,7 +637,7 @@ export class TerminalManager {
       }
 
       processHandle.onData((rawData) => {
-        const data = startupColorBridge?.consume(rawData) ?? rawData;
+        const data = runtime.appearanceController?.consumeOutput(rawData) ?? rawData;
         if (data.length === 0) return;
         // replay 버퍼: 원본 청크 순서/내용 그대로 즉시 누적 — coalescing과 독립.
         this.appendBufferedOutput(runtime, data);
@@ -649,7 +663,7 @@ export class TerminalManager {
       });
 
       processHandle.onExit((event) => {
-        const pendingColorQueryData = startupColorBridge?.drain() ?? '';
+        const pendingColorQueryData = runtime.appearanceController?.drain() ?? '';
         if (pendingColorQueryData) {
           this.appendBufferedOutput(runtime, pendingColorQueryData);
           runtime.model.write(pendingColorQueryData);
@@ -684,7 +698,10 @@ export class TerminalManager {
 
   private async attachRuntime(
     runtime: TerminalRuntime,
-    options: Pick<TerminalCreateOptions, 'connectionId' | 'surfaceId' | 'cols' | 'rows'>,
+    options: Pick<
+      TerminalCreateOptions,
+      'connectionId' | 'surfaceId' | 'cols' | 'rows' | 'appearance'
+    >,
     reattached: boolean,
   ): Promise<void> {
     const subscriberKey = this.getSubscriberKey(options.connectionId, options.surfaceId);
@@ -704,6 +721,25 @@ export class TerminalManager {
       this.resizeRuntime(runtime, options.cols, options.rows);
     }
     this.sendStarted(runtime, subscriber, reattached);
+    const runtimeAppearance = runtime.appearanceController?.getAppearance();
+    if (
+      reattached
+      && options.appearance
+      && runtimeAppearance
+      && (
+        runtimeAppearance.mode !== options.appearance.mode
+        || runtimeAppearance.foreground !== options.appearance.foreground
+        || runtimeAppearance.background !== options.appearance.background
+      )
+    ) {
+      this.setAppearance(
+        runtime.terminalId,
+        runtime.userId,
+        subscriber.connectionId,
+        subscriber.surfaceId,
+        options.appearance,
+      );
+    }
 
     try {
       const snapshot = await runtime.model.snapshot();
@@ -789,6 +825,58 @@ export class TerminalManager {
       }
     }
     runtime.process.write(data);
+  }
+
+  setAppearance(
+    terminalId: string,
+    userId: string,
+    connectionId: string,
+    surfaceId: string,
+    appearance: TerminalAppearance,
+  ): void {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime || runtime.ended) return;
+    const subscriberKey = this.getSubscriberKey(connectionId, surfaceId);
+    if (!runtime.subscribers.has(subscriberKey)) return;
+
+    runtime.appearanceController ??= createTerminalAppearanceController(
+      appearance,
+      (reply) => runtime.process.write(reply),
+    );
+    const currentAppearance = runtime.appearanceController.getAppearance();
+    const restartRequired = runtime.appearanceChangePolicy === 'restart'
+      && currentAppearance.mode !== appearance.mode
+      && !runtime.appearanceController.isDynamicColorSchemeSubscribed();
+    if (!restartRequired) {
+      runtime.appearanceController.updateAppearance(appearance);
+    }
+    runtime.appearanceRestartPending = restartRequired;
+    this.broadcastAppearance(runtime, restartRequired);
+  }
+
+  refreshAppearanceRestartAvailability(sessionId: string, userId: string): void {
+    const terminalId = this.sessionBindings.get(this.getSessionKey(userId, sessionId));
+    if (!terminalId) return;
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime || runtime.ended || !runtime.appearanceRestartPending) return;
+    this.broadcastAppearance(runtime, true);
+  }
+
+  private broadcastAppearance(runtime: TerminalRuntime, restartRequired: boolean): void {
+    const restartAllowed = restartRequired && (runtime.canRestartForAppearance?.() ?? false);
+    const canonicalAppearance = runtime.appearanceController?.getAppearance();
+    if (!canonicalAppearance) return;
+    for (const subscriber of runtime.subscribers.values()) {
+      this.sendToConnection(subscriber.connectionId, {
+        type: 'terminal_appearance',
+        terminalId: runtime.terminalId,
+        surfaceId: subscriber.surfaceId,
+        appearance: canonicalAppearance,
+        restartRequired,
+        restartAllowed,
+        restartIntent: restartAllowed ? runtime.appearanceRestartIntent : undefined,
+      });
+    }
   }
 
   /** Route existing chat actions to a terminal-kind session without spawning a headless CLI. */
@@ -880,6 +968,31 @@ export class TerminalManager {
     } catch {
       // Failed spawns already clean their token/overlay and have nothing to kill.
     }
+  }
+
+  /** Close only when this preview token created the runtime or owns its in-flight spawn. */
+  async releasePreview(
+    requestedTerminalId: string,
+    userId: string,
+    sessionId: string | null | undefined,
+    previewOwnerToken: string,
+  ): Promise<void> {
+    const terminalId = this.resolveTerminalId(userId, requestedTerminalId, sessionId);
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (runtime) {
+      if (shouldReleasePreviewRuntime({
+        runtimeOwnerToken: runtime.previewOwnerToken,
+        previewOwnerToken,
+      })) this.closeRuntime(runtime);
+      return;
+    }
+
+    const key = this.getKey(userId, terminalId);
+    if (!shouldReleasePreviewRuntime({
+      runtimeOwnerToken: this.openingPreviewOwnerByTerminalKey.get(key),
+      previewOwnerToken,
+    })) return;
+    await this.close(terminalId, userId);
   }
 
   private closeRuntime(runtime: TerminalRuntime): void {
@@ -1198,6 +1311,7 @@ export class TerminalManager {
       cwd: runtime.cwd,
       shell: runtime.shell,
       reattached,
+      appearance: runtime.appearanceController?.getAppearance(),
     });
   }
 

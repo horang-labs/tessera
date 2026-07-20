@@ -551,25 +551,6 @@ export function extractSessionKind(providerState: string | null): 'chat' | 'term
   }
 }
 
-/** 첫 PTY 런치(SessionStart hook 도착) 성공 여부. --resume 판정용. */
-export function isTerminalLaunched(providerState: string | null): boolean {
-  if (!providerState) return false;
-  try {
-    return JSON.parse(providerState).launched === true;
-  } catch {
-    return false;
-  }
-}
-
-/** launched=true 마커를 기존 provider_state에 병합 기록(kind 등 다른 키 보존). */
-export function markTerminalLaunched(sessionId: string): void {
-  const row = getSession(sessionId);
-  let prev: Record<string, unknown> = {};
-  try { prev = row?.provider_state ? JSON.parse(row.provider_state) : {}; } catch { prev = {}; }
-  if (prev.launched === true) return;
-  updateSession(sessionId, { provider_state: JSON.stringify({ ...prev, kind: 'terminal', launched: true }) });
-}
-
 /** codex 터미널 resume용 rollout session_id 추출. */
 export function extractCodexTerminalSessionId(providerState: string | null): string | undefined {
   if (!providerState) return undefined;

@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 interface LeftPanelProps {
   width: number | string;
   className?: string;
+  collapsed?: boolean;
 }
 
 interface ProjectImportError extends Error {
@@ -30,7 +31,7 @@ interface ProjectImportError extends Error {
   status?: number;
 }
 
-export function LeftPanel({ width, className }: LeftPanelProps) {
+export function LeftPanel({ width, className, collapsed = false }: LeftPanelProps) {
   const isFolderBrowserOpen = useFolderBrowserStore((state) => state.isOpen);
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
   const closeFolderBrowser = useFolderBrowserStore((state) => state.close);
@@ -69,7 +70,7 @@ export function LeftPanel({ width, className }: LeftPanelProps) {
       data-testid="left-panel-container"
     >
       <ProjectStrip onAddProject={handleAddProject} onRemoveProject={setRemoveTarget} />
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      {!collapsed && <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <AppHeader />
         <div className="min-h-0 flex-1 overflow-hidden relative">
           {viewMode === 'board' ? <KanbanBoard /> : <Sidebar />}
@@ -98,7 +99,7 @@ export function LeftPanel({ width, className }: LeftPanelProps) {
             </div>
           )}
         </div>
-      </div>
+      </div>}
       <FolderBrowserDialog
         isOpen={isFolderBrowserOpen}
         onClose={closeFolderBrowser}
