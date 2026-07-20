@@ -122,6 +122,28 @@ test('archive RPC failure preserves local state and task partial success is comp
   assert.equal(dbTasks.getTask('task-archive')?.archived, false);
 });
 
+test('archive falls back to the project work dir when the session worktree is gone', async () => {
+  const missingWorkDir = path.join(dataDir, 'worktrees', 'deleted-branch');
+  dbTasks.createTask({ id: 'task-missing-worktree', projectId: 'project-lifecycle', title: 'Missing worktree' });
+  dbSessions.createSession('archive-missing-worktree', 'project-lifecycle', 'Missing worktree', 'codex', {
+    workDir: missingWorkDir,
+    taskId: 'task-missing-worktree',
+    providerState: JSON.stringify({ threadId: 'thread-missing-worktree' }),
+  });
+
+  const workDirs: Array<string | undefined> = [];
+  setCodexThreadControlRequestExecutorForTests(async (context, method) => {
+    assert.equal(method, 'thread/archive');
+    workDirs.push(context.workDir);
+    return {};
+  });
+
+  await setTaskArchived('task-missing-worktree', true, 'user-1');
+
+  assert.deepEqual(workDirs, [dataDir]);
+  assert.equal(dbTasks.getTask('task-missing-worktree')?.archived, true);
+});
+
 test('archiving a chat stops its live PTY runtime', async (t) => {
   const sessionId = 'archive-live-pty';
   dbSessions.createSession(sessionId, 'project-lifecycle', 'Archive live PTY', 'claude-code', {

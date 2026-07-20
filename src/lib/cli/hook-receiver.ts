@@ -211,6 +211,9 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         terminalId: entry.terminalId,
         status: mapped.status,
         hookEvent: event,
+        // 이 상태 발생시각. recordSessionState가 저장해 replay 때 같은 값을 실으므로
+        // 클라의 알림 dedup 키가 재연결/재전송에도 안정적으로 같은 완료를 가리킨다.
+        stateAt: Date.now(),
         ...(mapped.preview ? { preview: mapped.preview } : {}),
       } as const;
       // 죽었거나 미소유인 pane의 늦은 curl은 브로드캐스트하지 않는다 — 이미

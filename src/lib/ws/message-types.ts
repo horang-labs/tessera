@@ -286,6 +286,12 @@ export type AppServerMessage =
       status: 'running' | 'completed' | 'input_required' | 'idle';
       hookEvent: string;
       preview?: string;
+      /**
+       * 이 상태 인스턴스의 발생시각(epoch ms). 클라의 알림 dedup 키 재료. 서버가
+       * 상태 기록 시 한 번 찍어 저장하고 replay에도 같은 값을 실어, 재연결/리로드로
+       * 같은 완료가 다시 도착해도 알림이 중복 발화하지 않게 한다.
+       */
+      stateAt?: number;
     }
   | {
       type: 'terminal_session_runtime';
