@@ -1,10 +1,11 @@
 export interface ProviderTerminalLaunchInput {
   providerId: string;       // 'claude-code' | 'codex' | 'opencode'
-  sessionId: string;        // tessera uuid (claude --session-id). codex는 argv에 안 씀.
+  sessionId: string;        // claude provider id (new sessions use Tessera id). codex는 argv에 안 씀.
   resume: boolean;          // claude: --resume vs --session-id / codex: resume 유무
   settingsJson?: string;    // claude 전용: buildClaudeHookSettingsJson()
   codexResumeId?: string;   // codex 전용: 캡처한 rollout session_id (codex resume <id>)
   opencodeResumeId?: string;
+  providerSessionActivation?: 'active' | 'background';
 }
 
 export interface ProviderTerminalLaunch {
@@ -34,6 +35,14 @@ export const TERMINAL_PROVIDER_COMMANDS: Readonly<Record<string, string>> = {
 export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput): ProviderTerminalLaunch {
   if (input.providerId === 'claude-code') {
     if (!input.settingsJson) throw new Error('claude terminal launch requires settingsJson');
+    if (input.providerSessionActivation === 'background') {
+      return {
+        command: TERMINAL_PROVIDER_COMMANDS['claude-code'],
+        // The daemon inherited hooks when `/fork` created it. Claude's attach
+        // subcommand ignores trailing global flags and misparses leading ones.
+        args: ['attach', input.sessionId.slice(0, 8)],
+      };
+    }
     return {
       command: TERMINAL_PROVIDER_COMMANDS['claude-code'],
       args: [input.resume ? '--resume' : '--session-id', input.sessionId, '--settings', input.settingsJson],

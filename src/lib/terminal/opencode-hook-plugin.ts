@@ -125,6 +125,22 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
     idleFinalizeTimer = undefined
   }
 
+  const activateTargetSession = (sessionID) => {
+    if (!sessionID || sessionID === targetSessionID) {
+      sendStart()
+      return
+    }
+    clearPromptFlushTimer()
+    clearIdleFinalizeTimer()
+    targetSessionID = sessionID
+    startSent = false
+    sessionIdle = false
+    turnHasSubmittedPrompt = false
+    userMessageIDs.clear()
+    textPartsByMessage.clear()
+    sendStart()
+  }
+
   const finalizeTurn = () => {
     idleFinalizeTimer = undefined
     clearPromptFlushTimer()
@@ -166,11 +182,11 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
           const parentID = readString(info?.parentID)
           if (!createdID || parentID) return
           if (directory && createdDirectory !== directory) return
+          candidateSessionIDs.add(createdID)
           if (targetSessionID) {
-            if (targetSessionID === createdID) sendStart()
+            activateTargetSession(createdID)
             return
           }
-          candidateSessionIDs.add(createdID)
           return
         }
 
@@ -179,10 +195,12 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
           const sessionID = readString(info?.sessionID)
           const messageID = readString(info?.id)
           if (!sessionID || !messageID) return
-          if (!targetSessionID && info?.role === "user") {
-            if (candidateSessionIDs.size > 0 && !candidateSessionIDs.has(sessionID)) return
-            targetSessionID = sessionID
-            sendStart()
+          if (info?.role === "user" && sessionID !== targetSessionID) {
+            if (
+              (targetSessionID && !candidateSessionIDs.has(sessionID))
+              || (!targetSessionID && candidateSessionIDs.size > 0 && !candidateSessionIDs.has(sessionID))
+            ) return
+            activateTargetSession(sessionID)
           }
           if (sessionID !== targetSessionID) return
           if (info?.role !== "user") {

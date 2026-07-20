@@ -265,6 +265,7 @@ export class WebSocketServer {
     this.sendToConnection(ws, userId, {
       type: 'terminal_session_runtime_snapshot',
       activeSessionIds: [...terminalManager.getActiveSessionIds(userId)],
+      reboundSessions: terminalManager.getSessionReboundsForUser(userId),
     });
 
     // Hook state is process state, not a transient WebSocket event. Replay the

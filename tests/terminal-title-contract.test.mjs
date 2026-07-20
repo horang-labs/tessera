@@ -50,7 +50,7 @@ test('automatic title fallback remains eligible for a later Stop retry', () => {
 test('terminal prompts apply the immediate local title before the Stop event', () => {
   assert.match(
     hookReceiverSource,
-    /event === 'UserPromptSubmit'[\s\S]*applyImmediateSessionTitle\(entry\.sessionId, prompt\)/,
+    /event === 'UserPromptSubmit'[\s\S]*applyImmediateSessionTitle\(sessionId, prompt\)/,
   );
   assert.match(hookReceiverSource, /type: 'session_title_updated'[\s\S]*silent: true/);
 });

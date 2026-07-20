@@ -299,11 +299,23 @@ export type AppServerMessage =
   | {
       type: 'terminal_session_runtime';
       sessionId: string;
+      terminalId: string;
       running: boolean;
+    }
+  | {
+      type: 'terminal_session_rebound';
+      previousSessionId: string;
+      sessionId: string;
+      terminalId: string;
     }
   | {
       type: 'terminal_session_runtime_snapshot';
       activeSessionIds: string[];
+      reboundSessions?: Array<{
+        previousSessionId: string;
+        sessionId: string;
+        terminalId: string;
+      }>;
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
   | { type: 'terminal_prefill_written'; terminalId: string }

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'module';
 import logger from '@/lib/logger';
 import { buildSpawnEnv, getAgentEnvironment } from '@/lib/cli/spawn-cli';
@@ -189,6 +190,10 @@ interface TerminalRuntime {
   cancelPrefill?: () => void;
   disposeSessionObservers: Array<() => void>;
   lastSessionState?: TerminalSessionStateMessage;
+  providerSessionId?: string;
+  retiredProviderSessionIds: Set<string>;
+  backgroundProviderSessionIds: Set<string>;
+  reboundFromSessionIds: Set<string>;
   previewOwnerToken?: string;
 }
 
@@ -211,6 +216,7 @@ export interface TerminalManagerOptions {
   createHeadlessModel?: (cols: number, rows: number) => TerminalHeadlessModelLike;
   onSessionRuntimeStateChange?: (state: {
     sessionId: string;
+    terminalId: string;
     userId: string;
     running: boolean;
   }) => void;
@@ -220,6 +226,12 @@ export interface TerminalManagerOptions {
     userId: string;
   }) => void;
   interruptSettleMs?: number;
+  onSessionRuntimeRebound?: (state: {
+    previousSessionId: string;
+    sessionId: string;
+    terminalId: string;
+    userId: string;
+  }) => void;
 }
 
 function normalizeTerminalDimension(value: number | undefined, fallback: number, max: number): number {
@@ -331,6 +343,8 @@ export class TerminalManager {
   private readonly openingSessionByTerminalKey = new Map<string, string | null>();
   private readonly openingPreviewOwnerByTerminalKey = new Map<string, string>();
   private readonly sessionBindings = new Map<string, string>();
+  private readonly terminalReservations = new Map<string, string>();
+  private readonly reservedSessionByTerminalKey = new Map<string, string>();
   private readonly generationByTerminal = new Map<string, number>();
   private readonly disconnectedConnections = new Set<string>();
   private readonly blockedSessions = new Set<string>();
@@ -349,6 +363,7 @@ export class TerminalManager {
       ? this.getSessionKey(options.userId, options.sessionId)
       : null;
     if (this.shuttingDown || (blockedSessionKey && this.blockedSessions.has(blockedSessionKey))) {
+      if (options.sessionId) this.clearTerminalReservation(options.userId, options.sessionId);
       if (options.launchSpec?.handoffSessionId) {
         releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
       }
@@ -366,12 +381,12 @@ export class TerminalManager {
       return;
     }
 
-    const boundTerminalId = options.sessionId
-      ? this.sessionBindings.get(this.getSessionKey(options.userId, options.sessionId))
-      : undefined;
+    const resolvedTerminalId = options.sessionId
+      ? this.reserveTerminalId(options.userId, options.terminalId, options.sessionId)
+      : options.terminalId;
     const resolvedOptions: TerminalCreateOptions = {
       ...options,
-      terminalId: boundTerminalId ?? options.terminalId,
+      terminalId: resolvedTerminalId,
     };
     const key = this.getKey(resolvedOptions.userId, resolvedOptions.terminalId);
     const openingKey = this.getOpeningKey(
@@ -612,6 +627,9 @@ export class TerminalManager {
         disposeSessionObservers: options.launchObserverDisposer
           ? [options.launchObserverDisposer]
           : [],
+        retiredProviderSessionIds: new Set(),
+        backgroundProviderSessionIds: new Set(),
+        reboundFromSessionIds: new Set(),
         previewOwnerToken: options.previewOwnerToken,
       };
       if (options.appearance) {
@@ -622,12 +640,14 @@ export class TerminalManager {
       }
       this.terminals.set(key, runtime);
       if (runtime.sessionId) {
+        this.clearTerminalReservation(runtime.userId, runtime.sessionId, runtime.terminalId);
         this.sessionBindings.set(
           this.getSessionKey(runtime.userId, runtime.sessionId),
           runtime.terminalId,
         );
         this.managerOptions.onSessionRuntimeStateChange?.({
           sessionId: runtime.sessionId,
+          terminalId: runtime.terminalId,
           userId: runtime.userId,
           running: true,
         });
@@ -743,6 +763,9 @@ export class TerminalManager {
 
       return runtime;
     } catch (error) {
+      if (options.sessionId) {
+        this.clearTerminalReservation(options.userId, options.sessionId, options.terminalId);
+      }
       if (options.launchSpec?.handoffSessionId) {
         releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
       }
@@ -1233,6 +1256,7 @@ export class TerminalManager {
       if (runtime.sessionId) {
         this.managerOptions.onSessionRuntimeStateChange?.({
           sessionId: runtime.sessionId,
+          terminalId: runtime.terminalId,
           userId: runtime.userId,
           running: false,
         });
@@ -1252,15 +1276,17 @@ export class TerminalManager {
   private startSessionObserver(runtime: TerminalRuntime): void {
     if (!runtime.sessionId || !this.observeSessionRuntime) return;
 
+    const observedSessionId = runtime.sessionId;
+
     void Promise.resolve().then(() => this.observeSessionRuntime?.({
       cwd: runtime.cwd,
       generation: runtime.generation,
-      sessionId: runtime.sessionId!,
+      sessionId: observedSessionId,
       terminalId: runtime.terminalId,
       userId: runtime.userId,
     })).then((dispose) => {
       if (!dispose) return;
-      if (runtime.ended) {
+      if (runtime.ended || runtime.sessionId !== observedSessionId) {
         dispose();
         return;
       }
@@ -1303,7 +1329,10 @@ export class TerminalManager {
     // Session deletion can race an async native PTY load/spawn. Wait for that
     // one in-flight create and immediately tear it down instead of orphaning it.
     const opening = this.openingTerminals.get(this.getSessionOpeningKey(userId, sessionId));
-    if (!opening) return;
+    if (!opening) {
+      this.clearTerminalReservation(userId, sessionId);
+      return;
+    }
     try {
       const runtime = await opening;
       this.closeRuntime(runtime);
@@ -1313,7 +1342,9 @@ export class TerminalManager {
   }
 
   preventSessionOpen(sessionId: string, userId: string): void {
-    this.blockedSessions.add(this.getSessionKey(userId, sessionId));
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    this.blockedSessions.add(sessionKey);
+    this.clearTerminalReservation(userId, sessionId);
   }
 
   allowSessionOpen(sessionId: string, userId: string): void {
@@ -1328,6 +1359,8 @@ export class TerminalManager {
     for (const runtime of runtimes) {
       this.closeRuntime(runtime);
     }
+    this.terminalReservations.clear();
+    this.reservedSessionByTerminalKey.clear();
   }
 
   getRuntimeSummary(): { activeCount: number; sessionCount: number } {
@@ -1351,9 +1384,147 @@ export class TerminalManager {
     );
   }
 
+  getSessionReboundsForUser(userId: string): Array<{
+    previousSessionId: string;
+    sessionId: string;
+    terminalId: string;
+  }> {
+    const activeRuntimes = [...this.terminals.values()]
+      .filter((runtime) => runtime.userId === userId && !runtime.ended && runtime.sessionId);
+    const activeSessionIds = new Set(activeRuntimes.map((runtime) => runtime.sessionId!));
+    return activeRuntimes
+      .flatMap((runtime) => [...runtime.reboundFromSessionIds].map((previousSessionId) => ({
+        previousSessionId,
+        sessionId: runtime.sessionId!,
+        terminalId: runtime.terminalId,
+      })))
+      .filter((rebound) => !activeSessionIds.has(rebound.previousSessionId));
+  }
+
+  getSessionIdForTerminal(terminalId: string, userId: string): string | null {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    return runtime && !runtime.ended ? runtime.sessionId : null;
+  }
+
+  isProviderSessionIdentityRetired(
+    terminalId: string,
+    userId: string,
+    providerSessionId: string,
+  ): boolean {
+    return this.getOwnedTerminal(terminalId, userId)?.retiredProviderSessionIds
+      .has(providerSessionId) ?? false;
+  }
+
+  markProviderSessionIdentityBackground(
+    terminalId: string,
+    userId: string,
+    providerSessionId: string,
+  ): boolean {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime || runtime.ended || runtime.providerSessionId === providerSessionId) return false;
+    runtime.backgroundProviderSessionIds.add(providerSessionId);
+    return true;
+  }
+
+  isProviderSessionIdentityBackground(
+    terminalId: string,
+    userId: string,
+    providerSessionId: string,
+  ): boolean {
+    return this.getOwnedTerminal(terminalId, userId)?.backgroundProviderSessionIds
+      .has(providerSessionId) ?? false;
+  }
+
+  activateProviderSessionIdentity(
+    terminalId: string,
+    userId: string,
+    providerSessionId: string,
+    previousProviderSessionId?: string,
+  ): boolean {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime || runtime.ended || runtime.retiredProviderSessionIds.has(providerSessionId)) {
+      return false;
+    }
+    if (runtime.providerSessionId && runtime.providerSessionId !== providerSessionId) {
+      runtime.retiredProviderSessionIds.add(runtime.providerSessionId);
+    }
+    if (previousProviderSessionId && previousProviderSessionId !== providerSessionId) {
+      runtime.retiredProviderSessionIds.add(previousProviderSessionId);
+    }
+    runtime.backgroundProviderSessionIds.delete(providerSessionId);
+    runtime.providerSessionId = providerSessionId;
+    return true;
+  }
+
+  /** Keep one live PTY while moving its ownership from a parent conversation
+   *  to the provider-created child conversation. */
+  rebindSession(
+    terminalId: string,
+    userId: string,
+    sourceSessionId: string,
+    destinationSessionId: string,
+  ): boolean {
+    if (sourceSessionId === destinationSessionId) return true;
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime || runtime.ended || runtime.sessionId !== sourceSessionId) return false;
+
+    const destinationKey = this.getSessionKey(userId, destinationSessionId);
+    const existingDestination = this.sessionBindings.get(destinationKey);
+    if (existingDestination && existingDestination !== terminalId) return false;
+
+    this.disposeSessionObserver(runtime);
+    this.clearSessionBinding(runtime);
+    runtime.lastSessionState = undefined;
+    runtime.sessionId = destinationSessionId;
+    runtime.reboundFromSessionIds.add(sourceSessionId);
+    this.sessionBindings.set(destinationKey, terminalId);
+    this.managerOptions.onSessionRuntimeRebound?.({
+      previousSessionId: sourceSessionId,
+      sessionId: destinationSessionId,
+      terminalId,
+      userId,
+    });
+    this.startSessionObserver(runtime);
+    return true;
+  }
+
   resolveTerminalId(userId: string, requestedTerminalId: string, sessionId?: string | null): string {
     if (!sessionId) return requestedTerminalId;
-    return this.sessionBindings.get(this.getSessionKey(userId, sessionId)) ?? requestedTerminalId;
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    return this.sessionBindings.get(sessionKey)
+      ?? this.terminalReservations.get(sessionKey)
+      ?? requestedTerminalId;
+  }
+
+  reserveTerminalId(userId: string, requestedTerminalId: string, sessionId: string): string {
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    const existing = this.sessionBindings.get(sessionKey) ?? this.terminalReservations.get(sessionKey);
+    if (existing) return existing;
+
+    let terminalId = requestedTerminalId;
+    while (true) {
+      const key = this.getKey(userId, terminalId);
+      const runtime = this.terminals.get(key);
+      const openingSessionId = this.openingSessionByTerminalKey.get(key);
+      const reservedSessionKey = this.reservedSessionByTerminalKey.get(key);
+      if (
+        (!runtime || runtime.sessionId === sessionId)
+        && (openingSessionId === undefined || openingSessionId === sessionId)
+        && (reservedSessionKey === undefined || reservedSessionKey === sessionKey)
+      ) break;
+      terminalId = `${requestedTerminalId}-${randomUUID()}`;
+    }
+    this.terminalReservations.set(sessionKey, terminalId);
+    this.reservedSessionByTerminalKey.set(this.getKey(userId, terminalId), sessionKey);
+    return terminalId;
+  }
+
+  releaseTerminalReservation(
+    userId: string,
+    sessionId: string,
+    expectedTerminalId?: string,
+  ): void {
+    this.clearTerminalReservation(userId, sessionId, expectedTerminalId);
   }
 
   hasOrIsOpening(
@@ -1362,7 +1533,8 @@ export class TerminalManager {
     sessionId?: string | null,
   ): boolean {
     const key = this.getKey(userId, terminalId);
-    return this.terminals.has(key)
+    const runtime = this.terminals.get(key);
+    return Boolean(runtime && (!sessionId || runtime.sessionId === sessionId))
       || this.openingTerminals.has(this.getOpeningKey(userId, terminalId, sessionId));
   }
 
@@ -1382,6 +1554,21 @@ export class TerminalManager {
 
   private getSessionKey(userId: string, sessionId: string): string {
     return `${userId}:${sessionId}`;
+  }
+
+  private clearTerminalReservation(
+    userId: string,
+    sessionId: string,
+    expectedTerminalId?: string,
+  ): void {
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    const terminalId = this.terminalReservations.get(sessionKey);
+    if (!terminalId || (expectedTerminalId && terminalId !== expectedTerminalId)) return;
+    this.terminalReservations.delete(sessionKey);
+    const terminalKey = this.getKey(userId, terminalId);
+    if (this.reservedSessionByTerminalKey.get(terminalKey) === sessionKey) {
+      this.reservedSessionByTerminalKey.delete(terminalKey);
+    }
   }
 
   private getSessionOpeningKey(userId: string, sessionId: string): string {

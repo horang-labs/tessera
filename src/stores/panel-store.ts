@@ -534,6 +534,26 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     }
   },
 
+  rebindSession: (previousSessionId, sessionId) => {
+    const state = get();
+    let changed = false;
+    const tabPanels = Object.fromEntries(Object.entries(state.tabPanels).map(([tabId, tabData]) => {
+      let tabChanged = false;
+      const panels = Object.fromEntries(Object.entries(tabData.panels).map(([panelId, panel]) => {
+        if (panel.sessionId !== previousSessionId) return [panelId, panel];
+        changed = true;
+        tabChanged = true;
+        return [panelId, { ...panel, sessionId }];
+      }));
+      return [tabId, tabChanged ? { ...tabData, panels } : tabData];
+    }));
+    if (!changed) return;
+    set({ tabPanels });
+    if (useSessionStore.getState().activeSessionId === previousSessionId) {
+      useSessionStore.getState().setActiveSession(sessionId);
+    }
+  },
+
   assignTerminal: (panelId, terminalId, terminalSessionId = null) => {
     const state = get();
     const tabData = state.tabPanels[state.activeTabId];

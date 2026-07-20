@@ -54,6 +54,7 @@ export interface PanelStoreActions {
   closePanelInTab(tabId: string, panelId: string): void;
   assignSession(panelId: string, sessionId: string | null): void;
   assignSessionInTab(tabId: string, panelId: string, sessionId: string | null): void;
+  rebindSession(previousSessionId: string, sessionId: string): void;
   assignTerminal(panelId: string, terminalId: string | null, terminalSessionId?: string | null): void;
   setActivePanelId(panelId: string): void;
   resizeSplit(leftAnchor: string, rightAnchor: string, ratio: number): void;

@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 29;
 
 export const CREATE_TABLES = `
 CREATE TABLE IF NOT EXISTS _meta (
@@ -54,6 +54,16 @@ CREATE TABLE IF NOT EXISTS session_messages (
   role       TEXT NOT NULL,
   content    TEXT NOT NULL,
   created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS terminal_provider_sessions (
+  provider_id        TEXT NOT NULL,
+  provider_session_id TEXT NOT NULL,
+  tessera_session_id TEXT NOT NULL UNIQUE,
+  transcript_path   TEXT,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  PRIMARY KEY (provider_id, provider_session_id)
 );
 
 CREATE TABLE IF NOT EXISTS custom_columns (
@@ -133,6 +143,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_collection
 
 CREATE INDEX IF NOT EXISTS idx_session_messages_session
   ON session_messages(session_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_terminal_provider_sessions_tessera
+  ON terminal_provider_sessions(tessera_session_id);
 
 CREATE INDEX IF NOT EXISTS idx_collections_project_sort
   ON collections(project_id, sort_order ASC, created_at ASC);

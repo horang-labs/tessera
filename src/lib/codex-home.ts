@@ -13,6 +13,35 @@ interface ResolveCodexAccountHomeOptions {
   homeDir?: string;
 }
 
+const CODEX_OVERLAY_MARKER = '.tessera-overlay.json';
+
+export function writeCodexOverlayMarker(overlayHome: string, accountHome: string): void {
+  fs.writeFileSync(path.join(overlayHome, CODEX_OVERLAY_MARKER), JSON.stringify({
+    kind: 'tessera-codex-overlay',
+    accountHome,
+  }) + '\n', { mode: 0o600 });
+}
+
+function readMarkedAccountHome(overlayHome: string): string | undefined {
+  try {
+    const marker = JSON.parse(
+      fs.readFileSync(path.join(overlayHome, CODEX_OVERLAY_MARKER), 'utf8'),
+    ) as Record<string, unknown>;
+    const accountHome = typeof marker.accountHome === 'string'
+      ? marker.accountHome.trim()
+      : '';
+    if (
+      marker.kind !== 'tessera-codex-overlay'
+      || !accountHome
+      || !path.isAbsolute(accountHome)
+      || path.resolve(accountHome) === path.resolve(overlayHome)
+    ) return undefined;
+    return path.resolve(accountHome);
+  } catch {
+    return undefined;
+  }
+}
+
 function isWithin(candidate: string, parent: string): boolean {
   const relative = path.relative(parent, candidate);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -36,6 +65,8 @@ export function resolveCodexAccountHome(
     cwd: options.cwd,
     homeDir,
   });
+  const markedAccountHome = readMarkedAccountHome(resolvedHome);
+  if (markedAccountHome) return markedAccountHome;
   const overlayRoot = path.join(getTesseraDataDir({
     env,
     cwd: options.cwd,

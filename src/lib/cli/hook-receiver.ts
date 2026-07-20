@@ -17,6 +17,10 @@ import {
   mapClaudeHookLifecycle,
 } from '@/lib/cli/providers/claude-code/terminal-hook-lifecycle';
 import { classifyAskUserQuestionEvent } from '@/lib/cli/providers/claude-code/ask-user-question-status';
+import { extractTerminalProviderSessionIdentity } from '@/lib/terminal/provider-session-identity';
+import { getTerminalProviderSessionForTesseraSession } from '@/lib/db/terminal-provider-sessions';
+import { cliProviderRegistry } from '@/lib/cli/providers/registry';
+import { observeTerminalProviderSession } from '@/lib/terminal/provider-session-observation';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -162,35 +166,57 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     const event = readString(payload.hook_event_name) || readString(payload.hookEventName);
     const isCodex = entry.providerId === 'codex';
     const isOpenCode = entry.providerId === 'opencode';
+    const activeSessionId = entry.sessionId
+      ? terminalManager.getSessionIdForTerminal(entry.terminalId, entry.userId)
+      : null;
+    let sessionId = activeSessionId ?? entry.sessionId;
+    const providerIdentity = extractTerminalProviderSessionIdentity(entry.providerId, payload);
+    if (activeSessionId && providerIdentity) {
+      const currentProviderSessionId = getTerminalProviderSessionForTesseraSession(activeSessionId)
+        ?.provider_session_id;
+      const discoveredInBackground = payload.tessera_session_activation === 'background'
+        || Boolean(currentProviderSessionId && cliProviderRegistry.getProvider(entry.providerId)
+          .isBackgroundTerminalSessionFork?.({
+          currentProviderSessionId,
+          observedProviderSessionId: providerIdentity.providerSessionId,
+        }));
+      const observation = observeTerminalProviderSession({
+        pane: entry,
+        identity: providerIdentity,
+        activation: discoveredInBackground ? 'background' : 'active',
+      });
+      if (observation.ignored) return send(204);
+      sessionId = observation.sessionId;
+    }
     const mapped = isCodex
       ? mapCodexEventToStatus(event, payload)
       : isOpenCode
         ? mapEventToStatus(event, payload)
         : mapClaudeEventToStatus(entry.terminalId, event, payload);
-    if (event === 'SessionStart' && entry.sessionId) {
+    if (event === 'SessionStart' && sessionId) {
       if (isCodex) {
         // codex rollout id를 provider_state에 캡처(resume용) + launched 마커 + kind.
-        markCodexTerminalSession(entry.sessionId, readString(payload.session_id));
+        markCodexTerminalSession(sessionId, readString(payload.session_id));
       } else if (isOpenCode) {
         // invocation plugin이 고정한 target id만 별도 키에 저장해 GUI session과 교차 resume하지 않는다.
-        const providerSessionId = readString(payload.session_id);
+        const providerSessionId = providerIdentity?.providerSessionId ?? '';
         if (providerSessionId) {
-          markOpenCodeTerminalSession(entry.sessionId, providerSessionId);
+          markOpenCodeTerminalSession(sessionId, providerSessionId);
         }
       }
-      terminalManager.refreshAppearanceRestartAvailability(entry.sessionId, entry.userId);
+      terminalManager.refreshAppearanceRestartAvailability(sessionId, entry.userId);
     }
     // 첫 프롬프트에서 동기 로컬 제목을 즉시 적용한다. 같은 프롬프트를 history에도
     // 기록해 사용자가 AI 개선을 켠 경우 Stop 시점의 선택적 생성 입력으로 활용한다.
-    if (event === 'UserPromptSubmit' && entry.sessionId) {
+    if (event === 'UserPromptSubmit' && sessionId) {
       const prompt = readString(payload.prompt);
       if (prompt) {
-        sessionHistory.recordUserMessage(entry.sessionId, prompt);
-        const titleUpdate = applyImmediateSessionTitle(entry.sessionId, prompt);
+        sessionHistory.recordUserMessage(sessionId, prompt);
+        const titleUpdate = applyImmediateSessionTitle(sessionId, prompt);
         if (titleUpdate) {
           wsServer.sendToUser(entry.userId, {
             type: 'session_title_updated',
-            sessionId: entry.sessionId,
+            sessionId,
             title: titleUpdate.title,
             previousTitle: titleUpdate.previousTitle,
             hasCustomTitle: false,
@@ -201,19 +227,19 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     }
     // 실제 턴 완료 시 선택적 AI 제목과 Git 상태를 확정한다. Claude는 lead Stop 뒤에도
     // background child가 실행될 수 있으므로 mapped 상태를 완료 경계로 사용한다.
-    if (mapped?.status === 'completed' && entry.sessionId) {
-      refreshSessionDiffStateInBackground(entry.sessionId, entry.userId, 'terminal lifecycle completion');
+    if (mapped?.status === 'completed' && sessionId) {
+      refreshSessionDiffStateInBackground(sessionId, entry.userId, 'terminal lifecycle completion');
       maybeAutoGenerateProtocolTitle({
         autoTitleTriggered: terminalAutoTitleTriggered,
         sendAppMessage: (uid, m) => wsServer.sendToUser(uid, m),
-        sessionId: entry.sessionId,
+        sessionId,
         userId: entry.userId,
       });
     }
-    if (mapped && entry.sessionId) {
+    if (mapped && sessionId) {
       const message = {
         type: 'session_state',
-        sessionId: entry.sessionId,
+        sessionId,
         terminalId: entry.terminalId,
         status: mapped.status,
         hookEvent: event,

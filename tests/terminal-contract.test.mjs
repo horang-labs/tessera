@@ -85,10 +85,14 @@ test('plain and OSC 8 terminal links share the validated Electron external URL b
   );
 });
 
-test('Claude PTY resumes only after Tessera has persisted conversation history', () => {
+test('Claude PTY resumes persisted history and native fork provider sessions', () => {
   assert.match(
     routingSource,
-    /const resume = await sessionHistory\.historyExists\(structured\.sessionId\)/,
+    /resolveTerminalProviderSessionReference\(/,
+  );
+  assert.match(
+    routingSource,
+    /const resume = providerSession\.nativeFork[\s\S]*sessionHistory\.historyExists\(structured\.sessionId\)/,
   );
   assert.doesNotMatch(routingSource, /isTerminalLaunched/);
   assert.doesNotMatch(hookReceiverSource, /markTerminalLaunched/);
@@ -239,6 +243,7 @@ test('terminal websocket protocol covers process lifecycle', () => {
     'terminal_exit',
     'terminal_error',
     'terminal_session_runtime',
+    'terminal_session_rebound',
     'terminal_session_runtime_snapshot',
   ]) {
     assert.match(messageTypesSource, new RegExp(`type: '${type}'`));
@@ -356,6 +361,7 @@ test('websocket disconnect detaches surfaces without killing terminal processes'
 
 test('terminal runtime lifecycle is broadcast and replayed to session clients', () => {
   assert.match(sharedTerminalManagerSource, /type: 'terminal_session_runtime'/);
+  assert.match(sharedTerminalManagerSource, /type: 'terminal_session_rebound'/);
   assert.match(wsServerSource, /bindTerminalRuntimeSender/);
   assert.match(wsServerSource, /type: 'terminal_session_runtime_snapshot'/);
   assert.match(wsServerSource, /terminalManager\.getActiveSessionIds\(userId\)/);

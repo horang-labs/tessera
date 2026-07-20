@@ -5,6 +5,7 @@ import path from 'node:path';
 import test, { before } from 'node:test';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import type { TerminalCreateOptions, TerminalPtyFactory } from '@/lib/terminal/types';
+import { mintPaneToken, resolvePaneToken } from '@/lib/terminal/pane-token-registry';
 
 process.env.TESSERA_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'tessera-terminal-test-'));
 process.env.NODE_ENV = 'test';
@@ -145,9 +146,81 @@ test('concurrent session opens spawn once and disconnect only detaches its surfa
   assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 0, sessionCount: 0 });
 });
 
+test('terminal reservations isolate concurrent sessions before either PTY starts', async () => {
+  const delivered: ServerTransportMessage[] = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+  );
+  const firstTerminalId = manager.reserveTerminalId('user-a', 'shared-proposal', 'session-one');
+  const secondTerminalId = manager.reserveTerminalId('user-a', 'shared-proposal', 'session-two');
+  assert.notEqual(firstTerminalId, secondTerminalId);
+  const abandonedTerminalId = manager.reserveTerminalId(
+    'user-a',
+    'abandoned-proposal',
+    'abandoned-session',
+  );
+  manager.releaseTerminalReservation(
+    'user-a',
+    'abandoned-session',
+    abandonedTerminalId,
+  );
+  assert.equal(
+    manager.reserveTerminalId('user-a', 'abandoned-proposal', 'replacement-session'),
+    'abandoned-proposal',
+    'preparation failure cleanup must release both reservation directions',
+  );
+  manager.releaseTerminalReservation('user-a', 'replacement-session', 'abandoned-proposal');
+  const firstToken = mintPaneToken({
+    terminalId: firstTerminalId,
+    userId: 'user-a',
+    sessionId: 'session-one',
+    providerId: 'codex',
+  });
+  const secondToken = mintPaneToken({
+    terminalId: secondTerminalId,
+    userId: 'user-a',
+    sessionId: 'session-two',
+    providerId: 'codex',
+  });
+
+  await Promise.all([
+    manager.create(createOptions({
+      terminalId: 'shared-proposal',
+      sessionId: 'session-one',
+      paneToken: firstToken,
+    })),
+    manager.create(createOptions({
+      terminalId: 'shared-proposal',
+      sessionId: 'session-two',
+      connectionId: 'connection-b',
+      surfaceId: 'surface-b',
+      paneToken: secondToken,
+    })),
+  ]);
+
+  assert.equal(spawned.length, 2);
+  const startedTerminalIds = delivered
+    .filter((message) => message.type === 'terminal_started')
+    .map((message) => message.type === 'terminal_started' ? message.terminalId : '')
+    .sort();
+  assert.deepEqual(startedTerminalIds, [firstTerminalId, secondTerminalId].sort());
+  assert.equal(resolvePaneToken(firstToken)?.terminalId, firstTerminalId);
+  assert.equal(resolvePaneToken(secondToken)?.terminalId, secondTerminalId);
+  assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 2, sessionCount: 2 });
+
+  await manager.shutdownAll();
+});
+
 test('session PTY lifecycle reports running until the process exits', async () => {
   const spawned: FakePty[] = [];
-  const runtimeStates: Array<{ sessionId: string; userId: string; running: boolean }> = [];
+  const runtimeStates: Array<{
+    sessionId: string;
+    terminalId: string;
+    userId: string;
+    running: boolean;
+  }> = [];
   const manager = new TerminalManager(
     () => {},
     async () => createFactory(spawned),
@@ -158,17 +231,27 @@ test('session PTY lifecycle reports running until the process exits', async () =
   );
 
   await manager.create(createOptions());
-  assert.deepEqual(runtimeStates, [{ sessionId: 'session-a', userId: 'user-a', running: true }]);
+  assert.deepEqual(runtimeStates, [{
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    userId: 'user-a',
+    running: true,
+  }]);
   assert.deepEqual([...manager.getActiveSessionIds('user-a')], ['session-a']);
 
   manager.detachConnection('connection-a');
-  assert.deepEqual(runtimeStates, [{ sessionId: 'session-a', userId: 'user-a', running: true }]);
+  assert.deepEqual(runtimeStates, [{
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    userId: 'user-a',
+    running: true,
+  }]);
   assert.deepEqual([...manager.getActiveSessionIds('user-a')], ['session-a']);
 
   spawned[0].emitExit(0);
   assert.deepEqual(runtimeStates, [
-    { sessionId: 'session-a', userId: 'user-a', running: true },
-    { sessionId: 'session-a', userId: 'user-a', running: false },
+    { sessionId: 'session-a', terminalId: 'terminal-a', userId: 'user-a', running: true },
+    { sessionId: 'session-a', terminalId: 'terminal-a', userId: 'user-a', running: false },
   ]);
   assert.deepEqual([...manager.getActiveSessionIds('user-a')], []);
 });
@@ -354,6 +437,140 @@ test('PTY Escape fallback rejects late tool activity but accepts the next prompt
   );
 });
 
+test('native CLI fork rebinds one live PTY from the parent session to the child', async () => {
+  const spawned: FakePty[] = [];
+  const delivered: ServerTransportMessage[] = [];
+  const runtimeStates: Array<{
+    sessionId: string;
+    terminalId: string;
+    userId: string;
+    running: boolean;
+  }> = [];
+  const runtimeRebounds: Array<{
+    previousSessionId: string;
+    sessionId: string;
+    terminalId: string;
+    userId: string;
+  }> = [];
+  const observed: string[] = [];
+  const disposed: string[] = [];
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+    ({ sessionId }) => {
+      observed.push(sessionId);
+      return () => disposed.push(sessionId);
+    },
+    {
+      onSessionRuntimeStateChange: (state) => runtimeStates.push(state),
+      onSessionRuntimeRebound: (state) => runtimeRebounds.push(state),
+    },
+  );
+
+  await manager.create(createOptions());
+  await nextImmediate();
+
+  assert.equal(
+    manager.markProviderSessionIdentityBackground(
+      'terminal-a',
+      'user-a',
+      'provider-child',
+    ),
+    true,
+  );
+  assert.equal(
+    manager.isProviderSessionIdentityBackground('terminal-a', 'user-a', 'provider-child'),
+    true,
+  );
+  assert.equal(manager.getSessionIdForTerminal('terminal-a', 'user-a'), 'session-a');
+
+  assert.equal(
+    manager.rebindSession('terminal-a', 'user-a', 'session-a', 'session-child'),
+    true,
+  );
+  await nextImmediate();
+
+  assert.deepEqual([...manager.getActiveSessionIds('user-a')], ['session-child']);
+  assert.equal(manager.getSessionIdForTerminal('terminal-a', 'user-a'), 'session-child');
+  assert.equal(manager.resolveTerminalId('user-a', 'child-proposal', 'session-child'), 'terminal-a');
+  assert.equal(manager.submitSessionInput('session-a', 'user-a', 'old session'), false);
+  assert.equal(manager.submitSessionInput('session-child', 'user-a', 'new session'), true);
+  assert.deepEqual(spawned[0].writes, ['new session\r']);
+  assert.equal(spawned[0].killCount, 0);
+  assert.equal(
+    manager.activateProviderSessionIdentity(
+      'terminal-a',
+      'user-a',
+      'provider-child',
+      'provider-parent',
+    ),
+    true,
+  );
+  assert.equal(
+    manager.isProviderSessionIdentityBackground('terminal-a', 'user-a', 'provider-child'),
+    false,
+  );
+  assert.equal(
+    manager.isProviderSessionIdentityRetired('terminal-a', 'user-a', 'provider-parent'),
+    true,
+  );
+  assert.equal(
+    manager.activateProviderSessionIdentity('terminal-a', 'user-a', 'provider-parent'),
+    false,
+  );
+  assert.equal(manager.getSessionIdForTerminal('terminal-a', 'user-a'), 'session-child');
+  assert.deepEqual(manager.getSessionReboundsForUser('user-a'), [{
+    previousSessionId: 'session-a',
+    sessionId: 'session-child',
+    terminalId: 'terminal-a',
+  }]);
+  assert.deepEqual(observed, ['session-a', 'session-child']);
+  assert.deepEqual(disposed, ['session-a']);
+  assert.deepEqual(runtimeStates, [
+    { sessionId: 'session-a', terminalId: 'terminal-a', userId: 'user-a', running: true },
+  ]);
+  assert.deepEqual(runtimeRebounds, [{
+    previousSessionId: 'session-a',
+    sessionId: 'session-child',
+    terminalId: 'terminal-a',
+    userId: 'user-a',
+  }]);
+
+  assert.equal(manager.hasOrIsOpening('terminal-a', 'user-a', 'session-a'), false);
+  const reservedParentTerminalId = manager.reserveTerminalId(
+    'user-a',
+    'terminal-a',
+    'session-a',
+  );
+  assert.notEqual(reservedParentTerminalId, 'terminal-a');
+  const parentPaneToken = mintPaneToken({
+    terminalId: reservedParentTerminalId,
+    userId: 'user-a',
+    sessionId: 'session-a',
+    providerId: 'codex',
+  });
+  delivered.length = 0;
+  await manager.create(createOptions({
+    connectionId: 'connection-b',
+    surfaceId: 'surface-b',
+    paneToken: parentPaneToken,
+  }));
+  assert.equal(spawned.length, 2, 'opening the parent must not attach to the child PTY');
+  const parentStart = delivered.find((message) => message.type === 'terminal_started');
+  assert.equal(parentStart?.type, 'terminal_started');
+  if (parentStart?.type === 'terminal_started') {
+    assert.equal(parentStart.terminalId, reservedParentTerminalId);
+    assert.equal(resolvePaneToken(parentPaneToken)?.terminalId, parentStart.terminalId);
+  }
+  assert.deepEqual(
+    manager.getSessionReboundsForUser('user-a'),
+    [],
+    'a reopened parent must not be rewritten to the child on reconnect',
+  );
+
+  await manager.shutdownAll();
+});
+
 test('cold attach receives one snapshot boundary followed by monotonic live output', async () => {
   const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
   const spawned: FakePty[] = [];
@@ -477,7 +694,12 @@ test('resize redraw cannot erase scrollback even when ED3 is split across PTY ch
 test('a late exit from an older generation cannot erase its replacement runtime', async () => {
   const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
   const spawned: FakePty[] = [];
-  const runtimeStates: Array<{ sessionId: string; userId: string; running: boolean }> = [];
+  const runtimeStates: Array<{
+    sessionId: string;
+    terminalId: string;
+    userId: string;
+    running: boolean;
+  }> = [];
   const manager = new TerminalManager(
     (connectionId, message) => delivered.push({ connectionId, message }),
     async () => createFactory(spawned),

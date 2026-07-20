@@ -18,15 +18,19 @@ import {
 } from '../terminal/terminal-handoff-lock';
 import { mintPaneToken } from '../terminal/pane-token-registry';
 import { buildProviderTerminalLaunch } from '../terminal/provider-launch';
+import { resolveTerminalProviderSessionReference } from '../terminal/provider-session-identity';
 import { detectTerminalProviders } from '../terminal/provider-detection';
 import { SettingsManager } from '../settings/manager';
 import { createCodexOverlay } from '../terminal/codex-overlay';
 import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
 import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
+import { createTerminalProviderSessionObserver } from '../terminal/provider-session-observer';
+import { getTerminalProviderSessionForTesseraSession } from '../db/terminal-provider-sessions';
+import { observeTerminalProviderSession } from '../terminal/provider-session-observation';
 import type { TerminalCreateOptions, TerminalLaunchSpec } from '../terminal/types';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
-import type { ProviderMeta } from '../cli/providers/types';
+import type { CliProvider, ProviderMeta } from '../cli/providers/types';
 import {
   clearUnreadFromWebSocket,
   closeSessionFromWebSocket,
@@ -146,6 +150,11 @@ export async function routeClientTransportMessage({
   const guardedSessionId = !unguardedSessionMessage && 'sessionId' in message
     ? message.sessionId
     : null;
+  let pendingTerminalReservation: {
+    manager: ReturnType<typeof bindTerminalSender>;
+    sessionId: string;
+    terminalId: string;
+  } | null = null;
   if (guardedSessionId && !beginTesseraSessionOperation(guardedSessionId)) {
     sendToUser(userId, {
       type: 'error',
@@ -497,7 +506,10 @@ export async function routeClientTransportMessage({
       // create/cwd allowlist용 sessionId(기존 동작 유지).
       const sessionId = structured?.sessionId ?? message.sessionId ?? null;
       const manager = bindTerminalSender(sendToConnection);
-      const terminalId = manager.resolveTerminalId(userId, message.terminalId, sessionId);
+      const terminalId = sessionId
+        ? manager.reserveTerminalId(userId, message.terminalId, sessionId)
+        : message.terminalId;
+      if (sessionId) pendingTerminalReservation = { manager, sessionId, terminalId };
       const terminalExists = manager.hasOrIsOpening(terminalId, userId, sessionId);
       let launchSpec: TerminalLaunchSpec | undefined;
       let providerId: string | undefined;
@@ -507,6 +519,7 @@ export async function routeClientTransportMessage({
       let resizeScrollbackPolicy: TerminalCreateOptions['resizeScrollbackPolicy'];
       let interruptInputPolicy: TerminalCreateOptions['interruptInputPolicy'];
       let canRestartForAppearance: TerminalCreateOptions['canRestartForAppearance'];
+      let terminalProvider: CliProvider | undefined;
       let acquiredHandoff = false;
 
       if (!terminalExists && isStructuredClaude && structured) {
@@ -516,11 +529,21 @@ export async function routeClientTransportMessage({
         // persist a resumable conversation until the first prompt is submitted.
         // Tessera records that prompt synchronously, so canonical history is the
         // resume boundary; a mere prior PTY launch is not.
-        const resume = await sessionHistory.historyExists(structured.sessionId);
+        const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
+        const providerSession = resolveTerminalProviderSessionReference(
+          structured.sessionId,
+          state,
+        );
+        const resume = providerSession.nativeFork
+          || await sessionHistory.historyExists(structured.sessionId);
         const built = buildProviderTerminalLaunch({
           providerId: 'claude-code',
-          sessionId: structured.sessionId,
+          sessionId: providerSession.providerSessionId,
           resume,
+          // Older persisted native forks predate activation metadata. Claude's
+          // native `/fork` artifact is a background daemon and must be attached.
+          providerSessionActivation: providerSession.activation
+            ?? (providerSession.nativeFork ? 'background' : undefined),
           settingsJson,
         });
         launchSpec = {
@@ -613,12 +636,13 @@ export async function routeClientTransportMessage({
       }
 
       if (!terminalExists && providerId) {
-        const terminalProvider = cliProviderRegistry.getProvider(providerId);
-        appearanceChangePolicy = terminalProvider.getTerminalAppearanceChangePolicy();
-        resizeScrollbackPolicy = terminalProvider.getTerminalResizeScrollbackPolicy();
-        interruptInputPolicy = terminalProvider.getTerminalInterruptInputPolicy();
+        const provider = cliProviderRegistry.getProvider(providerId);
+        terminalProvider = provider;
+        appearanceChangePolicy = provider.getTerminalAppearanceChangePolicy();
+        resizeScrollbackPolicy = provider.getTerminalResizeScrollbackPolicy();
+        interruptInputPolicy = provider.getTerminalInterruptInputPolicy();
         if (appearanceChangePolicy === 'restart' && structured) {
-          canRestartForAppearance = () => terminalProvider.canResumeTerminalAfterRestart?.(
+          canRestartForAppearance = () => provider.canResumeTerminalAfterRestart?.(
             dbSessions.getSession(structured.sessionId)?.provider_state ?? null,
           ) ?? false;
         } else if (appearanceChangePolicy === 'restart' && launchSpec?.handoffSessionId) {
@@ -635,8 +659,38 @@ export async function routeClientTransportMessage({
       const paneToken = !terminalExists && providerId
         ? mintPaneToken({ terminalId, userId, sessionId: tokenSessionId, providerId })
         : undefined;
+      if (!terminalExists && providerId && terminalProvider && paneToken && sessionId) {
+        const existingDisposer = launchObserverDisposer;
+        const providerSessionObserver = createTerminalProviderSessionObserver({
+          provider: terminalProvider,
+          currentProviderSessionId: () => {
+            const activeSessionId = manager.getSessionIdForTerminal(terminalId, userId)
+              ?? sessionId;
+            return getTerminalProviderSessionForTesseraSession(activeSessionId)
+              ?.provider_session_id;
+          },
+          onObservation: ({ activation, identity }) => {
+            try {
+              observeTerminalProviderSession({
+                pane: { terminalId, userId, sessionId, providerId },
+                identity,
+                activation,
+              });
+            } catch (error) {
+              logger.warn({ error, providerId, terminalId },
+                'Provider session observation could not be reconciled');
+            }
+          },
+        });
+        await providerSessionObserver.ready();
+        launchObserverDisposer = () => {
+          providerSessionObserver.dispose();
+          existingDisposer?.();
+        };
+      }
 
       try {
+        pendingTerminalReservation = null;
         await manager.create({
           userId,
           connectionId,
@@ -744,6 +798,13 @@ export async function routeClientTransportMessage({
         logUnknownClientTransportMessage(userId, message);
     }
   } finally {
+    if (pendingTerminalReservation) {
+      pendingTerminalReservation.manager.releaseTerminalReservation(
+        userId,
+        pendingTerminalReservation.sessionId,
+        pendingTerminalReservation.terminalId,
+      );
+    }
     if (guardedSessionId) {
       endTesseraSessionOperation(guardedSessionId);
     }

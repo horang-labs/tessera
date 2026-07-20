@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'node:crypto';
 import logger from '@/lib/logger';
-import { resolveCodexAccountHome } from '@/lib/codex-home';
+import { resolveCodexAccountHome, writeCodexOverlayMarker } from '@/lib/codex-home';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import {
@@ -150,6 +150,7 @@ export function createCodexOverlay(terminalId: string): string {
   fs.mkdirSync(overlayDir, { recursive: true });
 
   const systemHome = resolveCodexAccountHome();
+  writeCodexOverlayMarker(overlayDir, systemHome);
   let configToml = '';
   let entries: string[] = [];
   try {

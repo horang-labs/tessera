@@ -36,10 +36,11 @@ function createSharedState(): SharedTerminalManagerState {
       });
     },
     {
-      onSessionRuntimeStateChange: ({ sessionId, userId, running }) => {
+      onSessionRuntimeStateChange: ({ sessionId, terminalId, userId, running }) => {
         state.sendToUser?.(userId, {
           type: 'terminal_session_runtime',
           sessionId,
+          terminalId,
           running,
         });
         // 런타임 (재)시작 시 마지막 hook 상태를 재전송해, 이전에 runtime 신호와
@@ -51,6 +52,14 @@ function createSharedState(): SharedTerminalManagerState {
       },
       onSessionStateChange: ({ message, userId }) => {
         state.sendToUser?.(userId, message);
+      },
+      onSessionRuntimeRebound: ({ previousSessionId, sessionId, terminalId, userId }) => {
+        state.sendToUser?.(userId, {
+          type: 'terminal_session_rebound',
+          previousSessionId,
+          sessionId,
+          terminalId,
+        });
       },
     },
   );

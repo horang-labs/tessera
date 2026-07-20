@@ -43,6 +43,10 @@ import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { getRateLimitData } from '@/lib/rate-limit/fetcher';
 import { buildClaudeRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
+import {
+  createClaudeTerminalSessionObserver,
+  isClaudeBackgroundTerminalSessionFork,
+} from './terminal-session-observer';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -125,6 +129,10 @@ export class ClaudeCodeAdapter implements CliProvider {
   getTerminalInterruptInputPolicy(): 'single-escape' {
     return 'single-escape';
   }
+
+  createTerminalSessionObserver = createClaudeTerminalSessionObserver;
+
+  isBackgroundTerminalSessionFork = isClaudeBackgroundTerminalSessionFork;
 
   /**
    * Checks whether the Claude Code CLI binary is available.
