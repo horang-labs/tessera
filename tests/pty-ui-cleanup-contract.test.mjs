@@ -67,6 +67,6 @@ test('session PTY owns a workspace listener and lifecycle completion performs fi
   assert.match(watcher, /rootChangeListeners/);
   assert.match(
     hookReceiver,
-    /mapped\?\.status === 'completed'[\s\S]*refreshSessionDiffStateInBackground\(entry\.sessionId, entry\.userId, 'terminal lifecycle completion'\)/,
+    /mapped\?\.status === 'completed'[\s\S]*refreshSessionDiffStateInBackground\(sessionId, entry\.userId, 'terminal lifecycle completion'\)/,
   );
 });

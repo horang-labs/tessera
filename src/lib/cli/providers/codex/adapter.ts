@@ -36,6 +36,7 @@ import type {
   CliStatusResult,
   CliRawLogSink,
 } from '../types';
+import { createCodexTerminalSessionObserver } from './terminal-session-observer';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
@@ -272,6 +273,8 @@ export class CodexAdapter implements CliProvider {
   getTerminalInterruptInputPolicy(): 'single-escape' {
     return 'single-escape';
   }
+
+  createTerminalSessionObserver = createCodexTerminalSessionObserver;
 
   canResumeTerminalAfterRestart(providerState: string | null): boolean {
     if (!providerState) return false;

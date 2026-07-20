@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildProviderTerminalLaunch } from '@/lib/terminal/provider-launch';
+import {
+  buildTerminalProviderState,
+  resolveTerminalProviderSessionReference,
+} from '@/lib/terminal/provider-session-identity';
 
 test('Codex PTY starts with pre-trusted overlay hooks and no trust-bypass warning flag', () => {
   assert.deepEqual(
@@ -57,6 +61,33 @@ test('Claude PTY uses --resume only for a persisted Tessera conversation', () =>
     {
       command: 'claude',
       args: ['--resume', 'tessera-session', '--settings', '{"hooks":{}}'],
+    },
+  );
+});
+
+test('Claude background fork attaches to the provider child daemon', () => {
+  const providerState = buildTerminalProviderState({
+    providerId: 'claude-code',
+    providerSessionId: '772b268d-7979-4fe7-aecf-50985ccb652f',
+  }, 'background');
+  const reference = resolveTerminalProviderSessionReference('tessera-child', providerState);
+
+  assert.deepEqual(reference, {
+    providerSessionId: '772b268d-7979-4fe7-aecf-50985ccb652f',
+    nativeFork: true,
+    activation: 'background',
+  });
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'claude-code',
+      sessionId: reference.providerSessionId,
+      resume: reference.nativeFork,
+      providerSessionActivation: reference.activation,
+      settingsJson: '{"hooks":{}}',
+    }),
+    {
+      command: 'claude',
+      args: ['attach', '772b268d'],
     },
   );
 });

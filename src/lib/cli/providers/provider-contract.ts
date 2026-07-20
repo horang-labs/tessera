@@ -41,6 +41,22 @@ export type TerminalResizeScrollbackPolicy = 'native' | 'preserve-on-ed3';
 /** How accepted terminal input indicates an agent-turn interrupt. */
 export type TerminalInterruptInputPolicy = 'none' | 'single-escape';
 
+export interface ProviderTerminalSessionObservation {
+  activation: 'active' | 'background';
+  providerSessionId: string;
+  transcriptPath?: string;
+}
+
+export interface ProviderTerminalSessionObserver {
+  ready(): Promise<void>;
+  dispose(): void;
+}
+
+export interface ProviderTerminalSessionObserverOptions {
+  currentProviderSessionId: () => string | undefined;
+  onObservation: (observation: ProviderTerminalSessionObservation) => void;
+}
+
 export interface CliProbeSummary {
   ok: boolean;
   failureKind: CliProbeFailureKind;
@@ -129,6 +145,17 @@ export interface CliProvider {
    * PTY can be followed by a lossless resume of the same provider session.
    */
   canResumeTerminalAfterRestart?(providerState: string | null): boolean;
+
+  /** Watches provider-owned artifacts for native CLI session forks. */
+  createTerminalSessionObserver?(
+    options: ProviderTerminalSessionObserverOptions,
+  ): ProviderTerminalSessionObserver;
+
+  /** Classifies a provider hook that may belong to a non-active fork child. */
+  isBackgroundTerminalSessionFork?(options: {
+    currentProviderSessionId: string;
+    observedProviderSessionId: string;
+  }): boolean;
 
   /**
    * Checks whether this CLI binary is available in the requested environment

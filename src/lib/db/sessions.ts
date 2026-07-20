@@ -4,6 +4,7 @@
 
 import fs from 'fs';
 import { getDb } from './database';
+import { deleteTerminalProviderSessionsForTesseraSession } from './terminal-provider-sessions';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 
 export interface SessionRow {
@@ -165,6 +166,7 @@ export function createSession(
  * Delete a session record.
  */
 export function deleteSession(id: string): void {
+  deleteTerminalProviderSessionsForTesseraSession(id);
   getDb().prepare('DELETE FROM sessions WHERE id = ?').run(id);
 }
 

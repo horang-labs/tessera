@@ -185,6 +185,48 @@ test('resume targets the saved session and keeps processing after a failed POST'
   }
 });
 
+test('OpenCode native fork switches the invocation target and emits the child lifecycle', async () => {
+  const plugin = await loadPlugin({ resumeId: 'ses_parent' });
+  try {
+    await settlePosts(1, plugin.payloads);
+    await plugin.event({
+      event: {
+        type: 'session.created',
+        properties: { info: { id: 'ses_fork', directory: '/workspace' } },
+      },
+    });
+    await settlePosts(2, plugin.payloads);
+    assert.deepEqual(plugin.payloads[1], {
+      hook_event_name: 'SessionStart',
+      session_id: 'ses_fork',
+    });
+    await plugin.event({
+      event: {
+        type: 'message.updated',
+        properties: { info: { id: 'fork-message', sessionID: 'ses_fork', role: 'user' } },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: 'message.part.updated',
+        properties: { part: { id: 'fork-part', messageID: 'fork-message', sessionID: 'ses_fork', type: 'text', text: 'fork prompt' } },
+      },
+    });
+    await plugin.event({
+      event: { type: 'session.idle', properties: { sessionID: 'ses_fork' } },
+    });
+
+    await settlePosts(4, plugin.payloads);
+    assert.deepEqual(plugin.payloads.slice(1), [
+      { hook_event_name: 'SessionStart', session_id: 'ses_fork' },
+      { hook_event_name: 'UserPromptSubmit', session_id: 'ses_fork', prompt: 'fork prompt' },
+      { hook_event_name: 'Stop', session_id: 'ses_fork' },
+    ]);
+  } finally {
+    plugin.restore();
+  }
+});
+
 test('OpenCode waits for all real text parts and ignores synthetic expansion text', async () => {
   const plugin = await loadPlugin();
   try {

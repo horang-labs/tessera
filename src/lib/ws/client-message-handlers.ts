@@ -14,6 +14,7 @@ import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
 import { useNotificationStore } from '@/stores/notification-store';
+import { usePanelStore } from '@/stores/panel-store';
 import { useRateLimitStore } from '@/stores/rate-limit-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useSessionPrStore } from '@/stores/session-pr-store';
@@ -34,6 +35,13 @@ interface HandleIncomingServerMessageOptions {
   cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null) => void>;
   wasReconnect: boolean;
 }
+
+interface PendingTerminalRebound {
+  destinationSessionId: string;
+  sourceSessionIds: Set<string>;
+}
+
+const pendingTerminalRebounds = new Map<string, PendingTerminalRebound>();
 
 export function handleIncomingServerMessage({
   msg,
@@ -125,16 +133,42 @@ export function handleIncomingServerMessage({
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
       if (msg.running) {
+        removePendingTerminalReboundSource(msg.terminalId, msg.sessionId);
         useTerminalSessionStore.getState().markRuntimeStarted(msg.sessionId);
       } else {
         useTerminalSessionStore.getState().markRuntimeStopped(msg.sessionId);
+        cancelPendingTerminalReboundsForDestination(msg.sessionId);
         retireStoppedTerminalSessionSurface(msg.sessionId);
       }
       return { wasReconnect };
 
+    case 'terminal_session_rebound':
+      applyTerminalSessionRebound(msg.terminalId, msg.previousSessionId, msg.sessionId);
+      return { wasReconnect };
+
     case 'terminal_session_runtime_snapshot': {
+      const authoritativeReboundTerminalIds = new Set(
+        (msg.reboundSessions ?? []).map((rebound) => rebound.terminalId),
+      );
+      for (const terminalId of pendingTerminalRebounds.keys()) {
+        if (!authoritativeReboundTerminalIds.has(terminalId)) {
+          pendingTerminalRebounds.delete(terminalId);
+        }
+      }
+      for (const rebound of msg.reboundSessions ?? []) {
+        applyTerminalSessionRebound(
+          rebound.terminalId,
+          rebound.previousSessionId,
+          rebound.sessionId,
+        );
+      }
       sessionStore.applyTerminalRuntimeSnapshot(msg.activeSessionIds);
       const activeTerminalIds = new Set(msg.activeSessionIds);
+      for (const pending of [...pendingTerminalRebounds.values()]) {
+        if (!activeTerminalIds.has(pending.destinationSessionId)) {
+          cancelPendingTerminalReboundsForDestination(pending.destinationSessionId);
+        }
+      }
       for (const sessionId of msg.activeSessionIds) {
         useTerminalSessionStore.getState().markRuntimeStarted(sessionId);
       }
@@ -150,6 +184,7 @@ export function handleIncomingServerMessage({
         for (const session of project.sessions) {
           if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
             useTerminalSessionStore.getState().markRuntimeStopped(session.id);
+            if (isPendingTerminalReboundSource(session.id)) continue;
             retireStoppedTerminalSessionSurface(session.id);
           }
         }
@@ -333,6 +368,74 @@ export function handleIncomingServerMessage({
     default:
       return { wasReconnect };
   }
+}
+
+function applyTerminalSessionRebound(
+  terminalId: string,
+  previousSessionId: string,
+  sessionId: string,
+): void {
+  const terminalStore = useTerminalSessionStore.getState();
+  terminalStore.markRuntimeStopped(previousSessionId);
+  terminalStore.markRuntimeStarted(sessionId);
+  useSessionStore.getState().setSessionRunning(previousSessionId, false);
+
+  const pending = pendingTerminalRebounds.get(terminalId) ?? {
+    destinationSessionId: sessionId,
+    sourceSessionIds: new Set<string>(),
+  };
+  pending.sourceSessionIds.add(previousSessionId);
+  pending.destinationSessionId = sessionId;
+  pendingTerminalRebounds.set(terminalId, pending);
+  if (tryApplyPendingTerminalRebound(terminalId)) {
+    return;
+  }
+  void Promise.resolve(useSessionStore.getState().loadProjects()).then(
+    () => { tryApplyPendingTerminalRebound(terminalId); },
+    () => {},
+  );
+}
+
+function tryApplyPendingTerminalRebound(terminalId: string): boolean {
+  const pending = pendingTerminalRebounds.get(terminalId);
+  if (!pending) return true;
+  const terminalState = useTerminalSessionStore.getState()
+    .bySessionId[pending.destinationSessionId];
+  if (terminalState?.runtimeExited) {
+    cancelPendingTerminalReboundsForDestination(pending.destinationSessionId);
+    return true;
+  }
+  const sessionStore = useSessionStore.getState();
+  if (!sessionStore.getSession(pending.destinationSessionId)) return false;
+
+  for (const sourceSessionId of pending.sourceSessionIds) {
+    usePanelStore.getState().rebindSession(sourceSessionId, pending.destinationSessionId);
+  }
+  sessionStore.setSessionRunning(pending.destinationSessionId, true);
+  pendingTerminalRebounds.delete(terminalId);
+  return true;
+}
+
+function cancelPendingTerminalReboundsForDestination(sessionId: string): void {
+  for (const [terminalId, pending] of pendingTerminalRebounds) {
+    if (pending.destinationSessionId !== sessionId) continue;
+    pendingTerminalRebounds.delete(terminalId);
+    for (const sourceSessionId of pending.sourceSessionIds) {
+      retireStoppedTerminalSessionSurface(sourceSessionId);
+    }
+  }
+}
+
+function isPendingTerminalReboundSource(sessionId: string): boolean {
+  return [...pendingTerminalRebounds.values()]
+    .some((pending) => pending.sourceSessionIds.has(sessionId));
+}
+
+function removePendingTerminalReboundSource(terminalId: string, sessionId: string): void {
+  const pending = pendingTerminalRebounds.get(terminalId);
+  if (!pending) return;
+  pending.sourceSessionIds.delete(sessionId);
+  if (pending.sourceSessionIds.size === 0) pendingTerminalRebounds.delete(terminalId);
 }
 
 function retireStoppedTerminalSessionSurface(sessionId: string): void {

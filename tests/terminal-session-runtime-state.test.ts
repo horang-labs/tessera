@@ -319,6 +319,403 @@ test('PTY runtime exit removes its panel without discarding unrelated panels', (
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
 });
 
+test('PTY session rebound keeps the panel and transfers its session ownership atomically', () => {
+  const childSessionId = 'terminal-session-child';
+  const tabId = 'rebound-terminal-tab';
+  const panelId = 'rebound-terminal-panel';
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true), terminalSession(childSessionId))],
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  } as ServerTransportMessage);
+
+  assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), true);
+  assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
+  assert.deepEqual(
+    useTabStore.getState().findSessionLocation(childSessionId),
+    { tabId, panelId },
+  );
+  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, false);
+  assert.equal(useSessionStore.getState().getSession(childSessionId)?.isRunning, true);
+});
+
+test('PTY session rebound waits for the child menu row before switching the visible panel', async (t) => {
+  const childSessionId = 'terminal-session-delayed-child';
+  const tabId = 'delayed-rebound-tab';
+  const panelId = 'delayed-rebound-panel';
+  let releaseLoad!: () => void;
+  const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+  const originalLoadProjects = useSessionStore.getState().loadProjects;
+  t.after(() => useSessionStore.setState({ loadProjects: originalLoadProjects }));
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true))],
+    loadProjects: async () => {
+      await loadGate;
+      useSessionStore.setState({
+        projects: [project(terminalSession(SESSION_ID), terminalSession(childSessionId, true))],
+      });
+    },
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  });
+  assert.deepEqual(useTabStore.getState().findSessionLocation(SESSION_ID), { tabId, panelId });
+  assert.equal(useTabStore.getState().findSessionLocation(childSessionId), null);
+
+  releaseLoad();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
+  assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
+});
+
+test('PTY runtime snapshot repairs a rebound missed while the client was disconnected', () => {
+  const childSessionId = 'terminal-session-reconnected-child';
+  const tabId = 'reconnected-rebound-tab';
+  const panelId = 'reconnected-rebound-panel';
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true), terminalSession(childSessionId))],
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_runtime_snapshot',
+    activeSessionIds: [childSessionId],
+    reboundSessions: [{
+      previousSessionId: SESSION_ID,
+      sessionId: childSessionId,
+      terminalId: `session-${SESSION_ID}`,
+    }],
+  });
+
+  assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), true);
+  assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
+});
+
+test('delayed reconnect rebound keeps the source panel until the child row loads', async (t) => {
+  const childSessionId = 'snapshot-delayed-child';
+  const tabId = 'snapshot-delayed-tab';
+  const panelId = 'snapshot-delayed-panel';
+  let releaseLoad!: () => void;
+  const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+  const originalLoadProjects = useSessionStore.getState().loadProjects;
+  t.after(() => useSessionStore.setState({ loadProjects: originalLoadProjects }));
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true))],
+    loadProjects: async () => {
+      await loadGate;
+      useSessionStore.setState({
+        projects: [project(terminalSession(SESSION_ID), terminalSession(childSessionId, true))],
+      });
+    },
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_runtime_snapshot',
+    activeSessionIds: [childSessionId],
+    reboundSessions: [{
+      previousSessionId: SESSION_ID,
+      sessionId: childSessionId,
+      terminalId: `session-${SESSION_ID}`,
+    }],
+  });
+  assert.deepEqual(useTabStore.getState().findSessionLocation(SESSION_ID), { tabId, panelId });
+
+  releaseLoad();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
+});
+
+test('rebound destination exit during menu load retires the source and ignores the late load', async (t) => {
+  const childSessionId = 'exited-delayed-child';
+  const tabId = 'exited-delayed-tab';
+  const panelId = 'exited-delayed-panel';
+  let releaseLoad!: () => void;
+  const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+  const originalLoadProjects = useSessionStore.getState().loadProjects;
+  t.after(() => useSessionStore.setState({ loadProjects: originalLoadProjects }));
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true))],
+    loadProjects: async () => {
+      await loadGate;
+      useSessionStore.setState({
+        projects: [project(terminalSession(SESSION_ID), terminalSession(childSessionId))],
+      });
+    },
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  });
+  receive({ type: 'terminal_session_runtime', sessionId: childSessionId, running: false });
+  assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
+
+  releaseLoad();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
+});
+
+test('rapid chained rebounds apply only the latest child when loads resolve in reverse', async (t) => {
+  const middleSessionId = 'rebound-middle';
+  const finalSessionId = 'rebound-final';
+  const tabId = 'rebound-chain-tab';
+  const panelId = 'rebound-chain-panel';
+  let releaseFirst!: () => void;
+  let releaseSecond!: () => void;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
+  const originalLoadProjects = useSessionStore.getState().loadProjects;
+  t.after(() => useSessionStore.setState({ loadProjects: originalLoadProjects }));
+  let loadCount = 0;
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true))],
+    loadProjects: async () => {
+      loadCount += 1;
+      await (loadCount === 1 ? firstGate : secondGate);
+      useSessionStore.setState({
+        projects: [project(
+          terminalSession(SESSION_ID),
+          terminalSession(middleSessionId),
+          terminalSession(finalSessionId, true),
+        )],
+      });
+    },
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+  const terminalId = `session-${SESSION_ID}`;
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: middleSessionId,
+    terminalId,
+  });
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: middleSessionId,
+    sessionId: finalSessionId,
+    terminalId,
+  });
+  releaseSecond();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(useTabStore.getState().findSessionLocation(finalSessionId), { tabId, panelId });
+
+  releaseFirst();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(useTabStore.getState().findSessionLocation(finalSessionId), { tabId, panelId });
+  assert.equal(useTabStore.getState().findSessionLocation(middleSessionId), null);
+});
+
+test('starting the fork parent in another terminal does not cancel the original terminal rebound', async (t) => {
+  const childSessionId = 'reopened-parent-child';
+  const tabId = 'reopened-parent-tab';
+  const panelId = 'reopened-parent-panel';
+  let releaseLoad!: () => void;
+  const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+  const originalLoadProjects = useSessionStore.getState().loadProjects;
+  t.after(() => useSessionStore.setState({ loadProjects: originalLoadProjects }));
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true))],
+    loadProjects: async () => {
+      await loadGate;
+      useSessionStore.setState({
+        projects: [project(
+          terminalSession(SESSION_ID, true),
+          terminalSession(childSessionId, true),
+        )],
+      });
+    },
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  });
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    terminalId: 'separately-reopened-terminal',
+    running: true,
+  });
+  releaseLoad();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
+  assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
+  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(useSessionStore.getState().getSession(childSessionId)?.isRunning, true);
+});
+
+test('reconnect snapshot cancels a stale pending rebound omitted by the server', async (t) => {
+  const childSessionId = 'reconnect-reopened-parent-child';
+  const tabId = 'reconnect-reopened-parent-tab';
+  const panelId = 'reconnect-reopened-parent-panel';
+  let releaseLoad!: () => void;
+  const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+  const originalLoadProjects = useSessionStore.getState().loadProjects;
+  t.after(() => useSessionStore.setState({ loadProjects: originalLoadProjects }));
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true))],
+    loadProjects: async () => {
+      await loadGate;
+      useSessionStore.setState({
+        projects: [project(
+          terminalSession(SESSION_ID, true),
+          terminalSession(childSessionId, true),
+        )],
+      });
+    },
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  });
+  receive({
+    type: 'terminal_session_runtime_snapshot',
+    activeSessionIds: [SESSION_ID, childSessionId],
+    reboundSessions: [],
+  });
+  releaseLoad();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(useTabStore.getState().findSessionLocation(SESSION_ID), { tabId, panelId });
+  assert.equal(useTabStore.getState().findSessionLocation(childSessionId), null);
+});
+
 test('archiving a stopped PTY session retires its open surface after the request succeeds', async (t) => {
   const tabId = 'archived-terminal-tab';
   const panelId = 'archived-terminal-panel';
