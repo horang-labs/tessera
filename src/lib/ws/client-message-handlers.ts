@@ -138,6 +138,14 @@ export function handleIncomingServerMessage({
       for (const sessionId of msg.activeSessionIds) {
         useTerminalSessionStore.getState().markRuntimeStarted(sessionId);
       }
+      // terminal-session-store에 이미 hook 상태가 있는 세션은 세션 목록(projects)
+      // 로드 전이라도 snapshot 기준으로 정리한다 — 연결 직후에는 projects가 아직
+      // 비어 있어 아래 순회가 아무것도 강등하지 못한다.
+      for (const sessionId of Object.keys(useTerminalSessionStore.getState().bySessionId)) {
+        if (!activeTerminalIds.has(sessionId)) {
+          useTerminalSessionStore.getState().markRuntimeStopped(sessionId);
+        }
+      }
       for (const project of sessionStore.projects) {
         for (const session of project.sessions) {
           if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {

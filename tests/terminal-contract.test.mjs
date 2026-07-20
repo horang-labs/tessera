@@ -10,6 +10,7 @@ const wsServerSource = fs.readFileSync(new URL('../src/lib/ws/server.ts', import
 const terminalManagerSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-manager.ts', import.meta.url), 'utf8');
 const terminalResolverSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-resolver.ts', import.meta.url), 'utf8');
 const terminalLaunchIntentSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-launch-intent.ts', import.meta.url), 'utf8');
+const providerTerminalLaunchSource = fs.readFileSync(new URL('../src/lib/terminal/provider-launch.ts', import.meta.url), 'utf8');
 const terminalHandoffLockSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-handoff-lock.ts', import.meta.url), 'utf8');
 const processManagerSource = fs.readFileSync(new URL('../src/lib/cli/process-manager.ts', import.meta.url), 'utf8');
 const clientTerminalCwdSource = fs.readFileSync(new URL('../src/lib/terminal/client-terminal-cwd.ts', import.meta.url), 'utf8');
@@ -156,6 +157,10 @@ test('terminal typography follows Tessera appearance settings and xterm owns scr
   assert.match(terminalCssSource, /overflow-y: scroll !important/);
   assert.match(terminalCssSource, /scrollbar-width: none/);
   assert.match(terminalCssSource, /\.xterm-scrollable-element > \.xterm-scrollbar > \.xterm-slider/);
+  assert.doesNotMatch(
+    terminalCssSource,
+    /\.xterm-scrollbar\.xterm-vertical\s*{[^}]*opacity:\s*1\s*!important/s,
+  );
   assert.match(terminalThemeSource, /scrollbarSliderBackground/);
   assert.match(terminalThemeSource, /overviewRulerBorder: 'transparent'/);
   assert.doesNotMatch(terminalCssSource, /::-webkit-scrollbar-thumb/);
@@ -182,6 +187,14 @@ test('terminal preserves scroll position on resize and exposes the shared latest
   assert.match(terminalSurfaceSource, /requestStableFit/);
   assert.match(terminalSurfaceSource, /captureRestorePoint/);
   assert.match(terminalSurfaceSource, /restoreAfterLayout/);
+  assert.match(
+    terminalSurfaceSource,
+    /private fitAndResize\([\s\S]*?this\.recoverRendererPresentation\(\)/,
+  );
+  assert.match(
+    terminalSurfaceSource,
+    /private recoverRendererPresentation\(\): void \{[\s\S]*?this\.refreshTerminalViewport\(\)[\s\S]*?sharedTerminalRenderRecovery\.request\(\)/,
+  );
   assert.match(terminalSurfaceSource, /terminal\.onScroll/);
   assert.match(terminalScrollControllerSource, /'follow-output' \| 'pinned-viewport'/);
   assert.match(terminalScrollControllerSource, /registerMarker/);
@@ -248,6 +261,18 @@ test('terminal messages route through the connection-scoped server terminal mana
   assert.match(routingSource, /case 'terminal_input':/);
   assert.match(routingSource, /case 'terminal_resize':/);
   assert.match(routingSource, /case 'terminal_close':/);
+});
+
+test('provider terminals keep their native alternate-screen behavior', () => {
+  assert.doesNotMatch(providerTerminalLaunchSource, /CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN/);
+  assert.doesNotMatch(routingSource, /buildProviderTerminalEnv/);
+});
+
+test('all provider terminals use the shared Orca-style TUI wheel reporting path', () => {
+  assert.match(
+    terminalSurfaceSource,
+    /attachTerminalMouseWheelMultiplier\(terminal\)/,
+  );
 });
 
 test('terminal slash fallback transports intent rather than executable data', () => {

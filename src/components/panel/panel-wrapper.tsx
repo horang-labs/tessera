@@ -12,7 +12,17 @@ import { PanelDropZone, type DropEdge } from './panel-drop-zone';
 import { PANEL_NODE_DRAG_MIME, SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
-import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
+import {
+  getWorkspaceFileDragAbsolutePath,
+  hasWorkspaceFileDragData,
+  isPathInsertOnlyDragData,
+  parsePanelNodeDragData,
+  parsePanelTitleDragData,
+} from '@/lib/dnd/panel-session-drag';
+import {
+  insertFilePathIntoTerminal,
+  resolvePanelTerminalId,
+} from '@/lib/terminal/terminal-file-path-insert';
 import { focusPanelControl } from '@/lib/session/focus-session-panel';
 
 /** Edge zone threshold — the outer 25% of each edge triggers a split. */
@@ -66,6 +76,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
   // --- DnD state ---
   const [dropEdge, setDropEdge] = useState<DropEdge | null>(null);
+  const [insertPathHint, setInsertPathHint] = useState(false);
   const dropEdgeRef = useRef<DropEdge | null>(null);
   const dragCounterRef = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -104,7 +115,28 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
   // --- DnD handlers ---
 
+  /**
+   * A workspace file/folder dragged onto the center of a terminal pane inserts
+   * its path into the prompt (Orca-style) instead of replacing the pane. Edge
+   * drops keep the existing split-into-file-viewer behavior for files;
+   * folders are insert-only and never split.
+   */
+  const resolveInsertTargetTerminalId = useCallback(() => {
+    const ps = usePanelStore.getState();
+    const panel = ps.tabPanels[ps.activeTabId]?.panels[panelId];
+    return resolvePanelTerminalId(panel, (id) => (
+      useSessionStore.getState().getSession(id)?.kind === 'terminal'
+    ));
+  }, [panelId]);
+
+  const isTerminalPathInsertTarget = useCallback((e: React.DragEvent) => (
+    hasWorkspaceFileDragData(e.dataTransfer) && resolveInsertTargetTerminalId() !== null
+  ), [resolveInsertTargetTerminalId]);
+
   const isPanelCompatibleDrag = useCallback((e: React.DragEvent) => {
+    // Insert-only drags (folders) carry no session payload — accept them only
+    // over a terminal pane, where the drop inserts the path.
+    if (isPathInsertOnlyDragData(e.dataTransfer)) return isTerminalPathInsertTarget(e);
     const hasSessionDrag = e.dataTransfer.types.includes(SESSION_DRAG_MIME);
     const hasTabPanelTreeDrag = e.dataTransfer.types.includes(TAB_PANEL_TREE_DND_MIME);
     const hasPanelNodeDrag = e.dataTransfer.types.includes(PANEL_NODE_DRAG_MIME);
@@ -117,7 +149,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     // Yield to session-ref drop zone (MessageInput) — let it handle the drop
     if (hasSessionDrag && (e.target as HTMLElement)?.closest?.('[data-session-ref-drop]')) return false;
     return true;
-  }, [panelId, tabId]);
+  }, [panelId, tabId, isTerminalPathInsertTarget]);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
@@ -133,10 +165,14 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     const rect = wrapperRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    const edge = computeDropEdge(e.clientX, e.clientY, rect);
+    // Insert-only drags have no split behavior, so the whole pane acts as center.
+    const edge = isPathInsertOnlyDragData(e.dataTransfer)
+      ? 'center'
+      : computeDropEdge(e.clientX, e.clientY, rect);
     dropEdgeRef.current = edge;
     setDropEdge(edge);
-  }, [isPanelCompatibleDrag]);
+    setInsertPathHint(edge === 'center' && isTerminalPathInsertTarget(e));
+  }, [isPanelCompatibleDrag, isTerminalPathInsertTarget]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
@@ -146,6 +182,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       dragCounterRef.current = 0;
       dropEdgeRef.current = null;
       setDropEdge(null);
+      setInsertPathHint(false);
     }
   }, [isPanelCompatibleDrag]);
 
@@ -155,6 +192,17 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     dragCounterRef.current = 0;
     dropEdgeRef.current = null;
     setDropEdge(null);
+    setInsertPathHint(false);
+
+    if (currentEdge === 'center' && isTerminalPathInsertTarget(e)) {
+      const filePath = getWorkspaceFileDragAbsolutePath(e.dataTransfer);
+      const targetTerminalId = resolveInsertTargetTerminalId();
+      if (filePath && targetTerminalId && insertFilePathIntoTerminal(targetTerminalId, filePath)) {
+        usePanelStore.getState().setActivePanelId(panelId);
+        focusPanelControl(panelId);
+      }
+      return;
+    }
 
     const droppedSessionId = e.dataTransfer.getData(SESSION_DRAG_MIME);
     const droppedTabTreeId = e.dataTransfer.getData(TAB_PANEL_TREE_DND_MIME);
@@ -341,7 +389,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     if (session) {
       viewSession(session, { forceReload: true });
     }
-  }, [panelId, t, viewSession]);
+  }, [panelId, t, viewSession, isTerminalPathInsertTarget, resolveInsertTargetTerminalId]);
 
   return (
     <div
@@ -368,7 +416,12 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       onDrop={handleDrop}
     >
       {children}
-      {dropEdge && <PanelDropZone edge={dropEdge} />}
+      {dropEdge && (
+        <PanelDropZone
+          edge={dropEdge}
+          label={insertPathHint ? t('panel.dropToInsertPath') : undefined}
+        />
+      )}
     </div>
   );
 });

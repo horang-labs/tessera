@@ -10,12 +10,6 @@
   display: none;
 }
 
-/* xterm 6 owns this DOM scrollbar, so it remains visible on macOS at idle. */
-.tessera-terminal-surface .xterm-scrollable-element > .xterm-scrollbar.xterm-vertical {
-  opacity: 1 !important;
-  pointer-events: auto !important;
-}
-
 .tessera-terminal-surface .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider {
   border-radius: 4px;
 }

@@ -90,23 +90,40 @@ try {
   await waitForScrollbackRows(100);
 
   await page.waitForTimeout(2_500);
-  const persistentScrollbar = page.locator(
+  const scrollbar = page.locator(
+    '.xterm-scrollable-element > .xterm-scrollbar.xterm-vertical',
+  );
+  const scrollbarSlider = page.locator(
     '.xterm-scrollable-element > .xterm-scrollbar.xterm-vertical > .xterm-slider',
   );
-  await persistentScrollbar.waitFor({ state: 'visible', timeout: 1_000 });
-  const scrollbarStyle = await persistentScrollbar.evaluate((element) => ({
+  await scrollbarSlider.waitFor({ state: 'attached', timeout: 1_000 });
+  const idleScrollbarStyle = await scrollbar.evaluate((element) => ({
+    opacity: getComputedStyle(element).opacity,
+    pointerEvents: getComputedStyle(element).pointerEvents,
+  }));
+  assert.equal(idleScrollbarStyle.opacity, '0', 'xterm must auto-hide the scrollbar while idle');
+  assert.equal(idleScrollbarStyle.pointerEvents, 'none', 'an auto-hidden scrollbar must not intercept input');
+
+  await page.locator('.xterm-scrollable-element').hover();
+  await page.waitForFunction(() => {
+    const element = document.querySelector(
+      '.xterm-scrollable-element > .xterm-scrollbar.xterm-vertical',
+    );
+    return element && getComputedStyle(element).opacity !== '0';
+  });
+  const hoveredScrollbarStyle = await scrollbarSlider.evaluate((element) => ({
     opacity: getComputedStyle(element.parentElement).opacity,
     visibility: getComputedStyle(element).visibility,
     width: element.getBoundingClientRect().width,
   }));
-  assert.notEqual(scrollbarStyle.opacity, '0', 'terminal scrollbar must remain opaque while idle');
-  assert.notEqual(scrollbarStyle.visibility, 'hidden', 'terminal scrollbar must remain visible');
-  assert.ok(scrollbarStyle.width > 0, 'terminal scrollbar must reserve a visible gutter');
+  assert.notEqual(hoveredScrollbarStyle.opacity, '0', 'xterm must reveal scrollback controls on hover');
+  assert.notEqual(hoveredScrollbarStyle.visibility, 'hidden', 'hovered scrollbar must remain visible');
+  assert.ok(hoveredScrollbarStyle.width > 0, 'terminal scrollbar must reserve a usable gutter');
 
-  const thumbBeforeWheel = await persistentScrollbar.boundingBox();
+  const thumbBeforeWheel = await scrollbarSlider.boundingBox();
   await page.locator('.xterm-screen').hover();
   await page.mouse.wheel(0, -600);
-  const thumbAfterWheel = await persistentScrollbar.boundingBox();
+  const thumbAfterWheel = await scrollbarSlider.boundingBox();
   assert.ok(
     thumbBeforeWheel && thumbAfterWheel && thumbAfterWheel.y < thumbBeforeWheel.y,
     'xterm-owned scrollbar thumb must move in the same wheel interaction',

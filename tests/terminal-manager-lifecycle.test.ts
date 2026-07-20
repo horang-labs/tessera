@@ -217,6 +217,82 @@ test('cold attach receives one snapshot boundary followed by monotonic live outp
   await manager.shutdownAll();
 });
 
+test('resize redraw cannot erase scrollback even when ED3 is split across PTY chunks', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({
+    cols: 40,
+    rows: 8,
+    resizeScrollbackPolicy: 'preserve-on-ed3',
+  }));
+  const history = Array.from(
+    { length: 80 },
+    (_, index) => `ROW_${String(index + 1).padStart(4, '0')}\r\n`,
+  ).join('');
+  spawned[0].emitData(history);
+  await nextImmediate();
+  delivered.length = 0;
+
+  manager.resize('terminal-a', 'user-a', 'connection-a', 'surface-a', 24, 8, true);
+  spawned[0].emitData('\x1b[');
+  manager.resize('terminal-a', 'user-a', 'connection-a', 'surface-a', 26, 8, true);
+  spawned[0].emitData('3J\x1b[2J\x1b[HRESIZED_REDRAW');
+  await nextImmediate();
+
+  const resizeOutput = delivered
+    .filter(({ message }) => message.type === 'terminal_output')
+    .map(({ message }) => message.type === 'terminal_output' ? message.data : '')
+    .join('');
+  assert.doesNotMatch(resizeOutput, /\x1b\[3J/);
+  assert.match(resizeOutput, /RESIZED_REDRAW/);
+
+  delivered.length = 0;
+  await manager.create(createOptions({
+    terminalId: 'different-client-proposal',
+    connectionId: 'connection-b',
+    surfaceId: 'surface-b',
+    cols: 26,
+    rows: 8,
+  }));
+
+  const snapshot = delivered.find(({ connectionId, message }) =>
+    connectionId === 'connection-b' && message.type === 'terminal_snapshot'
+  )?.message;
+  assert.equal(snapshot?.type, 'terminal_snapshot');
+  if (snapshot?.type === 'terminal_snapshot') {
+    assert.match(snapshot.data, /ROW_0001/);
+    assert.match(snapshot.data, /RESIZED_REDRAW/);
+  }
+
+  delivered.length = 0;
+  manager.resize('terminal-a', 'user-a', 'connection-b', 'surface-b', 28, 8, true);
+  spawned[0].emitData('\x1b[');
+  manager.write('terminal-a', 'user-a', 'connection-b', 'surface-b', 'user-input');
+  spawned[0].emitData('3J');
+  await nextImmediate();
+  const resizeClear = delivered
+    .filter(({ message }) => message.type === 'terminal_output')
+    .map(({ message }) => message.type === 'terminal_output' ? message.data : '')
+    .join('');
+  assert.doesNotMatch(resizeClear, /\x1b\[3J/);
+
+  delivered.length = 0;
+  spawned[0].emitData('\x1b[3J');
+  await nextImmediate();
+  const explicitClear = delivered
+    .filter(({ message }) => message.type === 'terminal_output')
+    .map(({ message }) => message.type === 'terminal_output' ? message.data : '')
+    .join('');
+  assert.match(explicitClear, /\x1b\[3J/);
+
+  await manager.shutdownAll();
+});
+
 test('a late exit from an older generation cannot erase its replacement runtime', async () => {
   const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
   const spawned: FakePty[] = [];
@@ -618,4 +694,58 @@ test('cold-attached Codex surface is told when its requested mode needs a restar
   )));
 
   await manager.shutdownAll();
+});
+
+test('a wedged headless model cannot freeze reattach: fallback snapshot then live output', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const deadline = (label: string) => new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(label)), 1_000);
+  });
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+    undefined,
+    {
+      snapshotTimeoutMs: 25,
+      // A parser write whose completion callback never fires leaves the
+      // model's write chain pending forever — snapshot() then never settles.
+      createHeadlessModel: () => ({
+        write: () => {},
+        resize: () => {},
+        snapshot: () => new Promise(() => {}),
+        dispose: () => {},
+      }),
+    },
+  );
+
+  await Promise.race([manager.create(createOptions()), deadline('initial attach froze')]);
+  spawned[0].emitData('history-before-park\r\n');
+  await nextImmediate();
+
+  delivered.length = 0;
+  await Promise.race([
+    manager.create(createOptions({ connectionId: 'connection-b', surfaceId: 'surface-b' })),
+    deadline('reattach froze waiting for the wedged model snapshot'),
+  ]);
+
+  const snapshot = delivered.find(({ connectionId, message }) => (
+    connectionId === 'connection-b' && message.type === 'terminal_snapshot'
+  ))?.message;
+  assert.equal(snapshot?.type, 'terminal_snapshot');
+  if (snapshot?.type === 'terminal_snapshot') {
+    assert.equal(snapshot.fallback, true, 'wedged model must degrade to the raw fallback snapshot');
+    assert.match(snapshot.data, /history-before-park/);
+  }
+
+  delivered.length = 0;
+  spawned[0].emitData('live-after-reattach');
+  await nextImmediate();
+  const liveForB = delivered
+    .filter(({ connectionId, message }) => (
+      connectionId === 'connection-b' && message.type === 'terminal_output'
+    ))
+    .map(({ message }) => (message.type === 'terminal_output' ? message.data : ''))
+    .join('');
+  assert.match(liveForB, /live-after-reattach/, 'live output must resume after the fallback snapshot');
 });

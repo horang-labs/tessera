@@ -35,6 +35,9 @@ export type CliCommandShape = 'bare_command' | 'absolute_path' | 'relative_path'
 /** How a provider TUI reacts when the host terminal changes light/dark mode. */
 export type TerminalAppearanceChangePolicy = 'live' | 'restart';
 
+/** How a provider TUI uses ED3 while redrawing after SIGWINCH. */
+export type TerminalResizeScrollbackPolicy = 'native' | 'preserve-on-ed3';
+
 export interface CliProbeSummary {
   ok: boolean;
   failureKind: CliProbeFailureKind;
@@ -111,6 +114,9 @@ export interface CliProvider {
    * standardized color-scheme notification or must be resumed after restart.
    */
   getTerminalAppearanceChangePolicy(): TerminalAppearanceChangePolicy;
+
+  /** Declares whether SIGWINCH redraw ED3 must preserve host scrollback. */
+  getTerminalResizeScrollbackPolicy(): TerminalResizeScrollbackPolicy;
 
   /**
    * Interprets provider-owned persisted state to decide whether terminating a

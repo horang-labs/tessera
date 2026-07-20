@@ -621,7 +621,7 @@ export function GitPanelContentSection({
                       onDragStart={(event) => {
                         if (!sessionId) return;
                         setSelectedPath(file.path);
-                        setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path);
+                        setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path, absolutePath);
                       }}
                       className={cn(
                         "group relative border-l-2 transition-colors",
@@ -696,7 +696,7 @@ export function GitPanelContentSection({
                                 return;
                               }
                               setSelectedPath(file.path);
-                              setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path);
+                              setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path, absolutePath);
                             }}
                             draggable={Boolean(sessionId && canOpenReadOnly)}
                             disabled={!canOpenReadOnly}

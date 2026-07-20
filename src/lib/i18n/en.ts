@@ -715,6 +715,7 @@ export const en: I18nMessages = {
     closePanel: 'Close panel (Ctrl+Shift+W)',
     tooSmallToSplit: 'Panel is too small to split',
     cannotCloseLastPanel: 'Cannot close the last panel',
+    dropToInsertPath: 'Insert path into terminal',
   },
   sidebar: {
     noProjects: 'No projects',

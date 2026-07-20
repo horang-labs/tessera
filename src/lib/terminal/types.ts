@@ -1,4 +1,7 @@
-import type { TerminalAppearanceChangePolicy } from '@/lib/cli/providers/types';
+import type {
+  TerminalAppearanceChangePolicy,
+  TerminalResizeScrollbackPolicy,
+} from '@/lib/cli/providers/types';
 
 export type TerminalShellKind = 'default' | 'cmd' | 'powershell' | 'wsl';
 
@@ -48,6 +51,8 @@ export interface TerminalCreateOptions {
   providerId?: string;
   /** Provider-declared behavior for light/dark changes in an already-running TUI. */
   appearanceChangePolicy?: TerminalAppearanceChangePolicy;
+  /** Provider-declared handling for ED3 emitted by a resize redraw. */
+  resizeScrollbackPolicy?: TerminalResizeScrollbackPolicy;
   /** Whether closing this runtime can be followed by a same-session resume. */
   canRestartForAppearance?: () => boolean;
   /** Revalidated client-safe recipe for recreating a handoff runtime after exit. */

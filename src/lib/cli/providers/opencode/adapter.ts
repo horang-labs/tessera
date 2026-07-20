@@ -114,6 +114,10 @@ export class OpenCodeAdapter implements CliProvider {
     return 'live';
   }
 
+  getTerminalResizeScrollbackPolicy(): 'native' {
+    return 'native';
+  }
+
   async isAvailable(environment?: 'native' | 'wsl'): Promise<boolean> {
     if (environment) {
       return probeBinaryAvailable('opencode', environment);

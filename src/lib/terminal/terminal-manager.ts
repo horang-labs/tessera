@@ -29,6 +29,7 @@ import type {
 } from './types';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { shouldReleasePreviewRuntime } from './terminal-preview-policy';
+import { TerminalResizeOutputTransaction } from './terminal-resize-output-transaction';
 
 type SendToConnection = (connectionId: string, message: ServerTransportMessage) => void;
 type TerminalSessionStateMessage = Extract<ServerTransportMessage, { type: 'session_state' }>;
@@ -154,12 +155,13 @@ interface TerminalRuntime {
   cwd: string;
   shell: string;
   appearanceChangePolicy: NonNullable<TerminalCreateOptions['appearanceChangePolicy']>;
+  resizeScrollbackPolicy: NonNullable<TerminalCreateOptions['resizeScrollbackPolicy']>;
   canRestartForAppearance?: () => boolean;
   appearanceRestartIntent?: TerminalCreateOptions['appearanceRestartIntent'];
   appearanceRestartPending: boolean;
   process: TerminalProcessHandle;
   appearanceController?: ReturnType<typeof createTerminalAppearanceController>;
-  model: TerminalHeadlessModel;
+  model: TerminalHeadlessModelLike;
   cols: number;
   rows: number;
   subscribers: Map<string, TerminalSubscriber>;
@@ -170,6 +172,7 @@ interface TerminalRuntime {
   // 1회 WS 전송한다. replay 버퍼/prefill 감지와는 독립.
   pendingSend: string[];
   pendingSendTimer: ReturnType<typeof setImmediate> | null;
+  resizeOutputTransaction?: TerminalResizeOutputTransaction;
   handoffSessionId?: string;
   prefillPending?: boolean;
   closing?: boolean;
@@ -184,10 +187,23 @@ interface TerminalRuntime {
   previewOwnerToken?: string;
 }
 
+/** The runtime only needs these members; tests can inject a stub model. */
+export type TerminalHeadlessModelLike = Pick<
+  TerminalHeadlessModel,
+  'write' | 'resize' | 'snapshot' | 'dispose'
+>;
+
 export interface TerminalManagerOptions {
   closeExitGraceMs?: number;
   closeExitPollMs?: number;
   processIsAlive?: (pid: number) => boolean;
+  /**
+   * Upper bound on waiting for the headless-model snapshot during attach.
+   * A wedged model write chain must degrade to the raw fallback snapshot
+   * instead of freezing the reattaching surface forever.
+   */
+  snapshotTimeoutMs?: number;
+  createHeadlessModel?: (cols: number, rows: number) => TerminalHeadlessModelLike;
   onSessionRuntimeStateChange?: (state: {
     sessionId: string;
     userId: string;
@@ -198,6 +214,37 @@ export interface TerminalManagerOptions {
 function normalizeTerminalDimension(value: number | undefined, fallback: number, max: number): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.max(1, Math.min(max, Math.floor(value!)));
+}
+
+/**
+ * Attach must never hang on the model snapshot. A single lost xterm write
+ * callback wedges the model's write chain forever, and every later reattach
+ * would otherwise stall before `subscriber.ready` — the surface then shows a
+ * stale screen with all live output trapped in pendingFrames.
+ */
+const DEFAULT_SNAPSHOT_TIMEOUT_MS = 3_000;
+
+async function resolveSnapshotWithTimeout(
+  model: TerminalHeadlessModelLike,
+  timeoutMs: number,
+): Promise<{ data: string; cols: number; rows: number }> {
+  const snapshot = model.snapshot();
+  // If the timeout wins, a late rejection from the losing promise must not
+  // surface as an unhandled rejection.
+  snapshot.catch(() => {});
+  let timerId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      snapshot,
+      new Promise<never>((_, reject) => {
+        timerId = setTimeout(() => {
+          reject(new Error(`Terminal snapshot timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timerId);
+  }
 }
 
 function appendWslenv(
@@ -407,7 +454,7 @@ export class TerminalManager {
       onData(callback: (data: string) => void): void;
       onExit(callback: (event: { exitCode: number; signal?: number }) => void): void;
     }) | null = null;
-    let model: TerminalHeadlessModel | null = null;
+    let model: TerminalHeadlessModelLike | null = null;
     const assertOpeningActive = () => {
       if (this.cancelledOpeningKeys.has(key)) {
         throw new Error('Terminal startup was cancelled.');
@@ -522,7 +569,8 @@ export class TerminalManager {
 
       const generation = (this.generationByTerminal.get(key) ?? 0) + 1;
       this.generationByTerminal.set(key, generation);
-      model = new TerminalHeadlessModel(cols, rows);
+      model = this.managerOptions.createHeadlessModel?.(cols, rows)
+        ?? new TerminalHeadlessModel(cols, rows);
       const runtime: TerminalRuntime = {
         terminalId: options.terminalId,
         userId: options.userId,
@@ -533,6 +581,7 @@ export class TerminalManager {
         cwd: shell.displayCwd ?? shell.cwd,
         shell: shell.command,
         appearanceChangePolicy: options.appearanceChangePolicy ?? 'live',
+        resizeScrollbackPolicy: options.resizeScrollbackPolicy ?? 'native',
         canRestartForAppearance: options.canRestartForAppearance,
         appearanceRestartIntent: options.appearanceRestartIntent,
         appearanceRestartPending: false,
@@ -636,8 +685,7 @@ export class TerminalManager {
         prefillHardTimer = setTimeout(sendPrefill, PREFILL_HARD_TIMEOUT_MS);
       }
 
-      processHandle.onData((rawData) => {
-        const data = runtime.appearanceController?.consumeOutput(rawData) ?? rawData;
+      const deliverOutput = (data: string) => {
         if (data.length === 0) return;
         // replay 버퍼: 원본 청크 순서/내용 그대로 즉시 누적 — coalescing과 독립.
         this.appendBufferedOutput(runtime, data);
@@ -660,14 +708,20 @@ export class TerminalManager {
 
         // WS 전송만 한 tick 모아 1회 전송(flood 완화).
         this.queueOutput(runtime, data);
+      };
+      runtime.resizeOutputTransaction = new TerminalResizeOutputTransaction({
+        emit: deliverOutput,
+      });
+
+      processHandle.onData((rawData) => {
+        const data = runtime.appearanceController?.consumeOutput(rawData) ?? rawData;
+        runtime.resizeOutputTransaction?.accept(data);
       });
 
       processHandle.onExit((event) => {
         const pendingColorQueryData = runtime.appearanceController?.drain() ?? '';
         if (pendingColorQueryData) {
-          this.appendBufferedOutput(runtime, pendingColorQueryData);
-          runtime.model.write(pendingColorQueryData);
-          this.queueOutput(runtime, pendingColorQueryData);
+          runtime.resizeOutputTransaction?.accept(pendingColorQueryData);
         }
         clearPrefillTimers();
         this.finalizeRuntimeExit(runtime, key, event);
@@ -742,7 +796,10 @@ export class TerminalManager {
     }
 
     try {
-      const snapshot = await runtime.model.snapshot();
+      const snapshot = await resolveSnapshotWithTimeout(
+        runtime.model,
+        this.managerOptions.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS,
+      );
       if (runtime.subscribers.get(subscriberKey) !== subscriber) return;
       this.sendToConnection(subscriber.connectionId, {
         type: 'terminal_snapshot',
@@ -824,6 +881,9 @@ export class TerminalManager {
         );
       }
     }
+    if (classifyAutomatedTerminalResponse(data) === 'not-automated') {
+      runtime.resizeOutputTransaction?.settle();
+    }
     runtime.process.write(data);
   }
 
@@ -885,14 +945,18 @@ export class TerminalManager {
     if (!terminalId) return false;
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime || runtime.ended || data.length === 0) return false;
+    runtime.resizeOutputTransaction?.settle();
     runtime.process.write(`${data.replace(/[\r\n\t]+/g, ' ')}\r`);
     return true;
   }
 
-  recordSessionState(message: TerminalSessionStateMessage, userId: string): void {
+  /** 살아있는 소유 runtime의 상태만 수락한다. false = 죽었거나 미소유인 pane의
+   *  늦은 hook curl — 캐시도 브로드캐스트도 하면 안 되는 유령 상태다. */
+  recordSessionState(message: TerminalSessionStateMessage, userId: string): boolean {
     const runtime = this.getOwnedTerminal(message.terminalId, userId);
-    if (!runtime || runtime.sessionId !== message.sessionId || runtime.ended) return;
+    if (!runtime || runtime.sessionId !== message.sessionId || runtime.ended) return false;
     runtime.lastSessionState = message;
+    return true;
   }
 
   getSessionStatesForUser(userId: string): TerminalSessionStateMessage[] {
@@ -1115,6 +1179,7 @@ export class TerminalManager {
     runtime.ended = true;
     runtime.exitEvent = event;
     this.disposeSessionObserver(runtime);
+    runtime.resizeOutputTransaction?.dispose();
     this.flushPendingOutput(runtime);
     if (isCurrent) {
       this.terminals.delete(key);
@@ -1376,6 +1441,9 @@ export class TerminalManager {
     const normalizedCols = normalizeTerminalDimension(cols, 80, MAX_TERMINAL_COLS);
     const normalizedRows = normalizeTerminalDimension(rows, 24, MAX_TERMINAL_ROWS);
     if (runtime.cols === normalizedCols && runtime.rows === normalizedRows) return;
+    if (runtime.resizeScrollbackPolicy === 'preserve-on-ed3') {
+      runtime.resizeOutputTransaction?.begin();
+    }
     runtime.process.resize(normalizedCols, normalizedRows);
     runtime.model.resize(normalizedCols, normalizedRows);
     runtime.cols = normalizedCols;

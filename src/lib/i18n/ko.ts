@@ -722,6 +722,7 @@ export const ko: I18nMessages = {
     closePanel: '패널 닫기 (Ctrl+Shift+W)',
     tooSmallToSplit: '패널이 너무 작아서 분할할 수 없습니다',
     cannotCloseLastPanel: '마지막 패널은 닫을 수 없습니다',
+    dropToInsertPath: '터미널에 경로 삽입',
   },
   sidebar: {
     noProjects: '프로젝트가 없습니다',
