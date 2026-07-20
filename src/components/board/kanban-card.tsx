@@ -2,7 +2,7 @@
 
 import { memo, useState, useCallback, useRef } from 'react';
 import type React from 'react';
-import { GitBranch, MessageSquare, Plus, Tag, TriangleAlert } from 'lucide-react';
+import { GitBranch, MessageSquare, Plus, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
@@ -957,6 +957,14 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   <span
                     aria-hidden
                     className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg)"
+                  />
+                )}
+                {prMismatch && (
+                  <span
+                    title={prMismatchReason ?? undefined}
+                    aria-label={prMismatchReason ?? undefined}
+                    className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-warning-text) ring-1 ring-(--board-card-bg) cursor-help"
+                    data-testid="task-pr-mismatch-badge"
                   />
                 )}
                 {!showProviderIcons && (

@@ -20,6 +20,7 @@ import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 interface SessionCreateOptions {
   workDir?: string;
@@ -30,6 +31,7 @@ interface SessionCreateOptions {
   collectionId?: string;
   title?: string;
   hasCustomTitle?: boolean;
+  executionMode?: AgentExecutionMode;
 }
 
 export function useSessionCrud() {
@@ -165,6 +167,7 @@ export function useSessionCrud() {
             ...(worktreeBranch && { worktreeBranch }),
             ...(options.taskId && { taskId: options.taskId }),
             ...(options.collectionId && { collectionId: options.collectionId }),
+            ...(options.executionMode && { executionMode: options.executionMode }),
           }),
         });
 

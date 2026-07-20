@@ -9,6 +9,7 @@ import logger from '@/lib/logger';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 type TaskCreatedTelemetrySource = 'kanban' | 'list' | 'new_session';
 
@@ -16,6 +17,7 @@ interface CreateWorktreeSessionOptions {
   projectDir: string;
   parentProjectId?: string;
   providerId: string;
+  executionMode?: AgentExecutionMode;
   /** Task title. Worktree sessions are always task-backed. */
   taskTitle: string;
   /**
@@ -61,6 +63,7 @@ export function useWorktreeSession() {
       projectDir,
       parentProjectId,
       providerId,
+      executionMode,
       taskTitle,
       hasCustomTitle = true,
       collectionId,
@@ -222,6 +225,7 @@ export function useWorktreeSession() {
           ...(taskTitle && { title: taskTitle, hasCustomTitle }),
           ...(parentProjectId && { parentProjectId }),
           providerId: resolvedProviderId,
+          executionMode,
           worktreeBranch: result.branchName,
           collectionId,
           ...(createdTaskId && { taskId: createdTaskId }),

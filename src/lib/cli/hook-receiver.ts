@@ -13,6 +13,7 @@ import { refreshSessionDiffStateInBackground } from '@/lib/git/session-diff-refr
 import { applyImmediateSessionTitle } from '@/lib/session/immediate-session-title';
 import {
   CLAUDE_LIFECYCLE_EVENTS,
+  claudeHookLifecycleHasWorkingSubagents,
   mapClaudeHookLifecycle,
 } from '@/lib/cli/providers/claude-code/terminal-hook-lifecycle';
 import { classifyAskUserQuestionEvent } from '@/lib/cli/providers/claude-code/ask-user-question-status';
@@ -103,7 +104,12 @@ function mapClaudeEventToStatus(
     if ((event === 'Stop' || event === 'StopFailure') && lifecycle.status === 'completed') {
       return completedStatus(payload);
     }
-    return lifecycle;
+    return {
+      ...lifecycle,
+      ...(claudeHookLifecycleHasWorkingSubagents(terminalId)
+        ? { hasWorkingSubagents: true }
+        : {}),
+    };
   }
   // lifecycle 소유 이벤트의 null은 "의도적 무시"(턴 종료 후 늦은 curl 등)다.
   // 범용 폴백이 PostToolUse→running으로 되살리면 tombstone이 무력화된다.
@@ -211,6 +217,9 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         terminalId: entry.terminalId,
         status: mapped.status,
         hookEvent: event,
+        ...('hasWorkingSubagents' in mapped && mapped.hasWorkingSubagents
+          ? { hasWorkingSubagents: true }
+          : {}),
         // 이 상태 발생시각. recordSessionState가 저장해 replay 때 같은 값을 실으므로
         // 클라의 알림 dedup 키가 재연결/재전송에도 안정적으로 같은 완료를 가리킨다.
         stateAt: Date.now(),

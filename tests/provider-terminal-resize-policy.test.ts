@@ -9,3 +9,9 @@ test('only Codex requests resize-scoped ED3 scrollback protection', () => {
   assert.equal(codexAdapter.getTerminalResizeScrollbackPolicy(), 'preserve-on-ed3');
   assert.equal(opencodeAdapter.getTerminalResizeScrollbackPolicy(), 'native');
 });
+
+test('providers declare whether one Escape can interrupt their terminal UI', () => {
+  assert.equal(claudeCodeAdapter.getTerminalInterruptInputPolicy(), 'single-escape');
+  assert.equal(codexAdapter.getTerminalInterruptInputPolicy(), 'single-escape');
+  assert.equal(opencodeAdapter.getTerminalInterruptInputPolicy(), 'none');
+});

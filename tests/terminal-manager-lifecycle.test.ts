@@ -173,6 +173,187 @@ test('session PTY lifecycle reports running until the process exits', async () =
   assert.deepEqual([...manager.getActiveSessionIds('user-a')], []);
 });
 
+test('a provider-declared single Escape settles a running turn when the stop hook is omitted', async () => {
+  const spawned: FakePty[] = [];
+  const inferredStates: ServerTransportMessage[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      interruptSettleMs: 10,
+      onSessionStateChange: ({ message }) => inferredStates.push(message),
+    },
+  );
+
+  await manager.create(createOptions({ interruptInputPolicy: 'single-escape' }));
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  }, 'user-a');
+
+  manager.write('terminal-a', 'user-a', 'connection-a', 'surface-a', '\x1b');
+  assert.deepEqual(spawned[0].writes, ['\x1b']);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(
+    manager.getSessionStateForSession('session-a', 'user-a')?.status,
+    'idle',
+  );
+  assert.deepEqual(inferredStates.map((state) => (
+    state.type === 'session_state' ? [state.status, state.hookEvent] : [state.type]
+  )), [['idle', 'InterruptFallback']]);
+});
+
+test('a terminal without the single-Escape policy does not infer an interrupt', async () => {
+  const spawned: FakePty[] = [];
+  const inferredStates: ServerTransportMessage[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      interruptSettleMs: 10,
+      onSessionStateChange: ({ message }) => inferredStates.push(message),
+    },
+  );
+
+  await manager.create(createOptions({ interruptInputPolicy: 'none' }));
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  }, 'user-a');
+
+  manager.write('terminal-a', 'user-a', 'connection-a', 'surface-a', '\x1b');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(
+    manager.getSessionStateForSession('session-a', 'user-a')?.status,
+    'running',
+  );
+  assert.deepEqual(inferredStates, []);
+});
+
+test('PTY Escape fallback does not overwrite a stop hook from the same turn', async () => {
+  const spawned: FakePty[] = [];
+  const inferredStates: ServerTransportMessage[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      interruptSettleMs: 10,
+      onSessionStateChange: ({ message }) => inferredStates.push(message),
+    },
+  );
+
+  await manager.create(createOptions({ interruptInputPolicy: 'single-escape' }));
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  }, 'user-a');
+
+  manager.write('terminal-a', 'user-a', 'connection-a', 'surface-a', '\x1b');
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'completed',
+    hookEvent: 'Stop',
+  }, 'user-a');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(
+    manager.getSessionStateForSession('session-a', 'user-a')?.status,
+    'completed',
+  );
+  assert.deepEqual(inferredStates, []);
+});
+
+test('PTY Escape fallback keeps running while a background subagent is active', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    { interruptSettleMs: 10 },
+  );
+
+  await manager.create(createOptions({ interruptInputPolicy: 'single-escape' }));
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'SubagentStart',
+    hasWorkingSubagents: true,
+  }, 'user-a');
+
+  manager.write('terminal-a', 'user-a', 'connection-a', 'surface-a', '\x1b');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(
+    manager.getSessionStateForSession('session-a', 'user-a')?.status,
+    'running',
+  );
+});
+
+test('PTY Escape fallback rejects late tool activity but accepts the next prompt', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    { interruptSettleMs: 10 },
+  );
+
+  await manager.create(createOptions({ interruptInputPolicy: 'single-escape' }));
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  }, 'user-a');
+  manager.write('terminal-a', 'user-a', 'connection-a', 'surface-a', '\x1b');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const acceptedLateTool = manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'PostToolUse',
+  }, 'user-a');
+  assert.equal(acceptedLateTool, false);
+  assert.equal(
+    manager.getSessionStateForSession('session-a', 'user-a')?.status,
+    'idle',
+  );
+
+  const acceptedNextPrompt = manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  }, 'user-a');
+  assert.equal(acceptedNextPrompt, true);
+  assert.equal(
+    manager.getSessionStateForSession('session-a', 'user-a')?.status,
+    'running',
+  );
+});
+
 test('cold attach receives one snapshot boundary followed by monotonic live output', async () => {
   const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
   const spawned: FakePty[] = [];

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ElectronTitlebar } from '@/components/layout/electron-titlebar';
+import { AgentExecutionModePicker } from '@/components/settings/agent-execution-mode-picker';
 import CliCommandOverrideSettings from '@/components/settings/cli-command-override-settings';
 import { useAuthStore } from '@/stores/auth-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -25,6 +26,10 @@ import {
   normalizeTelemetryProviderSetupIssueStatus,
 } from '@/lib/telemetry/client';
 import { cn } from '@/lib/utils';
+import {
+  buildSetupCompletionSettings,
+  isSetupCompletionPersisted,
+} from '@/lib/setup/setup-completion';
 import { hasHandledSetup } from '@/lib/setup/setup-routing';
 import type {
   SetupEnvironmentState,
@@ -33,6 +38,7 @@ import type {
   SetupToolState,
   SetupToolStatus,
 } from '@/lib/setup/setup-status';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
 const TOOL_ORDER = ['git', 'gh'] as const;
@@ -44,6 +50,7 @@ type SetupTelemetryTrigger =
   | 'initial'
   | 'manual_refresh'
   | 'environment_switch'
+  | 'execution_mode_switch'
   | 'command_override_saved'
   | 'account_created';
 
@@ -78,11 +85,16 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
   );
   const loadSettings = useSettingsStore((state) => state.load);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
+  const pendingSaveCount = useSettingsStore((state) => state.pendingSaveCount);
 
   const [status, setStatus] = useState<SetupStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(initialNeedsAccountSetup !== true);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [selectedExecutionMode, setSelectedExecutionMode] = useState<AgentExecutionMode>(
+    settings.agentExecutionMode,
+  );
+  const [isProceeding, setIsProceeding] = useState(false);
   const [needsAccountSetup, setNeedsAccountSetup] = useState<boolean | null>(initialNeedsAccountSetup);
   const [accountUsername, setAccountUsername] = useState('');
   const [accountPassword, setAccountPassword] = useState('');
@@ -91,6 +103,10 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
   const [switchingEnvironment, setSwitchingEnvironment] = useState<AgentEnvironment | null>(null);
   const diagnosticsRunKeysRef = useRef<Set<string>>(new Set());
   const providerIssueKeysRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setSelectedExecutionMode(settings.agentExecutionMode);
+  }, [settings.agentExecutionMode]);
 
   const startSetupDiagnostics = useCallback((
     trigger: SetupTelemetryTrigger,
@@ -115,13 +131,19 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
     });
   }, [telemetryDisabledByEnv]);
 
-  const refreshStatus = useCallback(async (trigger: SetupTelemetryTrigger = 'manual_refresh') => {
+  const refreshStatus = useCallback(async (
+    trigger: SetupTelemetryTrigger = 'manual_refresh',
+    modeOverride?: AgentExecutionMode,
+  ) => {
     setIsLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({
         telemetry_source: 'setup',
         telemetry_trigger: trigger,
+        // picker 선택은 "계속" 전까지 설정에 저장되지 않으므로 서버가
+        // 어떤 모드로 감지할지 쿼리로 알려준다 (pty: which-only / gui: 풀 프로브).
+        execution_mode: modeOverride ?? selectedExecutionMode,
       });
       const response = await fetch(`/api/setup/status?${params.toString()}`);
       if (response.status === 401) {
@@ -139,7 +161,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
     } finally {
       setIsLoading(false);
     }
-  }, [router, startSetupDiagnostics]);
+  }, [router, selectedExecutionMode, startSetupDiagnostics]);
 
   useEffect(() => {
     let cancelled = false;
@@ -231,15 +253,41 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
   }, [environmentCopy, switchingEnvironment, t]);
 
   const handleProceed = useCallback(async () => {
-    const now = new Date().toISOString();
-    await updateSettings({
-      setup: {
-        ...settings.setup,
-        ...(status?.isFullyReady ? { completedAt: now } : { dismissedAt: now }),
-      },
-    });
-    router.push('/chat');
-  }, [router, settings.setup, status?.isFullyReady, updateSettings]);
+    if (isProceeding || pendingSaveCount > 0) return;
+
+    setIsProceeding(true);
+    setError(null);
+    try {
+      const completionSettings = buildSetupCompletionSettings({
+        setup: settings.setup,
+        agentExecutionMode: selectedExecutionMode,
+        isFullyReady: status?.isFullyReady ?? false,
+        now: new Date().toISOString(),
+      });
+      await updateSettings(completionSettings);
+
+      if (!isSetupCompletionPersisted(
+        useSettingsStore.getState().settings,
+        completionSettings,
+      )) {
+        setError(t('setup.saveFailed'));
+        return;
+      }
+
+      router.push('/chat');
+    } finally {
+      setIsProceeding(false);
+    }
+  }, [
+    isProceeding,
+    pendingSaveCount,
+    router,
+    selectedExecutionMode,
+    settings.setup,
+    status?.isFullyReady,
+    t,
+    updateSettings,
+  ]);
 
   const handleCreateAccount = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -377,6 +425,21 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                 ) : null}
               </div>
 
+              <AgentExecutionModePicker
+                value={selectedExecutionMode}
+                onChange={(mode) => {
+                  if (mode === selectedExecutionMode) return;
+                  setSelectedExecutionMode(mode);
+                  // state 반영 전이므로 모드를 명시 전달해 새 모드 기준으로 재감지.
+                  void refreshStatus('execution_mode_switch', mode);
+                }}
+                disabled={isProceeding}
+                title={t('setup.executionModeTitle')}
+                description={t('setup.executionModeDescription')}
+                note={t('setup.executionModeNote')}
+                recommendedMode="pty"
+              />
+
               <div className="divide-y divide-(--divider) border-y border-(--divider)">
                 {getSupportedProviders(status.summary.providers).map((provider) => (
                   <ProviderRow
@@ -409,42 +472,18 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                 </p>
               ) : null}
 
-              <div className="rounded-lg border border-(--divider) bg-(--sidebar-bg) px-4 py-3">
-                <CliCommandOverrideSettings
-                  environments={status.availableEnvironments}
-                  onSaved={() => void refreshStatus('command_override_saved')}
-                />
-              </div>
-
               <SetupTelemetryConsent
                 enabled={settings.telemetry.enabled && !telemetryDisabledByEnv}
                 disabled={telemetryDisabledByEnv}
                 onChange={handleTelemetryChange}
               />
 
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  onClick={handleProceed}
-                  data-testid="setup-continue"
-                >
-                  {status.isFullyReady ? t('setup.start') : t('setup.continue')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void refreshStatus('manual_refresh')}
-                  disabled={isLoading}
-                >
-                  <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
-                  {t('setup.checkAgain')}
-                </Button>
-              </div>
-
               <div className="pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAdvanced((value) => !value)}
+                  aria-expanded={showAdvanced}
+                  aria-controls="setup-advanced-details"
                   data-testid="setup-advanced-toggle"
                   className="inline-flex items-center gap-1.5 text-xs font-medium text-(--text-muted) hover:text-(--text-primary)"
                 >
@@ -455,7 +494,34 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                   )}
                   {showAdvanced ? t('setup.hideAdvanced') : t('setup.showAdvanced')}
                 </button>
-                {showAdvanced ? <AdvancedDetails status={status} /> : null}
+                {showAdvanced ? (
+                  <AdvancedDetails
+                    status={status}
+                    onCommandOverrideSaved={() => void refreshStatus('command_override_saved')}
+                  />
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 border-t border-(--divider) pt-4">
+                <Button
+                  type="button"
+                  onClick={handleProceed}
+                  disabled={isProceeding || pendingSaveCount > 0}
+                  aria-busy={isProceeding}
+                  data-testid="setup-continue"
+                >
+                  {isProceeding ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                  {status.isFullyReady ? t('setup.start') : t('setup.continue')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void refreshStatus('manual_refresh')}
+                  disabled={isLoading || isProceeding}
+                >
+                  <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
+                  {t('setup.checkAgain')}
+                </Button>
               </div>
             </div>
           ) : null}
@@ -731,16 +797,28 @@ function ProviderRow({
   );
 }
 
-function AdvancedDetails({ status }: { status: SetupStatusResponse }) {
+function AdvancedDetails({
+  status,
+  onCommandOverrideSaved,
+}: {
+  status: SetupStatusResponse;
+  onCommandOverrideSaved: () => void;
+}) {
   const { t } = useI18n();
   return (
     <div
+      id="setup-advanced-details"
       className="mt-3 rounded-lg border border-(--divider) bg-(--sidebar-bg) p-3"
       data-testid="setup-advanced-details"
     >
       <p className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
         {t('setup.advancedTitle')}
       </p>
+      <CliCommandOverrideSettings
+        environments={status.availableEnvironments}
+        onSaved={onCommandOverrideSaved}
+        className="mb-4 border-b border-(--divider) pb-4"
+      />
       <div className="grid gap-3 sm:grid-cols-2">
         {status.availableEnvironments.map((environment) => {
           const entry = status.environments[environment];

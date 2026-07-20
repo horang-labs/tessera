@@ -118,6 +118,10 @@ export class OpenCodeAdapter implements CliProvider {
     return 'native';
   }
 
+  getTerminalInterruptInputPolicy(): 'none' {
+    return 'none';
+  }
+
   async isAvailable(environment?: 'native' | 'wsl'): Promise<boolean> {
     if (environment) {
       return probeBinaryAvailable('opencode', environment);

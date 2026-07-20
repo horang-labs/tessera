@@ -11,6 +11,7 @@ export type SetupTelemetryTrigger =
   | 'initial'
   | 'manual_refresh'
   | 'environment_switch'
+  | 'execution_mode_switch'
   | 'command_override_saved'
   | 'account_created';
 
@@ -42,6 +43,7 @@ export function parseSetupTelemetryTrigger(value: unknown): SetupTelemetryTrigge
     value === 'initial'
     || value === 'manual_refresh'
     || value === 'environment_switch'
+    || value === 'execution_mode_switch'
     || value === 'command_override_saved'
     || value === 'account_created'
   ) {

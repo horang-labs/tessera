@@ -8,18 +8,31 @@ import { useTabStore } from './tab-store';
 import { toast } from './notification-store';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import {
+  applySessionRuntimeLiveness,
+  beginSessionRuntimeConnection,
+  createSessionRuntimeLiveness,
+  forgetSessionRuntime,
+  recordSessionRuntimeEvent,
+  recordSessionRuntimeSnapshot,
+  resolveSessionRuntimeLiveness,
+  type SessionRuntimeLiveness,
+} from '@/lib/session/session-runtime-liveness';
 
 
 export interface SessionState {
   // Core state - NEW (project-grouped)
   projects: ProjectGroup[];
   activeSessionId: string | null;
+  runtimeLiveness: SessionRuntimeLiveness;
 
   // REQ-002: Session creation loading state
   creatingSessionId: string | null;
 
   // REQ-003: Session loading indicator state
   loadingSessionId: string | null;
+
+  beginRuntimeConnection: () => void;
 
   // Actions - Project loading
   loadProjects: () => Promise<void>;
@@ -48,6 +61,7 @@ export interface SessionState {
    * tesseraSessionId/runtimeConfig 덮어쓰기 같은 부수효과가 없다.
    */
   setSessionRunning: (sessionId: string, running: boolean) => void;
+  applyGuiRuntimeSnapshot: (activeSessionIds: string[]) => void;
   applyTerminalRuntimeSnapshot: (activeSessionIds: string[]) => void;
   updateSessionRuntimeConfig: (
     sessionId: string,
@@ -114,8 +128,12 @@ export interface SessionState {
 
 }
 
-function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSession {
-  return {
+function mapApiSessionToUnified(
+  s: any,
+  fallbackProjectDir: string,
+  runtimeLiveness?: SessionRuntimeLiveness,
+): UnifiedSession {
+  const session: UnifiedSession = {
     id: s.id,
     title: s.title,
     projectDir: s.projectDir ?? fallbackProjectDir,
@@ -144,6 +162,9 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     collectionId: s.collectionId ?? undefined,
     diffStats: s.diffStats ?? undefined,
   };
+  return runtimeLiveness
+    ? resolveSessionRuntimeLiveness(session, runtimeLiveness)
+    : session;
 }
 
 function applyTaskWorkflowStatusToProjects(
@@ -311,8 +332,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   projects: [],
   activeSessionId: null,
+  runtimeLiveness: createSessionRuntimeLiveness(),
   creatingSessionId: null,
   loadingSessionId: null,
+
+  beginRuntimeConnection: () =>
+    set({ runtimeLiveness: beginSessionRuntimeConnection() }),
 
   // Project loading
   loadProjects: async () => {
@@ -357,7 +382,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         };
       });
 
-      set({ projects });
+      set((state) => ({
+        projects: applySessionRuntimeLiveness(projects, state.runtimeLiveness),
+      }));
+      const loadedProjects = get().projects;
 
       // Initialize turn lifecycle state from server isGenerating state.
       const generatingSessionIds: string[] = [];
@@ -378,7 +406,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const savedId = sessionStorage.getItem('activeSessionId');
         // Verify saved session still exists in loaded projects
         if (savedId) {
-          const exists = projects.some((p) =>
+          const exists = loadedProjects.some((p) =>
             p.sessions.some((s) => s.id === savedId)
           );
           if (exists) autoActiveId = savedId;
@@ -389,12 +417,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // Fallback: first running session or first session of current project
       if (!autoActiveId) {
-        const currentProject = projects.find((p) => p.isCurrent);
+        const currentProject = loadedProjects.find((p) => p.isCurrent);
         if (currentProject && currentProject.sessions.length > 0) {
           const runningSession = currentProject.sessions.find((s) => s.isRunning);
           autoActiveId = runningSession?.id || currentProject.sessions[0].id;
-        } else if (projects.length > 0 && projects[0].sessions.length > 0) {
-          autoActiveId = projects[0].sessions[0].id;
+        } else if (loadedProjects.length > 0 && loadedProjects[0].sessions.length > 0) {
+          autoActiveId = loadedProjects[0].sessions[0].id;
         }
       }
 
@@ -433,7 +461,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const existingIds = new Set(p.sessions.map((s) => s.id));
           const newSessions = data.sessions
             .filter((s: any) => !existingIds.has(s.id))
-            .map((s: any) => mapApiSessionToUnified(s, encodedDir));
+            .map((s: any) => mapApiSessionToUnified(s, encodedDir, state.runtimeLiveness));
 
           const allSessions = [...p.sessions, ...newSessions];
           // allLoaded: server says no more, OR no new sessions to display (all empty/dupes)
@@ -476,7 +504,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const existingIds = new Set(p.sessions.map((s) => s.id));
           const newSessions = data.sessions
             .filter((s: any) => !existingIds.has(s.id))
-            .map((s: any) => mapApiSessionToUnified(s, encodedDir));
+            .map((s: any) => mapApiSessionToUnified(s, encodedDir, state.runtimeLiveness));
 
           return {
             ...p,
@@ -601,6 +629,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         projects: updatedProjects,
         activeSessionId: newActiveId,
         runningWorkflowSessionIds,
+        runtimeLiveness: forgetSessionRuntime(state.runtimeLiveness, sessionId),
       };
     }),
 
@@ -767,6 +796,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     set((state) => ({
+      runtimeLiveness: recordSessionRuntimeEvent(
+        state.runtimeLiveness,
+        'gui',
+        sessionId,
+        true,
+      ),
       projects: state.projects.map((project) => ({
         ...project,
         sessions: project.sessions.map((s) =>
@@ -810,6 +845,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
       return {
         runningWorkflowSessionIds,
+        runtimeLiveness: recordSessionRuntimeEvent(
+          state.runtimeLiveness,
+          'gui',
+          sessionId,
+          false,
+        ),
         projects: state.projects.map((project) => ({
           ...project,
           sessions: project.sessions.map((s) =>
@@ -844,30 +885,39 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           };
         }),
       }));
-      return changed ? { projects } : {};
+      const runtimeLiveness = recordSessionRuntimeEvent(
+        state.runtimeLiveness,
+        'terminal',
+        sessionId,
+        running,
+      );
+      return changed ? { projects, runtimeLiveness } : { runtimeLiveness };
+    }),
+
+  applyGuiRuntimeSnapshot: (activeSessionIds) =>
+    set((state) => {
+      const runtimeLiveness = recordSessionRuntimeSnapshot(
+        state.runtimeLiveness,
+        'gui',
+        activeSessionIds,
+      );
+      return {
+        runtimeLiveness,
+        projects: applySessionRuntimeLiveness(state.projects, runtimeLiveness),
+      };
     }),
 
   applyTerminalRuntimeSnapshot: (activeSessionIds) =>
     set((state) => {
-      const active = new Set(activeSessionIds);
-      let changed = false;
-      const projects = state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((session) => {
-          if (session.kind !== 'terminal') return session;
-          const running = active.has(session.id);
-          const status = (running ? 'running' : 'stopped') as SessionStatus;
-          if (session.isRunning === running && session.status === status) return session;
-          changed = true;
-          return {
-            ...session,
-            isRunning: running,
-            hasStarted: running ? true : session.hasStarted,
-            status,
-          };
-        }),
-      }));
-      return changed ? { projects } : {};
+      const runtimeLiveness = recordSessionRuntimeSnapshot(
+        state.runtimeLiveness,
+        'terminal',
+        activeSessionIds,
+      );
+      return {
+        runtimeLiveness,
+        projects: applySessionRuntimeLiveness(state.projects, runtimeLiveness),
+      };
     }),
 
   updateSessionRuntimeConfig: (sessionId, runtimeConfig) =>

@@ -508,6 +508,9 @@ function handleSessionListMessage(
   const generatingSessionIds: string[] = [];
   const titleGeneratingSessionIds = msg.titleGeneratingSessionIds ?? [];
   const chatStore = useChatStore.getState();
+  useSessionStore.getState().applyGuiRuntimeSnapshot(
+    msg.sessions.map((session) => session.id),
+  );
   for (const session of msg.sessions || []) {
     const hasActivePrompt = Boolean(session.activeInteractivePrompt);
     if ('activeInteractivePrompt' in session) {

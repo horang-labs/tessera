@@ -28,6 +28,15 @@ function terminalSession(id = SESSION_ID, isRunning = false): UnifiedSession {
   };
 }
 
+function guiSession(id: string, isRunning = false): UnifiedSession {
+  return {
+    ...terminalSession(id, isRunning),
+    title: 'GUI session',
+    kind: 'chat',
+    status: isRunning ? 'running' : 'completed',
+  };
+}
+
 function project(...sessions: UnifiedSession[]): ProjectGroup {
   return {
     encodedDir: '/workspace',
@@ -56,6 +65,7 @@ beforeEach(() => {
   useChatStore.setState({ turnInFlightBySession: {} });
   useTerminalSessionStore.setState({ bySessionId: {} });
   useSessionStore.setState({
+    ...useSessionStore.getInitialState(),
     projects: [project(terminalSession())],
     activeSessionId: null,
     runningWorkflowSessionIds: new Set(),
@@ -90,6 +100,29 @@ test('PTY UserPromptSubmit marks only the terminal state as processing', () => {
   );
   assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
   assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+});
+
+test('PTY interrupt fallback clears the menu processing indicator', () => {
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  });
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'idle',
+    hookEvent: 'InterruptFallback',
+  });
+
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'idle',
+  );
+  assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
 });
 
 test('PTY turn start pins an open preview tab', () => {
@@ -763,4 +796,93 @@ test('PTY runtime snapshot reconciles sessions after a WebSocket reconnect', () 
     'running',
   );
   assert.equal(isTurnInFlight(useChatStore.getState(), inactiveSessionId), false);
+});
+
+test('PTY runtime snapshot received before project loading keeps the menu running state', async (t) => {
+  useSessionStore.setState({ projects: [] });
+
+  let resolveFetch!: (response: Response) => void;
+  t.mock.method(globalThis, 'fetch', () => new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  }));
+
+  const loading = useSessionStore.getState().loadProjects();
+
+  receive({
+    type: 'terminal_session_runtime_snapshot',
+    activeSessionIds: [SESSION_ID],
+  } as ServerTransportMessage);
+
+  resolveFetch(new Response(JSON.stringify({
+    projects: [project(terminalSession(SESSION_ID, false))],
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  }));
+  await loading;
+
+  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+});
+
+test('GUI runtime start received during project loading keeps the menu running state', async (t) => {
+  const guiSessionId = 'gui-session-a';
+  const staleSession = guiSession(guiSessionId, false);
+  useSessionStore.setState({ projects: [project(staleSession)] });
+
+  let resolveFetch!: (response: Response) => void;
+  t.mock.method(globalThis, 'fetch', () => new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  }));
+
+  const loading = useSessionStore.getState().loadProjects();
+
+  receive({
+    type: 'session_started',
+    sessionId: guiSessionId,
+    workDir: '/workspace',
+  });
+
+  resolveFetch(new Response(JSON.stringify({
+    projects: [project(staleSession)],
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  }));
+  await loading;
+
+  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, true);
+});
+
+test('GUI runtime snapshot clears stale menu running state after reconnect', () => {
+  const guiSessionId = 'gui-session-a';
+  useSessionStore.setState({ projects: [project(guiSession(guiSessionId, true))] });
+  useSessionStore.getState().markSessionRunning(guiSessionId, guiSessionId);
+  useSessionStore.getState().beginRuntimeConnection();
+
+  receive({
+    type: 'session_list',
+    sessions: [],
+    titleGeneratingSessionIds: [],
+  });
+
+  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, false);
+});
+
+test('GUI runtime event received during reconnect outranks the initial snapshot', () => {
+  const guiSessionId = 'gui-session-a';
+  useSessionStore.setState({ projects: [project(guiSession(guiSessionId, false))] });
+  useSessionStore.getState().beginRuntimeConnection();
+
+  receive({
+    type: 'session_started',
+    sessionId: guiSessionId,
+    workDir: '/workspace',
+  });
+  receive({
+    type: 'session_list',
+    sessions: [],
+    titleGeneratingSessionIds: [],
+  });
+
+  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, true);
 });

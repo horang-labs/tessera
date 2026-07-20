@@ -28,3 +28,22 @@ export function resolveEffectiveExecutionMode(
   if (capabilities.gui) return 'gui';
   throw new Error('Provider does not support an executable agent mode');
 }
+
+/**
+ * Resolve the mode for a single session creation request.
+ *
+ * Explicit per-session choices are strict: silently switching them would make
+ * the created session disagree with the radio state the user confirmed. Older
+ * callers that omit a choice retain the compatible global-default behavior.
+ */
+export function resolveSessionCreationExecutionMode(
+  requestedMode: AgentExecutionMode | undefined,
+  preferredMode: AgentExecutionMode,
+  capabilities: ProviderExecutionCapabilities,
+): AgentExecutionMode {
+  if (requestedMode !== undefined) {
+    if (capabilities[requestedMode]) return requestedMode;
+    throw new Error(`Provider does not support ${requestedMode} execution mode`);
+  }
+  return resolveEffectiveExecutionMode(preferredMode, capabilities);
+}

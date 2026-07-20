@@ -122,6 +122,10 @@ export class ClaudeCodeAdapter implements CliProvider {
     return 'native';
   }
 
+  getTerminalInterruptInputPolicy(): 'single-escape' {
+    return 'single-escape';
+  }
+
   /**
    * Checks whether the Claude Code CLI binary is available.
    * When an environment is provided, probes that environment (native vs. WSL);

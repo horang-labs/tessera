@@ -14,6 +14,7 @@ export type {
   CliStatusResult,
   CheckStatusOptions,
   TerminalAppearanceChangePolicy,
+  TerminalInterruptInputPolicy,
   TerminalResizeScrollbackPolicy,
   ProviderRateLimitOptions,
 } from './provider-contract';

@@ -18,6 +18,8 @@ import {
 } from '../terminal/terminal-handoff-lock';
 import { mintPaneToken } from '../terminal/pane-token-registry';
 import { buildProviderTerminalLaunch } from '../terminal/provider-launch';
+import { detectTerminalProviders } from '../terminal/provider-detection';
+import { SettingsManager } from '../settings/manager';
 import { createCodexOverlay } from '../terminal/codex-overlay';
 import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
 import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
@@ -188,6 +190,7 @@ export async function routeClientTransportMessage({
         collaborationMode: message.collaborationMode,
         approvalPolicy: message.approvalPolicy,
         sandboxMode: message.sandboxMode,
+        executionMode: message.executionMode,
       });
       return;
 
@@ -502,6 +505,7 @@ export async function routeClientTransportMessage({
       let launchObserverDisposer: (() => void) | undefined;
       let appearanceChangePolicy: TerminalCreateOptions['appearanceChangePolicy'];
       let resizeScrollbackPolicy: TerminalCreateOptions['resizeScrollbackPolicy'];
+      let interruptInputPolicy: TerminalCreateOptions['interruptInputPolicy'];
       let canRestartForAppearance: TerminalCreateOptions['canRestartForAppearance'];
       let acquiredHandoff = false;
 
@@ -612,6 +616,7 @@ export async function routeClientTransportMessage({
         const terminalProvider = cliProviderRegistry.getProvider(providerId);
         appearanceChangePolicy = terminalProvider.getTerminalAppearanceChangePolicy();
         resizeScrollbackPolicy = terminalProvider.getTerminalResizeScrollbackPolicy();
+        interruptInputPolicy = terminalProvider.getTerminalInterruptInputPolicy();
         if (appearanceChangePolicy === 'restart' && structured) {
           canRestartForAppearance = () => terminalProvider.canResumeTerminalAfterRestart?.(
             dbSessions.getSession(structured.sessionId)?.provider_state ?? null,
@@ -648,6 +653,7 @@ export async function routeClientTransportMessage({
           providerId,
           appearanceChangePolicy,
           resizeScrollbackPolicy,
+          interruptInputPolicy,
           canRestartForAppearance,
           appearanceRestartIntent: launchSpec?.handoffSessionId ? message.launchIntent : undefined,
           appearance: message.appearance,
@@ -750,8 +756,7 @@ async function listProvidersForWebSocketUser(
   sendToUser: WsSendToUser,
 ): Promise<void> {
   try {
-    const agentEnvironment = await getAgentEnvironment(userId);
-    const providers = await checkProviderStatusesForEnvironment(userId, agentEnvironment);
+    const providers = await resolveProvidersForUser(userId);
     sendToUser(userId, {
       type: 'providers_list',
       requestId,
@@ -759,7 +764,6 @@ async function listProvidersForWebSocketUser(
     });
     logger.info('Providers list sent', {
       userId,
-      agentEnvironment,
       providerCount: providers.length,
     });
   } catch (err) {
@@ -782,8 +786,7 @@ async function refreshProvidersForWebSocketUser(
   sendToUser: WsSendToUser,
 ): Promise<void> {
   try {
-    const agentEnvironment = await getAgentEnvironment(userId);
-    const providers = await checkProviderStatusesForEnvironment(userId, agentEnvironment, { force: true });
+    const providers = await resolveProvidersForUser(userId, { force: true });
     sendToUser(userId, {
       type: 'providers_list',
       requestId,
@@ -791,7 +794,6 @@ async function refreshProvidersForWebSocketUser(
     });
     logger.info('Providers refreshed', {
       userId,
-      agentEnvironment,
       providerCount: providers.length,
     });
   } catch (err) {
@@ -814,7 +816,7 @@ async function checkCliStatusForWebSocketUser(
   sendToUser: WsSendToUser,
 ): Promise<void> {
   try {
-    const results = await getCliStatusSnapshot({ force: true, userId });
+    const results = await resolveCliStatusesForUser(userId);
     sendToUser(userId, {
       type: 'cli_status_result',
       requestId,
@@ -832,6 +834,61 @@ async function checkCliStatusForWebSocketUser(
       message: 'Failed to check CLI status',
       requestId,
     });
+  }
+}
+
+/**
+ * 설정 화면의 CLI 상태 리스트도 실행 모드를 따라간다.
+ *  - pty: which-only 감지 결과를 CliStatusEntry 형태로 매핑(버전/auth 정보 없음).
+ *  - gui: 기존 풀 프로브(getCliStatusSnapshot) 그대로.
+ */
+async function resolveCliStatusesForUser(userId: string) {
+  const settings = await SettingsManager.load(userId, { silent: true });
+
+  if (settings.agentExecutionMode === 'pty') {
+    const detections = await detectTerminalProviders({ force: true });
+    return detections.map((detection) => ({
+      providerId: detection.providerId,
+      environment: 'native' as const,
+      status: detection.installed ? 'connected' as const : 'not_installed' as const,
+    }));
+  }
+
+  return getCliStatusSnapshot({ force: true, userId });
+}
+
+/**
+ * 실행 모드별 프로바이더 목록.
+ *  - pty: 로그인 셸 which-only 감지(설치 여부만, auth 안 봄) — 어드바이저리.
+ *         카탈로그 전부를 노출하고 설치된 것만 connected로 표시한다.
+ *  - gui: 기존 version+auth 프로브 그대로(직접 spawn의 전제조건이므로 불변).
+ */
+async function resolveProvidersForUser(
+  userId: string,
+  options: { force?: boolean } = {},
+): Promise<ProviderMeta[]> {
+  const settings = await SettingsManager.load(userId, { silent: true });
+
+  if (settings.agentExecutionMode === 'pty') {
+    const detections = await detectTerminalProviders({ force: options.force });
+    return detections.map((detection) => ({
+      id: detection.providerId,
+      displayName: resolveProviderDisplayName(detection.providerId),
+      available: detection.installed,
+      status: detection.installed ? 'connected' as const : 'not_installed' as const,
+    }));
+  }
+
+  const agentEnvironment = await getAgentEnvironment(userId);
+  return checkProviderStatusesForEnvironment(userId, agentEnvironment, options);
+}
+
+// getProvider는 미등록 id에 throw하므로 표시명 조회는 fallback으로 감싼다.
+function resolveProviderDisplayName(providerId: string): string {
+  try {
+    return cliProviderRegistry.getProvider(providerId).getDisplayName();
+  } catch {
+    return providerId;
   }
 }
 

@@ -16,7 +16,9 @@ export interface I18nMessages {
       title: string;
       description: string;
       existingSessions: string;
+      recommended: string;
       ptyOnly: string;
+      unsupported: string;
       pty: { label: string; description: string };
       gui: { label: string; description: string };
     };
@@ -131,6 +133,8 @@ export interface I18nMessages {
       refreshProviders: string;
       providerNeedsLoginTooltip: string;
       needsLoginShort: string;
+      providerNotInstalledTooltip: string;
+      notInstalledShort: string;
       needsLoginTitle: string;
       loginInstructionPrefix: string;
       loginInstructionSuffix: string;
@@ -344,6 +348,9 @@ export interface I18nMessages {
     usingWindowsTools: string;
     usingWslTools: string;
     usingLocalTools: string;
+    executionModeTitle: string;
+    executionModeDescription: string;
+    executionModeNote: string;
     telemetryTitle: string;
     telemetryDescription: string;
     aiCli: string;
@@ -374,6 +381,7 @@ export interface I18nMessages {
     limitedMode: string;
     loading: string;
     loadFailed: string;
+    saveFailed: string;
   };
   chat: {
     newSession: string;
@@ -1046,6 +1054,9 @@ export interface I18nMessages {
       launcherTitle: string;
       launcherSubtitle: string;
       startAsLabel: string;
+      agentUiLabel: string;
+      shellLabel: string;
+      shellDescription: string;
       continueButtonTooltip: string;
       continueFromLabel: string;
       continueSourcePrefix: string;

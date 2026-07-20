@@ -16,7 +16,6 @@ import {
   Plus,
   Sparkles,
   Trash2,
-  TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
 import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
@@ -858,17 +857,6 @@ export function TaskItemRow({
               : getWorktreeIconClass(task.workflowStatus),
           )}
         />
-        {showStatus && (
-          <ItemStatusIndicator
-            isProcessing={hasProcessingSession}
-            isAwaitingUser={hasAwaitingUserSession}
-            hasUnread={hasUnreadSession}
-            isRunning={hasVisibleRuntimeSession}
-            sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
-            placement="corner"
-            surface="sidebar"
-          />
-        )}
         {(() => {
           // Skip mismatch badge when PR sync is unsupported — we have no
           // reliable prStatus to compare against the column.
@@ -886,6 +874,17 @@ export function TaskItemRow({
             />
           );
         })()}
+        {showStatus && (
+          <ItemStatusIndicator
+            isProcessing={hasProcessingSession}
+            isAwaitingUser={hasAwaitingUserSession}
+            hasUnread={hasUnreadSession}
+            isRunning={hasVisibleRuntimeSession}
+            sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
+            placement="corner"
+            surface="sidebar"
+          />
+        )}
         {task.worktreeMissing && (
           <span
             aria-hidden
