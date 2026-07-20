@@ -3,8 +3,14 @@ import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { collectionExists } from '@/lib/db/collections';
 import { taskExists } from '@/lib/db/tasks';
+import * as dbSessions from '@/lib/db/sessions';
 import logger from '@/lib/logger';
 import { persistCreatedSessionRecord } from '@/lib/session/session-persistence';
+import {
+  getProviderExecutionCapabilities,
+  resolveEffectiveExecutionMode,
+} from '@/lib/session/agent-execution-mode';
+import { SettingsManager } from '@/lib/settings/manager';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 
 /**
@@ -57,6 +63,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'providerId is required' }, { status: 400 });
     }
 
+    const settings = await SettingsManager.load(userId, { silent: true });
+    const executionCapabilities = getProviderExecutionCapabilities(resolvedProviderId);
+    if (!executionCapabilities.pty && !executionCapabilities.gui) {
+      return NextResponse.json({ error: 'Provider has no supported execution mode' }, { status: 400 });
+    }
+    const executionMode = resolveEffectiveExecutionMode(
+      settings.agentExecutionMode,
+      executionCapabilities,
+    );
+
     if (normalizedWorktreeBranch && !normalizedTaskId) {
       return NextResponse.json(
         { error: 'worktreeBranch requires taskId' },
@@ -99,6 +115,7 @@ export async function POST(req: NextRequest) {
         resolvedWorkDir,
         title: result.title,
         providerId: resolvedProviderId,
+        executionMode,
         parentProjectId: typeof parentProjectId === 'string' ? parentProjectId : undefined,
         taskId: normalizedTaskId,
         collectionId: typeof collectionId === 'string' && collectionId.trim().length > 0 ? collectionId.trim() : undefined,
@@ -118,6 +135,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         ...result,
+        kind: dbSessions.extractSessionKind(dbSessions.getSession(result.sessionId)?.provider_state ?? null),
         provider: resolvedProviderId,
         model,
         reasoningEffort,

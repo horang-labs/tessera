@@ -10,6 +10,7 @@ import {
 } from '@/lib/chat/session-client-effects';
 import { serverMessageToReplayEvents } from '@/lib/chat/server-message-to-replay-events';
 import { useChatStore } from '@/stores/chat-store';
+import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
 import { useNotificationStore } from '@/stores/notification-store';
@@ -60,6 +61,7 @@ export function handleIncomingServerMessage({
 
     case 'session_closed':
       sessionStore.removeSession(msg.sessionId);
+      useTerminalSessionStore.getState().clearSession(msg.sessionId);
       chatStore.clearSession(msg.sessionId);
       useUsageStore.getState().clearUsage(msg.sessionId);
       useCommandStore.getState().clearSession(msg.sessionId);
@@ -76,14 +78,6 @@ export function handleIncomingServerMessage({
       chatStore.setTodoSnapshot(msg.sessionId, []);
       sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       useCommandStore.getState().clearSession(msg.sessionId);
-      return { wasReconnect };
-
-    case 'session_goal_updated':
-      sessionStore.updateSessionGoal(msg.sessionId, msg.goal);
-      return { wasReconnect };
-
-    case 'session_goal_cleared':
-      sessionStore.updateSessionGoal(msg.sessionId, null);
       return { wasReconnect };
 
     case 'replay_events':
@@ -110,6 +104,21 @@ export function handleIncomingServerMessage({
         serverMessageToReplayEvents(msg),
       );
       return { wasReconnect };
+
+    case 'session_state': {
+      const changed = useTerminalSessionStore.getState().applySessionState(msg);
+      // 사이드바 배지·Running 카운트는 session.status가 아니라 isRunning(boolean)을 읽는다.
+      // 따라서 hook 상태를 isRunning 토글로 반영한다(idle은 상태 승격 안 함).
+      if (msg.status === 'completed') {
+        sessionStore.setSessionRunning(msg.sessionId, false);
+      } else if (msg.status === 'running' || msg.status === 'input_required') {
+        sessionStore.setSessionRunning(msg.sessionId, true);
+      }
+      if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
+        handleTerminalSessionStateMessage(msg, sessionStore.activeSessionId);
+      }
+      return { wasReconnect };
+    }
 
     case 'interactive_prompt':
       sessionStore.touchSessionActivity(msg.sessionId);
@@ -367,6 +376,7 @@ function addCreatedSession(
     createdAt: new Date().toISOString(),
     lastModified: new Date().toISOString(),
     archived: false,
+    kind: msg.kind,
     provider: msg.provider,
     model: msg.model,
     reasoningEffort: msg.reasoningEffort,
@@ -397,6 +407,27 @@ function handleNotificationMessage(
   }
 
   notificationStore.playSound();
+}
+
+function handleTerminalSessionStateMessage(
+  msg: Extract<ServerTransportMessage, { type: 'session_state' }>,
+  activeSessionId: string | null,
+): void {
+  const notificationStore = useNotificationStore.getState();
+  if (msg.sessionId === activeSessionId) {
+    notificationStore.playSound();
+    return;
+  }
+
+  notificationStore.addNotification({
+    sessionId: msg.sessionId,
+    type: msg.status === 'completed' ? 'completed' : 'input_required',
+    preview: msg.preview
+      ?? (msg.status === 'completed'
+        ? 'Terminal task completed'
+        : 'Terminal is waiting for input'),
+  });
+  useSessionStore.getState().incrementUnreadCount(msg.sessionId);
 }
 
 function handleInteractivePromptMessage(
@@ -472,7 +503,7 @@ function handleSessionTitleUpdatedMessage(
   const previousTitle = msg.previousTitle;
   const nextTitle = msg.title;
 
-  sessionStore.updateSessionTitle(msg.sessionId, nextTitle, true);
+  sessionStore.updateSessionTitle(msg.sessionId, nextTitle, msg.hasCustomTitle ?? true);
   useTaskStore.getState().syncLinkedTaskTitle(msg.sessionId, nextTitle);
   useNotificationStore.getState().showToastWithAction(
     `"${nextTitle}"`,

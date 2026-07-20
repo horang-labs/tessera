@@ -12,6 +12,14 @@ export interface I18nMessages {
       gitDesc: string;
     };
     language: string;
+    executionMode: {
+      title: string;
+      description: string;
+      existingSessions: string;
+      ptyOnly: string;
+      pty: { label: string; description: string };
+      gui: { label: string; description: string };
+    };
     profile: {
       title: string;
       description: string;
@@ -397,10 +405,6 @@ export interface I18nMessages {
     codexFastEnabled: string;
     codexFastDisabled: string;
     codexCompactDuringTurn: string;
-    codexGoalEditMissing: string;
-    codexGoalChanged: string;
-    codexGoalObjectiveRequired: string;
-    codexGoalTooLong: string;
     cancelHint: string;
     cancelButton: string;
     attachFile: string;
@@ -487,39 +491,6 @@ export interface I18nMessages {
       networkError: string;
       reconnecting: string;
       maxRetriesReached: string;
-    };
-  };
-  goal: {
-    title: string;
-    start: string;
-    edit: string;
-    save: string;
-    pause: string;
-    resume: string;
-    clear: string;
-    complete: string;
-    refresh: string;
-    notSet: string;
-    objectiveLabel: string;
-    objectivePlaceholder: string;
-    inputPlaceholder: string;
-    steerPlaceholder: string;
-    tokensUsed: string;
-    status: {
-      active: string;
-      paused: string;
-      blocked: string;
-      usageLimited: string;
-      budgetLimited: string;
-      complete: string;
-    };
-    statusBar: {
-      active: string;
-      paused: string;
-      blocked: string;
-      usageLimited: string;
-      budgetLimited: string;
-      complete: string;
     };
   };
   notifications: {
@@ -880,38 +851,7 @@ export interface I18nMessages {
       git: string;
       diff: string;
       files: string;
-      tools: string;
       context: string;
-    };
-    tools: {
-      title: string;
-      live: string;
-      idle: string;
-      noSessionTitle: string;
-      noSessionBody: string;
-      noActivityTitle: string;
-      noActivityBody: string;
-      noMatchingEvents: string;
-      noSavedToolOutput: string;
-      loadToolOutputFailed: string;
-      loadingSavedOutput: string;
-      noErrorOutput: string;
-      columns: {
-        time: string;
-        kind: string;
-        event: string;
-      };
-      filters: {
-        all: string;
-        cmd: string;
-        read: string;
-        search: string;
-        edit: string;
-        issue: string;
-        task: string;
-        todo: string;
-        web: string;
-      };
     };
     empty: {
       noWorktreeTitle: string;

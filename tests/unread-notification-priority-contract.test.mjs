@@ -18,7 +18,10 @@ const kanbanCardSource = fs.readFileSync(
 test('late replay events do not restart unread completed sessions', () => {
   assert.match(clientMessageHandlersSource, /function shouldStartTurnFromReplayEvents/);
   assert.match(clientMessageHandlersSource, /if \(\(session\?\.unreadCount \?\? 0\) > 0\) \{\s*return false;\s*\}/);
-  assert.match(clientMessageHandlersSource, /case 'replay_events':\s*if \(shouldStartTurnFromReplayEvents\(sessionStore, msg\.sessionId, msg\.events\)\)/);
+  const replayCase = clientMessageHandlersSource.match(
+    /case 'replay_events':[\s\S]*?return \{ wasReconnect \};/,
+  )?.[0] ?? '';
+  assert.match(replayCase, /shouldStartTurnFromReplayEvents\(sessionStore, msg\.sessionId, msg\.events\)/);
 });
 
 test('session status dot renders unread before processing', () => {

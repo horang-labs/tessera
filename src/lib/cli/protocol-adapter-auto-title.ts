@@ -27,22 +27,33 @@ export function maybeAutoGenerateProtocolTitle({
     try {
       const dbSession = dbSessions.getSession(sessionId);
       if (!dbSession || dbSession.has_custom_title) {
+        autoTitleTriggered.delete(sessionId);
         return;
       }
 
       const settings = await SettingsManager.load(userId);
       if (settings.notifications?.autoGenerateTitle === false) {
+        autoTitleTriggered.delete(sessionId);
         return;
       }
 
-      const previousTitle = dbSession.title;
-      const result = await generateAITitle(sessionId, userId);
+      const result = await generateAITitle(sessionId, userId, {
+        fallbackToFirstUserMessage: true,
+      });
+      const latestSession = dbSessions.getSession(sessionId);
+      if (!latestSession || latestSession.has_custom_title) {
+        autoTitleTriggered.delete(sessionId);
+        return;
+      }
+      const previousTitle = latestSession.title;
 
       dbSessions.updateSession(
         sessionId,
         {
           title: result.title,
-          has_custom_title: 1,
+          // A deterministic fallback is visible immediately but remains eligible
+          // for AI replacement on the next provider Stop event.
+          has_custom_title: result.fallback ? 0 : 1,
         },
         { skipTimestamp: true },
       );
@@ -53,10 +64,20 @@ export function maybeAutoGenerateProtocolTitle({
         sessionId,
         title: result.title,
         previousTitle,
+        hasCustomTitle: result.fallback !== true,
       });
 
-      logger.info({ sessionId, title: result.title }, 'Auto-generated AI title');
+      if (result.fallback) {
+        autoTitleTriggered.delete(sessionId);
+      }
+
+      logger.info({
+        sessionId,
+        title: result.title,
+        fallback: result.fallback === true,
+      }, 'Auto-generated AI title');
     } catch (error: any) {
+      autoTitleTriggered.delete(sessionId);
       logger.warn({ sessionId, error: error.message }, 'Auto-title generation failed');
     }
   })();

@@ -16,7 +16,6 @@ import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 import { ProviderBadge } from './provider-brand';
 import { setPanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { MessageSearchBar } from './message-search-bar';
-import { SessionGoalControl } from './session-goal-control';
 import {
   CODEX_NATIVE_COMMAND_EVENT,
   type CodexNativeCommandEventDetail,
@@ -333,7 +332,6 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
 
               <span className="min-w-4 flex-1" aria-hidden="true" />
             </button>
-            <SessionGoalControl sessionId={sessionId} variant="header" />
           </div>
         )}
 

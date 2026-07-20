@@ -21,6 +21,7 @@ interface CacheState {
   entries: Map<string, CacheEntry>;
   pendingTimers: Map<string, NodeJS.Timeout>;
   pendingUserIds: Map<string, Set<string>>;
+  rerunUserIds: Map<string, Set<string>>;
   inFlight: Map<string, Promise<WorktreeDiffStats | null>>;
   listeners: Set<Listener>;
 }
@@ -34,11 +35,15 @@ function getState(): CacheState {
       entries: new Map(),
       pendingTimers: new Map(),
       pendingUserIds: new Map(),
+      rerunUserIds: new Map(),
       inFlight: new Map(),
       listeners: new Set(),
     };
   }
-  return g[GLOBAL_KEY]!;
+  const state = g[GLOBAL_KEY]!;
+  // Keep Next.js hot-reload state created by an older module shape usable.
+  state.rerunUserIds ??= new Map();
+  return state;
 }
 
 function normalize(workDir: string): string {
@@ -78,23 +83,39 @@ async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeD
   const state = getState();
   const existing = state.inFlight.get(workDir);
   if (existing) {
-    // If another compute is mid-flight, still attach userIds for the listener
-    // once it settles — but the simplest contract is: return the same promise
-    // and rely on the listener of the in-flight compute to reach those users.
-    // For most cases this is fine because connected users get broadcasts via
-    // a single listener.
+    let queuedUserIds = state.rerunUserIds.get(workDir);
+    if (!queuedUserIds) {
+      queuedUserIds = new Set();
+      state.rerunUserIds.set(workDir, queuedUserIds);
+    }
+    for (const userId of userIds) queuedUserIds.add(userId);
     return existing;
   }
 
   const promise = (async () => {
     try {
-      const agentEnvironment = userIds[0] ? await getAgentEnvironment(userIds[0]) : undefined;
-      const stats = await computeWorktreeDiffStats(workDir, agentEnvironment);
-      const previousStats = state.entries.get(workDir)?.stats;
-      state.entries.set(workDir, { stats, computedAt: Date.now() });
-      notifyListeners(workDir, stats, userIds, previousStats);
-      return stats;
+      let nextUserIds = userIds;
+      let stats: WorktreeDiffStats | null = null;
+
+      // A filesystem event or Stop flush can arrive while git is still being
+      // queried. Keep one shared promise, but repeat the query until no newer
+      // request remains so the final broadcast cannot expose stale counts.
+      while (true) {
+        const agentEnvironment = nextUserIds[0]
+          ? await getAgentEnvironment(nextUserIds[0])
+          : undefined;
+        stats = await computeWorktreeDiffStats(workDir, agentEnvironment);
+        const previousStats = state.entries.get(workDir)?.stats;
+        state.entries.set(workDir, { stats, computedAt: Date.now() });
+        notifyListeners(workDir, stats, nextUserIds, previousStats);
+
+        const queuedUserIds = state.rerunUserIds.get(workDir);
+        if (!queuedUserIds) return stats;
+        state.rerunUserIds.delete(workDir);
+        nextUserIds = Array.from(queuedUserIds);
+      }
     } finally {
+      state.rerunUserIds.delete(workDir);
       state.inFlight.delete(workDir);
     }
   })();

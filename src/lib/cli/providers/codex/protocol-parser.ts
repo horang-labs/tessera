@@ -36,7 +36,6 @@ import { buildImageToolResult, isImagePath } from '@/lib/tool-results/tool-image
 import type { AskUserQuestionItem, AskUserQuestionOption } from '@/types/cli-jsonl-schemas';
 import { buildCodexRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import { buildToolDisplay } from '@/lib/tool-display';
-import type { SessionGoal } from '@/types/session-goal';
 
 // =============================================================================
 // Constants
@@ -122,33 +121,6 @@ interface CodexRequestUserInputQuestion {
 
 const CODEX_MCP_ELICITATION_TOOL_NAME = 'CodexMcpElicitation';
 const CODEX_PERMISSIONS_REQUEST_TOOL_NAME = 'CodexPermissionsRequest';
-
-function normalizeCodexGoal(raw: unknown): SessionGoal | null {
-  if (!raw || typeof raw !== 'object') {
-    return null;
-  }
-
-  const goal = raw as Record<string, unknown>;
-  const status = String(goal.status);
-  if (
-    typeof goal.threadId !== 'string' ||
-    typeof goal.objective !== 'string' ||
-    !['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'].includes(status)
-  ) {
-    return null;
-  }
-
-  return {
-    threadId: goal.threadId,
-    objective: goal.objective,
-    status: status as SessionGoal['status'],
-    tokenBudget: typeof goal.tokenBudget === 'number' ? goal.tokenBudget : null,
-    tokensUsed: typeof goal.tokensUsed === 'number' ? goal.tokensUsed : 0,
-    timeUsedSeconds: typeof goal.timeUsedSeconds === 'number' ? goal.timeUsedSeconds : 0,
-    createdAt: typeof goal.createdAt === 'number' ? goal.createdAt : 0,
-    updatedAt: typeof goal.updatedAt === 'number' ? goal.updatedAt : 0,
-  };
-}
 
 // =============================================================================
 // Per-Session State
@@ -439,22 +411,6 @@ export class CodexProtocolParser {
           msg.result.rateLimitsByLimitId?.codex ??
           msg.result.rateLimits;
         return [this.buildRateLimitUpdateMessage(selectedRateLimit)];
-      }
-
-      if (methodName === 'thread/goal/get') {
-        const goal = normalizeCodexGoal(msg.result.goal);
-        return goal
-          ? this.buildGoalUpdatedMessages(sessionId, goal)
-          : this.buildGoalClearedMessages(sessionId);
-      }
-
-      if (methodName === 'thread/goal/set') {
-        const goal = normalizeCodexGoal(msg.result.goal);
-        return goal ? this.buildGoalUpdatedMessages(sessionId, goal) : [];
-      }
-
-      if (methodName === 'thread/goal/clear') {
-        return msg.result.cleared === true ? this.buildGoalClearedMessages(sessionId) : [];
       }
 
       // Responses to our own requests generally don't produce WS messages —
@@ -1226,12 +1182,6 @@ export class CodexProtocolParser {
       case 'thread/compacted':
         return this.handleThreadCompacted(sessionId, params);
 
-      case 'thread/goal/updated':
-        return this.handleThreadGoalUpdated(sessionId, params);
-
-      case 'thread/goal/cleared':
-        return this.handleThreadGoalCleared(sessionId, params);
-
       case 'thread/status/changed':
         logger.debug('Codex: thread lifecycle event', { sessionId, method });
         return [];
@@ -1263,33 +1213,6 @@ export class CodexProtocolParser {
       sideEffect: {
         type: 'remove_pending_permission_request',
         toolUseId: String(requestId),
-      },
-    }];
-  }
-
-  private buildGoalUpdatedMessages(sessionId: string, goal: SessionGoal): ParsedMessage[] {
-    return [{
-      serverMessage: {
-        type: 'session_goal_updated',
-        sessionId,
-        goal,
-      },
-      sideEffect: {
-        type: 'update_provider_state',
-        providerState: { goal },
-      },
-    }];
-  }
-
-  private buildGoalClearedMessages(sessionId: string): ParsedMessage[] {
-    return [{
-      serverMessage: {
-        type: 'session_goal_cleared',
-        sessionId,
-      },
-      sideEffect: {
-        type: 'update_provider_state',
-        providerState: { goal: null },
       },
     }];
   }
@@ -2598,32 +2521,6 @@ export class CodexProtocolParser {
         timestamp: new Date().toISOString(),
       },
     }];
-  }
-
-  private handleThreadGoalUpdated(sessionId: string, params: Record<string, any>): ParsedMessage[] {
-    const goal = normalizeCodexGoal(params.goal);
-    if (!goal) {
-      logger.warn('Codex: thread/goal/updated missing valid goal', { sessionId });
-      return [];
-    }
-
-    logger.info('Codex: goal updated', {
-      sessionId,
-      threadId: goal.threadId,
-      status: goal.status,
-      turnId: params.turnId ?? null,
-    });
-
-    return this.buildGoalUpdatedMessages(sessionId, goal);
-  }
-
-  private handleThreadGoalCleared(sessionId: string, params: Record<string, any>): ParsedMessage[] {
-    logger.info('Codex: goal cleared', {
-      sessionId,
-      threadId: params.threadId,
-    });
-
-    return this.buildGoalClearedMessages(sessionId);
   }
 
   // ---------------------------------------------------------------------------

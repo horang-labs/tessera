@@ -29,6 +29,13 @@ const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', im
 const prStatusProviderSource = fs.readFileSync(new URL('../src/lib/github/pr-status-provider.ts', import.meta.url), 'utf8');
 const managedWorktreesSource = fs.readFileSync(new URL('../src/lib/worktrees/managed.ts', import.meta.url), 'utf8');
 const terminalPanelSource = fs.readFileSync(new URL('../src/components/terminal/terminal-panel.tsx', import.meta.url), 'utf8');
+const terminalSurfaceSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-surface-registry.ts', import.meta.url), 'utf8');
+const electronMainSource = fs.readFileSync(new URL('../electron/main.ts', import.meta.url), 'utf8');
+const electronPreloadSource = fs.readFileSync(new URL('../electron/preload.ts', import.meta.url), 'utf8');
+const terminalThemeUrl = new URL('../src/lib/terminal/terminal-theme.ts', import.meta.url);
+const terminalThemeSource = fs.existsSync(terminalThemeUrl)
+  ? fs.readFileSync(terminalThemeUrl, 'utf8')
+  : '';
 const emptyPanelStateSource = fs.readFileSync(new URL('../src/components/panel/empty-panel-state.tsx', import.meta.url), 'utf8');
 const wsClientSource = fs.readFileSync(new URL('../src/lib/ws/client.ts', import.meta.url), 'utf8');
 const panelWrapperSource = fs.readFileSync(new URL('../src/components/panel/panel-wrapper.tsx', import.meta.url), 'utf8');
@@ -37,22 +44,86 @@ const tabItemSource = fs.readFileSync(new URL('../src/components/tab/tab-item.ts
 const tabBarSource = fs.readFileSync(new URL('../src/components/tab/tab-bar.tsx', import.meta.url), 'utf8');
 const panelTypesSource = fs.readFileSync(new URL('../src/types/panel.ts', import.meta.url), 'utf8');
 const prepareElectronRuntimeSource = fs.readFileSync(new URL('../scripts/prepare-electron-runtime.mjs', import.meta.url), 'utf8');
+const serverChildSource = fs.readFileSync(new URL('../electron/server-child.ts', import.meta.url), 'utf8');
+const sharedTerminalManagerSource = fs.readFileSync(new URL('../src/lib/terminal/shared-terminal-manager.ts', import.meta.url), 'utf8');
+const codexOverlaySource = fs.readFileSync(new URL('../src/lib/terminal/codex-overlay.ts', import.meta.url), 'utf8');
 
 test('terminal feature declares browser UI and server PTY dependencies', () => {
   assert.ok(packageJson.dependencies['@xterm/xterm']);
   assert.ok(packageJson.dependencies['@xterm/addon-fit']);
+  assert.ok(packageJson.dependencies['@xterm/headless']);
   assert.ok(packageJson.dependencies['node-pty']);
+});
+
+test('terminal exposes complete light and dark color palettes', () => {
+  assert.match(terminalThemeSource, /export const TERMINAL_DARK_THEME/);
+  assert.match(terminalThemeSource, /background: '#282c34'/);
+  assert.match(terminalThemeSource, /export const TERMINAL_LIGHT_THEME/);
+  assert.match(terminalThemeSource, /background: '#ffffff'/);
+  for (const color of [
+    'black',
+    'red',
+    'green',
+    'yellow',
+    'blue',
+    'magenta',
+    'cyan',
+    'white',
+    'brightBlack',
+    'brightRed',
+    'brightGreen',
+    'brightYellow',
+    'brightBlue',
+    'brightMagenta',
+    'brightCyan',
+    'brightWhite',
+  ]) {
+    assert.match(terminalThemeSource, new RegExp(`${color}:`));
+  }
+});
+
+test('mounted terminals follow app theme changes without recreating the PTY', () => {
+  assert.match(terminalPanelSource, /const isDark = useIsDark\(\)/);
+  assert.match(terminalPanelSource, /surface\.setTheme\(getTerminalTheme\(isDark\)\)/);
+  assert.match(terminalSurfaceSource, /setTheme\(theme: TesseraTerminalTheme\)/);
+  assert.match(terminalSurfaceSource, /this\.terminal\.options\.theme = this\.theme/);
+  assert.match(terminalSurfaceSource, /theme: this\.theme/);
+  assert.match(
+    terminalPanelSource,
+    /}, \[panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId\]\);/,
+  );
+});
+
+test('terminal routes modified keys through an explicit input policy before xterm encoding', () => {
+  assert.match(terminalSurfaceSource, /attachCustomKeyEventHandler\(\(event\) =>/);
+  assert.match(terminalSurfaceSource, /resolveTerminalInputAction\(event, inputContext\)/);
+  assert.match(terminalSurfaceSource, /event\.preventDefault\(\)/);
+  assert.match(terminalSurfaceSource, /this\.sendInput\(action\.data\)/);
+  assert.match(terminalSurfaceSource, /return false/);
+});
+
+test('terminal image paste crosses the Electron clipboard boundary through a narrow preload API', () => {
+  assert.match(electronMainSource, /getTerminalClipboardKind\(clipboard\)/);
+  assert.match(electronMainSource, /readTerminalClipboard\(clipboard\)/);
+  assert.match(electronPreloadSource, /ipcRenderer\.sendSync\('get-terminal-clipboard-kind'\)/);
+  assert.match(electronPreloadSource, /readTerminalClipboard:/);
+  assert.match(electronPreloadSource, /ipcRenderer\.invoke\('read-terminal-clipboard'\)/);
+  assert.match(terminalSurfaceSource, /pasteTerminalClipboard\(payload/);
+  assert.match(terminalSurfaceSource, /uploadTerminalClipboardImage/);
+  assert.match(terminalSurfaceSource, /terminal\.paste\(data\)/);
 });
 
 test('terminal websocket protocol covers process lifecycle', () => {
   for (const type of [
     'terminal_create',
+    'terminal_detach',
     'terminal_input',
     'terminal_resize',
     'terminal_close',
     'terminal_started',
     'terminal_prefill_written',
     'terminal_prefill_cancelled',
+    'terminal_snapshot',
     'terminal_output',
     'terminal_exit',
     'terminal_error',
@@ -64,14 +135,14 @@ test('terminal websocket protocol covers process lifecycle', () => {
 test('terminal launch success is acknowledged only after the slash prefill is written', () => {
   assert.match(terminalManagerSource, /type: 'terminal_prefill_written'/);
   assert.match(terminalManagerSource, /type: 'terminal_prefill_cancelled'/);
-  assert.match(terminalPanelSource, /message\.type === 'terminal_prefill_written'/);
-  assert.match(terminalPanelSource, /message\.type === 'terminal_prefill_cancelled'/);
-  assert.match(terminalPanelSource, /dispatchTerminalLaunchResult/);
+  assert.match(terminalSurfaceSource, /message\.type === 'terminal_prefill_written'/);
+  assert.match(terminalSurfaceSource, /message\.type === 'terminal_prefill_cancelled'/);
+  assert.match(terminalSurfaceSource, /dispatchTerminalLaunchResult/);
 });
 
-test('terminal messages route through the server terminal manager', () => {
-  assert.match(routingSource, /const terminalManager = bindTerminalSender\(sendToUser\)/);
-  assert.match(routingSource, /await terminalManager\.create/);
+test('terminal messages route through the connection-scoped server terminal manager', () => {
+  assert.match(routingSource, /const manager = bindTerminalSender\(sendToConnection\)/);
+  assert.match(routingSource, /await manager\.create\(\{/);
   assert.match(routingSource, /case 'terminal_create':/);
   assert.match(routingSource, /case 'terminal_input':/);
   assert.match(routingSource, /case 'terminal_resize':/);
@@ -101,7 +172,7 @@ test('handoff ownership is locked and released on every terminal lifecycle exit'
   assert.match(terminalHandoffLockSource, /acquireTerminalHandoffLock/);
   assert.match(terminalHandoffLockSource, /isSessionHandedOffToTerminal/);
   assert.match(terminalManagerSource, /releaseTerminalHandoffByTerminal\(options\.userId, options\.terminalId\)/);
-  assert.match(terminalManagerSource, /releaseTerminalHandoffByTerminal\(userId, terminalId\)/);
+  assert.match(terminalManagerSource, /releaseTerminalHandoffByTerminal\(runtime\.userId, runtime\.terminalId\)/);
   assert.match(serverSessionActionsSource, /code: 'session_handed_off_to_terminal'/);
   assert.match(routingSource, /eventType: 'session_stopped'/);
   assert.match(routingSource, /beginTesseraSessionOperation/);
@@ -131,16 +202,30 @@ test('resume, delete, archive, restore, and worktree cleanup hold atomic handoff
 
 test('terminal prefill strips control characters and never appends Enter', () => {
   assert.match(terminalManagerSource, /replace\(\/\[\\x00-\\x1f\\x7f-\\x9f\]\+\/g, ' '\)/);
-  assert.match(terminalManagerSource, /terminalProcess\.write\(sanitized\)/);
-  assert.doesNotMatch(terminalManagerSource, /terminalProcess\.write\(`\$\{sanitized\}\\[rn]`\)/);
+  assert.match(terminalManagerSource, /processHandle\.write\(sanitized\)/);
+  assert.doesNotMatch(terminalManagerSource, /processHandle\.write\(`\$\{sanitized\}\\[rn]`\)/);
+});
+
+test('terminal host is shared across server module graphs and validates filesystem identities', () => {
+  assert.match(sharedTerminalManagerSource, /Symbol\.for\('tessera\.terminalManager'\)/);
+  assert.match(routingSource, /SAFE_TERMINAL_ID/);
+  assert.match(routingSource, /Invalid terminal identity/);
+  assert.match(codexOverlaySource, /Invalid terminal id for Codex overlay/);
+});
+
+test('packaged Electron child exposes the authenticated terminal hook endpoint', () => {
+  assert.match(serverChildSource, /handleHookRequest/);
+  assert.match(serverChildSource, /req\.url\?\.split\('\?'\)\[0\] === '\/__tessera\/hook'/);
 });
 
 test('panels can own terminal process identity separately from agent sessions', () => {
   assert.match(panelTypesSource, /terminalId\?: string \| null/);
 });
 
-test('terminal processes are cleaned up after the final websocket disconnects', () => {
-  assert.match(wsServerSource, /terminalManager\.closeAllForUser\(userId\)/);
+test('websocket disconnect detaches surfaces without killing terminal processes', () => {
+  assert.match(wsServerSource, /terminalManager\.detachConnection\(ws\.connectionId\)/);
+  assert.doesNotMatch(wsServerSource, /terminalManager\.closeAllForUser\(userId\)/);
+  assert.match(wsServerSource, /terminalManager\.shutdownAll\(\)/);
 });
 
 test('terminal cwd is server validated before spawning a PTY', () => {
@@ -149,7 +234,7 @@ test('terminal cwd is server validated before spawning a PTY', () => {
   assert.match(terminalResolverSource, /getSession/);
   assert.match(terminalResolverSource, /Terminal cwd must be inside a registered project or active worktree/);
   assert.match(terminalLaunchIntentSource, /readSessionLaunchCwd/);
-  assert.match(routingSource, /cwd: launchSpec\?\.cwd \?\? message\.cwd/);
+  assert.match(terminalManagerSource, /cwd: options\.launchSpec\?\.cwd \?\? options\.cwd/);
   assert.match(routingSource, /shellKind: launchSpec \? undefined : message\.shellKind/);
 });
 
@@ -199,18 +284,14 @@ test('terminal ownership keys include user id and terminal id', () => {
   assert.match(terminalManagerSource, /`\$\{userId\}:\$\{terminalId\}`/);
   assert.match(terminalManagerSource, /const key = this\.getKey\(userId, terminalId\)/);
   assert.match(terminalManagerSource, /this\.terminals\.delete\(key\)/);
-  assert.match(terminalManagerSource, /this\.terminals\.get\(key\) !== runtime/);
+  assert.match(terminalManagerSource, /this\.terminals\.get\(key\) === runtime/);
 });
 
 test('pending terminal startup can be cancelled and duplicate IDs are single-flight', () => {
-  assert.match(terminalManagerSource, /pendingCreates = new Map/);
-  assert.match(terminalManagerSource, /launchReservations = new Map/);
-  assert.match(terminalManagerSource, /reserveTerminalLaunch/);
-  assert.match(routingSource, /isTerminalLaunchReserved/);
-  assert.match(routingSource, /releaseTerminalLaunchReservation/);
-  assert.match(terminalManagerSource, /pendingCreate\.cancelled = true/);
-  assert.match(terminalManagerSource, /Terminal startup was cancelled/);
-  assert.match(terminalManagerSource, /hasOrPendingTerminal/);
+  assert.match(terminalManagerSource, /openingTerminals = new Map/);
+  assert.match(terminalManagerSource, /openingByTerminalKey = new Map/);
+  assert.match(terminalManagerSource, /hasOrIsOpening/);
+  assert.match(terminalManagerSource, /preventSessionOpen/);
 });
 
 test('launched TUIs exit instead of falling through to a command shell', () => {
@@ -218,7 +299,7 @@ test('launched TUIs exit instead of falling through to a command shell', () => {
   assert.match(terminalResolverSource, /`exec \$\{buildPosixCommand\(launch\.program, launch\.args\)\}`/);
   assert.match(terminalResolverSource, /args: launch \? \['\/c'/);
   assert.doesNotMatch(terminalResolverSource, /NoExit/);
-  assert.match(terminalManagerSource, /User input wins over a delayed automatic prefill/);
+  assert.match(terminalManagerSource, /runtime\.cancelPrefill\?\.\(\)/);
 });
 
 test('terminal launch intent is runtime validated before classification', () => {
@@ -228,19 +309,21 @@ test('terminal launch intent is runtime validated before classification', () => 
 
 test('terminal client subscribes before creating the server process', () => {
   assert.ok(
-    terminalPanelSource.indexOf('subscribeServerMessages') <
-      terminalPanelSource.indexOf('wsClient.createTerminal'),
+    terminalSurfaceSource.indexOf('subscribeServerMessages') <
+      terminalSurfaceSource.indexOf('wsClient.createTerminal'),
   );
   assert.match(terminalPanelSource, /connectionStatus !== 'connected'/);
-  assert.match(terminalPanelSource, /didCreateTerminal/);
+  assert.match(terminalSurfaceSource, /attachedConnectionGeneration/);
   assert.match(wsClientSource, /createTerminal\(args: \{/);
   assert.match(wsClientSource, /\}\): boolean \{/);
 });
 
-test('terminal creation is not tied to active panel focus changes', () => {
+test('terminal creation is gated by visible tab, not active split-panel focus', () => {
   assert.doesNotMatch(terminalPanelSource, /useSessionStore\(\(state\) => state\.activeSessionId\)/);
   assert.doesNotMatch(terminalPanelSource, /useSessionStore\.getState\(\)\.activeSessionId/);
-  assert.match(terminalPanelSource, /\}, \[connectionStatus, terminalId, terminalSessionId\]\);/);
+  assert.match(terminalPanelSource, /!isTabActive/);
+  assert.match(terminalPanelSource, /surface\.ensureConnected\(\)\.then/);
+  assert.match(terminalPanelSource, /connected && isPanelActive/);
 });
 
 test('terminal panels without a bound session do not inherit stale active session cwd', () => {
@@ -261,9 +344,18 @@ test('terminal panels preserve the source session context used to create them', 
 
 test('terminal panels expose a panel drag handle', () => {
   assert.match(terminalPanelSource, /setPanelNodeDragData/);
+  assert.match(terminalPanelSource, /\{!sessionOwned && \(/);
   assert.match(terminalPanelSource, /data-testid="terminal-panel-drag-handle"/);
   assert.match(terminalPanelSource, /data-testid="terminal-panel-empty-drag-region"/);
   assert.match(terminalPanelSource, /draggable/);
+});
+
+test('session-owned terminals use session chrome and only surface restart on failure', () => {
+  assert.match(terminalPanelSource, /sessionOwned && status !== 'running' && \(/);
+  assert.match(terminalPanelSource, /terminal-session-status-banner/);
+  assert.match(terminalPanelSource, /terminal-session-restart-banner/);
+  assert.match(terminalPanelSource, /\{canRestart && \(/);
+  assert.match(terminalPanelSource, />\s*Restart\s*</);
 });
 
 test('terminal-only tabs can be dragged into another panel tree', () => {
@@ -281,11 +373,13 @@ test('terminal panels can be pulled into a new tab from a multi-panel layout', (
   assert.match(tabBarSource, /assignTerminal\(newPanelId, terminalId, terminalSessionId\)/);
 });
 
-test('terminal remount attaches to the existing server process', () => {
-  assert.match(terminalManagerSource, /const existing = this\.terminals\.get\(key\)/);
-  assert.match(terminalManagerSource, /this\.sendStarted\(existing\)/);
-  assert.match(terminalManagerSource, /this\.replayBufferedOutput\(existing\)/);
-  assert.doesNotMatch(terminalManagerSource, /this\.close\(options\.terminalId, options\.userId\);\n\n    try/);
+test('terminal remount reuses warm xterm and cold attach uses a targeted snapshot', () => {
+  assert.match(terminalSurfaceSource, /getParkingLot\(\)\.appendChild\(this\.root\)/);
+  assert.match(terminalSurfaceSource, /host\.appendChild\(this\.root\)/);
+  assert.match(terminalManagerSource, /let runtime = this\.terminals\.get\(key\)/);
+  assert.match(terminalManagerSource, /await this\.attachRuntime\(runtime/);
+  assert.match(terminalManagerSource, /type: 'terminal_snapshot'/);
+  assert.match(terminalManagerSource, /surfaceId: subscriber\.surfaceId/);
 });
 
 test('panel node drag preserves terminal panel identity', () => {
@@ -318,6 +412,13 @@ test('macOS terminal startup preserves user login PATH and executable node-pty h
   assert.match(terminalManagerSource, /fs\.chmodSync\(helperPath, stat\.mode \| 0o755\)/);
   assert.match(terminalManagerSource, /buildSpawnEnv\(env\)/);
   assert.match(terminalResolverSource, /platform === 'darwin' \? \['-l'\] : \[\]/);
+});
+
+test('terminal startup normalizes inherited color capability flags', () => {
+  assert.match(terminalManagerSource, /normalizeTerminalColorEnv\(nextEnv\)/);
+  assert.match(terminalManagerSource, /\{ name: 'TERM' \}/);
+  assert.match(terminalManagerSource, /\{ name: 'COLORTERM' \}/);
+  assert.match(terminalManagerSource, /\{ name: 'TERM_PROGRAM' \}/);
 });
 
 test('electron packages node-pty native runtime assets outside the asar', () => {

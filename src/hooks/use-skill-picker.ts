@@ -16,11 +16,6 @@ import {
   CLAUDE_FAST_COMMAND_DESCRIPTION,
   CLAUDE_FAST_COMMAND_NAME,
 } from '@/lib/chat/claude-fast-command';
-import {
-  CODEX_GOAL_BUILTIN_COMMAND,
-  CODEX_GOAL_COMMAND_DESCRIPTION,
-  CODEX_GOAL_COMMAND_NAME,
-} from '@/lib/chat/codex-goal-command';
 import { getTuiOnlySlashCommands } from '@/lib/terminal/tui-only-commands';
 import {
   getCodexSlashCommandsForPicker,
@@ -31,7 +26,6 @@ export type SkillInfo = CommandInfo & {
   builtinCommand?:
     | typeof CODEX_FAST_BUILTIN_COMMAND
     | typeof CODEX_COMPACT_BUILTIN_COMMAND
-    | typeof CODEX_GOAL_BUILTIN_COMMAND
     | typeof CLAUDE_FAST_BUILTIN_COMMAND;
   // 헤드리스 미지원(Claude TUI 전용) 명령 — 선택 시 전송이 아니라 터미널 fallback으로 실행된다.
   terminalFallback?: boolean;
@@ -93,10 +87,6 @@ export function useSkillPicker(
           name: CODEX_COMPACT_COMMAND_NAME,
           description: CODEX_COMPACT_COMMAND_DESCRIPTION,
           builtinCommand: CODEX_COMPACT_BUILTIN_COMMAND,
-        }, {
-          name: CODEX_GOAL_COMMAND_NAME,
-          description: CODEX_GOAL_COMMAND_DESCRIPTION,
-          builtinCommand: CODEX_GOAL_BUILTIN_COMMAND,
         }];
       }
       if (providerId === 'claude-code') {

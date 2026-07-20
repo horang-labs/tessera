@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useI18n } from "@/lib/i18n";
+import { TerminalPanel } from "@/components/terminal/terminal-panel";
+import { getSessionTerminalId } from "@/lib/terminal/terminal-surface-registry";
 
 interface ChatAreaProps {
   sessionId: string;
@@ -75,6 +77,18 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
     windowedMessages,
     groupedMessagesForSearch,
     sessionId,
+  );
+
+  // terminal-mode: 이 세션이 터미널 kind면 채팅 본문(메시지/컴포저) 대신 xterm 터미널을
+  // 렌더하고, 마운트 시 provider PTY를 프롬프트 없이 자동 기동한다. Header 등 세션 UI는
+  // 그대로 유지되어 제목편집·사이드바 선택·상태 인디케이터를 채팅창과 동일하게 흡수한다.
+  const sessionProvider = session?.provider;
+  const isTerminalSession = session?.kind === "terminal";
+  // 세션당 안정적 terminalId. 렌더러 메모리가 아니라 서버의 session binding이 실제
+  // PTY 소유권을 가지므로 reload/다중 창에서도 같은 런타임으로 attach된다.
+  const terminalId = useMemo(
+    () => (isTerminalSession ? getSessionTerminalId(sessionId) : null),
+    [isTerminalSession, sessionId],
   );
 
   if (!sessionId) {
@@ -152,37 +166,54 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
       />
 
       <div className="flex-1 overflow-hidden">
-        <MessageList
-          messages={windowedMessages}
-          isLoading={isLoading}
-          sessionId={sessionId}
-          hasMore={hasMore}
-          onLoadMore={loadMore}
-          isLoadingMore={isLoadingMore}
-          isSinglePanel={isSinglePanel}
-          isTabActive={isViewActive}
-          isTurnInFlight={isTurnInFlight}
-          search={{
-            activeMatchMessageId: messageSearch.activeMatch?.messageId ?? null,
-            activeGroupedRowIndex: messageSearch.activeGroupedRowIndex,
-          }}
-        />
+        {isTerminalSession ? (
+          terminalId && sessionProvider ? (
+            <TerminalPanel
+              panelId={panelId}
+              terminalId={terminalId}
+              terminalSessionId={sessionId}
+              sessionOwned
+              launch={{ providerId: sessionProvider, sessionId }}
+            />
+          ) : null
+        ) : (
+          <MessageList
+            messages={windowedMessages}
+            isLoading={isLoading}
+            sessionId={sessionId}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            isLoadingMore={isLoadingMore}
+            isSinglePanel={isSinglePanel}
+            isTabActive={isViewActive}
+            isTurnInFlight={isTurnInFlight}
+            search={{
+              activeMatchMessageId: messageSearch.activeMatch?.messageId ?? null,
+              activeGroupedRowIndex: messageSearch.activeGroupedRowIndex,
+            }}
+          />
+        )}
       </div>
 
-      {!isReadOnly && <InteractivePromptOverlay sessionId={sessionId} />}
+      {/* 채팅 전용 하단 UI — 터미널 세션에서는 숨긴다(입력은 터미널에 직접). */}
+      {!isTerminalSession && (
+        <>
+          {!isReadOnly && <InteractivePromptOverlay sessionId={sessionId} />}
 
-      <div className="max-h-[45vh] overflow-y-auto">
-        <WorkflowStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
-        <TodoStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
-      </div>
+          <div className="max-h-[45vh] overflow-y-auto">
+            <WorkflowStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
+            <TodoStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
+          </div>
 
-      <MessageInput
-        sessionId={sessionId}
-        isDisabled={isInputDisabled}
-        isReadOnly={isReadOnly}
-        isStopped={isStopped}
-        isSinglePanel={isSinglePanel}
-      />
+          <MessageInput
+            sessionId={sessionId}
+            isDisabled={isInputDisabled}
+            isReadOnly={isReadOnly}
+            isStopped={isStopped}
+            isSinglePanel={isSinglePanel}
+          />
+        </>
+      )}
     </div>
   );
 });

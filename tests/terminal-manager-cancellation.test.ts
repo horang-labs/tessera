@@ -23,11 +23,26 @@ function installPendingPrefillRuntime(
   const runtime = {
     terminalId,
     userId,
+    sessionId: null,
+    generation: 1,
+    sequence: 0,
+    ended: false,
     cwd: '.',
     shell: '/bin/zsh',
     process,
+    model: { dispose() {}, resize() {} },
+    subscribers: new Map([['connection:surface', {
+      connectionId: 'connection',
+      surfaceId: 'surface',
+      ready: true,
+      pendingFrames: [],
+    }]]),
+    viewportOwner: 'connection:surface',
     outputBuffer: [],
     outputBufferSize: 0,
+    pendingSend: [],
+    pendingSendTimer: null,
+    disposeSessionObservers: [],
     prefillPending: true,
     cancelPrefill() {
       cancelCount += 1;
@@ -52,8 +67,6 @@ test('closing a terminal while its PTY dependency loads cancels the spawn', asyn
     (_userId, message) => messages.push(message),
     () => loader,
   );
-  const reservation = manager.reserveTerminalLaunch('pending-terminal', 'pending-user');
-  assert.ok(reservation);
   const handoffSessionId = 'pending-handoff-session';
   assert.equal(acquireTerminalHandoffLock({
     sessionId: handoffSessionId,
@@ -64,6 +77,8 @@ test('closing a terminal while its PTY dependency loads cancels the spawn', asyn
   const creation = manager.create({
     terminalId: 'pending-terminal',
     userId: 'pending-user',
+    connectionId: 'connection',
+    surfaceId: 'surface',
     launchSpec: {
       program: 'codex',
       args: [],
@@ -71,7 +86,7 @@ test('closing a terminal while its PTY dependency loads cancels the spawn', asyn
       cwd: process.cwd(),
       handoffSessionId,
     },
-  }, reservation);
+  });
 
   manager.close('pending-terminal', 'pending-user');
   assert.equal(isSessionHandedOffToTerminal(handoffSessionId), false);
@@ -84,7 +99,7 @@ test('closing a terminal while its PTY dependency loads cancels the spawn', asyn
   await creation;
 
   assert.equal(spawnCount, 0);
-  assert.equal(manager.hasOrPendingTerminal('pending-terminal', 'pending-user'), false);
+  assert.equal(manager.hasOrIsOpening('pending-terminal', 'pending-user'), false);
   assert.equal(messages.some((message) => message.type === 'terminal_started'), false);
   assert.equal(messages.some(
     (message) => message.type === 'terminal_error'
@@ -102,6 +117,10 @@ test('closing a running handoff keeps its lease until PTY exit confirmation', ()
   const runtime = {
     terminalId,
     userId,
+    sessionId: null,
+    generation: 1,
+    sequence: 0,
+    ended: false,
     cwd: '.',
     shell: '/bin/zsh',
     process: {
@@ -109,8 +128,14 @@ test('closing a running handoff keeps its lease until PTY exit confirmation', ()
       resize() {},
       kill() { killCount += 1; },
     },
+    model: { dispose() {}, resize() {} },
+    subscribers: new Map(),
+    viewportOwner: null,
     outputBuffer: [],
     outputBufferSize: 0,
+    pendingSend: [],
+    pendingSendTimer: null,
+    disposeSessionObservers: [],
     handoffSessionId: sessionId,
   };
   const manager = new TerminalManager(() => undefined);
@@ -137,6 +162,10 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
   const runtime = {
     terminalId,
     userId,
+    sessionId: null,
+    generation: 1,
+    sequence: 0,
+    ended: false,
     cwd: '.',
     shell: '/bin/zsh',
     process: {
@@ -148,12 +177,19 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
         if (signals.length === 2) alive = false;
       },
     },
+    model: { dispose() {}, resize() {} },
+    subscribers: new Map(),
+    viewportOwner: null,
     outputBuffer: [],
     outputBufferSize: 0,
+    pendingSend: [],
+    pendingSendTimer: null,
+    disposeSessionObservers: [],
     handoffSessionId: sessionId,
   };
   const manager = new TerminalManager(
     () => undefined,
+    undefined,
     undefined,
     { closeExitGraceMs: 0, closeExitPollMs: 1, processIsAlive: () => alive },
   );
@@ -168,7 +204,7 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
   assert.equal(signals[0], undefined);
   assert.equal(signals.length, 2);
   assert.equal(isSessionHandedOffToTerminal(sessionId), false);
-  assert.equal(manager.hasOrPendingTerminal(terminalId, userId), false);
+  assert.equal(manager.hasOrIsOpening(terminalId, userId), false);
 });
 
 test('a throwing kill retains a live TUI handoff lease', async () => {
@@ -180,6 +216,10 @@ test('a throwing kill retains a live TUI handoff lease', async () => {
   const runtime = {
     terminalId,
     userId,
+    sessionId: null,
+    generation: 1,
+    sequence: 0,
+    ended: false,
     cwd: '.',
     shell: '/bin/zsh',
     process: {
@@ -188,12 +228,19 @@ test('a throwing kill retains a live TUI handoff lease', async () => {
       resize() {},
       kill() { throw new Error('still alive'); },
     },
+    model: { dispose() {}, resize() {} },
+    subscribers: new Map(),
+    viewportOwner: null,
     outputBuffer: [],
     outputBufferSize: 0,
+    pendingSend: [],
+    pendingSendTimer: null,
+    disposeSessionObservers: [],
     handoffSessionId: sessionId,
   };
   const manager = new TerminalManager(
     () => undefined,
+    undefined,
     undefined,
     { closeExitGraceMs: 0, closeExitPollMs: 10_000, processIsAlive: () => true },
   );
@@ -206,27 +253,9 @@ test('a throwing kill retains a live TUI handoff lease', async () => {
   await new Promise((resolve) => setTimeout(resolve, 10));
 
   assert.equal(isSessionHandedOffToTerminal(sessionId), true);
-  assert.equal(manager.hasOrPendingTerminal(terminalId, userId), true);
+  assert.equal(manager.hasOrIsOpening(terminalId, userId), true);
   internals.terminals.clear();
   releaseTerminalHandoffByTerminal(userId, terminalId);
-});
-
-test('a cancelled launch reservation cannot be consumed later', async () => {
-  const manager = new TerminalManager(() => undefined, async () => {
-    throw new Error('loader must not run');
-  });
-  const reservation = manager.reserveTerminalLaunch('reserved-terminal', 'reserved-user');
-  assert.ok(reservation);
-  manager.close('reserved-terminal', 'reserved-user');
-
-  await assert.rejects(
-    manager.create({
-      terminalId: 'reserved-terminal',
-      userId: 'reserved-user',
-      launchSpec: { program: 'codex', args: [], prefillInput: '/theme' },
-    }, reservation),
-    /Terminal startup was cancelled/,
-  );
 });
 
 test('xterm protocol replies do not cancel a pending command prefill', () => {
@@ -251,7 +280,7 @@ test('xterm protocol replies do not cancel a pending command prefill', () => {
   const runtime = installPendingPrefillRuntime(manager, 'protocol-terminal', 'protocol-user');
 
   for (const reply of [...protocolReplies, protocolReplies.join('')]) {
-    manager.write('protocol-terminal', 'protocol-user', reply);
+    manager.write('protocol-terminal', 'protocol-user', 'connection', 'surface', reply);
   }
 
   assert.equal(runtime.getCancelCount(), 0);
@@ -271,7 +300,7 @@ test('split xterm protocol replies do not cancel a pending command prefill', () 
 
   for (const reply of replies) {
     for (const byte of reply) {
-      manager.write('split-protocol-terminal', 'protocol-user', byte);
+      manager.write('split-protocol-terminal', 'protocol-user', 'connection', 'surface', byte);
     }
   }
 
@@ -283,7 +312,7 @@ test('an incomplete response-shaped user escape cancels after the fragment grace
   const manager = new TerminalManager(() => undefined);
   const runtime = installPendingPrefillRuntime(manager, 'partial-escape-terminal', 'input-user');
 
-  manager.write('partial-escape-terminal', 'input-user', '\x1b');
+  manager.write('partial-escape-terminal', 'input-user', 'connection', 'surface', '\x1b');
   assert.equal(runtime.getCancelCount(), 0);
   await new Promise((resolve) => setTimeout(resolve, 125));
 
@@ -304,7 +333,7 @@ test('real keyboard and paste data still cancel a pending command prefill', () =
     const terminalId = `user-input-terminal-${index}`;
     const manager = new TerminalManager(() => undefined);
     const runtime = installPendingPrefillRuntime(manager, terminalId, 'input-user');
-    manager.write(terminalId, 'input-user', input);
+    manager.write(terminalId, 'input-user', 'connection', 'surface', input);
     assert.equal(runtime.getCancelCount(), 1, JSON.stringify(input));
     assert.deepEqual(runtime.writes, [input]);
   }

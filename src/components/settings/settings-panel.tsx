@@ -20,6 +20,7 @@ import CliStatusList from './cli-status-list';
 import CliDiagnosticsPanel from './cli-diagnostics-panel';
 import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
+import AgentExecutionModeSettings from './agent-execution-mode-settings';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -54,6 +55,7 @@ export default function SettingsPanel() {
   const { t } = useI18n();
   const isOpen = useSettingsStore((state) => state.isOpen);
   const closeSettings = useSettingsStore((state) => state.close);
+  const isSaving = useSettingsStore((state) => state.pendingSaveCount > 0);
   const isWindowsServer = useSettingsStore((state) => state.serverHostInfo?.isWindowsEcosystem ?? false);
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === 'win32';
@@ -160,6 +162,9 @@ export default function SettingsPanel() {
       default:
         return (
           <>
+            <SettingsCard testId="settings-section-general-execution-mode">
+              <AgentExecutionModeSettings />
+            </SettingsCard>
             <SettingsCard testId="settings-section-general-profile">
               <ProfileSettings />
             </SettingsCard>
@@ -280,8 +285,9 @@ export default function SettingsPanel() {
               </button>
               <button
                 onClick={closeSettings}
+                disabled={isSaving}
                 aria-label="Close settings"
-                className="rounded-xl p-2 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+                className="rounded-xl p-2 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-wait disabled:opacity-50"
                 data-testid="settings-close"
               >
                 <X className="h-5 w-5" />

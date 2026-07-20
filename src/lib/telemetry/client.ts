@@ -103,7 +103,7 @@ const allowedSources = new Set([
   'git_panel',
 ]);
 const allowedViews = new Set(['list', 'kanban']);
-const allowedGitTabs = new Set(['git', 'files', 'agent']);
+const allowedGitTabs = new Set(['git', 'files', 'memory']);
 const allowedGitActions = new Set([
   'commit',
   'fetch',

@@ -841,6 +841,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
         taskId: task.id,
         collectionId: task.collectionId,
         provider: data.provider,
+        kind: data.kind,
         model: data.model,
         reasoningEffort: data.reasoningEffort,
         serviceTier: data.serviceTier,

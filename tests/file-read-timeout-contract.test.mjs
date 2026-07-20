@@ -9,6 +9,7 @@ const fileRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/fi
 const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', import.meta.url), 'utf8');
 const filePanelSource = fs.readFileSync(new URL('../src/components/workspace/workspace-file-panel.tsx', import.meta.url), 'utf8');
 const explorerTabSource = fs.readFileSync(new URL('../src/components/workspace/workspace-explorer-tab.tsx', import.meta.url), 'utf8');
+const fileListHookSource = fs.readFileSync(new URL('../src/hooks/use-workspace-file-list.ts', import.meta.url), 'utf8');
 
 test('fetchWithTimeout enforces a deadline and retries only on timeout', () => {
   assert.match(fetchWithTimeoutSource, /AbortSignal\.timeout\(timeoutMs\)/);
@@ -75,8 +76,8 @@ test('worktree diff stats git runner opts into the kill timer', () => {
 });
 
 test('file list flows use the timeout-aware fetch', () => {
-  assert.match(filePanelSource, /fetchWithTimeout\(/);
-  assert.match(filePanelSource, /isTimeoutError/);
-  assert.match(explorerTabSource, /fetchWithTimeout\(/);
-  assert.match(explorerTabSource, /isTimeoutError/);
+  assert.match(filePanelSource, /useWorkspaceFileList/);
+  assert.match(explorerTabSource, /useWorkspaceFileList/);
+  assert.match(fileListHookSource, /fetchWithTimeout\(/);
+  assert.match(fileListHookSource, /isTimeoutError/);
 });

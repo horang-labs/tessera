@@ -1,6 +1,7 @@
 import path from 'path';
 import * as dbProjects from '../db/projects';
 import * as dbSessions from '../db/sessions';
+import type { AgentExecutionMode } from './agent-execution-mode';
 
 interface PersistCreatedSessionRecordOptions {
   collectionId?: string;
@@ -11,6 +12,7 @@ interface PersistCreatedSessionRecordOptions {
   sessionId: string;
   taskId?: string;
   title: string;
+  executionMode: AgentExecutionMode;
   worktreeBranch?: string;
   worktreeManaged?: boolean;
   model?: string;
@@ -68,6 +70,12 @@ export function persistCreatedSessionRecord(
       providerState: options.providerState,
     },
   );
+
+  if (options.executionMode === 'pty') {
+    dbSessions.updateSession(options.sessionId, {
+      provider_state: JSON.stringify({ kind: 'terminal' }),
+    });
+  }
 
   if (options.hasCustomTitle === true) {
     dbSessions.updateSession(

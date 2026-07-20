@@ -14,7 +14,6 @@ import type {
   ProviderSessionAccessMode,
   ProviderSessionMode,
 } from '@/lib/session/session-control-types';
-import type { SessionGoal } from './session-goal';
 
 // New message types for protocol adapter → frontend
 // Base message fields
@@ -197,6 +196,8 @@ export interface UnifiedSession {
   isReadOnly?: boolean;
   /** Unread notification count (incremented on notification, cleared on view) */
   unreadCount?: number;
+  /** 세션 실행 형태. 'terminal'이면 composer 전송이 PTY claude 런치로 라우팅된다. 기본 'chat'. */
+  kind?: 'chat' | 'terminal';
   /** Whether the title was explicitly set by user (prevents auto-title overwrite) */
   hasCustomTitle?: boolean;
 
@@ -244,8 +245,6 @@ export interface UnifiedSession {
   hasStarted?: boolean;
   sessionMode?: ProviderSessionMode;
   accessMode?: ProviderSessionAccessMode;
-  goal?: SessionGoal | null;
-
   /**
    * Task entity ID this session belongs to.
    * Undefined when the session is not linked to any task.

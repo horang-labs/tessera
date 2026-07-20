@@ -4,7 +4,6 @@ import { useAuthStore } from '@/stores/auth-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import type { ContentBlock, SessionSpawnConfig } from '@/lib/ws/message-types';
-import type { SessionGoalUpdate } from '@/types/session-goal';
 
 export function useWebSocket() {
   const user = useAuthStore((state) => state.user);
@@ -76,31 +75,6 @@ export function useWebSocket() {
     wsClient.compactSession(sessionId, spawnConfig, displayContent);
   }, []);
 
-  const setSessionGoal = useCallback((
-    sessionId: string,
-    update: SessionGoalUpdate,
-    spawnConfig?: SessionSpawnConfig,
-    displayContent?: string,
-  ) => {
-    wsClient.setSessionGoal(sessionId, update, spawnConfig, displayContent);
-  }, []);
-
-  const refreshSessionGoal = useCallback((
-    sessionId: string,
-    spawnConfig?: SessionSpawnConfig,
-    displayContent?: string,
-  ) => {
-    wsClient.refreshSessionGoal(sessionId, spawnConfig, displayContent);
-  }, []);
-
-  const clearSessionGoal = useCallback((
-    sessionId: string,
-    spawnConfig?: SessionSpawnConfig,
-    displayContent?: string,
-  ) => {
-    wsClient.clearSessionGoal(sessionId, spawnConfig, displayContent);
-  }, []);
-
   const stopSession = useCallback((sessionId: string) => {
     wsClient.stopSession(sessionId);
   }, []);
@@ -122,9 +96,6 @@ export function useWebSocket() {
     sendInteractiveResponse,
     cancelGeneration,
     compactSession,
-    setSessionGoal,
-    refreshSessionGoal,
-    clearSessionGoal,
     stopSession,
     setServiceTier,
     setFastMode,
