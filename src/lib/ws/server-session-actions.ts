@@ -19,7 +19,8 @@ import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh
 import { SettingsManager } from '../settings/manager';
 import {
   getProviderExecutionCapabilities,
-  resolveEffectiveExecutionMode,
+  resolveSessionCreationExecutionMode,
+  type AgentExecutionMode,
 } from '../session/agent-execution-mode';
 import { translateMessageText } from '../session/message-translator';
 import {
@@ -74,6 +75,7 @@ interface CreateSessionActionOptions extends SessionActionOptions, ProviderRunti
   workDir?: string;
   model?: string;
   reasoningEffort?: string | null;
+  executionMode?: AgentExecutionMode;
 }
 
 interface CloseSessionActionOptions extends SessionActionOptions {
@@ -140,6 +142,7 @@ export async function createSessionFromWebSocket({
   collaborationMode,
   approvalPolicy,
   sandboxMode,
+  executionMode: requestedExecutionMode,
 }: CreateSessionActionOptions): Promise<void> {
   try {
     const resolvedProviderId = providerId.trim();
@@ -162,10 +165,21 @@ export async function createSessionFromWebSocket({
       return;
     }
     const settings = await SettingsManager.load(userId, { silent: true });
-    const executionMode = resolveEffectiveExecutionMode(
-      settings.agentExecutionMode,
-      executionCapabilities,
-    );
+    let executionMode: AgentExecutionMode;
+    try {
+      executionMode = resolveSessionCreationExecutionMode(
+        requestedExecutionMode,
+        settings.agentExecutionMode,
+        executionCapabilities,
+      );
+    } catch (error) {
+      sendToUser(userId, {
+        type: 'error',
+        code: 'unsupported_execution_mode',
+        message: error instanceof Error ? error.message : 'Unsupported execution mode',
+      });
+      return;
+    }
 
     const result = await sessionOrchestrator.createSession(userId, {
       workDir,

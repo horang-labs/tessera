@@ -5,9 +5,13 @@ import { generateSessionTitle } from './title-generator';
 
 const PLACEHOLDER_TITLES = new Set([
   'New Task',
+  'New Worktree',
   '새 태스크',
+  '새 워크트리',
   '新しいタスク',
+  '新しいワークツリー',
   '新建任务',
+  '新建工作树',
 ]);
 
 export interface ImmediateSessionTitleUpdate {

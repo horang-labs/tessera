@@ -8,7 +8,8 @@ import logger from '@/lib/logger';
 import { persistCreatedSessionRecord } from '@/lib/session/session-persistence';
 import {
   getProviderExecutionCapabilities,
-  resolveEffectiveExecutionMode,
+  resolveSessionCreationExecutionMode,
+  type AgentExecutionMode,
 } from '@/lib/session/agent-execution-mode';
 import { SettingsManager } from '@/lib/settings/manager';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
       worktreeBranch,
       taskId,
       collectionId,
+      executionMode: rawExecutionMode,
     } = body;
 
     const resolvedWorkDir = workDir || process.cwd();
@@ -68,10 +70,26 @@ export async function POST(req: NextRequest) {
     if (!executionCapabilities.pty && !executionCapabilities.gui) {
       return NextResponse.json({ error: 'Provider has no supported execution mode' }, { status: 400 });
     }
-    const executionMode = resolveEffectiveExecutionMode(
-      settings.agentExecutionMode,
-      executionCapabilities,
-    );
+    if (
+      rawExecutionMode !== undefined
+      && rawExecutionMode !== 'pty'
+      && rawExecutionMode !== 'gui'
+    ) {
+      return NextResponse.json({ error: 'executionMode must be pty or gui' }, { status: 400 });
+    }
+    let executionMode: AgentExecutionMode;
+    try {
+      executionMode = resolveSessionCreationExecutionMode(
+        rawExecutionMode,
+        settings.agentExecutionMode,
+        executionCapabilities,
+      );
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Unsupported execution mode' },
+        { status: 400 },
+      );
+    }
 
     if (normalizedWorktreeBranch && !normalizedTaskId) {
       return NextResponse.json(

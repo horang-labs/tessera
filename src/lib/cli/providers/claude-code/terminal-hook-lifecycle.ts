@@ -156,6 +156,11 @@ export class ClaudeHookLifecycleTracker {
     state.turnEndedAt = now;
   }
 
+  hasWorkingSubagents(terminalId: string): boolean {
+    const state = this.terminals.get(terminalId);
+    return state ? rosterHasWorkingSubagent(state.subagents) : false;
+  }
+
   private getOrCreate(terminalId: string): ClaudeTerminalLifecycle {
     const existing = this.terminals.get(terminalId);
     if (existing) return existing;
@@ -194,4 +199,8 @@ export function mapClaudeHookLifecycle(
   payload: Record<string, unknown>,
 ): { status: ClaudeHookLifecycleStatus } | null {
   return terminalHookLifecycle.apply(terminalId, event, payload);
+}
+
+export function claudeHookLifecycleHasWorkingSubagents(terminalId: string): boolean {
+  return terminalHookLifecycle.hasWorkingSubagents(terminalId);
 }

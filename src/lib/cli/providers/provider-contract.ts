@@ -38,6 +38,9 @@ export type TerminalAppearanceChangePolicy = 'live' | 'restart';
 /** How a provider TUI uses ED3 while redrawing after SIGWINCH. */
 export type TerminalResizeScrollbackPolicy = 'native' | 'preserve-on-ed3';
 
+/** How accepted terminal input indicates an agent-turn interrupt. */
+export type TerminalInterruptInputPolicy = 'none' | 'single-escape';
+
 export interface CliProbeSummary {
   ok: boolean;
   failureKind: CliProbeFailureKind;
@@ -117,6 +120,9 @@ export interface CliProvider {
 
   /** Declares whether SIGWINCH redraw ED3 must preserve host scrollback. */
   getTerminalResizeScrollbackPolicy(): TerminalResizeScrollbackPolicy;
+
+  /** Declares whether one accepted Escape interrupts the active terminal turn. */
+  getTerminalInterruptInputPolicy(): TerminalInterruptInputPolicy;
 
   /**
    * Interprets provider-owned persisted state to decide whether terminating a

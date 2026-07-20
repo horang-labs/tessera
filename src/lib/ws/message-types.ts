@@ -7,6 +7,7 @@ import type { SessionReplayEvent } from '@/lib/session-replay-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import type {
   TerminalAppearance,
   TerminalLaunchIntent,
@@ -67,7 +68,7 @@ export type SessionSpawnConfig = {
 
 // Client → Server messages
 export type ClientMessage =
-  | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
+  | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null; executionMode?: AgentExecutionMode } & ProviderRuntimeControls)
   | { type: 'close_session'; requestId: string; sessionId: string }
   | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string }
   | { type: 'translate_message'; requestId: string; sessionId: string; messageId: string }
@@ -286,6 +287,8 @@ export type AppServerMessage =
       status: 'running' | 'completed' | 'input_required' | 'idle';
       hookEvent: string;
       preview?: string;
+      /** Active child work prevents an Escape fallback from settling the turn. */
+      hasWorkingSubagents?: boolean;
       /**
        * 이 상태 인스턴스의 발생시각(epoch ms). 클라의 알림 dedup 키 재료. 서버가
        * 상태 기록 시 한 번 찍어 저장하고 replay에도 같은 값을 실어, 재연결/리로드로

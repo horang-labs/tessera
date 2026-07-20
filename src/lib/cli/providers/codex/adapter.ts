@@ -269,6 +269,10 @@ export class CodexAdapter implements CliProvider {
     return 'preserve-on-ed3';
   }
 
+  getTerminalInterruptInputPolicy(): 'single-escape' {
+    return 'single-escape';
+  }
+
   canResumeTerminalAfterRestart(providerState: string | null): boolean {
     if (!providerState) return false;
     try {

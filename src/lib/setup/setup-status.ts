@@ -2,12 +2,14 @@ import '@/lib/cli/providers/bootstrap';
 import { checkAllCliStatuses, type CliStatusEntry } from '@/lib/cli/connection-checker';
 import { execCli, isRunningInWsl, type CliEnvironment, type ExecResult } from '@/lib/cli/cli-exec';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
+import { detectTerminalProviders } from '@/lib/terminal/provider-detection';
 import type {
   CliCommandShape,
   CliCommandSource,
   CliDetectionReason,
   CliProbeSummary,
 } from '@/lib/cli/providers/provider-contract';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import type { AgentEnvironment, UserSettings } from '@/lib/settings/types';
 
 export type SetupToolStatus = 'ready' | 'missing' | 'needs_login' | 'needs_config';
@@ -76,6 +78,12 @@ interface BuildSetupStatusOptions {
   exec?: typeof execCli;
   checkCliStatuses?: typeof checkAllCliStatuses;
   userId?: string;
+  /**
+   * 실행 모드에 따라 프로바이더 판정 방식이 갈린다.
+   *  - 'pty': 로그인 셸 which-only 감지 — 설치만 돼 있으면 connected(auth 안 봄).
+   *  - 'gui'(기본): 기존 version+auth 풀 프로브.
+   */
+  executionMode?: AgentExecutionMode;
 }
 
 export const SETUP_INSTALL_LINKS = {
@@ -114,7 +122,9 @@ export async function buildSetupStatus(
   );
 
   const [cliStatuses, probedTools] = await Promise.all([
-    checkStatuses({ userId: options.userId }),
+    options.executionMode === 'pty'
+      ? detectTerminalProvidersAsCliStatuses()
+      : checkStatuses({ userId: options.userId }),
     Promise.all(
       availableEnvironments.map(async (environment) => ({
         environment,
@@ -155,6 +165,21 @@ export async function buildSetupStatus(
     canUseCoreFeatures: summary.aiCli.status === 'ready',
     installLinks: SETUP_INSTALL_LINKS,
   };
+}
+
+/**
+ * PTY 모드용: which-only 감지 결과를 기존 판정 파이프라인이 먹는
+ * CliStatusEntry 형태로 변환한다. 버전/auth 정보는 없다.
+ * 참고: PTY 감지는 native 로그인 셸만 프로브하므로 WSL 환경 카드에는
+ * 프로바이더가 비어 보인다(summary는 native 기준이라 판정에는 영향 없음).
+ */
+async function detectTerminalProvidersAsCliStatuses(): Promise<CliStatusEntry[]> {
+  const detections = await detectTerminalProviders({ force: true });
+  return detections.map((detection) => ({
+    providerId: detection.providerId,
+    environment: 'native' as const,
+    status: detection.installed ? 'connected' as const : 'not_installed' as const,
+  }));
 }
 
 function buildProviderStates(

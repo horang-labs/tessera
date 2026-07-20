@@ -29,9 +29,36 @@ import { useFolderBrowserStore } from '@/stores/folder-browser-store';
 import type { Collection } from '@/types/collection';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 import { v4 as uuidv4 } from 'uuid';
+import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
+import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
 
 interface EmptyPanelStateProps {
   panelId: string;
+}
+
+export type EmptyPanelShortcutTargetKind = 'execution-mode-radio' | 'text-entry' | 'other';
+
+export function shouldLaunchFromEmptyPanelShortcut(
+  key: string,
+  targetKind: EmptyPanelShortcutTargetKind,
+): boolean {
+  if (key !== 'Enter' && key !== ' ') return false;
+  return targetKind !== 'text-entry';
+}
+
+function getEmptyPanelShortcutTargetKind(target: EventTarget | null): EmptyPanelShortcutTargetKind {
+  if (!(target instanceof HTMLElement)) return 'other';
+  if (
+    target instanceof HTMLInputElement
+    && target.type === 'radio'
+    && target.closest('[data-empty-panel-execution-mode]')
+  ) {
+    return 'execution-mode-radio';
+  }
+  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+    return 'text-entry';
+  }
+  return 'other';
 }
 
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -47,6 +74,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
+  const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
   const providers = useProvidersStore((state) => state.providers);
   const { createSession, isCreating } = useSessionCrud();
   const { createWorktreeSession } = useWorktreeSession();
@@ -70,7 +98,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   );
 
   const [selectedProvider, setSelectedProvider] = useState('');
-  const [mode, setMode] = useState<'chat' | 'task'>('chat');
+  const [executionMode, setExecutionModeState] = useState(defaultExecutionMode);
+  const executionModeTouchedRef = useRef(false);
+  const [mode, setMode] = useState<'chat' | 'task' | 'shell'>('chat');
   const [rawSelectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState('');
   const [branchSlug, setBranchSlug] = useState(() => buildManagedWorktreeSlug());
@@ -85,6 +115,18 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const isSelectedProviderReady = connectedProviders.some(
     (provider) => provider.id === selectedProvider,
   );
+  const isSelectedExecutionModeSupported = getProviderExecutionCapabilities(
+    selectedProvider,
+  )[executionMode];
+
+  useEffect(() => {
+    if (!executionModeTouchedRef.current) setExecutionModeState(defaultExecutionMode);
+  }, [defaultExecutionMode]);
+
+  const setExecutionMode = useCallback((nextMode: typeof executionMode) => {
+    executionModeTouchedRef.current = true;
+    setExecutionModeState(nextMode);
+  }, []);
 
   useEffect(() => {
     if (!activeProjectId) return;
@@ -128,19 +170,29 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
       setError(t('task.worktree.errorNoProject'));
       return;
     }
-    if (!isSelectedProviderReady) {
+    if (mode !== 'shell' && !isSelectedProviderReady) {
       setError('Install or log in to an AI CLI before creating a session.');
+      return;
+    }
+    if (mode !== 'shell' && !isSelectedExecutionModeSupported) {
+      setError(t('settings.executionMode.unsupported'));
       return;
     }
 
     setError(null);
     setActivePanelId(panelId);
 
+    if (mode === 'shell') {
+      assignTerminal(panelId, uuidv4());
+      return;
+    }
+
     if (mode === 'chat') {
       await createSession({
         workDir: activeProject.decodedPath,
         providerId: selectedProvider,
         collectionId: selectedCollectionId ?? undefined,
+        executionMode,
       });
       return;
     }
@@ -162,6 +214,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
         projectDir: activeProject.decodedPath,
         parentProjectId: activeProject.encodedDir,
         providerId: selectedProvider,
+        executionMode,
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
         branchSlug: normalizedBranchSlug,
@@ -186,9 +239,12 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     }
   }, [
     activeProject,
+    assignTerminal,
     createSession,
     createWorktreeSession,
+    executionMode,
     isSelectedProviderReady,
+    isSelectedExecutionModeSupported,
     mode,
     panelId,
     selectedCollectionId,
@@ -201,30 +257,16 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     taskTitle,
   ]);
 
-  const handleOpenTerminal = useCallback(() => {
-    setError(null);
-    setActivePanelId(panelId);
-    assignTerminal(panelId, uuidv4());
-  }, [assignTerminal, panelId, setActivePanelId]);
-
   useEffect(() => {
     if (!isActivePanel) return;
 
     const handler = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
-      ) {
-        return;
-      }
+      const targetKind = getEmptyPanelShortcutTargetKind(event.target);
+      if (!shouldLaunchFromEmptyPanelShortcut(event.key, targetKind)) return;
 
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        if (!isCreating && !isSubmittingTask) {
-          void handleLaunch();
-        }
+      event.preventDefault();
+      if (!isCreating && !isSubmittingTask) {
+        void handleLaunch();
       }
     };
 
@@ -233,7 +275,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   }, [handleLaunch, isActivePanel, isCreating, isSubmittingTask]);
 
   const isSubmitting = isCreating || isSubmittingTask;
-  const isLaunchDisabled = isSubmitting || !activeProject || !isSelectedProviderReady;
+  const isLaunchDisabled = isSubmitting
+    || !activeProject
+    || (mode !== 'shell' && (!isSelectedProviderReady || !isSelectedExecutionModeSupported));
   const branchPreview = activeProject
     ? buildManagedWorktreeBranchName(branchSlug, branchPrefix)
     : '';
@@ -310,7 +354,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
 
       <div className="mx-auto w-full max-w-3xl">
         <div className="border-y border-(--divider)">
-          <section className="py-5">
+          <section className="pb-2 pt-5">
             <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
               {t('settings.provider.label')}
             </span>
@@ -318,32 +362,50 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               <CliProviderChipSelector
                 value={selectedProvider}
                 onChange={setSelectedProvider}
+                executionMode={executionMode}
                 className="gap-1.5"
                 chipClassName="px-2.5 py-1 text-[10px]"
               />
             </div>
           </section>
 
-          <section className="border-t border-(--divider) py-5">
+          <section className="border-t border-(--divider) py-2">
+            <div className="flex items-center gap-3">
+              <span className="w-16 shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+                {t('task.creation.agentUiLabel')}
+              </span>
+              <div className="w-fit min-w-0 max-w-full" data-empty-panel-execution-mode>
+                <ExecutionModeSelector
+                  value={executionMode}
+                  onChange={setExecutionMode}
+                  providerId={selectedProvider}
+                  density="regular"
+                  name={`empty-panel-execution-mode-${panelId}`}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section className="border-t border-(--divider) pb-5 pt-1">
             <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
               {t('task.creation.startAsLabel')}
             </span>
 
-            <div className="mt-3 grid max-w-md grid-cols-3 gap-2">
+            <div className="mt-2 grid max-w-xl grid-cols-3 gap-1 rounded-xl border border-(--divider) bg-(--sidebar-bg) p-1">
               <button
                 type="button"
                 onClick={() => setMode('chat')}
                 className={cn(
-                  'rounded-2xl border px-4 py-3 text-left transition-colors',
+                  'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'chat'
                     ? 'border-[color-mix(in_srgb,var(--accent)_24%,transparent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]'
                     : 'border-(--divider) bg-transparent hover:border-(--accent)/16 hover:bg-[color-mix(in_srgb,var(--accent)_4%,transparent)]',
                 )}
                 data-testid="empty-panel-mode-chat"
               >
-                <MessageSquare className="h-4 w-4 text-(--accent-hover)" />
-                <span className="mt-2 block text-sm font-semibold text-(--text-primary)">
-                  {t('task.newChat.chat')}
+                <MessageSquare className="h-3.5 w-3.5 text-(--accent-hover)" />
+                <span className="mt-1.5 block text-xs font-semibold text-(--text-primary)">
+                  {t('chat.newSession')}
                 </span>
                 <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
                   {t('task.creation.chatInstantHint')}
@@ -354,15 +416,15 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 type="button"
                 onClick={handleSetModeTask}
                 className={cn(
-                  'rounded-2xl border px-4 py-3 text-left transition-colors',
+                  'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'task'
                     ? 'border-[color-mix(in_srgb,var(--accent)_24%,transparent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]'
                     : 'border-(--divider) bg-transparent hover:border-(--accent)/16 hover:bg-[color-mix(in_srgb,var(--accent)_4%,transparent)]',
                 )}
                 data-testid="empty-panel-mode-task"
               >
-                <ListTodo className="h-4 w-4 text-(--accent-hover)" />
-                <span className="mt-2 block text-sm font-semibold text-(--text-primary)">
+                <ListTodo className="h-3.5 w-3.5 text-(--accent-hover)" />
+                <span className="mt-1.5 block text-xs font-semibold text-(--text-primary)">
                   {t('task.newChat.newTask')}
                 </span>
                 <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
@@ -372,16 +434,21 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
 
               <button
                 type="button"
-                onClick={handleOpenTerminal}
-                className="rounded-2xl border border-(--divider) bg-transparent px-4 py-3 text-left transition-colors hover:border-(--accent)/16 hover:bg-[color-mix(in_srgb,var(--accent)_4%,transparent)]"
+                onClick={() => setMode('shell')}
+                className={cn(
+                  'rounded-lg border px-3 py-2 text-left transition-colors',
+                  mode === 'shell'
+                    ? 'border-[color-mix(in_srgb,var(--accent)_24%,transparent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]'
+                    : 'border-transparent bg-transparent hover:border-(--accent)/16 hover:bg-[color-mix(in_srgb,var(--accent)_4%,transparent)]',
+                )}
                 data-testid="empty-panel-mode-terminal"
               >
-                <Terminal className="h-4 w-4 text-(--accent-hover)" />
-                <span className="mt-2 block text-sm font-semibold text-(--text-primary)">
-                  Terminal
+                <Terminal className="h-3.5 w-3.5 text-(--accent-hover)" />
+                <span className="mt-1.5 block text-xs font-semibold text-(--text-primary)">
+                  {t('task.creation.shellLabel')}
                 </span>
                 <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
-                  Open a shell here.
+                  {t('task.creation.shellDescription')}
                 </span>
               </button>
             </div>
@@ -520,7 +587,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 <div className="max-w-xl text-sm leading-6 text-(--text-secondary)">
                   {mode === 'task'
                     ? t('task.creation.taskWorktreeDescription')
-                    : t('task.creation.chatInstantHint')}
+                    : mode === 'shell'
+                      ? t('task.creation.shellDescription')
+                      : t('task.creation.chatInstantHint')}
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -549,7 +618,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                         ? t('panel.creating')
                         : mode === 'task'
                           ? t('task.creation.submit')
-                          : t('task.newChat.label')}
+                          : mode === 'shell'
+                            ? t('task.creation.shellLabel')
+                            : t('chat.newSession')}
                     </button>
                   </div>
                 </div>

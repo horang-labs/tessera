@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import type { ContentBlock, SessionSpawnConfig } from '@/lib/ws/message-types';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 export function useWebSocket() {
   const user = useAuthStore((state) => state.user);
@@ -34,13 +35,14 @@ export function useWebSocket() {
     [],
   );
 
-  const createSession = useCallback((args: { workDir?: string; providerId: string }) => {
+  const createSession = useCallback((args: { workDir?: string; providerId: string; executionMode?: AgentExecutionMode }) => {
     const { settings } = useSettingsStore.getState();
     const runtimeConfig = getProviderSessionRuntimeConfig(settings, args.providerId);
     wsClient.createSession({
       workDir: args.workDir,
       providerId: args.providerId,
       ...runtimeConfig,
+      ...(args.executionMode && { executionMode: args.executionMode }),
     });
   }, []);
 

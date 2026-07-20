@@ -1,5 +1,6 @@
 import type {
   TerminalAppearanceChangePolicy,
+  TerminalInterruptInputPolicy,
   TerminalResizeScrollbackPolicy,
 } from '@/lib/cli/providers/types';
 
@@ -53,6 +54,8 @@ export interface TerminalCreateOptions {
   appearanceChangePolicy?: TerminalAppearanceChangePolicy;
   /** Provider-declared handling for ED3 emitted by a resize redraw. */
   resizeScrollbackPolicy?: TerminalResizeScrollbackPolicy;
+  /** Provider-declared input gesture that interrupts an active terminal turn. */
+  interruptInputPolicy?: TerminalInterruptInputPolicy;
   /** Whether closing this runtime can be followed by a same-session resume. */
   canRestartForAppearance?: () => boolean;
   /** Revalidated client-safe recipe for recreating a handoff runtime after exit. */

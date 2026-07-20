@@ -48,6 +48,47 @@ test('replaces a placeholder and synchronizes its single linked task', () => {
   assert.equal(dbTasks.getTask('task-title')?.title, 'Fix the terminal title timing');
 });
 
+test('replaces the default New Worktree title from the first prompt', () => {
+  dbTasks.createTask({ id: 'worktree-task-title', projectId: 'project-title', title: 'New Worktree' });
+  dbSessions.createSession('worktree-session-title', 'project-title', 'New Worktree', 'codex', {
+    taskId: 'worktree-task-title',
+    workDir: dataDir,
+  });
+
+  const update = applyImmediateSessionTitle(
+    'worktree-session-title',
+    'Can you please fix the title regression?',
+  );
+
+  assert.deepEqual(update, { previousTitle: 'New Worktree', title: 'Fix the title regression' });
+  assert.equal(dbSessions.getSession('worktree-session-title')?.title, 'Fix the title regression');
+  assert.equal(dbTasks.getTask('worktree-task-title')?.title, 'Fix the title regression');
+});
+
+test('replaces localized default worktree titles from the first prompt', () => {
+  const placeholders = [
+    ['ko', '새 워크트리'],
+    ['ja', '新しいワークツリー'],
+    ['zh', '新建工作树'],
+  ] as const;
+
+  for (const [locale, placeholder] of placeholders) {
+    const taskId = `localized-worktree-task-${locale}`;
+    const sessionId = `localized-worktree-session-${locale}`;
+    dbTasks.createTask({ id: taskId, projectId: 'project-title', title: placeholder });
+    dbSessions.createSession(sessionId, 'project-title', placeholder, 'codex', {
+      taskId,
+      workDir: dataDir,
+    });
+
+    const update = applyImmediateSessionTitle(sessionId, 'Can you please fix the title regression?');
+
+    assert.deepEqual(update, { previousTitle: placeholder, title: 'Fix the title regression' });
+    assert.equal(dbSessions.getSession(sessionId)?.title, 'Fix the title regression');
+    assert.equal(dbTasks.getTask(taskId)?.title, 'Fix the title regression');
+  }
+});
+
 test('never replaces a manually chosen title', () => {
   dbSessions.createSession('manual-title', 'project-title', 'Keep this title', 'codex');
   dbSessions.updateSession('manual-title', { has_custom_title: 1 });

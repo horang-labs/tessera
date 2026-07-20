@@ -11,6 +11,7 @@ import type { ProviderRuntimeControls } from '@/lib/session/session-control-type
 import type { TerminalAppearance, TerminalLaunchIntent } from '@/lib/terminal/types';
 import { v4 as uuidv4 } from 'uuid';
 import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
+import { useSessionStore } from '@/stores/session-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import {
@@ -62,6 +63,7 @@ export class WebSocketClient {
 
       this.ws.onopen = () => {
         this.connectionGeneration += 1;
+        useSessionStore.getState().beginRuntimeConnection();
         if (this.reconnectAttempt > 0) {
           this.wasReconnect = true;
         }
@@ -203,6 +205,7 @@ export class WebSocketClient {
     providerId: string;
     model?: string;
     reasoningEffort?: string | null;
+    executionMode?: import('@/lib/session/agent-execution-mode').AgentExecutionMode;
   } & ProviderRuntimeControls) {
     const payload = args;
     this.sendRequest('create_session', {
@@ -218,6 +221,7 @@ export class WebSocketClient {
       ...(payload.sandboxMode && { sandboxMode: payload.sandboxMode }),
       ...(payload.serviceTier !== undefined && { serviceTier: payload.serviceTier }),
       ...(payload.fastMode !== undefined && { fastMode: payload.fastMode }),
+      ...(payload.executionMode && { executionMode: payload.executionMode }),
     });
   }
 

@@ -347,6 +347,21 @@ export function resolveAllowedTerminalCwd(options: {
   };
 }
 
+/**
+ * POSIX PTY가 띄우는 셸과 로그인 플래그.
+ * provider-detection.ts가 같은 셸로 `command -v`를 프로브해서
+ * 감지 환경과 실행 환경(PATH)을 일치시킨다 — 반드시 공유할 것.
+ */
+export function resolvePosixTerminalShellCommand(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; loginArgs: string[] } {
+  return {
+    command: env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash'),
+    loginArgs: platform === 'darwin' ? ['-l'] : [],
+  };
+}
+
 export function resolveTerminalShell(options: {
   cwd?: string | null;
   platform?: NodeJS.Platform;
@@ -391,8 +406,7 @@ export function resolveTerminalShell(options: {
     };
   }
 
-  const command = env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
-  const loginArgs = platform === 'darwin' ? ['-l'] : [];
+  const { command, loginArgs } = resolvePosixTerminalShellCommand(env, platform);
 
   if (launch) {
     return {

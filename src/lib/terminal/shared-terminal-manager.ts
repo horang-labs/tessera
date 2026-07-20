@@ -49,6 +49,9 @@ function createSharedState(): SharedTerminalManagerState {
           if (lastState) state.sendToUser?.(userId, lastState);
         }
       },
+      onSessionStateChange: ({ message, userId }) => {
+        state.sendToUser?.(userId, message);
+      },
     },
   );
   return state;

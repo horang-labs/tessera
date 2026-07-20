@@ -27,6 +27,9 @@ export default function CliStatusList() {
   const cliCommandOverridesKey = useSettingsStore((state) => (
     JSON.stringify(state.settings.cliCommandOverrides ?? {})
   ));
+  // 모드에 따라 서버의 감지 경로가 다르므로(pty: which-only / gui: 풀 프로브)
+  // 모드 토글 시 상태 리스트도 다시 조회한다.
+  const agentExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
   // null = loading, [] = no providers registered, undefined = disconnected / server error
   const [entries, setEntries] = useState<CliStatusEntry[] | null | undefined>(null);
   const reportedIssueKeysRef = useRef<Set<string>>(new Set());
@@ -50,7 +53,7 @@ export default function CliStatusList() {
     return () => {
       isMounted = false;
     };
-  }, [cliCommandOverridesKey]);
+  }, [cliCommandOverridesKey, agentExecutionMode]);
 
   const shouldShowEnvTag = useMemo(() => {
     if (!entries || entries.length === 0) return new Set<string>();
