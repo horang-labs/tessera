@@ -901,6 +901,20 @@ export class TerminalManager {
       .map((runtime) => runtime.lastSessionState!);
   }
 
+  getSessionStateForSession(sessionId: string, userId: string): TerminalSessionStateMessage | null {
+    for (const runtime of this.terminals.values()) {
+      if (
+        runtime.userId === userId
+        && runtime.sessionId === sessionId
+        && !runtime.ended
+        && runtime.lastSessionState
+      ) {
+        return runtime.lastSessionState;
+      }
+    }
+    return null;
+  }
+
   resize(
     terminalId: string,
     userId: string,

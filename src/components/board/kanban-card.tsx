@@ -11,10 +11,9 @@ import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useBoardStore } from '@/stores/board-store';
 import {
-  selectAnyAwaitingUserPrompt,
-  selectIsAwaitingUserPrompt,
-  useChatStore,
-} from '@/stores/chat-store';
+  useAnySessionAwaitingUser,
+  useIsSessionAwaitingUser,
+} from '@/hooks/use-session-awaiting-user';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -155,7 +154,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
+  const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const isGeneratingTitle = useSessionStore((s) => s.generatingTitleIds.has(session.id));
   const isJustDropped = useBoardStore((s) => s.justDroppedId === session.id);
   const isDragging = useBoardStore((s) => s.draggingTaskId === session.id);
@@ -650,7 +649,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
     hasProcessingSession,
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(task.sessions);
-  const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
+  const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
   const hasUnreadSession = useSessionStore((state) =>
     !isActive && taskSessionIds.some((id) => {
       if (id === activeSessionId) return false;
@@ -1215,7 +1214,7 @@ function KanbanSubSessionItem({
   });
   const liveUnreadCount = liveSession?.unreadCount ?? 0;
   const hasLiveUnread = !isActive && liveUnreadCount > 0;
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
+  const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const displayTitle = liveSession?.title ?? session.title;
   const isArchived = liveSession?.archived ?? false;
   const canOpenMenu = Boolean(

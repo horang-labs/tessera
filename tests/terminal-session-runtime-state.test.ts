@@ -474,6 +474,181 @@ test('PTY runtime exit clears terminal processing when no Stop hook arrives', ()
   assert.equal(useTabStore.getState().tabs[0]?.isPreview, true);
 });
 
+test('a running hook state is kept even while the session list still reads stale isRunning=false', () => {
+  // 세션 목록(HTTP)이 낡아 isRunning=false인 동안 hook의 running이 먼저 도착하는
+  // 실측 시나리오 — runtime 종료 신호를 받은 적이 없으므로 버려선 안 된다.
+  // (버리면 session_state는 재전송이 없어 다음 hook 이벤트까지 스피너가 영영 없다.)
+  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, false);
+
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  });
+
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'running',
+  );
+});
+
+test('a runtime restart lifts the ghost-state guard for subsequent hook activity', () => {
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    running: true,
+  } as ServerTransportMessage);
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  });
+
+  // 런타임 종료 — 이후의 늦은 활동 이벤트는 무시된다.
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    running: false,
+  } as ServerTransportMessage);
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'PostToolUse',
+  });
+  assert.notEqual(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'running',
+  );
+
+  // 런타임 재시작 — 가드가 풀려 다음 턴의 running이 정상 반영된다.
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    running: true,
+  } as ServerTransportMessage);
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  });
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'running',
+  );
+});
+
+test('PTY AskUserQuestion marks input_required without touching the GUI prompt map', () => {
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    running: true,
+  } as ServerTransportMessage);
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  });
+
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'input_required',
+    hookEvent: 'PreToolUse',
+    preview: '어느 방식으로 할까요?',
+  });
+
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'input_required',
+  );
+  // GUI 노란점 소스(chat-store activeInteractivePrompt)는 건드리지 않는다.
+  assert.equal(useChatStore.getState().activeInteractivePrompt.has(SESSION_ID), false);
+
+  // 답변 제출(PostToolUse) → running 복귀.
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'PostToolUse',
+  });
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'running',
+  );
+});
+
+test('PTY runtime exit clears a lingering input_required state', () => {
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    running: true,
+  } as ServerTransportMessage);
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'input_required',
+    hookEvent: 'PreToolUse',
+  });
+
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    running: false,
+  } as ServerTransportMessage);
+
+  // 죽은 런타임의 질문에는 답할 수 없다 — 노란 점이 영영 깜빡이면 안 된다.
+  assert.notEqual(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'input_required',
+  );
+});
+
+test('GUI session-list reconciliation cannot clear PTY input_required state', () => {
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    running: true,
+  } as ServerTransportMessage);
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'input_required',
+    hookEvent: 'PreToolUse',
+  });
+
+  receive({
+    type: 'session_list',
+    sessions: [{
+      id: SESSION_ID,
+      status: 'running',
+      isGenerating: false,
+      createdAt: '2026-07-14T00:00:00.000Z',
+      activeInteractivePrompt: null,
+      todoSnapshot: [],
+    }],
+    titleGeneratingSessionIds: [],
+  });
+
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'input_required',
+  );
+});
+
 test('new PTY sessions are stopped until their terminal is opened', () => {
   useSessionStore.setState({ projects: [] });
 

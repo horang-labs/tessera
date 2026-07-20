@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
-import { hasAnyAwaitingUserPrompt, useChatStore } from '@/stores/chat-store';
+import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
 import type { Tab } from '@/types/tab';
@@ -253,14 +253,8 @@ export const TabItem = memo(function TabItem({
     panelSessionIds ? panelSessionIds.split(',') : [],
   );
 
-  const isAwaitingUser = useChatStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return hasAnyAwaitingUserPrompt(state, panelSessionIds.split(','));
-      },
-      [panelSessionIds],
-    ),
+  const isAwaitingUser = useAnySessionAwaitingUser(
+    panelSessionIds ? panelSessionIds.split(',') : [],
   );
 
   // Unread indicator — any session in this tab has unreadCount > 0.

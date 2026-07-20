@@ -35,6 +35,7 @@ import {
   type ElectronTerminalClipboardApi,
 } from './terminal-clipboard-paste';
 import {
+  scheduleTerminalScrollIntentSync,
   TerminalScrollController,
   type TerminalScrollRestorePoint,
   type TerminalScrollTarget,
@@ -183,6 +184,7 @@ export class TerminalSurface {
   private unsubscribeScrollController: (() => void) | null = null;
   private scrollTrackingCleanup: (() => void) | null = null;
   private pendingScrollStateFrameId: number | null = null;
+  private scrollRebuildSettleTimerId: number | null = null;
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
@@ -500,6 +502,10 @@ export class TerminalSurface {
     this.cancelPendingFit();
     this.cancelScheduledScrollSync();
     this.cancelScheduledSurfaceScrollStateSync();
+    if (this.scrollRebuildSettleTimerId !== null) {
+      window.clearTimeout(this.scrollRebuildSettleTimerId);
+      this.scrollRebuildSettleTimerId = null;
+    }
     this.inputDisposable?.dispose();
     this.inputDisposable = null;
     this.scrollDisposable?.dispose();
@@ -864,6 +870,7 @@ export class TerminalSurface {
       this.terminal?.reset();
       this.terminal?.write(message.data, () => {
         if (restorePoint) this.scrollController?.restore(restorePoint);
+        this.scheduleScrollRebuildSettle();
         if (this.serverGeneration === message.generation) {
           this.replaying = false;
         }
@@ -880,6 +887,7 @@ export class TerminalSurface {
       const shouldRecoverRenderer = this.backgroundSgrDetector.consume(message.data);
       this.terminal?.write(message.data, () => {
         if (restorePoint) this.scrollController?.restore(restorePoint);
+        this.scheduleScrollRebuildSettle();
         this.scheduleSurfaceScrollStateSync();
         if (shouldRecoverRenderer) this.recoverRendererAfterBackgroundRedraw();
       });
@@ -984,12 +992,12 @@ export class TerminalSurface {
     controller: TerminalScrollController,
     preservePinnedAtBottom: boolean,
   ): void {
-    const sync = () => {
-      if (!this.disposed && this.scrollController === controller) {
-        controller.syncFromViewport({ preservePinnedAtBottom });
-      }
-    };
-    this.scrollSyncSettler.run(sync, { initial: 'microtask' });
+    scheduleTerminalScrollIntentSync(
+      controller,
+      this.scrollSyncSettler,
+      preservePinnedAtBottom,
+      () => !this.disposed && this.scrollController === controller,
+    );
   }
 
   private cancelScheduledScrollSync(): void {
@@ -1180,6 +1188,16 @@ export class TerminalSurface {
       this.pendingScrollStateFrameId = null;
       if (!this.disposed) this.syncScrollStateFromController();
     });
+  }
+
+  private scheduleScrollRebuildSettle(): void {
+    if (this.scrollRebuildSettleTimerId !== null) {
+      window.clearTimeout(this.scrollRebuildSettleTimerId);
+    }
+    this.scrollRebuildSettleTimerId = window.setTimeout(() => {
+      this.scrollRebuildSettleTimerId = null;
+      this.scrollController?.finishBufferRebuild();
+    }, TERMINAL_RESIZE_SETTLE_DELAY_MS);
   }
 
   private cancelScheduledSurfaceScrollStateSync(): void {

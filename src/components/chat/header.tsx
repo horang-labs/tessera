@@ -7,7 +7,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/stores/panel-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
-import { selectIsAwaitingUserPrompt, useChatStore } from '@/stores/chat-store';
+import { useIsSessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { TaskContextMenu } from './task-context-menu';
@@ -55,7 +55,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(sessionId));
   const { renameSession, generateTitle, deleteSession } = useSessionCrud();
   const isProcessing = useIsSessionProcessing(sessionId);
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(sessionId));
+  const isAwaitingUser = useIsSessionAwaitingUser(sessionId, session?.kind);
 
   // Multi-panel unread indicator — active panel's unread is auto-cleared by
   // panel-wrapper, so this only appears on inactive panel headers.

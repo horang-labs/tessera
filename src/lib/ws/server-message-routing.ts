@@ -17,7 +17,10 @@ import {
   releaseTerminalHandoffByTerminal,
 } from '../terminal/terminal-handoff-lock';
 import { mintPaneToken } from '../terminal/pane-token-registry';
-import { buildProviderTerminalLaunch } from '../terminal/provider-launch';
+import {
+  buildProviderTerminalEnv,
+  buildProviderTerminalLaunch,
+} from '../terminal/provider-launch';
 import { createCodexOverlay } from '../terminal/codex-overlay';
 import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
 import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
@@ -608,6 +611,10 @@ export async function routeClientTransportMessage({
       }
 
       if (!terminalExists && providerId) {
+        const providerTerminalEnv = buildProviderTerminalEnv(providerId);
+        if (providerTerminalEnv) {
+          launchEnv = { ...launchEnv, ...providerTerminalEnv };
+        }
         const appearanceProvider = cliProviderRegistry.getProvider(providerId);
         appearanceChangePolicy = appearanceProvider.getTerminalAppearanceChangePolicy();
         if (appearanceChangePolicy === 'restart' && structured) {
