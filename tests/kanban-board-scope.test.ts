@@ -79,7 +79,6 @@ test('all-projects scope exposes every project without treating the sentinel as 
   assert.deepEqual(data.tasks.map((item) => item.id), ['task-alpha', 'task-beta']);
   assert.deepEqual(Object.keys(data.collectionsByProject), ['alpha', 'beta']);
 });
-
 test('single-project scope keeps sessions, tasks, and collections project-local', () => {
   const scope = resolveKanbanScope('beta', projects);
   assert.deepEqual(scope, { kind: 'project', projectId: 'beta' });
@@ -90,4 +89,3 @@ test('single-project scope keeps sessions, tasks, and collections project-local'
   assert.deepEqual(data.tasks.map((item) => item.id), ['task-beta']);
   assert.deepEqual(Object.keys(data.collectionsByProject), ['beta']);
 });
-

@@ -30,4 +30,3 @@ test('all projects can select and restore its own board view mode', () => {
     });
   }
 });
-

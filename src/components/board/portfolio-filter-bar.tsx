@@ -75,4 +75,3 @@ export const PortfolioFilterBar = memo(function PortfolioFilterBar({
     </div>
   );
 });
-

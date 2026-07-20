@@ -13,7 +13,6 @@ export interface KanbanScopeData {
   tasks: TaskEntity[];
   collectionsByProject: Record<string, Collection[]>;
 }
-
 export function resolveKanbanScope(
   selectedProjectDir: string | null,
   projects: ProjectGroup[],
@@ -52,4 +51,3 @@ export function collectKanbanScopeData(
     ),
   };
 }
-
