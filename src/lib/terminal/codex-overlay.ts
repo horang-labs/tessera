@@ -12,6 +12,7 @@ import {
   type CodexHookEventName,
   type CodexHookSettings,
 } from './codex-hook-settings';
+import type { HookCommandStyle } from './hook-command';
 
 /**
  * 실 CODEX_HOME. process.env.CODEX_HOME은 절대 오버레이로 덮어쓰지 않는다
@@ -26,7 +27,7 @@ function overlayDirFor(terminalId: string): string {
 }
 
 /** 방어적: 과거 실험이 남긴 [hooks.state.*] TOML 테이블 제거(사용자 실 config엔 없음). */
-function stripHookStateSections(toml: string): string {
+export function stripHookStateSections(toml: string): string {
   const out: string[] = [];
   let skipping = false;
   for (const line of toml.split('\n')) {
@@ -95,12 +96,17 @@ function formatHookStateKey(key: string): string {
   return `"${escapeTomlBasicString(key)}"`;
 }
 
-function appendTrustedHookState(
+/**
+ * config.toml에 훅 trust 상태를 덧붙인다. canonicalHooksPath는 codex 런타임이
+ * 보게 될 hooks.json의 canonical 경로 — 호스트 오버레이는 realpathSync, WSL 게스트
+ * 오버레이는 게스트 안 readlink -f 결과를 넘긴다(호스트에서 게스트 경로를 resolve할
+ * 수 없으므로 인자로 분리했다).
+ */
+export function appendTrustedHookState(
   configToml: string,
-  hooksPath: string,
+  canonicalHooksPath: string,
   settings: CodexHookSettings,
 ): string {
-  const canonicalHooksPath = fs.realpathSync.native(hooksPath);
   const blocks: string[] = [];
   const windowsPath = usesWindowsPath(canonicalHooksPath);
   if (windowsPath) blocks.push('[hooks.state]');
@@ -143,7 +149,10 @@ function appendTrustedHookState(
  *
  * per-launch 재생성이라 매 런치마다 config 스냅샷이 최신이고 심링크 stale이 없다.
  */
-export function createCodexOverlay(terminalId: string): string {
+export function createCodexOverlay(
+  terminalId: string,
+  hookStyle: HookCommandStyle = 'posix',
+): string {
   const overlayDir = overlayDirFor(terminalId);
   // stale 재생성: 이전 런치 잔여 제거(심링크는 unlink만 → 타깃 무손상).
   fs.rmSync(overlayDir, { recursive: true, force: true });
@@ -171,18 +180,34 @@ export function createCodexOverlay(terminalId: string): string {
       }
       const stat = fs.statSync(source); // dangling 심링크 스킵
       const type: fs.symlink.Type = stat.isDirectory() ? (isWin ? 'junction' : 'dir') : 'file';
-      fs.symlinkSync(source, target, type);
+      try {
+        fs.symlinkSync(source, target, type);
+      } catch (err) {
+        // win32 파일 심링크는 개발자 모드 OFF·비관리자에서 EPERM. 조용히 스킵하면
+        // auth.json 없는 빈 CODEX_HOME이 되어 codex가 매번 로그인 화면을 띄운다 —
+        // hardlink(무권한, in-place 갱신은 실 파일에 반영) → copy 순으로 폴백한다.
+        if (!isWin || stat.isDirectory()) throw err;
+        try {
+          fs.linkSync(source, target);
+          logger.warn({ entry }, 'codex overlay: symlink denied, fell back to hardlink');
+        } catch {
+          fs.copyFileSync(source, target);
+          logger.warn({ entry }, 'codex overlay: symlink+hardlink denied, fell back to copy (writes will not reach the real CODEX_HOME)');
+        }
+      }
     } catch (err) {
-      logger.debug({ err, entry }, 'codex overlay: skip entry');
+      // 엔트리 하나가 빠지면 codex 동작이 조용히 달라진다(auth 없음=로그인 요구,
+      // sessions 없음=resume 불가) — 원인 추적이 가능하게 warn으로 남긴다.
+      logger.warn({ err, entry }, 'codex overlay: skip entry');
     }
   }
 
-  const hookSettings = buildCodexHookSettings();
+  const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksPath = path.join(overlayDir, 'hooks.json');
   fs.writeFileSync(hooksPath, JSON.stringify(hookSettings, null, 2) + '\n', { mode: 0o600 });
   fs.writeFileSync(
     path.join(overlayDir, 'config.toml'),
-    appendTrustedHookState(configToml, hooksPath, hookSettings),
+    appendTrustedHookState(configToml, fs.realpathSync.native(hooksPath), hookSettings),
     { mode: 0o600 },
   );
 

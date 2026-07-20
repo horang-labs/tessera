@@ -22,7 +22,10 @@ import { resolveTerminalProviderSessionReference } from '../terminal/provider-se
 import { detectTerminalProviders } from '../terminal/provider-detection';
 import { SettingsManager } from '../settings/manager';
 import { createCodexOverlay } from '../terminal/codex-overlay';
+import { createCodexOverlayInWsl } from '../terminal/codex-overlay-wsl';
 import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
+import type { HookCommandStyle } from '../terminal/hook-command';
+import { getRuntimePlatform } from '../system/runtime-platform';
 import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
 import { createTerminalProviderSessionObserver } from '../terminal/provider-session-observer';
 import { getTerminalProviderSessionForTesseraSession } from '../db/terminal-provider-sessions';
@@ -505,6 +508,12 @@ export async function routeClientTransportMessage({
 
       // create/cwd allowlist용 sessionId(기존 동작 유지).
       const sessionId = structured?.sessionId ?? message.sessionId ?? null;
+      // 훅 스타일·codex 오버레이 위치는 "CLI가 실제로 도는 런타임"을 따른다 —
+      // resolveShellKind와 같은 소스(getAgentEnvironment)라 스폰과 항상 일치한다.
+      const agentEnvironment = structured ? await getAgentEnvironment(userId) : 'native';
+      const wslTerminalRuntime = getRuntimePlatform() === 'win32' && agentEnvironment === 'wsl';
+      const hookCommandStyle: HookCommandStyle =
+        getRuntimePlatform() === 'win32' && !wslTerminalRuntime ? 'windows-cmd' : 'posix';
       const manager = bindTerminalSender(sendToConnection);
       const terminalId = sessionId
         ? manager.reserveTerminalId(userId, message.terminalId, sessionId)
@@ -524,7 +533,7 @@ export async function routeClientTransportMessage({
 
       if (!terminalExists && isStructuredClaude && structured) {
         providerId = 'claude-code';
-        const settingsJson = buildClaudeHookSettingsJson();
+        const settingsJson = buildClaudeHookSettingsJson(hookCommandStyle);
         // Claude emits SessionStart as soon as its empty TUI opens, but does not
         // persist a resumable conversation until the first prompt is submitted.
         // Tessera records that prompt synchronously, so canonical history is the
@@ -568,7 +577,26 @@ export async function routeClientTransportMessage({
           prefillInput: message.prefillInput,
         };
         // CODEX_HOME 오버레이 생성(hooks.json 주입) — env로만 자식에 전달.
-        launchEnv = { CODEX_HOME: createCodexOverlay(terminalId) };
+        // win32+wsl은 게스트 파일시스템 안에 만든다(호스트 오버레이는 게스트 codex가
+        // 못 쓴다: 계정 홈 불일치 + Windows 심링크 EPERM). 실패는 opencode 브랜치와
+        // 대칭으로 terminal_error로 알린다 — 조용히 빈 CODEX_HOME을 주면 codex가
+        // 로그인 화면부터 띄운다.
+        try {
+          launchEnv = {
+            CODEX_HOME: wslTerminalRuntime
+              ? await createCodexOverlayInWsl(terminalId, hookCommandStyle)
+              : createCodexOverlay(terminalId, hookCommandStyle),
+          };
+        } catch (error) {
+          logger.error({ error, terminalId }, 'Failed to prepare the Codex overlay');
+          sendToConnection(connectionId, {
+            type: 'terminal_error',
+            terminalId: message.terminalId,
+            surfaceId: message.surfaceId,
+            message: error instanceof Error ? error.message : 'Unable to prepare the Codex invocation.',
+          });
+          return;
+        }
       } else if (!terminalExists && isStructuredOpenCode && structured) {
         providerId = 'opencode';
         const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
@@ -907,10 +935,11 @@ async function resolveCliStatusesForUser(userId: string) {
   const settings = await SettingsManager.load(userId, { silent: true });
 
   if (settings.agentExecutionMode === 'pty') {
-    const detections = await detectTerminalProviders({ force: true });
+    const agentEnvironment = await getAgentEnvironment(userId);
+    const detections = await detectTerminalProviders({ force: true, environment: agentEnvironment });
     return detections.map((detection) => ({
       providerId: detection.providerId,
-      environment: 'native' as const,
+      environment: agentEnvironment,
       status: detection.installed ? 'connected' as const : 'not_installed' as const,
     }));
   }
@@ -931,7 +960,10 @@ async function resolveProvidersForUser(
   const settings = await SettingsManager.load(userId, { silent: true });
 
   if (settings.agentExecutionMode === 'pty') {
-    const detections = await detectTerminalProviders({ force: options.force });
+    const detections = await detectTerminalProviders({
+      force: options.force,
+      environment: await getAgentEnvironment(userId),
+    });
     return detections.map((detection) => ({
       id: detection.providerId,
       displayName: resolveProviderDisplayName(detection.providerId),

@@ -567,6 +567,28 @@ test('macOS terminal startup preserves user login PATH and executable node-pty h
   assert.match(terminalResolverSource, /platform === 'darwin' \? \['-l'\] : \[\]/);
 });
 
+test('WSL terminals cross hook coordinates and overlay homes via WSLENV', () => {
+  // 훅 좌표 3종은 값 그대로(플래그 없음) 크로스.
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_PANE_TOKEN' \}/);
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_SESSION_ID' \}/);
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_HOOK_PORT' \}/);
+  // 오버레이 홈은 값이 이미 게스트 POSIX 경로('/')면 /p 변환을 붙이지 않는다 —
+  // Windows 경로일 때만 경로 변환(orca endpointFlag 미러).
+  assert.match(terminalManagerSource, /\{ name: 'CODEX_HOME', path: !terminalEnv\.CODEX_HOME\?\.startsWith\('\/'\) \}/);
+  assert.match(terminalManagerSource, /\{ name: 'OPENCODE_CONFIG_DIR', path: !terminalEnv\.OPENCODE_CONFIG_DIR\?\.startsWith\('\/'\) \}/);
+});
+
+test('codex overlay placement and hook style follow the terminal runtime', () => {
+  // win32 + agentEnvironment 'wsl' → 게스트 파일시스템 오버레이(게스트 심링크),
+  // 그 외 → 호스트 오버레이. 훅 스타일도 같은 판정을 공유한다(스폰과 일치).
+  assert.match(routingSource, /wslTerminalRuntime = getRuntimePlatform\(\) === 'win32' && agentEnvironment === 'wsl'/);
+  assert.match(routingSource, /await createCodexOverlayInWsl\(terminalId, hookCommandStyle\)/);
+  assert.match(routingSource, /createCodexOverlay\(terminalId, hookCommandStyle\)/);
+  assert.match(routingSource, /buildClaudeHookSettingsJson\(hookCommandStyle\)/);
+  // 오버레이 실패는 제네릭 error가 아니라 terminal_error로 표면에 알린다.
+  assert.match(routingSource, /Failed to prepare the Codex overlay/);
+});
+
 test('terminal startup normalizes inherited color capability flags', () => {
   assert.match(terminalManagerSource, /normalizeTerminalColorEnv\(nextEnv\)/);
   assert.match(terminalManagerSource, /\{ name: 'TERM' \}/);

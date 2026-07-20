@@ -13,13 +13,22 @@ interface ResolveCodexAccountHomeOptions {
   homeDir?: string;
 }
 
-const CODEX_OVERLAY_MARKER = '.tessera-overlay.json';
+export const CODEX_OVERLAY_MARKER = '.tessera-overlay.json';
 
-export function writeCodexOverlayMarker(overlayHome: string, accountHome: string): void {
-  fs.writeFileSync(path.join(overlayHome, CODEX_OVERLAY_MARKER), JSON.stringify({
+/** 마커 파일 내용. WSL 게스트 오버레이(codex-overlay-wsl.ts)도 같은 계약을 쓴다. */
+export function buildCodexOverlayMarkerJson(accountHome: string): string {
+  return JSON.stringify({
     kind: 'tessera-codex-overlay',
     accountHome,
-  }) + '\n', { mode: 0o600 });
+  }) + '\n';
+}
+
+export function writeCodexOverlayMarker(overlayHome: string, accountHome: string): void {
+  fs.writeFileSync(
+    path.join(overlayHome, CODEX_OVERLAY_MARKER),
+    buildCodexOverlayMarkerJson(accountHome),
+    { mode: 0o600 },
+  );
 }
 
 function readMarkedAccountHome(overlayHome: string): string | undefined {
