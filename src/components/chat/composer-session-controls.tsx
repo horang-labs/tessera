@@ -380,6 +380,7 @@ interface ComposerSessionControlsProps {
     data: ProviderSessionOptions | null;
     isLoading: boolean;
   };
+  surfaceActive?: boolean;
 }
 
 interface ComposerSessionControlsInnerProps {
@@ -394,6 +395,7 @@ interface ComposerSessionControlsInnerProps {
   initialAccessMode: ProviderSessionAccessMode;
   initialModel: string;
   initialReasoningEffort: string | null;
+  surfaceActive: boolean;
 }
 
 function resolveReasoningEffort(
@@ -524,6 +526,7 @@ function ComposerSessionControlsInner({
   initialAccessMode,
   initialModel,
   initialReasoningEffort,
+  surfaceActive,
 }: ComposerSessionControlsInnerProps) {
   const { t } = useI18n();
   const [sessionMode, setSessionMode] = useState<ProviderSessionMode>(initialSessionMode);
@@ -807,6 +810,7 @@ function ComposerSessionControlsInner({
     if (!modelShortcut && !reasoningShortcut && !planShortcut && !fastModeShortcut) return;
 
     const isActivePanelSession = () => {
+      if (surfaceActive) return true;
       const panelState = usePanelStore.getState();
       const tabData = selectActiveTab(panelState);
       const panelActiveSessionId = tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
@@ -854,6 +858,7 @@ function ComposerSessionControlsInner({
     planShortcut,
     reasoningShortcut,
     sessionId,
+    surfaceActive,
   ]);
 
   return (
@@ -1002,6 +1007,7 @@ export function ComposerSessionControls({
   sessionId,
   variant = 'block',
   providerSessionOptions,
+  surfaceActive = false,
 }: ComposerSessionControlsProps) {
   const session = useSessionStore((state) => state.getSession(sessionId));
   const settings = useSettingsStore((state) => state.settings);
@@ -1054,6 +1060,7 @@ export function ComposerSessionControls({
       initialAccessMode={initialAccessMode}
       initialModel={initialModel}
       initialReasoningEffort={initialReasoningEffort}
+      surfaceActive={surfaceActive}
     />
   );
 }

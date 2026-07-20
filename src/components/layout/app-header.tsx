@@ -1,13 +1,14 @@
 'use client';
 
 import { memo } from 'react';
-import { PanelLeftClose } from 'lucide-react';
+import { PanelLeftClose, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useGitStore } from '@/stores/git-store';
 import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { ProjectViewModeToggle } from '@/components/tab/project-view-mode-toggle';
@@ -27,7 +28,14 @@ export const AppHeader = memo(function AppHeader() {
 
   // Sidebar collapse
   const toggleSidebar = useSettingsStore((state) => state.toggleSidebar);
+  const kanbanSessionOpenMode = useSettingsStore(
+    (state) => state.settings.kanbanSessionOpenMode,
+  );
+  const gitPanelOpen = useGitStore((state) => state.isOpen);
+  const toggleGitPanel = useGitStore((state) => state.toggle);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const viewMode = useBoardStore((state) => state.viewMode);
+  const isKanbanPeekMode = viewMode === 'board' && kanbanSessionOpenMode === 'peek';
   const projects = useSessionStore((state) => state.projects);
   const selectedProject = projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
   const isAllProjects = selectedProjectDir === ALL_PROJECTS_SENTINEL;
@@ -84,25 +92,45 @@ export const AppHeader = memo(function AppHeader() {
                 className={isElectronTitlebar ? 'electron-no-drag' : undefined}
                 labelMode="short"
               />
+              {isKanbanPeekMode ? (
+                <button
+                  type="button"
+                  onClick={toggleGitPanel}
+                  className={cn(
+                    'electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
+                    gitPanelOpen
+                      ? 'bg-(--accent)/14 text-(--accent)'
+                      : 'bg-(--chat-bg) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+                  )}
+                  aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
+                  aria-pressed={gitPanelOpen}
+                  title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
+                  data-testid="kanban-git-panel-toggle"
+                >
+                  {gitPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                </button>
+              ) : null}
             </>
           ) : (
             <div className="flex-1" />
           )}
 
-          {/* Sidebar collapse button */}
-          <ShortcutTooltip id="toggle-sidebar" label={t('shortcut.toggleSidebar')}>
-            <button
-              onClick={toggleSidebar}
-              className={cn(
-                'shrink-0 rounded p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
-                isElectronTitlebar && 'electron-no-drag',
-              )}
-              aria-label={t('sidebar.collapse')}
-              data-testid="sidebar-collapse-btn"
-            >
-              <PanelLeftClose size={16} />
-            </button>
-          </ShortcutTooltip>
+          {!isKanbanPeekMode ? (
+            <ShortcutTooltip id="toggle-sidebar" label={t('shortcut.toggleSidebar')}>
+              <button
+                onClick={toggleSidebar}
+                className={cn(
+                  'shrink-0 rounded p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+                  isElectronTitlebar && 'electron-no-drag',
+                )}
+                aria-label={t('sidebar.collapse')}
+                data-testid="sidebar-collapse-btn"
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            </ShortcutTooltip>
+          ) : null}
         </div>
       </header>
     </>

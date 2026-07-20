@@ -1,8 +1,11 @@
 'use client';
 
 import { Check } from 'lucide-react';
+import { useId } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
+import type { KanbanSessionOpenMode } from '@/lib/settings/types';
+import { cn } from '@/lib/utils';
 import {
   DEFAULT_FONT_SCALE,
   FONT_SCALE_OPTIONS,
@@ -15,6 +18,72 @@ import {
 } from '@/lib/terminal/terminal-theme';
 
 const PRESET_LABEL_KEYS = ['small', 'medium', 'large', 'xlarge'] as const;
+const KANBAN_SESSION_OPEN_MODES: KanbanSessionOpenMode[] = ['split', 'peek'];
+
+function KanbanSessionOpenModePicker({
+  value,
+  onChange,
+}: {
+  value: KanbanSessionOpenMode;
+  onChange: (mode: KanbanSessionOpenMode) => void;
+}) {
+  const { t } = useI18n();
+  const groupId = useId();
+
+  return (
+    <fieldset className="space-y-3 border-t border-(--divider) pt-4">
+      <legend className="text-sm font-medium text-(--text-secondary)">
+        {t('settings.kanbanSessionOpenMode.title')}
+      </legend>
+      <p className="-mt-2 text-xs leading-5 text-(--text-muted)">
+        {t('settings.kanbanSessionOpenMode.description')}
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {KANBAN_SESSION_OPEN_MODES.map((mode) => {
+          const selected = value === mode;
+          const inputId = `${groupId}-${mode}`;
+          return (
+            <label
+              key={mode}
+              htmlFor={inputId}
+              className={cn(
+                'relative flex cursor-pointer gap-3 rounded-xl border px-3 py-3 text-left transition-colors',
+                'has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-(--accent)',
+                selected
+                  ? 'border-[color-mix(in_srgb,var(--accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]'
+                  : 'border-(--divider) bg-(--sidebar-bg) hover:border-(--accent)/25',
+              )}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-(--text-primary)">
+                  {t(`settings.kanbanSessionOpenMode.${mode}.label`)}
+                </span>
+                <span className="mt-1.5 block text-xs leading-5 text-(--text-muted)">
+                  {t(`settings.kanbanSessionOpenMode.${mode}.description`)}
+                </span>
+              </span>
+              <span className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
+                <input
+                  type="radio"
+                  id={inputId}
+                  name={groupId}
+                  value={mode}
+                  data-testid={`kanban-session-open-mode-${mode}`}
+                  checked={selected}
+                  onChange={() => onChange(mode)}
+                  className="h-4 w-4 appearance-none rounded-full border border-(--input-border) bg-(--input-bg) checked:border-(--accent) checked:bg-(--accent)"
+                />
+                {selected ? (
+                  <Check className="pointer-events-none absolute h-3 w-3 text-white" aria-hidden="true" />
+                ) : null}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
 
 function TerminalThemePresetPicker({
   mode,
@@ -94,6 +163,9 @@ export default function AppearanceSettings() {
   const inactivePanelDimming = useSettingsStore((state) => state.settings.inactivePanelDimming);
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const showRecentWork = useSettingsStore((state) => state.settings.showRecentWork);
+  const kanbanSessionOpenMode = useSettingsStore(
+    (state) => state.settings.kanbanSessionOpenMode,
+  );
   const updateSettings = useSettingsStore((state) => state.updateSettings);
 
   // Theme and font scale are applied globally by ThemeInitializer.
@@ -122,6 +194,11 @@ export default function AppearanceSettings() {
           <option value="auto">{t('settings.theme.auto')}</option>
         </select>
       </div>
+
+      <KanbanSessionOpenModePicker
+        value={kanbanSessionOpenMode}
+        onChange={(mode) => void updateSettings({ kanbanSessionOpenMode: mode })}
+      />
 
       <div className="space-y-3 border-t border-(--divider) pt-4">
         <div>

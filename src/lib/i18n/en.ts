@@ -109,6 +109,18 @@ export const en: I18nMessages = {
     showProviderIconsDesc: 'Show the CLI provider mark in list and kanban items.',
     showRecentWork: 'Show Recent Work section',
     showRecentWorkDesc: 'Show a "Recent Work" section at the top of the sidebar.',
+    kanbanSessionOpenMode: {
+      title: 'Open sessions from Kanban',
+      description: 'Choose how session cards open while the Kanban board is active.',
+      split: {
+        label: 'Split view',
+        description: 'Show the board and session side by side.',
+      },
+      peek: {
+        label: 'Peek',
+        description: 'Open GUI chats and PTY terminals in a large overlay above the board.',
+      },
+    },
     enterKey: {
       label: 'Enter Key Behavior',
       send: 'Enter = Send',
@@ -400,6 +412,7 @@ export const en: I18nMessages = {
     reconnecting: 'Reconnecting...',
     disconnected: 'Disconnected',
     reconnect: 'Reconnect',
+    loadingSession: 'Loading session...',
     loadingHistory: 'Loading chat history...',
     thinking: 'Thinking...',
     send: 'Send',
@@ -976,6 +989,7 @@ export const en: I18nMessages = {
       globalScope: 'Global',
       projectScope: 'Project',
       unsavedChanges: 'Unsaved changes',
+      discardChangesConfirm: 'Discard unsaved Context changes?',
       save: 'Save',
       saveShortcut: 'Save (⌘S)',
       noUnsavedChanges: 'No unsaved changes',

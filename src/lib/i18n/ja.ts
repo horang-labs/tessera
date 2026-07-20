@@ -109,6 +109,18 @@ export const ja: I18nMessages = {
     showProviderIconsDesc: 'リストとカンバンの項目に CLI プロバイダーのマークを表示します。',
     showRecentWork: '「最近の作業」セクションを表示',
     showRecentWorkDesc: 'サイドバー上部に「最近の作業」セクションを表示します。',
+    kanbanSessionOpenMode: {
+      title: 'カンバンからセッションを開く方法',
+      description: 'カンバンでセッションカードを選択したときの開き方を選びます。',
+      split: {
+        label: '分割表示',
+        description: 'カンバンとセッションを並べて表示します。',
+      },
+      peek: {
+        label: 'Peek',
+        description: 'カンバン上の大きなウィンドウで GUI チャットと PTY ターミナルを使用します。',
+      },
+    },
     enterKey: {
       label: 'Enter キーの動作',
       send: 'Enter = 送信',
@@ -400,6 +412,7 @@ export const ja: I18nMessages = {
     reconnecting: '再接続中...',
     disconnected: '切断済み',
     reconnect: '再接続',
+    loadingSession: 'セッションを読み込み中...',
     loadingHistory: 'チャット履歴を読み込み中...',
     thinking: '考え中...',
     send: '送信',
@@ -976,6 +989,7 @@ export const ja: I18nMessages = {
       globalScope: 'グローバル',
       projectScope: 'プロジェクト',
       unsavedChanges: '未保存の変更',
+      discardChangesConfirm: '未保存の Context の変更を破棄しますか？',
       save: '保存',
       saveShortcut: '保存 (⌘S)',
       noUnsavedChanges: '未保存の変更はありません',

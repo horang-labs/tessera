@@ -97,20 +97,27 @@ function getKanbanScrollArea(): HTMLDivElement | null {
 export function ChatLayout() {
   const { t } = useI18n();
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const viewMode = useBoardStore((state) => state.viewMode);
+  const selectedBoardSessionId = useBoardStore((state) => state.selectedBoardSessionId);
+  const kanbanSessionOpenMode = useSettingsStore(
+    (state) => state.settings.kanbanSessionOpenMode,
+  );
   const activePanelSessionId = usePanelStore((state) => {
     const activeTabData = selectActiveTab(state);
     return activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
   });
-  const activeGitSessionId = resolveActiveWorkspaceSessionId({
-    activePanelSessionId,
-    activeSessionId,
-  });
+  const isKanbanPeekMode = viewMode === 'board' && kanbanSessionOpenMode === 'peek';
+  const activeGitSessionId = isKanbanPeekMode && selectedBoardSessionId
+    ? selectedBoardSessionId
+    : resolveActiveWorkspaceSessionId({
+        activePanelSessionId,
+        activeSessionId,
+      });
 
   const markSessionAsRead = useNotificationStore(
     (state) => state.markSessionAsRead,
   );
   const sidebarCollapsed = useSettingsStore((state) => state.sidebarCollapsed);
-  const viewMode = useBoardStore((state) => state.viewMode);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const sidebarWidth = useSettingsStore(
     (state) => state.getSidebarWidth(viewMode, selectedProjectDir),
@@ -136,6 +143,7 @@ export function ChatLayout() {
   const projectsLoadedRef = useRef(initiallyHasProjects);
   const [projectsLoaded, setProjectsLoaded] = useState(initiallyHasProjects);
   const isCompactViewport = viewportWidth < COMPACT_VIEWPORT_BREAKPOINT;
+  const isKanbanPeekLayout = isKanbanPeekMode && !sidebarCollapsed;
 
   const sidebarBaseMinWidth =
     viewMode === "board" ? BOARD_SIDEBAR_MIN_WIDTH : LIST_SIDEBAR_MIN_WIDTH;
@@ -459,6 +467,10 @@ export function ChatLayout() {
     if (!electronApi?.isElectron || !electronApi.onPopoutOpenSession) return;
     const cleanup = electronApi.onPopoutOpenSession(({ sessionId, action }) => {
       if (!sessionId) return;
+      if (action === 'preview' && isKanbanPeekMode) {
+        useBoardStore.getState().openSessionPeek(sessionId);
+        return;
+      }
       const tabStore = useTabStore.getState();
       const location = tabStore.findSessionLocation(sessionId);
       const session = useSessionStore.getState().getSession(sessionId);
@@ -481,7 +493,7 @@ export function ChatLayout() {
     return () => {
       if (typeof cleanup === 'function') cleanup();
     };
-  }, []);
+  }, [isKanbanPeekMode]);
 
   // BR-TOGGLE-005: 반응형 강제 collapsed (<1024px)
   useEffect(() => {
@@ -514,13 +526,14 @@ export function ChatLayout() {
                 ? "100vw"
                 : effectiveSidebarWidth}
             collapsed={sidebarCollapsed}
+            fillAvailable={isKanbanPeekLayout}
             className={cn(
               !sidebarCollapsed && isCompactViewport
                 && "fixed inset-0 z-50 h-[100dvh] border-r-0 shadow-2xl",
             )}
           />
           {/* Resize handle */}
-          {!sidebarCollapsed && !isCompactViewport && (
+          {!isKanbanPeekLayout && !sidebarCollapsed && !isCompactViewport && (
                 <div
                   className={cn(
                     "relative z-10 shrink-0 w-px h-full bg-transparent cursor-col-resize transition-all duration-150",
@@ -538,13 +551,16 @@ export function ChatLayout() {
                 </div>
           )}
 
-          {/* Right area — TabBar + TabPanelHost (always visible) */}
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-            <TabBar />
-            <TabPanelHost />
-            {/* Portal target for the Git diff drawer (rendered by GitPanel) */}
-            <div id="git-diff-drawer-portal" />
-          </div>
+          {/* Split mode keeps the existing tab workspace beside the board. */}
+          {!isKanbanPeekLayout && (
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <TabBar />
+              <TabPanelHost />
+            </div>
+          )}
+
+          {/* Portal target for the Git diff drawer (rendered by GitPanel). */}
+          <div id="git-diff-drawer-portal" />
 
           {/* Git Panel + Resize Handle */}
           {gitPanelOpen && (

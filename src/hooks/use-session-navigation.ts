@@ -40,9 +40,13 @@ export function useSessionNavigation() {
    * where WebSocket streaming messages arrive before JSONL history is fetched.
    */
   const viewSession = useCallback(
-    async (session: UnifiedSession, options?: { forceReload?: boolean }) => {
+    async (
+      session: UnifiedSession,
+      options?: { forceReload?: boolean; activate?: boolean },
+    ) => {
+      const shouldActivate = options?.activate !== false;
       if (!options?.forceReload && chatStore.isHistoryLoaded(session.id)) {
-        sessionStore.setActiveSession(session.id);
+        if (shouldActivate) sessionStore.setActiveSession(session.id);
         return;
       }
 
@@ -59,7 +63,7 @@ export function useSessionNavigation() {
           if (response.status === 404) {
             if (session.isRunning) {
               restoreSessionReplay(session.id, { messages: [] });
-              sessionStore.setActiveSession(session.id);
+              if (shouldActivate) sessionStore.setActiveSession(session.id);
               return;
             }
             toast.error(i18n.t('errors.sessionFileNotFound'));
@@ -81,7 +85,7 @@ export function useSessionNavigation() {
           });
         }
 
-        sessionStore.setActiveSession(session.id);
+        if (shouldActivate) sessionStore.setActiveSession(session.id);
       } catch (err) {
         toast.error(i18n.t('errors.sessionLoadFailed'));
         console.error('View session error:', err);

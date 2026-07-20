@@ -126,11 +126,19 @@ interface MessageInputProps {
   isReadOnly?: boolean;
   isStopped?: boolean;
   isSinglePanel?: boolean;
+  surfaceActive?: boolean;
 }
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
-export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isSinglePanel = false }: MessageInputProps) {
+export function MessageInput({
+  sessionId,
+  isDisabled,
+  isReadOnly,
+  isStopped,
+  isSinglePanel = false,
+  surfaceActive = false,
+}: MessageInputProps) {
   const { t } = useI18n();
   const setDraftInput = useChatStore((state) => state.setDraftInput);
   const [inputValue, setInputValue] = useState(() => useChatStore.getState().getDraftInput(sessionId));
@@ -463,6 +471,10 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
   // 마운트 시 활성 패널이면 자동 포커스 (스켈레톤 → ChatArea 전환 후 첫 렌더)
   useEffect(() => {
+    if (surfaceActive) {
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
+    }
     const ps = usePanelStore.getState();
     const tabData = selectActiveTab(ps);
     const activePanelId = tabData?.activePanelId ?? '';
@@ -470,7 +482,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
     if (panels[activePanelId]?.sessionId === sessionId) {
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
-  }, [sessionId]);
+  }, [sessionId, surfaceActive]);
 
   // 프롬프트 해제 후 textarea 자동 재포커스
   const prevActivePromptRef = useRef(activePrompt);
@@ -496,10 +508,12 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
     const handleGlobalKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape' && e.key !== 'Enter') return;
-      const panelState = usePanelStore.getState();
-      const tabData = selectActiveTab(panelState);
-      const panelActiveSessionId = tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
-      if (sessionId !== panelActiveSessionId) return;
+      if (!surfaceActive) {
+        const panelState = usePanelStore.getState();
+        const tabData = selectActiveTab(panelState);
+        const panelActiveSessionId = tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
+        if (sessionId !== panelActiveSessionId) return;
+      }
 
       e.preventDefault();
       stopVoiceRecording();
@@ -507,7 +521,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
 
     window.addEventListener('keydown', handleGlobalKey);
     return () => window.removeEventListener('keydown', handleGlobalKey);
-  }, [voiceState, stopVoiceRecording, sessionId]);
+  }, [voiceState, stopVoiceRecording, sessionId, surfaceActive]);
 
   // Voice input keyboard shortcut: Ctrl+Alt+V (Win/Linux) / Cmd+Option+V (macOS)
   useEffect(() => {
@@ -517,15 +531,17 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
       [voiceKey]: (e) => {
         e.preventDefault();
         // 멀티패널: 활성 패널 세션만 반응
-        const panelState = usePanelStore.getState();
-        const tabData = selectActiveTab(panelState);
-        const panelActiveSessionId = tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
-        if (sessionId !== panelActiveSessionId) return;
+        if (!surfaceActive) {
+          const panelState = usePanelStore.getState();
+          const tabData = selectActiveTab(panelState);
+          const panelActiveSessionId = tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
+          if (sessionId !== panelActiveSessionId) return;
+        }
         toggleVoiceRecording();
       },
     });
     return unsubscribe;
-  }, [canUseVoice, voiceKey, sessionId, toggleVoiceRecording]);
+  }, [canUseVoice, voiceKey, sessionId, surfaceActive, toggleVoiceRecording]);
   const handleInputChange = useCallback(
     (value: string) => {
       recordTerminalDraftEdit(sessionId);
@@ -1492,6 +1508,7 @@ export function MessageInput({ sessionId, isDisabled, isReadOnly, isStopped, isS
                     sessionId={sessionId}
                     variant="inline"
                     providerSessionOptions={providerSessionOptions}
+                    surfaceActive={surfaceActive}
                   />
                   <div ref={quickCreateTriggerRef} className="relative shrink-0">
                     <button

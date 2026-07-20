@@ -40,10 +40,14 @@ export function tryForwardClickToMainWindow(
 export function useSessionClickHandlers(options?: {
   /** Ordered list of session IDs in the current view (for Shift+Click range select) */
   orderedIds?: string[];
+  /** Optional normal-click destination used by surfaces such as Kanban Peek. */
+  onOpenSession?: (session: UnifiedSession) => void | Promise<void>;
 }): {
   handleSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => Promise<void>;
   handleSessionDoubleClick: (session: UnifiedSession) => Promise<void>;
 } {
+  const orderedIds = options?.orderedIds;
+  const onOpenSession = options?.onOpenSession;
   // Reactive subscriptions
   const clearUnreadCount = useSessionStore((state) => state.clearUnreadCount);
   const notifications = useNotificationStore((state) => state.notifications);
@@ -75,7 +79,7 @@ export function useSessionClickHandlers(options?: {
       // BRANCH A2 — Shift+click: range select from active session
       if (event && event.shiftKey) {
         const selStore = useSelectionStore.getState();
-        const oids = options?.orderedIds ?? [];
+        const oids = orderedIds ?? [];
         // Use active session as anchor when no prior Ctrl+Click anchor exists
         if (!selStore.lastClickedId) {
           const activeId = getSessionSelectionId(useSessionStore.getState().activeSessionId);
@@ -107,6 +111,11 @@ export function useSessionClickHandlers(options?: {
         return;
       }
 
+      if (onOpenSession) {
+        await onOpenSession(session);
+        return;
+      }
+
       // 2. Cross-tab location search (BR-SIDEBAR-004: replaces isInAnotherPanel)
       const location = useTabStore.getState().findSessionLocation(session.id);
       const openMode = resolveSessionTabOpenMode(session);
@@ -129,7 +138,7 @@ export function useSessionClickHandlers(options?: {
       }
       await viewSession(session);
     },
-    [unreadSessionIds, clearUnreadCount, viewSession, options?.orderedIds]
+    [unreadSessionIds, clearUnreadCount, viewSession, orderedIds, onOpenSession]
   );
 
   // Handle session double-click — always opens as pinned tab
