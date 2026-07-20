@@ -11,7 +11,11 @@ import logger from '@/lib/logger';
 import { terminalManager } from '@/lib/terminal/shared-terminal-manager';
 import { refreshSessionDiffStateInBackground } from '@/lib/git/session-diff-refresh';
 import { applyImmediateSessionTitle } from '@/lib/session/immediate-session-title';
-import { mapClaudeHookLifecycle } from '@/lib/cli/providers/claude-code/terminal-hook-lifecycle';
+import {
+  CLAUDE_LIFECYCLE_EVENTS,
+  mapClaudeHookLifecycle,
+} from '@/lib/cli/providers/claude-code/terminal-hook-lifecycle';
+import { classifyAskUserQuestionEvent } from '@/lib/cli/providers/claude-code/ask-user-question-status';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -88,11 +92,22 @@ function mapClaudeEventToStatus(
   event: string,
   payload: Record<string, unknown>,
 ): { status: TerminalSessionStatus; preview?: string } | null {
+  // AskUserQuestion 질문 카드가 뜬 동안은 input_required(사이드바 노란 깜빡점),
+  // 답변 제출(PostToolUse) 시 running 복귀. lifecycle tracker는 이 이벤트를 모른다.
+  const askUserQuestion = classifyAskUserQuestionEvent(event, payload);
+  if (askUserQuestion) return askUserQuestion;
   const lifecycle = mapClaudeHookLifecycle(terminalId, event, payload);
   if (lifecycle) {
-    if (event === 'Stop' && lifecycle.status === 'completed') return completedStatus(payload);
+    // Stop/StopFailure가 턴을 닫으면 assistant preview를 실어 완료로 보낸다.
+    // (StopFailure payload엔 통상 텍스트가 없어 preview는 undefined가 된다.)
+    if ((event === 'Stop' || event === 'StopFailure') && lifecycle.status === 'completed') {
+      return completedStatus(payload);
+    }
     return lifecycle;
   }
+  // lifecycle 소유 이벤트의 null은 "의도적 무시"(턴 종료 후 늦은 curl 등)다.
+  // 범용 폴백이 PostToolUse→running으로 되살리면 tombstone이 무력화된다.
+  if (CLAUDE_LIFECYCLE_EVENTS.has(event)) return null;
   return mapEventToStatus(event, payload);
 }
 

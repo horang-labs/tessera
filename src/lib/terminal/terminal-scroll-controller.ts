@@ -31,16 +31,43 @@ export interface TerminalScrollSnapshot {
 }
 
 export interface TerminalScrollRestorePoint {
+  readonly baseY: number;
+  readonly bottomOffset: number;
   readonly bufferType: 'normal' | 'alternate';
   readonly intent: TerminalScrollIntent;
   readonly marker?: TerminalScrollMarker;
   readonly revision: number;
-  readonly viewportY: number;
 }
 
 export type TerminalScrollScheduler = LayoutSettleScheduler;
 
 const BOTTOM_TOLERANCE_ROWS = 1;
+
+/**
+ * Tracks a wheel/key scroll while xterm applies its viewport change.
+ *
+ * A fullscreen TUI can consume the input without moving xterm. Preserve the
+ * provisional pin for the early frames, then classify from the real viewport
+ * at settle time so a pin at the bottom cannot survive into the next resize.
+ */
+export function scheduleTerminalScrollIntentSync(
+  controller: TerminalScrollController,
+  settler: LayoutSettleRunner,
+  preservePinnedAtBottom: boolean,
+  canSync: () => boolean = () => true,
+): void {
+  const sync = () => {
+    if (canSync()) controller.syncFromViewport({ preservePinnedAtBottom });
+  };
+  settler.run(sync, {
+    initial: 'microtask',
+    settledOperation: preservePinnedAtBottom
+      ? () => {
+          if (canSync()) controller.syncFromViewport();
+        }
+      : sync,
+  });
+}
 
 function isAtBottom(target: TerminalScrollTarget): boolean {
   const { baseY, viewportY } = target.buffer.active;
@@ -58,8 +85,11 @@ function safelyScroll(operation: () => void): boolean {
 }
 
 export class TerminalScrollController {
+  private bufferRebuildActive = false;
+  private lastObservedBaseY: number;
   private readonly listeners = new Set<() => void>();
   private readonly layoutSettler: LayoutSettleRunner;
+  private pinnedBottomOffset: number | null = null;
   private revision = 0;
   private snapshot: TerminalScrollSnapshot;
 
@@ -68,11 +98,15 @@ export class TerminalScrollController {
     scheduler?: TerminalScrollScheduler,
   ) {
     this.layoutSettler = new LayoutSettleRunner(scheduler);
+    this.lastObservedBaseY = target.buffer.active.baseY;
     const atBottom = isAtBottom(target);
     this.snapshot = {
       intent: atBottom ? 'follow-output' : 'pinned-viewport',
       isAtBottom: atBottom,
     };
+    if (!atBottom) {
+      this.pinnedBottomOffset = Math.max(0, target.buffer.active.baseY - target.buffer.active.viewportY);
+    }
   }
 
   getSnapshot = (): TerminalScrollSnapshot => this.snapshot;
@@ -85,21 +119,40 @@ export class TerminalScrollController {
   captureRestorePoint(): TerminalScrollRestorePoint {
     const buffer = this.target.buffer.active;
     const intent = this.snapshot.intent;
-    return {
+    // A resize redraw can clear scrollback before the previous write callback
+    // runs. Do not let later chunks create fresh line-0 markers during that gap.
+    if (
+      intent === 'pinned-viewport'
+      && buffer.type === 'normal'
+      && buffer.baseY === 0
+      && this.lastObservedBaseY > 0
+    ) {
+      this.bufferRebuildActive = true;
+    }
+    if (!this.bufferRebuildActive) this.lastObservedBaseY = buffer.baseY;
+    const point: TerminalScrollRestorePoint = {
+      baseY: buffer.baseY,
+      bottomOffset: intent === 'pinned-viewport'
+        ? this.pinnedBottomOffset ?? Math.max(0, buffer.baseY - buffer.viewportY)
+        : 0,
       bufferType: buffer.type,
       intent,
-      marker: intent === 'pinned-viewport' && buffer.type === 'normal'
+      marker: intent === 'pinned-viewport'
+        && buffer.type === 'normal'
+        && !this.bufferRebuildActive
         ? this.target.registerMarker(buffer.viewportY - (buffer.baseY + buffer.cursorY))
         : undefined,
       revision: this.revision,
-      viewportY: buffer.viewportY,
     };
+    return point;
   }
 
   scrollToBottom(): void {
     this.cancelPendingRestore();
     this.revision += 1;
     safelyScroll(() => this.target.scrollToBottom());
+    this.finishBufferRebuild();
+    this.pinnedBottomOffset = null;
     this.updateSnapshot('follow-output');
   }
 
@@ -107,12 +160,17 @@ export class TerminalScrollController {
     this.cancelPendingRestore();
     this.revision += 1;
     safelyScroll(() => this.target.scrollToLine(0));
+    this.finishBufferRebuild();
+    this.pinnedBottomOffset = this.target.buffer.active.baseY;
     this.updateSnapshot('pinned-viewport');
   }
 
   pinViewport(): void {
     this.cancelPendingRestore();
     this.revision += 1;
+    const buffer = this.target.buffer.active;
+    this.finishBufferRebuild();
+    this.pinnedBottomOffset = Math.max(0, buffer.baseY - buffer.viewportY);
     this.updateSnapshot('pinned-viewport');
   }
 
@@ -129,6 +187,16 @@ export class TerminalScrollController {
       && atBottom
       ? 'pinned-viewport'
       : atBottom ? 'follow-output' : 'pinned-viewport';
+    if (intent === 'follow-output') {
+      this.finishBufferRebuild();
+      this.pinnedBottomOffset = null;
+    } else if (!atBottom) {
+      this.finishBufferRebuild();
+      this.pinnedBottomOffset = Math.max(
+        0,
+        this.target.buffer.active.baseY - this.target.buffer.active.viewportY,
+      );
+    }
     this.updateSnapshot(intent);
   }
 
@@ -162,6 +230,11 @@ export class TerminalScrollController {
     this.listeners.clear();
   }
 
+  finishBufferRebuild(): void {
+    this.bufferRebuildActive = false;
+    this.lastObservedBaseY = this.target.buffer.active.baseY;
+  }
+
   private restoreNow(point: TerminalScrollRestorePoint): boolean {
     if (point.revision !== this.revision) return false;
     const buffer = this.target.buffer.active;
@@ -169,13 +242,28 @@ export class TerminalScrollController {
 
     if (point.intent === 'follow-output') {
       if (!safelyScroll(() => this.target.scrollToBottom())) return false;
+      this.pinnedBottomOffset = null;
     } else {
-      const markerLine = point.marker && !point.marker.isDisposed ? point.marker.line : -1;
-      if (!safelyScroll(() => this.target.scrollToLine(Math.min(
-        markerLine >= 0 ? markerLine : point.viewportY,
+      if (buffer.baseY < point.baseY) this.bufferRebuildActive = true;
+      const markerLine = !this.bufferRebuildActive
+        && point.marker
+        && !point.marker.isDisposed
+        ? point.marker.line
+        : -1;
+      const targetLine = Math.min(
+        markerLine >= 0
+          ? markerLine
+          // Once a TUI clears and rebuilds the buffer, absolute rows and old
+          // markers are invalid. Preserve the reader's distance from bottom.
+          : Math.max(0, buffer.baseY - point.bottomOffset),
         buffer.baseY,
-      )))) return false;
+      );
+      if (!safelyScroll(() => this.target.scrollToLine(targetLine))) return false;
+      this.pinnedBottomOffset = markerLine >= 0
+        ? Math.max(0, buffer.baseY - buffer.viewportY)
+        : point.bottomOffset;
     }
+    if (!this.bufferRebuildActive) this.lastObservedBaseY = buffer.baseY;
     this.updateSnapshot(point.intent);
     return true;
   }

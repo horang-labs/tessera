@@ -27,10 +27,9 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useBoardStore } from '@/stores/board-store';
 import {
-  selectAnyAwaitingUserPrompt,
-  selectIsAwaitingUserPrompt,
-  useChatStore,
-} from '@/stores/chat-store';
+  useAnySessionAwaitingUser,
+  useIsSessionAwaitingUser,
+} from '@/hooks/use-session-awaiting-user';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSelectionStore } from '@/stores/selection-store';
@@ -487,7 +486,7 @@ function SubSessionRow({
   const isSelected = useSelectionStore((state) => state.selectedIds.has(sess.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(sess.id));
+  const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
   const liveSession = useSessionStore((state) => {
     for (const project of state.projects) {
       const session = project.sessions.find((item) => item.id === sess.id);
@@ -735,7 +734,7 @@ export function TaskItemRow({
     hasProcessingSession,
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(task.sessions);
-  const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
+  const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
   const hasUnreadSession = useSessionStore((state) =>
     !isTaskActive &&
     taskSessionIds.some((id) => {
@@ -1186,7 +1185,7 @@ export function ChatItemRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
+  const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const liveSession = useSessionStore((state) => state.getSession(session.id));
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
   const runtimePresentation = resolveSessionRuntimePresentation({

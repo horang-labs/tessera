@@ -184,3 +184,131 @@ test('a later authoritative Stop can drain an idle teammate without SubagentStop
     session_crons: [],
   }), { status: 'completed' });
 });
+
+// ─── reconcile: Stop의 background_tasks 스냅샷으로 명단을 self-heal ───
+
+test('a lost SubagentStop is healed by the Stop payload marking the child done', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-lost-subagentstop';
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {});
+  tracker.apply(terminalId, 'SubagentStart', { agent_id: 'agent-a' });
+  // SubagentStop이 유실됐지만, Stop payload가 agent-a를 running이 아닌 상태로 보고하면
+  // reconcile이 그 child를 idle로 강등해 턴을 완료시킨다.
+  assert.deepEqual(tracker.apply(terminalId, 'Stop', {
+    background_tasks: [{ id: 'agent-a', type: 'subagent', status: 'completed' }],
+  }), { status: 'completed' });
+});
+
+test('a running subagent never observed via SubagentStart is recreated from the Stop payload', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-restart-midrun';
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {});
+  // SubagentStart를 놓쳤어도(서버/relay 재시작) Stop의 background_tasks에 running으로
+  // 있으면 명단에 재생성해 pane이 child 살아있는데 done으로 읽지 않게 한다.
+  assert.deepEqual(tracker.apply(terminalId, 'Stop', {
+    background_tasks: [{ id: 'agent-x', type: 'subagent', status: 'running' }],
+  }), { status: 'running' });
+  // 그 child가 다음 Stop에서 리스트에 없으면(끝남) 완료로 강등된다.
+  assert.deepEqual(tracker.apply(terminalId, 'Stop', {
+    background_tasks: [],
+  }), { status: 'completed' });
+});
+
+// ─── 재기동 턴: 백그라운드 작업 완료로 Claude가 자동으로 깨어난 턴의 감지 ───
+
+test('a PreToolUse after the revive grace reopens a completed turn as running', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-revived-by-build';
+  const t0 = 1_000_000;
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {}, t0);
+  // 백그라운드 빌드를 남긴 채 턴 종료 — 셸 작업은 스피너를 잡지 않는다(의도).
+  assert.deepEqual(tracker.apply(terminalId, 'Stop', {
+    background_tasks: [{ id: 'bash-build', type: 'local_shell', status: 'running' }],
+  }, t0 + 1_000), { status: 'completed' });
+
+  // 빌드가 끝나 Claude가 깨어나 결과를 확인한다 — UserPromptSubmit 없이 도구부터 쓴다.
+  assert.deepEqual(tracker.apply(terminalId, 'PreToolUse', {
+    tool_name: 'Bash',
+  }, t0 + 60_000), { status: 'running' });
+
+  assert.deepEqual(tracker.apply(terminalId, 'Stop', {
+    background_tasks: [],
+  }, t0 + 65_000), { status: 'completed' });
+});
+
+test('a PreToolUse inside the revive grace is treated as a late curl and ignored', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-late-pretooluse';
+  const t0 = 2_000_000;
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {}, t0);
+  tracker.apply(terminalId, 'Stop', { background_tasks: [] }, t0 + 1_000);
+
+  // 턴 마지막 도구의 PreToolUse curl이 Stop보다 늦게 배달된 역전 — 턴을 되살리면 안 된다.
+  assert.equal(tracker.apply(terminalId, 'PreToolUse', {
+    tool_name: 'Read',
+  }, t0 + 2_000), null);
+});
+
+test('a late PostToolUse never reopens a completed turn regardless of delay', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-late-posttooluse';
+  const t0 = 3_000_000;
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {}, t0);
+  tracker.apply(terminalId, 'Stop', { background_tasks: [] }, t0 + 1_000);
+
+  assert.equal(tracker.apply(terminalId, 'PostToolUse', {
+    tool_name: 'Bash',
+  }, t0 + 60_000), null);
+});
+
+test('tool events during a live turn keep it running and refresh subagent liveness', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-tool-activity';
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {});
+  assert.deepEqual(tracker.apply(terminalId, 'PreToolUse', { tool_name: 'Bash' }),
+    { status: 'running' });
+  assert.deepEqual(tracker.apply(terminalId, 'PostToolUse', { tool_name: 'Bash' }),
+    { status: 'running' });
+
+  // subagent 발 도구 이벤트는 그 child가 살아있다는 증거 — SubagentStart가 유실됐어도
+  // 명단에 올라 Stop의 done 게이트가 그 child를 기다리게 된다.
+  tracker.apply(terminalId, 'PreToolUse', { tool_name: 'Grep', agent_id: 'agent-live' });
+  assert.deepEqual(tracker.apply(terminalId, 'Stop', {}), { status: 'running' });
+  assert.deepEqual(tracker.apply(terminalId, 'SubagentStop', {
+    agent_id: 'agent-live',
+    background_tasks: [],
+  }), { status: 'completed' });
+});
+
+// ─── StopFailure: 에러로 끝난 턴도 Stop처럼 닫는다 ───
+
+test('StopFailure closes a turn with no live children just like Stop', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-stopfailure';
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {});
+  assert.deepEqual(tracker.apply(terminalId, 'StopFailure', {
+    background_tasks: [],
+  }), { status: 'completed' });
+});
+
+test('StopFailure keeps the turn running while a child is still working', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-stopfailure-with-child';
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {});
+  tracker.apply(terminalId, 'SubagentStart', { agent_id: 'agent-a' });
+  assert.deepEqual(tracker.apply(terminalId, 'StopFailure', {
+    background_tasks: [{ id: 'agent-a', type: 'subagent', status: 'running' }],
+  }), { status: 'running' });
+  assert.deepEqual(tracker.apply(terminalId, 'SubagentStop', {
+    agent_id: 'agent-a',
+    background_tasks: [],
+  }), { status: 'completed' });
+});

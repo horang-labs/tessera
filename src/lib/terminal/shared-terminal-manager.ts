@@ -42,6 +42,12 @@ function createSharedState(): SharedTerminalManagerState {
           sessionId,
           running,
         });
+        // 런타임 (재)시작 시 마지막 hook 상태를 재전송해, 이전에 runtime 신호와
+        // 어긋난 순서로 도착해 클라이언트가 버렸을 수 있는 상태를 복구한다.
+        if (running) {
+          const lastState = state.manager.getSessionStateForSession(sessionId, userId);
+          if (lastState) state.sendToUser?.(userId, lastState);
+        }
       },
     },
   );

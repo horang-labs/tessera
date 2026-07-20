@@ -40,6 +40,7 @@ export class LayoutSettleRunner {
     options: {
       initial: LayoutSettleInitialRun;
       onFinish?: () => void;
+      settledOperation?: () => void;
     },
   ): void {
     this.cancel();
@@ -63,7 +64,9 @@ export class LayoutSettleRunner {
     });
     pending.frameIds.push(firstFrameId);
     pending.timerId = this.scheduler.setTimeout(() => {
-      invoke();
+      if (!pending.cancelled) {
+        (options.settledOperation ?? operation)();
+      }
       this.finish(pending);
     }, 80);
   }

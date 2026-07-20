@@ -13,10 +13,8 @@ import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-default
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { useBoardStore } from '@/stores/board-store';
-import {
-  selectAnyAwaitingUserPrompt,
-  useChatStore,
-} from '@/stores/chat-store';
+import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useChatStore } from '@/stores/chat-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -285,7 +283,7 @@ export const CollectionGroup = memo(function CollectionGroup({
       return (snapshot.unreadCount ?? 0) > 0;
     }),
   );
-  const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(collectionSessionIds));
+  const hasAwaitingUserSession = useAnySessionAwaitingUser(collectionSessionSnapshots);
   const collectionIndicatorStatus = getPrioritizedCollectionIndicatorStatus({
     hasVisibleRuntimeSession,
     hasProcessingSession,

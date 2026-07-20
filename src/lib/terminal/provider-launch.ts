@@ -12,6 +12,16 @@ export interface ProviderTerminalLaunch {
   args: string[];    // 서버가 조립한 provider argv
 }
 
+/** Server-owned environment needed for consistent native PTY behavior. */
+export function buildProviderTerminalEnv(providerId: string): Record<string, string> | undefined {
+  if (providerId !== 'claude-code') return undefined;
+
+  // Claude's fullscreen virtual scroller owns history outside xterm's normal
+  // buffer. Keeping Claude on the normal buffer lets xterm own the scrollbar,
+  // wheel momentum, and resize reflow just like the other terminal providers.
+  return { CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1' };
+}
+
 /**
  * 클라 argv 불신. {providerId, sessionId, resume, ...} 만 받아 서버가 최소 argv 전량 조립.
  *  - claude: hooks는 --settings 인라인 주입.

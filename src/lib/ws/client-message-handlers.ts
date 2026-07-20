@@ -107,10 +107,11 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'session_state': {
-      const runtimeIsRunning = sessionStore.getSession(msg.sessionId)?.isRunning;
-      const changed = msg.status === 'running' && runtimeIsRunning === false
-        ? false
-        : useTerminalSessionStore.getState().applySessionState(msg);
+      // 유령 running 방지는 store의 runtimeExited 마커가 담당한다. 세션 목록의
+      // isRunning으로 여기서 드롭하면, 목록이 낡아 있는 동안(HTTP refetch 전)
+      // 도착한 진짜 running이 영구 유실된다 — session_state는 hook 이벤트
+      // 시점에만 push되고 재전송이 없다.
+      const changed = useTerminalSessionStore.getState().applySessionState(msg);
       if (changed && msg.status === 'running') {
         const location = useTabStore.getState().findSessionLocation(msg.sessionId);
         if (location) useTabStore.getState().pinTab(location.tabId);
@@ -123,7 +124,9 @@ export function handleIncomingServerMessage({
 
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
-      if (!msg.running) {
+      if (msg.running) {
+        useTerminalSessionStore.getState().markRuntimeStarted(msg.sessionId);
+      } else {
         useTerminalSessionStore.getState().markRuntimeStopped(msg.sessionId);
         retireStoppedTerminalSessionSurface(msg.sessionId);
       }
@@ -132,6 +135,9 @@ export function handleIncomingServerMessage({
     case 'terminal_session_runtime_snapshot': {
       sessionStore.applyTerminalRuntimeSnapshot(msg.activeSessionIds);
       const activeTerminalIds = new Set(msg.activeSessionIds);
+      for (const sessionId of msg.activeSessionIds) {
+        useTerminalSessionStore.getState().markRuntimeStarted(sessionId);
+      }
       for (const project of sessionStore.projects) {
         for (const session of project.sessions) {
           if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {

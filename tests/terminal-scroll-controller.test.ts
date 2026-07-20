@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  scheduleTerminalScrollIntentSync,
   TerminalScrollController,
   type TerminalScrollScheduler,
   type TerminalScrollTarget,
 } from '@/lib/terminal/terminal-scroll-controller';
+import { LayoutSettleRunner } from '@/lib/terminal/layout-settle-runner';
 
 function createScheduler() {
   let nextId = 1;
@@ -135,6 +137,29 @@ test('pinned viewport follows the same first visible line through wrapped-line r
   });
 });
 
+test('a pinned viewport keeps its bottom offset while a TUI rebuilds the buffer', () => {
+  const { active, calls, markerOffsets, target } = createTarget({ viewportY: 150 });
+  const controller = new TerminalScrollController(target);
+  const beforeClear = controller.captureRestorePoint();
+
+  active.baseY = 0;
+  active.viewportY = 0;
+  const duringRebuild = controller.captureRestorePoint();
+  beforeClear.marker?.dispose();
+  controller.restore(beforeClear);
+
+  active.baseY = 120;
+  active.viewportY = 0;
+  controller.restore(duringRebuild);
+
+  assert.deepEqual(calls, [
+    { type: 'line', line: 0 },
+    { type: 'line', line: 70 },
+  ]);
+  assert.deepEqual(markerOffsets, [-70]);
+  assert.equal(active.viewportY, 70);
+});
+
 test('a user follow-output request wins over an older pinned restore point', () => {
   const { active, calls, setMarkerLine, target, wasMarkerDisposed } = createTarget({
     viewportY: 150,
@@ -240,6 +265,43 @@ test('wheel-up intent pins immediately before the browser viewport catches up', 
 
   active.viewportY = 150;
   controller.syncFromViewport({ preservePinnedAtBottom: true });
+  assert.deepEqual(controller.getSnapshot(), {
+    intent: 'pinned-viewport',
+    isAtBottom: false,
+  });
+});
+
+test('a wheel consumed by a TUI does not leave a phantom pin at the bottom', () => {
+  const { target } = createTarget();
+  const { scheduler, runNextTimer } = createScheduler();
+  const controller = new TerminalScrollController(target);
+
+  controller.pinViewport();
+  scheduleTerminalScrollIntentSync(
+    controller,
+    new LayoutSettleRunner(scheduler),
+    true,
+  );
+
+  assert.equal(controller.getSnapshot().intent, 'pinned-viewport');
+  runNextTimer();
+  assert.equal(controller.getSnapshot().intent, 'follow-output');
+});
+
+test('settled wheel tracking keeps a viewport that actually moved pinned', () => {
+  const { active, target } = createTarget();
+  const { scheduler, runNextTimer } = createScheduler();
+  const controller = new TerminalScrollController(target);
+
+  controller.pinViewport();
+  scheduleTerminalScrollIntentSync(
+    controller,
+    new LayoutSettleRunner(scheduler),
+    true,
+  );
+  active.viewportY = 150;
+  runNextTimer();
+
   assert.deepEqual(controller.getSnapshot(), {
     intent: 'pinned-viewport',
     isAtBottom: false,

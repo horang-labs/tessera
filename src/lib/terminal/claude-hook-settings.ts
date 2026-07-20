@@ -16,6 +16,11 @@ function lifecycleHook() {
   return [{ hooks: [{ type: 'command', timeout: 5, command: HOOK_CURL }] }];
 }
 
+/** 특정 도구에만 발화하는 tool hook. matcher로 좁혀 매 도구 curl 부하를 피한다. */
+function toolHook(matcher: string) {
+  return [{ matcher, hooks: [{ type: 'command', timeout: 5, command: HOOK_CURL }] }];
+}
+
 export function buildClaudeHookSettings(): Record<string, unknown> {
   return {
     hooks: {
@@ -24,11 +29,22 @@ export function buildClaudeHookSettings(): Record<string, unknown> {
       // AI 자동 타이틀이 되게 한다(codex는 이미 등록됨).
       UserPromptSubmit: lifecycleHook(),
       Stop: lifecycleHook(),
+      // 일부 빌드는 API/모델 에러 뒤 정상 Stop을 건너뛰고 StopFailure를 낸다.
+      // 등록하지 않으면 그 턴의 스피너가 영영 돌아 갇힌다. 오래된 Claude 빌드는
+      // 등록되지 않은 이벤트명을 무시하므로 추가는 안전하다.
+      StopFailure: lifecycleHook(),
       // Claude의 lead turn이 먼저 끝나도 background child가 계속 실행될 수 있다.
       // child/team lifecycle을 받아 terminal 상태를 완료로 조기 전환하지 않게 한다.
       SubagentStart: lifecycleHook(),
       SubagentStop: lifecycleHook(),
       TeammateIdle: lifecycleHook(),
+      // 모든 도구의 PreToolUse/PostToolUse를 받는다(Orca와 동일). 핵심 목적은
+      // 백그라운드 셸 작업(빌드 등)이 끝나 Claude가 자동으로 깨어난 "재기동 턴"의
+      // 감지다 — 그 턴에는 UserPromptSubmit이 없어서 도구 이벤트가 유일한 활동
+      // 신호다. AskUserQuestion의 input_required 분류는 서버가 tool_name으로
+      // 판별한다(ask-user-question-status.ts).
+      PreToolUse: toolHook('*'),
+      PostToolUse: toolHook('*'),
     },
   };
 }
