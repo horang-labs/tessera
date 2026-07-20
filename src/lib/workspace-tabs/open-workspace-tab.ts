@@ -2,12 +2,58 @@
 
 import { usePanelStore } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
+import { useBoardStore } from "@/stores/board-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import {
   buildMemoryFileSessionId,
   buildWorkspaceFileSessionId,
   type WorkspaceFileTabKind,
 } from "./special-session";
 import type { MemoryTargetKind } from "@/types/memory";
+
+interface FileOpenOptions {
+  preferKanbanPeek?: boolean;
+}
+
+function canOpenFileInKanbanPeek(): boolean {
+  const settingsState = useSettingsStore.getState();
+  const boardState = useBoardStore.getState();
+  return settingsState.settings.kanbanSessionOpenMode === "peek"
+    && !settingsState.sidebarCollapsed
+    && boardState.viewMode === "board";
+}
+
+function tryOpenWorkspaceFileInKanbanPeek(
+  sourceSessionId: string,
+  kind: WorkspaceFileTabKind,
+  filePath: string,
+): boolean {
+  if (!canOpenFileInKanbanPeek()) return false;
+
+  useBoardStore.getState().openPeekFile({
+    type: "workspace-file",
+    sourceSessionId,
+    kind,
+    path: filePath,
+  });
+  return true;
+}
+
+function tryOpenMemoryFileInKanbanPeek(
+  sourceSessionId: string,
+  memoryKind: MemoryTargetKind,
+  fileName: string,
+): boolean {
+  if (!canOpenFileInKanbanPeek()) return false;
+
+  useBoardStore.getState().openPeekFile({
+    type: "memory-file",
+    sourceSessionId,
+    memoryKind,
+    fileName,
+  });
+  return true;
+}
 
 function focusOrCreateSpecialTab(
   specialSessionId: string,
@@ -30,7 +76,12 @@ export function openWorkspaceFileTab(
   sourceSessionId: string,
   kind: WorkspaceFileTabKind,
   filePath: string,
+  options: FileOpenOptions = {},
 ): void {
+  if (
+    options.preferKanbanPeek
+    && tryOpenWorkspaceFileInKanbanPeek(sourceSessionId, kind, filePath)
+  ) return;
   focusOrCreateSpecialTab(
     buildWorkspaceFileSessionId(sourceSessionId, kind, filePath),
     {
@@ -44,7 +95,12 @@ export function previewWorkspaceFileTab(
   sourceSessionId: string,
   kind: WorkspaceFileTabKind,
   filePath: string,
+  options: FileOpenOptions = {},
 ): void {
+  if (
+    options.preferKanbanPeek
+    && tryOpenWorkspaceFileInKanbanPeek(sourceSessionId, kind, filePath)
+  ) return;
   previewSpecialFileTab(buildWorkspaceFileSessionId(sourceSessionId, kind, filePath));
 }
 
@@ -52,7 +108,12 @@ export function openMemoryFileTab(
   sourceSessionId: string,
   memoryKind: MemoryTargetKind,
   fileName: string,
+  options: FileOpenOptions = {},
 ): void {
+  if (
+    options.preferKanbanPeek
+    && tryOpenMemoryFileInKanbanPeek(sourceSessionId, memoryKind, fileName)
+  ) return;
   focusOrCreateSpecialTab(
     buildMemoryFileSessionId(sourceSessionId, memoryKind, fileName),
     {
@@ -66,7 +127,12 @@ export function previewMemoryFileTab(
   sourceSessionId: string,
   memoryKind: MemoryTargetKind,
   fileName: string,
+  options: FileOpenOptions = {},
 ): void {
+  if (
+    options.preferKanbanPeek
+    && tryOpenMemoryFileInKanbanPeek(sourceSessionId, memoryKind, fileName)
+  ) return;
   previewSpecialFileTab(buildMemoryFileSessionId(sourceSessionId, memoryKind, fileName));
 }
 

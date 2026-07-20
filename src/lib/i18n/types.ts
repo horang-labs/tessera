@@ -101,6 +101,12 @@ export interface I18nMessages {
     showProviderIconsDesc: string;
     showRecentWork: string;
     showRecentWorkDesc: string;
+    kanbanSessionOpenMode: {
+      title: string;
+      description: string;
+      split: { label: string; description: string };
+      peek: { label: string; description: string };
+    };
     enterKey: {
       label: string;
       send: string;
@@ -394,6 +400,7 @@ export interface I18nMessages {
     reconnecting: string;
     disconnected: string;
     reconnect: string;
+    loadingSession: string;
     loadingHistory: string;
     thinking: string;
     send: string;
@@ -975,6 +982,7 @@ export interface I18nMessages {
       globalScope: string;
       projectScope: string;
       unsavedChanges: string;
+      discardChangesConfirm: string;
       save: string;
       saveShortcut: string;
       noUnsavedChanges: string;

@@ -275,12 +275,16 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           onClick={() => {
             if (!sessionId) return;
             setSelectedPath(node.path);
-            previewWorkspaceFileTab(sessionId, "file", node.path);
+            previewWorkspaceFileTab(sessionId, "file", node.path, {
+              preferKanbanPeek: true,
+            });
           }}
           onDoubleClick={() => {
             if (!sessionId) return;
             setSelectedPath(node.path);
-            openWorkspaceFileTab(sessionId, "file", node.path);
+            openWorkspaceFileTab(sessionId, "file", node.path, {
+              preferKanbanPeek: true,
+            });
           }}
           onDragStart={(event) => {
             if (!sessionId) return;

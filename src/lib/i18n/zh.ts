@@ -109,6 +109,18 @@ export const zh: I18nMessages = {
     showProviderIconsDesc: '在列表和看板项目中显示 CLI 提供者标记。',
     showRecentWork: '显示"最近工作"区域',
     showRecentWorkDesc: '在侧边栏顶部显示"最近工作"区域。',
+    kanbanSessionOpenMode: {
+      title: '从看板打开会话',
+      description: '选择在看板中点击会话卡片时的打开方式。',
+      split: {
+        label: '分屏视图',
+        description: '并排显示看板和会话。',
+      },
+      peek: {
+        label: 'Peek',
+        description: '在看板上方的大窗口中使用 GUI 聊天和 PTY 终端。',
+      },
+    },
     enterKey: {
       label: 'Enter 键行为',
       send: 'Enter = 发送',
@@ -400,6 +412,7 @@ export const zh: I18nMessages = {
     reconnecting: '重新连接中...',
     disconnected: '已断开',
     reconnect: '重新连接',
+    loadingSession: '正在加载会话...',
     loadingHistory: '加载聊天记录...',
     thinking: '思考中...',
     send: '发送',
@@ -976,6 +989,7 @@ export const zh: I18nMessages = {
       globalScope: '全局',
       projectScope: '项目',
       unsavedChanges: '未保存的更改',
+      discardChangesConfirm: '要放弃未保存的 Context 更改吗？',
       save: '保存',
       saveShortcut: '保存 (⌘S)',
       noUnsavedChanges: '没有未保存的更改',

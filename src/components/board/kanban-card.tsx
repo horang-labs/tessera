@@ -963,7 +963,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   <span
                     title={prMismatchReason ?? undefined}
                     aria-label={prMismatchReason ?? undefined}
-                    className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-warning-text) ring-1 ring-(--board-card-bg) cursor-help"
+                    className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg) cursor-help"
                     data-testid="task-pr-mismatch-badge"
                   />
                 )}

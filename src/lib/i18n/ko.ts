@@ -109,6 +109,18 @@ export const ko: I18nMessages = {
     showProviderIconsDesc: '리스트와 칸반 항목에 CLI 프로바이더 마크를 표시합니다.',
     showRecentWork: '최근 작업 섹션 표시',
     showRecentWorkDesc: '사이드바 상단에 "최근 작업" 섹션을 표시합니다.',
+    kanbanSessionOpenMode: {
+      title: '칸반 카드 열기 방식',
+      description: '칸반 보드에서 세션 카드를 눌렀을 때 열리는 방식을 선택합니다.',
+      split: {
+        label: '분할 보기',
+        description: '칸반과 세션을 나란히 표시합니다.',
+      },
+      peek: {
+        label: 'Peek',
+        description: '칸반 위의 큰 창에서 GUI 채팅과 PTY 터미널을 사용합니다.',
+      },
+    },
     enterKey: {
       label: 'Enter 키 동작',
       send: 'Enter = 전송',
@@ -402,6 +414,7 @@ export const ko: I18nMessages = {
     reconnecting: '재연결 중...',
     disconnected: '연결 끊김',
     reconnect: '재연결',
+    loadingSession: '세션을 불러오는 중...',
     loadingHistory: '대화 내역 불러오는 중...',
     thinking: '생각 중...',
     send: '전송',
@@ -983,6 +996,7 @@ export const ko: I18nMessages = {
       globalScope: '전역',
       projectScope: '프로젝트',
       unsavedChanges: '저장되지 않은 변경',
+      discardChangesConfirm: '저장하지 않은 Context 변경 사항을 버릴까요?',
       save: '저장',
       saveShortcut: '저장 (⌘S)',
       noUnsavedChanges: '저장할 변경 사항 없음',

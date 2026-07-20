@@ -417,8 +417,9 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
 
   const openRow = useCallback((row: MemoryRowItem, pin: boolean) => {
     if (!sessionId) return;
-    if (pin) openMemoryFileTab(sessionId, row.kind, row.relativePath);
-    else previewMemoryFileTab(sessionId, row.kind, row.relativePath);
+    const options = { preferKanbanPeek: true };
+    if (pin) openMemoryFileTab(sessionId, row.kind, row.relativePath, options);
+    else previewMemoryFileTab(sessionId, row.kind, row.relativePath, options);
   }, [sessionId]);
 
   const handleCreate = useCallback(async () => {
@@ -453,7 +454,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
 
       setCreateOpen(false);
       setCreateName("");
-      openMemoryFileTab(sessionId, "memory", fileName);
+      openMemoryFileTab(sessionId, "memory", fileName, { preferKanbanPeek: true });
       void loadMemories();
       toast.success(t("memoryPanel.toast.created", { fileName }));
     } catch (error) {

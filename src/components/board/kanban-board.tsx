@@ -87,6 +87,14 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const selectedProjectDir = useBoardStore((s) => s.selectedProjectDir);
   const activeCollectionFilter = useBoardStore((s) => s.activeCollectionFilter);
   const setCollectionFilter = useBoardStore((s) => s.setCollectionFilter);
+  const peekSessionId = useBoardStore((s) => s.peekSessionId);
+  const peekFileRef = useBoardStore((s) => s.peekFileRef);
+  const selectedBoardSessionId = useBoardStore((s) => s.selectedBoardSessionId);
+  const openSessionPeek = useBoardStore((s) => s.openSessionPeek);
+  const closeSessionPeek = useBoardStore((s) => s.closeSessionPeek);
+  const kanbanSessionOpenMode = useSettingsStore(
+    (state) => state.settings.kanbanSessionOpenMode,
+  );
 
   // Collection store
   const collectionsByProject = useCollectionStore((s) => s.collectionsByProject);
@@ -96,7 +104,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const tasksByProject = useTaskStore((s) => s.tasksByProject);
   // Session store
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
-  const selectionSessionId = getSessionSelectionId(activeSessionId);
+  const selectionSessionId = getSessionSelectionId(
+    kanbanSessionOpenMode === 'peek' ? selectedBoardSessionId : activeSessionId,
+  );
   const projects = useSessionStore((s) => s.projects);
   const scrollPositionKey = getKanbanScrollPositionKey(selectedProjectDir, activeCollectionFilter);
   const [portfolioProjectFilter, setPortfolioProjectFilter] = useState<string | null>(null);
@@ -521,7 +531,19 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, [filteredChats, isAllProjects, mergedTasksByStatus, visibleProjects, workflowChatsByStatus]);
 
   // Click handlers
-  const { handleSessionClick, handleSessionDoubleClick } = useSessionClickHandlers({ orderedIds });
+  const handleOpenSessionPeek = useCallback((session: UnifiedSession) => {
+    openSessionPeek(session.id);
+  }, [openSessionPeek]);
+  const { handleSessionClick, handleSessionDoubleClick } = useSessionClickHandlers({
+    orderedIds,
+    onOpenSession: kanbanSessionOpenMode === 'peek' ? handleOpenSessionPeek : undefined,
+  });
+
+  useEffect(() => {
+    if (kanbanSessionOpenMode !== 'peek' && (peekSessionId || peekFileRef)) {
+      closeSessionPeek();
+    }
+  }, [closeSessionPeek, kanbanSessionOpenMode, peekFileRef, peekSessionId]);
 
   const handleChatDragStart = useCallback((sessionId: string, e: React.DragEvent) => {
     const selectionStore = useSelectionStore.getState();
@@ -786,8 +808,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, [handleSessionClick]);
 
   const handleChatDoubleClick = useCallback((session: UnifiedSession) => {
+    if (kanbanSessionOpenMode === 'peek') return;
     handleSessionDoubleClick(session);
-  }, [handleSessionDoubleClick]);
+  }, [handleSessionDoubleClick, kanbanSessionOpenMode]);
 
   // ── Add session to existing task (matching list view's addSessionToTask) ──
 
@@ -971,7 +994,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   return (
     <div
-      className="flex flex-col h-full w-full bg-(--board-bg) overflow-hidden"
+      className="relative flex h-full w-full flex-col overflow-hidden bg-(--board-bg)"
       data-testid="kanban-board"
     >
       {isAllProjects ? (
@@ -1081,7 +1104,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
           />
         </div>
       </div>
-
       <KanbanScrollControls scrollAreaId={scrollAreaId} scrollAreaRef={scrollAreaRef} />
 
       {/* Task context menu -- rendered in portal via TaskContextMenu */}
@@ -1128,6 +1150,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
         onConfirm={handleMoveConfirm}
         onCancel={() => setMoveSessionTarget(null)}
       />
+
     </div>
   );
 });

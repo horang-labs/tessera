@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useContext, useEffect, useMemo, useRef } from "react";
+import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { selectIsTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionNavigation } from "@/hooks/use-session-navigation";
@@ -13,7 +13,7 @@ import { MessageInput } from "./message-input";
 import { WorkflowStatusBar } from "./workflow/workflow-status-bar";
 import { TodoStatusBar } from "./todo/todo-status-bar";
 import { InteractivePromptOverlay } from "./interactive-prompt-overlay";
-import { MessageSquare, AlertCircle, X as XIcon } from "lucide-react";
+import { MessageSquare, AlertCircle, LoaderCircle, X as XIcon } from "lucide-react";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
 import { Button } from "@/components/ui/button";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
@@ -26,22 +26,40 @@ import { shouldShowSessionHeader } from "@/lib/terminal/session-header-visibilit
 interface ChatAreaProps {
   sessionId: string;
   panelId: string;
+  presentation?: 'panel' | 'peek';
 }
 
-export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaProps) {
+const PEEK_LOADING_DELAY_MS = 300;
+
+export const ChatArea = memo(function ChatArea({
+  sessionId,
+  panelId,
+  presentation = 'panel',
+}: ChatAreaProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
+  const isPeek = presentation === 'peek';
+  const [peekLoadingReadySessionId, setPeekLoadingReadySessionId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isPeek) return;
+    const timer = setTimeout(() => {
+      setPeekLoadingReadySessionId(sessionId);
+    }, PEEK_LOADING_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [isPeek, sessionId]);
+  const shouldShowPeekLoading = isPeek && peekLoadingReadySessionId === sessionId;
   // Side-by-side panels in the active tab are all on-screen even though only
   // one is the panel-store's "active" panel; gating autoscroll on isPanelActive
   // froze the unfocused panel's viewport during streaming (issue #16).
-  const isViewActive = useTabStore((state) => state.activeTabId === tabId);
+  const isViewActive = useTabStore((state) => isPeek || state.activeTabId === tabId);
   const isPreviewTab = useTabStore(
-    (state) => state.tabs.find((tab) => tab.id === tabId)?.isPreview ?? false,
+    (state) => !isPeek && (state.tabs.find((tab) => tab.id === tabId)?.isPreview ?? false),
   );
   const { windowedMessages, hasMore, loadMore, isLoadingMore } =
     useWindowedMessages(sessionId);
   const isSinglePanel = usePanelStore(
-    (state) => Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length <= 1,
+    (state) => isPeek
+      || Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length <= 1,
   );
 
   const session = useSessionStore((state) => state.getSession(sessionId));
@@ -71,8 +89,8 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
       return;
     }
     autoLoadedSessionIdRef.current = session.id;
-    void viewSession(session);
-  }, [session, historyLoaded, viewSession]);
+    void viewSession(session, { activate: !isPeek });
+  }, [session, historyLoaded, isPeek, viewSession]);
   const groupedMessagesForSearch = useMemo(
     () => groupMessages(windowedMessages),
     [windowedMessages],
@@ -121,7 +139,7 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
           <Button
             onClick={() => {
               clearError(sessionId);
-              viewSession(session);
+              viewSession(session, { activate: !isPeek });
             }}
           >
             {t("chat.retry")}
@@ -132,7 +150,8 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
   }
 
   if (messages === undefined) {
-    return <ChatAreaSkeleton isSinglePanel={isSinglePanel} />;
+    if (!isPeek) return <ChatAreaSkeleton isSinglePanel={isSinglePanel} />;
+    return shouldShowPeekLoading ? <SessionPeekLoading /> : null;
   }
 
   const isUnifiedSession = "isRunning" in session;
@@ -151,7 +170,7 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
 
   return (
     <div className="flex-1 flex flex-col h-full bg-(--chat-bg)">
-      {shouldShowSessionHeader({ isTerminalSession, isSinglePanel }) && (
+      {!isPeek && shouldShowSessionHeader({ isTerminalSession, isSinglePanel }) && (
         <Header
           sessionId={sessionId}
           panelId={panelId}
@@ -179,7 +198,13 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
               panelId={panelId}
               terminalId={terminalId}
               terminalSessionId={sessionId}
-              runtimeOwnership={isPreviewTab ? 'session-preview' : 'session-retained'}
+              runtimeOwnership={isPeek
+                ? 'session-peek'
+                : isPreviewTab
+                  ? 'session-preview'
+                  : 'session-retained'}
+              surfaceActive={isPeek}
+              startupOverlay={shouldShowPeekLoading ? <SessionPeekLoading /> : undefined}
               launch={{ providerId: sessionProvider, sessionId }}
             />
           ) : null
@@ -218,12 +243,35 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
             isReadOnly={isReadOnly}
             isStopped={isStopped}
             isSinglePanel={isSinglePanel}
+            surfaceActive={isPeek}
           />
         </>
       )}
     </div>
   );
 });
+
+function SessionPeekLoading() {
+  const { t } = useI18n();
+
+  return (
+    <div
+      className="flex h-full flex-1 items-center justify-center bg-(--chat-bg)"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      data-testid="kanban-session-peek-loading"
+    >
+      <div className="flex flex-col items-center gap-3 text-center">
+        <LoaderCircle
+          className="h-7 w-7 animate-spin text-(--accent) motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+        <p className="text-sm text-(--text-muted)">{t("chat.loadingSession")}</p>
+      </div>
+    </div>
+  );
+}
 
 function SessionNotFound({ sessionId }: { sessionId: string }) {
   const { t } = useI18n();

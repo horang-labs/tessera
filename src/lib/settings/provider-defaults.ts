@@ -355,6 +355,12 @@ function normalizeWindowsCloseBehavior(value: unknown): UserSettings['windowsClo
   return value === 'tray' || value === 'quit' ? value : 'ask';
 }
 
+function normalizeKanbanSessionOpenMode(
+  value: unknown,
+): UserSettings['kanbanSessionOpenMode'] {
+  return value === 'peek' ? 'peek' : 'split';
+}
+
 function normalizeProviderSessionMode(
   providerId: string,
   value: unknown,
@@ -553,6 +559,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     inactivePanelDimming: 30,
     showProviderIcons: true,
     showRecentWork: true,
+    kanbanSessionOpenMode: 'split',
     sttEngine: 'webSpeech',
     geminiApiKey: '',
     favoriteSkills: [],
@@ -638,6 +645,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     fontSize: normalizeFontScale(raw?.fontSize),
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
     showRecentWork: raw?.showRecentWork ?? defaults.showRecentWork,
+    kanbanSessionOpenMode: normalizeKanbanSessionOpenMode(raw?.kanbanSessionOpenMode),
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
     managedWorktreePathTemplate: normalizeManagedWorktreePathTemplate(raw?.managedWorktreePathTemplate),

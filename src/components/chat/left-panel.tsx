@@ -12,6 +12,7 @@ const KanbanBoard = dynamic(
 import { FolderBrowserDialog } from './folder-browser-dialog';
 import { DeleteProjectDialog } from './delete-project-dialog';
 import { useBoardStore } from '@/stores/board-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useFolderBrowserStore } from '@/stores/folder-browser-store';
@@ -19,11 +20,13 @@ import { useSessionCrud } from '@/hooks/use-session-crud';
 import { usePopoutActive } from '@/hooks/use-popout-active';
 import { ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SessionPeek } from '@/components/board/session-peek';
 
 interface LeftPanelProps {
   width: number | string;
   className?: string;
   collapsed?: boolean;
+  fillAvailable?: boolean;
 }
 
 interface ProjectImportError extends Error {
@@ -31,12 +34,23 @@ interface ProjectImportError extends Error {
   status?: number;
 }
 
-export function LeftPanel({ width, className, collapsed = false }: LeftPanelProps) {
+export function LeftPanel({
+  width,
+  className,
+  collapsed = false,
+  fillAvailable = false,
+}: LeftPanelProps) {
   const isFolderBrowserOpen = useFolderBrowserStore((state) => state.isOpen);
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
   const closeFolderBrowser = useFolderBrowserStore((state) => state.close);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const viewMode = useBoardStore((state) => state.viewMode);
+  const peekSessionId = useBoardStore((state) => state.peekSessionId);
+  const peekFileRef = useBoardStore((state) => state.peekFileRef);
+  const closeSessionPeek = useBoardStore((state) => state.closeSessionPeek);
+  const kanbanSessionOpenMode = useSettingsStore(
+    (state) => state.settings.kanbanSessionOpenMode,
+  );
   const projects = useSessionStore((state) => state.projects);
   const { deleteProject } = useSessionCrud();
   const { isActive: isPopoutActive, closePopouts } = usePopoutActive();
@@ -65,12 +79,18 @@ export function LeftPanel({ width, className, collapsed = false }: LeftPanelProp
 
   return (
     <div
-      className={cn("shrink-0 flex border-r border-(--divider) overflow-hidden", className)}
-      style={{ width: typeof width === 'number' ? `${width}px` : width }}
+      className={cn(
+        'flex overflow-hidden border-r border-(--divider)',
+        fillAvailable ? 'min-w-0 flex-1' : 'shrink-0',
+        className,
+      )}
+      style={fillAvailable
+        ? { width: 0 }
+        : { width: typeof width === 'number' ? `${width}px` : width }}
       data-testid="left-panel-container"
     >
       <ProjectStrip onAddProject={handleAddProject} onRemoveProject={setRemoveTarget} />
-      {!collapsed && <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      {!collapsed && <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <AppHeader />
         <div className="min-h-0 flex-1 overflow-hidden relative">
           {viewMode === 'board' ? <KanbanBoard /> : <Sidebar />}
@@ -99,6 +119,13 @@ export function LeftPanel({ width, className, collapsed = false }: LeftPanelProp
             </div>
           )}
         </div>
+        {viewMode === 'board' && kanbanSessionOpenMode === 'peek' && (peekSessionId || peekFileRef) ? (
+          <SessionPeek
+            sessionId={peekSessionId ?? peekFileRef!.sourceSessionId}
+            showSessionContent={Boolean(peekSessionId)}
+            onClose={closeSessionPeek}
+          />
+        ) : null}
       </div>}
       <FolderBrowserDialog
         isOpen={isFolderBrowserOpen}

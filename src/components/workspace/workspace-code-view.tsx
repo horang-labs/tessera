@@ -305,11 +305,25 @@ export function WorkspaceCodeView({
   }
 
   if (!data) {
-    return <EmptyState title="No file loaded" body="Select a file to preview it." />;
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
+        <PendingStateHeader mode={mode} path={path} onClose={onClose} />
+        <div className="min-h-0 flex-1">
+          <EmptyState title="No file loaded" body="Select a file to preview it." />
+        </div>
+      </div>
+    );
   }
 
   if (fileData?.binary) {
-    return <EmptyState title="Binary file" body="Preview is unavailable for binary content." icon="binary" />;
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
+        <PendingStateHeader mode={mode} path={path} onClose={onClose} />
+        <div className="min-h-0 flex-1">
+          <EmptyState title="Binary file" body="Preview is unavailable for binary content." icon="binary" />
+        </div>
+      </div>
+    );
   }
 
   return (

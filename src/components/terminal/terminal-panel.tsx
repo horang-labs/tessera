@@ -8,6 +8,7 @@ import {
   useRef,
   useSyncExternalStore,
   type DragEvent,
+  type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GripVertical, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react';
@@ -34,7 +35,11 @@ interface TerminalPanelProps {
   terminalId: string;
   terminalSessionId: string | null;
   /** Determines whether unmount detaches, or may close a preview-created PTY. */
-  runtimeOwnership?: 'standalone' | 'session-preview' | 'session-retained';
+  runtimeOwnership?: 'standalone' | 'session-preview' | 'session-retained' | 'session-peek';
+  /** Treat a transient surface as visible/focused without borrowing panel-store state. */
+  surfaceActive?: boolean;
+  /** Optional overlay shown until the terminal surface reports that it is running. */
+  startupOverlay?: ReactNode;
   launch?: { providerId: string; sessionId: string };
 }
 
@@ -63,6 +68,8 @@ export function TerminalPanel({
   terminalId,
   terminalSessionId,
   runtimeOwnership = 'standalone',
+  surfaceActive = false,
+  startupOverlay,
   launch,
 }: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
@@ -74,18 +81,20 @@ export function TerminalPanel({
   const selectedThemePreset = isDark ? darkThemePreset : lightThemePreset;
   const terminalFontSize = getTerminalFontSize(fontScale);
   const containerRef = useRef<HTMLDivElement>(null);
+  const pendingSurfaceCleanupRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const sessionOwned = runtimeOwnership !== 'standalone';
   const previewOwnsRuntimeRef = useRef(runtimeOwnership === 'session-preview');
   const handleTerminalInput = useCallback(() => {
-    if (runtimeOwnership === 'standalone') return;
+    if (runtimeOwnership === 'standalone' || runtimeOwnership === 'session-peek') return;
     previewOwnsRuntimeRef.current = false;
     useTabStore.getState().pinTab(tabId);
   }, [runtimeOwnership, tabId]);
-  const isTabActive = useTabStore((state) => state.activeTabId === tabId);
+  const isTabActive = useTabStore((state) => surfaceActive || state.activeTabId === tabId);
   const isPanelActive = usePanelStore((state) => (
-    state.activeTabId === tabId && state.tabPanels[tabId]?.activePanelId === panelId
+    surfaceActive
+    || (state.activeTabId === tabId && state.tabPanels[tabId]?.activePanelId === panelId)
   ));
   const surface = useMemo(() => getTerminalSurface({
     registryKey: `${tabId}:${panelId}:${terminalId}`,
@@ -179,6 +188,10 @@ export function TerminalPanel({
   useEffect(() => {
     const host = containerRef.current;
     if (!host) return;
+    if (pendingSurfaceCleanupRef.current !== null) {
+      clearTimeout(pendingSurfaceCleanupRef.current);
+      pendingSurfaceCleanupRef.current = null;
+    }
 
     void surface.mount(host);
     return () => {
@@ -186,7 +199,8 @@ export function TerminalPanel({
       // Moving a panel can transiently unmount it. Check ownership after the
       // store update settles. A moved surface detaches; an actually removed
       // standalone terminal is the only case that kills the PTY.
-      setTimeout(() => {
+      pendingSurfaceCleanupRef.current = setTimeout(() => {
+        pendingSurfaceCleanupRef.current = null;
         const remainsInSamePanel = isTerminalAssignedToPanel(
           tabId,
           panelId,
@@ -276,6 +290,9 @@ export function TerminalPanel({
       )}
       <div className="relative min-h-0 flex-1 overflow-hidden p-2">
         <div ref={containerRef} className="h-full min-w-0 overflow-hidden" />
+        {status === 'starting' && startupOverlay ? (
+          <div className="absolute inset-0 z-10">{startupOverlay}</div>
+        ) : null}
         {!isAtBottom && (
           <ScrollToBottomButton
             onClick={() => surface.scrollToBottom()}

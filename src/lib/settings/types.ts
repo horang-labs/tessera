@@ -14,6 +14,7 @@ export type EnterKeyBehavior = 'send' | 'newline';
 export type SttEngine = 'webSpeech' | 'gemini';
 export type AgentEnvironment = 'native' | 'wsl';
 export type WindowsCloseBehavior = 'ask' | 'tray' | 'quit';
+export type KanbanSessionOpenMode = 'split' | 'peek';
 export type CliCommandOverrides = Record<string, Partial<Record<AgentEnvironment, string>>>;
 
 export interface SetupState {
@@ -82,6 +83,8 @@ export interface UserSettings {
   inactivePanelDimming: number;
   showProviderIcons: boolean;
   showRecentWork: boolean;
+  /** How selecting a session card behaves while the Kanban board is active. */
+  kanbanSessionOpenMode: KanbanSessionOpenMode;
   sttEngine: SttEngine;
   geminiApiKey: string;
   favoriteSkills: string[];
