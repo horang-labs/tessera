@@ -23,6 +23,10 @@ import {
   insertFilePathIntoTerminal,
   resolvePanelTerminalId,
 } from '@/lib/terminal/terminal-file-path-insert';
+import {
+  getNativeFileDropAbsolutePaths,
+  isNativeFileDrag,
+} from '@/lib/dnd/native-file-drop';
 import { focusPanelControl } from '@/lib/session/focus-session-panel';
 
 /** Edge zone threshold — the outer 25% of each edge triggers a split. */
@@ -133,7 +137,16 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     hasWorkspaceFileDragData(e.dataTransfer) && resolveInsertTargetTerminalId() !== null
   ), [resolveInsertTargetTerminalId]);
 
+  // OS (Finder/Explorer) file drops behave like folder drags: insert-only,
+  // center-only, and accepted only over a terminal pane.
+  const isNativeFilePathInsertTarget = useCallback((e: React.DragEvent) => (
+    isNativeFileDrag(e.dataTransfer) && resolveInsertTargetTerminalId() !== null
+  ), [resolveInsertTargetTerminalId]);
+
   const isPanelCompatibleDrag = useCallback((e: React.DragEvent) => {
+    // OS file drags carry the synthetic 'Files' type and no in-app payload;
+    // accept only over a terminal pane, where the drop inserts the path.
+    if (isNativeFileDrag(e.dataTransfer)) return isNativeFilePathInsertTarget(e);
     // Insert-only drags (folders) carry no session payload — accept them only
     // over a terminal pane, where the drop inserts the path.
     if (isPathInsertOnlyDragData(e.dataTransfer)) return isTerminalPathInsertTarget(e);
@@ -149,7 +162,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     // Yield to session-ref drop zone (MessageInput) — let it handle the drop
     if (hasSessionDrag && (e.target as HTMLElement)?.closest?.('[data-session-ref-drop]')) return false;
     return true;
-  }, [panelId, tabId, isTerminalPathInsertTarget]);
+  }, [panelId, tabId, isTerminalPathInsertTarget, isNativeFilePathInsertTarget]);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
@@ -160,19 +173,24 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+    const isNativeFile = isNativeFileDrag(e.dataTransfer);
+    e.dataTransfer.dropEffect = isNativeFile ? 'copy' : 'move';
 
     const rect = wrapperRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    // Insert-only drags have no split behavior, so the whole pane acts as center.
-    const edge = isPathInsertOnlyDragData(e.dataTransfer)
+    // Insert-only drags (folders, OS files) have no split behavior, so the
+    // whole pane acts as center.
+    const edge = isNativeFile || isPathInsertOnlyDragData(e.dataTransfer)
       ? 'center'
       : computeDropEdge(e.clientX, e.clientY, rect);
     dropEdgeRef.current = edge;
     setDropEdge(edge);
-    setInsertPathHint(edge === 'center' && isTerminalPathInsertTarget(e));
-  }, [isPanelCompatibleDrag, isTerminalPathInsertTarget]);
+    setInsertPathHint(
+      edge === 'center' &&
+      (isNativeFile ? isNativeFilePathInsertTarget(e) : isTerminalPathInsertTarget(e)),
+    );
+  }, [isPanelCompatibleDrag, isTerminalPathInsertTarget, isNativeFilePathInsertTarget]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
@@ -193,6 +211,23 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     dropEdgeRef.current = null;
     setDropEdge(null);
     setInsertPathHint(false);
+
+    // OS (Finder/Explorer) file drop → insert each absolute path into the PTY.
+    if (currentEdge === 'center' && isNativeFilePathInsertTarget(e)) {
+      const targetTerminalId = resolveInsertTargetTerminalId();
+      const paths = getNativeFileDropAbsolutePaths(e.dataTransfer);
+      if (targetTerminalId && paths.length > 0) {
+        let inserted = false;
+        for (const path of paths) {
+          if (insertFilePathIntoTerminal(targetTerminalId, path)) inserted = true;
+        }
+        if (inserted) {
+          usePanelStore.getState().setActivePanelId(panelId);
+          focusPanelControl(panelId);
+        }
+      }
+      return;
+    }
 
     if (currentEdge === 'center' && isTerminalPathInsertTarget(e)) {
       const filePath = getWorkspaceFileDragAbsolutePath(e.dataTransfer);
@@ -389,7 +424,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     if (session) {
       viewSession(session, { forceReload: true });
     }
-  }, [panelId, t, viewSession, isTerminalPathInsertTarget, resolveInsertTargetTerminalId]);
+  }, [panelId, t, viewSession, isTerminalPathInsertTarget, isNativeFilePathInsertTarget, resolveInsertTargetTerminalId]);
 
   return (
     <div

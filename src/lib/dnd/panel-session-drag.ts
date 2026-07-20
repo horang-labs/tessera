@@ -227,7 +227,9 @@ export function setWorkspaceDirectoryDragData(
   };
   dataTransfer.setData(WORKSPACE_FILE_DRAG_MIME, JSON.stringify(payload));
   dataTransfer.setData('text/plain', directoryPath);
-  dataTransfer.effectAllowed = 'copy';
+  // Must stay compatible with the drop zone's dropEffect ('move') — a
+  // mismatch makes the browser cancel the drop without firing the event.
+  dataTransfer.effectAllowed = 'copyMove';
 }
 
 /**

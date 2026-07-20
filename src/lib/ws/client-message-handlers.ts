@@ -461,15 +461,18 @@ function handleTerminalSessionStateMessage(
     return;
   }
 
-  notificationStore.addNotification({
+  const added = notificationStore.addNotification({
     sessionId: msg.sessionId,
     type: msg.status === 'completed' ? 'completed' : 'input_required',
     preview: msg.preview
       ?? (msg.status === 'completed'
         ? 'Terminal task completed'
         : 'Terminal is waiting for input'),
+    dedupKey: msg.stateAt != null
+      ? `${msg.sessionId}:${msg.status}:${msg.stateAt}`
+      : undefined,
   });
-  useSessionStore.getState().incrementUnreadCount(msg.sessionId);
+  if (added) useSessionStore.getState().incrementUnreadCount(msg.sessionId);
 }
 
 function handleInteractivePromptMessage(

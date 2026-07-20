@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   TerminalClipboardKind,
   TerminalClipboardPayload,
@@ -66,6 +66,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternalUrl: (url: string) => ipcRenderer.invoke('shell-open-external-url', url),
   openFilePath: (path: string) => ipcRenderer.invoke('shell-open-path', path),
   revealFilePath: (path: string) => ipcRenderer.invoke('shell-show-item-in-folder', path),
+  // Absolute host path for a File dragged in from Finder/Explorer. The renderer
+  // cannot read File.path directly (removed in Electron 32), so webUtils is the
+  // only supported way to resolve an OS-dropped file to a filesystem path.
+  getDroppedFilePath: (file: File): string => webUtils.getPathForFile(file),
   onPopoutStateChanged: (callback: (count: number) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { count?: number }) => {
       if (typeof payload?.count === 'number') {
