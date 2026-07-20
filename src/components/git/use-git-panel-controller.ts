@@ -1,10 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { wsClient } from "@/lib/ws/client";
-import { isTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useGitPanelStore } from "@/stores/git-panel-store";
-import { useSettingsStore } from "@/stores/settings-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
@@ -15,14 +12,7 @@ import type {
   GitDiffData,
   GitPanelData,
 } from "@/types/git";
-import type { WorkflowStatus } from "@/types/task-entity";
-import type { GitActionId } from "@/lib/git/action-templates";
-import { buildGitActionPrompt } from "./git-action-prompts";
-import {
-  type ActiveGitAction,
-  extractGitPanelErrorMessage,
-  getGitHubActionBlockReason,
-} from "./git-panel-shared";
+import { extractGitPanelErrorMessage } from "./git-panel-shared";
 
 // Optimistic session IDs created by use-session-crud.ts before the server
 // responds with the real id. These never exist in the server DB, so any
@@ -95,18 +85,8 @@ export function useGitPanelController(sessionId: string | null) {
   );
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
-  const [fetching, setFetching] = useState(false);
-
-  const [activeAction, setActiveAction] = useState<ActiveGitAction>(null);
-  const [actionInput, setActionInput] = useState("");
-  const [mergeSource, setMergeSource] = useState("");
-  const [mergePrPromptDraft, setMergePrPromptDraft] = useState("");
-  const [prBaseBranch, setPrBaseBranch] = useState("");
   const lastDiffStatsTokenRef = useRef<string | null>(null);
 
-  const isSessionBusy = useChatStore(
-    (state) => (sessionId ? isTurnInFlight(state, sessionId) : false),
-  );
   const sessionSnapshot = useSessionStore((state) =>
     sessionId ? state.getSession(sessionId) : undefined,
   );
@@ -120,8 +100,6 @@ export function useGitPanelController(sessionId: string | null) {
   const liveSessionPr = useSessionPrStore((state) =>
     !liveTaskId && sessionId ? state.prBySessionId[sessionId] : undefined,
   );
-  const gitConfig = useSettingsStore((state) => state.settings.gitConfig);
-
   const loadPanel = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
 
@@ -300,12 +278,6 @@ export function useGitPanelController(sessionId: string | null) {
     };
   }, [data, liveSessionPr, livePrStatus, sessionSnapshot?.diffStats, taskSnapshot]);
 
-  const closeAction = useCallback(() => {
-    setActiveAction(null);
-    setActionInput("");
-    setMergePrPromptDraft("");
-  }, []);
-
   useEffect(() => {
     const files = panelData?.changedFiles ?? [];
     if (files.length === 0) {
@@ -347,24 +319,6 @@ export function useGitPanelController(sessionId: string | null) {
     loadChangedFiles,
     panelData?.diffStats?.computedAt,
     sessionId,
-  ]);
-
-  useEffect(() => {
-    const prState = panelData?.prStatus?.state;
-    const branchStillOnRemote = panelData?.remoteBranchExists !== false;
-    const hasMergeablePr = prState === "open" && branchStillOnRemote;
-    if (activeAction === "merge-pr" && !hasMergeablePr) {
-      closeAction();
-      return;
-    }
-    if (activeAction === "create-pr" && hasMergeablePr) {
-      closeAction();
-    }
-  }, [
-    activeAction,
-    closeAction,
-    panelData?.prStatus?.state,
-    panelData?.remoteBranchExists,
   ]);
 
   useEffect(() => {
@@ -436,12 +390,6 @@ export function useGitPanelController(sessionId: string | null) {
   const checksUrl = panelData?.prStatus?.url
     ? `${panelData.prStatus.url}/checks`
     : null;
-
-  const reloadPanel = useCallback(async () => {
-    setDiffCache({});
-    setDiffError(null);
-    await loadPanel();
-  }, [loadPanel]);
 
   const copyBranch = useCallback(async () => {
     await writeClipboardText(data?.branch);
@@ -540,326 +488,9 @@ export function useGitPanelController(sessionId: string | null) {
     [panelData, selectedFileIndex],
   );
 
-  const sendActionPrompt = useCallback(
-    (action: GitActionId, vars: Record<string, string>, hint?: string) => {
-      if (!sessionId) return;
-
-      wsClient.sendMessage(
-        sessionId,
-        buildGitActionPrompt({
-          action,
-          globalGuidelines: gitConfig.globalGuidelines,
-          override: gitConfig.actionTemplates?.[action],
-          vars,
-          hint,
-        }),
-      );
-    },
-    [
-      gitConfig.actionTemplates,
-      gitConfig.globalGuidelines,
-      sessionId,
-    ],
-  );
-
-  const mergePrPromptPreview = useMemo(() => {
-    const prNumber = panelData?.prStatus?.number;
-    if (prNumber == null) return "";
-
-    return buildGitActionPrompt({
-      action: "mergePr",
-      globalGuidelines: gitConfig.globalGuidelines,
-      override: gitConfig.actionTemplates?.mergePr,
-      vars: {
-        branch: panelData?.branch ?? "",
-        prNumber: String(prNumber),
-      },
-    });
-  }, [
-    gitConfig.actionTemplates,
-    gitConfig.globalGuidelines,
-    panelData?.branch,
-    panelData?.prStatus?.number,
-  ]);
-
-  const updateCurrentTaskWorkflowStatus = useCallback(
-    (workflowStatus: WorkflowStatus) => {
-      const taskId = liveTaskId ?? sessionSnapshot?.taskId;
-      if (!taskId) return;
-
-      const taskFromStore = useTaskStore.getState().getTask(taskId);
-      const previousWorkflowStatus =
-        taskFromStore?.workflowStatus
-        ?? taskSnapshot?.workflowStatus
-        ?? sessionSnapshot?.workflowStatus
-        ?? "todo";
-
-      if (previousWorkflowStatus === workflowStatus) return;
-
-      const shouldSyncSessionFallback =
-        !taskFromStore && !!sessionId && sessionSnapshot?.taskId === taskId;
-
-      if (shouldSyncSessionFallback) {
-        useSessionStore.getState().syncTaskWorkflowStatus(
-          taskId,
-          previousWorkflowStatus,
-          workflowStatus,
-          sessionId,
-        );
-      }
-
-      void useTaskStore.getState().updateTask(taskId, { workflowStatus }).then((ok) => {
-        if (ok || !shouldSyncSessionFallback) return;
-        useSessionStore.getState().syncTaskWorkflowStatus(
-          taskId,
-          workflowStatus,
-          previousWorkflowStatus,
-        );
-      });
-    },
-    [
-      liveTaskId,
-      sessionId,
-      sessionSnapshot?.taskId,
-      sessionSnapshot?.workflowStatus,
-      taskSnapshot?.workflowStatus,
-    ],
-  );
-
-  const handleCommit = useCallback(() => {
-    if (!sessionId) return;
-    sendActionPrompt("commit", {}, actionInput);
-    void captureTelemetryEvent("git_action_triggered", {
-      source: "git_panel",
-      action: "commit",
-      has_worktree: Boolean(data?.worktreePath),
-      has_changes: Boolean(panelData?.changedFiles.length),
-      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
-    });
-    closeAction();
-  }, [
-    actionInput,
-    closeAction,
-    data?.worktreePath,
-    panelData?.changedFiles.length,
-    panelData?.github.pullRequest,
-    panelData?.prStatus,
-    sendActionPrompt,
-    sessionId,
-  ]);
-
-  const handlePush = useCallback(() => {
-    if (!sessionId) return;
-    sendActionPrompt("push", { branch: data?.branch ?? "" });
-    void captureTelemetryEvent("git_action_triggered", {
-      source: "git_panel",
-      action: "push",
-      has_worktree: Boolean(data?.worktreePath),
-      has_changes: Boolean(panelData?.changedFiles.length),
-      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
-    });
-  }, [
-    data?.branch,
-    data?.worktreePath,
-    panelData?.changedFiles.length,
-    panelData?.github.pullRequest,
-    panelData?.prStatus,
-    sendActionPrompt,
-    sessionId,
-  ]);
-
-  const handlePull = useCallback(() => {
-    if (!sessionId) return;
-    sendActionPrompt("pull", { branch: data?.branch ?? "" });
-    void captureTelemetryEvent("git_action_triggered", {
-      source: "git_panel",
-      action: "pull",
-      has_worktree: Boolean(data?.worktreePath),
-      has_changes: Boolean(panelData?.changedFiles.length),
-      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
-    });
-  }, [
-    data?.branch,
-    data?.worktreePath,
-    panelData?.changedFiles.length,
-    panelData?.github.pullRequest,
-    panelData?.prStatus,
-    sendActionPrompt,
-    sessionId,
-  ]);
-
-  const handleFetch = useCallback(async () => {
-    if (!sessionId || fetching) return;
-
-    void captureTelemetryEvent("git_action_triggered", {
-      source: "git_panel",
-      action: "fetch",
-      has_worktree: Boolean(data?.worktreePath),
-      has_changes: Boolean(panelData?.changedFiles.length),
-      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
-    });
-
-    setFetching(true);
-    setError(null);
-    try {
-      const response = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionId)}/git/fetch`,
-        { method: "POST" },
-      );
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(
-          extractGitPanelErrorMessage(payload, "Failed to fetch git updates."),
-        );
-      }
-
-      setDiffCache({});
-      setDiffError(null);
-      applyGitPanelData(sessionId, payload as GitPanelData);
-    } catch (nextError) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Failed to fetch git updates.",
-      );
-    } finally {
-      setFetching(false);
-    }
-  }, [
-    applyGitPanelData,
-    data?.worktreePath,
-    fetching,
-    panelData?.changedFiles.length,
-    panelData?.github.pullRequest,
-    panelData?.prStatus,
-    sessionId,
-  ]);
-
-  const handleMerge = useCallback(() => {
-    if (!sessionId || !mergeSource) return;
-    sendActionPrompt("merge", {
-      source: mergeSource,
-      current: data?.branch ?? "",
-    });
-    void captureTelemetryEvent("git_action_triggered", {
-      source: "git_panel",
-      action: "merge",
-      has_worktree: Boolean(data?.worktreePath),
-      has_changes: Boolean(panelData?.changedFiles.length),
-      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
-    });
-    closeAction();
-  }, [
-    closeAction,
-    data?.branch,
-    data?.worktreePath,
-    mergeSource,
-    panelData?.changedFiles.length,
-    panelData?.github.pullRequest,
-    panelData?.prStatus,
-    sendActionPrompt,
-    sessionId,
-  ]);
-
-  const handleCreatePr = useCallback(() => {
-    if (!sessionId) return;
-    if (panelData?.github && getGitHubActionBlockReason(panelData.github)) {
-      closeAction();
-      return;
-    }
-
-    const base = prBaseBranch || data?.defaultBranch || "main";
-    const branch = data?.branch ?? "";
-
-    sendActionPrompt(
-      "createPr",
-      { branch, base },
-      actionInput,
-    );
-    void captureTelemetryEvent("git_action_triggered", {
-      source: "git_panel",
-      action: "create_pr",
-      has_worktree: Boolean(data?.worktreePath),
-      has_changes: Boolean(panelData?.changedFiles.length),
-      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
-      github_available: Boolean(panelData?.github.available),
-    });
-    updateCurrentTaskWorkflowStatus("in_review");
-    closeAction();
-  }, [
-    actionInput,
-    closeAction,
-    data?.branch,
-    data?.defaultBranch,
-    data?.worktreePath,
-    panelData?.changedFiles.length,
-    panelData?.github,
-    prBaseBranch,
-    sendActionPrompt,
-    sessionId,
-    updateCurrentTaskWorkflowStatus,
-  ]);
-
-  const handleMergePr = useCallback(() => {
-    if (!sessionId) return;
-    if (panelData?.github && getGitHubActionBlockReason(panelData.github)) {
-      closeAction();
-      return;
-    }
-    const prNumber = panelData?.prStatus?.number;
-    if (prNumber == null) return;
-    const prompt = mergePrPromptDraft.trim();
-    if (!prompt) return;
-
-    wsClient.sendMessage(sessionId, prompt);
-    void captureTelemetryEvent("git_action_triggered", {
-      source: "git_panel",
-      action: "merge_pr",
-      has_worktree: Boolean(data?.worktreePath),
-      has_changes: Boolean(panelData?.changedFiles.length),
-      has_pr: Boolean(panelData?.prStatus || panelData?.github.pullRequest),
-      github_available: Boolean(panelData?.github.available),
-    });
-    updateCurrentTaskWorkflowStatus("done");
-    closeAction();
-  }, [
-    closeAction,
-    data?.worktreePath,
-    mergePrPromptDraft,
-    panelData?.changedFiles.length,
-    panelData?.github,
-    panelData?.prStatus?.number,
-    sessionId,
-    updateCurrentTaskWorkflowStatus,
-  ]);
-
-  const resetMergePrPromptDraft = useCallback(() => {
-    setMergePrPromptDraft(mergePrPromptPreview);
-  }, [mergePrPromptPreview]);
-
-  const openAction = useCallback(
-    (action: Exclude<ActiveGitAction, null>) => {
-      setActiveAction(action);
-      setActionInput("");
-
-      if (action === "merge") {
-        setMergeSource(data?.defaultBranch ?? "main");
-      } else if (action === "create-pr") {
-        setPrBaseBranch(data?.defaultBranch ?? "main");
-      } else if (action === "merge-pr") {
-        setMergePrPromptDraft(mergePrPromptPreview);
-      }
-    },
-    [data?.defaultBranch, mergePrPromptPreview],
-  );
 
   return {
-    actionInput,
-    activeAction,
     changedFileCount,
-    checksUrl,
-    closeAction,
     copyBranch,
     copyFilePath,
     copyWorktreePath,
@@ -868,32 +499,13 @@ export function useGitPanelController(sessionId: string | null) {
     diffError,
     diffLoading,
     error,
-    fetching,
-    handleCommit,
-    handleCreatePr,
-    handleFetch,
-    handleMerge,
-    handleMergePr,
-    handlePull,
-    handlePush,
-    isSessionBusy,
     loading,
-    mergePrPromptDraft,
-    mergePrPromptPreview,
-    mergeSource,
     moveSelection,
-    openAction,
     openExternal,
-    prBaseBranch,
     selectedFile,
     selectedFileIndex,
     selectedPath,
-    setActionInput,
-    setMergePrPromptDraft,
-    setMergeSource,
-    setPrBaseBranch,
     setSelectedPath,
-    resetMergePrPromptDraft,
   };
 }
 

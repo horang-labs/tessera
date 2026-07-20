@@ -10,6 +10,11 @@ import {
   resolveAllowedTerminalCwd,
   resolveTerminalShell,
 } from './terminal-resolver';
+import { getServerPort } from '@/lib/server-port';
+import { revokePaneTokensForTerminal } from './pane-token-registry';
+import { cleanupCodexOverlayForTerminal } from './codex-overlay';
+import { TerminalHeadlessModel } from './terminal-headless-model';
+import { normalizeTerminalColorEnv } from './terminal-color-env';
 import {
   ownsTerminalHandoffLock,
   releaseTerminalHandoffByTerminal,
@@ -22,8 +27,21 @@ import type {
 } from './types';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 
-type SendToUser = (userId: string, message: ServerTransportMessage) => void;
+type SendToConnection = (connectionId: string, message: ServerTransportMessage) => void;
+type TerminalSessionStateMessage = Extract<ServerTransportMessage, { type: 'session_state' }>;
+export interface TerminalSessionRuntimeInfo {
+  cwd: string;
+  generation: number;
+  sessionId: string;
+  terminalId: string;
+  userId: string;
+}
+export type ObserveTerminalSessionRuntime = (
+  info: TerminalSessionRuntimeInfo,
+) => void | (() => void) | Promise<void | (() => void)>;
 const MAX_REPLAY_BUFFER_CHARS = 200_000;
+const MAX_TERMINAL_COLS = 1_000;
+const MAX_TERMINAL_ROWS = 500;
 // 슬래시 fallback 프리필 타이밍 휴리스틱 (PTY 실측 기반)
 const PREFILL_IDLE_MS = 700; // 마지막 출력 후 이만큼 조용하면 ready로 간주
 const PREFILL_MIN_OUTPUT_CHARS = 600; // claude 기동 화면이 충분히 그려졌다는 최소 기준
@@ -35,11 +53,6 @@ const CLOSE_EXIT_POLL_MS = 250;
 const TERMINAL_TRACE_PATH = getTesseraDataPath('terminal-debug.log');
 const nodeRequire = createRequire(__filename);
 
-// xterm generates these replies while a TUI probes terminal capabilities.
-// They arrive through onData just like keyboard input, but must not cancel a
-// pending slash prefill. The token list mirrors replies emitted by xterm.js
-// 5.x (focus, DA/DSR/DECRPM, window metrics, colors, and DECRQSS). Keep it
-// narrow so keyboard escape sequences such as arrows still count as input.
 const AUTOMATED_TERMINAL_RESPONSE_TOKEN = /^(?:\x1b\[[IO]|\x1b\[\??\d+;\d+R|\x1b\[[?>=]?[0-9;]*c|\x1b\[\??[0-9;]+n|\x1b\[\??\d+;[0-4]\$y|\x1b\[(?:4|6|8);\d+;\d+t|\x1b\](?:4;\d+|1[012]);rgb:[0-9a-f]+\/[0-9a-f]+\/[0-9a-f]+(?:\x07|\x1b\\)|\x1bP[01]\$r[^\x1b\x9c]*\x1b\\)/i;
 
 type AutomatedResponseState = 'complete' | 'partial' | 'not-automated';
@@ -48,24 +61,15 @@ function isPotentialAutomatedResponsePrefix(value: string): boolean {
   if (value === '\x1b') return true;
   if (value.startsWith('\x1b[')) {
     const body = value.slice(2);
-    if (body.length === 0) return true;
-    // All xterm-generated CSI replies above consist of numeric parameters,
-    // optional private markers/intermediates, then one final byte. A supported
-    // final byte is consumed by AUTOMATED_TERMINAL_RESPONSE_TOKEN first.
-    return /^[?>=]?[0-9;]*\$?$/.test(body);
+    return body.length === 0 || /^[?>=]?[0-9;]*\$?$/.test(body);
   }
   if (value.startsWith('\x1b]')) {
     const body = value.slice(2);
-    if (body.length === 0) return true;
-    // OSC 4/10/11/12 color reports. Permit only a prefix of those identifiers
-    // and their rgb payload while waiting for BEL or ST.
-    return /^(?:4(?:;\d*)?|1[012]?)(?:;[rgb:0-9a-f/]*)?\x1b?$/i.test(body);
+    return body.length === 0 || /^(?:4(?:;\d*)?|1[012]?)(?:;[rgb:0-9a-f/]*)?\x1b?$/i.test(body);
   }
   if (value.startsWith('\x1bP')) {
     const body = value.slice(2);
-    if (body.length === 0) return true;
-    // DECRQSS response: DCS 0|1 $ r <printable payload> ST.
-    return /^(?:[01](?:\$r?[^\x1b\x9c]*)?)?\x1b?$/.test(body);
+    return body.length === 0 || /^(?:[01](?:\$r?[^\x1b\x9c]*)?)?\x1b?$/.test(body);
   }
   return false;
 }
@@ -75,9 +79,7 @@ function classifyAutomatedTerminalResponse(value: string): AutomatedResponseStat
   let remaining = value;
   while (remaining.length > 0) {
     const token = remaining.match(AUTOMATED_TERMINAL_RESPONSE_TOKEN)?.[0];
-    if (!token) {
-      return isPotentialAutomatedResponsePrefix(remaining) ? 'partial' : 'not-automated';
-    }
+    if (!token) return isPotentialAutomatedResponsePrefix(remaining) ? 'partial' : 'not-automated';
     remaining = remaining.slice(token.length);
   }
   return 'complete';
@@ -96,7 +98,10 @@ function hasUtf8Locale(value: string | undefined): boolean {
   return /\butf-?8\b/i.test(value ?? '');
 }
 
-function buildTerminalEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function buildTerminalEnv(
+  env: NodeJS.ProcessEnv,
+  extra?: Record<string, string | undefined>,
+): NodeJS.ProcessEnv {
   // Merge the login-shell PATH (and on macOS, the full login-shell environment)
   // so that globally installed CLIs (npm, pnpm, volta, etc.) remain discoverable.
   // Finder/Dock-launched Electron apps inherit a minimal system PATH that omits
@@ -112,22 +117,51 @@ function buildTerminalEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     nextEnv.LC_CTYPE = 'UTF-8';
   }
 
-  return nextEnv;
+  // Provider-specific launch metadata inherited by the PTY child process.
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v !== undefined) nextEnv[k] = v;
+    }
+  }
+
+  return normalizeTerminalColorEnv(nextEnv);
+}
+
+interface TerminalOutputFrame {
+  seq: number;
+  data: string;
+}
+
+interface TerminalSubscriber {
+  connectionId: string;
+  surfaceId: string;
+  ready: boolean;
+  pendingFrames: TerminalOutputFrame[];
+  pendingExit?: { exitCode: number; signal?: number };
 }
 
 interface TerminalRuntime {
   terminalId: string;
   userId: string;
+  sessionId: string | null;
+  generation: number;
+  sequence: number;
+  ended: boolean;
+  exitEvent?: { exitCode: number; signal?: number };
   cwd: string;
   shell: string;
   process: TerminalProcessHandle;
+  model: TerminalHeadlessModel;
+  subscribers: Map<string, TerminalSubscriber>;
+  viewportOwner: string | null;
   outputBuffer: string[];
   outputBufferSize: number;
+  // 출력 coalescing(M0): 한 event-loop tick에 도착한 청크를 모아 setImmediate에서
+  // 1회 WS 전송한다. replay 버퍼/prefill 감지와는 독립.
+  pendingSend: string[];
+  pendingSendTimer: ReturnType<typeof setImmediate> | null;
   handoffSessionId?: string;
   prefillPending?: boolean;
-  prefillResult?:
-    | { status: 'written' }
-    | { status: 'cancelled'; message: string };
   closing?: boolean;
   closeWatchdog?: ReturnType<typeof setTimeout>;
   closeWatchdogChecks?: number;
@@ -135,25 +169,32 @@ interface TerminalRuntime {
   automatedResponseTimer?: ReturnType<typeof setTimeout>;
   // 대기 중인 prefill 타이머를 즉시 취소하는 함수(close 시 write-after-kill 방지).
   cancelPrefill?: () => void;
-}
-
-interface PendingTerminalCreate {
-  cancelled: boolean;
-  terminalId: string;
-  userId: string;
-}
-
-export interface TerminalLaunchReservation {
-  readonly key: string;
-  readonly terminalId: string;
-  readonly userId: string;
-  cancelled: boolean;
+  disposeSessionObservers: Array<() => void>;
+  lastSessionState?: TerminalSessionStateMessage;
 }
 
 export interface TerminalManagerOptions {
   closeExitGraceMs?: number;
   closeExitPollMs?: number;
   processIsAlive?: (pid: number) => boolean;
+}
+
+function normalizeTerminalDimension(value: number | undefined, fallback: number, max: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(max, Math.floor(value!)));
+}
+
+function appendWslenv(
+  env: NodeJS.ProcessEnv,
+  entries: Array<{ name: string; path?: boolean }>,
+): void {
+  const existing = (env.WSLENV ?? '').split(':').filter(Boolean);
+  const byName = new Map(existing.map((entry) => [entry.split('/')[0], entry]));
+  for (const entry of entries) {
+    if (env[entry.name] === undefined) continue;
+    byName.set(entry.name, `${entry.name}${entry.path ? '/p' : ''}`);
+  }
+  if (byName.size > 0) env.WSLENV = [...byName.values()].join(':');
 }
 
 async function loadNodePty(): Promise<TerminalPtyFactory> {
@@ -211,134 +252,153 @@ function traceTerminalStage(stage: string, metadata: Record<string, unknown> = {
 
 export class TerminalManager {
   private readonly terminals = new Map<string, TerminalRuntime>();
-  private readonly pendingCreates = new Map<string, PendingTerminalCreate>();
-  private readonly launchReservations = new Map<string, TerminalLaunchReservation>();
+  private readonly openingTerminals = new Map<string, Promise<TerminalRuntime>>();
+  private readonly openingByTerminalKey = new Map<string, Promise<TerminalRuntime>>();
+  private readonly openingSessionByTerminalKey = new Map<string, string | null>();
+  private readonly sessionBindings = new Map<string, string>();
+  private readonly generationByTerminal = new Map<string, number>();
+  private readonly disconnectedConnections = new Set<string>();
+  private readonly blockedSessions = new Set<string>();
+  private readonly cancelledOpeningKeys = new Set<string>();
+  private shuttingDown = false;
 
   constructor(
-    private readonly sendToUser: SendToUser,
+    private readonly sendToConnection: SendToConnection,
     private readonly ptyFactoryLoader: () => Promise<TerminalPtyFactory> = loadNodePty,
+    private readonly observeSessionRuntime?: ObserveTerminalSessionRuntime,
     private readonly managerOptions: TerminalManagerOptions = {},
   ) {}
 
-  reserveTerminalLaunch(terminalId: string, userId: string): TerminalLaunchReservation | null {
-    const key = this.getKey(userId, terminalId);
-    if (
-      this.terminals.has(key)
-      || this.pendingCreates.has(key)
-      || this.launchReservations.has(key)
-    ) {
-      return null;
+  async create(options: TerminalCreateOptions): Promise<void> {
+    const blockedSessionKey = options.sessionId
+      ? this.getSessionKey(options.userId, options.sessionId)
+      : null;
+    if (this.shuttingDown || (blockedSessionKey && this.blockedSessions.has(blockedSessionKey))) {
+      if (options.launchSpec?.handoffSessionId) {
+        releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
+      }
+      options.launchObserverDisposer?.();
+      revokePaneTokensForTerminal(options.terminalId);
+      cleanupCodexOverlayForTerminal(options.terminalId);
+      this.sendToConnection(options.connectionId, {
+        type: 'terminal_error',
+        terminalId: options.terminalId,
+        surfaceId: options.surfaceId,
+        message: this.shuttingDown
+          ? 'Terminal host is shutting down.'
+          : 'Session is closing and cannot open a terminal.',
+      });
+      return;
     }
-    const reservation: TerminalLaunchReservation = {
-      key,
-      terminalId,
-      userId,
-      cancelled: false,
+
+    const boundTerminalId = options.sessionId
+      ? this.sessionBindings.get(this.getSessionKey(options.userId, options.sessionId))
+      : undefined;
+    const resolvedOptions: TerminalCreateOptions = {
+      ...options,
+      terminalId: boundTerminalId ?? options.terminalId,
     };
-    this.launchReservations.set(key, reservation);
-    return reservation;
-  }
-
-  isTerminalLaunchReserved(reservation: TerminalLaunchReservation): boolean {
-    return !reservation.cancelled
-      && this.launchReservations.get(reservation.key) === reservation;
-  }
-
-  releaseTerminalLaunchReservation(reservation: TerminalLaunchReservation): void {
-    if (this.launchReservations.get(reservation.key) === reservation) {
-      this.launchReservations.delete(reservation.key);
-    }
-    reservation.cancelled = true;
-  }
-
-  attach(
-    terminalId: string,
-    userId: string,
-    cols = 80,
-    rows = 24,
-  ): boolean {
-    const runtime = this.getOwnedTerminal(terminalId, userId);
-    if (runtime) {
-      this.resize(terminalId, userId, cols, rows);
-      this.sendStarted(runtime);
-      this.replayBufferedOutput(runtime);
-      this.replayPrefillResult(runtime);
-      return true;
-    }
-    const key = this.getKey(userId, terminalId);
-    return this.pendingCreates.has(key) || this.launchReservations.has(key);
-  }
-
-  async create(
-    options: TerminalCreateOptions,
-    launchReservation?: TerminalLaunchReservation,
-  ): Promise<void> {
-    const key = this.getKey(options.userId, options.terminalId);
+    const key = this.getKey(resolvedOptions.userId, resolvedOptions.terminalId);
+    const openingKey = this.getOpeningKey(
+      resolvedOptions.userId,
+      resolvedOptions.terminalId,
+      resolvedOptions.sessionId,
+    );
     traceTerminalStage('create:enter', {
-      terminalId: options.terminalId,
-      userId: options.userId,
-      cwd: options.cwd,
-      sessionId: options.sessionId,
-      shellKind: options.shellKind,
+      terminalId: resolvedOptions.terminalId,
+      requestedTerminalId: options.terminalId,
+      userId: resolvedOptions.userId,
+      cwd: resolvedOptions.cwd,
+      sessionId: resolvedOptions.sessionId,
+      shellKind: resolvedOptions.shellKind,
     });
     logger.debug({
-      terminalId: options.terminalId,
-      userId: options.userId,
-      cwd: options.cwd,
-      sessionId: options.sessionId,
-      cols: options.cols,
-      rows: options.rows,
+      terminalId: resolvedOptions.terminalId,
+      userId: resolvedOptions.userId,
+      cwd: resolvedOptions.cwd,
+      sessionId: resolvedOptions.sessionId,
+      cols: resolvedOptions.cols,
+      rows: resolvedOptions.rows,
     }, 'Terminal create requested');
-    const existing = this.terminals.get(key);
-    if (existing) {
-      if (options.launchSpec) {
-        throw new Error('This terminal is already running.');
+
+    let runtime = this.terminals.get(key);
+    let createdByRequest = false;
+    if (!runtime) {
+      // A session is the creation lock, not the client-proposed terminal id.
+      // Two windows can propose different ids before the first spawn establishes
+      // its binding; both must still await one PTY.
+      let opening = this.openingTerminals.get(openingKey);
+      if (!opening) {
+        createdByRequest = true;
+        this.cancelledOpeningKeys.delete(key);
+        opening = this.spawnRuntime(resolvedOptions, key);
+        this.openingTerminals.set(openingKey, opening);
+        this.openingByTerminalKey.set(key, opening);
+        this.openingSessionByTerminalKey.set(key, resolvedOptions.sessionId ?? null);
+        void opening.finally(() => {
+          if (this.openingTerminals.get(openingKey) === opening) {
+            this.openingTerminals.delete(openingKey);
+          }
+          if (this.openingByTerminalKey.get(key) === opening) {
+            this.openingByTerminalKey.delete(key);
+            this.openingSessionByTerminalKey.delete(key);
+          }
+          this.cancelledOpeningKeys.delete(key);
+        }).catch(() => {});
       }
-      this.resize(options.terminalId, options.userId, options.cols ?? 80, options.rows ?? 24);
-      this.sendStarted(existing);
-      this.replayBufferedOutput(existing);
-      return;
-    }
-    if (this.pendingCreates.has(key)) {
-      if (options.launchSpec) {
-        throw new Error('This terminal is already starting.');
+
+      try {
+        runtime = await opening;
+      } catch (error) {
+        if (!createdByRequest) {
+          options.launchObserverDisposer?.();
+        }
+        logger.error({ error, terminalId: resolvedOptions.terminalId }, 'Failed to create terminal');
+        this.sendToConnection(resolvedOptions.connectionId, {
+          type: 'terminal_error',
+          terminalId: resolvedOptions.terminalId,
+          surfaceId: resolvedOptions.surfaceId,
+          message: error instanceof Error ? error.message : 'Failed to create terminal',
+        });
+        return;
       }
-      return;
     }
-    if (launchReservation) {
-      if (launchReservation.key !== key || !this.isTerminalLaunchReserved(launchReservation)) {
-        throw new Error('Terminal startup was cancelled.');
-      }
-      this.launchReservations.delete(key);
-    } else if (this.launchReservations.has(key)) {
-      throw new Error('This terminal is reserved for a command launch.');
+
+    if (this.shuttingDown && !runtime.ended) {
+      this.closeRuntime(runtime);
     }
-    const pendingCreate: PendingTerminalCreate = {
-      cancelled: false,
-      terminalId: options.terminalId,
-      userId: options.userId,
-    };
-    this.pendingCreates.set(key, pendingCreate);
-    const handoffSessionId = options.launchSpec?.handoffSessionId;
-    const assertCreateActive = () => {
-      if (pendingCreate.cancelled || this.pendingCreates.get(key) !== pendingCreate) {
+    if (!createdByRequest) {
+      options.launchObserverDisposer?.();
+    }
+    if (this.disconnectedConnections.has(resolvedOptions.connectionId)) return;
+    // A natural exit can race the first/cold attach. Attach once to deliver the
+    // bounded fallback snapshot and exit diagnostics. Explicit close/shutdown
+    // has no exitEvent and must stay silent.
+    if (runtime.ended && !runtime.exitEvent) return;
+    await this.attachRuntime(runtime, resolvedOptions, !createdByRequest);
+  }
+
+  private async spawnRuntime(
+    options: TerminalCreateOptions,
+    key: string,
+  ): Promise<TerminalRuntime> {
+    let terminalProcess: (TerminalProcessHandle & {
+      onData(callback: (data: string) => void): void;
+      onExit(callback: (event: { exitCode: number; signal?: number }) => void): void;
+    }) | null = null;
+    let model: TerminalHeadlessModel | null = null;
+    const assertOpeningActive = () => {
+      if (this.cancelledOpeningKeys.has(key)) {
         throw new Error('Terminal startup was cancelled.');
       }
     };
 
     try {
-      assertCreateActive();
-      if (handoffSessionId && !ownsTerminalHandoffLock(
-        handoffSessionId,
-        options.userId,
-        options.terminalId,
-      )) {
-        throw new Error('The Codex terminal handoff was cancelled.');
-      }
+      assertOpeningActive();
       traceTerminalStage('load-node-pty:before', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal loading node-pty');
       const ptyFactory = await this.ptyFactoryLoader();
-      assertCreateActive();
+      assertOpeningActive();
       traceTerminalStage('load-node-pty:after', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal loaded node-pty');
       traceTerminalStage('resolve-cwd:before', { terminalId: options.terminalId });
@@ -354,7 +414,7 @@ export class TerminalManager {
       }
       traceTerminalStage('resolve-shell-kind:before', { terminalId: options.terminalId });
       const shellKind = await this.resolveShellKind(options);
-      assertCreateActive();
+      assertOpeningActive();
       traceTerminalStage('resolve-shell-kind:after', { terminalId: options.terminalId, shellKind });
       logger.debug({ terminalId: options.terminalId, shellKind }, 'Terminal shell kind resolved');
       traceTerminalStage('resolve-shell:before', { terminalId: options.terminalId });
@@ -379,7 +439,35 @@ export class TerminalManager {
       }, 'Terminal shell resolved');
       traceTerminalStage('spawn:before', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal spawning PTY');
-      const terminalEnv = buildTerminalEnv(process.env);
+      const extraEnv: Record<string, string | undefined> = {
+        ...(options.paneToken
+          ? {
+              TESSERA_PANE_TOKEN: options.paneToken,
+              TESSERA_SESSION_ID: options.sessionId ?? '',
+              TESSERA_HOOK_PORT: String(getServerPort()),
+            }
+          : {}),
+        ...(options.launchEnv ?? {}),
+      };
+      const terminalEnv = buildTerminalEnv(
+        process.env,
+        Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
+      );
+      if (shellKind === 'wsl') {
+        appendWslenv(terminalEnv, [
+          { name: 'TESSERA_PANE_TOKEN' },
+          { name: 'TESSERA_SESSION_ID' },
+          { name: 'TESSERA_HOOK_PORT' },
+          { name: 'TESSERA_OPENCODE_RESUME_ID' },
+          { name: 'CODEX_HOME', path: true },
+          { name: 'OPENCODE_CONFIG_DIR', path: true },
+          { name: 'TERM' },
+          { name: 'COLORTERM' },
+          { name: 'TERM_PROGRAM' },
+        ]);
+      }
+      const cols = normalizeTerminalDimension(options.cols, 80, MAX_TERMINAL_COLS);
+      const rows = normalizeTerminalDimension(options.rows, 24, MAX_TERMINAL_ROWS);
       logger.debug({
         terminalId: options.terminalId,
         shellCommand: shell.command,
@@ -390,6 +478,8 @@ export class TerminalManager {
         envKeys: Object.keys(terminalEnv).length,
         envHasUndefinedValues: Object.entries(terminalEnv).filter(([, v]) => v === undefined).map(([k]) => k),
       }, 'Terminal env before PTY spawn');
+      const handoffSessionId = options.launchSpec?.handoffSessionId;
+      assertOpeningActive();
       if (handoffSessionId && !ownsTerminalHandoffLock(
         handoffSessionId,
         options.userId,
@@ -397,30 +487,53 @@ export class TerminalManager {
       )) {
         throw new Error('The Codex terminal handoff was cancelled.');
       }
-      const terminalProcess = ptyFactory.spawn(shell.command, shell.args, {
+      terminalProcess = ptyFactory.spawn(shell.command, shell.args, {
         name: 'xterm-256color',
-        cols: options.cols ?? 80,
-        rows: options.rows ?? 24,
+        cols,
+        rows,
         cwd: shell.cwd,
         env: terminalEnv,
         ...(getRuntimePlatform() === 'win32' ? { useConpty: false } : {}),
       });
+      const processHandle = terminalProcess;
       traceTerminalStage('spawn:after', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal PTY spawned');
 
+      const generation = (this.generationByTerminal.get(key) ?? 0) + 1;
+      this.generationByTerminal.set(key, generation);
+      model = new TerminalHeadlessModel(cols, rows);
       const runtime: TerminalRuntime = {
         terminalId: options.terminalId,
         userId: options.userId,
+        sessionId: options.sessionId ?? null,
+        generation,
+        sequence: 0,
+        ended: false,
         cwd: shell.displayCwd ?? shell.cwd,
         shell: shell.command,
-        process: terminalProcess,
+        process: processHandle,
+        model,
+        subscribers: new Map(),
+        viewportOwner: null,
         outputBuffer: [],
         outputBufferSize: 0,
-        handoffSessionId: options.launchSpec?.handoffSessionId,
+        pendingSend: [],
+        pendingSendTimer: null,
+        handoffSessionId,
+        prefillPending: Boolean(options.launchSpec?.prefillInput),
+        disposeSessionObservers: options.launchObserverDisposer
+          ? [options.launchObserverDisposer]
+          : [],
       };
       this.terminals.set(key, runtime);
+      if (runtime.sessionId) {
+        this.sessionBindings.set(
+          this.getSessionKey(runtime.userId, runtime.sessionId),
+          runtime.terminalId,
+        );
+      }
 
-      // 미지원 슬래시 명령 fallback: launchCommand(claude)가 기동된 뒤 입력창이
+      // 미지원 슬래시 명령 fallback: provider TUI가 기동된 뒤 입력창이
       // 준비되면 prefillInput을 개행 없이 write한다(자동 실행 X, 사용자가 Enter).
       // ready 판정은 출력이 잠시 idle해지는 시점을 휴리스틱으로 감지하고,
       // 8초 안전장치로 어떤 경우에도 한 번은 프리필되도록 한다.
@@ -433,7 +546,6 @@ export class TerminalManager {
       const prefillInput = resolvedPrefill && resolvedPrefill.length > 0
         ? resolvedPrefill
         : undefined;
-      runtime.prefillPending = Boolean(prefillInput);
       let prefillSent = false;
       let prefillIdleTimer: ReturnType<typeof setTimeout> | null = null;
       let prefillHardTimer: ReturnType<typeof setTimeout> | null = null;
@@ -452,52 +564,45 @@ export class TerminalManager {
       const sendPrefill = () => {
         if (prefillSent || !prefillInput) return;
         if (runtime.automatedResponseCandidate) {
-          // Do not write into the middle of a split xterm protocol reply. The
-          // fragment grace timer will either complete it or cancel the prefill.
           prefillHardTimer = setTimeout(sendPrefill, AUTOMATED_RESPONSE_FRAGMENT_GRACE_MS);
           return;
         }
         prefillSent = true;
+        runtime.prefillPending = false;
         clearPrefillTimers();
-        // 모든 C0/C1 control bytes를 제거한다. 특히 CR/LF는 자동 제출이고
-        // tab/escape는 TUI 동작을 유발하므로 사용자가 직접 Enter를 누르게 한다.
+        // 개행은 자동 제출, 탭은 TUI 자동완성을 유발하므로 공백으로 치환한다
+        // (자동 실행 방지 불변식). 사용자가 확인 후 직접 Enter를 눌러야 한다.
         const sanitized = prefillInput.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ');
         try {
-          terminalProcess.write(sanitized);
-          runtime.prefillPending = false;
+          processHandle.write(sanitized);
           runtime.cancelPrefill = undefined;
-          runtime.prefillResult = { status: 'written' };
-          this.sendToUser(options.userId, {
+          logger.debug({ terminalId: options.terminalId }, 'Terminal prefill written');
+          this.sendToConnection(options.connectionId, {
             type: 'terminal_prefill_written',
             terminalId: options.terminalId,
           });
-          logger.debug({ terminalId: options.terminalId }, 'Terminal prefill written');
         } catch (err) {
-          runtime.prefillPending = false;
-          runtime.cancelPrefill = undefined;
-          const message = 'The terminal opened, but the command could not be entered. Your draft was kept.';
-          runtime.prefillResult = { status: 'cancelled', message };
-          this.sendToUser(options.userId, {
-            type: 'terminal_prefill_cancelled',
-            terminalId: options.terminalId,
-            message,
-          });
           // close()가 onExit보다 먼저 와 PTY가 이미 죽은 경우 write가 throw할 수 있다.
           // setTimeout 콜백에서 던지면 서버 프로세스가 죽으므로 조용히 무시한다.
           logger.debug({ terminalId: options.terminalId, err }, 'Terminal prefill write skipped (pty gone)');
+          runtime.cancelPrefill = undefined;
+          this.sendToConnection(options.connectionId, {
+            type: 'terminal_prefill_cancelled',
+            terminalId: options.terminalId,
+            message: 'Terminal closed before the command could be prepared.',
+          });
         }
       };
       if (prefillInput) {
         prefillHardTimer = setTimeout(sendPrefill, PREFILL_HARD_TIMEOUT_MS);
       }
 
-      terminalProcess.onData((data) => {
+      processHandle.onData((data) => {
+        // replay 버퍼: 원본 청크 순서/내용 그대로 즉시 누적 — coalescing과 독립.
         this.appendBufferedOutput(runtime, data);
-        this.sendToUser(options.userId, {
-          type: 'terminal_output',
-          terminalId: options.terminalId,
-          data,
-        });
+        runtime.model.write(data);
+
+        // prefill 감지: 원본 청크 타이밍에 의존하므로 즉시 처리(WS 전송만 뒤에서 모은다).
         if (prefillInput && !prefillSent) {
           prefillSeenOutput += data.length;
           if (prefillIdleTimer) clearTimeout(prefillIdleTimer);
@@ -511,38 +616,121 @@ export class TerminalManager {
             }
           }, PREFILL_IDLE_MS);
         }
+
+        // WS 전송만 한 tick 모아 1회 전송(flood 완화).
+        this.queueOutput(runtime, data);
       });
 
-      terminalProcess.onExit((event) => {
+      processHandle.onExit((event) => {
         clearPrefillTimers();
-        this.finalizeTerminalExit(runtime, key, event);
+        this.finalizeRuntimeExit(runtime, key, event);
       });
 
-      this.sendStarted(runtime);
+      this.startSessionObserver(runtime);
+
+      return runtime;
     } catch (error) {
-      if (handoffSessionId && ownsTerminalHandoffLock(
-        handoffSessionId,
-        options.userId,
-        options.terminalId,
-      )) {
+      if (options.launchSpec?.handoffSessionId) {
         releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
       }
-      logger.error({ error, terminalId: options.terminalId }, 'Failed to create terminal');
-      this.sendToUser(options.userId, {
-        type: 'terminal_error',
-        terminalId: options.terminalId,
-        message: error instanceof Error ? error.message : 'Failed to create terminal',
-      });
-    } finally {
-      if (this.pendingCreates.get(key) === pendingCreate) {
-        this.pendingCreates.delete(key);
+      try {
+        terminalProcess?.kill();
+      } catch {
+        // Spawn may have failed after allocating a partial native handle.
       }
+      model?.dispose();
+      if (this.terminals.get(key)?.process === terminalProcess) {
+        this.terminals.delete(key);
+      }
+      revokePaneTokensForTerminal(options.terminalId);
+      cleanupCodexOverlayForTerminal(options.terminalId);
+      options.launchObserverDisposer?.();
+      throw error;
     }
   }
 
-  write(terminalId: string, userId: string, data: string): void {
+  private async attachRuntime(
+    runtime: TerminalRuntime,
+    options: Pick<TerminalCreateOptions, 'connectionId' | 'surfaceId' | 'cols' | 'rows'>,
+    reattached: boolean,
+  ): Promise<void> {
+    const subscriberKey = this.getSubscriberKey(options.connectionId, options.surfaceId);
+    const subscriber: TerminalSubscriber = {
+      connectionId: options.connectionId,
+      surfaceId: options.surfaceId,
+      ready: false,
+      pendingFrames: [],
+    };
+
+    this.flushPendingOutput(runtime);
+    const snapshotSeq = runtime.sequence;
+    const fallbackSnapshot = runtime.outputBuffer.join('');
+    runtime.subscribers.set(subscriberKey, subscriber);
+    runtime.viewportOwner = subscriberKey;
+    if (options.cols && options.rows) {
+      this.resizeRuntime(runtime, options.cols, options.rows);
+    }
+    this.sendStarted(runtime, subscriber, reattached);
+
+    try {
+      const snapshot = await runtime.model.snapshot();
+      if (runtime.subscribers.get(subscriberKey) !== subscriber) return;
+      this.sendToConnection(subscriber.connectionId, {
+        type: 'terminal_snapshot',
+        terminalId: runtime.terminalId,
+        surfaceId: subscriber.surfaceId,
+        generation: runtime.generation,
+        seq: snapshotSeq,
+        data: snapshot.data,
+        cols: snapshot.cols,
+        rows: snapshot.rows,
+      });
+    } catch (error) {
+      if (runtime.subscribers.get(subscriberKey) !== subscriber) return;
+      logger.warn({ error, terminalId: runtime.terminalId }, 'Terminal snapshot failed; using raw replay');
+      this.sendToConnection(subscriber.connectionId, {
+        type: 'terminal_snapshot',
+        terminalId: runtime.terminalId,
+        surfaceId: subscriber.surfaceId,
+        generation: runtime.generation,
+        seq: snapshotSeq,
+        data: fallbackSnapshot,
+        cols: normalizeTerminalDimension(options.cols, 80, MAX_TERMINAL_COLS),
+        rows: normalizeTerminalDimension(options.rows, 24, MAX_TERMINAL_ROWS),
+        fallback: true,
+      });
+    }
+
+    if (runtime.subscribers.get(subscriberKey) !== subscriber) return;
+    subscriber.ready = true;
+    const pendingFrames = subscriber.pendingFrames;
+    subscriber.pendingFrames = [];
+    for (const frame of pendingFrames) {
+      if (frame.seq > snapshotSeq) {
+        this.sendOutput(runtime, subscriber, frame);
+      }
+    }
+    if (subscriber.pendingExit) {
+      this.sendExitToSubscriber(runtime, subscriber, subscriber.pendingExit);
+      subscriber.pendingExit = undefined;
+    } else if (runtime.exitEvent) {
+      this.sendExitToSubscriber(runtime, subscriber, runtime.exitEvent);
+    }
+  }
+
+  write(
+    terminalId: string,
+    userId: string,
+    connectionId: string,
+    surfaceId: string,
+    data: string,
+  ): void {
     const runtime = this.getOwnedTerminal(terminalId, userId);
-    if (runtime?.prefillPending && data.length > 0) {
+    if (!runtime || runtime.ended) return;
+    const subscriberKey = this.getSubscriberKey(connectionId, surfaceId);
+    if (!runtime.subscribers.has(subscriberKey)) return;
+    runtime.viewportOwner = subscriberKey;
+    if (runtime.prefillPending && data.length > 0) {
       const candidate = `${runtime.automatedResponseCandidate ?? ''}${data}`;
       const responseState = classifyAutomatedTerminalResponse(candidate);
       if (responseState === 'complete') {
@@ -561,56 +749,125 @@ export class TerminalManager {
         runtime.automatedResponseTimer.unref?.();
       } else {
         this.clearAutomatedResponseCandidate(runtime);
-        // User input wins over a delayed automatic prefill; concatenating the
-        // slash onto user text would be surprising and potentially unsafe.
         this.cancelPendingPrefill(
           runtime,
           'Terminal input arrived before the command was ready. Your draft was kept.',
         );
       }
     }
-    runtime?.process.write(data);
+    runtime.process.write(data);
   }
 
-  resize(terminalId: string, userId: string, cols: number, rows: number): void {
+  /** Route existing chat actions to a terminal-kind session without spawning a headless CLI. */
+  submitSessionInput(sessionId: string, userId: string, data: string): boolean {
+    const terminalId = this.sessionBindings.get(this.getSessionKey(userId, sessionId));
+    if (!terminalId) return false;
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime || runtime.ended || data.length === 0) return false;
+    runtime.process.write(`${data.replace(/[\r\n\t]+/g, ' ')}\r`);
+    return true;
+  }
+
+  recordSessionState(message: TerminalSessionStateMessage, userId: string): void {
+    const runtime = this.getOwnedTerminal(message.terminalId, userId);
+    if (!runtime || runtime.sessionId !== message.sessionId || runtime.ended) return;
+    runtime.lastSessionState = message;
+  }
+
+  getSessionStatesForUser(userId: string): TerminalSessionStateMessage[] {
+    return [...this.terminals.values()]
+      .filter((runtime) => runtime.userId === userId && !runtime.ended && runtime.lastSessionState)
+      .map((runtime) => runtime.lastSessionState!);
+  }
+
+  resize(
+    terminalId: string,
+    userId: string,
+    connectionId: string,
+    surfaceId: string,
+    cols: number,
+    rows: number,
+    claim = false,
+  ): void {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime || runtime.ended) return;
+    const subscriberKey = this.getSubscriberKey(connectionId, surfaceId);
+    if (!runtime.subscribers.has(subscriberKey)) return;
+    if (claim || runtime.viewportOwner === null) {
+      runtime.viewportOwner = subscriberKey;
+    }
+    if (runtime.viewportOwner !== subscriberKey) return;
+    this.resizeRuntime(runtime, cols, rows);
+  }
+
+  detach(terminalId: string, userId: string, connectionId: string, surfaceId: string): void {
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime) return;
-    runtime.process.resize(
-      Math.max(1, Math.floor(cols)),
-      Math.max(1, Math.floor(rows)),
-    );
+    const subscriberKey = this.getSubscriberKey(connectionId, surfaceId);
+    runtime.subscribers.delete(subscriberKey);
+    if (runtime.viewportOwner === subscriberKey) {
+      runtime.viewportOwner = runtime.subscribers.keys().next().value ?? null;
+    }
   }
 
-  close(terminalId: string, userId: string): void {
-    const key = this.getKey(userId, terminalId);
-    const reservation = this.launchReservations.get(key);
-    if (reservation) {
-      reservation.cancelled = true;
-      this.launchReservations.delete(key);
+  detachConnection(connectionId: string): void {
+    this.disconnectedConnections.add(connectionId);
+    for (const runtime of this.terminals.values()) {
+      for (const [subscriberKey, subscriber] of runtime.subscribers) {
+        if (subscriber.connectionId !== connectionId) continue;
+        runtime.subscribers.delete(subscriberKey);
+        if (runtime.viewportOwner === subscriberKey) {
+          runtime.viewportOwner = null;
+        }
+      }
+      if (runtime.viewportOwner === null) {
+        runtime.viewportOwner = runtime.subscribers.keys().next().value ?? null;
+      }
     }
-    const runtime = this.getOwnedTerminal(terminalId, userId);
-    if (!runtime) {
-      const pendingCreate = this.pendingCreates.get(key);
-      if (pendingCreate) pendingCreate.cancelled = true;
-      // A handoff can already be leased while launch intent resolution or PTY
-      // loading is still awaiting. Closing the panel must release it now.
-      releaseTerminalHandoffByTerminal(userId, terminalId);
+  }
+
+  registerConnection(connectionId: string): void {
+    this.disconnectedConnections.delete(connectionId);
+  }
+
+  async close(terminalId: string, userId: string): Promise<void> {
+    const key = this.getKey(userId, terminalId);
+    const existing = this.getOwnedTerminal(terminalId, userId);
+    if (existing) {
+      this.closeRuntime(existing);
       return;
     }
-    if (runtime.closing) return;
+
+    const opening = this.openingByTerminalKey.get(key);
+    if (!opening) return;
+    this.cancelledOpeningKeys.add(key);
+    releaseTerminalHandoffByTerminal(userId, terminalId);
+    try {
+      await opening;
+    } catch {
+      // Failed spawns already clean their token/overlay and have nothing to kill.
+    }
+  }
+
+  private closeRuntime(runtime: TerminalRuntime): void {
+    if (runtime.ended || runtime.closing) return;
+    const { terminalId, userId } = runtime;
     runtime.closing = true;
     this.cancelPendingPrefill(
       runtime,
       'The terminal was closed before the command could be entered. Your draft was kept.',
     );
+    const key = this.getKey(userId, terminalId);
+    let killSignalled = false;
     try {
-      // Keep the handoff lease until node-pty confirms process exit. Releasing
-      // before onExit can briefly give the TUI and app-server the same thread.
       runtime.process.kill();
+      killSignalled = true;
     } catch (error) {
-      // A thrown kill does not prove the PTY is dead. Keep ownership until the
-      // exit callback or PID liveness check confirms termination.
       logger.warn({ error, terminalId }, 'Terminal close signal failed; awaiting exit confirmation');
+    }
+    if (killSignalled && !runtime.handoffSessionId) {
+      this.finalizeRuntimeExit(runtime, key, { exitCode: 0 });
+      return;
     }
     if (this.terminals.get(key) === runtime) {
       this.scheduleCloseWatchdog(
@@ -621,64 +878,22 @@ export class TerminalManager {
     }
   }
 
-  closeAllForUser(userId: string): void {
-    const keyPrefix = `${userId}:`;
-    for (const [key, reservation] of this.launchReservations) {
-      if (!key.startsWith(keyPrefix)) continue;
-      reservation.cancelled = true;
-      this.launchReservations.delete(key);
-      releaseTerminalHandoffByTerminal(reservation.userId, reservation.terminalId);
-    }
-    for (const [key, pendingCreate] of this.pendingCreates) {
-      if (!key.startsWith(keyPrefix)) continue;
-      pendingCreate.cancelled = true;
-      releaseTerminalHandoffByTerminal(pendingCreate.userId, pendingCreate.terminalId);
-    }
-    const ownedTerminalIds = [...this.terminals.values()]
-      .filter((runtime) => runtime.userId === userId)
-      .map((runtime) => runtime.terminalId);
-    for (const terminalId of ownedTerminalIds) {
-      this.close(terminalId, userId);
-    }
-  }
-
-  hasOrPendingTerminal(terminalId: string, userId: string): boolean {
-    const key = this.getKey(userId, terminalId);
-    return this.terminals.has(key)
-      || this.pendingCreates.has(key)
-      || this.launchReservations.has(key);
-  }
-
-  private getOwnedTerminal(terminalId: string, userId: string): TerminalRuntime | null {
-    const runtime = this.terminals.get(this.getKey(userId, terminalId));
-    if (!runtime) return null;
-    if (runtime.userId !== userId) {
-      logger.warn({ terminalId, userId }, 'Rejected terminal access for non-owner');
-      this.sendToUser(userId, {
-        type: 'terminal_error',
-        terminalId,
-        message: 'You do not own this terminal',
-      });
-      return null;
-    }
-    return runtime;
-  }
-
-  private getKey(userId: string, terminalId: string): string {
-    return `${userId}:${terminalId}`;
-  }
-
   private cancelPendingPrefill(runtime: TerminalRuntime, message: string): void {
     if (!runtime.prefillPending) return;
     this.clearAutomatedResponseCandidate(runtime);
     runtime.cancelPrefill?.();
     runtime.cancelPrefill = undefined;
-    runtime.prefillResult = { status: 'cancelled', message };
-    this.sendToUser(runtime.userId, {
-      type: 'terminal_prefill_cancelled',
-      terminalId: runtime.terminalId,
-      message,
-    });
+    runtime.prefillPending = false;
+    const notifiedConnections = new Set<string>();
+    for (const subscriber of runtime.subscribers.values()) {
+      if (notifiedConnections.has(subscriber.connectionId)) continue;
+      notifiedConnections.add(subscriber.connectionId);
+      this.sendToConnection(subscriber.connectionId, {
+        type: 'terminal_prefill_cancelled',
+        terminalId: runtime.terminalId,
+        message,
+      });
+    }
   }
 
   private clearAutomatedResponseCandidate(runtime: TerminalRuntime): void {
@@ -694,24 +909,17 @@ export class TerminalManager {
     runtime.closeWatchdog = setTimeout(() => {
       runtime.closeWatchdog = undefined;
       if (this.terminals.get(key) !== runtime || !runtime.closing) return;
-
       const pid = runtime.process.pid;
       if (!Number.isSafeInteger(pid) || (pid ?? 0) <= 0) {
-        // Production node-pty handles always expose a PID. Without one there is
-        // no safe way to infer death from a missing onExit callback.
         logger.error({ terminalId: runtime.terminalId }, 'Cannot confirm closing terminal exit without a PID');
         return;
       }
-
       const alive = (this.managerOptions.processIsAlive ?? isProcessAlive)(pid as number);
       if (!alive) {
-        this.finalizeTerminalExit(runtime, key, { exitCode: 0 });
+        this.finalizeRuntimeExit(runtime, key, { exitCode: 0 });
         return;
       }
-
       runtime.closeWatchdogChecks = (runtime.closeWatchdogChecks ?? 0) + 1;
-      // If the graceful close did not take effect, escalate once and then keep
-      // polling. Even if this throws, retain the lease while the PID is alive.
       if (runtime.closeWatchdogChecks === 1) {
         try {
           runtime.process.kill(getRuntimePlatform() === 'win32' ? undefined : 'SIGKILL');
@@ -728,12 +936,13 @@ export class TerminalManager {
     runtime.closeWatchdog.unref?.();
   }
 
-  private finalizeTerminalExit(
+  private finalizeRuntimeExit(
     runtime: TerminalRuntime,
     key: string,
     event: { exitCode: number; signal?: number },
   ): void {
-    if (this.terminals.get(key) !== runtime) return;
+    if (runtime.ended) return;
+    const isCurrent = this.terminals.get(key) === runtime;
     if (runtime.closeWatchdog) {
       clearTimeout(runtime.closeWatchdog);
       runtime.closeWatchdog = undefined;
@@ -743,7 +952,16 @@ export class TerminalManager {
       runtime,
       'The terminal exited before the command could be entered. Your draft was kept.',
     );
-    this.terminals.delete(key);
+    runtime.ended = true;
+    runtime.exitEvent = event;
+    this.disposeSessionObserver(runtime);
+    this.flushPendingOutput(runtime);
+    if (isCurrent) {
+      this.terminals.delete(key);
+      this.clearSessionBinding(runtime);
+      revokePaneTokensForTerminal(runtime.terminalId);
+      cleanupCodexOverlayForTerminal(runtime.terminalId);
+    }
     if (runtime.handoffSessionId && ownsTerminalHandoffLock(
       runtime.handoffSessionId,
       runtime.userId,
@@ -751,28 +969,159 @@ export class TerminalManager {
     )) {
       releaseTerminalHandoffByTerminal(runtime.userId, runtime.terminalId);
     }
-    this.sendToUser(runtime.userId, {
-      type: 'terminal_exit',
+    runtime.model?.dispose();
+    this.sendExit(runtime, event);
+  }
+
+  private startSessionObserver(runtime: TerminalRuntime): void {
+    if (!runtime.sessionId || !this.observeSessionRuntime) return;
+
+    void Promise.resolve().then(() => this.observeSessionRuntime?.({
+      cwd: runtime.cwd,
+      generation: runtime.generation,
+      sessionId: runtime.sessionId!,
       terminalId: runtime.terminalId,
-      exitCode: event.exitCode,
-      signal: event.signal,
+      userId: runtime.userId,
+    })).then((dispose) => {
+      if (!dispose) return;
+      if (runtime.ended) {
+        dispose();
+        return;
+      }
+      runtime.disposeSessionObservers.push(dispose);
+    }).catch((error) => {
+      logger.warn({ error, sessionId: runtime.sessionId, terminalId: runtime.terminalId }, 'Terminal session observer failed');
     });
   }
 
-  private replayPrefillResult(runtime: TerminalRuntime): void {
-    if (runtime.prefillResult?.status === 'written') {
-      this.sendToUser(runtime.userId, {
-        type: 'terminal_prefill_written',
-        terminalId: runtime.terminalId,
-      });
+  private disposeSessionObserver(runtime: TerminalRuntime): void {
+    const disposers = (runtime.disposeSessionObservers ?? []).splice(0);
+    for (const dispose of disposers) {
+      try {
+        dispose();
+      } catch (error) {
+        logger.warn({ error, sessionId: runtime.sessionId, terminalId: runtime.terminalId }, 'Terminal session observer cleanup failed');
+      }
+    }
+  }
+
+  async closeAllForUser(userId: string): Promise<void> {
+    const ownedTerminalIds = new Set([...this.terminals.values()]
+      .filter((runtime) => runtime.userId === userId)
+      .map((runtime) => runtime.terminalId));
+    for (const key of this.openingByTerminalKey.keys()) {
+      const prefix = `${userId}:`;
+      if (key.startsWith(prefix)) ownedTerminalIds.add(key.slice(prefix.length));
+    }
+    await Promise.all([...ownedTerminalIds].map((terminalId) => this.close(terminalId, userId)));
+  }
+
+  async closeSession(sessionId: string, userId: string): Promise<void> {
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    const boundTerminalId = this.sessionBindings.get(sessionKey);
+    if (boundTerminalId) {
+      await this.close(boundTerminalId, userId);
       return;
     }
-    if (runtime.prefillResult?.status === 'cancelled') {
-      this.sendToUser(runtime.userId, {
-        type: 'terminal_prefill_cancelled',
-        terminalId: runtime.terminalId,
-        message: runtime.prefillResult.message,
-      });
+
+    // Session deletion can race an async native PTY load/spawn. Wait for that
+    // one in-flight create and immediately tear it down instead of orphaning it.
+    const opening = this.openingTerminals.get(this.getSessionOpeningKey(userId, sessionId));
+    if (!opening) return;
+    try {
+      const runtime = await opening;
+      this.closeRuntime(runtime);
+    } catch {
+      // Failed spawns already clean their token/overlay and have nothing to kill.
+    }
+  }
+
+  preventSessionOpen(sessionId: string, userId: string): void {
+    this.blockedSessions.add(this.getSessionKey(userId, sessionId));
+  }
+
+  allowSessionOpen(sessionId: string, userId: string): void {
+    this.blockedSessions.delete(this.getSessionKey(userId, sessionId));
+  }
+
+  async shutdownAll(): Promise<void> {
+    this.shuttingDown = true;
+    const openings = [...new Set(this.openingTerminals.values())];
+    await Promise.allSettled(openings);
+    const runtimes = [...this.terminals.values()];
+    for (const runtime of runtimes) {
+      this.closeRuntime(runtime);
+    }
+  }
+
+  getRuntimeSummary(): { activeCount: number; sessionCount: number } {
+    const runtimes = [...this.terminals.values()].filter((runtime) => !runtime.ended);
+    const activeKeys = new Set(runtimes.map((runtime) => this.getKey(runtime.userId, runtime.terminalId)));
+    const openingEntries = [...this.openingByTerminalKey.keys()]
+      .filter((key) => !activeKeys.has(key));
+    return {
+      activeCount: runtimes.length + openingEntries.length,
+      sessionCount: runtimes.filter((runtime) => runtime.sessionId !== null).length
+        + openingEntries.filter((key) => this.openingSessionByTerminalKey.get(key) != null).length,
+    };
+  }
+
+  resolveTerminalId(userId: string, requestedTerminalId: string, sessionId?: string | null): string {
+    if (!sessionId) return requestedTerminalId;
+    return this.sessionBindings.get(this.getSessionKey(userId, sessionId)) ?? requestedTerminalId;
+  }
+
+  hasOrIsOpening(
+    terminalId: string,
+    userId: string,
+    sessionId?: string | null,
+  ): boolean {
+    const key = this.getKey(userId, terminalId);
+    return this.terminals.has(key)
+      || this.openingTerminals.has(this.getOpeningKey(userId, terminalId, sessionId));
+  }
+
+  private getOwnedTerminal(terminalId: string, userId: string): TerminalRuntime | null {
+    const runtime = this.terminals.get(this.getKey(userId, terminalId));
+    if (!runtime) return null;
+    if (runtime.userId !== userId) {
+      logger.warn({ terminalId, userId }, 'Rejected terminal access for non-owner');
+      return null;
+    }
+    return runtime;
+  }
+
+  private getKey(userId: string, terminalId: string): string {
+    return `${userId}:${terminalId}`;
+  }
+
+  private getSessionKey(userId: string, sessionId: string): string {
+    return `${userId}:${sessionId}`;
+  }
+
+  private getSessionOpeningKey(userId: string, sessionId: string): string {
+    return `session:${this.getSessionKey(userId, sessionId)}`;
+  }
+
+  private getOpeningKey(
+    userId: string,
+    terminalId: string,
+    sessionId?: string | null,
+  ): string {
+    return sessionId
+      ? this.getSessionOpeningKey(userId, sessionId)
+      : `terminal:${this.getKey(userId, terminalId)}`;
+  }
+
+  private getSubscriberKey(connectionId: string, surfaceId: string): string {
+    return `${connectionId}:${surfaceId}`;
+  }
+
+  private clearSessionBinding(runtime: TerminalRuntime): void {
+    if (!runtime.sessionId) return;
+    const sessionKey = this.getSessionKey(runtime.userId, runtime.sessionId);
+    if (this.sessionBindings.get(sessionKey) === runtime.terminalId) {
+      this.sessionBindings.delete(sessionKey);
     }
   }
 
@@ -787,38 +1136,111 @@ export class TerminalManager {
     return agentEnvironment === 'wsl' ? 'wsl' : options.shellKind;
   }
 
-  private sendStarted(runtime: TerminalRuntime): void {
-    this.sendToUser(runtime.userId, {
+  private sendStarted(
+    runtime: TerminalRuntime,
+    subscriber: TerminalSubscriber,
+    reattached: boolean,
+  ): void {
+    this.sendToConnection(subscriber.connectionId, {
       type: 'terminal_started',
       terminalId: runtime.terminalId,
+      surfaceId: subscriber.surfaceId,
+      generation: runtime.generation,
       cwd: runtime.cwd,
       shell: runtime.shell,
+      reattached,
     });
   }
 
-  private replayBufferedOutput(runtime: TerminalRuntime): void {
-    if (runtime.outputBuffer.length === 0) return;
-    this.sendToUser(runtime.userId, {
+  private sendOutput(
+    runtime: TerminalRuntime,
+    subscriber: TerminalSubscriber,
+    frame: TerminalOutputFrame,
+  ): void {
+    this.sendToConnection(subscriber.connectionId, {
       type: 'terminal_output',
       terminalId: runtime.terminalId,
-      data: runtime.outputBuffer.join(''),
+      surfaceId: subscriber.surfaceId,
+      generation: runtime.generation,
+      seq: frame.seq,
+      data: frame.data,
     });
+  }
+
+  private sendExit(
+    runtime: TerminalRuntime,
+    event: { exitCode: number; signal?: number },
+  ): void {
+    for (const subscriber of runtime.subscribers.values()) {
+      if (!subscriber.ready) {
+        subscriber.pendingExit = event;
+        continue;
+      }
+      this.sendExitToSubscriber(runtime, subscriber, event);
+    }
+  }
+
+  private sendExitToSubscriber(
+    runtime: TerminalRuntime,
+    subscriber: TerminalSubscriber,
+    event: { exitCode: number; signal?: number },
+  ): void {
+    this.sendToConnection(subscriber.connectionId, {
+      type: 'terminal_exit',
+      terminalId: runtime.terminalId,
+      surfaceId: subscriber.surfaceId,
+      generation: runtime.generation,
+      exitCode: event.exitCode,
+      signal: event.signal,
+    });
+  }
+
+  private resizeRuntime(runtime: TerminalRuntime, cols: number, rows: number): void {
+    const normalizedCols = normalizeTerminalDimension(cols, 80, MAX_TERMINAL_COLS);
+    const normalizedRows = normalizeTerminalDimension(rows, 24, MAX_TERMINAL_ROWS);
+    runtime.process.resize(normalizedCols, normalizedRows);
+    runtime.model.resize(normalizedCols, normalizedRows);
+  }
+
+  // 코얼레싱 버퍼에 청크를 쌓고, 예약된 flush가 없으면 setImmediate 1개를 건다.
+  // 같은 tick(poll 단계)에 도착한 모든 청크가 하나의 terminal_output로 합쳐진다.
+  private queueOutput(runtime: TerminalRuntime, data: string): void {
+    runtime.pendingSend.push(data);
+    if (runtime.pendingSendTimer) return;
+    runtime.pendingSendTimer = setImmediate(() => {
+      this.flushPendingOutput(runtime);
+    });
+  }
+
+  // pending 청크를 하나의 data로 이어붙여 1회 전송한다. onExit/close에서 직접 호출하면
+  // 예약된 setImmediate를 취소하고 마지막 출력을 내보낸다(스키마는 그대로 유지).
+  private flushPendingOutput(runtime: TerminalRuntime): void {
+    if (runtime.pendingSendTimer) {
+      clearImmediate(runtime.pendingSendTimer);
+      runtime.pendingSendTimer = null;
+    }
+    if (runtime.pendingSend.length === 0) return;
+    const data = runtime.pendingSend.join('');
+    runtime.pendingSend = [];
+    const frame = { seq: ++runtime.sequence, data };
+    for (const subscriber of runtime.subscribers.values()) {
+      if (subscriber.ready) {
+        this.sendOutput(runtime, subscriber, frame);
+      } else {
+        subscriber.pendingFrames.push(frame);
+      }
+    }
   }
 
   private appendBufferedOutput(runtime: TerminalRuntime, data: string): void {
     runtime.outputBuffer.push(data);
     runtime.outputBufferSize += data.length;
 
-    while (runtime.outputBufferSize > MAX_REPLAY_BUFFER_CHARS && runtime.outputBuffer.length > 0) {
-      const first = runtime.outputBuffer[0];
-      const overflow = runtime.outputBufferSize - MAX_REPLAY_BUFFER_CHARS;
-      if (first.length <= overflow) {
-        runtime.outputBuffer.shift();
-        runtime.outputBufferSize -= first.length;
-      } else {
-        runtime.outputBuffer[0] = first.slice(overflow);
-        runtime.outputBufferSize -= overflow;
-      }
+    // Drop complete PTY chunks only. Cutting through a chunk can begin fallback
+    // replay in the middle of a control sequence and corrupt a fresh xterm.
+    while (runtime.outputBufferSize > MAX_REPLAY_BUFFER_CHARS && runtime.outputBuffer.length > 1) {
+      const first = runtime.outputBuffer.shift();
+      if (first) runtime.outputBufferSize -= first.length;
     }
   }
 }

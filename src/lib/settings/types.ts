@@ -2,6 +2,7 @@ import type { PermissionMode } from '@/lib/ws/message-types';
 import type { ShortcutId } from '@/lib/keyboard/registry';
 import type { GitActionId } from '@/lib/git/action-templates';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 export type Language = 'en' | 'ko' | 'zh' | 'ja';
 export type Theme = 'light' | 'dark' | 'auto';
@@ -46,6 +47,8 @@ export interface TelemetrySettings {
 
 export interface UserSettings {
   language: Language;
+  /** Preferred interaction surface for newly created agent sessions. */
+  agentExecutionMode: AgentExecutionMode;
   profile: UserProfileSettings;
   notifications: {
     soundEnabled: boolean;

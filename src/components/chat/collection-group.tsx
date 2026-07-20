@@ -90,6 +90,7 @@ async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) 
       taskId: task.id,
       collectionId: task.collectionId,
       provider: sessionData.provider,
+      kind: sessionData.kind,
       model: sessionData.model,
       reasoningEffort: sessionData.reasoningEffort,
       serviceTier: sessionData.serviceTier,

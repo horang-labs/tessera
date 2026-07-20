@@ -8,6 +8,7 @@ import {
   isSessionOperationConflictError,
   isTerminalHandoffConflictError,
 } from '@/lib/terminal/terminal-handoff-lock';
+import { terminalManager } from '@/lib/terminal/shared-terminal-manager';
 
 /**
  * DELETE /api/sessions/[id]
@@ -39,6 +40,8 @@ export async function DELETE(
     const sessionRow = getSession(sessionId);
     const projectId = sessionRow?.project_id;
 
+    terminalManager.preventSessionOpen(sessionId, userId);
+    await terminalManager.closeSession(sessionId, userId);
     await sessionOrchestrator.deleteSession(userId, sessionId);
 
     logger.info({ userId, sessionId }, 'Session deleted via API');
@@ -49,8 +52,10 @@ export async function DELETE(
       originClientId: getOriginClientIdFromRequest(request),
     });
 
+    terminalManager.allowSessionOpen(sessionId, userId);
     return NextResponse.json({ success: true });
   } catch (err: any) {
+    terminalManager.allowSessionOpen(sessionId, userId);
     logger.error({
       userId,
       sessionId,

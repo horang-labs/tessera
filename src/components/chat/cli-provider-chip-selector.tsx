@@ -12,6 +12,8 @@ import {
 } from '@/lib/telemetry/client';
 import { ProviderLogoMark } from './provider-brand';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
+import { useSettingsStore } from '@/stores/settings-store';
+import { ProviderExecutionBadge } from './provider-execution-badge';
 
 interface CliProviderChipSelectorProps {
   value: string;
@@ -32,6 +34,7 @@ export function CliProviderChipSelector({
   const loading = useProvidersStore((s) => s.loading);
   const fetchProviders = useProvidersStore((s) => s.fetch);
   const refreshProviders = useProvidersStore((s) => s.refresh);
+  const agentExecutionMode = useSettingsStore((s) => s.settings.agentExecutionMode);
   const reportedIssueKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -118,6 +121,7 @@ export function CliProviderChipSelector({
             isSingle={selectable.length === 1}
             onClick={() => selectable.length > 1 && onChange(provider.id)}
             chipClassName={chipClassName}
+            preferredExecutionMode={agentExecutionMode}
           />
         ))}
         {needsLogin.map((provider) => (
@@ -162,6 +166,7 @@ function ProviderChip({
   onClick,
   variant = 'connected',
   chipClassName,
+  preferredExecutionMode,
 }: {
   provider: ProviderMeta;
   isSelected?: boolean;
@@ -169,6 +174,7 @@ function ProviderChip({
   onClick?: () => void;
   variant?: 'connected' | 'needs-login';
   chipClassName?: string;
+  preferredExecutionMode?: 'pty' | 'gui';
 }) {
   const { t } = useI18n();
 
@@ -216,6 +222,13 @@ function ProviderChip({
         iconClassName="h-2.5 w-2.5"
       />
       <span>{provider.displayName}</span>
+      {preferredExecutionMode && (
+        <ProviderExecutionBadge
+          preferredMode={preferredExecutionMode}
+          providerId={provider.id}
+          testId={`provider-chip-${provider.id}-pty-only`}
+        />
+      )}
     </button>
   );
 }

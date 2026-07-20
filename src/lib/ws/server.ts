@@ -142,6 +142,21 @@ export class WebSocketServer {
     }
   }
 
+  /** Send a transport message only to the renderer connection that owns a terminal surface. */
+  sendToConnectionId(connectionId: string, message: ServerTransportMessage): void {
+    for (const wsSet of this.connections.values()) {
+      for (const ws of wsSet) {
+        if (ws.connectionId !== connectionId || ws.readyState !== WebSocket.OPEN) continue;
+        try {
+          ws.send(JSON.stringify(message));
+        } catch (error) {
+          logger.error({ connectionId, error, messageType: message.type }, 'Failed to send connection message');
+        }
+        return;
+      }
+    }
+  }
+
   private sendToConnection(
     ws: AuthenticatedWebSocket,
     userId: string,
@@ -174,6 +189,7 @@ export class WebSocketServer {
 
     ws.userId = userId;
     ws.connectionId = randomUUID();
+    terminalManager.registerConnection(ws.connectionId);
 
     // Add to connection set for this user
     if (!this.connections.has(userId)) {
@@ -200,16 +216,14 @@ export class WebSocketServer {
     ws.on('close', () => {
       if (ws.connectionId) {
         workspaceFileWatchManager.unsubscribeConnection(ws.connectionId);
+        terminalManager.detachConnection(ws.connectionId);
       }
       const wsSet = this.connections.get(userId);
       if (wsSet) {
         wsSet.delete(ws);
         logger.info({ userId, remainingConnections: wsSet.size }, 'WebSocket closed');
 
-        if (wsSet.size === 0) {
-          this.connections.delete(userId);
-          terminalManager.closeAllForUser(userId);
-        }
+        if (wsSet.size === 0) this.connections.delete(userId);
       }
     });
 
@@ -244,6 +258,13 @@ export class WebSocketServer {
       sessions,
       titleGeneratingSessionIds: getGeneratingTitleSessionIds(userId),
     });
+
+    // Hook state is process state, not a transient WebSocket event. Replay the
+    // latest state only to this new connection so a renderer reload retains
+    // completed/input-required badges without duplicating other windows.
+    for (const message of terminalManager.getSessionStatesForUser(userId)) {
+      this.sendToConnection(ws, userId, message);
+    }
 
     // Send cached rate limit data to new connection
     const cachedRateLimit = getCachedRateLimitData();
@@ -314,6 +335,7 @@ export class WebSocketServer {
         userId,
         message,
         sendToUser: this.sendToUser.bind(this),
+        sendToConnection: this.sendToConnectionId.bind(this),
       });
     } catch (err) {
       logger.error({
@@ -432,6 +454,7 @@ export class WebSocketServer {
     this.stopPingPong();
     this.analysisUnsubscribe?.();
     this.analysisUnsubscribe = null;
+    await terminalManager.shutdownAll();
 
     if (!this.wss) return;
 

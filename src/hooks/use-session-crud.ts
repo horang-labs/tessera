@@ -201,6 +201,7 @@ export function useSessionCrud() {
           archived: false,
           sortOrder: 0,
           worktreeBranch,
+          kind: result.kind,
           provider: result.provider,
           model: result.model,
           reasoningEffort: result.reasoningEffort,

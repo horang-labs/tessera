@@ -25,6 +25,11 @@ interface WorkspaceFileSubscriber {
   userId: string;
 }
 
+interface WorkspaceRootChangeListener {
+  listenerId: string;
+  onChange: (root: string) => void;
+}
+
 interface PendingWatchEvent {
   eventName: WatchEventName;
   relativePath: string;
@@ -47,11 +52,13 @@ interface WorkspaceWatchEntry {
   ready: boolean;
   readyPromise: Promise<void>;
   root: string;
+  rootChangeListeners: Map<string, WorkspaceRootChangeListener>;
   status: WatchStatus;
   subscribers: Map<string, WorkspaceFileSubscriber>;
   truncated: boolean;
   version: number;
   watcher: FSWatcher | null;
+  watcherReadyPromise: Promise<void>;
 }
 
 const CHANGE_DEBOUNCE_MS = 300;
@@ -81,7 +88,7 @@ function toWorkspaceRelativePath(root: string, filePath: string): string {
   return normalizeWorkspaceRelativePath(relativePath);
 }
 
-class WorkspaceFileWatchManager {
+export class WorkspaceFileWatchManager {
   private readonly canceledSubscriberKeys = new Set<string>();
   private readonly closedConnectionIds = new Set<string>();
   private readonly closedConnectionCleanupTimers = new Map<string, NodeJS.Timeout>();
@@ -143,6 +150,51 @@ class WorkspaceFileWatchManager {
     }).catch((error) => {
       logger.warn({ error, root: entry.root }, "Workspace file watch bootstrap failed");
     });
+  }
+
+  async subscribeRootChanges(options: {
+    listenerId: string;
+    onChange: (root: string) => void;
+    root: string;
+  }): Promise<() => void> {
+    const canonicalRoot = await resolveCanonicalWorkspaceRoot(options.root);
+    const entry = this.getOrCreateEntry(canonicalRoot);
+    const listener: WorkspaceRootChangeListener = {
+      listenerId: options.listenerId,
+      onChange: options.onChange,
+    };
+    entry.rootChangeListeners.set(options.listenerId, listener);
+
+    let active = true;
+    const dispose = () => {
+      if (!active) return;
+      active = false;
+      if (entry.rootChangeListeners.get(options.listenerId) === listener) {
+        if (entry.debounceTimer) {
+          clearTimeout(entry.debounceTimer);
+          entry.debounceTimer = null;
+          this.flushChanges(entry);
+        }
+        entry.rootChangeListeners.delete(options.listenerId);
+      }
+      this.closeEntryIfUnused(entry);
+    };
+
+    // Return the disposer without waiting for chokidar readiness. A watcher on
+    // an unavailable filesystem may never emit ready/error; terminal teardown
+    // must still be able to remove the listener and close the watcher.
+    void Promise.all([entry.readyPromise, entry.watcherReadyPromise]).then(() => {
+      if (entry.rootChangeListeners.get(options.listenerId) !== listener) return;
+      try {
+        listener.onChange(entry.root);
+      } catch (error) {
+        logger.warn({ error, listenerId: listener.listenerId, root: entry.root }, "Workspace root change listener failed during initial refresh");
+      }
+    }).catch((error) => {
+      logger.warn({ error, listenerId: listener.listenerId, root: entry.root }, "Workspace root change listener readiness failed");
+    });
+
+    return dispose;
   }
 
   unsubscribe(options: {
@@ -235,11 +287,13 @@ class WorkspaceFileWatchManager {
       ready: false,
       readyPromise: Promise.resolve(),
       root,
+      rootChangeListeners: new Map(),
       status: "starting",
       subscribers: new Map(),
       truncated: false,
       version: 0,
       watcher: null,
+      watcherReadyPromise: Promise.resolve(),
     };
     this.entriesByRoot.set(root, entry);
     this.startWatcher(entry);
@@ -274,6 +328,17 @@ class WorkspaceFileWatchManager {
   }
 
   private startWatcher(entry: WorkspaceWatchEntry): void {
+    let resolveWatcherReady!: () => void;
+    entry.watcherReadyPromise = new Promise<void>((resolve) => {
+      resolveWatcherReady = resolve;
+    });
+    let watcherReadySettled = false;
+    const markWatcherReady = () => {
+      if (watcherReadySettled) return;
+      watcherReadySettled = true;
+      resolveWatcherReady();
+    };
+
     try {
       const watcher = chokidar.watch(entry.root, {
         atomic: true,
@@ -299,7 +364,10 @@ class WorkspaceFileWatchManager {
         this.applyWatchEvent(entry, eventName, relativePath);
       });
 
+      watcher.on("ready", markWatcherReady);
+
       watcher.on("error", (error) => {
+        markWatcherReady();
         entry.status = "fallback";
         logger.warn({ error, root: entry.root }, "Workspace file watcher failed; falling back to visible polling");
         this.emitWatchStatus(entry, "fallback", "watch_error");
@@ -307,6 +375,7 @@ class WorkspaceFileWatchManager {
 
       entry.watcher = watcher;
     } catch (error) {
+      markWatcherReady();
       entry.status = "fallback";
       logger.warn({ error, root: entry.root }, "Failed to start workspace file watcher");
       this.emitWatchStatus(entry, "fallback", "watch_start_failed");
@@ -413,7 +482,7 @@ class WorkspaceFileWatchManager {
 
   private flushChanges(entry: WorkspaceWatchEntry): void {
     entry.debounceTimer = null;
-    if (entry.subscribers.size === 0) return;
+    if (entry.subscribers.size === 0 && entry.rootChangeListeners.size === 0) return;
 
     entry.version += 1;
     const changedPaths = Array.from(entry.pendingChangedPaths)
@@ -430,6 +499,14 @@ class WorkspaceFileWatchManager {
     entry.pendingDeletedPaths.clear();
     entry.pendingTreeChanged = false;
     entry.pendingHasMoreChangedPaths = false;
+
+    for (const listener of entry.rootChangeListeners.values()) {
+      try {
+        listener.onChange(entry.root);
+      } catch (error) {
+        logger.warn({ error, listenerId: listener.listenerId, root: entry.root }, "Workspace root change listener failed");
+      }
+    }
 
     const subscribersByUser = new Map<string, WorkspaceFileSubscriber[]>();
     for (const subscriber of entry.subscribers.values()) {
@@ -474,7 +551,7 @@ class WorkspaceFileWatchManager {
   }
 
   private closeEntryIfUnused(entry: WorkspaceWatchEntry): void {
-    if (entry.subscribers.size > 0) return;
+    if (entry.subscribers.size > 0 || entry.rootChangeListeners.size > 0) return;
 
     this.entriesByRoot.delete(entry.root);
     for (const [sessionId, root] of Array.from(this.rootBySessionId.entries())) {

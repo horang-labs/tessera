@@ -144,6 +144,7 @@ interface SettingsState {
   serverHostInfo: ServerHostInfo | null;
   isOpen: boolean;
   isLoading: boolean;
+  pendingSaveCount: number;
 
   // REQ-007: Sidebar toggle state
   sidebarCollapsed: boolean;
@@ -172,6 +173,7 @@ export const useSettingsStore = create<SettingsState>()(
       serverHostInfo: null,
       isOpen: false,
       isLoading: false,
+      pendingSaveCount: 0,
       sidebarCollapsed: false, // BR-TOGGLE-001: 기본 펼침
       sidebarWidths: {
         list: LIST_SIDEBAR_MIN_WIDTH,
@@ -181,7 +183,10 @@ export const useSettingsStore = create<SettingsState>()(
       sidebarWidth: LIST_SIDEBAR_MIN_WIDTH, // 레거시 호환용 alias (list width)
 
       open: () => set({ isOpen: true }),
-      close: () => set({ isOpen: false }),
+      close: () => {
+        if (get().pendingSaveCount > 0) return;
+        set({ isOpen: false });
+      },
       applyExternalSettings: (externalSettings) => {
         const settings = normalizeUserSettings(externalSettings);
         set({ settings });
@@ -235,7 +240,10 @@ export const useSettingsStore = create<SettingsState>()(
           lastModified: new Date().toISOString(),
         });
 
-        set({ settings: updated });
+        set((state) => ({
+          settings: updated,
+          pendingSaveCount: state.pendingSaveCount + 1,
+        }));
         broadcastSettingsSnapshot(updated);
 
         if (partial.language) {
@@ -263,6 +271,10 @@ export const useSettingsStore = create<SettingsState>()(
           if (partial.language) {
             syncI18nLanguage(prior.language);
           }
+        } finally {
+          set((state) => ({
+            pendingSaveCount: Math.max(0, state.pendingSaveCount - 1),
+          }));
         }
 
         // Environment and CLI command overrides change which binaries are reachable.

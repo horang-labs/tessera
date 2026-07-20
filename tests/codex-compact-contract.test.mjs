@@ -124,12 +124,12 @@ test('Codex compact completion is rendered as a compact boundary system message'
   assert.match(codexParserSource, /provider: 'codex'/);
   assert.ok(
     codexParserSource.indexOf("message: 'Context compacted'") <
-      codexParserSource.indexOf("private handleThreadGoalUpdated"),
+      codexParserSource.indexOf("private handleReasoningTextDelta"),
   );
   assert.doesNotMatch(
     codexParserSource.slice(
       codexParserSource.indexOf('private buildCompactBoundaryMessages'),
-      codexParserSource.indexOf('private handleThreadGoalUpdated'),
+      codexParserSource.indexOf('private handleReasoningTextDelta'),
     ),
     /set_generating/,
   );

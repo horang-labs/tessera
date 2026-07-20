@@ -15,33 +15,53 @@ import {
   endTesseraSessionOperation,
   releaseTerminalHandoffByTerminal,
 } from '../terminal/terminal-handoff-lock';
+import { mintPaneToken } from '../terminal/pane-token-registry';
+import { buildProviderTerminalLaunch } from '../terminal/provider-launch';
+import { createCodexOverlay } from '../terminal/codex-overlay';
+import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
+import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
+import type { TerminalLaunchSpec } from '../terminal/types';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { ProviderMeta } from '../cli/providers/types';
 import {
   clearUnreadFromWebSocket,
-  clearSessionGoalFromWebSocket,
   closeSessionFromWebSocket,
   compactSessionFromWebSocket,
   createSessionFromWebSocket,
-  refreshSessionGoalFromWebSocket,
   resumeSessionFromWebSocket,
   retrySessionFromWebSocket,
   runProcessManagerControlAction,
   sendCommandsListToWebSocketUser,
   sendInteractiveResponseFromWebSocket,
   sendSessionMessageFromWebSocket,
-  setSessionGoalFromWebSocket,
   translateMessageFromWebSocket,
 } from './server-session-actions';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
+type WsSendToConnection = (connectionId: string, message: ServerTransportMessage) => void;
 
 interface RouteClientTransportMessageOptions {
   connectionId: string;
   message: ClientMessage;
+  sendToConnection: WsSendToConnection;
   sendToUser: WsSendToUser;
   userId: string;
+}
+
+const SAFE_TERMINAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function isSafeTerminalIdentity(value: unknown): value is string {
+  return typeof value === 'string' && SAFE_TERMINAL_ID.test(value);
+}
+
+function terminalInputText(content: Extract<ClientMessage, { type: 'send_message' }>['content']): string {
+  if (typeof content === 'string') return content.trim();
+  return content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+    .trim();
 }
 
 export function parseClientTransportMessage(data: Buffer): ClientMessage {
@@ -111,6 +131,7 @@ export function verifyClientSessionAccess(
 export async function routeClientTransportMessage({
   connectionId,
   message,
+  sendToConnection,
   sendToUser,
   userId,
 }: RouteClientTransportMessageOptions): Promise<void> {
@@ -130,6 +151,23 @@ export async function routeClientTransportMessage({
       message: 'Close the Codex terminal before using this session in Tessera.',
     });
     return;
+  }
+
+  if ('terminalId' in message) {
+    const invalidTerminal = !isSafeTerminalIdentity(message.terminalId);
+    const terminalId = !invalidTerminal ? message.terminalId : 'invalid-terminal';
+    const invalidSurface = 'surfaceId' in message && !isSafeTerminalIdentity(message.surfaceId);
+    if (invalidTerminal || invalidSurface) {
+      sendToConnection(connectionId, {
+        type: 'terminal_error',
+        terminalId,
+        ...('surfaceId' in message && typeof message.surfaceId === 'string'
+          ? { surfaceId: message.surfaceId }
+          : {}),
+        message: 'Invalid terminal identity.',
+      });
+      return;
+    }
   }
 
   try {
@@ -153,15 +191,42 @@ export async function routeClientTransportMessage({
       return;
 
     case 'close_session':
-      await closeSessionFromWebSocket({
-        userId,
-        sendToUser,
-        sessionId: message.sessionId,
-        eventType: 'session_closed',
-      });
+      bindTerminalSender(sendToConnection).preventSessionOpen(message.sessionId, userId);
+      try {
+        await bindTerminalSender(sendToConnection).closeSession(message.sessionId, userId);
+        await closeSessionFromWebSocket({
+          userId,
+          sendToUser,
+          sessionId: message.sessionId,
+          eventType: 'session_closed',
+        });
+      } finally {
+        bindTerminalSender(sendToConnection).allowSessionOpen(message.sessionId, userId);
+      }
       return;
 
     case 'send_message':
+      if (
+        dbSessions.extractSessionKind(
+          dbSessions.getSession(message.sessionId)?.provider_state ?? null,
+        ) === 'terminal'
+      ) {
+        const text = terminalInputText(message.content);
+        const submitted = text.length > 0
+          && bindTerminalSender(sendToConnection).submitSessionInput(message.sessionId, userId, text);
+        if (!submitted) {
+          sendToUser(userId, {
+            type: 'error',
+            requestId: message.requestId,
+            sessionId: message.sessionId,
+            code: 'terminal_input_unavailable',
+            message: text.length > 0
+              ? 'The terminal is not running. Open the session and try again.'
+              : 'Terminal sessions only accept text input.',
+          });
+        }
+        return;
+      }
       await sendSessionMessageFromWebSocket({
         userId,
         sendToUser,
@@ -244,37 +309,6 @@ export async function routeClientTransportMessage({
 
     case 'compact_session':
       await compactSessionFromWebSocket({
-        userId,
-        sendToUser,
-        sessionId: message.sessionId,
-        spawnConfig: message.spawnConfig,
-        displayContent: message.displayContent,
-      });
-      return;
-
-    case 'set_session_goal':
-      await setSessionGoalFromWebSocket({
-        userId,
-        sendToUser,
-        sessionId: message.sessionId,
-        spawnConfig: message.spawnConfig,
-        update: message.update,
-        displayContent: message.displayContent,
-      });
-      return;
-
-    case 'refresh_session_goal':
-      await refreshSessionGoalFromWebSocket({
-        userId,
-        sendToUser,
-        sessionId: message.sessionId,
-        spawnConfig: message.spawnConfig,
-        displayContent: message.displayContent,
-      });
-      return;
-
-    case 'clear_session_goal':
-      await clearSessionGoalFromWebSocket({
         userId,
         sendToUser,
         sessionId: message.sessionId,
@@ -390,13 +424,19 @@ export async function routeClientTransportMessage({
       return;
 
     case 'stop_session':
-      await closeSessionFromWebSocket({
-        userId,
-        sendToUser,
-        sessionId: message.sessionId,
-        eventType: 'session_stopped',
-        logMessage: 'Session stopped',
-      });
+      bindTerminalSender(sendToConnection).preventSessionOpen(message.sessionId, userId);
+      try {
+        await bindTerminalSender(sendToConnection).closeSession(message.sessionId, userId);
+        await closeSessionFromWebSocket({
+          userId,
+          sendToUser,
+          sessionId: message.sessionId,
+          eventType: 'session_stopped',
+          logMessage: 'Session stopped',
+        });
+      } finally {
+        bindTerminalSender(sendToConnection).allowSessionOpen(message.sessionId, userId);
+      }
       return;
 
     case 'get_commands':
@@ -419,100 +459,216 @@ export async function routeClientTransportMessage({
       await checkCliStatusForWebSocketUser(userId, message.requestId, sendToUser);
       return;
 
-    case 'terminal_create':
-      const terminalManager = bindTerminalSender(sendToUser);
-      const launchReservation = message.launchIntent
-        ? terminalManager.reserveTerminalLaunch(message.terminalId, userId) ?? undefined
-        : undefined;
-      if (message.launchIntent && !launchReservation) {
-        if (terminalManager.attach(
-          message.terminalId,
-          userId,
-          message.cols,
-          message.rows,
-        )) {
+    case 'terminal_create': {
+      const structured = message.launch;
+      const isStructuredClaude = structured?.providerId === 'claude-code';
+      const isStructuredCodex = structured?.providerId === 'codex';
+      const isStructuredOpenCode = structured?.providerId === 'opencode';
+
+      if (structured) {
+        const session = dbSessions.getSession(structured.sessionId);
+        const supportedProvider = isStructuredClaude || isStructuredCodex || isStructuredOpenCode;
+        const matchesPersistedSession = session
+          && session.provider === structured.providerId
+          && dbSessions.extractSessionKind(session.provider_state) === 'terminal';
+        if (!supportedProvider || !matchesPersistedSession) {
+          sendToConnection(connectionId, {
+            type: 'terminal_error',
+            terminalId: message.terminalId,
+            surfaceId: message.surfaceId,
+            message: 'Terminal launch does not match the persisted session provider.',
+          });
           return;
         }
-        sendToUser(userId, {
-          type: 'terminal_error',
-          terminalId: message.terminalId,
-          message: 'This terminal is already running or starting.',
-        });
+      }
+
+      // 보안: 구조화 launch의 sessionId(클라 입력)를 소유 검증 — 남의 세션 resume 차단(codex 동일).
+      if (
+        (isStructuredClaude || isStructuredCodex || isStructuredOpenCode) && structured
+        && !verifyClientSessionAccess(userId, { ...message, sessionId: structured.sessionId }, sendToUser)
+      ) {
         return;
       }
+
+      // create/cwd allowlist용 sessionId(기존 동작 유지).
+      const sessionId = structured?.sessionId ?? message.sessionId ?? null;
+      const manager = bindTerminalSender(sendToConnection);
+      const terminalId = manager.resolveTerminalId(userId, message.terminalId, sessionId);
+      const terminalExists = manager.hasOrIsOpening(terminalId, userId, sessionId);
+      let launchSpec: TerminalLaunchSpec | undefined;
+      let providerId: string | undefined;
+      let launchEnv: Record<string, string> | undefined;
+      let launchObserverDisposer: (() => void) | undefined;
       let acquiredHandoff = false;
-      try {
-        const launchSpec = message.launchIntent
-          ? await resolveTerminalLaunchIntent({
-              intent: message.launchIntent,
-              sessionId: message.sessionId,
-              terminalId: message.terminalId,
-              userId,
-            })
-          : undefined;
-        acquiredHandoff = Boolean(launchSpec?.handoffSessionId);
-        if (launchReservation && !terminalManager.isTerminalLaunchReserved(launchReservation)) {
-          throw new TerminalLaunchIntentError(
-            'Terminal startup was cancelled.',
-            'terminal_cancelled',
-          );
-        }
-        if (launchSpec?.handoffSessionId) {
-          await closeSessionFromWebSocket({
-            userId,
-            sendToUser,
-            sessionId: launchSpec.handoffSessionId,
-            eventType: 'session_stopped',
-            logMessage: 'Session handed off to Codex terminal',
+
+      if (!terminalExists && isStructuredClaude && structured) {
+        providerId = 'claude-code';
+        const settingsJson = buildClaudeHookSettingsJson();
+        const resume = dbSessions.isTerminalLaunched(
+          dbSessions.getSession(structured.sessionId)?.provider_state ?? null,
+        );
+        const built = buildProviderTerminalLaunch({
+          providerId: 'claude-code',
+          sessionId: structured.sessionId,
+          resume,
+          settingsJson,
+        });
+        launchSpec = {
+          program: built.command,
+          args: built.args,
+          prefillInput: message.prefillInput,
+        };
+      } else if (!terminalExists && isStructuredCodex && structured) {
+        providerId = 'codex';
+        // resume 판정: 이전 SessionStart 훅에서 캡처한 codexSessionId(rollout id)가 있으면 resume.
+        const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
+        const codexResumeId = dbSessions.extractCodexTerminalSessionId(state);
+        const built = buildProviderTerminalLaunch({
+          providerId: 'codex',
+          sessionId: structured.sessionId,
+          resume: !!codexResumeId,
+          codexResumeId,
+        });
+        launchSpec = {
+          program: built.command,
+          args: built.args,
+          prefillInput: message.prefillInput,
+        };
+        // CODEX_HOME 오버레이 생성(hooks.json 주입) — env로만 자식에 전달.
+        launchEnv = { CODEX_HOME: createCodexOverlay(terminalId) };
+      } else if (!terminalExists && isStructuredOpenCode && structured) {
+        providerId = 'opencode';
+        const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
+        const opencodeResumeId = dbSessions.extractOpenCodeTerminalSessionId(state);
+        try {
+          const overlay = createOpenCodeOverlay(terminalId);
+          launchObserverDisposer = overlay.dispose;
+          launchEnv = {
+            OPENCODE_CONFIG_DIR: overlay.configDir,
+            ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
+          };
+          const built = buildProviderTerminalLaunch({
+            providerId: 'opencode',
+            sessionId: structured.sessionId,
+            resume: !!opencodeResumeId,
+            opencodeResumeId,
           });
+          launchSpec = {
+            program: built.command,
+            args: built.args,
+            prefillInput: message.prefillInput,
+          };
+        } catch (error) {
+          launchObserverDisposer?.();
+          sendToConnection(connectionId, {
+            type: 'terminal_error',
+            terminalId: message.terminalId,
+            surfaceId: message.surfaceId,
+            message: error instanceof Error ? error.message : 'Unable to prepare the OpenCode invocation.',
+          });
+          return;
         }
-        if (launchReservation && !terminalManager.isTerminalLaunchReserved(launchReservation)) {
-          throw new TerminalLaunchIntentError(
-            'Terminal startup was cancelled.',
-            'terminal_cancelled',
-          );
+      } else if (!terminalExists && message.launchIntent) {
+        try {
+          launchSpec = await resolveTerminalLaunchIntent({
+            intent: message.launchIntent,
+            sessionId: message.sessionId,
+            terminalId,
+            userId,
+          });
+          acquiredHandoff = Boolean(launchSpec.handoffSessionId);
+          if (launchSpec.handoffSessionId) {
+            await closeSessionFromWebSocket({
+              userId,
+              sendToUser,
+              sessionId: launchSpec.handoffSessionId,
+              eventType: 'session_stopped',
+              logMessage: 'Session handed off to Codex terminal',
+            });
+          }
+        } catch (error) {
+          if (acquiredHandoff) releaseTerminalHandoffByTerminal(userId, terminalId);
+          logger.warn({ error, terminalId }, 'Rejected terminal launch intent');
+          sendToConnection(connectionId, {
+            type: 'terminal_error',
+            terminalId,
+            surfaceId: message.surfaceId,
+            message: error instanceof TerminalLaunchIntentError
+              ? error.message
+              : 'Failed to prepare terminal command.',
+          });
+          return;
         }
-        await terminalManager.create({
+      }
+
+      // paneToken sessionId: slash-fallback은 ambient(chat) id라 상태 오귀속 방지 위해 null.
+      const tokenSessionId = (
+        isStructuredClaude || isStructuredCodex || isStructuredOpenCode
+      ) && structured ? structured.sessionId : null;
+      const paneToken = !terminalExists && providerId
+        ? mintPaneToken({ terminalId, userId, sessionId: tokenSessionId, providerId })
+        : undefined;
+
+      try {
+        await manager.create({
           userId,
-          terminalId: message.terminalId,
-          cwd: launchSpec?.cwd ?? message.cwd,
-          sessionId: message.sessionId,
-          // Launch intents use the server-side environment; only ordinary raw
-          // terminals may accept a client-selected shell.
+          connectionId,
+          surfaceId: message.surfaceId,
+          terminalId,
+          cwd: message.cwd,
+          sessionId,
           shellKind: launchSpec ? undefined : message.shellKind,
           cols: message.cols,
           rows: message.rows,
           launchSpec,
-        }, launchReservation);
-      } catch (error) {
-        if (acquiredHandoff) {
-          releaseTerminalHandoffByTerminal(userId, message.terminalId);
-        }
-        logger.warn({ error, terminalId: message.terminalId }, 'Rejected terminal launch intent');
-        sendToUser(userId, {
-          type: 'terminal_error',
-          terminalId: message.terminalId,
-          message: error instanceof TerminalLaunchIntentError
-            ? error.message
-            : 'Failed to prepare terminal command.',
+          paneToken,
+          providerId,
+          launchEnv,
+          launchObserverDisposer,
         });
-      } finally {
-        if (launchReservation) {
-          terminalManager.releaseTerminalLaunchReservation(launchReservation);
-        }
+      } catch (error) {
+        launchObserverDisposer?.();
+        if (acquiredHandoff) releaseTerminalHandoffByTerminal(userId, terminalId);
+        throw error;
       }
+      // markTerminalLaunched는 여기서 안 한다(brick finding): create()가 실패를 삼키므로,
+      // 실제 claude가 세션을 persist한 시점 = SessionStart hook 수신 시(S4)에 마커를 찍는다.
+      return;
+    }
+
+    case 'terminal_detach':
+      bindTerminalSender(sendToConnection).detach(
+        message.terminalId,
+        userId,
+        connectionId,
+        message.surfaceId,
+      );
       return;
 
     case 'terminal_input':
-      bindTerminalSender(sendToUser).write(message.terminalId, userId, message.data);
+      bindTerminalSender(sendToConnection).write(
+        message.terminalId,
+        userId,
+        connectionId,
+        message.surfaceId,
+        message.data,
+      );
       return;
 
     case 'terminal_resize':
-      bindTerminalSender(sendToUser).resize(message.terminalId, userId, message.cols, message.rows);
+      bindTerminalSender(sendToConnection).resize(
+        message.terminalId,
+        userId,
+        connectionId,
+        message.surfaceId,
+        message.cols,
+        message.rows,
+        message.claim,
+      );
       return;
 
     case 'terminal_close':
-      bindTerminalSender(sendToUser).close(message.terminalId, userId);
+      await bindTerminalSender(sendToConnection).close(message.terminalId, userId);
       return;
 
     case 'subscribe_workspace_files':

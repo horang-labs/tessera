@@ -1,27 +1,49 @@
 'use client';
 
-import { useCallback, useContext, useEffect, useRef, useState, type DragEvent } from 'react';
-import { GripVertical, Terminal as TerminalIcon, X } from 'lucide-react';
-import { wsClient } from '@/lib/ws/client';
-import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type DragEvent,
+} from 'react';
+import { GripVertical, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TabIdContext, usePanelStore } from '@/stores/panel-store';
+import { useTabStore } from '@/stores/tab-store';
 import { useChatStore } from '@/stores/chat-store';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
 import {
-  setPendingTerminalLaunch,
-  takePendingTerminalLaunch,
-  type PendingTerminalLaunch,
-} from '@/lib/terminal/pending-terminal-launch';
-import { dispatchTerminalLaunchResult } from '@/lib/terminal/terminal-launch-result';
-import { clearClientTerminalHandoff } from '@/lib/terminal/client-terminal-handoff-state';
+  closeAndDisposeTerminalSurface,
+  getTerminalSurface,
+} from '@/lib/terminal/terminal-surface-registry';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
+import { useIsDark } from '@/hooks/use-is-dark';
+import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 
 interface TerminalPanelProps {
   panelId: string;
   terminalId: string;
   terminalSessionId: string | null;
+  /** Terminal-mode sessions own their PTY independently from this React mount. */
+  sessionOwned?: boolean;
+  launch?: { providerId: string; sessionId: string };
+}
+
+function isTerminalAssignedToPanel(
+  tabId: string,
+  panelId: string,
+  terminalId: string,
+  terminalSessionId: string | null,
+  sessionOwned: boolean,
+): boolean {
+  const panel = usePanelStore.getState().tabPanels[tabId]?.panels[panelId];
+  return sessionOwned
+    ? panel?.sessionId === terminalSessionId
+    : panel?.terminalId === terminalId;
 }
 
 function isTerminalAssignedToAnyPanel(terminalId: string): boolean {
@@ -31,253 +53,176 @@ function isTerminalAssignedToAnyPanel(terminalId: string): boolean {
   );
 }
 
-export function TerminalPanel({ panelId, terminalId, terminalSessionId }: TerminalPanelProps) {
+export function TerminalPanel({
+  panelId,
+  terminalId,
+  terminalSessionId,
+  sessionOwned = false,
+  launch,
+}: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
+  const isDark = useIsDark();
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<any>(null);
-  const fitAddonRef = useRef<any>(null);
-  const pendingLaunchRef = useRef<PendingTerminalLaunch | null>(null);
-  const closeRequestedRef = useRef(false);
-  const [status, setStatus] = useState<'starting' | 'running' | 'exited' | 'error'>('starting');
-  const [subtitle, setSubtitle] = useState('Starting terminal...');
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
+  const isTabActive = useTabStore((state) => state.activeTabId === tabId);
+  const isPanelActive = usePanelStore((state) => (
+    state.activeTabId === tabId && state.tabPanels[tabId]?.activePanelId === panelId
+  ));
+  const surface = useMemo(() => getTerminalSurface({
+    registryKey: `${tabId}:${panelId}:${terminalId}`,
+    terminalId,
+    cwd: getInitialTerminalCwd(terminalSessionId),
+    sessionId: getSessionSelectionId(terminalSessionId),
+    launch,
+  }), [launch, panelId, tabId, terminalId, terminalSessionId]);
+  const { status, subtitle } = useSyncExternalStore(
+    surface.subscribe,
+    surface.getSnapshot,
+    surface.getSnapshot,
+  );
+  const terminalTheme = getTerminalTheme(isDark);
+
+  useEffect(() => {
+    surface.setTheme(getTerminalTheme(isDark));
+  }, [isDark, surface]);
 
   const handlePanelDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     const didSet = setPanelNodeDragData(event.dataTransfer, { tabId, panelId });
-    if (!didSet) {
-      event.preventDefault();
-    }
+    if (!didSet) event.preventDefault();
   }, [panelId, tabId]);
 
-  const handleCloseTerminal = useCallback(() => {
-    closeRequestedRef.current = true;
-    clearClientTerminalHandoff(terminalId);
-    wsClient.closeTerminal(terminalId);
-    assignTerminal(panelId, null);
-  }, [assignTerminal, panelId, terminalId]);
-
-  useEffect(() => {
-    let disposed = false;
-    let resizeObserver: ResizeObserver | null = null;
-    closeRequestedRef.current = false;
-    const unsubscribe = wsClient.subscribeServerMessages((message: ServerTransportMessage) => {
-      if (!('terminalId' in message) || message.terminalId !== terminalId) return;
-
-      if (message.type === 'terminal_started') {
-        setStatus('running');
-        setSubtitle(`${message.shell} - ${message.cwd}`);
-        return;
-      }
-
-      if (message.type === 'terminal_prefill_written') {
-        const pendingLaunch = pendingLaunchRef.current;
-        if (pendingLaunch?.sourceSessionId) {
-          pendingLaunchRef.current = null;
-          dispatchTerminalLaunchResult({
-            terminalId,
-            sourceSessionId: pendingLaunch.sourceSessionId,
-            commandInput: pendingLaunch.intent.commandInput,
-            status: 'started',
-          });
-        }
-        return;
-      }
-
-      if (message.type === 'terminal_prefill_cancelled') {
-        const pendingLaunch = pendingLaunchRef.current;
-        if (!pendingLaunch?.locksSourceSession) {
-          clearClientTerminalHandoff(terminalId);
-        }
-        if (pendingLaunch?.sourceSessionId) {
-          pendingLaunchRef.current = null;
-          dispatchTerminalLaunchResult({
-            terminalId,
-            sourceSessionId: pendingLaunch.sourceSessionId,
-            commandInput: pendingLaunch.intent.commandInput,
-            status: 'error',
-            message: message.message,
-          });
-        }
-        return;
-      }
-
-      if (message.type === 'terminal_output') {
-        terminalRef.current?.write(message.data);
-        return;
-      }
-
-      if (message.type === 'terminal_exit') {
-        clearClientTerminalHandoff(terminalId);
-        setStatus('exited');
-        setSubtitle(`Terminal exited with code ${message.exitCode}`);
-        const pendingLaunch = pendingLaunchRef.current;
-        if (pendingLaunch?.sourceSessionId) {
-          pendingLaunchRef.current = null;
-          dispatchTerminalLaunchResult({
-            terminalId,
-            sourceSessionId: pendingLaunch.sourceSessionId,
-            commandInput: pendingLaunch.intent.commandInput,
-            status: 'error',
-            message: 'The terminal exited before the command was ready. Your draft was kept.',
-          });
-        }
-        return;
-      }
-
-      if (message.type === 'terminal_error') {
-        clearClientTerminalHandoff(terminalId);
-        setStatus('error');
-        setSubtitle(message.message);
-        const pendingLaunch = pendingLaunchRef.current;
-        if (pendingLaunch?.sourceSessionId) {
-          pendingLaunchRef.current = null;
-          dispatchTerminalLaunchResult({
-            terminalId,
-            sourceSessionId: pendingLaunch.sourceSessionId,
-            commandInput: pendingLaunch.intent.commandInput,
-            status: 'error',
-            message: message.message,
-          });
-        }
-      }
-    });
-
-    async function mountTerminal() {
-      try {
-        const [{ Terminal }, { FitAddon }] = await Promise.all([
-          import('@xterm/xterm'),
-          import('@xterm/addon-fit'),
-        ]);
-        if (disposed || !containerRef.current) return;
-
-        const terminal = new Terminal({
-          cursorBlink: true,
-          convertEol: true,
-          fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-          fontSize: 12,
-          theme: {
-            background: '#0f1115',
-            foreground: '#d7dde3',
-            cursor: '#d7dde3',
-          },
-        });
-        const fitAddon = new FitAddon();
-        terminal.loadAddon(fitAddon);
-        terminal.open(containerRef.current);
-        fitAddon.fit();
-        terminal.focus();
-
-        terminal.onData((data: string) => {
-          wsClient.sendTerminalInput(terminalId, data);
-        });
-
-        terminalRef.current = terminal;
-        fitAddonRef.current = fitAddon;
-
-        if (connectionStatus !== 'connected') {
-          setStatus('starting');
-          setSubtitle('Waiting for server connection...');
-          return;
-        }
-
-        const dimensions = fitAddon.proposeDimensions();
-        // 미지원 슬래시 명령 fallback으로 생성된 터미널이면 1회성 launch/prefill을 소비한다.
-        const pendingLaunch = takePendingTerminalLaunch(terminalId);
-        pendingLaunchRef.current = pendingLaunch ?? null;
-        const didCreateTerminal = wsClient.createTerminal({
-          terminalId,
-          cwd: getInitialTerminalCwd(terminalSessionId),
-          sessionId: getSessionSelectionId(terminalSessionId),
-          cols: dimensions?.cols,
-          rows: dimensions?.rows,
-          launchIntent: pendingLaunch?.intent,
-        });
-        if (!didCreateTerminal) {
-          // 전송 실패 시 소비한 pending launch를 되돌려 재연결 시 재사용되도록 한다.
-          if (pendingLaunch) setPendingTerminalLaunch(terminalId, pendingLaunch);
-          pendingLaunchRef.current = null;
-          setStatus('starting');
-          setSubtitle('Waiting for server connection...');
-          return;
-        }
-
-        resizeObserver = new ResizeObserver(() => {
-          if (!fitAddonRef.current) return;
-          fitAddonRef.current.fit();
-          const next = fitAddonRef.current.proposeDimensions();
-          if (next) {
-            wsClient.resizeTerminal(terminalId, next.cols, next.rows);
-          }
-        });
-        resizeObserver.observe(containerRef.current);
-      } catch (error) {
-        setStatus('error');
-        setSubtitle(error instanceof Error ? error.message : 'Terminal failed to load.');
-      }
+  const handleTerminalAction = useCallback(() => {
+    if (status === 'exited' || status === 'error') {
+      void surface.restart();
+      return;
     }
 
-    void mountTerminal();
+    if (sessionOwned) {
+      surface.close();
+      return;
+    }
 
+    closeAndDisposeTerminalSurface(surface);
+    assignTerminal(panelId, null);
+  }, [assignTerminal, panelId, sessionOwned, status, surface]);
+
+  useEffect(() => {
+    const host = containerRef.current;
+    if (!host) return;
+
+    void surface.mount(host);
     return () => {
-      disposed = true;
-      unsubscribe();
-      resizeObserver?.disconnect();
-      const unresolvedLaunch = pendingLaunchRef.current;
-      if (unresolvedLaunch && isTerminalAssignedToAnyPanel(terminalId)) {
-        setPendingTerminalLaunch(terminalId, unresolvedLaunch);
-      }
-      pendingLaunchRef.current = null;
-      terminalRef.current?.dispose?.();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
-      if (!closeRequestedRef.current && !isTerminalAssignedToAnyPanel(terminalId)) {
-        clearClientTerminalHandoff(terminalId);
-        wsClient.closeTerminal(terminalId);
-      }
+      surface.unmount(host);
+      // Moving a panel can transiently unmount it. Check ownership after the
+      // store update settles. A moved surface detaches; an actually removed
+      // standalone terminal is the only case that kills the PTY.
+      setTimeout(() => {
+        const remainsInSamePanel = isTerminalAssignedToPanel(
+          tabId,
+          panelId,
+          terminalId,
+          terminalSessionId,
+          sessionOwned,
+        );
+        if (remainsInSamePanel && useTabStore.getState().lruTabIds.includes(tabId)) return;
+
+        // LRU eviction removes the React tree while retaining panel ownership.
+        // Release the xterm/subscriber but keep the server PTY for cold attach.
+        if (remainsInSamePanel) {
+          surface.dispose();
+          return;
+        }
+
+        if (sessionOwned || isTerminalAssignedToAnyPanel(terminalId)) {
+          surface.dispose();
+        } else {
+          closeAndDisposeTerminalSurface(surface);
+        }
+      }, 0);
     };
-  }, [connectionStatus, terminalId, terminalSessionId]);
+  }, [panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId]);
+
+  useEffect(() => {
+    if (connectionStatus !== 'connected' || !isTabActive) return;
+    void surface.ensureConnected().then((connected) => {
+      if (connected && isPanelActive) surface.activate();
+    });
+  }, [connectionStatus, isPanelActive, isTabActive, surface]);
+
+  const canRestart = status === 'exited' || status === 'error';
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0f1115] text-[#d7dde3]" data-testid="terminal-panel">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-white/10 px-2 text-xs">
-        <button
-          type="button"
-          draggable
-          onDragStart={handlePanelDragStart}
-          title="Move terminal panel"
-          aria-label="Move terminal panel"
-          data-testid="terminal-panel-drag-handle"
-          className="cursor-grab rounded p-1 text-white/45 transition-colors hover:bg-white/10 hover:text-white active:cursor-grabbing"
-        >
-          <GripVertical className="h-3.5 w-3.5" />
-        </button>
-        <TerminalIcon className="h-4 w-4 text-(--accent)" />
-        <div className="flex min-w-0 shrink items-center gap-2 select-text">
-          <span className="font-medium">Terminal</span>
-          <span className="min-w-0 truncate text-white/55">{subtitle}</span>
+    <div
+      className="flex h-full min-h-0 flex-col"
+      data-testid="terminal-panel"
+      style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
+    >
+      {!sessionOwned && (
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-black/10 px-2 text-xs dark:border-white/10">
+          <button
+            type="button"
+            draggable
+            onDragStart={handlePanelDragStart}
+            title="Move terminal panel"
+            aria-label="Move terminal panel"
+            data-testid="terminal-panel-drag-handle"
+            className="cursor-grab rounded p-1 text-black/60 transition-colors hover:bg-black/5 hover:text-black active:cursor-grabbing dark:text-white/60 dark:hover:bg-white/10 dark:hover:text-white"
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+          </button>
+          <TerminalIcon className="h-4 w-4 text-(--accent)" />
+          <div className="flex min-w-0 shrink items-center gap-2 select-text">
+            <span className="font-medium">Terminal</span>
+            <span className="min-w-0 truncate text-black/60 dark:text-white/60">{subtitle}</span>
+          </div>
+          <div
+            draggable
+            onDragStart={handlePanelDragStart}
+            title="Move terminal panel"
+            aria-label="Move terminal panel"
+            data-testid="terminal-panel-empty-drag-region"
+            className="h-full min-w-8 flex-1 cursor-grab active:cursor-grabbing"
+          />
+          <span className="text-black/60 dark:text-white/60">{status}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-black/60 hover:bg-black/5 hover:text-black dark:text-white/60 dark:hover:bg-white/10 dark:hover:text-white"
+            onClick={handleTerminalAction}
+            aria-label={canRestart ? 'Restart terminal' : 'Close terminal'}
+            title={canRestart ? 'Restart terminal' : 'Close terminal'}
+          >
+            {canRestart ? <RotateCcw className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+          </Button>
         </div>
-        <div
-          draggable
-          onDragStart={handlePanelDragStart}
-          title="Move terminal panel"
-          aria-label="Move terminal panel"
-          data-testid="terminal-panel-empty-drag-region"
-          className="h-full min-w-8 flex-1 cursor-grab active:cursor-grabbing"
-        />
-        <span className="text-white/45">{status}</span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-white/60 hover:bg-white/10 hover:text-white"
-          onClick={handleCloseTerminal}
-          aria-label="Close terminal"
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-hidden p-2">
+      )}
+      <div className="relative min-h-0 flex-1 overflow-hidden p-2">
         <div ref={containerRef} className="h-full min-h-0 overflow-hidden" />
+        {sessionOwned && status !== 'running' && (
+          <div
+            role="status"
+            data-testid={canRestart
+              ? 'terminal-session-restart-banner'
+              : 'terminal-session-status-banner'}
+            className="pointer-events-none absolute inset-x-3 top-3 flex justify-center"
+          >
+            <div className="pointer-events-auto flex max-w-full items-center gap-3 border border-(--divider) bg-(--chat-header-bg) px-3 py-2 text-xs text-(--text-secondary)">
+              <span className="min-w-0 truncate">{subtitle}</span>
+              {canRestart && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 shrink-0 px-2"
+                  onClick={handleTerminalAction}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Restart
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

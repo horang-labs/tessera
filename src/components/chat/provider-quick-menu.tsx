@@ -8,6 +8,8 @@ import { useCloseOnEscape } from '@/hooks/use-close-on-escape';
 import { useMenuNavigation } from '@/hooks/use-menu-navigation';
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import { ProviderLogoMark } from './provider-brand';
+import { useSettingsStore } from '@/stores/settings-store';
+import { ProviderExecutionBadge } from './provider-execution-badge';
 
 interface ProviderQuickMenuProps {
   anchorRect: DOMRect;
@@ -33,6 +35,7 @@ export function ProviderQuickMenu({
   const fetchProviders = useProvidersStore((s) => s.fetch);
   const refreshProviders = useProvidersStore((s) => s.refresh);
   const loading = useProvidersStore((s) => s.loading);
+  const agentExecutionMode = useSettingsStore((s) => s.settings.agentExecutionMode);
 
   useEffect(() => {
     if (providers === null && !initialized && !loading) fetchProviders();
@@ -136,6 +139,11 @@ export function ProviderQuickMenu({
                 iconClassName="h-2.5 w-2.5"
               />
               <span className="flex-1 truncate">{provider.displayName}</span>
+              <ProviderExecutionBadge
+                preferredMode={agentExecutionMode}
+                providerId={provider.id}
+                testId={`provider-quick-menu-item-${provider.id}-pty-only`}
+              />
               {isCurrent && (
                 <span className="text-[10px] text-(--text-muted)">current</span>
               )}

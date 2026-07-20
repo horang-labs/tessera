@@ -504,6 +504,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       : undefined;
   const defaults = {
     language: 'en',
+    agentExecutionMode: 'pty',
     profile: {
       displayName: DEFAULT_PROFILE_DISPLAY_NAME,
       avatarDataUrl: DEFAULT_PROFILE_AVATAR_DATA_URL,
@@ -620,6 +621,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
   return {
     ...defaults,
     ...raw,
+    agentExecutionMode: raw?.agentExecutionMode === 'gui' ? 'gui' : 'pty',
     defaultModel: normalizedClaudeModel,
     fontSize: normalizeFontScale(raw?.fontSize),
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,

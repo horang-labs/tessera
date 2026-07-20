@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import type { SessionStatus, ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { WorkflowStatus } from '@/types/task-entity';
-import type { SessionGoal } from '@/types/session-goal';
 import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
 import { useTaskStore } from './task-store';
@@ -42,11 +41,16 @@ export interface SessionState {
     runtimeConfig?: Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'fastMode' | 'sessionMode' | 'accessMode'>,
   ) => void;
   markSessionStopped: (sessionId: string) => void;
+  /**
+   * isRunning만 가볍게 토글한다(사이드바 배지·Running 카운트가 읽는 필드).
+   * 터미널 세션의 hook 상태 반영 전용 — markSessionRunning과 달리 telemetry 발화나
+   * tesseraSessionId/runtimeConfig 덮어쓰기 같은 부수효과가 없다.
+   */
+  setSessionRunning: (sessionId: string, running: boolean) => void;
   updateSessionRuntimeConfig: (
     sessionId: string,
     runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'fastMode' | 'sessionMode' | 'accessMode'>>,
   ) => void;
-  updateSessionGoal: (sessionId: string, goal: SessionGoal | null) => void;
   setCreatingSession: (sessionId: string | null) => void;
   setLoadingSession: (sessionId: string | null) => void;
   getSession: (sessionId: string) => UnifiedSession | undefined;
@@ -122,6 +126,7 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     hasCustomTitle: s.hasCustomTitle ?? false,
     workflowStatus: s.workflowStatus ?? undefined,
     worktreeBranch: s.worktreeBranch ?? undefined,
+    kind: s.kind ?? undefined,
     workDir: s.workDir ?? undefined,
     archived: s.archived ?? false,
     archivedAt: s.archivedAt ?? undefined,
@@ -133,7 +138,6 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     serviceTier: 'serviceTier' in s ? s.serviceTier : undefined,
     fastMode: 'fastMode' in s ? s.fastMode : undefined,
     hasStarted: s.hasStarted ?? s.isRunning ?? false,
-    goal: 'goal' in s ? s.goal : undefined,
     taskId: s.taskId ?? undefined,
     collectionId: s.collectionId ?? undefined,
     diffStats: s.diffStats ?? undefined,
@@ -820,6 +824,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       };
     }),
 
+  setSessionRunning: (sessionId, running) =>
+    set((state) => {
+      // 값이 실제로 바뀔 때만 새 참조를 만들어 불필요한 리렌더를 막는다
+      // hook replay에서 동일한 상태가 다시 와도 불필요한 리렌더를 하지 않는다.
+      let changed = false;
+      const projects = state.projects.map((project) => ({
+        ...project,
+        sessions: project.sessions.map((s) => {
+          if (s.id !== sessionId || s.isRunning === running) return s;
+          changed = true;
+          return {
+            ...s,
+            isRunning: running,
+            hasStarted: running ? true : s.hasStarted,
+            status: (running ? 'running' : 'completed') as SessionStatus,
+          };
+        }),
+      }));
+      return changed ? { projects } : {};
+    }),
+
   updateSessionRuntimeConfig: (sessionId, runtimeConfig) =>
     set((state) => ({
       projects: state.projects.map((project) => ({
@@ -845,18 +870,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                   accessMode: runtimeConfig.accessMode,
                 }),
               }
-            : s
-        ),
-      })),
-    })),
-
-  updateSessionGoal: (sessionId, goal) =>
-    set((state) => ({
-      projects: state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((s) =>
-          s.id === sessionId
-            ? { ...s, goal }
             : s
         ),
       })),

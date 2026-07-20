@@ -117,6 +117,9 @@ export async function forkCodexSession(
         model: remoteFork.model ?? source.model ?? undefined,
         reasoningEffort: remoteFork.reasoningEffort ?? source.reasoning_effort ?? undefined,
         serviceTier: remoteFork.serviceTier ?? source.service_tier ?? undefined,
+        executionMode: dbSessions.extractSessionKind(source.provider_state) === 'terminal'
+          ? 'pty'
+          : 'gui',
         providerState: JSON.stringify({ threadId: remoteFork.threadId }),
       });
       sessionPersisted = true;

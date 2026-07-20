@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ItemStatusIndicator } from '../src/components/chat/work-item-primitives.tsx';
-import {
-  FONT_SCALE_OPTIONS,
-  normalizeFontScale,
-} from '../src/lib/settings/provider-defaults.ts';
+import * as workItemPrimitives from '../src/components/chat/work-item-primitives.tsx';
+import * as providerDefaults from '../src/lib/settings/provider-defaults.ts';
+
+const { ItemStatusIndicator } = workItemPrimitives.default ?? workItemPrimitives;
+const { FONT_SCALE_OPTIONS, normalizeFontScale } = providerDefaults.default ?? providerDefaults;
 
 const settingsDefaultsSource = fs.readFileSync(
   new URL('../src/lib/settings/provider-defaults.ts', import.meta.url),

@@ -27,9 +27,10 @@ const output = ts.transpileModule(source, {
 }).outputText;
 const registry = await import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
 
-test('Codex 0.144.1 registry pins all 55 canonical commands without duplicates', () => {
-  assert.equal(registry.CODEX_0_144_1_SLASH_COMMAND_NAMES.length, 55);
-  assert.equal(new Set(registry.CODEX_0_144_1_SLASH_COMMAND_NAMES).size, 55);
+test('Codex 0.144.1 registry pins supported canonical commands without duplicates', () => {
+  assert.equal(registry.CODEX_0_144_1_SLASH_COMMAND_NAMES.length, 54);
+  assert.equal(new Set(registry.CODEX_0_144_1_SLASH_COMMAND_NAMES).size, 54);
+  assert.ok(!registry.CODEX_0_144_1_SLASH_COMMAND_NAMES.includes('goal'));
   assert.ok(registry.CODEX_0_144_1_SLASH_COMMAND_NAMES.includes('fork'));
   assert.ok(registry.CODEX_0_144_1_SLASH_COMMAND_NAMES.includes('debug-m-update'));
 });
@@ -37,7 +38,7 @@ test('Codex 0.144.1 registry pins all 55 canonical commands without duplicates',
 test('aliases and dynamic fast resolve before skills while unknown slash text remains free', () => {
   assert.equal(registry.resolveCodexSlashCommandName('clean'), 'stop');
   assert.equal(registry.resolveCodexSlashCommandName('pet'), 'pets');
-  assert.equal(registry.resolveCodexSlashCommandName('goooooooooooal'), 'goal');
+  assert.equal(registry.resolveCodexSlashCommandName('goooooooooooal'), null);
   assert.equal(registry.resolveCodexSlashCommandName('fast'), 'fast');
   assert.equal(registry.resolveCodexSlashCommandName('Fork'), null, 'matching is lowercase exact');
   assert.equal(registry.classifyCodexSlashCommand('/tmp/file'), null);
@@ -59,7 +60,7 @@ test('classification separates native, terminal, and hidden routes', () => {
     support: 'native',
     nativeCommand: 'fast',
   });
-  assert.equal(registry.classifyCodexSlashCommand('/goooal edit')?.nativeCommand, 'goal');
+  assert.equal(registry.classifyCodexSlashCommand('/goooal edit'), null);
   assert.equal(registry.classifyCodexSlashCommand('/review')?.support, 'terminal-handoff');
   assert.equal(registry.classifyCodexSlashCommand('/logout')?.support, 'terminal-direct');
   assert.equal(registry.classifyCodexSlashCommand('/usage')?.support, 'terminal-direct');
@@ -70,20 +71,20 @@ test('classification separates native, terminal, and hidden routes', () => {
 
 test('canonical commands are fully partitioned and picker hides unsafe/platform routes', () => {
   assert.deepEqual(registry.CODEX_0_144_1_ROUTE_COUNTS, {
-    native: 16,
+    native: 15,
     terminalDirect: 13,
     terminalHandoff: 8,
     hidden: 18,
   });
   assert.equal(
     Object.values(registry.CODEX_0_144_1_ROUTE_COUNTS).reduce((sum, value) => sum + value, 0),
-    55,
+    54,
   );
   const macPicker = registry.getCodexSlashCommandsForPicker({
     platform: 'darwin',
     agentEnvironment: 'native',
   });
-  assert.equal(macPicker.length, 33, 'compact/goal are separate built-ins and Windows commands are gated');
+  assert.equal(macPicker.length, 33, 'compact is a separate built-in and Windows commands are gated');
   assert.ok(macPicker.some((item) => item.name === 'model' && item.support === 'native'));
   assert.ok(macPicker.some((item) => item.name === 'mcp' && item.support === 'terminal-direct'));
   assert.ok(macPicker.some((item) => item.name === 'review' && item.support === 'terminal-handoff'));

@@ -15,7 +15,7 @@
  *     resume, rewind, status, focus, plan
  *
  * 절대 넣지 말 것: /model /effort /usage /fast /rename 등은 control-request이거나
- * Tessera 자체 빌트인(/fast, /goal)이라 이미 네이티브 지원된다 — 넣으면 터미널로
+ * Tessera 자체 빌트인(/fast)이라 이미 네이티브 지원된다 — 넣으면 터미널로
  * 잘못 분기된다.
  *
  * 주의: 유지 항목이 전부 Ink 위젯 전용은 아니다(diff/help/skills 등 포함). 공통

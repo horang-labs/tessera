@@ -11,68 +11,6 @@ import type {
 } from "@/types/git";
 
 export type GitTab = "diff" | "pr" | "context";
-export type ActiveGitAction = "commit" | "merge" | "create-pr" | "merge-pr" | null;
-
-export interface GitFooterButtonStates {
-  showMergePr: boolean;
-  commitDisabled: boolean;
-  pushDisabled: boolean;
-  pullDisabled: boolean;
-  syncDisabled: boolean;
-  createPrDisabled: boolean;
-  mergePrDisabled: boolean;
-}
-
-export function computeGitFooterButtonStates(
-  data: GitPanelData,
-  isSessionBusy: boolean,
-  activeAction: ActiveGitAction,
-): GitFooterButtonStates {
-  const availableBranches = (data.branches ?? []).filter(
-    (branch) => branch !== data.branch,
-  );
-  const prState = data.prStatus?.state;
-  const hasChangedFiles = data.changedFiles.length > 0;
-  const hasUnpushedCommits = (data.ahead ?? 0) > 0;
-
-  // After a PR is merged/closed, HEAD diverging from the PR's recorded head
-  // commit means the user has new commits beyond what the PR captured —
-  // i.e. there is fresh work that warrants a new PR.
-  const headSha = data.headSha ?? null;
-  const prHeadOid = data.prStatus?.headRefOid ?? null;
-  const hasPostPrCommits =
-    (prState === "merged" || prState === "closed")
-    && headSha !== null
-    && prHeadOid !== null
-    && headSha !== prHeadOid;
-
-  const hasPrContent =
-    hasChangedFiles || hasUnpushedCommits || hasPostPrCommits;
-
-  const branchStillOnRemote = data.remoteBranchExists !== false;
-  const hasMergeablePr = prState === "open" && branchStillOnRemote;
-
-  return {
-    showMergePr: hasMergeablePr,
-    commitDisabled:
-      isSessionBusy || activeAction !== null || !hasChangedFiles,
-    pushDisabled:
-      isSessionBusy
-      || activeAction !== null
-      || (!hasUnpushedCommits && !!data.upstream),
-    pullDisabled:
-      isSessionBusy || activeAction !== null || (data.behind ?? 0) === 0,
-    syncDisabled:
-      isSessionBusy || activeAction !== null || availableBranches.length === 0,
-    createPrDisabled:
-      isSessionBusy
-      || activeAction !== null
-      || data.prUnsupported === true
-      || data.github.available === false
-      || !hasPrContent,
-    mergePrDisabled: isSessionBusy || activeAction !== null,
-  };
-}
 
 export const GIT_PANEL_TABS: Array<{
   id: GitTab;
@@ -166,22 +104,4 @@ export function getFileScopeLabel(file: GitChangedFile | null): string | null {
   if (file.staged) return "Staged";
   if (file.unstaged) return "Working tree";
   return null;
-}
-
-export function getGitHubActionBlockReason(
-  github: GitPanelData["github"],
-): string | null {
-  if (github.available) return null;
-  if (github.reason) return github.reason;
-
-  switch (github.reasonCode) {
-    case "gh_missing":
-      return "Install GitHub CLI to create and merge pull requests.";
-    case "gh_unauthenticated":
-      return "Run `gh auth login`, then refresh.";
-    case "not_github_remote":
-      return "Add a GitHub origin remote to create pull requests.";
-    default:
-      return "GitHub pull request actions are unavailable.";
-  }
 }

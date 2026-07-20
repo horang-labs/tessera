@@ -1,6 +1,6 @@
 export type TerminalShellKind = 'default' | 'cmd' | 'powershell' | 'wsl';
 
-/** Client-safe request. Executable, argv, and Codex thread ids are server-owned. */
+/** Client-safe request. Executable, argv, and provider conversation ids are server-owned. */
 export type TerminalLaunchIntent =
   | { kind: 'claude-slash'; commandInput: string }
   | { kind: 'codex-slash'; commandInput: string };
@@ -22,12 +22,22 @@ export interface TerminalLaunchSpec {
 export interface TerminalCreateOptions {
   terminalId: string;
   userId: string;
+  connectionId: string;
+  surfaceId: string;
   cwd?: string | null;
   sessionId?: string | null;
   shellKind?: TerminalShellKind;
   cols?: number;
   rows?: number;
   launchSpec?: TerminalLaunchSpec;
+  /** Provider hook side-channel token minted by server-message-routing. */
+  paneToken?: string;
+  /** Native agent provider launched inside this PTY. */
+  providerId?: string;
+  /** Disposes provider resources created before PTY spawn. */
+  launchObserverDisposer?: () => void;
+  /** Server-owned environment overrides for the provider process. */
+  launchEnv?: Record<string, string>;
 }
 
 export interface TerminalResolvedShell {
@@ -42,7 +52,7 @@ export type TerminalCwdResolution =
   | { ok: false; message: string };
 
 export interface TerminalProcessHandle {
-  /** Outer PTY process id. node-pty always supplies this; test doubles may omit it. */
+  /** Outer PTY process id. node-pty supplies this; test doubles may omit it. */
   readonly pid?: number;
   write(data: string): void;
   resize(cols: number, rows: number): void;

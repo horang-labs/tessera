@@ -2,18 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Bot, Brain, FileText, GitCommitHorizontal, X } from "lucide-react";
+import { Brain, FileText, GitCommitHorizontal, X } from "lucide-react";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { useSessionStore } from "@/stores/session-store";
 import { supportsMemoryPanel } from "@/lib/memory/memory-provider";
 import type { GitChangedFile } from "@/types/git";
-import { AgentContextPanel } from "./agent-context-panel";
 import {
   GitPanelCommitsSection,
   GitPanelContentSection,
-  GitPanelFooterSection,
   GitPanelSummarySection,
 } from "./git-panel-sections";
 import { useGitPanelController } from "./use-git-panel-controller";
@@ -26,7 +24,7 @@ import { MemoryPanel } from "@/components/memory/memory-panel";
 import { cn } from "@/lib/utils";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
 
-type GitPanelTab = "git" | "files" | "agent" | "memory";
+type GitPanelTab = "git" | "files" | "memory";
 
 function GitPanelTabButton({
   active,
@@ -231,13 +229,6 @@ export function GitPanel({
           >
             {t("gitPanel.tabs.files")}
           </GitPanelTabButton>
-          <GitPanelTabButton
-            active={effectivePanelTab === "agent"}
-            icon={<Bot className="h-3.5 w-3.5" />}
-            onClick={() => handlePanelTabChange("agent")}
-          >
-            {t("gitPanel.tabs.tools")}
-          </GitPanelTabButton>
           {showMemoryTab ? (
             <GitPanelTabButton
               active={effectivePanelTab === "memory"}
@@ -277,10 +268,6 @@ export function GitPanel({
         <div className="min-h-0 flex-1">
           <WorkspaceFilePanel key={sessionId ?? "no-session"} sessionId={sessionId} />
         </div>
-      ) : effectivePanelTab === "agent" ? (
-        <div className="min-h-0 flex-1">
-          <AgentContextPanel sessionId={sessionId} />
-        </div>
       ) : effectivePanelTab === "memory" ? (
         <div className="min-h-0 flex-1">
           <MemoryPanel key={sessionId ?? "no-session"} sessionId={sessionId} />
@@ -306,36 +293,6 @@ export function GitPanel({
             loading={controller.loading}
             error={controller.error}
           />
-
-          {controller.data && !controller.loading && !controller.error ? (
-            <GitPanelFooterSection
-              data={controller.data}
-              isSessionBusy={controller.isSessionBusy}
-              activeAction={controller.activeAction}
-              actionInput={controller.actionInput}
-              mergePrPromptDraft={controller.mergePrPromptDraft}
-              mergePrPromptPreview={controller.mergePrPromptPreview}
-              mergeSource={controller.mergeSource}
-              prBaseBranch={controller.prBaseBranch}
-              checksUrl={controller.checksUrl}
-              onActionInputChange={controller.setActionInput}
-              onSetMergeSource={controller.setMergeSource}
-              onSetPrBaseBranch={controller.setPrBaseBranch}
-              onCommit={controller.handleCommit}
-              onFetch={controller.handleFetch}
-              onMerge={controller.handleMerge}
-              onCreatePr={controller.handleCreatePr}
-              onMergePr={controller.handleMergePr}
-              onMergePrPromptChange={controller.setMergePrPromptDraft}
-              onOpenAction={controller.openAction}
-              onCloseAction={controller.closeAction}
-              onResetMergePrPrompt={controller.resetMergePrPromptDraft}
-              onPush={controller.handlePush}
-              onPull={controller.handlePull}
-              onOpenExternal={controller.openExternal}
-              fetching={controller.fetching}
-            />
-          ) : null}
         </>
       )}
     </aside>
