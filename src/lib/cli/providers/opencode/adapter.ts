@@ -110,6 +110,10 @@ export class OpenCodeAdapter implements CliProvider {
     return 'OpenCode';
   }
 
+  getTerminalAppearanceChangePolicy(): 'live' {
+    return 'live';
+  }
+
   async isAvailable(environment?: 'native' | 'wsl'): Promise<boolean> {
     if (environment) {
       return probeBinaryAvailable('opencode', environment);

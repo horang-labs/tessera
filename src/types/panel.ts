@@ -51,6 +51,7 @@ export interface PanelStoreActions {
   movePanelNode(sourcePanelId: string, targetPanelId: string, edge: PanelDropEdge): string | null;
   graftTabIntoActiveTab(sourceTabId: string, targetPanelId: string, edge: PanelDropEdge): string | null;
   closePanel(panelId: string): void;
+  closePanelInTab(tabId: string, panelId: string): void;
   assignSession(panelId: string, sessionId: string | null): void;
   assignSessionInTab(tabId: string, panelId: string, sessionId: string | null): void;
   assignTerminal(panelId: string, terminalId: string | null, terminalSessionId?: string | null): void;

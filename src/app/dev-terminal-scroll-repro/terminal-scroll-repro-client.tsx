@@ -13,14 +13,15 @@ import { wsClient } from '@/lib/ws/client';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
-import { TerminalScrollbar } from '@/components/terminal/terminal-scrollbar';
 
 const REPRO_TERMINAL_ID = 'dev-terminal-scroll-repro';
 const INITIAL_SNAPSHOT: TerminalSurfaceSnapshot = {
   status: 'starting',
   subtitle: 'Starting terminal...',
   isAtBottom: true,
-  scrollMetrics: { baseY: 0, viewportY: 0, rows: 1 },
+  appearanceMode: 'dark',
+  themeRestartRequired: false,
+  themeRestartAllowed: false,
 };
 
 interface ReproTerminalBuffer {
@@ -33,6 +34,7 @@ interface ReproWindow extends Window {
   __tesseraTerminalScrollRepro?: {
     firstVisibleRowTag(): string | null;
     isAtBottom(): boolean | null;
+    metrics(): { baseY: number; viewportY: number; rows: number } | null;
     viewportY(): number | null;
   };
 }
@@ -48,6 +50,7 @@ export function TerminalScrollReproClient() {
     registryKey: REPRO_TERMINAL_ID,
     terminalId: REPRO_TERMINAL_ID,
     theme: getTerminalTheme(isDark),
+    appearanceMode: isDark ? 'dark' : 'light',
     fontSize: terminalFontSize,
     cwd: null,
     sessionId: null,
@@ -63,7 +66,7 @@ export function TerminalScrollReproClient() {
   }, []);
 
   useEffect(() => {
-    surface.setTheme(getTerminalTheme(isDark));
+    surface.setTheme(getTerminalTheme(isDark), isDark ? 'dark' : 'light');
   }, [isDark, surface]);
 
   useEffect(() => {
@@ -91,6 +94,17 @@ export function TerminalScrollReproClient() {
           terminal: { buffer: { active: ReproTerminalBuffer } } | null;
         }).terminal?.buffer.active;
         return active ? active.viewportY >= active.baseY - 1 : null;
+      },
+      metrics: () => {
+        const terminal = (surface as unknown as {
+          terminal: { buffer: { active: ReproTerminalBuffer }; rows: number } | null;
+        }).terminal;
+        if (!terminal) return null;
+        return {
+          baseY: terminal.buffer.active.baseY,
+          viewportY: terminal.buffer.active.viewportY,
+          rows: terminal.rows,
+        };
       },
       viewportY: () => (
         (surface as unknown as {
@@ -146,10 +160,7 @@ export function TerminalScrollReproClient() {
         style={{ backgroundColor: theme.background, color: theme.foreground }}
       >
         {isVisible && (
-          <div className="flex h-full min-h-0 gap-1">
-            <div ref={hostRef} className="h-full min-w-0 flex-1 overflow-hidden" />
-            <TerminalScrollbar metrics={snapshot.scrollMetrics} />
-          </div>
+          <div ref={hostRef} className="h-full min-w-0 overflow-hidden" />
         )}
         {!snapshot.isAtBottom && (
           <ScrollToBottomButton

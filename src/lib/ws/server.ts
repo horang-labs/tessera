@@ -11,6 +11,7 @@ import { findUserById } from '../users';
 import { getCachedRateLimitData } from '../rate-limit/fetcher';
 import { skillAnalysisService } from '../skill/skill-analysis-service';
 import { buildClaudeRateLimitSnapshot } from '../status-display/rate-limit-snapshots';
+import { rateLimitPoller } from '../rate-limit/poller';
 import logger from '../logger';
 import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
@@ -282,6 +283,15 @@ export class WebSocketServer {
         ...buildClaudeRateLimitSnapshot(cachedRateLimit),
       });
       sentProviders.add('claude-code');
+    }
+
+    for (const snapshot of rateLimitPoller.getCachedSnapshots()) {
+      if (sentProviders.has(snapshot.providerId)) continue;
+      this.sendToUser(userId, {
+        type: 'rate_limit_update',
+        ...snapshot,
+      });
+      sentProviders.add(snapshot.providerId);
     }
 
     const cachedProviderLimits = this.rateLimitCache.get(userId);

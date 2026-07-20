@@ -1,8 +1,8 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { createHash } from 'node:crypto';
 import logger from '@/lib/logger';
+import { resolveCodexAccountHome } from '@/lib/codex-home';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import {
@@ -18,11 +18,6 @@ import {
  * (오버레이 경로는 launchEnv로만 자식에 전달) → 항상 사용자 실제 홈을 가리킨다.
  * 미설정이면 ~/.codex.
  */
-function getSystemCodexHome(): string {
-  const fromEnv = process.env.CODEX_HOME?.trim();
-  return fromEnv && fromEnv.length > 0 ? fromEnv : path.join(os.homedir(), '.codex');
-}
-
 function overlayDirFor(terminalId: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(terminalId)) {
     throw new Error('Invalid terminal id for Codex overlay');
@@ -154,7 +149,7 @@ export function createCodexOverlay(terminalId: string): string {
   fs.rmSync(overlayDir, { recursive: true, force: true });
   fs.mkdirSync(overlayDir, { recursive: true });
 
-  const systemHome = getSystemCodexHome();
+  const systemHome = resolveCodexAccountHome();
   let configToml = '';
   let entries: string[] = [];
   try {

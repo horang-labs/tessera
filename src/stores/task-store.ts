@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import { useSessionStore } from './session-store';
+import { useTabStore } from './tab-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 
 interface LoadTasksOptions {
@@ -515,6 +516,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         body: JSON.stringify({ archived }),
       });
       if (!res.ok) throw new Error('Failed to update task archive state');
+      if (archived) {
+        for (const sessionId of linkedSessionIds) {
+          useTabStore.getState().retireSessionSurface(sessionId);
+        }
+      }
       return true;
     } catch {
       set((state) => ({

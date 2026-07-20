@@ -1,7 +1,7 @@
 import * as dbSessions from '../db/sessions';
-import { processManager } from '../cli/process-manager';
 import logger from '../logger';
 import { withExclusiveTesseraSessionOperation } from '../terminal/terminal-handoff-lock';
+import { closeSessionRuntimes } from './active-session-runtime';
 import { syncCodexThreadsArchived } from './codex-thread-lifecycle';
 
 export interface ArchiveSessionResult {
@@ -41,12 +41,8 @@ export async function archiveSession(
       throw error;
     }
 
-    if (archived && processManager.getProcess(sessionId)) {
-      try {
-        await processManager.closeSession(sessionId);
-      } catch (error) {
-        logger.warn({ sessionId, error }, 'Session archived but its Codex process did not stop cleanly');
-      }
+    if (archived) {
+      await closeSessionRuntimes(sessionId, userId);
     }
 
     logger.info({ sessionId, projectId: session.project_id, archived }, 'Session archive state updated');

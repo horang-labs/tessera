@@ -27,14 +27,14 @@ import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 import { useIsDark } from '@/hooks/use-is-dark';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
-import { TerminalScrollbar } from './terminal-scrollbar';
+import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
 
 interface TerminalPanelProps {
   panelId: string;
   terminalId: string;
   terminalSessionId: string | null;
-  /** Terminal-mode sessions own their PTY independently from this React mount. */
-  sessionOwned?: boolean;
+  /** Determines whether unmount detaches, or may close a preview-created PTY. */
+  runtimeOwnership?: 'standalone' | 'session-preview' | 'session-retained';
   launch?: { providerId: string; sessionId: string };
 }
 
@@ -62,17 +62,27 @@ export function TerminalPanel({
   panelId,
   terminalId,
   terminalSessionId,
-  sessionOwned = false,
+  runtimeOwnership = 'standalone',
   launch,
 }: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
   const { t } = useTranslation();
   const isDark = useIsDark();
   const fontScale = useSettingsStore((state) => state.settings.fontSize);
+  const lightThemePreset = useSettingsStore((state) => state.settings.terminalThemeLightPreset);
+  const darkThemePreset = useSettingsStore((state) => state.settings.terminalThemeDarkPreset);
+  const selectedThemePreset = isDark ? darkThemePreset : lightThemePreset;
   const terminalFontSize = getTerminalFontSize(fontScale);
   const containerRef = useRef<HTMLDivElement>(null);
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
+  const sessionOwned = runtimeOwnership !== 'standalone';
+  const previewOwnsRuntimeRef = useRef(runtimeOwnership === 'session-preview');
+  const handleTerminalInput = useCallback(() => {
+    if (runtimeOwnership === 'standalone') return;
+    previewOwnsRuntimeRef.current = false;
+    useTabStore.getState().pinTab(tabId);
+  }, [runtimeOwnership, tabId]);
   const isTabActive = useTabStore((state) => state.activeTabId === tabId);
   const isPanelActive = usePanelStore((state) => (
     state.activeTabId === tabId && state.tabPanels[tabId]?.activePanelId === panelId
@@ -80,26 +90,70 @@ export function TerminalPanel({
   const surface = useMemo(() => getTerminalSurface({
     registryKey: `${tabId}:${panelId}:${terminalId}`,
     terminalId,
-    theme: getTerminalTheme(isDark),
+    theme: getTerminalTheme(isDark, selectedThemePreset),
+    appearanceMode: isDark ? 'dark' : 'light',
     fontSize: terminalFontSize,
     cwd: getInitialTerminalCwd(terminalSessionId),
     sessionId: getSessionSelectionId(terminalSessionId),
     launch,
-  }), [isDark, launch, panelId, tabId, terminalFontSize, terminalId, terminalSessionId]);
-  const { status, subtitle, isAtBottom, scrollMetrics } = useSyncExternalStore(
+    previewOwned: runtimeOwnership === 'session-preview',
+  }), [
+    isDark,
+    launch,
+    panelId,
+    runtimeOwnership,
+    selectedThemePreset,
+    tabId,
+    terminalFontSize,
+    terminalId,
+    terminalSessionId,
+  ]);
+  const {
+    status,
+    subtitle,
+    isAtBottom,
+    appearanceMode,
+    themeRestartRequired,
+    themeRestartAllowed,
+  } = useSyncExternalStore(
     surface.subscribe,
     surface.getSnapshot,
     surface.getSnapshot,
   );
-  const terminalTheme = getTerminalTheme(isDark);
+  const terminalTheme = getTerminalTheme(
+    appearanceMode === 'dark',
+    appearanceMode === 'dark' ? darkThemePreset : lightThemePreset,
+  );
 
   useEffect(() => {
-    surface.setTheme(getTerminalTheme(isDark));
-  }, [isDark, surface]);
+    surface.setTheme(
+      getTerminalTheme(isDark, selectedThemePreset),
+      isDark ? 'dark' : 'light',
+    );
+  }, [isDark, selectedThemePreset, surface]);
+
+  useEffect(() => {
+    surface.setHostVisible(isTabActive);
+  }, [isTabActive, surface]);
 
   useEffect(() => {
     surface.setFontSize(terminalFontSize);
   }, [surface, terminalFontSize]);
+
+  useEffect(() => {
+    surface.setInputListener(handleTerminalInput);
+    return () => surface.setInputListener(null);
+  }, [handleTerminalInput, surface]);
+
+  useEffect(() => {
+    if (runtimeOwnership !== 'session-preview') previewOwnsRuntimeRef.current = false;
+  }, [runtimeOwnership]);
+
+  useEffect(() => {
+    if (runtimeOwnership === 'session-preview' && terminalSessionId) {
+      registerTerminalPreviewSurface(terminalSessionId, surface);
+    }
+  }, [runtimeOwnership, surface, terminalSessionId]);
 
   const handlePanelDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     const didSet = setPanelNodeDragData(event.dataTransfer, { tabId, panelId });
@@ -108,6 +162,7 @@ export function TerminalPanel({
 
   const handleTerminalAction = useCallback(() => {
     if (status === 'exited' || status === 'error') {
+      if (sessionOwned) handleTerminalInput();
       void surface.restart();
       return;
     }
@@ -119,7 +174,7 @@ export function TerminalPanel({
 
     closeAndDisposeTerminalSurface(surface);
     assignTerminal(panelId, null);
-  }, [assignTerminal, panelId, sessionOwned, status, surface]);
+  }, [assignTerminal, handleTerminalInput, panelId, sessionOwned, status, surface]);
 
   useEffect(() => {
     const host = containerRef.current;
@@ -142,13 +197,18 @@ export function TerminalPanel({
         if (remainsInSamePanel && useTabStore.getState().lruTabIds.includes(tabId)) return;
 
         // LRU eviction removes the React tree while retaining panel ownership.
-        // Release the xterm/subscriber but keep the server PTY for cold attach.
+        // A preview-owned surface stays registered so replacing the unmounted
+        // preview can still close the runtime it created. Retained sessions use
+        // the normal cold-attach path.
         if (remainsInSamePanel) {
+          if (sessionOwned && previewOwnsRuntimeRef.current) return;
           surface.dispose();
           return;
         }
 
-        if (sessionOwned || isTerminalAssignedToAnyPanel(terminalId)) {
+        if (sessionOwned && previewOwnsRuntimeRef.current) {
+          surface.releasePreviewRuntime();
+        } else if (sessionOwned || isTerminalAssignedToAnyPanel(terminalId)) {
           surface.dispose();
         } else {
           closeAndDisposeTerminalSurface(surface);
@@ -165,6 +225,9 @@ export function TerminalPanel({
   }, [connectionStatus, isPanelActive, isTabActive, surface]);
 
   const canRestart = status === 'exited' || status === 'error';
+  const handleThemeRestart = useCallback(() => {
+    surface.restartForTheme();
+  }, [surface]);
 
   return (
     <div
@@ -212,10 +275,7 @@ export function TerminalPanel({
         </div>
       )}
       <div className="relative min-h-0 flex-1 overflow-hidden p-2">
-        <div className="flex h-full min-h-0 gap-1">
-          <div ref={containerRef} className="h-full min-w-0 flex-1 overflow-hidden" />
-          <TerminalScrollbar metrics={scrollMetrics} />
-        </div>
+        <div ref={containerRef} className="h-full min-w-0 overflow-hidden" />
         {!isAtBottom && (
           <ScrollToBottomButton
             onClick={() => surface.scrollToBottom()}
@@ -223,22 +283,30 @@ export function TerminalPanel({
             testId="terminal-scroll-to-bottom-button"
           />
         )}
-        {sessionOwned && status !== 'running' && (
+        {(themeRestartRequired || (sessionOwned && status !== 'running')) && (
           <div
             role="status"
-            data-testid={canRestart
-              ? 'terminal-session-restart-banner'
-              : 'terminal-session-status-banner'}
+            data-testid={themeRestartRequired
+              ? 'terminal-theme-restart-banner'
+              : canRestart
+                ? 'terminal-session-restart-banner'
+                : 'terminal-session-status-banner'}
             className="pointer-events-none absolute inset-x-3 top-3 flex justify-center"
           >
             <div className="pointer-events-auto flex max-w-full items-center gap-3 border border-(--divider) bg-(--chat-header-bg) px-3 py-2 text-xs text-(--text-secondary)">
-              <span className="min-w-0 truncate">{subtitle}</span>
-              {canRestart && (
+              <span className="min-w-0 truncate">
+                {themeRestartRequired
+                  ? themeRestartAllowed
+                    ? 'Restart to apply the new terminal theme.'
+                    : 'This running terminal keeps its launch theme to prevent mixed CLI colors.'
+                  : subtitle}
+              </span>
+              {(canRestart || (themeRestartRequired && themeRestartAllowed)) && (
                 <Button
                   variant="outline"
                   size="sm"
                   className="h-7 shrink-0 px-2"
-                  onClick={handleTerminalAction}
+                  onClick={themeRestartRequired ? handleThemeRestart : handleTerminalAction}
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
                   Restart

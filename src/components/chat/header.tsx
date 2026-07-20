@@ -7,7 +7,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/stores/panel-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
-import { selectIsAwaitingUserPrompt, selectIsTurnInFlight, useChatStore } from '@/stores/chat-store';
+import { selectIsAwaitingUserPrompt, useChatStore } from '@/stores/chat-store';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { TaskContextMenu } from './task-context-menu';
@@ -20,6 +20,8 @@ import {
   CODEX_NATIVE_COMMAND_EVENT,
   type CodexNativeCommandEventDetail,
 } from '@/lib/chat/codex-native-command-events';
+import { useIsSessionProcessing } from '@/hooks/use-session-processing';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 interface HeaderProps {
   sessionId: string;
@@ -52,8 +54,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   );
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(sessionId));
   const { renameSession, generateTitle, deleteSession } = useSessionCrud();
-  const hasRunningWorkflow = useSessionStore((state) => state.runningWorkflowSessionIds.has(sessionId));
-  const isProcessing = useChatStore(selectIsTurnInFlight(sessionId)) || hasRunningWorkflow;
+  const isProcessing = useIsSessionProcessing(sessionId);
   const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(sessionId));
 
   // Multi-panel unread indicator — active panel's unread is auto-cleared by
@@ -214,6 +215,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   }, [isEditingTitle, titleInput, titleMinWidth]);
 
   if (!session) return null;
+  const runtimePresentation = resolveSessionRuntimePresentation(session);
   return (
     <div
       className="h-9 border-b border-(--chat-header-border) bg-(--chat-header-bg)"
@@ -414,14 +416,14 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
           anchorRect={menuAnchorRect}
           currentStatus={isSingleSessionTask ? currentTaskStatus : undefined}
           isArchived={session.archived ?? false}
-          isRunning={session.isRunning}
+          isRunning={runtimePresentation.showRunning}
           onStatusChange={isSingleSessionTask ? handleStatusChange : undefined}
           onArchive={session.taskId ? undefined : handleArchive}
           onUnarchive={session.taskId ? undefined : handleUnarchive}
           onRename={handleRenameFromMenu}
           onDelete={handleDelete}
           onGenerateTitle={() => generateTitle(sessionId)}
-          onStopProcess={session.isRunning ? handleStopProcess : undefined}
+          onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}

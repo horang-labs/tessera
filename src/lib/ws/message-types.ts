@@ -8,7 +8,7 @@ import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type {
-  TerminalColorQueryColors,
+  TerminalAppearance,
   TerminalLaunchIntent,
   TerminalShellKind,
 } from '@/lib/terminal/types';
@@ -92,18 +92,33 @@ export type ClientMessage =
       requestId: string;
       terminalId: string;
       surfaceId: string;
+      previewOwnerToken?: string;
       cwd?: string | null;
       sessionId?: string | null;
       shellKind?: TerminalShellKind;
       cols?: number;
       rows?: number;
-      colorQueryColors?: TerminalColorQueryColors;
+      appearance?: TerminalAppearance;
       launchIntent?: TerminalLaunchIntent;
       prefillInput?: string;
       launch?: { providerId: string; sessionId: string };
     }
   | { type: 'terminal_detach'; requestId: string; terminalId: string; surfaceId: string }
+  | {
+      type: 'terminal_release_preview';
+      requestId: string;
+      terminalId: string;
+      sessionId?: string | null;
+      previewOwnerToken: string;
+    }
   | { type: 'terminal_input'; requestId: string; terminalId: string; surfaceId: string; data: string }
+  | {
+      type: 'terminal_set_appearance';
+      requestId: string;
+      terminalId: string;
+      surfaceId: string;
+      appearance: TerminalAppearance;
+    }
   | {
       type: 'terminal_resize';
       requestId: string;
@@ -285,6 +300,15 @@ export type AppServerMessage =
   | { type: 'terminal_prefill_written'; terminalId: string }
   | { type: 'terminal_prefill_cancelled'; terminalId: string; message: string }
   | {
+      type: 'terminal_appearance';
+      terminalId: string;
+      surfaceId: string;
+      appearance: TerminalAppearance;
+      restartRequired: boolean;
+      restartAllowed: boolean;
+      restartIntent?: TerminalLaunchIntent;
+    }
+  | {
       type: 'terminal_started';
       terminalId: string;
       surfaceId: string;
@@ -292,6 +316,7 @@ export type AppServerMessage =
       cwd: string;
       shell: string;
       reattached: boolean;
+      appearance?: TerminalAppearance;
     }
   | {
       type: 'terminal_snapshot';

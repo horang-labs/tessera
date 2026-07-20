@@ -442,7 +442,8 @@ test('agent PTY startup answers color probes before forwarding renderer output',
 
   await manager.create(createOptions({
     launchSpec: { program: 'claude' },
-    colorQueryColors: {
+    appearance: {
+      mode: 'light',
       foreground: '#25282b',
       background: '#fafaf9',
     },
@@ -461,6 +462,160 @@ test('agent PTY startup answers color probes before forwarding renderer output',
       .map((message) => message.type === 'terminal_output' ? message.data : ''),
     ['ready'],
   );
+
+  await manager.shutdownAll();
+});
+
+test('subscribed agent PTY receives live terminal color-scheme updates', async () => {
+  const delivered: ServerTransportMessage[] = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({
+    launchSpec: { program: 'claude' },
+    providerId: 'claude-code',
+    appearanceChangePolicy: 'live',
+    appearance: {
+      mode: 'light',
+      foreground: '#25282b',
+      background: '#fafaf9',
+    },
+  }));
+  await manager.create(createOptions({
+    terminalId: 'second-surface-proposal',
+    connectionId: 'connection-b',
+    surfaceId: 'surface-b',
+    appearance: {
+      mode: 'light',
+      foreground: '#25282b',
+      background: '#fafaf9',
+    },
+  }));
+  delivered.length = 0;
+
+  spawned[0].emitData('\x1b[?2031h');
+  manager.setAppearance(
+    'terminal-a',
+    'user-a',
+    'connection-a',
+    'surface-a',
+    { mode: 'dark', foreground: '#e3e9ed', background: '#161616' },
+  );
+
+  assert.deepEqual(spawned[0].writes, [
+    '\x1b[?997;2n',
+    '\x1b[?997;1n',
+  ]);
+  assert.ok(delivered.some((message) => (
+    message.type === 'terminal_appearance'
+    && message.appearance.mode === 'dark'
+    && message.restartRequired === false
+  )));
+  assert.equal(
+    delivered.filter((message) => (
+      message.type === 'terminal_appearance'
+      && message.appearance.mode === 'dark'
+    )).length,
+    2,
+  );
+
+  await manager.shutdownAll();
+});
+
+test('running Codex keeps its launch appearance and requests restart when it cannot subscribe', async () => {
+  const delivered: ServerTransportMessage[] = [];
+  const spawned: FakePty[] = [];
+  let resumable = false;
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({
+    launchSpec: { program: 'codex' },
+    providerId: 'codex',
+    appearanceChangePolicy: 'restart',
+    canRestartForAppearance: () => resumable,
+    appearance: {
+      mode: 'light',
+      foreground: '#25282b',
+      background: '#fafaf9',
+    },
+  }));
+  delivered.length = 0;
+
+  manager.setAppearance(
+    'terminal-a',
+    'user-a',
+    'connection-a',
+    'surface-a',
+    { mode: 'dark', foreground: '#e3e9ed', background: '#161616' },
+  );
+
+  assert.deepEqual(spawned[0].writes, []);
+  assert.ok(delivered.some((message) => (
+    message.type === 'terminal_appearance'
+    && message.appearance.mode === 'light'
+    && message.restartRequired === true
+    && message.restartAllowed === false
+  )));
+
+  delivered.length = 0;
+  resumable = true;
+  manager.refreshAppearanceRestartAvailability('session-a', 'user-a');
+  assert.ok(delivered.some((message) => (
+    message.type === 'terminal_appearance'
+    && message.restartRequired === true
+    && message.restartAllowed === true
+  )));
+
+  await manager.shutdownAll();
+});
+
+test('cold-attached Codex surface is told when its requested mode needs a restart', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({
+    launchSpec: { program: 'codex' },
+    providerId: 'codex',
+    appearanceChangePolicy: 'restart',
+    canRestartForAppearance: () => true,
+    appearanceRestartIntent: { kind: 'codex-slash', commandInput: '/resume' },
+    appearance: {
+      mode: 'light',
+      foreground: '#25282b',
+      background: '#fafaf9',
+    },
+  }));
+  delivered.length = 0;
+
+  await manager.create(createOptions({
+    terminalId: 'different-client-proposal',
+    connectionId: 'connection-b',
+    surfaceId: 'surface-b',
+    appearance: {
+      mode: 'dark',
+      foreground: '#e3e9ed',
+      background: '#161616',
+    },
+  }));
+
+  assert.ok(delivered.some(({ connectionId, message }) => (
+    connectionId === 'connection-b'
+    && message.type === 'terminal_appearance'
+    && message.appearance.mode === 'light'
+    && message.restartRequired === true
+    && message.restartAllowed === true
+    && message.restartIntent?.kind === 'codex-slash'
+  )));
 
   await manager.shutdownAll();
 });

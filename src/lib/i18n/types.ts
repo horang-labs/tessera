@@ -71,6 +71,22 @@ export interface I18nMessages {
       dark: string;
       auto: string;
     };
+    terminalTheme: {
+      title: string;
+      description: string;
+      light: string;
+      dark: string;
+      presets: {
+        liftedNeutral: string;
+        coolPorcelain: string;
+        blueFrost: string;
+        pureWhite: string;
+        neutralCharcoal: string;
+        graphiteBlue: string;
+        deepNavy: string;
+        softSlate: string;
+      };
+    };
     fontSize: string;
     fontSizePresets: {
       small: string;
@@ -565,16 +581,12 @@ export interface I18nMessages {
     switchSession: string;
     nextSession: string;
     prevSession: string;
-    nextTab: string;
-    prevTab: string;
     settings: string;
     showHelp: string;
   };
   shortcut: {
     newTab: string;
     closeTab: string;
-    nextTab: string;
-    prevTab: string;
     toggleSidebar: string;
     toggleView: string;
     splitRight: string;

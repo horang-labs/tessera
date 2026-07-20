@@ -401,7 +401,7 @@ export const TabBar = memo(function TabBar() {
         isWindowsElectron && !gitPanelOpen && 'pr-[152px]',
         isLinuxElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
         isMacElectron && 'electron-drag h-10 border-b-(--chat-header-border) select-none',
-        isMacElectron && sidebarCollapsed && 'pl-[84px]'
+        isMacElectron && sidebarCollapsed && 'pl-10'
       )}
       data-testid="tab-bar"
     >

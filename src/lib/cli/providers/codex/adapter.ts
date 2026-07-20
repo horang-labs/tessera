@@ -64,6 +64,7 @@ import { updateProviderStateWithRetry } from '../../process-manager-side-effects
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
+import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -260,6 +261,20 @@ export class CodexAdapter implements CliProvider {
     return 'Codex';
   }
 
+  getTerminalAppearanceChangePolicy(): 'restart' {
+    return 'restart';
+  }
+
+  canResumeTerminalAfterRestart(providerState: string | null): boolean {
+    if (!providerState) return false;
+    try {
+      const resumeId = (JSON.parse(providerState) as Record<string, unknown>).codexSessionId;
+      return typeof resumeId === 'string' && resumeId.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // CliProvider: isAvailable
   // ---------------------------------------------------------------------------
@@ -269,6 +284,10 @@ export class CodexAdapter implements CliProvider {
       return probeBinaryAvailable('codex', environment);
     }
     return isBinaryAvailable('codex');
+  }
+
+  async fetchRateLimits({ environment }: { environment: 'native' | 'wsl' }) {
+    return fetchCodexRateLimitSnapshot(environment);
   }
 
   /**

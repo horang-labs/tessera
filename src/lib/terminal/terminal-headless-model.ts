@@ -14,6 +14,7 @@ export class TerminalHeadlessModel {
   private readonly terminal: Terminal;
   private readonly serializer: SerializeAddon;
   private writeTail: Promise<void> = Promise.resolve();
+  private readonly pendingWriteCompletions = new Set<() => void>();
   private disposed = false;
 
   constructor(cols: number, rows: number) {
@@ -39,7 +40,19 @@ export class TerminalHeadlessModel {
           resolve();
           return;
         }
-        this.terminal.write(data, resolve);
+        let completed = false;
+        const complete = () => {
+          if (completed) return;
+          completed = true;
+          this.pendingWriteCompletions.delete(complete);
+          resolve();
+        };
+        this.pendingWriteCompletions.add(complete);
+        try {
+          this.terminal.write(data, complete);
+        } catch {
+          complete();
+        }
       }))
       .catch(() => {
         // Keep later writes/snapshots usable after one parser failure. The
@@ -68,6 +81,7 @@ export class TerminalHeadlessModel {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const complete of [...this.pendingWriteCompletions]) complete();
     this.terminal.dispose();
   }
 }

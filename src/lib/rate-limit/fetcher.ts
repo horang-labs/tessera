@@ -5,6 +5,7 @@ import { homedir, userInfo } from 'os';
 import { isRunningInWsl, type CliEnvironment } from '../cli/cli-exec';
 import { getRuntimePlatform } from '../system/runtime-platform';
 import logger from '../logger';
+import { RATE_LIMIT_REFRESH_INTERVAL_MS } from './constants';
 
 interface OAuthCredentials {
   claudeAiOauth?: {
@@ -42,7 +43,7 @@ interface CacheEntry {
 
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const CREDENTIALS_FILE = '.credentials.json';
-const CACHE_TTL_MS = 300_000; // 5 minutes
+const CACHE_TTL_MS = RATE_LIMIT_REFRESH_INTERVAL_MS;
 const CREDENTIALS_READ_TIMEOUT_MS = 5_000;
 
 const cachedDataByEnvironment = new Map<CliEnvironment, CacheEntry>();

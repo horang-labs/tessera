@@ -36,7 +36,6 @@ import { useTabStore } from "@/stores/tab-store";
 import { TabBar } from "@/components/tab/tab-bar";
 import { TabPanelHost } from "@/components/tab/tab-panel-host";
 import { ElectronTitlebarThemeSync } from "@/components/layout/electron-titlebar";
-import { TabCarouselNav } from "@/components/tab/tab-carousel-nav";
 import { LeftPanel } from "./left-panel";
 const GitPanel = dynamic(
   () => import("@/components/git/git-panel").then((m) => m.GitPanel),
@@ -51,6 +50,7 @@ import {
 } from "@/lib/constants/special-sessions";
 import { resolveActiveWorkspaceSessionId } from "@/lib/session/active-workspace-session";
 import { activateSessionPanel } from "@/lib/session/focus-session-panel";
+import { resolveSessionTabOpenMode } from "@/lib/terminal/terminal-preview-policy";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -60,6 +60,7 @@ const COMPACT_VIEWPORT_BREAKPOINT = 1024;
 const FALLBACK_VIEWPORT_WIDTH = 1440;
 const KANBAN_SCROLL_AREA_SELECTOR = '[data-kanban-scroll-area="true"]';
 const KANBAN_SCROLL_END_SNAP_THRESHOLD = 16;
+const PROJECT_STRIP_WIDTH = 44;
 
 function getViewportWidth(): number {
   return typeof window === "undefined"
@@ -460,7 +461,10 @@ export function ChatLayout() {
       if (!sessionId) return;
       const tabStore = useTabStore.getState();
       const location = tabStore.findSessionLocation(sessionId);
-      if (action === 'pin') {
+      const session = useSessionStore.getState().getSession(sessionId);
+      const shouldPin = action === 'pin'
+        || (session ? resolveSessionTabOpenMode(session) === 'pinned' : false);
+      if (shouldPin) {
         if (location) {
           activateSessionPanel(sessionId, { location });
           tabStore.pinTab(location.tabId);
@@ -503,17 +507,20 @@ export function ChatLayout() {
       <div className="flex h-screen flex-col overflow-hidden" data-testid="chat-layout">
         <div className="flex flex-1 overflow-hidden">
           {/* Left panel — project strip + header + content (list/kanban) */}
-          {!sidebarCollapsed && (
-            <>
-              <LeftPanel
-                width={isCompactViewport ? "100vw" : effectiveSidebarWidth}
-                className={cn(
-                  isCompactViewport
-                    && "fixed inset-0 z-50 h-[100dvh] border-r-0 shadow-2xl",
-                )}
-              />
-              {/* Resize handle */}
-              {!isCompactViewport && (
+          <LeftPanel
+            width={sidebarCollapsed
+              ? PROJECT_STRIP_WIDTH
+              : isCompactViewport
+                ? "100vw"
+                : effectiveSidebarWidth}
+            collapsed={sidebarCollapsed}
+            className={cn(
+              !sidebarCollapsed && isCompactViewport
+                && "fixed inset-0 z-50 h-[100dvh] border-r-0 shadow-2xl",
+            )}
+          />
+          {/* Resize handle */}
+          {!sidebarCollapsed && !isCompactViewport && (
                 <div
                   className={cn(
                     "relative z-10 shrink-0 w-px h-full bg-transparent cursor-col-resize transition-all duration-150",
@@ -529,16 +536,12 @@ export function ChatLayout() {
                 >
                   <div className="absolute inset-y-0 -left-[11px] w-[24px] cursor-col-resize" />
                 </div>
-              )}
-            </>
           )}
 
-          {/* Right area — TabBar + Carousel + TabPanelHost (always visible) */}
+          {/* Right area — TabBar + TabPanelHost (always visible) */}
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             <TabBar />
-            <TabCarouselNav>
-              <TabPanelHost />
-            </TabCarouselNav>
+            <TabPanelHost />
             {/* Portal target for the Git diff drawer (rendered by GitPanel) */}
             <div id="git-diff-drawer-portal" />
           </div>

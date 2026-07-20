@@ -12,6 +12,7 @@ function toTaskSession(session: UnifiedSession): TaskSession {
     provider: session.provider,
     lastModified: session.lastModified,
     isRunning: session.isRunning,
+    kind: session.kind,
   };
 }
 

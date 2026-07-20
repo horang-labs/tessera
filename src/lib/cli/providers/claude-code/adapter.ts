@@ -41,6 +41,8 @@ import {
 } from '../../status-detection';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
+import { getRateLimitData } from '@/lib/rate-limit/fetcher';
+import { buildClaudeRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -112,6 +114,10 @@ export class ClaudeCodeAdapter implements CliProvider {
     return 'Claude Code';
   }
 
+  getTerminalAppearanceChangePolicy(): 'live' {
+    return 'live';
+  }
+
   /**
    * Checks whether the Claude Code CLI binary is available.
    * When an environment is provided, probes that environment (native vs. WSL);
@@ -122,6 +128,11 @@ export class ClaudeCodeAdapter implements CliProvider {
       return probeBinaryAvailable('claude', environment);
     }
     return isBinaryAvailable('claude');
+  }
+
+  async fetchRateLimits({ environment }: { environment: 'native' | 'wsl' }) {
+    const data = await getRateLimitData({ environment });
+    return data ? buildClaudeRateLimitSnapshot(data) : null;
   }
 
   /**

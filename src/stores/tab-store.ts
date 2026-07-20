@@ -780,6 +780,22 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     return null;
   },
 
+  retireSessionSurface: (sessionId: string): void => {
+    const location = get().findSessionLocation(sessionId);
+    if (!location) return;
+
+    const panelStore = usePanelStore.getState();
+    const tabData = panelStore.tabPanels[location.tabId];
+    if (!tabData) return;
+
+    if (Object.keys(tabData.panels).length === 1) {
+      get().closeTab(location.tabId);
+      return;
+    }
+
+    panelStore.closePanelInTab(location.tabId, location.panelId);
+  },
+
   getActiveTabSnapshot: (): TabSnapshot => {
     const state = get();
     const panelStore = usePanelStore.getState();

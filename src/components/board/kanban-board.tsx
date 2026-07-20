@@ -45,6 +45,7 @@ import {
 } from '@/lib/kanban-scroll-position';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import type { Collection } from '@/types/collection';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -930,7 +931,8 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const handleTaskStopProcess = useCallback(() => {
     if (!taskMenuAnchor) return;
     for (const s of taskMenuAnchor.task.sessions) {
-      if (s.isRunning) {
+      const liveSession = useSessionStore.getState().getSession(s.id);
+      if (resolveSessionRuntimePresentation(liveSession ?? s).canStop) {
         wsClient.stopSession(s.id);
         useSessionStore.getState().clearUnreadCount(s.id);
         wsClient.sendMarkAsRead(s.id);
@@ -949,7 +951,10 @@ export const KanbanBoard = memo(function KanbanBoard() {
     setTaskMenuAnchor(null);
   }, [taskMenuAnchor]);
 
-  const taskMenuIsRunning = taskMenuAnchor?.task.sessions.some((s) => s.isRunning) ?? false;
+  const taskMenuIsRunning = taskMenuAnchor?.task.sessions.some((session) => {
+    const liveSession = useSessionStore.getState().getSession(session.id);
+    return resolveSessionRuntimePresentation(liveSession ?? session).canStop;
+  }) ?? false;
   const handleTaskRename = useCallback(async (taskId: string, newTitle: string) => {
     await useTaskStore.getState().updateTask(taskId, { title: newTitle });
   }, []);

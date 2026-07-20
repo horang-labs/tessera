@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
-import { hasAnyAwaitingUserPrompt, hasAnyTurnInFlight, useChatStore } from '@/stores/chat-store';
+import { hasAnyAwaitingUserPrompt, useChatStore } from '@/stores/chat-store';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
 import type { Tab } from '@/types/tab';
@@ -14,6 +14,7 @@ import type { Panel, TabPanelData } from '@/types/panel';
 import { SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
 import { getSpecialSessionTitle, getSpecialSessionTitleKey, isSpecialSession } from '@/lib/constants/special-sessions';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
+import { useAnySessionProcessing } from '@/hooks/use-session-processing';
 
 /** Delay before activating a tab when a session drag hovers over it. */
 const TAB_HOVER_ACTIVATE_DELAY = 500;
@@ -248,25 +249,9 @@ export const TabItem = memo(function TabItem({
         .sort()
         .join(',');
 
-  const isGeneratingTurn = useChatStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return hasAnyTurnInFlight(state, panelSessionIds.split(','));
-      },
-      [panelSessionIds],
-    ),
+  const isGenerating = useAnySessionProcessing(
+    panelSessionIds ? panelSessionIds.split(',') : [],
   );
-  // A background workflow keeps the tab "running" even after the turn ends.
-  const hasRunningWorkflow = useSessionStore(
-    useCallback(
-      (state) =>
-        !!panelSessionIds &&
-        panelSessionIds.split(',').some((id) => state.runningWorkflowSessionIds.has(id)),
-      [panelSessionIds],
-    ),
-  );
-  const isGenerating = isGeneratingTurn || hasRunningWorkflow;
 
   const isAwaitingUser = useChatStore(
     useCallback(

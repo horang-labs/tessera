@@ -1,6 +1,8 @@
 import type { ChildProcess } from 'child_process';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { ContentBlock } from '@/lib/ws/message-types';
+import type { CliEnvironment } from '../cli-exec';
 import type { ParsedMessage } from './message-types';
 import type { GeneratedTitle, SpawnOptions, SpawnResult, TranslatedText } from './session-types';
 import type { SkillSource } from './skill-types';
@@ -29,6 +31,9 @@ export type CliProbeFailureKind = 'ok' | 'spawn_error' | 'timeout' | 'nonzero_ex
 
 export type CliCommandSource = 'default' | 'override';
 export type CliCommandShape = 'bare_command' | 'absolute_path' | 'relative_path' | 'other';
+
+/** How a provider TUI reacts when the host terminal changes light/dark mode. */
+export type TerminalAppearanceChangePolicy = 'live' | 'restart';
 
 export interface CliProbeSummary {
   ok: boolean;
@@ -71,6 +76,10 @@ export interface CheckStatusOptions {
   userId?: string;
 }
 
+export interface ProviderRateLimitOptions {
+  environment: CliEnvironment;
+}
+
 /**
  * CliProvider is the primary abstraction for plugging in different coding-agent
  * CLIs (Claude, Codex, Gemini, OpenCode, etc.).
@@ -98,11 +107,28 @@ export interface CliProvider {
   getDisplayName(): string;
 
   /**
+   * Declares whether an already-running TUI can follow the terminal's
+   * standardized color-scheme notification or must be resumed after restart.
+   */
+  getTerminalAppearanceChangePolicy(): TerminalAppearanceChangePolicy;
+
+  /**
+   * Interprets provider-owned persisted state to decide whether terminating a
+   * PTY can be followed by a lossless resume of the same provider session.
+   */
+  canResumeTerminalAfterRestart?(providerState: string | null): boolean;
+
+  /**
    * Checks whether this CLI binary is available in the requested environment
    * ("native" host vs. "wsl"). When omitted, implementations fall back to a
    * same-host binary probe.
    */
   isAvailable(environment?: 'native' | 'wsl'): Promise<boolean>;
+
+  /** Reads account-wide usage limits without requiring a provider session. */
+  fetchRateLimits?(
+    options: ProviderRateLimitOptions,
+  ): Promise<ProviderRateLimitsSnapshot | null>;
 
   /**
    * Returns the CLI arguments to pass to spawn() for the given options.
