@@ -867,14 +867,9 @@ export function TaskItemRow({
             <span
               title={reason}
               aria-label={reason}
-              className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--sidebar-bg) cursor-help"
+              className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--sidebar-bg) cursor-help"
               data-testid="task-pr-mismatch-badge"
-            >
-              <TriangleAlert
-                className="h-full w-full text-(--status-warning-text)"
-                strokeWidth={2.5}
-              />
-            </span>
+            />
           );
         })()}
         {task.worktreeMissing && (
@@ -1186,6 +1181,14 @@ export function ChatItemRow({
   const workflowIconFill = workflowStatus
     ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
+  // Trailing badges mirror the worktree row's trailing group. The diff badge
+  // shows whenever the chat has worktree diff stats — provider icons on or off.
+  // With provider icons on, the leading slot holds the provider logo, so the
+  // chat bubble rides the trailing edge — ALWAYS shown for chats (colored by
+  // status when set, neutral gray when the chat has no status). Provider-off
+  // rows already carry the bubble in the leading slot instead.
+  const showTrailingDiff = !!session.diffStats && session.diffStats.changedFiles > 0;
+  const showTrailingBubble = showProviderIcons;
   const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
@@ -1336,6 +1339,36 @@ export function ChatItemRow({
             </span>
           )}
         </div>
+
+        {/* Trailing group mirrors the worktree row: diff first, then a status-
+            colored chat bubble. Diff shows regardless of provider icons; the
+            bubble only when the provider logo holds the leading slot. Hidden on
+            hover so the quick-action buttons show. */}
+        {!isRenaming && (showTrailingDiff || showTrailingBubble) && (
+          <span
+            className={cn(
+              'flex shrink-0 items-center gap-1.5 transition-opacity duration-150',
+              isHovered ? 'opacity-0' : 'opacity-100',
+            )}
+          >
+            <DiffStatsBadge stats={session.diffStats} />
+            {showTrailingBubble && (
+              workflowColor && workflowIconFill ? (
+                <WorkflowMessageSquareIcon
+                  className="h-3.5 w-3.5 opacity-95"
+                  style={{ color: workflowColor }}
+                  fillColor={workflowIconFill}
+                  testId={`collection-chat-status-bubble-${session.id}`}
+                />
+              ) : (
+                <MessageSquare
+                  className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
+                  data-testid={`collection-chat-status-bubble-${session.id}`}
+                />
+              )
+            )}
+          </span>
+        )}
 
         <div
           className={cn(

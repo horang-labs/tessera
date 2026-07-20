@@ -319,17 +319,34 @@ export const KanbanChatCard = memo(function KanbanChatCard({
       >
         {/* Main row: icon + content */}
         <div className="flex items-start gap-2.5">
-          {/* Provider mark with Discord-style status overlay */}
-          <span className="relative mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-            {showProviderIcons ? (
-              <ProviderLogoMark
-                providerId={session.provider}
-                className={KANBAN_PROVIDER_MARK_CLASS}
-                iconClassName={KANBAN_PROVIDER_ICON_CLASS}
-                data-testid={`kanban-chat-agent-icon-${session.id}`}
-              />
-            ) : (
-              workflowColor && workflowIconFill ? (
+          {/* Provider mark aligns with the first title line; the chat bubble sits
+              one text line below it, mirroring the worktree card's branch icon. */}
+          <span className="mt-[3px] flex flex-col shrink-0 items-center gap-[5px]">
+            {showProviderIcons && (
+              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <ProviderLogoMark
+                  providerId={session.provider}
+                  className={KANBAN_PROVIDER_MARK_CLASS}
+                  iconClassName={KANBAN_PROVIDER_ICON_CLASS}
+                  data-testid={`kanban-chat-agent-icon-${session.id}`}
+                />
+                <ItemStatusIndicator
+                  isProcessing={isProcessing}
+                  isAwaitingUser={isAwaitingUser}
+                  hasUnread={hasUnread}
+                  isRunning={session.isRunning}
+                  placement="corner"
+                  surface="board"
+                />
+              </span>
+            )}
+            <span
+              className={cn(
+                'relative flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                showProviderIcons && 'translate-y-[1px]',
+              )}
+            >
+              {workflowColor && workflowIconFill ? (
                 <WorkflowMessageSquareIcon
                   className="h-3.5 w-3.5 opacity-95"
                   style={{ color: workflowColor }}
@@ -344,16 +361,18 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                   )}
                   data-testid={`kanban-chat-bubble-${session.id}`}
                 />
-              )
-            )}
-            <ItemStatusIndicator
-              isProcessing={isProcessing}
-              isAwaitingUser={isAwaitingUser}
-              hasUnread={hasUnread}
-              isRunning={session.isRunning}
-              placement="corner"
-              surface="board"
-            />
+              )}
+              {!showProviderIcons && (
+                <ItemStatusIndicator
+                  isProcessing={isProcessing}
+                  isAwaitingUser={isAwaitingUser}
+                  hasUnread={hasUnread}
+                  isRunning={session.isRunning}
+                  placement="corner"
+                  surface="board"
+                />
+              )}
+            </span>
           </span>
 
           {/* Content */}
@@ -941,14 +960,9 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   <span
                     title={prMismatchReason ?? undefined}
                     aria-label={prMismatchReason ?? undefined}
-                    className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--board-card-bg) cursor-help"
+                    className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg) cursor-help"
                     data-testid="task-pr-mismatch-badge"
-                  >
-                    <TriangleAlert
-                      className="h-full w-full text-(--status-warning-text)"
-                      strokeWidth={2.5}
-                    />
-                  </span>
+                  />
                 )}
               </span>
             ) : null}
@@ -956,13 +970,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 <span
                   title={prMismatchReason ?? undefined}
                   aria-label={prMismatchReason ?? undefined}
-                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-(--board-card-bg) cursor-help"
+                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center cursor-help"
                   data-testid="task-pr-mismatch-badge"
                 >
-                  <TriangleAlert
-                    className="h-full w-full text-(--status-warning-text)"
-                    strokeWidth={2.5}
-                  />
+                  <span className="h-1.5 w-1.5 rounded-full bg-(--status-error-text)" />
                 </span>
             )}
           </span>
