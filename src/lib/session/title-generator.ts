@@ -1,34 +1,34 @@
 /**
  * Session Title Generator
  *
- * Generates human-readable session titles from first user message.
+ * Generates concise, deterministic session titles from the first user message.
+ * This path must stay synchronous so a useful title appears as soon as a prompt
+ * is sent, without waiting for a provider or model response.
  */
+
+const TITLE_SCAN_LIMIT = 512;
+const TITLE_MAX_LENGTH = 40;
+
+const PROMPT_FILLER_PATTERNS = [
+  /^(?:can|could|would|will) you (?:please )?/iu,
+  /^please\s+/iu,
+  /^help me(?:\s+to)?\s+/iu,
+  /^i (?:want|need) you to\s+/iu,
+];
 
 /**
- * Generate a session title from a user message
+ * Generate a session title from a user message.
  *
- * Rules:
- * - If message starts with "!", use command as title
- * - Otherwise, use first line of message (full length — UI handles overflow via CSS)
- * - Sanitize special characters (command path only)
- *
- * @param message - User's first message
- * @returns Generated title, or empty string if message is empty
- *
- * @example
- * generateSessionTitle("!git status") // "git status"
- * generateSessionTitle("Can you help me with React?") // "Can you help me with React?"
+ * The first request clause is cleaned and capped at a word boundary. Bang
+ * commands retain their existing shortcut behavior.
  */
 export function generateSessionTitle(message: string): string {
-  // Remove leading/trailing whitespace
   const cleaned = message.trim();
 
-  // If empty, return empty string (caller will use default "Session N")
   if (!cleaned) {
     return '';
   }
 
-  // If starts with "!", extract command
   if (cleaned.startsWith('!')) {
     const commandMatch = cleaned.match(/^!(\S+)/);
     if (commandMatch) {
@@ -36,42 +36,74 @@ export function generateSessionTitle(message: string): string {
     }
   }
 
-  // Use full first line — UI layers (header, tab, kanban card, sidebar, etc.)
-  // apply CSS truncation/line-clamp so titles fit whatever width they render in.
-  return cleaned.split('\n')[0];
+  let candidate = takeCodePointPrefix(cleaned, TITLE_SCAN_LIMIT);
+
+  // Keep Markdown link labels, then remove destinations and standalone URLs.
+  candidate = candidate.replace(/\[([^\]]+)\]\([^)]+\)/gu, '$1');
+  const hadUrl = /(?:https?:\/\/|www\.)[^\s;!?]+/iu.test(candidate);
+  candidate = candidate.replace(/(?:https?:\/\/|www\.)[^\s;!?]+/giu, ' ');
+
+  // A short first clause reads more like a title than an entire prompt.
+  candidate = candidate.split(/(?:\r?\n|[!?！？]+|[。；]|[.;](?=\s|$))/u, 1)[0] ?? '';
+  candidate = candidate
+    .replace(/[*~`>#]+/gu, '')
+    .replace(/[^\p{L}\p{N}\s\-_]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+
+  for (const pattern of PROMPT_FILLER_PATTERNS) {
+    if (pattern.test(candidate)) {
+      candidate = candidate.replace(pattern, '').trim();
+      break;
+    }
+  }
+
+  if (hadUrl) {
+    candidate = candidate.replace(/\b(?:at|on|in|from|to|via|for)$/iu, '').trim();
+  }
+
+  candidate = capitalizeFirstCodePoint(candidate);
+  return truncateAtWordBoundary(candidate, TITLE_MAX_LENGTH);
+}
+
+function capitalizeFirstCodePoint(value: string): string {
+  const [first = '', ...rest] = Array.from(value);
+  return `${first.toUpperCase()}${rest.join('')}`;
+}
+
+function takeCodePointPrefix(value: string, limit: number): string {
+  let prefix = '';
+  let count = 0;
+  for (const codePoint of value) {
+    if (count >= limit) {
+      break;
+    }
+    prefix += codePoint;
+    count += 1;
+  }
+  return prefix;
+}
+
+function truncateAtWordBoundary(value: string, maxLength: number): string {
+  const codePoints = Array.from(value);
+  if (codePoints.length <= maxLength) {
+    return value;
+  }
+
+  const clipped = codePoints.slice(0, maxLength).join('');
+  const lastSpace = clipped.lastIndexOf(' ');
+  return (lastSpace > 0 ? clipped.slice(0, lastSpace) : clipped).trim();
 }
 
 /**
- * Sanitize a title by removing special characters
- *
- * Allows:
- * - Alphanumeric (a-z, A-Z, 0-9)
- * - Spaces
- * - Dashes (-)
- * - Underscores (_)
- *
- * @param title - Raw title string
- * @returns Sanitized title
- *
- * @example
- * sanitizeTitle("Hello<script>World") // "HelloscriptWorld"
- * sanitizeTitle("test-file_name") // "test-file_name"
+ * Sanitize a title by retaining Unicode letters, numbers, spaces, dashes, and
+ * underscores.
  */
 export function sanitizeTitle(title: string): string {
-  // Allow Unicode letters/digits (\p{L}, \p{N}), spaces, dashes, underscores
   return title.replace(/[^\p{L}\p{N}\s\-_]/gu, '').trim();
 }
 
-/**
- * Generate default session title with incrementing number
- *
- * @param sessionCount - Current number of sessions
- * @returns Default title like "Session 1", "Session 2", etc.
- *
- * @example
- * generateDefaultTitle(0) // "Session 1"
- * generateDefaultTitle(5) // "Session 6"
- */
+/** Generate a numbered fallback when no title can be derived. */
 export function generateDefaultTitle(sessionCount: number): string {
   return `Session ${sessionCount + 1}`;
 }

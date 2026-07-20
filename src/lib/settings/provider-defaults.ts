@@ -512,7 +512,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     notifications: {
       soundEnabled: true,
       showToast: true,
-      autoGenerateTitle: true,
+      aiTitleRefinement: false,
     },
     translate: {
       enabled: false,
@@ -632,8 +632,10 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     windowsCloseBehavior: normalizeWindowsCloseBehavior(raw?.windowsCloseBehavior),
     profile: normalizeProfileSettings(raw?.profile, defaults.profile),
     notifications: {
-      ...defaults.notifications,
-      ...(raw?.notifications ?? {}),
+      soundEnabled: raw?.notifications?.soundEnabled ?? defaults.notifications.soundEnabled,
+      showToast: raw?.notifications?.showToast ?? defaults.notifications.showToast,
+      aiTitleRefinement:
+        raw?.notifications?.aiTitleRefinement ?? defaults.notifications.aiTitleRefinement,
     },
     translate: {
       ...defaults.translate,

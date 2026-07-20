@@ -44,8 +44,8 @@ export const zh: I18nMessages = {
     notifications: '通知设置',
     sound: '声音',
     toast: '提示通知',
-    autoGenerateTitle: '自动生成标题',
-    autoGenerateTitleDesc: '首次回复后自动生成AI标题',
+    aiTitleRefinement: 'AI 标题优化',
+    aiTitleRefinementDesc: '首次回复后，用 AI 标题替换即时生成的本地标题',
     translate: {
       title: '翻译',
       enabled: '自动翻译',
@@ -470,6 +470,7 @@ export const zh: I18nMessages = {
     newTabDefault: '新标签',
     openGitPanel: '打开右侧 Git 面板',
     closeGitPanel: '关闭右侧 Git 面板',
+    renameTab: '重命名标签: {{title}}',
     closeTab: '关闭标签: {{title}}',
     closeOtherTabs: '关闭其他标签',
     closeTabsToLeft: '关闭左侧标签',

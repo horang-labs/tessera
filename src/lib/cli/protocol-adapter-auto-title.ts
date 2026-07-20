@@ -32,7 +32,7 @@ export function maybeAutoGenerateProtocolTitle({
       }
 
       const settings = await SettingsManager.load(userId);
-      if (settings.notifications?.autoGenerateTitle === false) {
+      if (!settings.notifications?.aiTitleRefinement) {
         autoTitleTriggered.delete(sessionId);
         return;
       }

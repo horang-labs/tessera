@@ -44,8 +44,8 @@ export const ja: I18nMessages = {
     notifications: '通知設定',
     sound: 'サウンド',
     toast: 'トースト通知',
-    autoGenerateTitle: 'タイトル自動生成',
-    autoGenerateTitleDesc: '最初の応答後にAIタイトルを自動生成します',
+    aiTitleRefinement: 'AIによるタイトル改善',
+    aiTitleRefinementDesc: '即時生成されたローカルタイトルを最初の応答後にAIタイトルへ置き換えます',
     translate: {
       title: '翻訳',
       enabled: '自動翻訳',
@@ -470,6 +470,7 @@ export const ja: I18nMessages = {
     newTabDefault: '新しいタブ',
     openGitPanel: '右側の Git パネルを開く',
     closeGitPanel: '右側の Git パネルを閉じる',
+    renameTab: 'タブ名を変更: {{title}}',
     closeTab: 'タブを閉じる: {{title}}',
     closeOtherTabs: '他のタブをすべて閉じる',
     closeTabsToLeft: '左側のタブをすべて閉じる',

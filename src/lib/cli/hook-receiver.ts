@@ -11,6 +11,7 @@ import { maybeAutoGenerateProtocolTitle } from './protocol-adapter-auto-title';
 import logger from '@/lib/logger';
 import { terminalManager } from '@/lib/terminal/shared-terminal-manager';
 import { refreshSessionDiffStateInBackground } from '@/lib/git/session-diff-refresh';
+import { applyImmediateSessionTitle } from '@/lib/session/immediate-session-title';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -141,14 +142,27 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         markTerminalLaunched(entry.sessionId);
       }
     }
-    // 터미널 세션 AI 자동 타이틀용: 사용자 프롬프트를 Tessera session-history에 user_message로
-    // 기록한다(jsonl 원본 파싱이 아니라 hook payload.prompt 활용). generateAITitle이 이걸 읽는다.
+    // 첫 프롬프트에서 동기 로컬 제목을 즉시 적용한다. 같은 프롬프트를 history에도
+    // 기록해 사용자가 AI 개선을 켠 경우 Stop 시점의 선택적 생성 입력으로 활용한다.
     if (event === 'UserPromptSubmit' && entry.sessionId) {
       const prompt = readString(payload.prompt);
-      if (prompt) sessionHistory.recordUserMessage(entry.sessionId, prompt);
+      if (prompt) {
+        sessionHistory.recordUserMessage(entry.sessionId, prompt);
+        const titleUpdate = applyImmediateSessionTitle(entry.sessionId, prompt);
+        if (titleUpdate) {
+          wsServer.sendToUser(entry.userId, {
+            type: 'session_title_updated',
+            sessionId: entry.sessionId,
+            title: titleUpdate.title,
+            previousTitle: titleUpdate.previousTitle,
+            hasCustomTitle: false,
+            silent: true,
+          });
+        }
+      }
     }
-    // 턴 종료(Stop) 시 자동 타이틀 1회 — headless의 result 트리거는 터미널 세션엔 오지 않으므로
-    // 여기서 발화한다(커스텀 타이틀 없고 미발화일 때만; maybeAutoGenerateProtocolTitle 내부 가드).
+    // 턴 종료(Stop) 시 선택적 AI 제목 개선 — headless의 result 트리거는 터미널
+    // 세션엔 오지 않으므로 여기서 발화한다. 설정/중복 여부는 내부에서 확인한다.
     if (event === 'Stop' && entry.sessionId) {
       refreshSessionDiffStateInBackground(entry.sessionId, entry.userId, 'terminal Stop hook');
       maybeAutoGenerateProtocolTitle({

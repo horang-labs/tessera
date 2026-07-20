@@ -429,6 +429,8 @@ export type AppServerMessage =
       previousTitle: string;
       /** False for a deterministic placeholder that remains eligible for AI replacement. */
       hasCustomTitle?: boolean;
+      /** Suppress rename feedback for automatic local placeholder replacement. */
+      silent?: boolean;
     }
   | {
       type: 'session_title_generation';

@@ -53,7 +53,8 @@ export interface UserSettings {
   notifications: {
     soundEnabled: boolean;
     showToast: boolean;
-    autoGenerateTitle: boolean;
+    /** Optional LLM replacement for the deterministic title shown immediately. */
+    aiTitleRefinement: boolean;
   };
   translate: {
     enabled: boolean;

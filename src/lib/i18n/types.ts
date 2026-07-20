@@ -36,8 +36,8 @@ export interface I18nMessages {
     notifications: string;
     sound: string;
     toast: string;
-    autoGenerateTitle: string;
-    autoGenerateTitleDesc: string;
+    aiTitleRefinement: string;
+    aiTitleRefinementDesc: string;
     translate: {
       title: string;
       enabled: string;
@@ -464,6 +464,7 @@ export interface I18nMessages {
     newTabDefault: string;
     openGitPanel: string;
     closeGitPanel: string;
+    renameTab: string;
     closeTab: string;
     closeOtherTabs: string;
     closeTabsToLeft: string;

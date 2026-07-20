@@ -24,6 +24,7 @@ const MIN_MARGIN_PX = 50;
 interface AdjacentTab {
   tabId: string;
   sessionId: string | null;
+  customTitle: string | null;
   title: string;
 }
 
@@ -47,13 +48,13 @@ function useAdjacentTabs(): { left: AdjacentTab | null; right: AdjacentTab | nul
         ? (tabData.panels[tabData.activePanelId]?.sessionId ?? null)
         : null;
       let title = t('chat.newTabDefault');
-      if (sessionId && isSpecialSession(sessionId)) {
+      if (tab.title) {
+        title = tab.title;
+      } else if (sessionId && isSpecialSession(sessionId)) {
         const titleKey = getSpecialSessionTitleKey(sessionId);
         title = titleKey ? t(titleKey) : getSpecialSessionTitle(sessionId, t) ?? t('chat.newTabDefault');
-      } else if (tab.title) {
-        title = tab.title;
       }
-      return { tabId: tab.id, sessionId, title };
+      return { tabId: tab.id, sessionId, customTitle: tab.title, title };
     };
 
     const left = activeIdx > 0 ? resolveTab(tabs[activeIdx - 1]) : null;
@@ -117,9 +118,11 @@ function useContentEdges(enabled: boolean) {
 
 const SideNavTitle = memo(function SideNavTitle({
   sessionId,
+  customTitle,
   fallbackTitle,
 }: {
   sessionId: string | null;
+  customTitle: string | null;
   fallbackTitle: string;
 }) {
   const { t } = useI18n();
@@ -131,6 +134,7 @@ const SideNavTitle = memo(function SideNavTitle({
       [sessionId],
     ),
   );
+  if (customTitle) return <>{customTitle}</>;
   if (titleKey) return <>{t(titleKey)}</>;
   if (specialTitle) return <>{specialTitle}</>;
   return <>{session?.title ?? fallbackTitle}</>;
@@ -201,7 +205,11 @@ const ContentPill = memo(function ContentPill({
           )}
         >
           <span className="text-[0.6875rem] whitespace-nowrap max-w-[140px] truncate text-(--text-secondary)">
-            <SideNavTitle sessionId={adjacent.sessionId} fallbackTitle={adjacent.title} />
+            <SideNavTitle
+              sessionId={adjacent.sessionId}
+              customTitle={adjacent.customTitle}
+              fallbackTitle={adjacent.title}
+            />
           </span>
         </div>
       </button>
@@ -283,7 +291,11 @@ const EdgeOverlay = memo(function EdgeOverlay({
             )}
           >
             <span className="text-[0.6875rem] font-medium text-(--accent)">
-              <SideNavTitle sessionId={adjacent.sessionId} fallbackTitle={adjacent.title} />
+              <SideNavTitle
+                sessionId={adjacent.sessionId}
+                customTitle={adjacent.customTitle}
+                fallbackTitle={adjacent.title}
+              />
             </span>
           </div>
         </button>

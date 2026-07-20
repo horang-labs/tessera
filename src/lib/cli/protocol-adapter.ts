@@ -275,7 +275,7 @@ export class ProtocolAdapter {
   /**
    * Trigger background AI title generation if eligible:
    *  - Session has no custom title (has_custom_title=0)
-   *  - User has autoGenerateTitle enabled in settings
+   *  - User has AI title refinement enabled in settings
    * Fire-and-forget: errors are logged but never thrown.
    */
   maybeAutoGenerateTitle(sessionId: string, userId: string): void {
