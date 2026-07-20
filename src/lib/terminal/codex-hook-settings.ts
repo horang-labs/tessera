@@ -1,5 +1,30 @@
 import { HOOK_CURL } from './claude-hook-settings';
 
+export const CODEX_HOOK_EVENT_LABEL = {
+  SessionStart: 'session_start',
+  UserPromptSubmit: 'user_prompt_submit',
+  Stop: 'stop',
+} as const;
+
+export type CodexHookEventName = keyof typeof CODEX_HOOK_EVENT_LABEL;
+
+export interface CodexHookCommand {
+  type: 'command';
+  timeout?: number;
+  command: string;
+  async?: boolean;
+  statusMessage?: string;
+}
+
+export interface CodexHookGroup {
+  matcher?: string;
+  hooks: CodexHookCommand[];
+}
+
+export interface CodexHookSettings {
+  hooks: Record<CodexHookEventName, CodexHookGroup[]>;
+}
+
 /**
  * codex CODEX_HOME/hooks.json 에 쓸 상태 훅 정의.
  * 스키마: { hooks: { <Event>: [ { hooks: [ { type, command, timeout } ] } ] } }.
@@ -8,19 +33,15 @@ import { HOOK_CURL } from './claude-hook-settings';
  * argv --settings가 아니라 CODEX_HOME/hooks.json 파일로 주입한다는 점.
  * 스크립트는 stdout을 오염시키지 않고 항상 성공 종료(|| true)하는 순수 lifecycle observer다.
  */
-const CODEX_EVENTS = [
-  'SessionStart',
-  'UserPromptSubmit',
-  'Stop',
-] as const;
-
-function group() {
+function group(): CodexHookGroup[] {
   return [{ hooks: [{ type: 'command', timeout: 5, command: HOOK_CURL }] }];
 }
 
-export function buildCodexHookSettings(): Record<string, unknown> {
-  const hooks: Record<string, unknown> = {};
-  for (const event of CODEX_EVENTS) hooks[event] = group();
+export function buildCodexHookSettings(): CodexHookSettings {
+  const hooks = {} as CodexHookSettings['hooks'];
+  for (const event of Object.keys(CODEX_HOOK_EVENT_LABEL) as CodexHookEventName[]) {
+    hooks[event] = group();
+  }
   return { hooks };
 }
 

@@ -24,6 +24,11 @@ export function buildClaudeHookSettings(): Record<string, unknown> {
       // AI 자동 타이틀이 되게 한다(codex는 이미 등록됨).
       UserPromptSubmit: lifecycleHook(),
       Stop: lifecycleHook(),
+      // Claude의 lead turn이 먼저 끝나도 background child가 계속 실행될 수 있다.
+      // child/team lifecycle을 받아 terminal 상태를 완료로 조기 전환하지 않게 한다.
+      SubagentStart: lifecycleHook(),
+      SubagentStop: lifecycleHook(),
+      TeammateIdle: lifecycleHook(),
     },
   };
 }

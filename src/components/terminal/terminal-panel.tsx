@@ -9,11 +9,14 @@ import {
   useSyncExternalStore,
   type DragEvent,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 import { GripVertical, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ScrollToBottomButton } from '@/components/ui/scroll-to-bottom-button';
 import { TabIdContext, usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useChatStore } from '@/stores/chat-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
 import {
@@ -23,6 +26,8 @@ import {
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 import { useIsDark } from '@/hooks/use-is-dark';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
+import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
+import { TerminalScrollbar } from './terminal-scrollbar';
 
 interface TerminalPanelProps {
   panelId: string;
@@ -61,7 +66,10 @@ export function TerminalPanel({
   launch,
 }: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
+  const { t } = useTranslation();
   const isDark = useIsDark();
+  const fontScale = useSettingsStore((state) => state.settings.fontSize);
+  const terminalFontSize = getTerminalFontSize(fontScale);
   const containerRef = useRef<HTMLDivElement>(null);
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
@@ -72,11 +80,13 @@ export function TerminalPanel({
   const surface = useMemo(() => getTerminalSurface({
     registryKey: `${tabId}:${panelId}:${terminalId}`,
     terminalId,
+    theme: getTerminalTheme(isDark),
+    fontSize: terminalFontSize,
     cwd: getInitialTerminalCwd(terminalSessionId),
     sessionId: getSessionSelectionId(terminalSessionId),
     launch,
-  }), [launch, panelId, tabId, terminalId, terminalSessionId]);
-  const { status, subtitle } = useSyncExternalStore(
+  }), [isDark, launch, panelId, tabId, terminalFontSize, terminalId, terminalSessionId]);
+  const { status, subtitle, isAtBottom, scrollMetrics } = useSyncExternalStore(
     surface.subscribe,
     surface.getSnapshot,
     surface.getSnapshot,
@@ -86,6 +96,10 @@ export function TerminalPanel({
   useEffect(() => {
     surface.setTheme(getTerminalTheme(isDark));
   }, [isDark, surface]);
+
+  useEffect(() => {
+    surface.setFontSize(terminalFontSize);
+  }, [surface, terminalFontSize]);
 
   const handlePanelDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     const didSet = setPanelNodeDragData(event.dataTransfer, { tabId, panelId });
@@ -198,7 +212,17 @@ export function TerminalPanel({
         </div>
       )}
       <div className="relative min-h-0 flex-1 overflow-hidden p-2">
-        <div ref={containerRef} className="h-full min-h-0 overflow-hidden" />
+        <div className="flex h-full min-h-0 gap-1">
+          <div ref={containerRef} className="h-full min-w-0 flex-1 overflow-hidden" />
+          <TerminalScrollbar metrics={scrollMetrics} />
+        </div>
+        {!isAtBottom && (
+          <ScrollToBottomButton
+            onClick={() => surface.scrollToBottom()}
+            title={t('chat.scrollToBottom')}
+            testId="terminal-scroll-to-bottom-button"
+          />
+        )}
         {sessionOwned && status !== 'running' && (
           <div
             role="status"

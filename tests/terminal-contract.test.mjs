@@ -28,14 +28,21 @@ const worktreeDiffStatsSource = fs.readFileSync(new URL('../src/lib/git/worktree
 const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', import.meta.url), 'utf8');
 const prStatusProviderSource = fs.readFileSync(new URL('../src/lib/github/pr-status-provider.ts', import.meta.url), 'utf8');
 const managedWorktreesSource = fs.readFileSync(new URL('../src/lib/worktrees/managed.ts', import.meta.url), 'utf8');
+const chatAreaSource = fs.readFileSync(new URL('../src/components/chat/chat-area.tsx', import.meta.url), 'utf8');
 const terminalPanelSource = fs.readFileSync(new URL('../src/components/terminal/terminal-panel.tsx', import.meta.url), 'utf8');
+const tabPanelHostSource = fs.readFileSync(new URL('../src/components/tab/tab-panel-host.tsx', import.meta.url), 'utf8');
 const terminalSurfaceSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-surface-registry.ts', import.meta.url), 'utf8');
+const terminalScrollControllerSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-scroll-controller.ts', import.meta.url), 'utf8');
+const layoutSettleRunnerSource = fs.readFileSync(new URL('../src/lib/terminal/layout-settle-runner.ts', import.meta.url), 'utf8');
+const scrollToBottomButtonSource = fs.readFileSync(new URL('../src/components/ui/scroll-to-bottom-button.tsx', import.meta.url), 'utf8');
 const electronMainSource = fs.readFileSync(new URL('../electron/main.ts', import.meta.url), 'utf8');
 const electronPreloadSource = fs.readFileSync(new URL('../electron/preload.ts', import.meta.url), 'utf8');
 const terminalThemeUrl = new URL('../src/lib/terminal/terminal-theme.ts', import.meta.url);
 const terminalThemeSource = fs.existsSync(terminalThemeUrl)
   ? fs.readFileSync(terminalThemeUrl, 'utf8')
   : '';
+const terminalCssSource = fs.readFileSync(new URL('../src/app/terminal.css', import.meta.url), 'utf8');
+const terminalScrollbarSource = fs.readFileSync(new URL('../src/components/terminal/terminal-scrollbar.tsx', import.meta.url), 'utf8');
 const emptyPanelStateSource = fs.readFileSync(new URL('../src/components/panel/empty-panel-state.tsx', import.meta.url), 'utf8');
 const wsClientSource = fs.readFileSync(new URL('../src/lib/ws/client.ts', import.meta.url), 'utf8');
 const panelWrapperSource = fs.readFileSync(new URL('../src/components/panel/panel-wrapper.tsx', import.meta.url), 'utf8');
@@ -55,11 +62,29 @@ test('terminal feature declares browser UI and server PTY dependencies', () => {
   assert.ok(packageJson.dependencies['node-pty']);
 });
 
+test('plain and OSC 8 terminal links share the validated Electron external URL bridge', () => {
+  assert.match(
+    terminalSurfaceSource,
+    /const \{ webLinkHandler, oscLinkHandler \} = createTerminalExternalLinkHandlers\(\)/,
+  );
+  assert.match(terminalSurfaceSource, /linkHandler: oscLinkHandler/);
+  assert.match(terminalSurfaceSource, /new WebLinksAddon\(webLinkHandler\)/);
+  assert.match(
+    electronPreloadSource,
+    /openExternalUrl: \(url: string\) => ipcRenderer\.invoke\('shell-open-external-url', url\)/,
+  );
+  assert.match(
+    electronMainSource,
+    /ipcMain\.handle\('shell-open-external-url',[\s\S]*normalizeExternalHttpUrl\(rawUrl\)[\s\S]*shell\.openExternal\(targetUrl\)/,
+  );
+});
+
 test('terminal exposes complete light and dark color palettes', () => {
   assert.match(terminalThemeSource, /export const TERMINAL_DARK_THEME/);
-  assert.match(terminalThemeSource, /background: '#282c34'/);
+  assert.match(terminalThemeSource, /background: '#161616'/);
   assert.match(terminalThemeSource, /export const TERMINAL_LIGHT_THEME/);
-  assert.match(terminalThemeSource, /background: '#ffffff'/);
+  assert.match(terminalThemeSource, /background: '#fafaf9'/);
+  assert.match(terminalThemeSource, /black: '#ecece8'/);
   for (const color of [
     'black',
     'red',
@@ -84,14 +109,39 @@ test('terminal exposes complete light and dark color palettes', () => {
 
 test('mounted terminals follow app theme changes without recreating the PTY', () => {
   assert.match(terminalPanelSource, /const isDark = useIsDark\(\)/);
+  assert.match(terminalPanelSource, /theme: getTerminalTheme\(isDark\)/);
+  assert.match(terminalSurfaceSource, /theme: TesseraTerminalTheme/);
+  assert.match(terminalSurfaceSource, /this\.theme = \{ \.\.\.options\.theme \}/);
+  assert.doesNotMatch(terminalSurfaceSource, /private theme = getTerminalTheme\(true\)/);
   assert.match(terminalPanelSource, /surface\.setTheme\(getTerminalTheme\(isDark\)\)/);
   assert.match(terminalSurfaceSource, /setTheme\(theme: TesseraTerminalTheme\)/);
   assert.match(terminalSurfaceSource, /this\.terminal\.options\.theme = this\.theme/);
   assert.match(terminalSurfaceSource, /theme: this\.theme/);
+  assert.match(terminalSurfaceSource, /minimumContrastRatio: 4\.5/);
+  assert.match(terminalSurfaceSource, /colorQueryColors: \{/);
+  assert.match(terminalManagerSource, /createTerminalStartupColorQueryBridge/);
+  assert.match(messageTypesSource, /colorQueryColors\?: TerminalColorQueryColors/);
   assert.match(
     terminalPanelSource,
     /}, \[panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId\]\);/,
   );
+});
+
+test('terminal typography and scrollbar visibility follow Tessera appearance settings', () => {
+  assert.match(terminalPanelSource, /getTerminalFontSize\(fontScale\)/);
+  assert.match(terminalPanelSource, /surface\.setFontSize\(terminalFontSize\)/);
+  assert.match(terminalSurfaceSource, /fontSize: this\.fontSize/);
+  assert.match(terminalCssSource, /--terminal-scrollbar-thumb: #687078/);
+  assert.match(terminalCssSource, /scrollbar-width: none/);
+  assert.match(terminalScrollbarSource, /data-testid="terminal-scrollbar"/);
+  assert.match(terminalScrollbarSource, /TerminalScrollMetrics/);
+  assert.match(terminalPanelSource, /<TerminalScrollbar metrics=\{scrollMetrics\} \/>/);
+});
+
+test('mounted terminal DOM order stays stable when LRU activation order changes', () => {
+  assert.match(tabPanelHostSource, /orderMountedTabIds\(tabs, lruTabIds\)/);
+  assert.match(tabPanelHostSource, /mountedTabIds\.map/);
+  assert.doesNotMatch(tabPanelHostSource, /\{lruTabIds\.map/);
 });
 
 test('terminal routes modified keys through an explicit input policy before xterm encoding', () => {
@@ -100,6 +150,28 @@ test('terminal routes modified keys through an explicit input policy before xter
   assert.match(terminalSurfaceSource, /event\.preventDefault\(\)/);
   assert.match(terminalSurfaceSource, /this\.sendInput\(action\.data\)/);
   assert.match(terminalSurfaceSource, /return false/);
+});
+
+test('terminal preserves scroll position on resize and exposes the shared latest-output control', () => {
+  assert.match(terminalSurfaceSource, /new TerminalScrollController\(terminal\)/);
+  assert.match(terminalSurfaceSource, /requestStableFit/);
+  assert.match(terminalSurfaceSource, /captureRestorePoint/);
+  assert.match(terminalSurfaceSource, /restoreAfterLayout/);
+  assert.match(terminalSurfaceSource, /terminal\.onScroll/);
+  assert.match(terminalScrollControllerSource, /'follow-output' \| 'pinned-viewport'/);
+  assert.match(terminalScrollControllerSource, /registerMarker/);
+  assert.match(terminalScrollControllerSource, /LayoutSettleRunner/);
+  assert.match(layoutSettleRunnerSource, /requestAnimationFrame/);
+  assert.match(terminalPanelSource, /!isAtBottom/);
+  assert.match(terminalPanelSource, /surface\.scrollToBottom\(\)/);
+  assert.match(terminalPanelSource, /terminal-scroll-to-bottom-button/);
+  assert.match(scrollToBottomButtonSource, /aria-label=\{title\}/);
+});
+
+test('single-panel terminal sessions omit only the redundant session header', () => {
+  assert.match(chatAreaSource, /shouldShowSessionHeader\(\{ isTerminalSession, isSinglePanel \}\)/);
+  assert.match(chatAreaSource, /<Header/);
+  assert.match(chatAreaSource, /search=\{\{/);
 });
 
 test('terminal image paste crosses the Electron clipboard boundary through a narrow preload API', () => {
@@ -127,6 +199,8 @@ test('terminal websocket protocol covers process lifecycle', () => {
     'terminal_output',
     'terminal_exit',
     'terminal_error',
+    'terminal_session_runtime',
+    'terminal_session_runtime_snapshot',
   ]) {
     assert.match(messageTypesSource, new RegExp(`type: '${type}'`));
   }
@@ -226,6 +300,13 @@ test('websocket disconnect detaches surfaces without killing terminal processes'
   assert.match(wsServerSource, /terminalManager\.detachConnection\(ws\.connectionId\)/);
   assert.doesNotMatch(wsServerSource, /terminalManager\.closeAllForUser\(userId\)/);
   assert.match(wsServerSource, /terminalManager\.shutdownAll\(\)/);
+});
+
+test('terminal runtime lifecycle is broadcast and replayed to session clients', () => {
+  assert.match(sharedTerminalManagerSource, /type: 'terminal_session_runtime'/);
+  assert.match(wsServerSource, /bindTerminalRuntimeSender/);
+  assert.match(wsServerSource, /type: 'terminal_session_runtime_snapshot'/);
+  assert.match(wsServerSource, /terminalManager\.getActiveSessionIds\(userId\)/);
 });
 
 test('terminal cwd is server validated before spawning a PTY', () => {

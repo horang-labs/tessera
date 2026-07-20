@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { processManager } from '@/lib/cli/process-manager';
+import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import * as dbTasks from '@/lib/db/tasks';
 import * as dbSessions from '@/lib/db/sessions';
 import { collectionExists } from '@/lib/db/collections';
@@ -31,11 +31,12 @@ export async function GET(
 ) {
   const auth = await requireAuthenticatedUserId(req);
   if ('response' in auth) return auth.response;
+  const { userId } = auth;
 
   const { id } = await params;
 
   try {
-    const activeSessionIds = processManager.getActiveSessionIds();
+    const activeSessionIds = getActiveSessionIds(userId);
     const task = dbTasks.getTask(id, activeSessionIds);
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
@@ -198,7 +199,7 @@ export async function DELETE(
 
   const { id } = await params;
 
-  const task = dbTasks.getTask(id, processManager.getActiveSessionIds());
+  const task = dbTasks.getTask(id, getActiveSessionIds());
   if (!task) {
     return NextResponse.json({ error: 'Task not found' }, { status: 404 });
   }

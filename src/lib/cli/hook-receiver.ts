@@ -12,6 +12,7 @@ import logger from '@/lib/logger';
 import { terminalManager } from '@/lib/terminal/shared-terminal-manager';
 import { refreshSessionDiffStateInBackground } from '@/lib/git/session-diff-refresh';
 import { applyImmediateSessionTitle } from '@/lib/session/immediate-session-title';
+import { mapClaudeHookLifecycle } from '@/lib/cli/providers/claude-code/terminal-hook-lifecycle';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -37,6 +38,10 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 function readString(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+function completedStatus(payload: Record<string, unknown>): { status: 'completed'; preview?: string } {
+  return { status: 'completed', preview: readString(payload.last_assistant_message) || undefined };
 }
 
 /**
@@ -71,12 +76,25 @@ function mapEventToStatus(
       return { status: 'running' };
     case 'Stop':
       // stock Stop payload엔 assistant 텍스트가 없다. 포크 필드가 있으면만 preview로.
-      return { status: 'completed', preview: readString(payload.last_assistant_message) || undefined };
+      return completedStatus(payload);
     case 'Notification':
       return classifyNotification(payload);
     default:
       return null;
   }
+}
+
+function mapClaudeEventToStatus(
+  terminalId: string,
+  event: string,
+  payload: Record<string, unknown>,
+): { status: TerminalSessionStatus; preview?: string } | null {
+  const lifecycle = mapClaudeHookLifecycle(terminalId, event, payload);
+  if (lifecycle) {
+    if (event === 'Stop' && lifecycle.status === 'completed') return completedStatus(payload);
+    return lifecycle;
+  }
+  return mapEventToStatus(event, payload);
 }
 
 /**
@@ -98,7 +116,7 @@ function mapCodexEventToStatus(
     case 'PermissionRequest':
       return { status: 'input_required' };
     case 'Stop':
-      return { status: 'completed', preview: readString(payload.last_assistant_message) || undefined };
+      return completedStatus(payload);
     default:
       return null;
   }
@@ -126,7 +144,9 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     const isOpenCode = entry.providerId === 'opencode';
     const mapped = isCodex
       ? mapCodexEventToStatus(event, payload)
-      : mapEventToStatus(event, payload);
+      : isOpenCode
+        ? mapEventToStatus(event, payload)
+        : mapClaudeEventToStatus(entry.terminalId, event, payload);
     // brick finding: launched 마커는 SessionStart 수신 시 찍는다 = agent가 세션을 실제 persist한 시점.
     if (event === 'SessionStart' && entry.sessionId) {
       if (isCodex) {
@@ -161,10 +181,10 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         }
       }
     }
-    // 턴 종료(Stop) 시 선택적 AI 제목 개선 — headless의 result 트리거는 터미널
-    // 세션엔 오지 않으므로 여기서 발화한다. 설정/중복 여부는 내부에서 확인한다.
-    if (event === 'Stop' && entry.sessionId) {
-      refreshSessionDiffStateInBackground(entry.sessionId, entry.userId, 'terminal Stop hook');
+    // 실제 턴 완료 시 선택적 AI 제목과 Git 상태를 확정한다. Claude는 lead Stop 뒤에도
+    // background child가 실행될 수 있으므로 mapped 상태를 완료 경계로 사용한다.
+    if (mapped?.status === 'completed' && entry.sessionId) {
+      refreshSessionDiffStateInBackground(entry.sessionId, entry.userId, 'terminal lifecycle completion');
       maybeAutoGenerateProtocolTitle({
         autoTitleTriggered: terminalAutoTitleTriggered,
         sendAppMessage: (uid, m) => wsServer.sendToUser(uid, m),

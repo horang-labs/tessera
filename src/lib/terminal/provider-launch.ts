@@ -16,8 +16,7 @@ export interface ProviderTerminalLaunch {
  * 클라 argv 불신. {providerId, sessionId, resume, ...} 만 받아 서버가 최소 argv 전량 조립.
  *  - claude: hooks는 --settings 인라인 주입.
  *  - codex : hooks는 argv가 아니라 CODEX_HOME/hooks.json(오버레이)로 주입되므로 argv엔 없다.
- *            trust는 --dangerously-bypass-hook-trust(글로벌 플래그)로 통과 —
- *            hooks.json은 서버가 소유한 고정 loopback curl이라 인젝션 표면이 없다.
+ *            Tessera 훅의 trust hash도 오버레이 config.toml에 함께 기록한다.
  *            (approvals/sandbox는 절대 우회하지 않는다: --dangerously-bypass-approvals-and-sandbox 미사용.)
  */
 export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput): ProviderTerminalLaunch {
@@ -30,12 +29,12 @@ export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput):
   }
 
   if (input.providerId === 'codex') {
-    // 글로벌 플래그라 subcommand 앞/뒤 어디든 허용(0.144.1 확인). 신규는 세션식별 인자 없음
-    // (codex가 rollout id 자체 발급). resume는 이전 훅에서 캡처한 codexResumeId 필요.
+    // 신규는 세션식별 인자 없음(codex가 rollout id 자체 발급).
+    // resume는 이전 훅에서 캡처한 codexResumeId 필요.
     if (input.resume && input.codexResumeId) {
-      return { command: 'codex', args: ['resume', input.codexResumeId, '--dangerously-bypass-hook-trust'] };
+      return { command: 'codex', args: ['resume', input.codexResumeId] };
     }
-    return { command: 'codex', args: ['--dangerously-bypass-hook-trust'] };
+    return { command: 'codex', args: [] };
   }
 
   if (input.providerId === 'opencode') {

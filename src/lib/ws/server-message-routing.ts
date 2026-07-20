@@ -623,6 +623,7 @@ export async function routeClientTransportMessage({
           launchSpec,
           paneToken,
           providerId,
+          colorQueryColors: message.colorQueryColors,
           launchEnv,
           launchObserverDisposer,
         });

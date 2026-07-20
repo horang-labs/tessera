@@ -477,6 +477,7 @@ export function mapSessionRowToApi(
 ) {
   const isRunning = activeSessionIds.has(row.id);
   const isGenerating = generatingSessionIds.has(row.id);
+  const kind = extractSessionKind(row.provider_state);
   const hasStarted = isRunning || hasProviderConversationState(row.provider_state) || hasSessionHistoryFile(row.id);
   return {
     id: row.id,
@@ -487,7 +488,7 @@ export function mapSessionRowToApi(
     isRunning,
     isGenerating,
     hasStarted,
-    status: isRunning ? 'running' : ('completed' as const),
+    status: isRunning ? ('running' as const) : kind === 'terminal' ? ('stopped' as const) : ('completed' as const),
     projectDir: row.project_id,
     workDir: row.work_dir ?? undefined,
     workflowStatus: row.workflow_status ?? undefined,
@@ -499,7 +500,7 @@ export function mapSessionRowToApi(
     model: row.model ?? undefined,
     reasoningEffort: row.reasoning_effort ?? undefined,
     serviceTier: row.service_tier ?? undefined,
-    kind: extractSessionKind(row.provider_state),
+    kind,
     taskId: row.task_id ?? undefined,
     collectionId: row.collection_id ?? undefined,
   };

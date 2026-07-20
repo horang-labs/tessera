@@ -1,6 +1,7 @@
 import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { processManager } from '@/lib/cli/process-manager';
+import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
     const limitPerStatus = parseInt(searchParams.get('limitPerStatus') || '100000', 10);
 
     // Get active/generating session IDs from process manager
-    const activeSessionIds = processManager.getActiveSessionIds();
+    const activeSessionIds = getActiveSessionIds(userId);
     const generatingSessionIds = processManager.getGeneratingSessionIds();
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
     const agentEnvironment = await getAgentEnvironment(userId);

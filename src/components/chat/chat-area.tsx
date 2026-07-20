@@ -21,6 +21,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { useI18n } from "@/lib/i18n";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { getSessionTerminalId } from "@/lib/terminal/terminal-surface-registry";
+import { shouldShowSessionHeader } from "@/lib/terminal/session-header-visibility";
 
 interface ChatAreaProps {
   sessionId: string;
@@ -80,8 +81,8 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
   );
 
   // terminal-mode: 이 세션이 터미널 kind면 채팅 본문(메시지/컴포저) 대신 xterm 터미널을
-  // 렌더하고, 마운트 시 provider PTY를 프롬프트 없이 자동 기동한다. Header 등 세션 UI는
-  // 그대로 유지되어 제목편집·사이드바 선택·상태 인디케이터를 채팅창과 동일하게 흡수한다.
+  // 렌더하고, 마운트 시 provider PTY를 프롬프트 없이 자동 기동한다. 단일 패널에서는
+  // 탭 제목과 중복되는 Header를 숨기고, 멀티 패널에서는 패널 제어를 위해 유지한다.
   const sessionProvider = session?.provider;
   const isTerminalSession = session?.kind === "terminal";
   // 세션당 안정적 terminalId. 렌더러 메모리가 아니라 서버의 session binding이 실제
@@ -147,23 +148,25 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
 
   return (
     <div className="flex-1 flex flex-col h-full bg-(--chat-bg)">
-      <Header
-        sessionId={sessionId}
-        panelId={panelId}
-        isSinglePanel={isSinglePanel}
-        search={{
-          isOpen: messageSearch.isSearchOpen,
-          query: messageSearch.query,
-          matchCount: messageSearch.matches.length,
-          activeMatchIndex: messageSearch.activeMatchIndex,
-          hasMore,
-          onOpen: messageSearch.openSearch,
-          onClose: messageSearch.closeSearch,
-          onQueryChange: messageSearch.setQuery,
-          onNext: messageSearch.goToNextMatch,
-          onPrevious: messageSearch.goToPreviousMatch,
-        }}
-      />
+      {shouldShowSessionHeader({ isTerminalSession, isSinglePanel }) && (
+        <Header
+          sessionId={sessionId}
+          panelId={panelId}
+          isSinglePanel={isSinglePanel}
+          search={{
+            isOpen: messageSearch.isSearchOpen,
+            query: messageSearch.query,
+            matchCount: messageSearch.matches.length,
+            activeMatchIndex: messageSearch.activeMatchIndex,
+            hasMore,
+            onOpen: messageSearch.openSearch,
+            onClose: messageSearch.closeSearch,
+            onQueryChange: messageSearch.setQuery,
+            onNext: messageSearch.goToNextMatch,
+            onPrevious: messageSearch.goToPreviousMatch,
+          }}
+        />
+      )}
 
       <div className="flex-1 overflow-hidden">
         {isTerminalSession ? (

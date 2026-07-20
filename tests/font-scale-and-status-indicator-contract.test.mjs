@@ -17,20 +17,23 @@ const layoutSource = fs.readFileSync(
   new URL('../src/app/layout.tsx', import.meta.url),
   'utf8',
 );
-test('font scale presets keep the default and provide a substantially larger maximum', () => {
-  const expectedScales = /\[0\.8125, 0\.875, 1, 1\.25\]/;
+test('font scale presets provide visibly distinct 13px, 16px, 19px, and 22px root sizes', () => {
+  const expectedScales = /\[0\.8125, 1, 1\.1875, 1\.375\]/;
 
-  assert.deepEqual(FONT_SCALE_OPTIONS, [0.8125, 0.875, 1, 1.25]);
+  assert.deepEqual(FONT_SCALE_OPTIONS, [0.8125, 1, 1.1875, 1.375]);
   assert.match(settingsDefaultsSource, expectedScales);
-  assert.match(layoutSource, expectedScales);
-  assert.match(settingsDefaultsSource, /DEFAULT_FONT_SCALE = 0\.875/);
+  assert.match(layoutSource, /JSON\.stringify\(FONT_SCALE_OPTIONS\)/);
+  assert.match(settingsDefaultsSource, /DEFAULT_FONT_SCALE = 0\.8125/);
 });
 
-test('legacy large font scale upgrades without shrinking', () => {
+test('stored font scales migrate to the matching new semantic preset', () => {
   assert.equal(normalizeFontScale(0.9375), 1);
-  assert.equal(normalizeFontScale(0.875), 0.875);
-  assert.equal(normalizeFontScale(1.25), 1.25);
-  assert.match(layoutSource, /if \(raw === 0\.9375\) raw = 1/);
+  assert.equal(normalizeFontScale(0.8125), 0.8125);
+  assert.equal(normalizeFontScale(0.875), 0.8125);
+  assert.equal(normalizeFontScale(1), 1);
+  assert.equal(normalizeFontScale(1.125), 1.1875);
+  assert.equal(normalizeFontScale(1.25), 1.375);
+  assert.match(layoutSource, /JSON\.stringify\(FONT_SCALE_MIGRATIONS\)/);
 });
 
 function renderStatusIndicator({
