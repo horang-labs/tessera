@@ -714,6 +714,7 @@ export interface I18nMessages {
     closePanel: string;
     tooSmallToSplit: string;
     cannotCloseLastPanel: string;
+    dropToInsertPath: string;
   };
   sidebar: {
     noProjects: string;

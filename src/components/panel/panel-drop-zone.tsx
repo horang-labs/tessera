@@ -7,6 +7,8 @@ export type DropEdge = 'left' | 'right' | 'top' | 'bottom' | 'center';
 
 interface PanelDropZoneProps {
   edge: DropEdge;
+  /** Optional hint shown centered in the zone (e.g. "insert path" for file drags). */
+  label?: string;
 }
 
 /**
@@ -15,12 +17,12 @@ interface PanelDropZoneProps {
  * Center zone: highlights the full panel with a solid border (replace/assign).
  * pointer-events: none — purely presentational.
  */
-export const PanelDropZone = memo(function PanelDropZone({ edge }: PanelDropZoneProps) {
+export const PanelDropZone = memo(function PanelDropZone({ edge, label }: PanelDropZoneProps) {
   return (
     <div className="absolute inset-0 z-40 pointer-events-none" data-testid="panel-drop-zone">
       <div
         className={cn(
-          'absolute rounded-md transition-all duration-150',
+          'absolute flex items-center justify-center rounded-md transition-all duration-150',
           edge === 'center'
             ? 'inset-1 bg-(--accent)/10 border-2 border-solid border-(--accent)'
             : 'bg-(--accent)/15 border-2 border-dashed border-(--accent)',
@@ -31,7 +33,16 @@ export const PanelDropZone = memo(function PanelDropZone({ edge }: PanelDropZone
         )}
         data-testid="panel-drop-highlight"
         data-drop-edge={edge}
-      />
+      >
+        {label && (
+          <span
+            className="rounded-md bg-(--accent) px-2 py-1 text-xs font-medium text-white shadow-sm"
+            data-testid="panel-drop-label"
+          >
+            {label}
+          </span>
+        )}
+      </div>
     </div>
   );
 });

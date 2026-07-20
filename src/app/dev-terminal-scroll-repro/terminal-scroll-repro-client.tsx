@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ScrollToBottomButton } from '@/components/ui/scroll-to-bottom-button';
+import { PanelDivider } from '@/components/panel/panel-divider';
 import { useIsDark } from '@/hooks/use-is-dark';
 import {
   closeAndDisposeTerminalSurface,
@@ -32,9 +33,14 @@ interface ReproTerminalBuffer {
 
 interface ReproWindow extends Window {
   __tesseraTerminalScrollRepro?: {
+    bufferType(): 'normal' | 'alternate' | null;
+    capturePtyInput(): boolean;
     firstVisibleRowTag(): string | null;
     isAtBottom(): boolean | null;
     metrics(): { baseY: number; viewportY: number; rows: number } | null;
+    mouseReporting(): boolean | null;
+    takeCapturedPtyInput(): string[];
+    visibleText(): string | null;
     viewportY(): number | null;
   };
 }
@@ -45,7 +51,10 @@ export function TerminalScrollReproClient() {
   const terminalFontSize = getTerminalFontSize(fontScale);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const hostRef = useRef<HTMLDivElement>(null);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(true);
+  const [isSplit, setIsSplit] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(0.7);
   const surface = useMemo(() => getTerminalSurface({
     registryKey: REPRO_TERMINAL_ID,
     terminalId: REPRO_TERMINAL_ID,
@@ -75,7 +84,29 @@ export function TerminalScrollReproClient() {
 
   useEffect(() => {
     const reproWindow = window as ReproWindow;
+    const capturedPtyInput: string[] = [];
+    let captureDisposable: { dispose(): void } | null = null;
     reproWindow.__tesseraTerminalScrollRepro = {
+      capturePtyInput: () => {
+        const terminal = (surface as unknown as {
+          terminal: { onData(handler: (data: string) => void): { dispose(): void } } | null;
+        }).terminal;
+        if (!terminal || captureDisposable) return captureDisposable !== null;
+        captureDisposable = terminal.onData((data) => {
+          capturedPtyInput.push(data);
+        });
+        return true;
+      },
+      mouseReporting: () => (
+        (surface as unknown as { terminal: { element?: HTMLElement } | null })
+          .terminal?.element?.classList.contains('enable-mouse-events') ?? null
+      ),
+      takeCapturedPtyInput: () => capturedPtyInput.splice(0, capturedPtyInput.length),
+      bufferType: () => (
+        (surface as unknown as {
+          terminal: { buffer: { active: ReproTerminalBuffer & { type: 'normal' | 'alternate' } } } | null;
+        }).terminal?.buffer.active.type ?? null
+      ),
       firstVisibleRowTag: () => {
         const terminal = (surface as unknown as {
           terminal: { buffer: { active: ReproTerminalBuffer }; rows: number } | null;
@@ -106,6 +137,16 @@ export function TerminalScrollReproClient() {
           rows: terminal.rows,
         };
       },
+      visibleText: () => {
+        const terminal = (surface as unknown as {
+          terminal: { buffer: { active: ReproTerminalBuffer }; rows: number } | null;
+        }).terminal;
+        if (!terminal) return null;
+        const { active } = terminal.buffer;
+        return Array.from({ length: terminal.rows }, (_, offset) => (
+          active.getLine(active.viewportY + offset)?.translateToString(true) ?? ''
+        )).join('\n');
+      },
       viewportY: () => (
         (surface as unknown as {
           terminal: { buffer: { active: ReproTerminalBuffer } } | null;
@@ -113,6 +154,7 @@ export function TerminalScrollReproClient() {
       ),
     };
     return () => {
+      captureDisposable?.dispose();
       delete reproWindow.__tesseraTerminalScrollRepro;
     };
   }, [surface]);
@@ -122,7 +164,7 @@ export function TerminalScrollReproClient() {
     if (!isVisible || !host) return;
     void surface.mount(host);
     return () => surface.unmount(host);
-  }, [isVisible, surface]);
+  }, [isSplit, isVisible, surface]);
 
   useEffect(() => {
     if (connectionStatus !== 'connected' || !isVisible) return;
@@ -137,6 +179,14 @@ export function TerminalScrollReproClient() {
     <main className="flex h-screen flex-col bg-(--chat-bg) text-(--text-primary)">
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-(--divider) px-4 text-xs">
         <span data-testid="terminal-repro-status">{snapshot.status}</span>
+        <button
+          type="button"
+          className="rounded border border-(--divider) px-2 py-1"
+          data-testid="toggle-terminal-split"
+          onClick={() => setIsSplit((current) => !current)}
+        >
+          {isSplit ? 'Single panel' : 'Split panel'}
+        </button>
         <button
           type="button"
           className="rounded border border-(--divider) px-2 py-1"
@@ -159,8 +209,33 @@ export function TerminalScrollReproClient() {
         data-testid="terminal-scroll-repro"
         style={{ backgroundColor: theme.background, color: theme.foreground }}
       >
-        {isVisible && (
+        {isVisible && !isSplit && (
           <div ref={hostRef} className="h-full min-w-0 overflow-hidden" />
+        )}
+        {isVisible && isSplit && (
+          <div
+            ref={splitContainerRef}
+            className="flex h-full min-h-0 min-w-0 overflow-hidden"
+            data-testid="terminal-split-container"
+          >
+            <div
+              className="min-h-0 min-w-0 overflow-hidden"
+              style={{ flex: splitRatio }}
+            >
+              <div ref={hostRef} className="h-full min-w-0 overflow-hidden" />
+            </div>
+            <PanelDivider
+              direction="horizontal"
+              initialRatio={splitRatio}
+              onResize={setSplitRatio}
+              containerRef={splitContainerRef}
+            />
+            <div
+              className="min-h-0 min-w-0 border-l border-(--divider)"
+              data-testid="terminal-split-sibling"
+              style={{ flex: 1 - splitRatio }}
+            />
+          </div>
         )}
         {!snapshot.isAtBottom && (
           <ScrollToBottomButton

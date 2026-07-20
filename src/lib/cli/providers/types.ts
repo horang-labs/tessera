@@ -14,6 +14,7 @@ export type {
   CliStatusResult,
   CheckStatusOptions,
   TerminalAppearanceChangePolicy,
+  TerminalResizeScrollbackPolicy,
   ProviderRateLimitOptions,
 } from './provider-contract';
 export type { ParsedMessage, ParsedMessageSideEffect } from './message-types';

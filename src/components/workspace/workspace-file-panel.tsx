@@ -24,7 +24,7 @@ import {
   openWorkspaceFileTab,
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
-import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
+import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import {
   copyText,
   toAbsoluteWorkspacePath,
@@ -216,6 +216,11 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
                 position: { x: event.clientX, y: event.clientY },
               });
             }}
+            onDragStart={(event) => {
+              if (!sessionId) return;
+              setWorkspaceDirectoryDragData(event.dataTransfer, sessionId, node.path, absolutePath);
+            }}
+            draggable={Boolean(sessionId)}
             className="group flex min-w-0 items-center gap-1.5 border-l-2 border-l-transparent py-1.5 pr-2 text-left text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
             style={{ paddingLeft }}
             title={node.path}
@@ -280,7 +285,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           onDragStart={(event) => {
             if (!sessionId) return;
             setSelectedPath(node.path);
-            setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", node.path);
+            setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", node.path, absolutePath);
           }}
           draggable={Boolean(sessionId)}
           className="flex min-w-0 items-center gap-2 border-l-transparent py-1.5 pr-2 text-left transition-colors"

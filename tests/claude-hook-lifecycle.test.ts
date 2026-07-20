@@ -253,6 +253,22 @@ test('a PreToolUse inside the revive grace is treated as a late curl and ignored
   }, t0 + 2_000), null);
 });
 
+test('a subagent-origin PreToolUse never reopens a completed turn even after the grace', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const terminalId = 'terminal-post-turn-worker-tool';
+  const t0 = 5_000_000;
+
+  tracker.apply(terminalId, 'UserPromptSubmit', {}, t0);
+  tracker.apply(terminalId, 'Stop', { background_tasks: [] }, t0 + 1_000);
+
+  // 턴 종료 후 도는 후처리 워커(요약 생성 등)의 도구 이벤트 — grace를 한참 지나도
+  // lead가 깨어난 것이 아니므로 부활시키면 안 된다(다시 꺼줄 Stop이 안 온다).
+  assert.equal(tracker.apply(terminalId, 'PreToolUse', {
+    tool_name: 'Bash',
+    agent_id: 'recap-worker',
+  }, t0 + 600_000), null);
+});
+
 test('a late PostToolUse never reopens a completed turn regardless of delay', () => {
   const tracker = new ClaudeHookLifecycleTracker();
   const terminalId = 'terminal-late-posttooluse';

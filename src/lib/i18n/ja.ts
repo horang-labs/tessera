@@ -715,6 +715,7 @@ export const ja: I18nMessages = {
     closePanel: 'パネルを閉じる (Ctrl+Shift+W)',
     tooSmallToSplit: 'パネルが小さすぎて分割できません',
     cannotCloseLastPanel: '最後のパネルは閉じることができません',
+    dropToInsertPath: 'ターミナルにパスを挿入',
   },
   sidebar: {
     noProjects: 'プロジェクトがありません',

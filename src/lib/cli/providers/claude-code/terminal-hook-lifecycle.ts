@@ -69,10 +69,14 @@ export class ClaudeHookLifecycleTracker {
 
     if (event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure') {
       const state = this.getOrCreate(terminalId);
+      const agentId = readString(payload.agent_id) || readString(payload.agentId);
       if (state.turnEnded) {
-        // 재기동 턴 감지는 PreToolUse만 신뢰한다. PostToolUse는 턴 마지막 도구의
-        // 완료 직후 Stop이 따라붙어 curl 역전 가능성이 크다.
-        if (event !== 'PreToolUse' || now - state.turnEndedAt < REVIVED_TURN_GRACE_MS) {
+        // 재기동 턴 감지는 lead(agent_id 없음)의 PreToolUse만 신뢰한다.
+        // PostToolUse는 턴 마지막 도구의 완료 직후 Stop이 따라붙어 curl 역전
+        // 가능성이 크고, agent_id 있는 이벤트는 턴 종료 후에도 도는 후처리
+        // 워커일 수 있다 — 그걸로 부활시키면 lead Stop이 다시 올 때까지
+        // running에 갇힌다(tombstone의 존재 이유와 동일).
+        if (event !== 'PreToolUse' || agentId || now - state.turnEndedAt < REVIVED_TURN_GRACE_MS) {
           return null;
         }
         state.subagents.clear();
@@ -81,7 +85,6 @@ export class ClaudeHookLifecycleTracker {
         return { status: 'running' };
       }
       // 진행 중 턴의 도구 활동. subagent 발 이벤트면 그 child가 살아있다는 증거다.
-      const agentId = readString(payload.agent_id) || readString(payload.agentId);
       if (agentId) upsertWorkingSubagent(state.subagents, agentId);
       return { status: 'running' };
     }

@@ -48,11 +48,9 @@ import {
   resetAndRefreshTerminalRenderers,
 } from './terminal-render-recovery';
 import {
-  deferTerminalPtyResizeFlushIfHeld,
-  queueTerminalPtyResizeIfHeld,
-  TERMINAL_RESIZE_SETTLE_DELAY_MS,
-  type TerminalPtyResizeRequest,
-} from './terminal-pty-resize-hold';
+  attachTerminalMouseWheelMultiplier,
+  isTerminalTuiOwnedWheelEvent,
+} from './terminal-mouse-wheel';
 
 export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
 
@@ -83,6 +81,8 @@ type XtermLike = TerminalScrollTarget & {
   options: { theme?: ITheme; fontSize?: number };
   unicode: { activeVersion: string };
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
+  attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean): void;
+  element?: HTMLElement;
   loadAddon(addon: unknown): void;
   open(element: HTMLElement): void;
   focus(): void;
@@ -116,6 +116,7 @@ let parkingLot: HTMLElement | null = null;
  * `TerminalSurface.coldPark`.
  */
 const COLD_PARK_DELAY_MS = 30_000;
+const TERMINAL_RESIZE_SETTLE_DELAY_MS = 150;
 
 function getParkingLot(): HTMLElement {
   if (parkingLot?.isConnected) return parkingLot;
@@ -603,6 +604,7 @@ export class TerminalSurface {
       terminal.loadAddon(new Unicode11Addon());
       terminal.loadAddon(new WebLinksAddon(webLinkHandler));
       terminal.unicode.activeVersion = '11';
+      attachTerminalMouseWheelMultiplier(terminal);
 
       try {
         const webglAddon = new WebglAddon();
@@ -875,7 +877,7 @@ export class TerminalSurface {
           this.replaying = false;
         }
         this.scheduleSurfaceScrollStateSync();
-        if (shouldRecoverRenderer) this.recoverRendererAfterBackgroundRedraw();
+        if (shouldRecoverRenderer) this.recoverRendererPresentation();
       });
       return;
     }
@@ -889,7 +891,7 @@ export class TerminalSurface {
         if (restorePoint) this.scrollController?.restore(restorePoint);
         this.scheduleScrollRebuildSettle();
         this.scheduleSurfaceScrollStateSync();
-        if (shouldRecoverRenderer) this.recoverRendererAfterBackgroundRedraw();
+        if (shouldRecoverRenderer) this.recoverRendererPresentation();
       });
       return;
     }
@@ -921,9 +923,9 @@ export class TerminalSurface {
     }
   }
 
-  private recoverRendererAfterBackgroundRedraw(): void {
+  private recoverRendererPresentation(): void {
     // A synchronous repaint repairs stale cells immediately. The shared atlas
-    // reset waits for streaming output to settle so it cannot flicker mid-frame.
+    // reset waits for output/resize activity to settle so it cannot flicker.
     try {
       this.refreshTerminalViewport();
     } finally {
@@ -958,6 +960,10 @@ export class TerminalSurface {
       && target.closest('.xterm-viewport, .xterm-scrollbar, .xterm-slider') !== null
     );
     const onWheel = (event: WheelEvent) => {
+      // A mouse-reporting TUI (Claude Code select prompts, ...) owns this
+      // wheel: xterm sends it to the PTY as mouse reports and never moves
+      // the viewport. Pinning here would silently break follow-output.
+      if (isTerminalTuiOwnedWheelEvent(event, this.terminal?.element)) return;
       if (event.deltaY < 0) controller.pinViewport();
       this.scheduleScrollIntentSync(controller, event.deltaY < 0);
     };
@@ -1005,7 +1011,6 @@ export class TerminalSurface {
   }
 
   private requestStableFit(claim: boolean): void {
-    deferTerminalPtyResizeFlushIfHeld();
     this.pendingFitClaim ||= claim;
     if (this.pendingFitFrameId !== null || !this.isMountedHostVisible()) return;
 
@@ -1066,36 +1071,33 @@ export class TerminalSurface {
 
   private fitAndResize(claim: boolean, shouldFit = true): void {
     if (!this.isMountedHostVisible() || !this.fitAddon || !this.terminal) return;
+    let didFit = false;
     let restorePoint: TerminalScrollRestorePoint | null = null;
     try {
       if (shouldFit) {
         restorePoint = this.scrollController?.captureRestorePoint() ?? null;
         this.fitAddon.fit();
+        didFit = true;
       }
       const dimensions = this.getDimensions();
       if (dimensions && this.attachedConnectionGeneration > 0) {
-        const connectionGeneration = this.attachedConnectionGeneration;
-        const request: TerminalPtyResizeRequest = { ...dimensions, claim };
-        const send = (pendingRequest: TerminalPtyResizeRequest) => {
-          if (
-            this.disposed
-            || connectionGeneration !== this.attachedConnectionGeneration
-          ) return;
-          wsClient.resizeTerminal(
-            this.actualTerminalId,
-            this.surfaceId,
-            pendingRequest.cols,
-            pendingRequest.rows,
-            pendingRequest.claim,
-          );
-        };
-        if (!queueTerminalPtyResizeIfHeld(this.surfaceId, request, send)) send(request);
+        wsClient.resizeTerminal(
+          this.actualTerminalId,
+          this.surfaceId,
+          dimensions.cols,
+          dimensions.rows,
+          claim,
+        );
       }
     } catch {
       // A zero-sized panel can briefly make FitAddon unable to calculate cells.
     } finally {
       if (restorePoint) this.scrollController?.restoreAfterLayout(restorePoint);
       this.scheduleSurfaceScrollStateSync();
+      // WebGL can finish a rapid resize with the correct xterm buffer but an
+      // empty presentation model. Force the same full repaint and quiet atlas
+      // recovery Orca uses for stale terminal presentation.
+      if (didFit) this.recoverRendererPresentation();
     }
   }
 

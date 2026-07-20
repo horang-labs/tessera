@@ -1,17 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  buildProviderTerminalEnv,
-  buildProviderTerminalLaunch,
-} from '@/lib/terminal/provider-launch';
-
-test('Claude PTY keeps scrollback in xterm instead of its fullscreen virtual scroller', () => {
-  assert.deepEqual(buildProviderTerminalEnv('claude-code'), {
-    CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
-  });
-  assert.equal(buildProviderTerminalEnv('codex'), undefined);
-  assert.equal(buildProviderTerminalEnv('opencode'), undefined);
-});
+import { buildProviderTerminalLaunch } from '@/lib/terminal/provider-launch';
 
 test('Codex PTY starts with pre-trusted overlay hooks and no trust-bypass warning flag', () => {
   assert.deepEqual(

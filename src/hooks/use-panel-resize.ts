@@ -3,10 +3,6 @@
 
 import { useState, useRef, useEffect } from 'react';
 import type React from 'react';
-import {
-  holdTerminalPtyResizes,
-  type TerminalPtyResizeHold,
-} from '@/lib/terminal/terminal-pty-resize-hold';
 
 // 로컬 인터페이스 (export 없음)
 interface UsePanelResizeOptions {
@@ -47,16 +43,12 @@ export function usePanelResize({
   const handlePointerUpRef = useRef<(() => void) | null>(null);
   const handlePointerCancelRef = useRef<(() => void) | null>(null);
   const handleWindowBlurRef = useRef<(() => void) | null>(null);
-  const terminalPtyResizeHoldRef = useRef<TerminalPtyResizeHold | null>(null);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();   // BR-DIVIDER-005: 이벤트 전파 차단
     if (isDraggingRef.current) return;
-
-    terminalPtyResizeHoldRef.current?.cancel();
-    terminalPtyResizeHoldRef.current = holdTerminalPtyResizes();
 
     isDraggingRef.current = true;
     setIsDragging(true);
@@ -88,8 +80,8 @@ export function usePanelResize({
       onRatioChangeRef.current(clampedRatio);
     };
 
-    const stopDragging = (): TerminalPtyResizeHold | null => {
-      if (!isDraggingRef.current) return null;
+    const stopDragging = () => {
+      if (!isDraggingRef.current) return;
 
       isDraggingRef.current = false;
       setIsDragging(false);
@@ -103,21 +95,14 @@ export function usePanelResize({
       document.body.style.userSelect = '';
       // BR-DIVIDER-003: 커서 복원
       document.body.style.cursor = '';
-
-      const resizeHold = terminalPtyResizeHoldRef.current;
-      terminalPtyResizeHoldRef.current = null;
-      return resizeHold;
     };
 
-    // 정상 종료에서는 드래그 중 마지막 격자 크기만 PTY로 전달한다.
-    const handlePointerUp = () => stopDragging()?.flush();
+    const handlePointerUp = () => stopDragging();
     const handlePointerCancel = () => {
       onRatioChangeRef.current(initialRatio);
-      // 복원된 레이아웃의 격자 크기는 PTY에도 한 번 동기화해야 한다.
-      stopDragging()?.flush();
+      stopDragging();
     };
-    // pointerup을 놓칠 수 있는 창 이탈도 현재 레이아웃의 마지막 크기로 마무리한다.
-    const handleWindowBlur = () => stopDragging()?.flush();
+    const handleWindowBlur = () => stopDragging();
 
     handlePointerMoveRef.current = handlePointerMove;
     handlePointerUpRef.current = handlePointerUp;
@@ -146,8 +131,6 @@ export function usePanelResize({
       if (handleWindowBlurRef.current) {
         window.removeEventListener('blur', handleWindowBlurRef.current);
       }
-      terminalPtyResizeHoldRef.current?.cancel();
-      terminalPtyResizeHoldRef.current = null;
       if (isDraggingRef.current) {
         document.body.style.userSelect = '';
         document.body.style.cursor = '';

@@ -92,7 +92,22 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
   markRuntimeStopped: (sessionId) =>
     set((prev) => {
       const current = prev.bySessionId[sessionId];
-      if (!current) return prev;
+      // hook 상태를 본 적 없는 세션이라도 tombstone을 남긴다 — 종료 신호보다
+      // 늦게 배달되는 hook curl(running)이 첫 엔트리가 되면 꺼줄 신호가 없다.
+      if (!current) {
+        return {
+          bySessionId: {
+            ...prev.bySessionId,
+            [sessionId]: {
+              status: 'idle',
+              hookEvent: 'RuntimeExit',
+              terminalId: `session-${sessionId}`,
+              updatedAt: Date.now(),
+              runtimeExited: true,
+            },
+          },
+        };
+      }
       // 죽은 런타임은 입력을 받을 수 없다 — input_required를 남겨두면 답할 수 없는
       // 질문에 노란 점이 영영 깜빡인다. running과 함께 idle로 강등하고, 이후 늦게
       // 도착하는 활동 이벤트를 막기 위해 runtimeExited 마커를 남긴다.

@@ -545,6 +545,56 @@ test('a runtime restart lifts the ghost-state guard for subsequent hook activity
   );
 });
 
+test('a hook state arriving after the runtime exit signal cannot start a ghost spinner', () => {
+  // 앱 재시작 직후 실측 시나리오: 죽은 세션의 runtime-exit 신호가 hook 상태보다
+  // 먼저 도착한다. 그 뒤 늦게 배달된 running curl이 store의 첫 엔트리가 되면
+  // 다시 꺼줄 신호가 없어 영구 스피너가 된다 — tombstone이 이를 막아야 한다.
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    running: false,
+  } as ServerTransportMessage);
+
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'PreToolUse',
+  });
+
+  assert.notEqual(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'running',
+  );
+});
+
+test('a runtime snapshot demotes tracked hook states even before the session list loads', () => {
+  // 연결 직후에는 projects가 아직 비어 있다 — snapshot 정리가 세션 목록에
+  // 의존하면 이미 store에 있는 유령 running을 강등하지 못한다.
+  useSessionStore.setState({ projects: [] });
+  useTerminalSessionStore.setState({
+    bySessionId: {
+      [SESSION_ID]: {
+        status: 'running',
+        hookEvent: 'UserPromptSubmit',
+        terminalId: `session-${SESSION_ID}`,
+        updatedAt: Date.now(),
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_runtime_snapshot',
+    activeSessionIds: [],
+  } as ServerTransportMessage);
+
+  assert.notEqual(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
+    'running',
+  );
+});
+
 test('PTY AskUserQuestion marks input_required without touching the GUI prompt map', () => {
   receive({
     type: 'terminal_session_runtime',

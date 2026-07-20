@@ -4,6 +4,16 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 const DEFAULT_SCROLLBACK_ROWS = 5_000;
 
 /**
+ * DEC private modes SerializeAddon omits from snapshots. It serializes the
+ * mouse tracking protocol (?1000/?1002/?1003) but not the report encoding
+ * (?1006 SGR and friends) or wheel emulation (?1007). Replaying such a
+ * snapshot downgrades mouse reports to legacy X10 encoding, which TUIs like
+ * Claude Code ignore — wheel scroll goes dead until the app happens to
+ * re-assert its modes on the next keypress-triggered redraw.
+ */
+const SNAPSHOT_ONLY_TRACKED_DEC_MODES: readonly number[] = [1005, 1006, 1007, 1015, 1016];
+
+/**
  * Server-side xterm model used only for cold surface reattachment.
  *
  * Writes are serialized through xterm's public callback API so a snapshot is
@@ -15,6 +25,7 @@ export class TerminalHeadlessModel {
   private readonly serializer: SerializeAddon;
   private writeTail: Promise<void> = Promise.resolve();
   private readonly pendingWriteCompletions = new Set<() => void>();
+  private readonly activeSnapshotOnlyDecModes = new Set<number>();
   private disposed = false;
 
   constructor(cols: number, rows: number) {
@@ -29,6 +40,46 @@ export class TerminalHeadlessModel {
     });
     this.serializer = new SerializeAddon();
     this.terminal.loadAddon(this.serializer);
+    this.trackSnapshotOnlyDecModes();
+  }
+
+  /**
+   * Mirrors DECSET/DECRST for the modes SerializeAddon cannot see, so
+   * snapshot() can replay them. Handlers return false to leave xterm's own
+   * processing untouched.
+   */
+  private trackSnapshotOnlyDecModes(): void {
+    const applyModes = (params: (number | number[])[], enabled: boolean): boolean => {
+      for (const param of params) {
+        const mode = typeof param === 'number' ? param : param[0];
+        if (!SNAPSHOT_ONLY_TRACKED_DEC_MODES.includes(mode)) continue;
+        if (enabled) this.activeSnapshotOnlyDecModes.add(mode);
+        else this.activeSnapshotOnlyDecModes.delete(mode);
+      }
+      return false;
+    };
+    this.terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => (
+      applyModes(params, true)
+    ));
+    this.terminal.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => (
+      applyModes(params, false)
+    ));
+    // RIS (full reset) and DECSTR (soft reset) both clear these modes.
+    this.terminal.parser.registerEscHandler({ final: 'c' }, () => {
+      this.activeSnapshotOnlyDecModes.clear();
+      return false;
+    });
+    this.terminal.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, () => {
+      this.activeSnapshotOnlyDecModes.clear();
+      return false;
+    });
+  }
+
+  private serializeSnapshotOnlyDecModes(): string {
+    return [...this.activeSnapshotOnlyDecModes]
+      .sort((left, right) => left - right)
+      .map((mode) => `\x1b[?${mode}h`)
+      .join('');
   }
 
   write(data: string): void {
@@ -72,7 +123,8 @@ export class TerminalHeadlessModel {
       throw new Error('Terminal model is disposed');
     }
     return {
-      data: this.serializer.serialize({ scrollback: DEFAULT_SCROLLBACK_ROWS }),
+      data: this.serializer.serialize({ scrollback: DEFAULT_SCROLLBACK_ROWS })
+        + this.serializeSnapshotOnlyDecModes(),
       cols: this.terminal.cols,
       rows: this.terminal.rows,
     };

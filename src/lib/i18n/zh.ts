@@ -715,6 +715,7 @@ export const zh: I18nMessages = {
     closePanel: '关闭面板 (Ctrl+Shift+W)',
     tooSmallToSplit: '面板太小，无法拆分',
     cannotCloseLastPanel: '无法关闭最后一个面板',
+    dropToInsertPath: '将路径插入终端',
   },
   sidebar: {
     noProjects: '暂无项目',

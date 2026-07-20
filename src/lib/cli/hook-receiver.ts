@@ -213,8 +213,12 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         hookEvent: event,
         ...(mapped.preview ? { preview: mapped.preview } : {}),
       } as const;
-      terminalManager.recordSessionState(message, entry.userId);
-      wsServer.sendToUser(entry.userId, message);
+      // 죽었거나 미소유인 pane의 늦은 curl은 브로드캐스트하지 않는다 — 이미
+      // runtime 종료로 idle 처리된 세션에 유령 running을 그리게 된다. 클라이언트
+      // 재연결 replay에도 없는 상태라 한 번 그려지면 스스로 꺼질 길이 없다.
+      if (terminalManager.recordSessionState(message, entry.userId)) {
+        wsServer.sendToUser(entry.userId, message);
+      }
     }
   } catch (err) {
     logger.debug({ err }, 'Terminal hook parse/dispatch skipped (fail-open)');

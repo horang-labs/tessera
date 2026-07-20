@@ -265,6 +265,10 @@ export class CodexAdapter implements CliProvider {
     return 'restart';
   }
 
+  getTerminalResizeScrollbackPolicy(): 'preserve-on-ed3' {
+    return 'preserve-on-ed3';
+  }
+
   canResumeTerminalAfterRestart(providerState: string | null): boolean {
     if (!providerState) return false;
     try {

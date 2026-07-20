@@ -17,10 +17,7 @@ import {
   releaseTerminalHandoffByTerminal,
 } from '../terminal/terminal-handoff-lock';
 import { mintPaneToken } from '../terminal/pane-token-registry';
-import {
-  buildProviderTerminalEnv,
-  buildProviderTerminalLaunch,
-} from '../terminal/provider-launch';
+import { buildProviderTerminalLaunch } from '../terminal/provider-launch';
 import { createCodexOverlay } from '../terminal/codex-overlay';
 import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
 import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
@@ -504,6 +501,7 @@ export async function routeClientTransportMessage({
       let launchEnv: Record<string, string> | undefined;
       let launchObserverDisposer: (() => void) | undefined;
       let appearanceChangePolicy: TerminalCreateOptions['appearanceChangePolicy'];
+      let resizeScrollbackPolicy: TerminalCreateOptions['resizeScrollbackPolicy'];
       let canRestartForAppearance: TerminalCreateOptions['canRestartForAppearance'];
       let acquiredHandoff = false;
 
@@ -611,14 +609,11 @@ export async function routeClientTransportMessage({
       }
 
       if (!terminalExists && providerId) {
-        const providerTerminalEnv = buildProviderTerminalEnv(providerId);
-        if (providerTerminalEnv) {
-          launchEnv = { ...launchEnv, ...providerTerminalEnv };
-        }
-        const appearanceProvider = cliProviderRegistry.getProvider(providerId);
-        appearanceChangePolicy = appearanceProvider.getTerminalAppearanceChangePolicy();
+        const terminalProvider = cliProviderRegistry.getProvider(providerId);
+        appearanceChangePolicy = terminalProvider.getTerminalAppearanceChangePolicy();
+        resizeScrollbackPolicy = terminalProvider.getTerminalResizeScrollbackPolicy();
         if (appearanceChangePolicy === 'restart' && structured) {
-          canRestartForAppearance = () => appearanceProvider.canResumeTerminalAfterRestart?.(
+          canRestartForAppearance = () => terminalProvider.canResumeTerminalAfterRestart?.(
             dbSessions.getSession(structured.sessionId)?.provider_state ?? null,
           ) ?? false;
         } else if (appearanceChangePolicy === 'restart' && launchSpec?.handoffSessionId) {
@@ -652,6 +647,7 @@ export async function routeClientTransportMessage({
           paneToken,
           providerId,
           appearanceChangePolicy,
+          resizeScrollbackPolicy,
           canRestartForAppearance,
           appearanceRestartIntent: launchSpec?.handoffSessionId ? message.launchIntent : undefined,
           appearance: message.appearance,
