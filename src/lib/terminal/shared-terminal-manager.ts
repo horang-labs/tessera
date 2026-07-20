@@ -5,10 +5,12 @@ import { workspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-
 import { TerminalManager } from './terminal-manager';
 
 type SendToConnection = (connectionId: string, message: ServerTransportMessage) => void;
+type SendToUser = (userId: string, message: ServerTransportMessage) => void;
 
 interface SharedTerminalManagerState {
   manager: TerminalManager;
   sendToConnection: SendToConnection | null;
+  sendToUser: SendToUser | null;
 }
 
 const SHARED_TERMINAL_MANAGER_KEY = Symbol.for('tessera.terminalManager');
@@ -17,6 +19,7 @@ const sharedGlobal = globalThis as unknown as Record<symbol, SharedTerminalManag
 function createSharedState(): SharedTerminalManagerState {
   const state = {} as SharedTerminalManagerState;
   state.sendToConnection = null;
+  state.sendToUser = null;
   state.manager = new TerminalManager(
     (connectionId, message) => {
       state.sendToConnection?.(connectionId, message);
@@ -32,6 +35,15 @@ function createSharedState(): SharedTerminalManagerState {
         onChange: (root) => scheduleRecompute(root, userId),
       });
     },
+    {
+      onSessionRuntimeStateChange: ({ sessionId, userId, running }) => {
+        state.sendToUser?.(userId, {
+          type: 'terminal_session_runtime',
+          sessionId,
+          running,
+        });
+      },
+    },
   );
   return state;
 }
@@ -44,4 +56,8 @@ export const terminalManager = sharedState.manager;
 export function bindTerminalSender(sendToConnection: SendToConnection): TerminalManager {
   sharedState.sendToConnection = sendToConnection;
   return terminalManager;
+}
+
+export function bindTerminalRuntimeSender(sendToUser: SendToUser): void {
+  sharedState.sendToUser = sendToUser;
 }

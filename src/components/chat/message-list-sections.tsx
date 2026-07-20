@@ -1,10 +1,11 @@
 'use client';
 
-import { ArrowDown, ArrowUp, MessageSquare } from 'lucide-react';
+import { ArrowUp, MessageSquare } from 'lucide-react';
 import type { ToolCallMessage } from '@/types/chat';
 import { ToolCallDetailPanel } from './tool-call-detail-panel';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
+import { ScrollToBottomButton } from '@/components/ui/scroll-to-bottom-button';
 import { LoadingIndicator } from './loading-indicator';
 
 interface MessageListScrollAreaProps {
@@ -132,16 +133,5 @@ export function MessageListScrollToBottomButton({
   onClick,
   title,
 }: MessageListScrollToBottomButtonProps) {
-  return (
-    <Button
-      variant="outline"
-      size="icon"
-      className="absolute bottom-4 left-1/2 z-10 h-9 w-9 -translate-x-1/2 rounded-full border-(--divider) bg-(--chat-bg)/95 text-(--text-secondary) shadow-[0_10px_24px_rgba(0,0,0,0.14),0_1px_4px_rgba(0,0,0,0.10)] backdrop-blur hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-      onClick={onClick}
-      title={title}
-      data-testid="scroll-to-bottom-button"
-    >
-      <ArrowDown className="h-4 w-4" />
-    </Button>
-  );
+  return <ScrollToBottomButton onClick={onClick} title={title} />;
 }

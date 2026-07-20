@@ -48,3 +48,16 @@ test('updateSession patches model + reasoningEffort + serviceTier (resume re-app
   assert.equal(row?.reasoning_effort, 'xhigh');
   assert.equal(row?.service_tier, 'default');
 });
+
+test('API mapping reports an unopened terminal session as stopped', async () => {
+  await initDatabase();
+  createSession('s-terminal-status', 'proj-1', 'Terminal', 'claude-code', {
+    providerState: JSON.stringify({ kind: 'terminal' }),
+  });
+
+  const row = getSession('s-terminal-status');
+  assert.ok(row, 'terminal session row should exist');
+
+  assert.equal(mapSessionRowToApi(row, new Set(), new Set()).status, 'stopped');
+  assert.equal(mapSessionRowToApi(row, new Set([row.id]), new Set()).status, 'running');
+});

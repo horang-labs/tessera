@@ -186,7 +186,7 @@ export function useSessionCrud() {
 
         sessionStore.removeSession(tempSessionId);
 
-        // CLI is not spawned until the first message — see session_started event.
+        // No runtime exists yet. GUI starts on first input; PTY starts on first open.
         const newSession: UnifiedSession = {
           id: result.sessionId,
           title: result.title,
@@ -194,7 +194,7 @@ export function useSessionCrud() {
           workDir: options.workDir || result.projectDir,
           isRunning: false,
           hasStarted: false,
-          status: result.status,
+          status: result.kind === 'terminal' ? 'stopped' : result.status,
           createdAt: result.createdAt,
           lastModified: result.createdAt,
           tesseraSessionId: result.sessionId,

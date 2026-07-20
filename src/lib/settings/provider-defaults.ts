@@ -23,8 +23,12 @@ import {
   DEFAULT_PROFILE_DISPLAY_NAME,
 } from './profile-defaults';
 
-export const FONT_SCALE_OPTIONS = [0.8125, 0.875, 1, 1.25] as const;
-export const DEFAULT_FONT_SCALE = 0.875;
+export const FONT_SCALE_OPTIONS = [0.8125, 1, 1.1875, 1.375] as const;
+export const DEFAULT_FONT_SCALE = 0.8125;
+export const FONT_SCALE_MIGRATIONS: Readonly<Record<number, number>> = {
+  0.9375: 1,
+  1.25: 1.375,
+};
 type ClaudeAccessMode = Extract<
   ProviderSessionAccessMode,
   'default' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions'
@@ -40,8 +44,8 @@ type OpenCodeAccessMode = Extract<
 
 /**
  * Normalize fontSize to one of FONT_SCALE_OPTIONS. Legacy px values (12-20)
- * from prior versions collapse to 1 since the old setting never actually took
- * effect — users experienced the default size regardless of the stored number.
+ * from prior versions collapse to the default since the old setting never
+ * actually took effect.
  */
 export function normalizeFontScale(raw: unknown): number {
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
@@ -50,11 +54,8 @@ export function normalizeFontScale(raw: unknown): number {
   if (raw >= 2) {
     return DEFAULT_FONT_SCALE;
   }
-  // Preserve the semantic "large" choice for users upgrading from the old
-  // preset list, where 0.9375 sat exactly between the new medium and large.
-  if (raw === 0.9375) {
-    return 1;
-  }
+  const migratedScale = FONT_SCALE_MIGRATIONS[raw];
+  if (migratedScale !== undefined) return migratedScale;
   let best: number = FONT_SCALE_OPTIONS[0];
   let bestDelta = Math.abs(raw - best);
   for (const option of FONT_SCALE_OPTIONS) {

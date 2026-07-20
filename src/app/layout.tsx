@@ -3,10 +3,16 @@ import ThemeInitializer from '@/components/theme-initializer';
 import '@xterm/xterm/css/xterm.css';
 import 'monaco-editor/min/vs/editor/editor.main.css';
 import './globals.css';
+import './terminal.css';
 import { I18nHtmlLang } from '@/components/i18n-html-lang';
 import { Agentation } from 'agentation';
 import { ElectronCloseDialog } from '@/components/layout/electron-close-dialog';
 import { TelemetryProvider } from '@/components/telemetry/telemetry-provider';
+import {
+  DEFAULT_FONT_SCALE,
+  FONT_SCALE_MIGRATIONS,
+  FONT_SCALE_OPTIONS,
+} from '@/lib/settings/provider-defaults';
 
 export const metadata: Metadata = {
   title: 'Tessera',
@@ -23,10 +29,11 @@ const themeScript = `
     var theme = settings.theme || 'auto';
     var isDark = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     if (isDark) document.documentElement.classList.add('dark');
-    var scales = [0.8125, 0.875, 1, 1.25];
-    var raw = typeof settings.fontSize === 'number' ? settings.fontSize : 0.875;
-    if (raw === 0.9375) raw = 1;
-    var scale = 0.875;
+    var scales = ${JSON.stringify(FONT_SCALE_OPTIONS)};
+    var migrations = ${JSON.stringify(FONT_SCALE_MIGRATIONS)};
+    var raw = typeof settings.fontSize === 'number' ? settings.fontSize : ${DEFAULT_FONT_SCALE};
+    if (migrations[raw] !== undefined) raw = migrations[raw];
+    var scale = ${DEFAULT_FONT_SCALE};
     if (raw < 2) {
       var best = scales[0];
       var bestDelta = Math.abs(raw - best);

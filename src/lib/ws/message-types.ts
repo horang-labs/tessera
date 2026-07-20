@@ -7,7 +7,11 @@ import type { SessionReplayEvent } from '@/lib/session-replay-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
-import type { TerminalLaunchIntent, TerminalShellKind } from '@/lib/terminal/types';
+import type {
+  TerminalColorQueryColors,
+  TerminalLaunchIntent,
+  TerminalShellKind,
+} from '@/lib/terminal/types';
 
 // ========== ContentBlock 타입 정의 (클립보드 이미지 붙여넣기) ==========
 
@@ -93,6 +97,7 @@ export type ClientMessage =
       shellKind?: TerminalShellKind;
       cols?: number;
       rows?: number;
+      colorQueryColors?: TerminalColorQueryColors;
       launchIntent?: TerminalLaunchIntent;
       prefillInput?: string;
       launch?: { providerId: string; sessionId: string };
@@ -266,6 +271,15 @@ export type AppServerMessage =
       status: 'running' | 'completed' | 'input_required' | 'idle';
       hookEvent: string;
       preview?: string;
+    }
+  | {
+      type: 'terminal_session_runtime';
+      sessionId: string;
+      running: boolean;
+    }
+  | {
+      type: 'terminal_session_runtime_snapshot';
+      activeSessionIds: string[];
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
   | { type: 'terminal_prefill_written'; terminalId: string }

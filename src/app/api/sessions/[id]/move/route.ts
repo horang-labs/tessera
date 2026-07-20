@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
 import * as dbProjects from '@/lib/db/projects';
-import { processManager } from '@/lib/cli/process-manager';
+import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 
@@ -21,6 +21,7 @@ export async function PATCH(
   if ('response' in auth) {
     return auth.response;
   }
+  const { userId } = auth;
 
   const { id: sessionId } = await params;
 
@@ -54,7 +55,7 @@ export async function PATCH(
   }
 
   // Block move for running sessions
-  const activeIds = processManager.getActiveSessionIds();
+  const activeIds = getActiveSessionIds(userId);
   if (activeIds.has(sessionId)) {
     return NextResponse.json(
       { error: 'Cannot move a running session. Stop it first.' },

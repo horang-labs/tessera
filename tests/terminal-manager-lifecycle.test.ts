@@ -145,6 +145,34 @@ test('concurrent session opens spawn once and disconnect only detaches its surfa
   assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 0, sessionCount: 0 });
 });
 
+test('session PTY lifecycle reports running until the process exits', async () => {
+  const spawned: FakePty[] = [];
+  const runtimeStates: Array<{ sessionId: string; userId: string; running: boolean }> = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      onSessionRuntimeStateChange: (state) => runtimeStates.push(state),
+    },
+  );
+
+  await manager.create(createOptions());
+  assert.deepEqual(runtimeStates, [{ sessionId: 'session-a', userId: 'user-a', running: true }]);
+  assert.deepEqual([...manager.getActiveSessionIds('user-a')], ['session-a']);
+
+  manager.detachConnection('connection-a');
+  assert.deepEqual(runtimeStates, [{ sessionId: 'session-a', userId: 'user-a', running: true }]);
+  assert.deepEqual([...manager.getActiveSessionIds('user-a')], ['session-a']);
+
+  spawned[0].emitExit(0);
+  assert.deepEqual(runtimeStates, [
+    { sessionId: 'session-a', userId: 'user-a', running: true },
+    { sessionId: 'session-a', userId: 'user-a', running: false },
+  ]);
+  assert.deepEqual([...manager.getActiveSessionIds('user-a')], []);
+});
+
 test('cold attach receives one snapshot boundary followed by monotonic live output', async () => {
   const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
   const spawned: FakePty[] = [];
@@ -192,9 +220,14 @@ test('cold attach receives one snapshot boundary followed by monotonic live outp
 test('a late exit from an older generation cannot erase its replacement runtime', async () => {
   const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
   const spawned: FakePty[] = [];
+  const runtimeStates: Array<{ sessionId: string; userId: string; running: boolean }> = [];
   const manager = new TerminalManager(
     (connectionId, message) => delivered.push({ connectionId, message }),
     async () => createFactory(spawned),
+    undefined,
+    {
+      onSessionRuntimeStateChange: (state) => runtimeStates.push(state),
+    },
   );
 
   await manager.create(createOptions());
@@ -209,8 +242,10 @@ test('a late exit from an older generation cannot erase its replacement runtime'
   if (firstStart?.type === 'terminal_started' && secondStart?.type === 'terminal_started') {
     assert.equal(secondStart.generation, firstStart.generation + 1);
   }
+  const runtimeStatesBeforeLateExit = [...runtimeStates];
 
   spawned[0].emitExit(0);
+  assert.deepEqual(runtimeStates, runtimeStatesBeforeLateExit);
   assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 1, sessionCount: 1 });
   spawned[1].emitData('replacement-is-alive');
   await nextImmediate();
@@ -355,6 +390,19 @@ test('spawn and resize clamp hostile terminal dimensions', async () => {
   await manager.shutdownAll();
 });
 
+test('claiming an already-sized viewport does not send a redundant PTY resize', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(() => {}, async () => createFactory(spawned));
+
+  await manager.create(createOptions({ cols: 100, rows: 30 }));
+  manager.resize('terminal-a', 'user-a', 'connection-a', 'surface-a', 100, 30, true);
+  assert.deepEqual(spawned[0].resizes, []);
+
+  manager.resize('terminal-a', 'user-a', 'connection-a', 'surface-a', 120, 40, true);
+  assert.deepEqual(spawned[0].resizes, [{ cols: 120, rows: 40 }]);
+  await manager.shutdownAll();
+});
+
 test('PTY spawn normalizes inherited color opt-outs at the manager boundary', async () => {
   let spawnEnv: NodeJS.ProcessEnv | null = null;
   const factory: TerminalPtyFactory = {
@@ -380,6 +428,39 @@ test('PTY spawn normalizes inherited color opt-outs at the manager boundary', as
   assert.equal(spawnEnv.TERM, 'xterm-256color');
   assert.equal(spawnEnv.COLORTERM, 'truecolor');
   assert.equal(spawnEnv.TERM_PROGRAM, 'Tessera');
+
+  await manager.shutdownAll();
+});
+
+test('agent PTY startup answers color probes before forwarding renderer output', async () => {
+  const delivered: ServerTransportMessage[] = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({
+    launchSpec: { program: 'claude' },
+    colorQueryColors: {
+      foreground: '#25282b',
+      background: '#fafaf9',
+    },
+  }));
+  delivered.length = 0;
+
+  spawned[0].emitData('\x1b]10;?\x1b\\\x1b]11;?\x1b\\ready');
+  await nextImmediate();
+
+  assert.deepEqual(spawned[0].writes, [
+    '\x1b]10;rgb:2525/2828/2b2b\x1b\\',
+    '\x1b]11;rgb:fafa/fafa/f9f9\x1b\\',
+  ]);
+  assert.deepEqual(
+    delivered.filter((message) => message.type === 'terminal_output')
+      .map((message) => message.type === 'terminal_output' ? message.data : ''),
+    ['ready'],
+  );
 
   await manager.shutdownAll();
 });

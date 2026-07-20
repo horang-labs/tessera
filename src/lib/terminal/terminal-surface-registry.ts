@@ -13,10 +13,7 @@ import {
 } from './pending-terminal-launch';
 import { dispatchTerminalLaunchResult } from './terminal-launch-result';
 import { clearClientTerminalHandoff } from './client-terminal-handoff-state';
-import {
-  getTerminalTheme,
-  type TesseraTerminalTheme,
-} from './terminal-theme';
+import type { TesseraTerminalTheme } from './terminal-theme';
 import {
   detectTerminalClientPlatform,
   isTerminalPasteShortcut,
@@ -28,26 +25,38 @@ import {
   uploadTerminalClipboardImage,
   type ElectronTerminalClipboardApi,
 } from './terminal-clipboard-paste';
+import {
+  TerminalScrollController,
+  type TerminalScrollRestorePoint,
+  type TerminalScrollTarget,
+} from './terminal-scroll-controller';
+import { LayoutSettleRunner } from './layout-settle-runner';
+import type { TerminalScrollMetrics } from './terminal-scrollbar-geometry';
+import { createTerminalExternalLinkHandlers } from './terminal-external-link';
 
 export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
 
 export interface TerminalSurfaceSnapshot {
   status: TerminalSurfaceStatus;
   subtitle: string;
+  isAtBottom: boolean;
+  scrollMetrics: TerminalScrollMetrics;
 }
 
 export interface TerminalSurfaceOptions {
   registryKey: string;
   terminalId: string;
+  theme: TesseraTerminalTheme;
+  fontSize: number;
   cwd?: string | null;
   sessionId?: string | null;
   launch?: { providerId: string; sessionId: string };
 }
 
-type XtermLike = {
+type XtermLike = TerminalScrollTarget & {
   cols: number;
   rows: number;
-  options: { theme?: ITheme };
+  options: { theme?: ITheme; fontSize?: number };
   unicode: { activeVersion: string };
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
   loadAddon(addon: unknown): void;
@@ -57,9 +66,8 @@ type XtermLike = {
   write(data: string, callback?: () => void): void;
   reset(): void;
   refresh(start: number, end: number): void;
-  scrollToTop(): void;
-  scrollToBottom(): void;
   onData(callback: (data: string) => void): { dispose(): void };
+  onScroll(callback: (viewportY: number) => void): { dispose(): void };
   dispose(): void;
 };
 
@@ -107,19 +115,31 @@ export class TerminalSurface {
   private state: TerminalSurfaceSnapshot = {
     status: 'starting',
     subtitle: 'Starting terminal...',
+    isAtBottom: true,
+    scrollMetrics: { baseY: 0, viewportY: 0, rows: 1 },
   };
   private actualTerminalId: string;
-  private theme = getTerminalTheme(true);
+  private theme: TesseraTerminalTheme;
+  private fontSize: number;
   private terminal: XtermLike | null = null;
   private fitAddon: FitAddonLike | null = null;
   private webglAddon: { dispose(): void } | null = null;
   private inputDisposable: { dispose(): void } | null = null;
+  private scrollDisposable: { dispose(): void } | null = null;
+  private scrollController: TerminalScrollController | null = null;
+  private unsubscribeScrollController: (() => void) | null = null;
+  private scrollTrackingCleanup: (() => void) | null = null;
+  private pendingScrollStateFrameId: number | null = null;
+  private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private clipboardPasteQueue: Promise<void> = Promise.resolve();
   private root: HTMLDivElement | null = null;
   private intendedHost: HTMLElement | null = null;
   private mountedHost: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private pendingFitFrameId: number | null = null;
+  private pendingFitClaim = false;
+  private resizeSettleTimerId: number | null = null;
   private initializePromise: Promise<boolean> | null = null;
   private attachedConnectionGeneration = 0;
   private pendingLaunch: PendingTerminalLaunch | null = null;
@@ -132,6 +152,8 @@ export class TerminalSurface {
   private readonly unsubscribeSessionStore: (() => void) | null;
 
   constructor(private readonly options: TerminalSurfaceOptions) {
+    this.theme = { ...options.theme };
+    this.fontSize = options.fontSize;
     this.actualTerminalId = options.terminalId;
     this.unsubscribeMessages = wsClient.subscribeServerMessages((message) => {
       this.handleServerMessage(message);
@@ -168,6 +190,14 @@ export class TerminalSurface {
     this.terminal.options.theme = this.theme;
   }
 
+  setFontSize(fontSize: number): void {
+    if (this.fontSize === fontSize) return;
+    this.fontSize = fontSize;
+    if (!this.terminal) return;
+    this.terminal.options.fontSize = fontSize;
+    this.requestStableFit(false);
+  }
+
   async mount(host: HTMLElement): Promise<void> {
     if (this.disposed) return;
     this.intendedHost = host;
@@ -177,12 +207,19 @@ export class TerminalSurface {
     host.appendChild(this.root);
     this.mountedHost = host;
     this.resizeObserver?.disconnect();
-    this.resizeObserver = new ResizeObserver(() => this.fitAndResize(false));
+    this.resizeObserver = new ResizeObserver(() => {
+      this.requestStableFit(false);
+      if (this.resizeSettleTimerId !== null) window.clearTimeout(this.resizeSettleTimerId);
+      this.resizeSettleTimerId = window.setTimeout(() => {
+        this.resizeSettleTimerId = null;
+        this.requestStableFit(false);
+      }, 150);
+    });
     this.resizeObserver.observe(host);
 
     requestAnimationFrame(() => {
       if (this.mountedHost !== host) return;
-      this.fitAndResize(false);
+      this.requestStableFit(false);
     });
   }
 
@@ -192,6 +229,8 @@ export class TerminalSurface {
 
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.cancelPendingFit();
+    this.scrollController?.cancelPendingRestore();
     this.mountedHost = null;
     if (this.root && !this.disposed) {
       getParkingLot().appendChild(this.root);
@@ -220,6 +259,10 @@ export class TerminalSurface {
       sessionId: this.options.sessionId,
       cols: dimensions?.cols,
       rows: dimensions?.rows,
+      colorQueryColors: {
+        foreground: this.theme.foreground,
+        background: this.theme.background,
+      },
       launchIntent: pendingLaunch?.intent,
       prefillInput: pendingLaunch?.prefillInput,
       launch: pendingLaunch?.launch ?? this.options.launch,
@@ -244,6 +287,10 @@ export class TerminalSurface {
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
   }
 
+  scrollToBottom(): void {
+    this.scrollController?.scrollToBottom();
+  }
+
   matchesTerminal(terminalId: string): boolean {
     return this.options.terminalId === terminalId || this.actualTerminalId === terminalId;
   }
@@ -264,6 +311,7 @@ export class TerminalSurface {
     this.lastSequence = 0;
     this.replaying = false;
     this.terminal?.reset();
+    this.scrollController?.scrollToBottom();
     this.updateState('starting', 'Restarting terminal...');
     return this.ensureConnected();
   }
@@ -272,7 +320,7 @@ export class TerminalSurface {
     if (this.disposed || !this.isMountedHostVisible()) return;
     requestAnimationFrame(() => {
       if (!this.isMountedHostVisible()) return;
-      this.fitAndResize(true);
+      this.requestStableFit(true);
       this.terminal?.focus();
     });
   }
@@ -287,8 +335,19 @@ export class TerminalSurface {
     this.unsubscribeSessionStore?.();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.cancelPendingFit();
+    this.cancelScheduledScrollSync();
+    this.cancelScheduledSurfaceScrollStateSync();
     this.inputDisposable?.dispose();
     this.inputDisposable = null;
+    this.scrollDisposable?.dispose();
+    this.scrollDisposable = null;
+    this.scrollTrackingCleanup?.();
+    this.scrollTrackingCleanup = null;
+    this.unsubscribeScrollController?.();
+    this.unsubscribeScrollController = null;
+    this.scrollController?.dispose();
+    this.scrollController = null;
     if (this.root && this.pasteListener) {
       this.root.removeEventListener('paste', this.pasteListener, true);
     }
@@ -347,17 +406,20 @@ export class TerminalSurface {
       if (this.disposed) return;
 
       const root = document.createElement('div');
-      root.className = 'h-full min-h-0 overflow-hidden';
+      root.className = 'tessera-terminal-surface h-full min-h-0 overflow-hidden';
       getParkingLot().appendChild(root);
 
+      const { webLinkHandler, oscLinkHandler } = createTerminalExternalLinkHandlers();
       const terminal = new Terminal({
         cursorBlink: true,
         convertEol: true,
         allowProposedApi: true,
+        minimumContrastRatio: 4.5,
         scrollback: 5_000,
         fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-        fontSize: 12,
+        fontSize: this.fontSize,
         theme: this.theme,
+        linkHandler: oscLinkHandler,
       }) as XtermLike;
 
       terminal.open(root);
@@ -366,10 +428,7 @@ export class TerminalSurface {
       terminal.loadAddon(new SearchAddon());
       terminal.loadAddon(new SerializeAddon());
       terminal.loadAddon(new Unicode11Addon());
-      terminal.loadAddon(new WebLinksAddon((event: MouseEvent, uri: string) => {
-        event.preventDefault();
-        window.open(uri, '_blank', 'noopener,noreferrer');
-      }));
+      terminal.loadAddon(new WebLinksAddon(webLinkHandler));
       terminal.unicode.activeVersion = '11';
 
       try {
@@ -396,6 +455,12 @@ export class TerminalSurface {
       this.root = root;
       this.terminal = terminal;
       this.fitAddon = fitAddon;
+      const scrollController = new TerminalScrollController(terminal);
+      this.scrollController = scrollController;
+      this.unsubscribeScrollController = scrollController.subscribe(() => {
+        this.syncScrollStateFromController();
+      });
+      this.scrollTrackingCleanup = this.attachScrollTracking(root, scrollController);
       const inputContext = {
         platform: detectTerminalClientPlatform(navigator.userAgent),
       } as const;
@@ -403,6 +468,21 @@ export class TerminalSurface {
         window as Window & { electronAPI?: Partial<ElectronTerminalClipboardApi> }
       ).electronAPI;
       terminal.attachCustomKeyEventHandler((event) => {
+        if (
+          event.type === 'keydown'
+          && event.shiftKey
+          && !event.metaKey
+          && !event.ctrlKey
+          && !event.altKey
+        ) {
+          if (event.key === 'PageUp') {
+            scrollController.pinViewport();
+            this.scheduleScrollIntentSync(scrollController, true);
+          } else if (event.key === 'PageDown') {
+            this.scheduleScrollIntentSync(scrollController, false);
+          }
+        }
+
         if (
           typeof electronClipboard?.getTerminalClipboardKind === 'function'
           && typeof electronClipboard.readTerminalClipboard === 'function'
@@ -425,15 +505,20 @@ export class TerminalSurface {
         if (action.type === 'send-input') {
           this.sendInput(action.data);
         } else if (action.position === 'top') {
-          terminal.scrollToTop();
+          scrollController.scrollToTop();
         } else {
-          terminal.scrollToBottom();
+          scrollController.scrollToBottom();
         }
         return false;
       });
       this.inputDisposable = terminal.onData((data) => {
         this.sendInput(data);
       });
+      this.scrollDisposable = terminal.onScroll(() => {
+        scrollController.notifyViewportChanged();
+        this.scheduleSurfaceScrollStateSync();
+      });
+      this.syncScrollStateFromController();
       this.pasteListener = (event) => {
         if (event.clipboardData?.getData('text/plain')) return;
         const imageFile = Array.from(event.clipboardData?.items ?? [])
@@ -537,11 +622,14 @@ export class TerminalSurface {
       this.serverGeneration = message.generation;
       this.lastSequence = message.seq;
       this.replaying = true;
+      const restorePoint = this.scrollController?.captureRestorePoint();
       this.terminal?.reset();
       this.terminal?.write(message.data, () => {
+        if (restorePoint) this.scrollController?.restore(restorePoint);
         if (this.serverGeneration === message.generation) {
           this.replaying = false;
         }
+        this.scheduleSurfaceScrollStateSync();
       });
       return;
     }
@@ -549,7 +637,11 @@ export class TerminalSurface {
     if (message.type === 'terminal_output') {
       if (message.generation !== this.serverGeneration || message.seq <= this.lastSequence) return;
       this.lastSequence = message.seq;
-      this.terminal?.write(message.data);
+      const restorePoint = this.scrollController?.captureRestorePoint();
+      this.terminal?.write(message.data, () => {
+        if (restorePoint) this.scrollController?.restore(restorePoint);
+        this.scheduleSurfaceScrollStateSync();
+      });
       return;
     }
 
@@ -581,10 +673,115 @@ export class TerminalSurface {
     });
   }
 
-  private fitAndResize(claim: boolean): void {
+  private attachScrollTracking(
+    root: HTMLElement,
+    controller: TerminalScrollController,
+  ): () => void {
+    let pointerScrollActive = false;
+    const isScrollbarTarget = (target: EventTarget | null): boolean => (
+      target instanceof Element
+      && target.closest('.xterm-viewport, .xterm-scrollbar, .xterm-slider') !== null
+    );
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) controller.pinViewport();
+      this.scheduleScrollIntentSync(controller, event.deltaY < 0);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      pointerScrollActive = isScrollbarTarget(event.target);
+    };
+    const onPointerDone = () => {
+      if (!pointerScrollActive) return;
+      pointerScrollActive = false;
+      controller.syncFromViewport();
+    };
+    const onScroll = () => {
+      controller.notifyViewportChanged();
+      if (pointerScrollActive) controller.syncFromViewport();
+    };
+
+    root.addEventListener('wheel', onWheel, { capture: true, passive: true });
+    root.addEventListener('pointerdown', onPointerDown, true);
+    root.addEventListener('scroll', onScroll, true);
+    window.addEventListener('pointerup', onPointerDone, true);
+    window.addEventListener('pointercancel', onPointerDone, true);
+    return () => {
+      root.removeEventListener('wheel', onWheel, true);
+      root.removeEventListener('pointerdown', onPointerDown, true);
+      root.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('pointerup', onPointerDone, true);
+      window.removeEventListener('pointercancel', onPointerDone, true);
+    };
+  }
+
+  private scheduleScrollIntentSync(
+    controller: TerminalScrollController,
+    preservePinnedAtBottom: boolean,
+  ): void {
+    const sync = () => {
+      if (!this.disposed && this.scrollController === controller) {
+        controller.syncFromViewport({ preservePinnedAtBottom });
+      }
+    };
+    this.scrollSyncSettler.run(sync, { initial: 'microtask' });
+  }
+
+  private cancelScheduledScrollSync(): void {
+    this.scrollSyncSettler.cancel();
+  }
+
+  private requestStableFit(claim: boolean): void {
+    this.pendingFitClaim ||= claim;
+    if (this.pendingFitFrameId !== null || !this.isMountedHostVisible()) return;
+
+    let previous = this.getProposedDimensions();
+    let frameCount = 0;
+    const waitForStableGrid = () => {
+      this.pendingFitFrameId = requestAnimationFrame(() => {
+        this.pendingFitFrameId = null;
+        if (!this.isMountedHostVisible() || !this.terminal) {
+          this.pendingFitClaim = false;
+          return;
+        }
+
+        const next = this.getProposedDimensions();
+        frameCount += 1;
+        const matchesTerminal = next
+          && next.cols === this.terminal.cols
+          && next.rows === this.terminal.rows;
+        const dimensionsStable = next
+          && previous
+          && next.cols === previous.cols
+          && next.rows === previous.rows;
+        if (!next || matchesTerminal || dimensionsStable || frameCount >= 8) {
+          const pendingClaim = this.pendingFitClaim;
+          this.pendingFitClaim = false;
+          this.fitAndResize(pendingClaim, !matchesTerminal);
+          return;
+        }
+
+        previous = next;
+        waitForStableGrid();
+      });
+    };
+    waitForStableGrid();
+  }
+
+  private cancelPendingFit(): void {
+    if (this.pendingFitFrameId !== null) cancelAnimationFrame(this.pendingFitFrameId);
+    this.pendingFitFrameId = null;
+    this.pendingFitClaim = false;
+    if (this.resizeSettleTimerId !== null) window.clearTimeout(this.resizeSettleTimerId);
+    this.resizeSettleTimerId = null;
+  }
+
+  private fitAndResize(claim: boolean, shouldFit = true): void {
     if (!this.isMountedHostVisible() || !this.fitAddon || !this.terminal) return;
+    let restorePoint: TerminalScrollRestorePoint | null = null;
     try {
-      this.fitAddon.fit();
+      if (shouldFit) {
+        restorePoint = this.scrollController?.captureRestorePoint() ?? null;
+        this.fitAddon.fit();
+      }
       const dimensions = this.getDimensions();
       if (dimensions && this.attachedConnectionGeneration > 0) {
         wsClient.resizeTerminal(
@@ -597,6 +794,9 @@ export class TerminalSurface {
       }
     } catch {
       // A zero-sized panel can briefly make FitAddon unable to calculate cells.
+    } finally {
+      if (restorePoint) this.scrollController?.restoreAfterLayout(restorePoint);
+      this.scheduleSurfaceScrollStateSync();
     }
   }
 
@@ -612,9 +812,56 @@ export class TerminalSurface {
       ?? (this.terminal ? { cols: this.terminal.cols, rows: this.terminal.rows } : undefined);
   }
 
+  private getProposedDimensions(): { cols: number; rows: number } | undefined {
+    try {
+      return this.fitAddon?.proposeDimensions();
+    } catch {
+      return undefined;
+    }
+  }
+
   private updateState(status: TerminalSurfaceStatus, subtitle: string): void {
     if (this.state.status === status && this.state.subtitle === subtitle) return;
-    this.state = { status, subtitle };
+    this.state = { ...this.state, status, subtitle };
+    this.notifyListeners();
+  }
+
+  private syncScrollStateFromController(): void {
+    const isAtBottom = this.scrollController?.getSnapshot().isAtBottom ?? true;
+    const activeBuffer = this.terminal?.buffer.active;
+    const scrollMetrics: TerminalScrollMetrics = activeBuffer && this.terminal
+      ? {
+          baseY: activeBuffer.baseY,
+          viewportY: activeBuffer.viewportY,
+          rows: this.terminal.rows,
+        }
+      : this.state.scrollMetrics;
+    if (
+      this.state.isAtBottom === isAtBottom
+      && this.state.scrollMetrics.baseY === scrollMetrics.baseY
+      && this.state.scrollMetrics.viewportY === scrollMetrics.viewportY
+      && this.state.scrollMetrics.rows === scrollMetrics.rows
+    ) return;
+    this.state = { ...this.state, isAtBottom, scrollMetrics };
+    this.notifyListeners();
+  }
+
+  private scheduleSurfaceScrollStateSync(): void {
+    if (this.pendingScrollStateFrameId !== null || this.disposed) return;
+    this.pendingScrollStateFrameId = requestAnimationFrame(() => {
+      this.pendingScrollStateFrameId = null;
+      if (!this.disposed) this.syncScrollStateFromController();
+    });
+  }
+
+  private cancelScheduledSurfaceScrollStateSync(): void {
+    if (this.pendingScrollStateFrameId !== null) {
+      cancelAnimationFrame(this.pendingScrollStateFrameId);
+    }
+    this.pendingScrollStateFrameId = null;
+  }
+
+  private notifyListeners(): void {
     for (const listener of this.listeners) listener();
   }
 }

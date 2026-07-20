@@ -130,7 +130,7 @@ test('macOS Command editing chords match native terminal line operations', () =>
   );
 });
 
-test('macOS Command+Up and Command+Down navigate terminal scrollback', () => {
+test('macOS Command+Up and Command+Down navigate terminal scrollback without PTY input', () => {
   const context = { platform: 'mac' as const };
   assert.deepEqual(
     [

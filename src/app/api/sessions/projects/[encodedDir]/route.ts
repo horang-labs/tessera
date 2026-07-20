@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processManager } from '@/lib/cli/process-manager';
+import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { validateEncodedPath } from '@/lib/validation/path';
 import * as dbProjects from '@/lib/db/projects';
@@ -63,7 +64,7 @@ export async function GET(
       );
     }
 
-    const activeSessionIds = processManager.getActiveSessionIds();
+    const activeSessionIds = getActiveSessionIds(userId);
     const generatingSessionIds = processManager.getGeneratingSessionIds();
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
 

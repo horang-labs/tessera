@@ -15,7 +15,7 @@ import logger from '../logger';
 import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
-import { terminalManager } from '../terminal/shared-terminal-manager';
+import { bindTerminalRuntimeSender, terminalManager } from '../terminal/shared-terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import { getGeneratingTitleSessionIds } from './title-generation-state';
 import {
@@ -67,6 +67,9 @@ export class WebSocketServer {
 
     // Setup protocol adapter callback
     protocolAdapter.setSendToUser((userId, message) => {
+      this.sendToUser(userId, message);
+    });
+    bindTerminalRuntimeSender((userId, message) => {
       this.sendToUser(userId, message);
     });
 
@@ -257,6 +260,10 @@ export class WebSocketServer {
       type: 'session_list',
       sessions,
       titleGeneratingSessionIds: getGeneratingTitleSessionIds(userId),
+    });
+    this.sendToConnection(ws, userId, {
+      type: 'terminal_session_runtime_snapshot',
+      activeSessionIds: [...terminalManager.getActiveSessionIds(userId)],
     });
 
     // Hook state is process state, not a transient WebSocket event. Replay the

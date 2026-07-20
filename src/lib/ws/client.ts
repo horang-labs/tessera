@@ -8,7 +8,7 @@ import type {
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
-import type { TerminalLaunchIntent } from '@/lib/terminal/types';
+import type { TerminalColorQueryColors, TerminalLaunchIntent } from '@/lib/terminal/types';
 import { v4 as uuidv4 } from 'uuid';
 import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
 import { useProvidersStore } from '@/stores/providers-store';
@@ -360,6 +360,7 @@ export class WebSocketClient {
     shellKind?: 'default' | 'cmd' | 'powershell' | 'wsl';
     cols?: number;
     rows?: number;
+    colorQueryColors?: TerminalColorQueryColors;
     launchIntent?: TerminalLaunchIntent;
     prefillInput?: string;
     launch?: { providerId: string; sessionId: string };

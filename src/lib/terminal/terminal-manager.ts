@@ -15,6 +15,7 @@ import { revokePaneTokensForTerminal } from './pane-token-registry';
 import { cleanupCodexOverlayForTerminal } from './codex-overlay';
 import { TerminalHeadlessModel } from './terminal-headless-model';
 import { normalizeTerminalColorEnv } from './terminal-color-env';
+import { createTerminalStartupColorQueryBridge } from './terminal-startup-color-query';
 import {
   ownsTerminalHandoffLock,
   releaseTerminalHandoffByTerminal,
@@ -152,6 +153,8 @@ interface TerminalRuntime {
   shell: string;
   process: TerminalProcessHandle;
   model: TerminalHeadlessModel;
+  cols: number;
+  rows: number;
   subscribers: Map<string, TerminalSubscriber>;
   viewportOwner: string | null;
   outputBuffer: string[];
@@ -177,6 +180,11 @@ export interface TerminalManagerOptions {
   closeExitGraceMs?: number;
   closeExitPollMs?: number;
   processIsAlive?: (pid: number) => boolean;
+  onSessionRuntimeStateChange?: (state: {
+    sessionId: string;
+    userId: string;
+    running: boolean;
+  }) => void;
 }
 
 function normalizeTerminalDimension(value: number | undefined, fallback: number, max: number): number {
@@ -513,6 +521,8 @@ export class TerminalManager {
         shell: shell.command,
         process: processHandle,
         model,
+        cols,
+        rows,
         subscribers: new Map(),
         viewportOwner: null,
         outputBuffer: [],
@@ -531,7 +541,22 @@ export class TerminalManager {
           this.getSessionKey(runtime.userId, runtime.sessionId),
           runtime.terminalId,
         );
+        this.managerOptions.onSessionRuntimeStateChange?.({
+          sessionId: runtime.sessionId,
+          userId: runtime.userId,
+          running: true,
+        });
       }
+
+      // Agent TUIs probe terminal colors immediately and can time out before
+      // the new browser surface receives its first output frame. Answer only
+      // during startup, then let xterm remain the protocol authority.
+      const startupColorBridge = options.launchSpec && options.colorQueryColors
+        ? createTerminalStartupColorQueryBridge(
+            options.colorQueryColors,
+            (reply) => processHandle.write(reply),
+          )
+        : null;
 
       // 미지원 슬래시 명령 fallback: provider TUI가 기동된 뒤 입력창이
       // 준비되면 prefillInput을 개행 없이 write한다(자동 실행 X, 사용자가 Enter).
@@ -597,7 +622,9 @@ export class TerminalManager {
         prefillHardTimer = setTimeout(sendPrefill, PREFILL_HARD_TIMEOUT_MS);
       }
 
-      processHandle.onData((data) => {
+      processHandle.onData((rawData) => {
+        const data = startupColorBridge?.consume(rawData) ?? rawData;
+        if (data.length === 0) return;
         // replay 버퍼: 원본 청크 순서/내용 그대로 즉시 누적 — coalescing과 독립.
         this.appendBufferedOutput(runtime, data);
         runtime.model.write(data);
@@ -622,6 +649,12 @@ export class TerminalManager {
       });
 
       processHandle.onExit((event) => {
+        const pendingColorQueryData = startupColorBridge?.drain() ?? '';
+        if (pendingColorQueryData) {
+          this.appendBufferedOutput(runtime, pendingColorQueryData);
+          runtime.model.write(pendingColorQueryData);
+          this.queueOutput(runtime, pendingColorQueryData);
+        }
         clearPrefillTimers();
         this.finalizeRuntimeExit(runtime, key, event);
       });
@@ -961,6 +994,13 @@ export class TerminalManager {
       this.clearSessionBinding(runtime);
       revokePaneTokensForTerminal(runtime.terminalId);
       cleanupCodexOverlayForTerminal(runtime.terminalId);
+      if (runtime.sessionId) {
+        this.managerOptions.onSessionRuntimeStateChange?.({
+          sessionId: runtime.sessionId,
+          userId: runtime.userId,
+          running: false,
+        });
+      }
     }
     if (runtime.handoffSessionId && ownsTerminalHandoffLock(
       runtime.handoffSessionId,
@@ -1064,6 +1104,15 @@ export class TerminalManager {
       sessionCount: runtimes.filter((runtime) => runtime.sessionId !== null).length
         + openingEntries.filter((key) => this.openingSessionByTerminalKey.get(key) != null).length,
     };
+  }
+
+  getActiveSessionIds(userId?: string): Set<string> {
+    return new Set(
+      [...this.terminals.values()]
+        .filter((runtime) => !runtime.ended && runtime.sessionId !== null)
+        .filter((runtime) => userId === undefined || runtime.userId === userId)
+        .map((runtime) => runtime.sessionId!),
+    );
   }
 
   resolveTerminalId(userId: string, requestedTerminalId: string, sessionId?: string | null): string {
@@ -1198,8 +1247,11 @@ export class TerminalManager {
   private resizeRuntime(runtime: TerminalRuntime, cols: number, rows: number): void {
     const normalizedCols = normalizeTerminalDimension(cols, 80, MAX_TERMINAL_COLS);
     const normalizedRows = normalizeTerminalDimension(rows, 24, MAX_TERMINAL_ROWS);
+    if (runtime.cols === normalizedCols && runtime.rows === normalizedRows) return;
     runtime.process.resize(normalizedCols, normalizedRows);
     runtime.model.resize(normalizedCols, normalizedRows);
+    runtime.cols = normalizedCols;
+    runtime.rows = normalizedRows;
   }
 
   // 코얼레싱 버퍼에 청크를 쌓고, 예약된 flush가 없으면 setImmediate 1개를 건다.

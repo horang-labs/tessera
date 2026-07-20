@@ -1,5 +1,10 @@
 export type TerminalShellKind = 'default' | 'cmd' | 'powershell' | 'wsl';
 
+export interface TerminalColorQueryColors {
+  foreground: string;
+  background: string;
+}
+
 /** Client-safe request. Executable, argv, and provider conversation ids are server-owned. */
 export type TerminalLaunchIntent =
   | { kind: 'claude-slash'; commandInput: string }
@@ -34,6 +39,8 @@ export interface TerminalCreateOptions {
   paneToken?: string;
   /** Native agent provider launched inside this PTY. */
   providerId?: string;
+  /** Renderer-resolved colors used to answer an agent's startup OSC queries. */
+  colorQueryColors?: TerminalColorQueryColors;
   /** Disposes provider resources created before PTY spawn. */
   launchObserverDisposer?: () => void;
   /** Server-owned environment overrides for the provider process. */

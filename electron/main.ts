@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
+import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { getTerminalClipboardKind, readTerminalClipboard } from './terminal-clipboard';
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
@@ -1022,6 +1023,20 @@ ipcMain.on('ui-storage-set-item', (event, payload: unknown) => {
 ipcMain.on('ui-storage-remove-item', (event, key: unknown) => {
   removeUiStorageItem(key);
   event.returnValue = true;
+});
+ipcMain.handle('shell-open-external-url', async (_event, rawUrl: unknown) => {
+  const targetUrl = normalizeExternalHttpUrl(rawUrl);
+  if (!targetUrl) return { ok: false, error: 'invalid_url' };
+
+  try {
+    await shell.openExternal(targetUrl);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 });
 ipcMain.handle('shell-open-path', async (_event, rawPath: unknown) => {
   const targetPath = resolveShellPath(rawPath);

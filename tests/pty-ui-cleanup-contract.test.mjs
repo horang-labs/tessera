@@ -54,7 +54,7 @@ test('Goal is absent from UI, transport, persistence, and Codex provider integra
   }
 });
 
-test('session PTY owns a workspace listener and Stop performs final Git reconciliation', () => {
+test('session PTY owns a workspace listener and lifecycle completion performs final Git reconciliation', () => {
   const terminalManager = read('src/lib/terminal/terminal-manager.ts');
   const sharedManager = read('src/lib/terminal/shared-terminal-manager.ts');
   const watcher = read('src/lib/workspace-files/workspace-file-watch-manager.ts');
@@ -65,5 +65,8 @@ test('session PTY owns a workspace listener and Stop performs final Git reconcil
   assert.match(sharedManager, /subscribeRootChanges/);
   assert.match(sharedManager, /scheduleRecompute\(root, userId\)/);
   assert.match(watcher, /rootChangeListeners/);
-  assert.match(hookReceiver, /refreshSessionDiffStateInBackground\(entry\.sessionId, entry\.userId, 'terminal Stop hook'\)/);
+  assert.match(
+    hookReceiver,
+    /mapped\?\.status === 'completed'[\s\S]*refreshSessionDiffStateInBackground\(entry\.sessionId, entry\.userId, 'terminal lifecycle completion'\)/,
+  );
 });

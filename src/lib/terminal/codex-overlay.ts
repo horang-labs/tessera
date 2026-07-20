@@ -1,10 +1,17 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { createHash } from 'node:crypto';
 import logger from '@/lib/logger';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
-import { buildCodexHookSettingsJson } from './codex-hook-settings';
+import {
+  buildCodexHookSettings,
+  CODEX_HOOK_EVENT_LABEL,
+  type CodexHookCommand,
+  type CodexHookEventName,
+  type CodexHookSettings,
+} from './codex-hook-settings';
 
 /**
  * 실 CODEX_HOME. process.env.CODEX_HOME은 절대 오버레이로 덮어쓰지 않는다
@@ -35,6 +42,101 @@ function stripHookStateSections(toml: string): string {
   return out.join('\n');
 }
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      sorted[key] = canonicalize((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/** Codex command_hook_hash와 동일한 정규화·직렬화 계약. */
+function computeTrustedHash(
+  eventName: CodexHookEventName,
+  hook: CodexHookCommand,
+  matcher?: string,
+): string {
+  const normalizedHook: Record<string, unknown> = {
+    type: 'command',
+    command: hook.command,
+    timeout: Math.max(1, hook.timeout ?? 600),
+    async: hook.async ?? false,
+  };
+  if (hook.statusMessage !== undefined) normalizedHook.statusMessage = hook.statusMessage;
+
+  const identity: Record<string, unknown> = {
+    event_name: CODEX_HOOK_EVENT_LABEL[eventName],
+    hooks: [normalizedHook],
+  };
+  // Codex는 UserPromptSubmit/Stop의 matcher를 훅 identity에서 제외한다.
+  if (eventName === 'SessionStart' && matcher !== undefined) identity.matcher = matcher;
+  const digest = createHash('sha256')
+    .update(JSON.stringify(canonicalize(identity)))
+    .digest('hex');
+  return `sha256:${digest}`;
+}
+
+function usesWindowsPath(pathValue: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(pathValue) || pathValue.startsWith('\\\\');
+}
+
+function escapeTomlBasicString(value: string): string {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('\b', '\\b')
+    .replaceAll('\f', '\\f')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\t', '\\t');
+}
+
+function formatHookStateKey(key: string): string {
+  if (usesWindowsPath(key) && !key.includes("'")) return `'${key}'`;
+  return `"${escapeTomlBasicString(key)}"`;
+}
+
+function appendTrustedHookState(
+  configToml: string,
+  hooksPath: string,
+  settings: CodexHookSettings,
+): string {
+  const canonicalHooksPath = fs.realpathSync.native(hooksPath);
+  const blocks: string[] = [];
+  const windowsPath = usesWindowsPath(canonicalHooksPath);
+  if (windowsPath) blocks.push('[hooks.state]');
+
+  for (const [eventName, groups] of Object.entries(settings.hooks) as Array<
+    [CodexHookEventName, CodexHookSettings['hooks'][CodexHookEventName]]
+  >) {
+    groups.forEach((group, groupIndex) => {
+      group.hooks.forEach((hook, handlerIndex) => {
+        if (hook.type !== 'command' || !hook.command) return;
+        const suffix = `${CODEX_HOOK_EVENT_LABEL[eventName]}:${groupIndex}:${handlerIndex}`;
+        const sourcePaths = windowsPath
+          ? [canonicalHooksPath.replaceAll('/', '\\'), canonicalHooksPath.replaceAll('\\', '/')]
+          : [canonicalHooksPath];
+        const trustedHash = computeTrustedHash(eventName, hook, group.matcher);
+        for (const sourcePath of [...new Set(sourcePaths)]) {
+          const key = `${sourcePath}:${suffix}`;
+          blocks.push(
+            `[hooks.state.${formatHookStateKey(key)}]\n`
+            + 'enabled = true\n'
+            + `trusted_hash = "${trustedHash}"`,
+          );
+        }
+      });
+    });
+  }
+
+  const trimmed = configToml.trimEnd();
+  return `${trimmed}${trimmed ? '\n\n' : ''}${blocks.join('\n\n')}\n`;
+}
+
 /**
  * per-terminal CODEX_HOME 오버레이 생성. 반환값을 자식 CODEX_HOME env로 준다.
  *
@@ -53,6 +155,7 @@ export function createCodexOverlay(terminalId: string): string {
   fs.mkdirSync(overlayDir, { recursive: true });
 
   const systemHome = getSystemCodexHome();
+  let configToml = '';
   let entries: string[] = [];
   try {
     entries = fs.readdirSync(systemHome);
@@ -67,8 +170,7 @@ export function createCodexOverlay(terminalId: string): string {
     const target = path.join(overlayDir, entry);
     try {
       if (entry === 'config.toml') {
-        const toml = stripHookStateSections(fs.readFileSync(source, 'utf8'));
-        fs.writeFileSync(target, toml, { mode: 0o600 });
+        configToml = stripHookStateSections(fs.readFileSync(source, 'utf8'));
         continue;
       }
       const stat = fs.statSync(source); // dangling 심링크 스킵
@@ -79,9 +181,12 @@ export function createCodexOverlay(terminalId: string): string {
     }
   }
 
+  const hookSettings = buildCodexHookSettings();
+  const hooksPath = path.join(overlayDir, 'hooks.json');
+  fs.writeFileSync(hooksPath, JSON.stringify(hookSettings, null, 2) + '\n', { mode: 0o600 });
   fs.writeFileSync(
-    path.join(overlayDir, 'hooks.json'),
-    buildCodexHookSettingsJson() + '\n',
+    path.join(overlayDir, 'config.toml'),
+    appendTrustedHookState(configToml, hooksPath, hookSettings),
     { mode: 0o600 },
   );
 

@@ -107,15 +107,34 @@ export function handleIncomingServerMessage({
 
     case 'session_state': {
       const changed = useTerminalSessionStore.getState().applySessionState(msg);
-      // 사이드바 배지·Running 카운트는 session.status가 아니라 isRunning(boolean)을 읽는다.
-      // 따라서 hook 상태를 isRunning 토글로 반영한다(idle은 상태 승격 안 함).
-      if (msg.status === 'completed') {
-        sessionStore.setSessionRunning(msg.sessionId, false);
-      } else if (msg.status === 'running' || msg.status === 'input_required') {
-        sessionStore.setSessionRunning(msg.sessionId, true);
+      const runtimeIsRunning = sessionStore.getSession(msg.sessionId)?.isRunning;
+      if (msg.status === 'running' && runtimeIsRunning !== false) {
+        startTurnInFlight(msg.sessionId);
+      } else {
+        stopTurnInFlight(msg.sessionId);
       }
       if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
         handleTerminalSessionStateMessage(msg, sessionStore.activeSessionId);
+      }
+      return { wasReconnect };
+    }
+
+    case 'terminal_session_runtime':
+      sessionStore.setSessionRunning(msg.sessionId, msg.running);
+      if (!msg.running) {
+        stopTurnInFlight(msg.sessionId);
+      }
+      return { wasReconnect };
+
+    case 'terminal_session_runtime_snapshot': {
+      sessionStore.applyTerminalRuntimeSnapshot(msg.activeSessionIds);
+      const activeTerminalIds = new Set(msg.activeSessionIds);
+      for (const project of sessionStore.projects) {
+        for (const session of project.sessions) {
+          if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
+            stopTurnInFlight(session.id);
+          }
+        }
       }
       return { wasReconnect };
     }
@@ -362,9 +381,8 @@ function addCreatedSession(
     (sum, project) => sum + project.sessions.length,
     0,
   );
-  // Session exists in DB but CLI isn't spawned until the first message.
-  // isRunning=false reflects the real process state; markSessionRunning flips
-  // it to true once the session_started event arrives.
+  // Session exists in DB but has no backing runtime yet. GUI sessions start on
+  // first input; PTY sessions start when their terminal view is first opened.
   sessionStore.addSession({
     id: msg.sessionId,
     title: i18n.t('chat.sessionDefaultTitle', { count: totalSessions + 1 }),
@@ -372,7 +390,7 @@ function addCreatedSession(
     workDir: msg.workDir,
     isRunning: false,
     hasStarted: false,
-    status: 'starting',
+    status: msg.kind === 'terminal' ? 'stopped' : 'starting',
     createdAt: new Date().toISOString(),
     lastModified: new Date().toISOString(),
     archived: false,

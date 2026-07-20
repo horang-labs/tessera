@@ -42,11 +42,12 @@ export interface SessionState {
   ) => void;
   markSessionStopped: (sessionId: string) => void;
   /**
-   * isRunning만 가볍게 토글한다(사이드바 배지·Running 카운트가 읽는 필드).
-   * 터미널 세션의 hook 상태 반영 전용 — markSessionRunning과 달리 telemetry 발화나
+   * PTY 런타임 생존 상태를 가볍게 반영한다(사이드바 배지·Running 카운트가 읽는 필드).
+   * markSessionRunning과 달리 telemetry 발화나
    * tesseraSessionId/runtimeConfig 덮어쓰기 같은 부수효과가 없다.
    */
   setSessionRunning: (sessionId: string, running: boolean) => void;
+  applyTerminalRuntimeSnapshot: (activeSessionIds: string[]) => void;
   updateSessionRuntimeConfig: (
     sessionId: string,
     runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'fastMode' | 'sessionMode' | 'accessMode'>>,
@@ -838,7 +839,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             ...s,
             isRunning: running,
             hasStarted: running ? true : s.hasStarted,
-            status: (running ? 'running' : 'completed') as SessionStatus,
+            status: (running ? 'running' : 'stopped') as SessionStatus,
+          };
+        }),
+      }));
+      return changed ? { projects } : {};
+    }),
+
+  applyTerminalRuntimeSnapshot: (activeSessionIds) =>
+    set((state) => {
+      const active = new Set(activeSessionIds);
+      let changed = false;
+      const projects = state.projects.map((project) => ({
+        ...project,
+        sessions: project.sessions.map((session) => {
+          if (session.kind !== 'terminal') return session;
+          const running = active.has(session.id);
+          const status = (running ? 'running' : 'stopped') as SessionStatus;
+          if (session.isRunning === running && session.status === status) return session;
+          changed = true;
+          return {
+            ...session,
+            isRunning: running,
+            hasStarted: running ? true : session.hasStarted,
+            status,
           };
         }),
       }));

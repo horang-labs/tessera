@@ -1,0 +1,25 @@
+:root {
+  --terminal-scrollbar-thumb: #858581;
+  --terminal-scrollbar-track: #e7e7e3;
+}
+
+:root.dark {
+  --terminal-scrollbar-thumb: #687078;
+  --terminal-scrollbar-track: #181b1e;
+}
+
+/*
+ * Chromium's native overlay scrollbar auto-hides on macOS regardless of the
+ * requested gutter. The persistent indicator is rendered beside xterm, so hide
+ * the native thumb to avoid a second scrollbar flashing over it while scrolling.
+ */
+.tessera-terminal-surface .xterm-viewport {
+  overflow-y: scroll !important;
+  scrollbar-width: none;
+}
+
+.tessera-terminal-surface .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
