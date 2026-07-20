@@ -1055,6 +1055,7 @@ export interface I18nMessages {
       totalTasks: string;
       running: string;
       emptyColumn: string;
+      selectProjectToCreate: string;
       viewList: string;
       viewBoard: string;
       viewListShort: string;

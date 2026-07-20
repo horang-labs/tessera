@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import {
   readUiStorageItem,
@@ -238,7 +237,6 @@ function resolveProjectViewMode(
   projectViewModes: Record<string, ViewMode>,
   fallback: ViewMode,
 ): ViewMode {
-  if (projectDir === ALL_PROJECTS_SENTINEL) return 'list';
   if (projectDir && projectViewModes[projectDir]) return projectViewModes[projectDir];
   return fallback;
 }
@@ -247,12 +245,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   viewMode: loadViewMode(),
   projectViewModes: loadProjectViewModes(),
   setViewMode: (mode) => {
-    // All Projects mode only supports list view — block board switch
-    if (mode === 'board' && get().selectedProjectDir === ALL_PROJECTS_SENTINEL) return;
     if (get().viewMode === mode) return;
     set((state) => {
       const nextProjectViewModes =
-        state.selectedProjectDir && state.selectedProjectDir !== ALL_PROJECTS_SENTINEL
+        state.selectedProjectDir
           ? {
               ...state.projectViewModes,
               [state.selectedProjectDir]: mode,
@@ -365,7 +361,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   setSelectedProjectDir: (dir) => {
     set((state) => {
       const nextProjectViewModes =
-        state.selectedProjectDir && state.selectedProjectDir !== ALL_PROJECTS_SENTINEL
+        state.selectedProjectDir
           ? {
               ...state.projectViewModes,
               [state.selectedProjectDir]: state.viewMode,

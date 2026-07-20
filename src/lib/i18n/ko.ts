@@ -1057,6 +1057,7 @@ export const ko: I18nMessages = {
       totalTasks: '{{count}}개 태스크',
       running: '{{count}}개 실행 중',
       emptyColumn: '여기에 드롭',
+      selectProjectToCreate: '새 작업을 만들 프로젝트를 위에서 선택하세요',
       viewList: '리스트 보기',
       viewBoard: '보드 보기',
       viewListShort: '리스트',

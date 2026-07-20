@@ -1050,6 +1050,7 @@ export const ja: I18nMessages = {
       totalTasks: '{{count}} タスク',
       running: '{{count}} 実行中',
       emptyColumn: 'ここにドロップ',
+      selectProjectToCreate: '上でプロジェクトを選択して作業を作成します',
       viewList: 'リストビュー',
       viewBoard: 'ボードビュー',
       viewListShort: 'リスト',
