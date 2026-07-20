@@ -523,6 +523,7 @@ export async function routeClientTransportMessage({
       let launchSpec: TerminalLaunchSpec | undefined;
       let providerId: string | undefined;
       let launchEnv: Record<string, string> | undefined;
+      let launchEnvFactory: (() => Promise<Record<string, string> | undefined>) | undefined;
       let launchObserverDisposer: (() => void) | undefined;
       let appearanceChangePolicy: TerminalCreateOptions['appearanceChangePolicy'];
       let resizeScrollbackPolicy: TerminalCreateOptions['resizeScrollbackPolicy'];
@@ -578,25 +579,26 @@ export async function routeClientTransportMessage({
         };
         // CODEX_HOME 오버레이 생성(hooks.json 주입) — env로만 자식에 전달.
         // win32+wsl은 게스트 파일시스템 안에 만든다(호스트 오버레이는 게스트 codex가
-        // 못 쓴다: 계정 홈 불일치 + Windows 심링크 EPERM). 실패는 opencode 브랜치와
-        // 대칭으로 terminal_error로 알린다 — 조용히 빈 CODEX_HOME을 주면 codex가
-        // 로그인 화면부터 띄운다.
-        try {
-          launchEnv = {
-            CODEX_HOME: wslTerminalRuntime
+        // 못 쓴다: 계정 홈 불일치 + Windows 심링크 EPERM). factory로 넘겨 opening
+        // 윈도우 안에서 실행한다 — WSL VM 콜드 부팅으로 수십 초 걸릴 수 있어서,
+        // 여기서 await하면 close_session 취소도 중복 create 방지도 그 구간을 못
+        // 지킨다. 실패는 create()가 terminal_error로 표면화한다 — 조용히 빈
+        // CODEX_HOME을 주면 codex가 로그인 화면부터 띄운다.
+        launchEnvFactory = async () => {
+          try {
+            const overlayHome = wslTerminalRuntime
               ? await createCodexOverlayInWsl(terminalId, hookCommandStyle)
-              : createCodexOverlay(terminalId, hookCommandStyle),
-          };
-        } catch (error) {
-          logger.error({ error, terminalId }, 'Failed to prepare the Codex overlay');
-          sendToConnection(connectionId, {
-            type: 'terminal_error',
-            terminalId: message.terminalId,
-            surfaceId: message.surfaceId,
-            message: error instanceof Error ? error.message : 'Unable to prepare the Codex invocation.',
-          });
-          return;
-        }
+              : createCodexOverlay(terminalId, hookCommandStyle);
+            // TESSERA_CODEX_HOME: login 셸 profile이 CODEX_HOME을 덮어도 -c 본문의
+            // 재단언(terminal-resolver)이 오버레이로 되돌릴 수 있게 원본을 함께 전달.
+            return { CODEX_HOME: overlayHome, TESSERA_CODEX_HOME: overlayHome };
+          } catch (error) {
+            logger.error({ error, terminalId }, 'Failed to prepare the Codex overlay');
+            throw new Error(
+              `Failed to prepare the Codex overlay: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        };
       } else if (!terminalExists && isStructuredOpenCode && structured) {
         providerId = 'opencode';
         const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
@@ -740,6 +742,7 @@ export async function routeClientTransportMessage({
           appearanceRestartIntent: launchSpec?.handoffSessionId ? message.launchIntent : undefined,
           appearance: message.appearance,
           launchEnv,
+          launchEnvFactory,
           launchObserverDisposer,
         });
       } catch (error) {

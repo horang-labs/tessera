@@ -66,6 +66,14 @@ export interface TerminalCreateOptions {
   launchObserverDisposer?: () => void;
   /** Server-owned environment overrides for the provider process. */
   launchEnv?: Record<string, string>;
+  /**
+   * Async variant of launchEnv, resolved inside the opening window right before
+   * PTY spawn. Slow preparation (e.g. the WSL guest Codex overlay, up to tens of
+   * seconds on a cold VM) must use this instead of awaiting before create():
+   * outside the opening window a concurrent close_session cannot cancel it and
+   * a duplicate terminal_create cannot deduplicate against it.
+   */
+  launchEnvFactory?: () => Promise<Record<string, string> | undefined>;
 }
 
 export interface TerminalResolvedShell {

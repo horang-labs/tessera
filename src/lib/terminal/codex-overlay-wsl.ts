@@ -39,6 +39,27 @@ const FINALIZE_TIMEOUT_MS = 10_000;
 /** wsl.exe로 이 세션에서 게스트 오버레이를 만든 터미널 — cleanup 스폰 낭비 방지용. */
 const guestOverlayTerminals = new Set<string>();
 
+/**
+ * terminalId별 게스트 스크립트 직렬화 체인. terminalId는 `session-<id>`로 결정적
+ * 재사용되므로(terminal-surface-registry) 종료 직후 재생성이 흔한데, cleanup의
+ * fire-and-forget `rm -rf`와 다음 create의 스크립트는 별개 wsl.exe 프로세스라
+ * 순서 보장이 없다 — 지연된 rm -rf가 새로 만든 오버레이를 지우는 레이스를
+ * 체인으로 막는다. 호스트 경로(rmSync)는 동기라 이 문제가 없다.
+ */
+const guestOpsByTerminal = new Map<string, Promise<unknown>>();
+
+function chainGuestOp<T>(terminalId: string, op: () => Promise<T>): Promise<T> {
+  const previous = guestOpsByTerminal.get(terminalId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(op);
+  const tail = next.catch(() => undefined).then(() => {
+    if (guestOpsByTerminal.get(terminalId) === tail) {
+      guestOpsByTerminal.delete(terminalId);
+    }
+  });
+  guestOpsByTerminal.set(terminalId, tail);
+  return next;
+}
+
 function assertSafeTerminalId(terminalId: string): void {
   if (!SAFE_TERMINAL_ID.test(terminalId)) {
     throw new Error('Invalid terminal id for Codex overlay');
@@ -169,6 +190,13 @@ export async function createCodexOverlayInWsl(
   hookStyle: HookCommandStyle = 'posix',
 ): Promise<string> {
   assertSafeTerminalId(terminalId);
+  return chainGuestOp(terminalId, () => createOverlayScripts(terminalId, hookStyle));
+}
+
+async function createOverlayScripts(
+  terminalId: string,
+  hookStyle: HookCommandStyle,
+): Promise<string> {
   const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksJson = JSON.stringify(hookSettings, null, 2) + '\n';
 
@@ -212,7 +240,8 @@ export async function createCodexOverlayInWsl(
 export function cleanupCodexOverlayInWsl(terminalId: string): void {
   if (!guestOverlayTerminals.delete(terminalId)) return;
   try {
-    runWslScript(buildWslCodexOverlayCleanupScript(terminalId), FINALIZE_TIMEOUT_MS)
+    chainGuestOp(terminalId, () =>
+      runWslScript(buildWslCodexOverlayCleanupScript(terminalId), FINALIZE_TIMEOUT_MS))
       .catch((err) => {
         logger.debug({ err, terminalId }, 'codex WSL overlay cleanup skipped');
       });

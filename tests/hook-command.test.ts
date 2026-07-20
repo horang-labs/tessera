@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { buildHookCommand } from '@/lib/terminal/hook-command';
 
@@ -53,25 +56,37 @@ test('posix hook command posts the stdin payload with the pane token', async () 
   }
 });
 
-test('posix hook command exits 0 even when the server is unreachable', async () => {
-  const exitCode = await new Promise<number | null>((resolve, reject) => {
-    const child = spawn('sh', ['-c', buildHookCommand('posix')], {
-      env: {
-        ...process.env,
-        // 예약 포트에 아무도 없음 — 1차 curl 실패, (WSL이면) curl.exe 폴백도 실패.
-        TESSERA_HOOK_PORT: '9',
-        TESSERA_SESSION_ID: 's',
-        TESSERA_PANE_TOKEN: 't',
-        // 폴백 경로가 실 Windows 호스트로 나가지 않게 WSL 감지를 우회한다.
-        WSL_DISTRO_NAME: '',
-      },
-      stdio: ['pipe', 'ignore', 'ignore'],
+test('posix hook command exits 0 when the local curl fails', async () => {
+  // WSL 감지는 env를 비워도 /proc/version 폴백으로 참이 될 수 있다(이 테스트가
+  // WSL 개발 머신에서 돌 때). env 우회 대신 PATH 스텁으로 격리한다: curl은 실패,
+  // curl.exe는 성공 — 성공시켜야 스텁 불가능한 /mnt/c 절대경로 폴백(실 interop
+  // curl.exe)까지 내려가지 않는다. 비-WSL 머신에서는 curl 실패 후 즉시 || true.
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-curl-stub-'));
+  fs.writeFileSync(path.join(stubDir, 'curl'), '#!/bin/sh\nexit 7\n');
+  fs.writeFileSync(path.join(stubDir, 'curl.exe'), '#!/bin/sh\ncat >/dev/null\nexit 0\n');
+  for (const name of ['curl', 'curl.exe']) {
+    fs.chmodSync(path.join(stubDir, name), 0o755);
+  }
+  try {
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      const child = spawn('sh', ['-c', buildHookCommand('posix')], {
+        env: {
+          ...process.env,
+          PATH: `${stubDir}:${process.env.PATH ?? ''}`,
+          TESSERA_HOOK_PORT: '9',
+          TESSERA_SESSION_ID: 's',
+          TESSERA_PANE_TOKEN: 't',
+        },
+        stdio: ['pipe', 'ignore', 'ignore'],
+      });
+      child.on('error', reject);
+      child.on('close', resolve);
+      child.stdin.end('{}');
     });
-    child.on('error', reject);
-    child.on('close', resolve);
-    child.stdin.end('{}');
-  });
-  assert.equal(exitCode, 0);
+    assert.equal(exitCode, 0);
+  } finally {
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
 });
 
 test('posix hook command retries through curl.exe on WSL runtimes', () => {

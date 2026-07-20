@@ -65,9 +65,9 @@ export const ChatArea = memo(function ChatArea({
   const session = useSessionStore((state) => state.getSession(sessionId));
   // 생성 중(낙관적 temp 세션): 서버 세션이 아직 없어서 PTY attach가 불가능하다 —
   // TerminalPanel을 붙이면 존재하지 않는 세션으로 terminal_create가 나가 에러가 뜬다.
-  const isPendingCreation = useSessionStore(
-    (state) => state.creatingSessionId === sessionId,
-  );
+  // 전역 creatingSessionId 슬롯은 동시 생성 시 덮여서 믿을 수 없다 — temp- 접두가
+  // 낙관적 세션의 결정적 마커다(use-session-crud만 이 접두로 id를 만든다).
+  const isPendingCreation = sessionId.startsWith('temp-');
   const messages = useChatStore((state) => state.messages.get(sessionId));
   const error = useChatStore((state) => state.errors.get(sessionId));
   const clearError = useChatStore((state) => state.clearError);
