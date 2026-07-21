@@ -19,6 +19,7 @@ import {
   normalizeCwdForCliEnvironment,
   resolveDefaultAgentEnvironment,
   spawnCliProcess,
+  type SpawnCliRuntimeOptions,
 } from './spawn-cli-runtime';
 
 const spawnCliCache = getSpawnCliCache();
@@ -85,6 +86,9 @@ export function spawnCli(
   args: string[],
   options: SpawnOptions,
   agentEnv: AgentEnvironment,
+  runtimeOptions?: SpawnCliRuntimeOptions,
 ): ChildProcess {
-  return spawnCliProcess(command, args, options, agentEnv, spawnCliCache);
+  return spawnCliProcess(command, args, options, agentEnv, spawnCliCache, runtimeOptions);
 }
+
+export type { SpawnCliRuntimeOptions };

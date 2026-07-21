@@ -150,18 +150,30 @@ function resolveLinuxSupplementalCliPath(): string | null {
     : null;
 }
 
+export interface SpawnCliRuntimeOptions {
+  // When false, the WSL bridge runs the command in a plain non-login,
+  // non-interactive shell instead of the user's `-i -l` login shell. This skips
+  // sourcing the user's rc files (nvm, oh-my-zsh, powerlevel10k) on every call,
+  // which routinely costs hundreds of ms per invocation. Only safe for binaries
+  // on WSL's default PATH that don't depend on the user's shell rc for
+  // discovery or config (e.g. git). Real agent CLIs (claude, codex) still need
+  // the login shell for nvm PATH etc.
+  loginShell?: boolean;
+}
+
 export function spawnCliProcess(
   command: string,
   args: string[],
   options: SpawnOptions,
   agentEnv: AgentEnvironment,
   cache: SpawnCliCache,
+  runtimeOptions?: SpawnCliRuntimeOptions,
 ): ChildProcess {
   const env = buildSpawnEnvironment((options.env as NodeJS.ProcessEnv) ?? process.env, cache);
   const spawnOptions = buildPlatformSpawnOptions(options, env);
 
   if (agentEnv === 'wsl' && getRuntimePlatform() === 'win32') {
-    return spawnWslCli(command, args, spawnOptions, cache, env);
+    return spawnWslCli(command, args, spawnOptions, cache, env, runtimeOptions);
   }
 
   if (agentEnv === 'native' && getRuntimePlatform() === 'win32') {
@@ -529,14 +541,25 @@ function spawnWslCli(
   options: SpawnOptions,
   cache: SpawnCliCache,
   env: NodeJS.ProcessEnv,
+  runtimeOptions?: SpawnCliRuntimeOptions,
 ): ChildProcess {
   const { cwd, ...spawnOptions } = options;
-  const shell = resolveWslLoginShell(cache, env);
   const wslCwd = typeof cwd === 'string' && cwd.length > 0
     ? normalizeCwdForCliEnvironment(cwd, 'wsl')
     : null;
   const script = buildLoginShellExecScript(command, args, wslCwd);
 
+  // Fixed-path binaries (git) don't need the user's login shell; running them in
+  // a plain `sh -c` avoids the per-call cost of sourcing the user's rc files
+  // (nvm, oh-my-zsh, etc. — routinely hundreds of ms per invocation). sh exists
+  // on every distro including busybox-based ones (the login-shell probe above
+  // relies on the same fact), and WSL's default PATH covers /usr/bin, so git
+  // resolves without any rc. The exec script is POSIX-sh compatible.
+  if (runtimeOptions?.loginShell === false) {
+    return spawn('wsl', ['sh', '-c', script], spawnOptions);
+  }
+
+  const shell = resolveWslLoginShell(cache, env);
   return spawn('wsl', [shell, '-i', '-l', '-c', script], spawnOptions);
 }
 
