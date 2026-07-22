@@ -22,6 +22,11 @@ import {
 import { normalizeTerminalColorEnv } from './terminal-color-env';
 import { createTerminalAppearanceController } from './terminal-appearance-controller';
 import {
+  createTerminalDeviceQueryController,
+  formatTerminalDeviceQueryReply,
+  type TerminalDeviceQueryKind,
+} from './terminal-device-query-controller';
+import {
   ownsTerminalHandoffLock,
   releaseTerminalHandoffByTerminal,
 } from './terminal-handoff-lock';
@@ -169,6 +174,7 @@ interface TerminalRuntime {
   appearanceRestartPending: boolean;
   process: TerminalProcessHandle;
   appearanceController?: ReturnType<typeof createTerminalAppearanceController>;
+  deviceQueryController: ReturnType<typeof createTerminalDeviceQueryController>;
   model: TerminalHeadlessModelLike;
   cols: number;
   rows: number;
@@ -208,7 +214,7 @@ interface TerminalRuntime {
 export type TerminalHeadlessModelLike = Pick<
   TerminalHeadlessModel,
   'write' | 'resize' | 'snapshot' | 'readVisibleText' | 'dispose'
->;
+> & Partial<Pick<TerminalHeadlessModel, 'whenSettled' | 'cursorPosition'>>;
 
 export interface TerminalManagerOptions {
   closeExitGraceMs?: number;
@@ -663,6 +669,7 @@ export class TerminalManager {
         appearanceRestartIntent: options.appearanceRestartIntent,
         appearanceRestartPending: false,
         process: processHandle,
+        deviceQueryController: createTerminalDeviceQueryController(),
         model,
         cols,
         rows,
@@ -769,7 +776,7 @@ export class TerminalManager {
         prefillHardTimer = setTimeout(sendPrefill, PREFILL_HARD_TIMEOUT_MS);
       }
 
-      const deliverOutput = (data: string) => {
+      const emitOutput = (data: string) => {
         if (data.length === 0) return;
         // replay 버퍼: 원본 청크 순서/내용 그대로 즉시 누적 — coalescing과 독립.
         this.appendBufferedOutput(runtime, data);
@@ -794,6 +801,20 @@ export class TerminalManager {
         // WS 전송만 한 tick 모아 1회 전송(flood 완화).
         this.queueOutput(runtime, data);
       };
+
+      // CPR/DSR/DA는 여기서 소비한다 — 브라우저 xterm까지 왕복시키면 응답이 늦어
+      // tty ECHO에 `^[[1;1R`로 찍힌다(codex는 기동 즉시 CSI 6n을 보낸다).
+      // resize 트랜잭션 뒤에 두는 이유: 트랜잭션은 원본 청크 경계로 분할 ED3를
+      // 재조립하므로, 그 앞에서 조각을 붙잡으면 경계 신호가 사라진다.
+      const deliverOutput = (raw: string) => {
+        if (raw.length === 0) return;
+        // 세그먼트 순서대로 처리해야 커서 보고가 질의 시점의 위치를 답한다.
+        for (const segment of runtime.deviceQueryController.consumeOutput(raw)) {
+          emitOutput(segment.output);
+          if (segment.query) this.answerDeviceQueries(runtime, segment.query);
+        }
+      };
+
       runtime.resizeOutputTransaction = new TerminalResizeOutputTransaction({
         emit: deliverOutput,
       });
@@ -808,6 +829,9 @@ export class TerminalManager {
         if (pendingColorQueryData) {
           runtime.resizeOutputTransaction?.accept(pendingColorQueryData);
         }
+        // 트랜잭션을 다시 태우면 같은 조각이 컨트롤러에 재보관되어 유실되므로
+        // 하위로 직접 흘린다.
+        emitOutput(runtime.deviceQueryController.drain());
         clearPrefillTimers();
         this.finalizeRuntimeExit(runtime, key, event);
       });
@@ -1035,6 +1059,26 @@ export class TerminalManager {
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime || runtime.ended) return;
     runtime.providerSessionId = undefined;
+  }
+
+  /**
+   * Writes the reply for a query consumed from the PTY output. It waits for the
+   * model to finish parsing the output that preceded the query, so a cursor
+   * report describes the position the querying program actually left behind
+   * rather than a mid-chunk guess. A model without those members (test stubs)
+   * degrades to the home position, which is what a fresh grid would report.
+   */
+  private answerDeviceQueries(runtime: TerminalRuntime, query: TerminalDeviceQueryKind): void {
+    const settled = runtime.model.whenSettled?.() ?? Promise.resolve();
+    void settled.then(() => {
+      if (runtime.ended) return;
+      const cursor = runtime.model.cursorPosition?.() ?? { row: 1, column: 1 };
+      try {
+        runtime.process.write(formatTerminalDeviceQueryReply(query, cursor));
+      } catch {
+        // The PTY can exit between emitting the query and receiving its reply.
+      }
+    });
   }
 
   private observeAgentInterruptInput(runtime: TerminalRuntime, data: string): void {

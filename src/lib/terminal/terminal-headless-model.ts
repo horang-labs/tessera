@@ -7,6 +7,7 @@ import {
 } from './terminal-serialize-absolute-cursor';
 import { advancePartialEscapeTail } from './terminal-partial-escape-tail';
 import { activateTesseraTerminalUnicodeProvider } from './terminal-unicode-provider';
+import type { TerminalDeviceQueryCursor } from './terminal-device-query-controller';
 
 const DEFAULT_SCROLLBACK_ROWS = 5_000;
 /** Rows readVisibleText() scans by default — one screen plus a little history. */
@@ -185,6 +186,20 @@ export class TerminalHeadlessModel {
         // Keep later writes/snapshots usable after one parser failure. The
         // caller retains a bounded raw replay buffer as a fallback.
       });
+  }
+
+  /**
+   * Resolves once every write queued so far has been parsed, so a caller can
+   * read cursor state at a completed parser boundary rather than mid-chunk.
+   */
+  whenSettled(): Promise<void> {
+    return this.writeTail;
+  }
+
+  /** 1-based cursor position of the active buffer, as CPR reports it. */
+  cursorPosition(): TerminalDeviceQueryCursor {
+    const buffer = this.terminal.buffer.active;
+    return { row: buffer.cursorY + 1, column: buffer.cursorX + 1 };
   }
 
   resize(cols: number, rows: number): void {

@@ -1251,3 +1251,49 @@ test('a provider-detected conversation reset is reported once per bound session'
   await settle();
   assert.equal(resets.length, 1);
 });
+
+test('startup device queries are answered by the server and never reach the browser', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ terminalId: 'terminal-query', sessionId: 'session-query' }));
+  delivered.length = 0;
+
+  // The opening burst codex writes before it draws anything.
+  spawned[0].emitData('\x1b[?2004h\x1b[6n\x1b[?u\x1b[c\x1b[?2026hframe');
+  // The cursor report waits for the model to finish parsing what came before it.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Answered locally, so the querying program never waits on a WS round trip.
+  assert.deepEqual(spawned[0].writes, ['\x1b[1;1R', '\x1b[?1;2c']);
+
+  const output = delivered
+    .filter(({ message }) => message.type === 'terminal_output')
+    .map(({ message }) => (message.type === 'terminal_output' ? message.data : ''))
+    .join('');
+  // The browser must not see the queries it would otherwise answer late, but
+  // everything else — including the kitty query we leave alone — passes through.
+  assert.doesNotMatch(output, /\x1b\[6n/);
+  assert.doesNotMatch(output, /\x1b\[c/);
+  assert.equal(output, '\x1b[?2004h\x1b[?u\x1b[?2026hframe');
+});
+
+test('a cursor report reflects where the program actually left the cursor', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => undefined,
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ terminalId: 'terminal-cursor', sessionId: 'session-cursor' }));
+
+  spawned[0].emitData('\x1b[5;9Hplaced\x1b[6n');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Row 5, column 9 plus the six characters written there.
+  assert.deepEqual(spawned[0].writes, ['\x1b[5;15R']);
+});
