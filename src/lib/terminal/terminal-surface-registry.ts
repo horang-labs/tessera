@@ -206,8 +206,6 @@ let parkingLot: HTMLElement | null = null;
  */
 const COLD_PARK_DELAY_MS = 30_000;
 const TERMINAL_RESIZE_SETTLE_DELAY_MS = 150;
-/** Upper bound for keystrokes queued while a snapshot replay parses. */
-const MAX_PENDING_REPLAY_INPUT_CHARS = 8_192;
 
 function getParkingLot(): HTMLElement {
   if (parkingLot?.isConnected) return parkingLot;
@@ -297,7 +295,6 @@ export class TerminalSurface {
   private serverGeneration: number | null = null;
   private lastSequence = 0;
   private replaying = false;
-  private pendingReplayInput = '';
   private previewViewer = false;
   private onInput: (() => void) | null = null;
   private terminalInputOriginArmed = false;
@@ -366,7 +363,7 @@ export class TerminalSurface {
     this.setThemeRestartRequired(false);
     this.themeRestartPending = true;
     this.autoConnect = true;
-    this.discardReplayState();
+    this.replaying = false;
     this.updateState('starting', 'Restarting terminal to apply theme...');
     wsClient.closeTerminal(this.actualTerminalId);
   }
@@ -490,34 +487,8 @@ export class TerminalSurface {
   }
 
   sendInput(data: string): boolean {
-    if (this.disposed || this.state.status === 'exited') return false;
-    if (this.replaying) {
-      // Keystrokes during a snapshot replay used to be dropped silently, so a
-      // reopened session ignored typing for however long the replay took to
-      // parse (seconds on a deep scrollback — the random "input dead after
-      // opening" reports). Queue them and flush in order once the replay
-      // settles; restart/exit paths discard the queue instead.
-      if (this.pendingReplayInput.length + data.length <= MAX_PENDING_REPLAY_INPUT_CHARS) {
-        this.pendingReplayInput += data;
-      }
-      return true;
-    }
+    if (this.disposed || this.replaying || this.state.status === 'exited') return false;
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
-  }
-
-  /** Replay finished parsing: reopen the input path and flush queued keys. */
-  private finishReplayAndFlushInput(): void {
-    this.replaying = false;
-    const pending = this.pendingReplayInput;
-    this.pendingReplayInput = '';
-    if (!pending || this.disposed || this.state.status === 'exited') return;
-    wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, pending);
-  }
-
-  /** Restart/exit paths: the queued keys no longer target a live view. */
-  private discardReplayState(): void {
-    this.replaying = false;
-    this.pendingReplayInput = '';
   }
 
   /** Ask the server to close only a runtime created by this preview token. */
@@ -649,7 +620,7 @@ export class TerminalSurface {
     this.autoConnect = true;
     this.serverGeneration = null;
     this.lastSequence = 0;
-    this.discardReplayState();
+    this.replaying = false;
     this.terminal?.reset();
     this.scrollController?.scrollToBottom();
     this.updateState('starting', 'Restarting terminal...');
@@ -1107,12 +1078,7 @@ export class TerminalSurface {
         && message.cols >= 2 && message.rows >= 1
         && (this.terminal.cols !== message.cols || this.terminal.rows !== message.rows);
       if (snapshotResized) this.terminal?.resize(message.cols, message.rows);
-      if (!this.terminal) {
-        // No terminal to replay into — never leave the replaying latch set or
-        // the input path stays closed forever.
-        this.discardReplayState();
-        return;
-      }
+      if (!this.terminal) return;
       writeForegroundTerminalChunk(this.terminal, message.data, {
         forceViewportRefresh: true,
         // A snapshot replay rewrites the whole grid; always follow up on the
@@ -1123,7 +1089,7 @@ export class TerminalSurface {
           if (restorePoint) this.scrollController?.restore(restorePoint);
           this.scheduleScrollRebuildSettle();
           if (this.serverGeneration === message.generation) {
-            this.finishReplayAndFlushInput();
+            this.replaying = false;
           }
           this.scheduleSurfaceScrollStateSync();
           // Unconditional, not SGR-gated: a replay rasterizes CJK glyphs into
@@ -1181,14 +1147,14 @@ export class TerminalSurface {
         }
         this.serverGeneration = null;
         this.lastSequence = 0;
-        this.discardReplayState();
+        this.replaying = false;
         this.terminal?.reset();
         this.scrollController?.scrollToBottom();
         void this.ensureConnected();
         return;
       }
       this.autoConnect = false;
-      this.discardReplayState();
+      this.replaying = false;
       clearClientTerminalHandoff(this.options.terminalId);
       this.updateState('exited', `Terminal exited with code ${message.exitCode}`);
       this.finishPendingLaunch('error', `Terminal exited with code ${message.exitCode}`);
