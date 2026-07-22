@@ -73,9 +73,9 @@ async function runTaskTurn() {
   assistantTool('update-1-active', 'TaskUpdate', { taskId: '1', status: 'in_progress', activeForm: 'Inspecting Claude task events' });
   await delay(120);
   toolResult('update-1-active', { success: true, taskId: '1' });
-  // Leave enough time for the E2E browser to reload and prove the active
-  // projection is restored from canonical history, not the visible message page.
-  await delay(8_000);
+  // Leave enough time for the E2E browser to collapse the bar, reload to prove
+  // the active projection and collapsed preference both survive, then expand.
+  await delay(15_000);
 
   for (const [id] of tasks) {
     assistantTool(`update-${id}-done`, 'TaskUpdate', { taskId: id, status: 'completed' });
