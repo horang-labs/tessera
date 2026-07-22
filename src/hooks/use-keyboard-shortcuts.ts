@@ -14,6 +14,7 @@ const PANEL_DIRECTION_EPSILON = 1;
 import { useEffect, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { KeyboardManager } from '@/lib/keyboard/keyboard-manager';
+import { setGlobalShortcutKeys } from '@/lib/keyboard/terminal-passthrough';
 import { SHORTCUT_IDS, type ShortcutId } from '@/lib/keyboard/registry';
 import { getEffectiveShortcut } from '@/lib/keyboard/effective';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS } from '@/stores/panel-store';
@@ -128,6 +129,13 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
 
   // Same code path as the tab × button (tab-item.tsx) — closes the currently-active tab.
   const handleCloseTab = useCallback(() => {
+    // Kanban peek is the topmost close target; a dirty file sidecar may veto
+    // via confirm, in which case the tab underneath must stay open too.
+    const { peekSessionId, peekFileRef, closeSessionPeek } = useBoardStore.getState();
+    if (peekSessionId || peekFileRef) {
+      closeSessionPeek();
+      return;
+    }
     const { activeTabId: id, closeTab } = useTabStore.getState();
     if (!id) return;
     closeTab(id);
@@ -210,14 +218,20 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
 
   useEffect(() => {
     const manager = new KeyboardManager();
+    const activeKeys: string[] = [];
     for (const id of SHORTCUT_IDS) {
       const handler = handlers[id];
       if (!handler) continue;
       const key = getEffectiveShortcut(id, overrides);
       if (!key) continue;
       manager.register(key, () => { void handler(); }, { ignoreInputFields: false });
+      activeKeys.push(key);
     }
-    return () => manager.unregisterAll();
+    setGlobalShortcutKeys(activeKeys);
+    return () => {
+      manager.unregisterAll();
+      setGlobalShortcutKeys([]);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     overrides,
