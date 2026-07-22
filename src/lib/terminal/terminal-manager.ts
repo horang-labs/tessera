@@ -581,14 +581,33 @@ export class TerminalManager {
       )) {
         throw new Error('The Codex terminal handoff was cancelled.');
       }
-      terminalProcess = ptyFactory.spawn(shell.command, shell.args, {
-        name: 'xterm-256color',
-        cols,
-        rows,
-        cwd: shell.cwd,
-        env: terminalEnv,
-        ...(getRuntimePlatform() === 'win32' ? { useConpty: false } : {}),
-      });
+      const spawnPtyProcess = (windowsPtyOptions: { useConptyDll?: boolean }) =>
+        ptyFactory.spawn(shell.command, shell.args, {
+          name: 'xterm-256color',
+          cols,
+          rows,
+          cwd: shell.cwd,
+          env: terminalEnv,
+          ...(getRuntimePlatform() === 'win32' ? windowsPtyOptions : {}),
+        });
+      try {
+        // node-pty's bundled ConPTY (conpty.dll + OpenConsole, shipped in
+        // prebuilds and asar-unpacked) has the modern wrap-marker behavior
+        // xterm expects; the OS ConPTY on older Windows builds corrupts
+        // full-width (CJK) TUI rows in scrollback and delta-repaints against
+        // a grid the client may not have converged on yet. The previous
+        // `useConpty: false` was a no-op — node-pty 1.2 removed winpty and
+        // ignores that flag entirely, so Windows was silently running on the
+        // legacy system ConPTY.
+        terminalProcess = spawnPtyProcess({ useConptyDll: true });
+      } catch (error) {
+        if (getRuntimePlatform() !== 'win32') throw error;
+        logger.warn(
+          { error, terminalId: options.terminalId },
+          'Bundled ConPTY spawn failed; retrying with the system ConPTY',
+        );
+        terminalProcess = spawnPtyProcess({});
+      }
       const processHandle = terminalProcess;
       traceTerminalStage('spawn:after', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal PTY spawned');
