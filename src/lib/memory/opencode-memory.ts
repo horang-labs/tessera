@@ -6,6 +6,7 @@ import { execCli, isRunningInWsl, type CliEnvironment } from "@/lib/cli/cli-exec
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 import { resolveClaudeConfigDirForEnvironment } from "@/lib/skill/skill-loader";
 import { getMemoryProviderKind } from "@/lib/memory/memory-provider";
+import { toMemoryDisplayPath } from "@/lib/memory/memory-display-path";
 import {
   directoryExists,
   MemoryApiError,
@@ -345,6 +346,7 @@ export async function listOpenCodeGuidelines(
     label: target.label,
     fileName: target.fileName,
     path: target.absolutePath,
+    displayPath: toMemoryDisplayPath(target.absolutePath, environment),
     status: target.status,
     statusLabel: target.statusLabel,
     statusReason: target.statusReason,

@@ -33,8 +33,10 @@ export interface MemoryGuidelineSummary {
   /** Human label, e.g. "Global CLAUDE.md". */
   label: string;
   fileName: string;
-  /** Absolute path for display/tooltip. */
+  /** Absolute path on the host filesystem, used to open/reveal the file. */
   path: string;
+  /** Same file as the CLI sees it; `path` on non-bridged setups. */
+  displayPath: string;
   exists: boolean;
   size: number;
   mtimeMs: number;
@@ -67,11 +69,23 @@ export interface MemoryFileSummary {
   readOnly: boolean;
 }
 
+/**
+ * Paths travel in two forms because the server and the CLI can live on
+ * different sides of a WSL bridge: the `*Display` values are what the CLI
+ * reads (and therefore what the user must see), while the plain values stay
+ * host-filesystem paths so Electron can open and reveal them. On non-bridged
+ * setups the two are identical.
+ */
 export interface MemoryListData {
   sessionId: string;
   provider: MemoryProviderKind;
   memoryDir: string;
+  memoryDirDisplay: string;
   instructionRoots: {
+    user: string;
+    project: string | null;
+  };
+  instructionRootsDisplay: {
     user: string;
     project: string | null;
   };

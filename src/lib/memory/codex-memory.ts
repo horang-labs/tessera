@@ -5,6 +5,7 @@ import * as dbSessions from "@/lib/db/sessions";
 import { execCli, isRunningInWsl, type CliEnvironment } from "@/lib/cli/cli-exec";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 import { getMemoryProviderKind } from "@/lib/memory/memory-provider";
+import { toMemoryDisplayPath } from "@/lib/memory/memory-display-path";
 import {
   directoryExists,
   MemoryApiError,
@@ -77,7 +78,11 @@ export async function resolveCodexHomeForEnvironment(
       [
         "-NoProfile",
         "-Command",
-        "$home = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }; Write-Output $home",
+        // `$home` is a PowerShell automatic variable: assigning to it is a
+        // no-op, so the probe used to echo the Windows profile itself and drop
+        // the `.codex` suffix. Keep this script free of double quotes too —
+        // PowerShell strips them when forwarding arguments to a native command.
+        "$codexDir = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }; Write-Output $codexDir",
       ],
       "native",
       5000,
@@ -193,6 +198,7 @@ export async function listCodexGuidelines(
     label: target.label,
     fileName: target.fileName,
     path: target.absolutePath,
+    displayPath: toMemoryDisplayPath(target.absolutePath, environment),
     status: target.status,
     statusLabel: target.statusLabel,
     ...(await statFileSafe(target.absolutePath)),

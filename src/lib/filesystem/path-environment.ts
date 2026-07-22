@@ -67,12 +67,48 @@ export async function formatBrowsePathForDisplay(
   return filesystemPath;
 }
 
+/**
+ * Rewrite a host filesystem path into the form the CLI for `environment`
+ * actually sees, so the UI never shows a path the agent could not open.
+ *
+ * Both bridges are asymmetric, and each needs the opposite translation:
+ * - Windows host, WSL agent: the server reaches the distro through
+ *   `\\wsl.localhost\<distro>\home\u` and drives through `C:\`, while the CLI
+ *   sees `/home/u` and `/mnt/c`.
+ * - WSL host, native (Windows) agent: the server reaches the Windows side
+ *   through `/mnt/c` and its own files directly, while the CLI sees `C:\` and
+ *   reaches the distro back through the `\\wsl.localhost` share.
+ *
+ * This mirrors `normalizeCwdForCliEnvironment`, which computes the cwd the CLI
+ * is actually spawned with; the two must agree, or the panel would show a path
+ * that disagrees with the directory the agent reads (the Claude memory slug is
+ * derived from that same cwd). Non-bridged setups (Windows host + native agent,
+ * Linux host + WSL agent) already share one path style, so this is a no-op.
+ */
 export function formatPathForAgentDisplay(
   filesystemPath: string,
   environment: FilesystemBrowseEnvironment,
 ): string {
-  if (environment !== 'wsl') return filesystemPath;
-  return formatWindowsHostedWslDisplayPath(filesystemPath, null);
+  if (environment === 'wsl') {
+    return formatWindowsHostedWslDisplayPath(filesystemPath, null);
+  }
+
+  if (getRuntimePlatform() === 'linux' && isRunningInWsl()) {
+    return formatWslHostedNativeDisplayPath(filesystemPath);
+  }
+
+  return filesystemPath;
+}
+
+function formatWslHostedNativeDisplayPath(filesystemPath: string): string {
+  const windowsDrivePath = wslMountPathToWindowsDrivePath(filesystemPath);
+  if (windowsDrivePath) return windowsDrivePath;
+  if (isWindowsStylePath(filesystemPath)) return filesystemPath;
+
+  // A distro-local path: a Windows CLI can only reach it over the UNC share.
+  // Without a distro name there is no share to name, so the raw path is still
+  // the most useful thing to show.
+  return buildWslUncPath(process.env.WSL_DISTRO_NAME, filesystemPath) ?? filesystemPath;
 }
 
 export function getFilesystemPathBasename(filesystemPath: string): string {

@@ -3,6 +3,7 @@ import { join, basename, resolve } from 'path';
 import { homedir } from 'os';
 import logger from '../logger';
 import { execCli, isRunningInWsl, type CliEnvironment } from '../cli/cli-exec';
+import { getWslHostedWindowsHomeMountPath } from '../filesystem/path-environment';
 
 export interface SkillInfo {
   name: string;
@@ -83,15 +84,17 @@ export async function resolveClaudeConfigDirForEnvironment(
   }
 
   if (environment === 'native' && isRunningInWsl()) {
-    const result = await execCli(
-      'powershell.exe',
-      ['-NoProfile', '-Command', '[Environment]::GetFolderPath("UserProfile")'],
-      'native',
-      5000,
-    );
-    const windowsHome = lastNonEmptyLine(result.stdout);
-    const wslConfigDir = windowsHome ? toWslPath(`${windowsHome}\\.claude`) : null;
-    if (result.ok && wslConfigDir) return wslConfigDir;
+    // Deliberately not a PowerShell probe: reaching a Windows CLI from WSL
+    // wraps the call in an outer `powershell.exe -Command`, and PowerShell
+    // strips double quotes when it forwards arguments to a native command, so
+    // `GetFolderPath("UserProfile")` arrives unparseable and the lookup fails
+    // silently back to the WSL home. The cmd.exe probe needs no quoting and
+    // verifies the mount exists.
+    try {
+      return join(await getWslHostedWindowsHomeMountPath(), '.claude');
+    } catch {
+      // Fall through: the Windows profile is not reachable from this distro.
+    }
   }
 
   return getClaudeConfigDir();
