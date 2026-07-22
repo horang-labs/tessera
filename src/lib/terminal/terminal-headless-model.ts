@@ -1,5 +1,12 @@
 import { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
+import {
+  readSavedCursorRegister,
+  serializeWithAbsoluteCursor,
+} from './terminal-serialize-absolute-cursor';
+import { advancePartialEscapeTail } from './terminal-partial-escape-tail';
+import { activateTesseraTerminalUnicodeProvider } from './terminal-unicode-provider';
 
 const DEFAULT_SCROLLBACK_ROWS = 5_000;
 /** Rows readVisibleText() scans by default — one screen plus a little history. */
@@ -14,6 +21,18 @@ const VISIBLE_TEXT_ROWS = 120;
  * re-assert its modes on the next keypress-triggered redraw.
  */
 const SNAPSHOT_ONLY_TRACKED_DEC_MODES: readonly number[] = [1005, 1006, 1007, 1015, 1016];
+const ALTERNATE_SCREEN_MARKER = '\x1b[?1049h';
+
+export interface TerminalHeadlessSnapshot {
+  data: string;
+  cols: number;
+  rows: number;
+  alternateScreen: boolean;
+  /** Normal-buffer scrollback captured separately while an alt frame is active. */
+  scrollbackAnsi?: string;
+  /** Parser state that SerializeAddon cannot represent. Must replay last. */
+  pendingEscapeTailAnsi?: string;
+}
 
 /**
  * Server-side xterm model used only for cold surface reattachment.
@@ -28,6 +47,7 @@ export class TerminalHeadlessModel {
   private writeTail: Promise<void> = Promise.resolve();
   private readonly pendingWriteCompletions = new Set<() => void>();
   private readonly activeSnapshotOnlyDecModes = new Set<number>();
+  private pendingEscapeTail = '';
   private disposed = false;
 
   constructor(cols: number, rows: number) {
@@ -42,6 +62,8 @@ export class TerminalHeadlessModel {
     });
     this.serializer = new SerializeAddon();
     this.terminal.loadAddon(this.serializer);
+    this.terminal.loadAddon(new Unicode11Addon());
+    activateTesseraTerminalUnicodeProvider(this.terminal);
     this.trackSnapshotOnlyDecModes();
   }
 
@@ -97,6 +119,7 @@ export class TerminalHeadlessModel {
         const complete = () => {
           if (completed) return;
           completed = true;
+          this.pendingEscapeTail = advancePartialEscapeTail(this.pendingEscapeTail, data);
           this.pendingWriteCompletions.delete(complete);
           resolve();
         };
@@ -118,17 +141,28 @@ export class TerminalHeadlessModel {
     this.terminal.resize(normalizeDimension(cols), normalizeDimension(rows));
   }
 
-  async snapshot(): Promise<{ data: string; cols: number; rows: number }> {
+  async snapshot(): Promise<TerminalHeadlessSnapshot> {
     const boundary = this.writeTail;
     await boundary;
     if (this.disposed) {
       throw new Error('Terminal model is disposed');
     }
+
+    const alternateScreen = this.terminal.buffer.active.type === 'alternate';
+    const combinedData = serializeWithAbsoluteCursor(
+      this.serializer,
+      this.terminal,
+      { scrollback: DEFAULT_SCROLLBACK_ROWS },
+      readSavedCursorRegister(this.terminal),
+    ) + this.serializeSnapshotOnlyDecModes();
+    const split = splitTerminalSnapshotAnsi(combinedData, alternateScreen);
     return {
-      data: this.serializer.serialize({ scrollback: DEFAULT_SCROLLBACK_ROWS })
-        + this.serializeSnapshotOnlyDecModes(),
+      data: split.data,
       cols: this.terminal.cols,
       rows: this.terminal.rows,
+      alternateScreen,
+      ...(split.scrollbackAnsi !== undefined && { scrollbackAnsi: split.scrollbackAnsi }),
+      ...(this.pendingEscapeTail && { pendingEscapeTailAnsi: this.pendingEscapeTail }),
     };
   }
 
@@ -164,4 +198,18 @@ export class TerminalHeadlessModel {
 
 function normalizeDimension(value: number): number {
   return Math.max(1, Math.floor(value));
+}
+
+function splitTerminalSnapshotAnsi(
+  snapshotAnsi: string,
+  alternateScreen: boolean,
+): { data: string; scrollbackAnsi?: string } {
+  if (!alternateScreen) return { data: snapshotAnsi };
+  const start = snapshotAnsi.lastIndexOf(ALTERNATE_SCREEN_MARKER);
+  if (start === -1) return { data: snapshotAnsi };
+
+  return {
+    scrollbackAnsi: snapshotAnsi.slice(0, start),
+    data: snapshotAnsi.slice(start + ALTERNATE_SCREEN_MARKER.length),
+  };
 }

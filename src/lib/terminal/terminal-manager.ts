@@ -15,7 +15,10 @@ import { getServerPort } from '@/lib/server-port';
 import { revokePaneTokensForTerminal } from './pane-token-registry';
 import { cleanupCodexOverlayForTerminal } from './codex-overlay';
 import { cleanupCodexOverlayInWsl } from './codex-overlay-wsl';
-import { TerminalHeadlessModel } from './terminal-headless-model';
+import {
+  TerminalHeadlessModel,
+  type TerminalHeadlessSnapshot,
+} from './terminal-headless-model';
 import { normalizeTerminalColorEnv } from './terminal-color-env';
 import { createTerminalAppearanceController } from './terminal-appearance-controller';
 import {
@@ -265,7 +268,7 @@ const CONVERSATION_RESET_SCAN_MS = 250;
 async function resolveSnapshotWithTimeout(
   model: TerminalHeadlessModelLike,
   timeoutMs: number,
-): Promise<{ data: string; cols: number; rows: number }> {
+): Promise<TerminalHeadlessSnapshot> {
   const snapshot = model.snapshot();
   // If the timeout wins, a late rejection from the losing promise must not
   // surface as an unhandled rejection.
@@ -857,9 +860,6 @@ export class TerminalManager {
     const fallbackSnapshot = runtime.outputBuffer.join('');
     runtime.subscribers.set(subscriberKey, subscriber);
     runtime.viewportOwner = subscriberKey;
-    if (options.cols && options.rows) {
-      this.resizeRuntime(runtime, options.cols, options.rows);
-    }
     this.sendStarted(runtime, subscriber, reattached);
     const runtimeAppearance = runtime.appearanceController?.getAppearance();
     if (
@@ -896,6 +896,13 @@ export class TerminalManager {
         data: snapshot.data,
         cols: snapshot.cols,
         rows: snapshot.rows,
+        alternateScreen: snapshot.alternateScreen,
+        ...(snapshot.scrollbackAnsi !== undefined && {
+          scrollbackAnsi: snapshot.scrollbackAnsi,
+        }),
+        ...(snapshot.pendingEscapeTailAnsi && {
+          pendingEscapeTailAnsi: snapshot.pendingEscapeTailAnsi,
+        }),
       });
     } catch (error) {
       if (runtime.subscribers.get(subscriberKey) !== subscriber) return;
@@ -907,8 +914,10 @@ export class TerminalManager {
         generation: runtime.generation,
         seq: snapshotSeq,
         data: fallbackSnapshot,
-        cols: normalizeTerminalDimension(options.cols, 80, MAX_TERMINAL_COLS),
-        rows: normalizeTerminalDimension(options.rows, 24, MAX_TERMINAL_ROWS),
+        // Raw replay was produced at the live PTY's current grid, not at the
+        // destination panel's requested dimensions.
+        cols: runtime.cols,
+        rows: runtime.rows,
         fallback: true,
       });
     }
@@ -1158,6 +1167,7 @@ export class TerminalManager {
     cols: number,
     rows: number,
     claim = false,
+    replayRefresh = false,
   ): void {
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime || runtime.ended) return;
@@ -1167,7 +1177,7 @@ export class TerminalManager {
       runtime.viewportOwner = subscriberKey;
     }
     if (runtime.viewportOwner !== subscriberKey) return;
-    this.resizeRuntime(runtime, cols, rows);
+    this.resizeRuntime(runtime, cols, rows, replayRefresh);
   }
 
   detach(terminalId: string, userId: string, connectionId: string, surfaceId: string): void {
@@ -1774,17 +1784,37 @@ export class TerminalManager {
     });
   }
 
-  private resizeRuntime(runtime: TerminalRuntime, cols: number, rows: number): void {
+  private resizeRuntime(
+    runtime: TerminalRuntime,
+    cols: number,
+    rows: number,
+    forceRefresh = false,
+  ): void {
     const normalizedCols = normalizeTerminalDimension(cols, 80, MAX_TERMINAL_COLS);
     const normalizedRows = normalizeTerminalDimension(rows, 24, MAX_TERMINAL_ROWS);
-    if (runtime.cols === normalizedCols && runtime.rows === normalizedRows) return;
+    const dimensionsChanged = runtime.cols !== normalizedCols || runtime.rows !== normalizedRows;
+    if (!dimensionsChanged && !forceRefresh) return;
     if (runtime.resizeScrollbackPolicy === 'preserve-on-ed3') {
       runtime.resizeOutputTransaction?.begin();
     }
     runtime.process.resize(normalizedCols, normalizedRows);
-    runtime.model.resize(normalizedCols, normalizedRows);
-    runtime.cols = normalizedCols;
-    runtime.rows = normalizedRows;
+    if (dimensionsChanged) {
+      runtime.model.resize(normalizedCols, normalizedRows);
+      runtime.cols = normalizedCols;
+      runtime.rows = normalizedRows;
+    }
+
+    if (forceRefresh && getRuntimePlatform() !== 'win32') {
+      // POSIX node-pty only emits SIGWINCH when dimensions change. Snapshot
+      // replay also needs a repaint at the same grid, so mirror Orca's
+      // explicit post-replay signal. ConPTY gets the same-size native resize
+      // above; node-pty does not support signals on Windows.
+      try {
+        runtime.process.kill('SIGWINCH');
+      } catch {
+        // The process may have exited between replay and refresh.
+      }
+    }
   }
 
   private inferInterrupt(

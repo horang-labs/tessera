@@ -1,6 +1,6 @@
 'use client';
 
-import type { ITheme } from '@xterm/xterm';
+import type { ITheme, IUnicodeHandling } from '@xterm/xterm';
 import { v4 as uuidv4 } from 'uuid';
 import { wsClient } from '@/lib/ws/client';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
@@ -56,6 +56,8 @@ import {
   attachTerminalMouseWheelMultiplier,
   isTerminalTuiOwnedWheelEvent,
 } from './terminal-mouse-wheel';
+import { activateTesseraTerminalUnicodeProvider } from './terminal-unicode-provider';
+import { buildTerminalSnapshotReplay } from './terminal-snapshot-replay';
 
 export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
 
@@ -84,7 +86,8 @@ type XtermLike = TerminalScrollTarget & {
   cols: number;
   rows: number;
   options: { theme?: ITheme; fontSize?: number };
-  unicode: { activeVersion: string };
+  unicode: IUnicodeHandling;
+  modes: { sendFocusMode: boolean };
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
   attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean): void;
   element?: HTMLElement;
@@ -293,6 +296,9 @@ export class TerminalSurface {
   private serverGeneration: number | null = null;
   private lastSequence = 0;
   private replaying = false;
+  private replayEpoch = 0;
+  private pendingReplayFitEpoch: number | null = null;
+  private pendingReplayOutput: Array<{ data: string; generation: number; seq: number }> = [];
   private onInput: (() => void) | null = null;
   private terminalInputOriginArmed = false;
   private terminalInputOriginEpoch = 0;
@@ -360,7 +366,7 @@ export class TerminalSurface {
     this.setThemeRestartRequired(false);
     this.themeRestartPending = true;
     this.autoConnect = true;
-    this.replaying = false;
+    this.cancelSnapshotReplay();
     this.updateState('starting', 'Restarting terminal to apply theme...');
     wsClient.closeTerminal(this.actualTerminalId);
   }
@@ -605,6 +611,7 @@ export class TerminalSurface {
   close(): void {
     if (this.disposed) return;
     this.autoConnect = false;
+    this.cancelSnapshotReplay();
     clearClientTerminalHandoff(this.options.terminalId);
     wsClient.closeTerminal(this.actualTerminalId);
     this.attachedConnectionGeneration = 0;
@@ -616,7 +623,7 @@ export class TerminalSurface {
     this.autoConnect = true;
     this.serverGeneration = null;
     this.lastSequence = 0;
-    this.replaying = false;
+    this.cancelSnapshotReplay();
     this.terminal?.reset();
     this.scrollController?.scrollToBottom();
     this.updateState('starting', 'Restarting terminal...');
@@ -686,6 +693,7 @@ export class TerminalSurface {
   }
 
   private releaseRenderResources(): void {
+    this.cancelSnapshotReplay();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.cancelPendingFit();
@@ -799,7 +807,7 @@ export class TerminalSurface {
       terminal.loadAddon(new SerializeAddon());
       terminal.loadAddon(new Unicode11Addon());
       terminal.loadAddon(new WebLinksAddon(webLinkHandler));
-      terminal.unicode.activeVersion = '11';
+      activateTesseraTerminalUnicodeProvider(terminal);
       attachTerminalMouseWheelMultiplier(terminal);
 
       // Renderer choice. WebGL everywhere by default — the postinstall patch
@@ -997,6 +1005,7 @@ export class TerminalSurface {
       if (!surfaceMatches) return;
       this.autoConnect = false;
       this.attachedConnectionGeneration = 0;
+      this.cancelSnapshotReplay();
       clearClientTerminalHandoff(this.options.terminalId);
       this.updateState('error', message.message);
       this.finishPendingLaunch('error', message.message);
@@ -1008,6 +1017,7 @@ export class TerminalSurface {
     if (message.type === 'terminal_started') {
       this.actualTerminalId = message.terminalId;
       if (this.serverGeneration !== message.generation) {
+        this.cancelSnapshotReplay();
         this.serverGeneration = message.generation;
         this.lastSequence = 0;
       }
@@ -1051,7 +1061,10 @@ export class TerminalSurface {
       ) return;
       this.serverGeneration = message.generation;
       this.lastSequence = message.seq;
+      const replayEpoch = ++this.replayEpoch;
       this.replaying = true;
+      this.pendingReplayFitEpoch = null;
+      this.pendingReplayOutput = [];
       const restorePoint = this.scrollController?.captureRestorePoint();
       // Recovery after a replay is unconditional (see onParsed below), but the
       // detector still consumes the chunk to keep its cross-chunk scan state.
@@ -1068,19 +1081,27 @@ export class TerminalSurface {
         && message.cols >= 2 && message.rows >= 1
         && (this.terminal.cols !== message.cols || this.terminal.rows !== message.rows);
       if (snapshotResized) this.terminal?.resize(message.cols, message.rows);
-      if (!this.terminal) return;
-      writeForegroundTerminalChunk(this.terminal, message.data, {
+      if (!this.terminal) {
+        this.cancelSnapshotReplay();
+        return;
+      }
+      const replayData = buildTerminalSnapshotReplay(message);
+      writeForegroundTerminalChunk(this.terminal, replayData, {
         forceViewportRefresh: true,
         // A snapshot replay rewrites the whole grid; always follow up on the
         // settled frame in case the immediate repaint raced layout.
         followupViewportRefresh: true,
         shouldRefreshViewportSynchronously: () => !this.webglAddon,
         onParsed: () => {
+          if (
+            this.replayEpoch !== replayEpoch
+            || this.serverGeneration !== message.generation
+          ) return;
           if (restorePoint) this.scrollController?.restore(restorePoint);
           this.scheduleScrollRebuildSettle();
-          if (this.serverGeneration === message.generation) {
-            this.replaying = false;
-          }
+          // Keep live output and user input behind the replay barrier until the
+          // destination grid is fitted and the PTY receives its repaint resize.
+          this.pendingReplayFitEpoch = replayEpoch;
           this.scheduleSurfaceScrollStateSync();
           // Unconditional, not SGR-gated: a replay rasterizes CJK glyphs into
           // whatever renderer state preceded the reveal, and that state stays
@@ -1100,19 +1121,15 @@ export class TerminalSurface {
     if (message.type === 'terminal_output') {
       if (message.generation !== this.serverGeneration || message.seq <= this.lastSequence) return;
       this.lastSequence = message.seq;
-      const restorePoint = this.scrollController?.captureRestorePoint();
-      const shouldRecoverRenderer = this.backgroundSgrDetector.consume(message.data);
-      if (!this.terminal) return;
-      writeForegroundTerminalChunk(this.terminal, message.data, {
-        forceViewportRefresh: true,
-        shouldRefreshViewportSynchronously: () => !this.webglAddon,
-        onParsed: () => {
-          if (restorePoint) this.scrollController?.restore(restorePoint);
-          this.scheduleScrollRebuildSettle();
-          this.scheduleSurfaceScrollStateSync();
-          if (shouldRecoverRenderer) this.recoverRendererPresentation();
-        },
-      });
+      if (this.replaying) {
+        this.pendingReplayOutput.push({
+          data: message.data,
+          generation: message.generation,
+          seq: message.seq,
+        });
+        return;
+      }
+      this.applyTerminalOutput(message.data);
       return;
     }
 
@@ -1129,17 +1146,65 @@ export class TerminalSurface {
         }
         this.serverGeneration = null;
         this.lastSequence = 0;
-        this.replaying = false;
+        this.cancelSnapshotReplay();
         this.terminal?.reset();
         this.scrollController?.scrollToBottom();
         void this.ensureConnected();
         return;
       }
       this.autoConnect = false;
-      this.replaying = false;
+      this.cancelSnapshotReplay();
       clearClientTerminalHandoff(this.options.terminalId);
       this.updateState('exited', `Terminal exited with code ${message.exitCode}`);
       this.finishPendingLaunch('error', `Terminal exited with code ${message.exitCode}`);
+    }
+  }
+
+  private applyTerminalOutput(data: string): void {
+    const restorePoint = this.scrollController?.captureRestorePoint();
+    const shouldRecoverRenderer = this.backgroundSgrDetector.consume(data);
+    if (!this.terminal) return;
+    writeForegroundTerminalChunk(this.terminal, data, {
+      forceViewportRefresh: true,
+      shouldRefreshViewportSynchronously: () => !this.webglAddon,
+      onParsed: () => {
+        if (restorePoint) this.scrollController?.restore(restorePoint);
+        this.scheduleScrollRebuildSettle();
+        this.scheduleSurfaceScrollStateSync();
+        if (shouldRecoverRenderer) this.recoverRendererPresentation();
+      },
+    });
+  }
+
+  private cancelSnapshotReplay(): void {
+    this.replayEpoch += 1;
+    this.replaying = false;
+    this.pendingReplayFitEpoch = null;
+    this.pendingReplayOutput = [];
+  }
+
+  private finishSnapshotReplay(replayEpoch: number): void {
+    if (this.replayEpoch !== replayEpoch || this.pendingReplayFitEpoch !== replayEpoch) return;
+
+    const pendingOutput = this.pendingReplayOutput;
+    this.pendingReplayOutput = [];
+    this.pendingReplayFitEpoch = null;
+    this.replaying = false;
+    for (const frame of pendingOutput) {
+      if (frame.generation === this.serverGeneration) this.applyTerminalOutput(frame.data);
+    }
+
+    const terminal = this.terminal;
+    const activeElement = document.activeElement;
+    if (
+      terminal?.modes.sendFocusMode
+      && activeElement
+      && terminal.element?.contains(activeElement)
+    ) {
+      // Focus may have happened before replay restored ?1004h. Re-send the
+      // event once after the snapshot barrier so fullscreen TUIs always learn
+      // that this newly attached surface is active.
+      wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, '\x1b[I');
     }
   }
 
@@ -1291,13 +1356,19 @@ export class TerminalSurface {
 
   private fitAndResize(claim: boolean, shouldFit = true): void {
     if (!this.isMountedHostVisible() || !this.fitAddon || !this.terminal) return;
+    const replayFitEpoch = this.pendingReplayFitEpoch;
+    // A ResizeObserver/activation fit can race snapshot parsing. Preserve the
+    // exact source grid until the replay write callback establishes a barrier.
+    if (this.replaying && replayFitEpoch === null) return;
     let didFit = false;
+    let fitCompleted = !shouldFit;
     let restorePoint: TerminalScrollRestorePoint | null = null;
     try {
       if (shouldFit) {
         restorePoint = this.scrollController?.captureRestorePoint() ?? null;
         this.fitAddon.fit();
         didFit = true;
+        fitCompleted = true;
       }
       const dimensions = this.getDimensions();
       if (dimensions && this.attachedConnectionGeneration > 0) {
@@ -1307,10 +1378,26 @@ export class TerminalSurface {
           dimensions.cols,
           dimensions.rows,
           claim,
+          replayFitEpoch !== null,
         );
       }
     } catch {
       // A zero-sized panel can briefly make FitAddon unable to calculate cells.
+      // Do not strand a parsed snapshot behind the replay barrier: repaint at
+      // its exact source grid now and let the next ResizeObserver fit retry.
+      if (replayFitEpoch !== null) {
+        if (this.attachedConnectionGeneration > 0) {
+          wsClient.resizeTerminal(
+            this.actualTerminalId,
+            this.surfaceId,
+            this.terminal.cols,
+            this.terminal.rows,
+            claim,
+            true,
+          );
+        }
+        fitCompleted = true;
+      }
     } finally {
       if (restorePoint) this.scrollController?.restoreAfterLayout(restorePoint);
       // Reflow plus the ConPTY resize repaint can strand the viewport in a
@@ -1331,6 +1418,9 @@ export class TerminalSurface {
       // empty presentation model. Force the same full repaint and quiet atlas
       // recovery Orca uses for stale terminal presentation.
       if (didFit) this.recoverRendererPresentation();
+      if (replayFitEpoch !== null && fitCompleted) {
+        this.finishSnapshotReplay(replayFitEpoch);
+      }
     }
   }
 

@@ -28,6 +28,7 @@ before(async () => {
 class FakePty {
   readonly writes: string[] = [];
   readonly resizes: Array<{ cols: number; rows: number }> = [];
+  readonly killSignals: Array<string | undefined> = [];
   killCount = 0;
   private dataListeners: Array<(data: string) => void> = [];
   private exitListeners: Array<(event: { exitCode: number; signal?: number }) => void> = [];
@@ -48,7 +49,8 @@ class FakePty {
     this.resizes.push({ cols, rows });
   }
 
-  kill(): void {
+  kill(signal?: string): void {
+    this.killSignals.push(signal);
     this.killCount += 1;
   }
 
@@ -882,6 +884,46 @@ test('claiming an already-sized viewport does not send a redundant PTY resize', 
   await manager.shutdownAll();
 });
 
+test('cold attach snapshots the source grid before the destination fit and forces a repaint', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ cols: 100, rows: 30 }));
+  delivered.length = 0;
+  await manager.create(createOptions({
+    terminalId: 'reattach-proposal',
+    connectionId: 'connection-b',
+    surfaceId: 'surface-b',
+    cols: 140,
+    rows: 45,
+  }));
+
+  assert.deepEqual(spawned[0].resizes, [], 'attach must not reflow the source before snapshot');
+  const snapshot = delivered.find(({ connectionId, message }) => (
+    connectionId === 'connection-b' && message.type === 'terminal_snapshot'
+  ))?.message;
+  assert.equal(snapshot?.type, 'terminal_snapshot');
+  if (snapshot?.type === 'terminal_snapshot') {
+    assert.deepEqual({ cols: snapshot.cols, rows: snapshot.rows }, { cols: 100, rows: 30 });
+  }
+
+  manager.resize('terminal-a', 'user-a', 'connection-b', 'surface-b', 140, 45, false, true);
+  manager.resize('terminal-a', 'user-a', 'connection-b', 'surface-b', 140, 45, false, true);
+  assert.deepEqual(spawned[0].resizes, [
+    { cols: 140, rows: 45 },
+    { cols: 140, rows: 45 },
+  ]);
+  assert.equal(
+    spawned[0].killSignals.filter((signal) => signal === 'SIGWINCH').length,
+    process.platform === 'win32' ? 0 : 2,
+  );
+  await manager.shutdownAll();
+});
+
 test('PTY spawn normalizes inherited color opt-outs at the manager boundary', async () => {
   let spawnEnv: NodeJS.ProcessEnv | null = null;
   const factory: TerminalPtyFactory = {
@@ -1128,7 +1170,12 @@ test('a wedged headless model cannot freeze reattach: fallback snapshot then liv
 
   delivered.length = 0;
   await Promise.race([
-    manager.create(createOptions({ connectionId: 'connection-b', surfaceId: 'surface-b' })),
+    manager.create(createOptions({
+      connectionId: 'connection-b',
+      surfaceId: 'surface-b',
+      cols: 140,
+      rows: 45,
+    })),
     deadline('reattach froze waiting for the wedged model snapshot'),
   ]);
 
@@ -1139,6 +1186,11 @@ test('a wedged headless model cannot freeze reattach: fallback snapshot then liv
   if (snapshot?.type === 'terminal_snapshot') {
     assert.equal(snapshot.fallback, true, 'wedged model must degrade to the raw fallback snapshot');
     assert.match(snapshot.data, /history-before-park/);
+    assert.deepEqual(
+      { cols: snapshot.cols, rows: snapshot.rows },
+      { cols: 100, rows: 30 },
+      'fallback bytes must replay at the grid that produced them',
+    );
   }
 
   delivered.length = 0;

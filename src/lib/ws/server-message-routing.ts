@@ -827,6 +827,7 @@ export async function routeClientTransportMessage({
         message.cols,
         message.rows,
         message.claim,
+        message.replayRefresh,
       );
       return;
 
