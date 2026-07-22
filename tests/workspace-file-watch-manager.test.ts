@@ -3,9 +3,13 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { WorkspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-watch-manager';
+import {
+  isWindowsHostedWslRoot,
+  WorkspaceFileWatchManager,
+} from '@/lib/workspace-files/workspace-file-watch-manager';
 
 interface TestWatchEntry {
+  bridgeActive: boolean;
   closeTimer: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
   files: Set<string>;
@@ -31,6 +35,17 @@ function waitFor<T>(promise: Promise<T>, timeoutMs = 5_000): Promise<T> {
     }),
   ]);
 }
+
+test('only Windows-hosted WSL roots bypass chokidar', () => {
+  assert.equal(
+    isWindowsHostedWslRoot('\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\project'),
+    true,
+  );
+  assert.equal(isWindowsHostedWslRoot('//wsl$/Ubuntu-24.04/home/work/project'), true);
+  assert.equal(isWindowsHostedWslRoot('\\\\fileserver\\share\\project'), false);
+  assert.equal(isWindowsHostedWslRoot('C:\\Users\\work\\project'), false);
+  assert.equal(isWindowsHostedWslRoot('/home/work/project'), false);
+});
 
 test('internal root listener observes file changes without a websocket subscriber and disposes cleanly', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-watch-'));
@@ -139,6 +154,14 @@ test('poll-mode refresh diffs the index, notifies listeners, and delays teardown
   assert.ok(entry.files.has('added.txt'));
   assert.ok(entry.files.has('seed.txt'));
   assert.ok(changeCount >= 2, `listener should observe poll diff (changeCount=${changeCount})`);
+
+  const beforeContentOnlyRefresh = changeCount;
+  writeFileSync(path.join(root, 'seed.txt'), 'changed content');
+  await internals.refreshPollIndex(entry);
+  assert.ok(
+    changeCount > beforeContentOnlyRefresh,
+    'bridge fallback should invalidate listeners for content-only changes',
+  );
 
   rmSync(path.join(root, 'added.txt'));
   await internals.refreshPollIndex(entry);

@@ -418,7 +418,7 @@ test('server filesystem reads resolve WSL POSIX paths before calling node fs', (
   assert.match(sessionFileRouteSource, /resolveSessionWorkspaceFilesystemRoot\(id\)/);
   assert.match(sessionFileRouteSource, /getFilesystemPathModule\(root\)/);
   assert.match(sessionFilesRouteSource, /resolveSessionWorkspaceFilesystemRoot\(id\)/);
-  assert.match(sessionFilesRouteSource, /workspaceFileWatchManager\.getIndexedSnapshotForRoot\(root\)/);
+  assert.match(sessionFilesRouteSource, /workspaceFileWatchManager\.ensureSnapshotForRoot\(root\)/);
   assert.match(sessionFilesRouteSource, /walkWorkspaceFiles\(root\)/);
   assert.match(projectsRouteSource, /resolveBrowsePath\(\n\s+folderPath,\n\s+settings\.agentEnvironment,/);
   assert.match(archiveServiceSource, /pathExists\(workDir\)/);

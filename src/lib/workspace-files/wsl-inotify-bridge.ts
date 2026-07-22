@@ -30,6 +30,7 @@ export interface BridgeEvent {
 const WSL_UNC_HOSTS = new Set(["wsl.localhost", "wsl$"]);
 const RESTART_DELAY_MS = 3_000;
 const MAX_RESTARTS = 2;
+const STABLE_UPTIME_MS = 30_000;
 const DISTRO_STATE_TTL_MS = 5_000;
 const DISTRO_WAIT_POLL_MS = 15_000;
 
@@ -113,10 +114,15 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** POSIX ERE handed to inotifywait so ignored trees are never watched. */
-export function buildInotifyExcludeRegex(): string {
+/** POSIX ERE handed to inotifywait so known high-churn trees are never watched. */
+export function buildInotifyExcludeRegex(posixRoot: string): string {
   const names = Array.from(IGNORED_WORKSPACE_DIR_NAMES, escapeRegExp).join("|");
-  return `/(\\.[^/]+|${names})(/|$)`;
+  const normalizedRoot = posixRoot.replace(/\/+$/, "");
+  // inotifywait compares this regex with absolute paths. Anchor it below the
+  // workspace root so a hidden ancestor such as ~/.tessera does not suppress
+  // every event. Other hidden descendants are cheap to watch and are filtered
+  // after delivery; this also preserves the explicitly allowed .env.example.
+  return `^${escapeRegExp(normalizedRoot)}/(.*/)?(${names})(/|$)`;
 }
 
 export class WslInotifyBridge {
@@ -125,6 +131,7 @@ export class WslInotifyBridge {
   private established = false;
   private restartCount = 0;
   private restartTimer: NodeJS.Timeout | null = null;
+  private stableUptimeTimer: NodeJS.Timeout | null = null;
   private stdoutBuffer = "";
   private stderrTail = "";
   private stopped = false;
@@ -151,7 +158,7 @@ export class WslInotifyBridge {
         "--exec", "stdbuf", "-oL",
         "inotifywait", "-m", "-r",
         "-e", "create,delete,move,modify,close_write",
-        "--exclude", buildInotifyExcludeRegex(),
+        "--exclude", buildInotifyExcludeRegex(this.options.root.posixPath),
         "--format", "%e|%w%f",
         "--", this.options.root.posixPath,
       ], {
@@ -170,16 +177,18 @@ export class WslInotifyBridge {
       this.stderrTail = (this.stderrTail + text).slice(-500);
       if (!this.established && text.includes("Watches established")) {
         this.established = true;
-        this.restartCount = 0;
+        this.armStableUptimeReset();
         this.options.onEstablished();
       }
     });
     child.on("error", (error) => {
       this.child = null;
+      this.clearStableUptimeTimer();
       this.reportDown(`unable to launch wsl.exe: ${error.message}`);
     });
     child.on("close", (code) => {
       this.child = null;
+      this.clearStableUptimeTimer();
       if (this.stopped) return;
       if (!this.established) {
         this.reportDown(`inotifywait unavailable in distro (exit ${code}): ${this.stderrTail.trim()}`);
@@ -236,6 +245,7 @@ export class WslInotifyBridge {
 
   stop(): void {
     this.stopped = true;
+    this.clearStableUptimeTimer();
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
@@ -261,9 +271,25 @@ export class WslInotifyBridge {
     }
   }
 
+  private armStableUptimeReset(): void {
+    this.clearStableUptimeTimer();
+    this.stableUptimeTimer = setTimeout(() => {
+      this.stableUptimeTimer = null;
+      this.restartCount = 0;
+    }, STABLE_UPTIME_MS);
+    this.stableUptimeTimer.unref?.();
+  }
+
+  private clearStableUptimeTimer(): void {
+    if (!this.stableUptimeTimer) return;
+    clearTimeout(this.stableUptimeTimer);
+    this.stableUptimeTimer = null;
+  }
+
   private reportDown(reason: string): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.clearStableUptimeTimer();
     this.options.onDown(reason);
   }
 }

@@ -87,11 +87,12 @@ const POLL_SWEEP_SLOW_MS = 60_000;
 const POLL_UNUSED_GRACE_MS = 60_000;
 const POLL_IDLE_CLOSE_MS = 5 * 60_000;
 
-// Recursive fs watching over network redirectors (e.g. \\wsl.localhost via 9P)
-// is unreliable: chokidar takes 10s+ to become ready, errors with EISDIR, and
-// never reports changes. Those roots use a periodic re-walk instead of a watcher.
-function isNetworkShareRoot(root: string): boolean {
-  return root.startsWith("\\\\") || root.startsWith("//");
+// Recursive watching through the Windows WSL 9P redirector is unreliable:
+// chokidar takes 10s+ to become ready, emits EISDIR storms, and starves the
+// server event loop that also carries PTY input. Keep unrelated SMB shares on
+// their existing watcher path; only Windows-hosted WSL roots use the bridge.
+export function isWindowsHostedWslRoot(root: string): boolean {
+  return parseWslUncRoot(root) !== null;
 }
 
 function subscriberKey(connectionId: string, sessionId: string, subscriberId: string): string {
@@ -296,7 +297,7 @@ export class WorkspaceFileWatchManager {
   }
 
   /**
-   * Like getIndexedSnapshotForRoot, but for network-share roots it also creates
+   * Like getIndexedSnapshotForRoot, but for Windows-hosted WSL roots it also creates
    * and bootstraps the index on first use, so repeat requests are served from
    * memory instead of re-walking the share. Watch-capable roots keep the
    * passive behavior: no entry is created on behalf of a plain REST read.
@@ -304,7 +305,7 @@ export class WorkspaceFileWatchManager {
   async ensureSnapshotForRoot(root: string): Promise<WorkspaceFileWalkResult | null> {
     const canonicalRoot = await resolveCanonicalWorkspaceRoot(root);
     const existing = this.entriesByRoot.get(canonicalRoot);
-    if (!existing && !isNetworkShareRoot(canonicalRoot)) {
+    if (!existing && !isWindowsHostedWslRoot(canonicalRoot)) {
       return this.getIndexedSnapshotForRoot(canonicalRoot);
     }
 
@@ -314,11 +315,11 @@ export class WorkspaceFileWatchManager {
     return this.serveSnapshot(entry);
   }
 
-  /** Fire-and-forget index prewarm for a session's network-share workspace. */
+  /** Fire-and-forget index prewarm for a Windows-hosted WSL workspace. */
   warmSessionWorkspace(sessionId: string): void {
     void (async () => {
       const root = await this.resolveRootForSession(sessionId);
-      if (!root || !isNetworkShareRoot(root)) return;
+      if (!root || !isWindowsHostedWslRoot(root)) return;
       const entry = this.getOrCreateEntry(root);
       this.touchEntry(entry);
       await entry.readyPromise;
@@ -347,6 +348,7 @@ export class WorkspaceFileWatchManager {
   private getOrCreateEntry(root: string): WorkspaceWatchEntry {
     const existing = this.entriesByRoot.get(root);
     if (existing) return existing;
+    const wslRoot = parseWslUncRoot(root);
 
     const entry: WorkspaceWatchEntry = {
       bridge: null,
@@ -371,10 +373,10 @@ export class WorkspaceFileWatchManager {
       subscribers: new Map(),
       truncated: false,
       version: 0,
-      watchMode: isNetworkShareRoot(root) ? "poll" : "watch",
+      watchMode: wslRoot ? "poll" : "watch",
       watcher: null,
       watcherReadyPromise: Promise.resolve(),
-      wslRoot: parseWslUncRoot(root),
+      wslRoot,
     };
     this.entriesByRoot.set(root, entry);
     this.startWatcher(entry);
@@ -442,7 +444,11 @@ export class WorkspaceFileWatchManager {
         followSymlinks: false,
         ignoreInitial: true,
         ignored: (filePath, stats) => (
-          isIgnoredWorkspacePath(toWorkspaceRelativePath(entry.root, String(filePath)), stats)
+          isIgnoredWorkspacePath(
+            toWorkspaceRelativePath(entry.root, String(filePath)),
+            stats,
+            { includeHidden: true },
+          )
         ),
         persistent: true,
       });
@@ -451,7 +457,7 @@ export class WorkspaceFileWatchManager {
         if (!this.isWatchEventName(eventName)) return;
         if (!this.isWatchEventShape(eventName, stats)) return;
         const relativePath = toWorkspaceRelativePath(entry.root, String(filePath));
-        if (!relativePath || isIgnoredWorkspacePath(relativePath)) return;
+        if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
         if (!entry.ready) {
           entry.pendingEventsBeforeReady.push({ eventName, relativePath });
           return;
@@ -563,7 +569,9 @@ export class WorkspaceFileWatchManager {
         entry.bridgeActive = false;
         entry.bridge = null;
         if (this.entriesByRoot.get(entry.root) !== entry) return;
+        entry.status = "fallback";
         this.setPollCadence(entry, POLL_SWEEP_FAST_MS);
+        this.emitWatchStatus(entry, "fallback", "wsl_bridge_unavailable");
         logger.warn({
           root: entry.root,
           distro: wslRoot.distro,
@@ -577,7 +585,7 @@ export class WorkspaceFileWatchManager {
 
   private handleBridgeEvent(entry: WorkspaceWatchEntry, event: BridgeEvent): void {
     const relativePath = normalizeWorkspaceRelativePath(event.relativePath);
-    if (!relativePath || isIgnoredWorkspacePath(relativePath)) return;
+    if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
     if (!entry.ready) {
       entry.pendingEventsBeforeReady.push({ eventName: event.eventName, relativePath });
       return;
@@ -630,6 +638,11 @@ export class WorkspaceFileWatchManager {
           entry.debounceTimer = null;
         }
         this.flushChanges(entry);
+      } else if (!entry.bridgeActive && entry.rootChangeListeners.size > 0) {
+        // A filename-only snapshot cannot see edits to an existing file. In
+        // bridge fallback mode, periodically invalidate terminal git stats so
+        // content-only changes are still observed.
+        this.notifyRootChangeListeners(entry);
       }
     } catch (error) {
       logger.warn({ error, root: entry.root }, "Workspace poll index refresh failed");
@@ -696,13 +709,7 @@ export class WorkspaceFileWatchManager {
     entry.pendingTreeChanged = false;
     entry.pendingHasMoreChangedPaths = false;
 
-    for (const listener of entry.rootChangeListeners.values()) {
-      try {
-        listener.onChange(entry.root);
-      } catch (error) {
-        logger.warn({ error, listenerId: listener.listenerId, root: entry.root }, "Workspace root change listener failed");
-      }
-    }
+    this.notifyRootChangeListeners(entry);
 
     const subscribersByUser = new Map<string, WorkspaceFileSubscriber[]>();
     for (const subscriber of entry.subscribers.values()) {
@@ -725,6 +732,16 @@ export class WorkspaceFileWatchManager {
         deletedPaths,
         hasMoreChangedPaths,
       });
+    }
+  }
+
+  private notifyRootChangeListeners(entry: WorkspaceWatchEntry): void {
+    for (const listener of entry.rootChangeListeners.values()) {
+      try {
+        listener.onChange(entry.root);
+      } catch (error) {
+        logger.warn({ error, listenerId: listener.listenerId, root: entry.root }, "Workspace root change listener failed");
+      }
     }
   }
 

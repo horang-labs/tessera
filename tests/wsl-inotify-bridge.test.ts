@@ -75,14 +75,21 @@ test('parseWslRunningDistros reads wsl.exe --list --running output', () => {
   assert.deepEqual(parseWslRunningDistros('U\0b\0u\0n\0t\0u\0\r\0\n\0'), ['Ubuntu']);
 });
 
-test('buildInotifyExcludeRegex skips ignored and hidden trees only', () => {
-  const regex = new RegExp(buildInotifyExcludeRegex());
+test('buildInotifyExcludeRegex skips high-churn descendants without excluding a hidden root', () => {
+  const regex = new RegExp(buildInotifyExcludeRegex('/home/work/proj'));
   assert.ok(regex.test('/home/work/proj/node_modules/pkg/index.js'));
   assert.ok(regex.test('/home/work/proj/.git/HEAD'));
   assert.ok(regex.test('/home/work/proj/.next/'));
   assert.ok(regex.test('/home/work/proj/dist'));
-  assert.ok(regex.test('/home/work/proj/src/.hidden/file.ts'));
+  assert.equal(regex.test('/home/work/proj/src/.hidden/file.ts'), false);
+  assert.equal(regex.test('/home/work/proj/.env.example'), false);
   assert.equal(regex.test('/home/work/proj/src/app/route.ts'), false);
   assert.equal(regex.test('/home/work/proj/distribution/file.ts'), false);
   assert.equal(regex.test('/home/work/proj/outbox/file.ts'), false);
+
+  const hiddenRootRegex = new RegExp(
+    buildInotifyExcludeRegex('/home/work/.tessera/worktrees/proj'),
+  );
+  assert.equal(hiddenRootRegex.test('/home/work/.tessera/worktrees/proj/src/app.ts'), false);
+  assert.ok(hiddenRootRegex.test('/home/work/.tessera/worktrees/proj/node_modules/pkg/index.js'));
 });
