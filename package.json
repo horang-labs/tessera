@@ -77,7 +77,7 @@
     "electron:build:all": "npm run electron:prebuild && electron-builder build --publish never",
     "npm:prepack": "npm run build && npm run server:compile",
     "prepack": "npm run npm:prepack",
-    "postinstall": "node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
+    "postinstall": "node scripts/patch-xterm-webgl-atlas.mjs && node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
