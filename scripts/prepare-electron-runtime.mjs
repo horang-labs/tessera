@@ -277,7 +277,26 @@ async function ensureExecutableRuntimeFiles() {
   }
 }
 
+async function assertOwnNodeModules() {
+  const nodeModulesPath = path.join(rootDir, 'node_modules');
+  const nodeModulesStat = await fs.lstat(nodeModulesPath).catch(() => null);
+  if (!nodeModulesStat?.isSymbolicLink()) return;
+
+  const linkTarget = await fs.readlink(nodeModulesPath).catch(() => '(unreadable)');
+  throw new Error(
+    [
+      `node_modules is a symlink (-> ${linkTarget}).`,
+      'Next.js cannot trace individual files through it, so every .nft.json falls back to',
+      'referencing the whole node_modules directory. That pulls devDependencies into',
+      '.electron-runtime and electron-builder rejects the build.',
+      'Install dependencies inside this worktree instead of linking them.',
+    ].join(' ')
+  );
+}
+
 async function main() {
+  await assertOwnNodeModules();
+
   if (!(await pathExists(requiredServerFilesPath))) {
     throw new Error('Missing .next/required-server-files.json. Run `npm run build` first.');
   }
