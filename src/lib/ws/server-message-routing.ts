@@ -757,6 +757,11 @@ export async function routeClientTransportMessage({
           launchSpec,
           paneToken,
           providerId,
+          detectConversationReset: terminalProvider?.detectTerminalConversationReset
+            ? (options) => Boolean(
+              terminalProvider.detectTerminalConversationReset?.(options),
+            )
+            : undefined,
           appearanceChangePolicy,
           resizeScrollbackPolicy,
           interruptInputPolicy,

@@ -2,7 +2,10 @@ import logger from '@/lib/logger';
 import { broadcastSessionMutation } from '@/lib/ws/mutation-broadcast';
 import type { PaneTokenEntry } from './pane-token-registry';
 import type { TerminalProviderSessionIdentity } from './provider-session-identity';
-import { reconcileTerminalProviderSession } from './provider-session-reconciliation';
+import {
+  reconcileTerminalProviderSession,
+  type TerminalProviderSessionOrigin,
+} from './provider-session-reconciliation';
 import { terminalManager } from './shared-terminal-manager';
 
 /** Applies one provider identity observation to the common PTY session model. */
@@ -10,8 +13,9 @@ export function observeTerminalProviderSession(options: {
   pane: PaneTokenEntry;
   identity: TerminalProviderSessionIdentity;
   activation: 'active' | 'background';
+  origin?: TerminalProviderSessionOrigin;
 }): { ignored: boolean; sessionId: string | null } {
-  const { pane, identity, activation } = options;
+  const { pane, identity, activation, origin } = options;
   const activeSessionId = pane.sessionId
     ? terminalManager.getSessionIdForTerminal(pane.terminalId, pane.userId)
     : null;
@@ -47,6 +51,7 @@ export function observeTerminalProviderSession(options: {
     sourceSessionId: activeSessionId,
     identity,
     activation,
+    ...(origin ? { origin } : {}),
   });
   if (reconciliation.kind === 'created') {
     broadcastSessionMutation(pane.userId, {

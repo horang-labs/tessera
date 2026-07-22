@@ -95,6 +95,33 @@ export function resolveTerminalProviderSessionReference(
     : { providerSessionId: tesseraSessionId, nativeFork: false };
 }
 
+/**
+ * State for a PTY session forked before its provider identity exists — the
+ * Codex/OpenCode reset case, where the CLI only mints the new session id once
+ * the next prompt is submitted. The marker tells reconciliation that the first
+ * identity this session observes is its own (and that an identity already owned
+ * by another session means the reset never happened).
+ */
+export function buildPendingTerminalProviderState(): string {
+  return JSON.stringify({
+    kind: 'terminal',
+    launched: true,
+    terminalProviderSessionPending: true,
+  });
+}
+
+export function isPendingTerminalProviderSessionState(
+  providerState: string | null | undefined,
+): boolean {
+  if (!providerState) return false;
+  try {
+    return (JSON.parse(providerState) as Record<string, unknown>)
+      .terminalProviderSessionPending === true;
+  } catch {
+    return false;
+  }
+}
+
 export function buildTerminalProviderState(
   identity: TerminalProviderSessionIdentity,
   activation?: TerminalProviderSessionActivation,

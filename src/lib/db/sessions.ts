@@ -314,6 +314,17 @@ export function getArchivedChatSessions(
   `).all(...params) as SessionRow[];
 }
 
+/** Sessions a project currently shows, used to number a new placeholder title. */
+export function countActiveSessionsInProject(projectId: string): number {
+  const row = getDb().prepare(`
+    SELECT COUNT(*) as cnt
+    FROM sessions s
+    LEFT JOIN tasks t ON t.id = s.task_id
+    WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL}
+  `).get(projectId) as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
+}
+
 export function countArchivedChatSessions(projectId?: string, query?: string): number {
   const where = archivedChatWhere(projectId, query);
   const row = getDb().prepare(`

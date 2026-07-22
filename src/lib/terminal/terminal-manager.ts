@@ -191,6 +191,9 @@ interface TerminalRuntime {
   cancelPrefill?: () => void;
   disposeSessionObservers: Array<() => void>;
   lastSessionState?: TerminalSessionStateMessage;
+  detectConversationReset?: TerminalCreateOptions['detectConversationReset'];
+  conversationResetScanTimer?: ReturnType<typeof setTimeout>;
+  conversationResetHandledProviderSessionIds: Set<string>;
   providerSessionId?: string;
   retiredProviderSessionIds: Set<string>;
   backgroundProviderSessionIds: Set<string>;
@@ -201,7 +204,7 @@ interface TerminalRuntime {
 /** The runtime only needs these members; tests can inject a stub model. */
 export type TerminalHeadlessModelLike = Pick<
   TerminalHeadlessModel,
-  'write' | 'resize' | 'snapshot' | 'dispose'
+  'write' | 'resize' | 'snapshot' | 'readVisibleText' | 'dispose'
 >;
 
 export interface TerminalManagerOptions {
@@ -227,6 +230,11 @@ export interface TerminalManagerOptions {
     userId: string;
   }) => void;
   interruptSettleMs?: number;
+  /** The agent running in this PTY reset its conversation in place. */
+  onTerminalConversationReset?: (state: {
+    terminalId: string;
+    userId: string;
+  }) => void;
   onSessionRuntimeRebound?: (state: {
     previousSessionId: string;
     sessionId: string;
@@ -247,6 +255,12 @@ function normalizeTerminalDimension(value: number | undefined, fallback: number,
  * stale screen with all live output trapped in pendingFrames.
  */
 const DEFAULT_SNAPSHOT_TIMEOUT_MS = 3_000;
+
+/**
+ * Idle gap before re-reading the screen for a conversation reset. Long enough
+ * that a repaint has settled into one scan, short enough to feel immediate.
+ */
+const CONVERSATION_RESET_SCAN_MS = 250;
 
 async function resolveSnapshotWithTimeout(
   model: TerminalHeadlessModelLike,
@@ -660,6 +674,8 @@ export class TerminalManager {
         disposeSessionObservers: options.launchObserverDisposer
           ? [options.launchObserverDisposer]
           : [],
+        detectConversationReset: options.detectConversationReset,
+        conversationResetHandledProviderSessionIds: new Set(),
         retiredProviderSessionIds: new Set(),
         backgroundProviderSessionIds: new Set(),
         reboundFromSessionIds: new Set(),
@@ -755,6 +771,7 @@ export class TerminalManager {
         // replay 버퍼: 원본 청크 순서/내용 그대로 즉시 누적 — coalescing과 독립.
         this.appendBufferedOutput(runtime, data);
         runtime.model.write(data);
+        this.scheduleConversationResetScan(runtime);
 
         // prefill 감지: 원본 청크 타이밍에 의존하므로 즉시 처리(WS 전송만 뒤에서 모은다).
         if (prefillInput && !prefillSent) {
@@ -955,6 +972,60 @@ export class TerminalManager {
     }
     runtime.process.write(data);
     this.observeAgentInterruptInput(runtime, data);
+  }
+
+  /**
+   * Codex/OpenCode do not announce a conversation reset — they mint the next
+   * session id only when the next prompt is submitted. What they do repaint,
+   * immediately and however the command was issued, is the screen, so the
+   * provider adapter reads that instead. Scans are throttled and only run while
+   * a provider session is actually bound to this PTY.
+   */
+  private scheduleConversationResetScan(runtime: TerminalRuntime): void {
+    if (!runtime.detectConversationReset || runtime.conversationResetScanTimer) return;
+    runtime.conversationResetScanTimer = setTimeout(() => {
+      runtime.conversationResetScanTimer = undefined;
+      this.scanForConversationReset(runtime);
+    }, CONVERSATION_RESET_SCAN_MS);
+    runtime.conversationResetScanTimer.unref?.();
+  }
+
+  private scanForConversationReset(runtime: TerminalRuntime): void {
+    const providerSessionId = runtime.providerSessionId;
+    if (
+      runtime.ended
+      || !runtime.sessionId
+      || !providerSessionId
+      || !runtime.detectConversationReset
+      || runtime.conversationResetHandledProviderSessionIds.has(providerSessionId)
+    ) return;
+
+    let reset = false;
+    try {
+      reset = runtime.detectConversationReset({
+        visibleText: runtime.model.readVisibleText(),
+        currentProviderSessionId: providerSessionId,
+      });
+    } catch (error) {
+      logger.debug({ error, terminalId: runtime.terminalId },
+        'Conversation reset detection skipped');
+      return;
+    }
+    if (!reset) return;
+
+    runtime.conversationResetHandledProviderSessionIds.add(providerSessionId);
+    this.managerOptions.onTerminalConversationReset?.({
+      terminalId: runtime.terminalId,
+      userId: runtime.userId,
+    });
+  }
+
+  /** Detaches the runtime from its provider identity without retiring it, so a
+   *  reset that never happened can hand the same identity straight back. */
+  clearProviderSessionIdentity(terminalId: string, userId: string): void {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime || runtime.ended) return;
+    runtime.providerSessionId = undefined;
   }
 
   private observeAgentInterruptInput(runtime: TerminalRuntime, data: string): void {

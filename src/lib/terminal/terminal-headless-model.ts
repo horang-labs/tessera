@@ -2,6 +2,8 @@ import { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 
 const DEFAULT_SCROLLBACK_ROWS = 5_000;
+/** Rows readVisibleText() scans by default — one screen plus a little history. */
+const VISIBLE_TEXT_ROWS = 120;
 
 /**
  * DEC private modes SerializeAddon omits from snapshots. It serializes the
@@ -128,6 +130,28 @@ export class TerminalHeadlessModel {
       cols: this.terminal.cols,
       rows: this.terminal.rows,
     };
+  }
+
+  /**
+   * Plain text of what the user can currently see, newest rows last. Provider
+   * adapters read it to recognize screens a CLI only paints on a conversation
+   * reset — the one reset signal Codex/OpenCode give at the moment it happens.
+   * Wrapped rows are rejoined so a match is not lost to the terminal width.
+   */
+  readVisibleText(maxRows = VISIBLE_TEXT_ROWS): string {
+    if (this.disposed) return '';
+    const buffer = this.terminal.buffer.active;
+    const end = buffer.baseY + this.terminal.rows;
+    const start = Math.max(0, end - Math.max(1, maxRows));
+    const rows: string[] = [];
+    for (let index = start; index < end; index += 1) {
+      const line = buffer.getLine(index);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      if (line.isWrapped && rows.length > 0) rows[rows.length - 1] += text;
+      else rows.push(text);
+    }
+    return rows.join('\n');
   }
 
   dispose(): void {

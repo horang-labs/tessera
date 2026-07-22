@@ -115,6 +115,45 @@ Orca terminal context menu의 fork는 위 native fork와 다르다. xterm scroll
 [new worktree + tab](https://github.com/stablyai/orca/blob/b19dccd9b74328daa39bf20955a57fdfc7279c3e/src/renderer/src/components/terminal-pane/terminal-agent-session-fork.ts#L215-L302),
 [bounded prompt](https://github.com/stablyai/orca/blob/b19dccd9b74328daa39bf20955a57fdfc7279c3e/src/renderer/src/lib/agent-session-fork-context.ts#L1-L20)
 
+## 6. 대화 리셋(`/clear`·`/new`)은 fork와 신호 타이밍이 다르다 — 2026-07-22 실측
+
+같은 "새 provider 세션"이라도 리셋은 fork와 달리 **CLI가 즉시 알려주지 않는다.**
+codex-cli 0.144.5와 opencode 1.14.48을 PTY로 띄워 훅/플러그인 이벤트를 직접 캡처한 결과:
+
+| CLI | 리셋 직후 | 다음 프롬프트 제출 시 |
+| --- | --- | --- |
+| claude | `SessionStart(source=clear)` 새 session_id 즉시 (대화가 없어도 발화) | — |
+| codex | 이벤트 없음 (rollout 파일도 안 생김) | `SessionStart(source=clear)` + 새 rollout |
+| opencode | 이벤트 없음 (`session.created` 안 옴) | `session.created` → 플러그인 `SessionStart` |
+
+codex/opencode는 새 대화를 lazy하게 만든다 — 리셋 시점엔 provider session id 자체가
+존재하지 않는다. 그래서 hook만으로는 "다음 프롬프트까지 이전 Tessera 세션에 묶여 있는"
+공백이 생긴다(수정 전 실측: `/clear` 후 사이드바 무변화, 다음 프롬프트에서야 fork 생성).
+
+### 왜 hook·artifact로는 못 잡는가
+
+- codex 훅 이벤트는 바이너리 기준 7종뿐이다: `session_start`, `user_prompt_submit`,
+  `pre_tool_use`, `post_tool_use`, `permission_request`, `stop`, `compact`.
+  세션 종료/전환 계열 이벤트가 아예 없어 `/clear` 시점에 발화시킬 훅이 없다.
+- codex `remote-control`은 app-server 데몬 전용이라 PTY의 TUI 프로세스와 별개다.
+- opencode 플러그인 훅은 `event`(서버 이벤트 버스)·`tool`·`auth`·`permission.ask`뿐이고,
+  `/new`는 TUI 클라이언트의 로컬 상태 전환이라 서버 이벤트가 발생하지 않는다.
+
+### 그래서 화면을 읽는다
+
+리셋 순간 두 CLI가 확실히 하는 일은 화면 repaint뿐이다. 입력 방식(타이핑/탭 완성/
+팝업 선택)과 무관하므로 Tessera는 여기서 신호를 얻는다
+(`terminal-conversation-reset-screen.ts`, provider adapter의 `detectTerminalConversationReset`):
+
+- codex: 방금 닫은 세션의 `To continue this session, run codex resume <uuid>`.
+  uuid를 Tessera가 보유한 provider session id와 대조하므로 오탐이 사실상 없다.
+- opencode: 빈 컴포저 홈 화면의 `Ask anything...` 문구(대화가 생기면 사라진다).
+
+감지되면 provider 식별자 없이 세션을 먼저 분기해 두고(`terminalProviderSessionPending`),
+뒤늦게 도착한 첫 식별자를 그 세션이 흡수한다. 감지가 틀렸다면 이전 식별자가 다시
+관찰되므로 빈 대기 세션을 버리고 원래 세션으로 PTY를 되돌린다. 화면 문구가 바뀌어
+감지에 실패해도 동작은 수정 전(다음 프롬프트에 fork)으로 degrade될 뿐이다.
+
 ## Tessera 적용 시사점
 
 1. 공통 `ProviderSessionIdentity { provider, id, transcriptPath? }`를 PTY session/tab ID와
