@@ -21,6 +21,7 @@ import { extractTerminalProviderSessionIdentity } from '@/lib/terminal/provider-
 import { getTerminalProviderSessionForTesseraSession } from '@/lib/db/terminal-provider-sessions';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import { observeTerminalProviderSession } from '@/lib/terminal/provider-session-observation';
+import { classifyPermissionRequestEvent } from './permission-request-status';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -122,6 +123,8 @@ function mapClaudeEventToStatus(
   event: string,
   payload: Record<string, unknown>,
 ): { status: TerminalSessionStatus; preview?: string } | null {
+  const permissionRequest = classifyPermissionRequestEvent(event, payload);
+  if (permissionRequest) return permissionRequest;
   // AskUserQuestion 질문 카드가 뜬 동안은 input_required(사이드바 노란 깜빡점),
   // 답변 제출(PostToolUse) 시 running 복귀. lifecycle tracker는 이 이벤트를 모른다.
   const askUserQuestion = classifyAskUserQuestionEvent(event, payload);
@@ -155,6 +158,8 @@ function mapCodexEventToStatus(
   event: string,
   payload: Record<string, unknown>,
 ): { status: TerminalSessionStatus; preview?: string } | null {
+  const permissionRequest = classifyPermissionRequestEvent(event, payload);
+  if (permissionRequest) return permissionRequest;
   switch (event) {
     case 'SessionStart':
       return { status: 'idle' };
@@ -162,8 +167,6 @@ function mapCodexEventToStatus(
     case 'PreToolUse':
     case 'PostToolUse':
       return { status: 'running' };
-    case 'PermissionRequest':
-      return { status: 'input_required' };
     case 'Stop':
       return completedStatus(payload);
     default:

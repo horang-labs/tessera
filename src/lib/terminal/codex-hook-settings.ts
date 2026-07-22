@@ -3,6 +3,9 @@ import { buildHookCommand, type HookCommandStyle } from './hook-command';
 export const CODEX_HOOK_EVENT_LABEL = {
   SessionStart: 'session_start',
   UserPromptSubmit: 'user_prompt_submit',
+  PreToolUse: 'pre_tool_use',
+  PermissionRequest: 'permission_request',
+  PostToolUse: 'post_tool_use',
   Stop: 'stop',
 } as const;
 

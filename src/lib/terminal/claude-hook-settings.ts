@@ -42,6 +42,10 @@ export function buildClaudeHookSettings(style: HookCommandStyle = 'posix'): Reco
       // 판별한다(ask-user-question-status.ts).
       PreToolUse: toolHook('*', command),
       PostToolUse: toolHook('*', command),
+      PostToolUseFailure: toolHook('*', command),
+      // 권한 창이 실제로 열리는 경계만 관찰한다. 훅은 빈 stdout + 성공 종료라
+      // 승인 여부에는 관여하지 않고 Claude Code의 원래 TUI를 그대로 유지한다.
+      PermissionRequest: toolHook('*', command),
     },
   };
 }
