@@ -418,6 +418,13 @@ if (process.env.TESSERA_DISABLE_GPU === '1') {
   app.commandLine.appendSwitch('max-active-webgl-contexts', '128');
 }
 
+// The embedded server listens on 127.0.0.1 only, but windows load http://localhost.
+// On hosts where connecting to ::1 stalls (observed ~210ms per connect with WSL /
+// VPN network stacks), every fresh renderer connection pays that penalty. Pin
+// localhost to IPv4 in Chromium's resolver; keeping the literal "localhost" URL
+// preserves the renderer origin (localStorage, IndexedDB).
+app.commandLine.appendSwitch('host-resolver-rules', 'MAP localhost 127.0.0.1');
+
 let mainWindow: BrowserWindow | null = null;
 const popoutWindows = new Set<BrowserWindow>();
 let serverProcess: ChildProcess | null = null;

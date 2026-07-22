@@ -1,9 +1,26 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { WorkspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-watch-manager';
+
+interface TestWatchEntry {
+  closeTimer: NodeJS.Timeout | null;
+  debounceTimer: NodeJS.Timeout | null;
+  files: Set<string>;
+  readyPromise: Promise<void>;
+  watchMode: 'watch' | 'poll';
+  watcher: { close(): Promise<void> } | null;
+}
+
+function managerInternals(manager: WorkspaceFileWatchManager): {
+  entriesByRoot: Map<string, TestWatchEntry>;
+  refreshPollIndex(entry: TestWatchEntry): Promise<void>;
+  closeEntryNow(entry: TestWatchEntry): void;
+} {
+  return manager as unknown as ReturnType<typeof managerInternals>;
+}
 
 function waitFor<T>(promise: Promise<T>, timeoutMs = 5_000): Promise<T> {
   return Promise.race([
@@ -83,4 +100,56 @@ test('disposing immediately after a write flushes the pending root change', asyn
   assert.equal(changeCount, 2);
   await new Promise((resolve) => setTimeout(resolve, 400));
   assert.equal(changeCount, 2);
+});
+
+test('ensureSnapshotForRoot stays passive for watch-capable roots without an entry', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-ensure-'));
+  writeFileSync(path.join(root, 'present.txt'), 'x');
+  const manager = new WorkspaceFileWatchManager();
+
+  assert.equal(await manager.ensureSnapshotForRoot(root), null);
+  assert.equal(managerInternals(manager).entriesByRoot.size, 0);
+});
+
+test('poll-mode refresh diffs the index, notifies listeners, and delays teardown', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-poll-'));
+  writeFileSync(path.join(root, 'seed.txt'), 'seed');
+  const manager = new WorkspaceFileWatchManager();
+  const internals = managerInternals(manager);
+  let changeCount = 0;
+
+  const dispose = await manager.subscribeRootChanges({
+    listenerId: 'terminal:poll-test',
+    root,
+    onChange: () => { changeCount += 1; },
+  });
+  const canonicalRoot = realpathSync(root);
+  const entry = internals.entriesByRoot.get(canonicalRoot);
+  assert.ok(entry);
+  await entry.readyPromise;
+  await waitFor((async () => { while (changeCount < 1) await new Promise((r) => setTimeout(r, 10)); })());
+
+  // Simulate a network-share root: no watcher, poll-based indexing.
+  await entry.watcher?.close();
+  entry.watcher = null;
+  entry.watchMode = 'poll';
+
+  writeFileSync(path.join(root, 'added.txt'), 'new');
+  await internals.refreshPollIndex(entry);
+  assert.ok(entry.files.has('added.txt'));
+  assert.ok(entry.files.has('seed.txt'));
+  assert.ok(changeCount >= 2, `listener should observe poll diff (changeCount=${changeCount})`);
+
+  rmSync(path.join(root, 'added.txt'));
+  await internals.refreshPollIndex(entry);
+  assert.equal(entry.files.has('added.txt'), false);
+
+  // Poll entries are kept warm briefly instead of closing on last unsubscribe.
+  dispose();
+  assert.ok(internals.entriesByRoot.has(canonicalRoot), 'poll entry should linger after dispose');
+  assert.ok(entry.closeTimer, 'poll entry should have a scheduled close');
+  clearTimeout(entry.closeTimer);
+  entry.closeTimer = null;
+  internals.closeEntryNow(entry);
+  assert.equal(internals.entriesByRoot.has(canonicalRoot), false);
 });
