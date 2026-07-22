@@ -8,6 +8,8 @@ import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useBoardStore } from '@/stores/board-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { ToastNotification } from './toast-notification';
 import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
@@ -112,6 +114,14 @@ export function ToastContainer() {
 
     clearUnreadCount(sessionId);
     wsClient.sendMarkAsRead(sessionId);
+
+    // Kanban peek mode: open the session in the board peek panel instead of a tab
+    const boardStore = useBoardStore.getState();
+    const peekMode = useSettingsStore.getState().settings.kanbanSessionOpenMode === 'peek';
+    if (boardStore.viewMode === 'board' && peekMode) {
+      boardStore.openSessionPeek(sessionId);
+      return;
+    }
 
     // Tab-aware session focus: use findSessionLocation (same as sidebar click handler)
     const tabStore = useTabStore.getState();

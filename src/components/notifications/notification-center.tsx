@@ -6,6 +6,8 @@ import { CheckCircle, AlertTriangle, Inbox } from 'lucide-react';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTabStore } from '@/stores/tab-store';
+import { useBoardStore } from '@/stores/board-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -83,6 +85,15 @@ function NotificationCenterContent({
     wsClient.sendMarkAsRead(sessionId);
 
     const session = getSession(sessionId);
+
+    // Kanban peek mode: open the session in the board peek panel instead of a tab
+    const boardStore = useBoardStore.getState();
+    const peekMode = useSettingsStore.getState().settings.kanbanSessionOpenMode === 'peek';
+    if (boardStore.viewMode === 'board' && peekMode) {
+      boardStore.openSessionPeek(sessionId);
+      onClose();
+      return;
+    }
 
     // Tab-aware session focus: use findSessionLocation (same as sidebar click handler)
     const tabStore = useTabStore.getState();
