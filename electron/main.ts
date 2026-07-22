@@ -409,6 +409,13 @@ if (process.env.TESSERA_DISABLE_GPU === '1') {
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-gpu-compositing');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
+} else {
+  // Blink force-loses the oldest WebGL context past 16 per renderer, and every
+  // attached terminal surface holds one. Inactive tabs stay mounted (LRU) and
+  // parked surfaces keep their terminal alive, so a busy workspace exceeds 16
+  // and evicted surfaces are silently downgraded to the DOM renderer mid-session.
+  // 128 covers real layouts while keeping a bound so context leaks still surface.
+  app.commandLine.appendSwitch('max-active-webgl-contexts', '128');
 }
 
 let mainWindow: BrowserWindow | null = null;
