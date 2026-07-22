@@ -11,6 +11,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useGitStore } from '@/stores/git-store';
 import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
+import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { ProjectViewModeToggle } from '@/components/tab/project-view-mode-toggle';
 
 /**
@@ -63,6 +64,9 @@ export const AppHeader = memo(function AppHeader() {
           className={cn(
             'flex min-w-0 flex-1 items-center gap-2 px-3',
             isMacElectron && 'pl-10',
+            // Peek mode stretches the header across the window, so it has to
+            // clear the native window controls the tab bar normally clears.
+            isKanbanPeekMode && isWindowsElectron && !gitPanelOpen && 'pr-[152px]',
           )}
         >
           {shouldShowProjectContext ? (
@@ -79,7 +83,10 @@ export const AppHeader = memo(function AppHeader() {
               </div>
               <div
                 className={cn(
-                  'min-w-0 flex-1',
+                  'min-w-0',
+                  // In peek mode the header spans the full window, so the project
+                  // name must not absorb the free space — the spacer below does.
+                  isKanbanPeekMode ? 'shrink' : 'flex-1',
                   isElectronTitlebar && 'electron-drag pointer-events-none',
                 )}
                 title={projectTitle}
@@ -93,23 +100,31 @@ export const AppHeader = memo(function AppHeader() {
                 labelMode="short"
               />
               {isKanbanPeekMode ? (
-                <button
-                  type="button"
-                  onClick={toggleGitPanel}
-                  className={cn(
-                    'electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
-                    gitPanelOpen
-                      ? 'bg-(--accent)/14 text-(--accent)'
-                      : 'bg-(--chat-bg) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
-                  )}
-                  aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
-                  aria-pressed={gitPanelOpen}
-                  title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
-                  data-testid="kanban-git-panel-toggle"
-                >
-                  {gitPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-                </button>
+                <>
+                  <div
+                    className={cn(
+                      'min-w-0 flex-1',
+                      isElectronTitlebar && 'electron-drag',
+                    )}
+                  />
+                  <button
+                    type="button"
+                    onClick={toggleGitPanel}
+                    className={cn(
+                      'electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
+                      gitPanelOpen
+                        ? 'bg-(--accent)/14 text-(--accent)'
+                        : 'bg-(--chat-bg) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+                    )}
+                    aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
+                    aria-pressed={gitPanelOpen}
+                    title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
+                    data-testid="kanban-git-panel-toggle"
+                  >
+                    {gitPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                  </button>
+                </>
               ) : null}
             </>
           ) : (
@@ -132,6 +147,7 @@ export const AppHeader = memo(function AppHeader() {
             </ShortcutTooltip>
           ) : null}
         </div>
+        {isKanbanPeekMode && isLinuxElectron && !gitPanelOpen ? <ElectronWindowControls /> : null}
       </header>
     </>
   );
