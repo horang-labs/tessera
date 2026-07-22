@@ -21,6 +21,7 @@ import { ensureRemoteModelConfigLoaded } from './src/lib/model-config/remote-con
 import logger from './src/lib/logger';
 import { getServerPort } from './src/lib/server-port';
 import { handleHookRequest } from './src/lib/cli/hook-receiver';
+import { warmWindowsConptyOnce } from './src/lib/terminal/windows-conpty-warmup';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -86,6 +87,10 @@ async function startServer() {
   server.listen(port, hostname, () => {
     // Start WebSocket server on the same HTTP server
     wsServer.start(server);
+
+    // Pay the first ConPTY spawn cost (~seconds on Windows) before the user
+    // opens their first terminal.
+    warmWindowsConptyOnce();
 
     // Start rate limit poller
     rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
