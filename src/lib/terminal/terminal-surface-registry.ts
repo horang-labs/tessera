@@ -1089,15 +1089,7 @@ export class TerminalSurface {
           // composition stops garbling). An idle session never gets that
           // accidental recovery — schedule it deterministically after every
           // replay instead of waiting for the next output or focus cycle.
-          //
-          // The refit must CLAIM the viewport when this surface is the one on
-          // screen: the server drops non-claiming resizes while another
-          // subscriber owns the viewport (attach hands ownership to whoever
-          // attached last, e.g. a session preview), and a dropped refit leaves
-          // the PTY on a different grid than this view — the TUI then draws
-          // its input box displaced into the transcript. Previews and hidden
-          // LRU replays must not steal the viewport back.
-          this.requestStableFit(this.isMountedHostVisible() && !this.options.previewOwned);
+          this.requestStableFit(false);
           this.retryWebglAttachOnReveal();
           this.recoverRendererPresentation();
         },
