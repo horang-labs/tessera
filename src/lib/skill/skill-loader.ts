@@ -73,9 +73,16 @@ export async function resolveClaudeConfigDirForEnvironment(
   if (configuredDir) return resolve(configuredDir);
 
   if (environment === 'wsl' && process.platform === 'win32') {
+    // `-c`, not `-lc`: the WSL bridge already runs this through the user's
+    // login shell, so its rc files have been sourced and exported by the time
+    // the snippet runs. Asking for a second login shell re-reads ~/.profile,
+    // and one broken line there (`. "$HOME/.cargo/env"` after uninstalling
+    // Rust is the common one) makes a non-interactive POSIX shell exit 2
+    // before `wslpath` runs — the probe then fell back to the Windows-side
+    // home and the whole session silently pointed at the wrong `.claude`.
     const result = await execCli(
       'sh',
-      ['-lc', 'wslpath -w "$HOME/.claude" 2>/dev/null || printf %s "$HOME/.claude"'],
+      ['-c', 'wslpath -w "$HOME/.claude" 2>/dev/null || printf %s "$HOME/.claude"'],
       'wsl',
       5000,
     );

@@ -64,7 +64,10 @@ export async function resolveCodexHomeForEnvironment(
   if (environment === "wsl" && process.platform === "win32") {
     const result = await execCli(
       "sh",
-      ["-lc", 'printf "%s" "${CODEX_HOME:-$HOME/.codex}"'],
+      // `-c`, not `-lc` — see resolveClaudeConfigDirForEnvironment: the bridge
+      // already sourced the login shell, and a second one re-reads ~/.profile
+      // where a single broken line kills the probe.
+      ["-c", 'printf "%s" "${CODEX_HOME:-$HOME/.codex}"'],
       "wsl",
       5000,
     );

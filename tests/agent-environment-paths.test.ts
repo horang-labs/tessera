@@ -173,3 +173,21 @@ test('the Claude config dir is probed with the verified cmd.exe home lookup', ()
   assert.match(skillLoaderSource, /getWslHostedWindowsHomeMountPath\(\)/);
   assert.doesNotMatch(withoutLineComments(skillLoaderSource), /GetFolderPath/);
 });
+
+/**
+ * The WSL bridge already runs these through the user's login shell, so the
+ * snippet must not ask for a second one. `sh -lc` re-reads ~/.profile, and a
+ * single broken line there (`. "$HOME/.cargo/env"` after removing Rust) makes
+ * a non-interactive POSIX shell exit 2 before the snippet runs — the probe
+ * then falls back to the *Windows* home and the whole session points at a
+ * `.claude` the agent never reads.
+ */
+test('WSL probes do not spawn a second login shell', () => {
+  for (const [name, source] of [
+    ['skill-loader', skillLoaderSource],
+    ['codex-memory', codexMemorySource],
+    ['opencode-memory', opencodeMemorySource],
+  ] as const) {
+    assert.doesNotMatch(source, /["']-lc["']/, `${name} must probe with sh -c, not sh -lc`);
+  }
+});

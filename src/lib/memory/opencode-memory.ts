@@ -62,7 +62,8 @@ export async function resolveOpenCodeConfigDirForEnvironment(
   if (environment === "wsl" && process.platform === "win32") {
     const result = await execCli(
       "sh",
-      ["-lc", 'printf "%s" "$HOME/.config/opencode"'],
+      // `-c`, not `-lc` — see resolveClaudeConfigDirForEnvironment.
+      ["-c", 'printf "%s" "$HOME/.config/opencode"'],
       "wsl",
       5000,
     );
