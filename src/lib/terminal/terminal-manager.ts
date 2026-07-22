@@ -833,14 +833,7 @@ export class TerminalManager {
     if (!previewAttach || runtime.viewportOwner === null) {
       runtime.viewportOwner = subscriberKey;
     }
-    // Never resize a live runtime from attach dims (orca's daemon does the
-    // same): a reattaching client measures its pane only after mount, so its
-    // attach carries pre-fit defaults (80x24) — resizing the PTY to them and
-    // back again on the post-replay refit makes the TUI paint garbage frames
-    // at the wrong grid into scrollback, which is why reopened sessions came
-    // up broken at random. The claiming refit after the replay applies the
-    // one correct, measured resize.
-    if (options.cols && options.rows && runtime.viewportOwner === subscriberKey && !reattached) {
+    if (options.cols && options.rows && runtime.viewportOwner === subscriberKey) {
       this.resizeRuntime(runtime, options.cols, options.rows);
     }
     this.sendStarted(runtime, subscriber, reattached);
