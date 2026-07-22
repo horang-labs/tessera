@@ -9,8 +9,11 @@ import {
 import { resolvePathForHostFilesystem } from "@/lib/filesystem/host-path";
 import * as dbSessions from "@/lib/db/sessions";
 import * as dbTasks from "@/lib/db/tasks";
-import { getCachedSessionPr, syncSessionPr } from "@/lib/github/session-pr-sync";
-import { computeWorktreeFileDiffStats } from "@/lib/git/worktree-diff-stats";
+import { getCachedSessionPr } from "@/lib/github/session-pr-sync";
+import {
+  computeWorktreeFileDiffStats,
+  computeWorktreeFileDiffStatsFromRaw,
+} from "@/lib/git/worktree-diff-stats";
 import { getCachedDiffStats } from "@/lib/git/worktree-diff-stats-cache";
 import { getAgentEnvironment, spawnCli } from "@/lib/cli/spawn-cli";
 import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
@@ -27,6 +30,7 @@ import type {
 } from "@/types/git";
 
 const COMMAND_MAX_BUFFER = 4 * 1024 * 1024;
+const BATCH_COMMAND_MAX_BUFFER = 24 * 1024 * 1024;
 const MAX_SYNTHETIC_DIFF_BYTES = 64 * 1024;
 const COMMAND_TIMEOUT_MS = 10_000;
 // Upper bound on how many changed-file rows we serialize to the client and
@@ -73,6 +77,7 @@ async function runCommand(
   args: string[],
   cwd: string,
   agentEnvironment: AgentEnvironment,
+  maxBuffer = COMMAND_MAX_BUFFER,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const options: SpawnOptions = {
@@ -83,7 +88,7 @@ async function runCommand(
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     };
-    const child = spawnCli(command, args, options, agentEnvironment);
+    const child = spawnCli(command, args, options, agentEnvironment, { loginShell: false });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let stdoutLength = 0;
@@ -111,11 +116,11 @@ async function runCommand(
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutLength += chunk.length;
-      if (stdoutLength <= COMMAND_MAX_BUFFER) stdoutChunks.push(chunk);
+      if (stdoutLength <= maxBuffer) stdoutChunks.push(chunk);
     });
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrLength += chunk.length;
-      if (stderrLength <= COMMAND_MAX_BUFFER) stderrChunks.push(chunk);
+      if (stderrLength <= maxBuffer) stderrChunks.push(chunk);
     });
 
     child.on("close", (code) => {
@@ -136,6 +141,105 @@ async function runCommand(
       reject(new GitPanelError("command_failed", error.message || `Failed to run ${command}`, 500));
     });
   });
+}
+
+export interface GitBatchCommand {
+  key: string;
+  args: string[];
+}
+
+interface GitBatchResult {
+  stdout: string;
+}
+
+function quotePosixShellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function buildGitBatchScript(commands: GitBatchCommand[]): string {
+  for (const command of commands) {
+    if (!/^[a-z][a-zA-Z0-9]*$/.test(command.key)) {
+      throw new Error(`Invalid git batch key: ${command.key}`);
+    }
+  }
+
+  return [
+    "command -v base64 >/dev/null 2>&1 || exit 69",
+    "command -v tr >/dev/null 2>&1 || exit 69",
+    ...commands.flatMap((command) => [
+      `printf ${quotePosixShellArg(`${command.key}\tb64:`)}`,
+      [
+        "git",
+        ...command.args.map(quotePosixShellArg),
+        "2>/dev/null",
+        "| base64 | tr -d '\\r\\n'",
+      ].join(" "),
+      "printf '\\n'",
+    ]),
+  ].join("\n");
+}
+
+function parseGitBatchOutput(
+  raw: string,
+  commands: GitBatchCommand[],
+): Map<string, GitBatchResult> {
+  const expectedKeys = new Set(commands.map((command) => command.key));
+  const results = new Map<string, GitBatchResult>();
+
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const firstTab = line.indexOf("\t");
+    if (firstTab <= 0) {
+      throw new GitPanelError("command_failed", "Invalid batched git output", 500);
+    }
+
+    const key = line.slice(0, firstTab);
+    const encodedField = line.slice(firstTab + 1);
+    if (
+      !expectedKeys.has(key)
+      || !encodedField.startsWith("b64:")
+    ) {
+      throw new GitPanelError("command_failed", "Invalid batched git result", 500);
+    }
+    const encoded = encodedField.slice(4);
+
+    results.set(key, {
+      stdout: Buffer.from(encoded, "base64").toString("utf8").trimEnd(),
+    });
+  }
+
+  if (results.size !== expectedKeys.size) {
+    throw new GitPanelError("command_failed", "Incomplete batched git output", 500);
+  }
+
+  return results;
+}
+
+async function runGitBatch(
+  commands: GitBatchCommand[],
+  cwd: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<Map<string, GitBatchResult>> {
+  const raw = await runCommand(
+    "sh",
+    ["-c", buildGitBatchScript(commands)],
+    cwd,
+    agentEnvironment,
+    BATCH_COMMAND_MAX_BUFFER,
+  );
+  return parseGitBatchOutput(raw, commands);
+}
+
+function getOptionalBatchOutput(
+  results: Map<string, GitBatchResult>,
+  key: string,
+): string | null {
+  const result = results.get(key);
+  return result?.stdout ?? null;
+}
+
+function shouldBatchGitCommands(agentEnvironment: AgentEnvironment): boolean {
+  return agentEnvironment === "wsl" && getRuntimePlatform() === "win32";
 }
 
 async function runOptionalCommand(
@@ -478,12 +582,10 @@ export function summarizeStatusCheckRollup(items: unknown[]): GitChecksSummary {
   return checks;
 }
 
-async function resolveGitHubPanelState(
-  workDir: string,
+function resolveGitHubPanelState(
   remoteUrl: string | null,
   prSummary: { wasUnsupported: boolean; prStatus?: unknown } | null,
-  agentEnvironment: AgentEnvironment,
-): Promise<GitPanelData["github"]> {
+): GitPanelData["github"] {
   if (!normalizeGithubUrl(remoteUrl)) {
     return {
       available: false,
@@ -493,29 +595,16 @@ async function resolveGitHubPanelState(
     };
   }
 
-  try {
-    await runCommand("gh", ["--version"], workDir, agentEnvironment);
-  } catch {
+  if (!prSummary) {
     return {
       available: false,
-      reasonCode: "gh_missing",
-      reason: "gh CLI is not available in this environment.",
+      reasonCode: "unknown",
+      reason: "GitHub status will update shortly.",
       pullRequest: null,
     };
   }
 
-  try {
-    await runCommand("gh", ["auth", "status"], workDir, agentEnvironment);
-  } catch {
-    return {
-      available: false,
-      reasonCode: "gh_unauthenticated",
-      reason: "GitHub CLI is installed, but it is not logged in. Run `gh auth login`, then refresh.",
-      pullRequest: null,
-    };
-  }
-
-  if (prSummary?.wasUnsupported) {
+  if (prSummary.wasUnsupported) {
     return {
       available: false,
       reasonCode: "unknown",
@@ -526,8 +615,8 @@ async function resolveGitHubPanelState(
 
   return {
     available: true,
-    reasonCode: prSummary?.prStatus ? null : "no_pull_request",
-    reason: prSummary?.prStatus
+    reasonCode: prSummary.prStatus ? null : "no_pull_request",
+    reason: prSummary.prStatus
       ? null
       : "No pull request is linked to the current branch.",
     pullRequest: null,
@@ -558,9 +647,17 @@ async function getChangedFiles(
     runStatusStreaming(workDir, agentEnvironment, STATUS_STREAM_NUL_LIMIT),
     computeWorktreeFileDiffStats(workDir, agentEnvironment),
   ]);
+  return attachFileDiffStats(status.stdout, fileDiffStats, status.stoppedEarly);
+}
+
+function attachFileDiffStats(
+  statusRaw: string | null,
+  fileDiffStats: Map<string, { added: number; removed: number }> | null,
+  stoppedEarly = false,
+): ChangedFilesResult {
   const statsByPath = fileDiffStats ?? new Map();
-  const parsed = parseGitStatus(status.stdout);
-  const truncated = status.stoppedEarly || parsed.length > MAX_CHANGED_FILES;
+  const parsed = parseGitStatus(statusRaw ?? "");
+  const truncated = stoppedEarly || parsed.length > MAX_CHANGED_FILES;
   const limited = truncated ? parsed.slice(0, MAX_CHANGED_FILES) : parsed;
   const files = limited.map((file) => {
     const diffStats = statsByPath.get(file.path);
@@ -568,7 +665,214 @@ async function getChangedFiles(
   });
   // When we killed git early the parsed count is only a lower bound, so leave
   // `total` unset — the client shows "first N, many more" instead of a wrong number.
-  return { files, total: status.stoppedEarly ? undefined : parsed.length, truncated };
+  return { files, total: stoppedEarly ? undefined : parsed.length, truncated };
+}
+
+interface GitPanelSnapshot {
+  repoRoot: string;
+  branchRaw: string | null;
+  upstream: string | null;
+  aheadBehindRaw: string | null;
+  remoteUrl: string | null;
+  defaultBranchRaw: string | null;
+  branchListRaw: string | null;
+  changedFiles: ChangedFilesResult;
+  recentCommitsRaw: string | null;
+  detachedHead: string | null;
+  headShaRaw: string | null;
+}
+
+function getChangedFilesBatchCommands(): GitBatchCommand[] {
+  return [
+    { key: "repoRoot", args: ["rev-parse", "--show-toplevel"] },
+    {
+      key: "status",
+      args: ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    },
+    { key: "numstat", args: ["diff", "--numstat", "HEAD", "--"] },
+    {
+      key: "untracked",
+      args: ["ls-files", "--others", "--exclude-standard", "-z"],
+    },
+  ];
+}
+
+function getGitPanelBatchCommands(): GitBatchCommand[] {
+  return [
+    ...getChangedFilesBatchCommands(),
+    { key: "branch", args: ["branch", "--show-current"] },
+    {
+      key: "upstream",
+      args: ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    },
+    {
+      key: "aheadBehind",
+      args: ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    },
+    { key: "remoteUrl", args: ["remote", "get-url", "origin"] },
+    {
+      key: "defaultBranch",
+      args: ["symbolic-ref", "refs/remotes/origin/HEAD"],
+    },
+    {
+      key: "branchList",
+      args: ["branch", "-a", "--format=%(refname:short)"],
+    },
+    { key: "recentLocal", args: getRecentCommitArgs(false) },
+    { key: "recentUpstream", args: getRecentCommitArgs(true) },
+    { key: "detachedHead", args: ["rev-parse", "--short", "HEAD"] },
+    { key: "headSha", args: ["rev-parse", "HEAD"] },
+  ];
+}
+
+function requireBatchedRepoRoot(results: Map<string, GitBatchResult>): string {
+  const repoRoot = getOptionalBatchOutput(results, "repoRoot");
+  if (!repoRoot) {
+    throw new GitPanelError(
+      "not_git_repo",
+      "Working directory is not a git repository",
+      422,
+    );
+  }
+  return repoRoot;
+}
+
+async function getBatchedChangedFiles(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<{ repoRoot: string; changedFiles: ChangedFilesResult }> {
+  const commands = getChangedFilesBatchCommands();
+  const results = await runGitBatch(commands, workDir, agentEnvironment);
+  const repoRoot = requireBatchedRepoRoot(results);
+  const statusRaw = getOptionalBatchOutput(results, "status");
+  const fileDiffStats = await computeWorktreeFileDiffStatsFromRaw(
+    workDir,
+    getOptionalBatchOutput(results, "numstat"),
+    getOptionalBatchOutput(results, "untracked"),
+  );
+  return {
+    repoRoot,
+    changedFiles: attachFileDiffStats(statusRaw, fileDiffStats),
+  };
+}
+
+async function getBatchedGitPanelSnapshot(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<GitPanelSnapshot> {
+  const commands = getGitPanelBatchCommands();
+  const results = await runGitBatch(commands, workDir, agentEnvironment);
+  const repoRoot = requireBatchedRepoRoot(results);
+  const upstream = getOptionalBatchOutput(results, "upstream");
+  const fileDiffStats = await computeWorktreeFileDiffStatsFromRaw(
+    workDir,
+    getOptionalBatchOutput(results, "numstat"),
+    getOptionalBatchOutput(results, "untracked"),
+  );
+
+  return {
+    repoRoot,
+    branchRaw: getOptionalBatchOutput(results, "branch"),
+    upstream,
+    aheadBehindRaw: getOptionalBatchOutput(results, "aheadBehind"),
+    remoteUrl: getOptionalBatchOutput(results, "remoteUrl"),
+    defaultBranchRaw: getOptionalBatchOutput(results, "defaultBranch"),
+    branchListRaw: getOptionalBatchOutput(results, "branchList"),
+    changedFiles: attachFileDiffStats(
+      getOptionalBatchOutput(results, "status"),
+      fileDiffStats,
+    ),
+    recentCommitsRaw: getOptionalBatchOutput(
+      results,
+      upstream ? "recentUpstream" : "recentLocal",
+    ),
+    detachedHead: getOptionalBatchOutput(results, "detachedHead"),
+    headShaRaw: getOptionalBatchOutput(results, "headSha"),
+  };
+}
+
+async function getSeparateGitPanelSnapshot(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<GitPanelSnapshot> {
+  const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
+  const upstreamPromise = runOptionalCommand(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    workDir,
+    agentEnvironment,
+  );
+  const recentCommitsPromise = upstreamPromise.then((currentUpstream) =>
+    runOptionalCommand(
+      "git",
+      getRecentCommitArgs(Boolean(currentUpstream)),
+      workDir,
+      agentEnvironment,
+    ),
+  );
+
+  const [
+    branchRaw,
+    upstream,
+    aheadBehindRaw,
+    remoteUrl,
+    defaultBranchRaw,
+    branchListRaw,
+    changedFiles,
+    recentCommitsRaw,
+  ] = await Promise.all([
+    runOptionalCommand("git", ["branch", "--show-current"], workDir, agentEnvironment),
+    upstreamPromise,
+    runOptionalCommand(
+      "git",
+      ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+      workDir,
+      agentEnvironment,
+    ),
+    runOptionalCommand("git", ["remote", "get-url", "origin"], workDir, agentEnvironment),
+    runOptionalCommand(
+      "git",
+      ["symbolic-ref", "refs/remotes/origin/HEAD"],
+      workDir,
+      agentEnvironment,
+    ),
+    runOptionalCommand(
+      "git",
+      ["branch", "-a", "--format=%(refname:short)"],
+      workDir,
+      agentEnvironment,
+    ),
+    getChangedFiles(workDir, agentEnvironment),
+    recentCommitsPromise,
+  ]);
+
+  const [detachedHead, headShaRaw] = await Promise.all([
+    runOptionalCommand("git", ["rev-parse", "--short", "HEAD"], workDir, agentEnvironment),
+    runOptionalCommand("git", ["rev-parse", "HEAD"], workDir, agentEnvironment),
+  ]);
+
+  return {
+    repoRoot,
+    branchRaw,
+    upstream,
+    aheadBehindRaw,
+    remoteUrl,
+    defaultBranchRaw,
+    branchListRaw,
+    changedFiles,
+    recentCommitsRaw,
+    detachedHead,
+    headShaRaw,
+  };
+}
+
+function getGitPanelSnapshot(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<GitPanelSnapshot> {
+  return shouldBatchGitCommands(agentEnvironment)
+    ? getBatchedGitPanelSnapshot(workDir, agentEnvironment)
+    : getSeparateGitPanelSnapshot(workDir, agentEnvironment);
 }
 
 function ensurePathInsideRepo(repoRoot: string, relativePath: string): string {
@@ -632,43 +936,8 @@ export async function getGitPanelData(
   const sessionContext = await resolveSessionContext(sessionId);
   const { workDir } = sessionContext;
   const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
-  const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
-  const prContext = sessionContext.taskId
-    ? dbTasks.getTaskPrSyncContext(sessionContext.taskId)
-    : null;
-  // Bare sessions (no task) carry PR state in an in-memory cache populated
-  // by syncSessionPr — same probe pipeline as tasks, just keyed by sessionId
-  // since there's no task row to persist to. The cache is rebuilt on
-  // restart, so on the first panel load we probe inline to avoid the panel
-  // showing "no PR" until the next focus/poll tick.
-  let bareSessionPr = sessionContext.taskId
-    ? null
-    : getCachedSessionPr(sessionId) ?? null;
-  if (!sessionContext.taskId && !bareSessionPr && workDir) {
-    try {
-      await syncSessionPr(sessionId, { agentEnvironment });
-      bareSessionPr = getCachedSessionPr(sessionId) ?? null;
-    } catch {
-      // Best-effort — the visibility refresh and poller will fill it in.
-    }
-  }
-
-  const upstreamPromise = runOptionalCommand(
-    "git",
-    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-    workDir,
-    agentEnvironment,
-  );
-  const recentCommitsPromise = upstreamPromise.then((currentUpstream) =>
-    runOptionalCommand(
-      "git",
-      getRecentCommitArgs(Boolean(currentUpstream)),
-      workDir,
-      agentEnvironment,
-    ),
-  );
-
-  const [
+  const {
+    repoRoot,
     branchRaw,
     upstream,
     aheadBehindRaw,
@@ -677,43 +946,25 @@ export async function getGitPanelData(
     branchListRaw,
     changedFiles,
     recentCommitsRaw,
-  ] = await Promise.all([
-    runOptionalCommand("git", ["branch", "--show-current"], workDir, agentEnvironment),
-    upstreamPromise,
-    runOptionalCommand(
-      "git",
-      ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
-      workDir,
-      agentEnvironment,
-    ),
-    runOptionalCommand("git", ["remote", "get-url", "origin"], workDir, agentEnvironment),
-    runOptionalCommand(
-      "git",
-      ["symbolic-ref", "refs/remotes/origin/HEAD"],
-      workDir,
-      agentEnvironment,
-    ),
-    runOptionalCommand(
-      "git",
-      ["branch", "-a", "--format=%(refname:short)"],
-      workDir,
-      agentEnvironment,
-    ),
-    getChangedFiles(workDir, agentEnvironment),
-    recentCommitsPromise,
-  ]);
-
-  const [detachedHead, headShaRaw] = await Promise.all([
-    runOptionalCommand("git", ["rev-parse", "--short", "HEAD"], workDir, agentEnvironment),
-    runOptionalCommand("git", ["rev-parse", "HEAD"], workDir, agentEnvironment),
-  ]);
+    detachedHead,
+    headShaRaw,
+  } = await getGitPanelSnapshot(workDir, agentEnvironment);
+  const prContext = sessionContext.taskId
+    ? dbTasks.getTaskPrSyncContext(sessionContext.taskId)
+    : null;
+  // PR detection can invoke remote git and gh commands. Keep the initial panel
+  // read local-only and use the last cached result; the focus/turn-end/poller
+  // refresh paths populate this cache and broadcast the updated panel state.
+  const bareSessionPr = sessionContext.taskId
+    ? null
+    : getCachedSessionPr(sessionId) ?? null;
   const { ahead, behind } = parseAheadBehind(aheadBehindRaw);
   const prSummary = prContext
     ? { wasUnsupported: prContext.wasUnsupported, prStatus: prContext.prStatus }
     : bareSessionPr
       ? { wasUnsupported: bareSessionPr.prUnsupported, prStatus: bareSessionPr.prStatus }
       : null;
-  const github = await resolveGitHubPanelState(workDir, remoteUrl, prSummary, agentEnvironment);
+  const github = resolveGitHubPanelState(remoteUrl, prSummary);
 
   return {
     sessionId,
@@ -758,9 +1009,14 @@ export async function getGitChangedFilesData(
 ): Promise<GitChangedFilesData> {
   const workDir = await resolveSessionWorkDir(sessionId);
   const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
-  await resolveRepoRoot(workDir, agentEnvironment);
+  let changedFiles: ChangedFilesResult;
+  if (shouldBatchGitCommands(agentEnvironment)) {
+    changedFiles = (await getBatchedChangedFiles(workDir, agentEnvironment)).changedFiles;
+  } else {
+    await resolveRepoRoot(workDir, agentEnvironment);
+    changedFiles = await getChangedFiles(workDir, agentEnvironment);
+  }
 
-  const changedFiles = await getChangedFiles(workDir, agentEnvironment);
   return {
     sessionId,
     changedFiles: changedFiles.files,
