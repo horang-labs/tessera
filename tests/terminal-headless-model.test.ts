@@ -89,6 +89,60 @@ test('alternate-screen snapshot separates normal scrollback and restores its cur
   model.dispose();
 });
 
+test('alternate-screen snapshot preserves OpenTUI rows after a width shrink', async () => {
+  const cols = 20;
+  const rows = 6;
+  const initialCols = 24;
+  const initialRows = 8;
+  const model = new TerminalHeadlessModel(initialCols, initialRows);
+  const labels = Array.from({ length: initialRows }, (_, index) => `ROW-${index}`);
+  model.write([
+    '\x1b[?1049h\x1b[2J',
+    ...labels.map((label, index) => (
+      `\x1b[${index + 1};1H\x1b[38;2;255;255;255;48;2;245;245;245m${label.padEnd(initialCols, ' ')}`
+    )),
+  ].join(''));
+  // Finish parsing at the old PTY size before simulating a cold reopen at a
+  // smaller surface. Otherwise resize could win the intentionally async write.
+  await model.snapshot();
+  model.resize(cols, rows);
+  const snapshot = await model.snapshot();
+
+  const restored = new Terminal({
+    cols: snapshot.cols,
+    rows: snapshot.rows,
+    allowProposedApi: true,
+  });
+  await writeTerminal(restored, buildTerminalSnapshotReplay(snapshot));
+  restored.resize(cols, rows);
+
+  assert.deepEqual(
+    Array.from({ length: rows }, (_, index) => (
+      restored.buffer.active.getLine(index)?.translateToString().trimEnd()
+    )),
+    labels.slice(-rows),
+  );
+  restored.dispose();
+  model.dispose();
+});
+
+test('alternate-screen snapshot does not discard columns hidden by a shrink', async () => {
+  const model = new TerminalHeadlessModel(24, 4);
+  model.write('\x1b[?1049h\x1b[1;24HX');
+  await model.snapshot();
+
+  model.resize(20, 4);
+  await model.snapshot();
+  model.resize(24, 4);
+  const expanded = await model.snapshot();
+
+  const restored = new Terminal({ cols: 24, rows: 4, allowProposedApi: true });
+  await writeTerminal(restored, buildTerminalSnapshotReplay(expanded));
+  assert.equal(restored.buffer.active.getLine(0)?.translateToString(), ' '.repeat(23) + 'X');
+  restored.dispose();
+  model.dispose();
+});
+
 test('snapshot carries a PTY escape sequence that ended between chunks', async () => {
   const model = new TerminalHeadlessModel(20, 4);
   model.write('\x1b[38;2;120');

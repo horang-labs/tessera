@@ -106,6 +106,57 @@ export class TerminalHeadlessModel {
       .join('');
   }
 
+  /**
+   * SerializeAddon walks `IBufferLine.length` for every non-final row. After
+   * an alternate-screen terminal shrinks, xterm deliberately retains removed
+   * columns in its backing lines even though `terminal.cols` already reports
+   * the smaller PTY width. OpenTUI paints those hidden columns, so the emitted
+   * ANSI can still contain (for example) 166 cells per row while the snapshot
+   * claims 134. Replaying that stream at 134 columns wraps every row and
+   * scrolls the beginning of the frame away.
+   *
+   * Present capped, non-mutating line views only while SerializeAddon runs.
+   * Keeping the backing lines intact matches xterm's resize semantics: hidden
+   * cells can become visible again if the same surface later grows.
+   */
+  private serializeAtCurrentAlternateWidth(
+    savedCursor: ReturnType<typeof readSavedCursorRegister>,
+  ): string {
+    const alternate = this.terminal.buffer.alternate;
+    const originalGetLine = alternate.getLine.bind(alternate);
+    const ownGetLineDescriptor = Object.getOwnPropertyDescriptor(alternate, 'getLine');
+
+    Object.defineProperty(alternate, 'getLine', {
+      configurable: true,
+      value: (index: number) => {
+        const line = originalGetLine(index);
+        if (!line || line.length <= this.terminal.cols) return line;
+        return Object.create(line, {
+          length: {
+            configurable: true,
+            enumerable: true,
+            value: this.terminal.cols,
+          },
+        });
+      },
+    });
+
+    try {
+      return serializeWithAbsoluteCursor(
+        this.serializer,
+        this.terminal,
+        { scrollback: DEFAULT_SCROLLBACK_ROWS },
+        savedCursor,
+      );
+    } finally {
+      if (ownGetLineDescriptor) {
+        Object.defineProperty(alternate, 'getLine', ownGetLineDescriptor);
+      } else {
+        Reflect.deleteProperty(alternate, 'getLine');
+      }
+    }
+  }
+
   write(data: string): void {
     if (this.disposed || data.length === 0) return;
 
@@ -149,12 +200,16 @@ export class TerminalHeadlessModel {
     }
 
     const alternateScreen = this.terminal.buffer.active.type === 'alternate';
-    const combinedData = serializeWithAbsoluteCursor(
-      this.serializer,
-      this.terminal,
-      { scrollback: DEFAULT_SCROLLBACK_ROWS },
-      readSavedCursorRegister(this.terminal),
-    ) + this.serializeSnapshotOnlyDecModes();
+    const savedCursor = readSavedCursorRegister(this.terminal);
+    const serialized = alternateScreen
+      ? this.serializeAtCurrentAlternateWidth(savedCursor)
+      : serializeWithAbsoluteCursor(
+        this.serializer,
+        this.terminal,
+        { scrollback: DEFAULT_SCROLLBACK_ROWS },
+        savedCursor,
+      );
+    const combinedData = serialized + this.serializeSnapshotOnlyDecModes();
     const split = splitTerminalSnapshotAnsi(combinedData, alternateScreen);
     return {
       data: split.data,
