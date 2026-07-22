@@ -94,6 +94,8 @@ export type ClientMessage =
       terminalId: string;
       surfaceId: string;
       previewOwnerToken?: string;
+      /** Read-only attach (kanban peek): never claims the viewport or resizes the PTY. */
+      viewer?: boolean;
       cwd?: string | null;
       sessionId?: string | null;
       shellKind?: TerminalShellKind;

@@ -378,6 +378,7 @@ export class WebSocketClient {
     prefillInput?: string;
     launch?: { providerId: string; sessionId: string };
     previewOwnerToken?: string;
+    viewer?: boolean;
   }): boolean {
     // A deliberate restart supersedes a close queued during a disconnect.
     this.pendingTerminalCloses.delete(args.terminalId);
