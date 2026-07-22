@@ -47,6 +47,11 @@ import {
   TerminalBackgroundSgrDetector,
   resetAndRefreshTerminalRenderers,
 } from './terminal-render-recovery';
+import { forceRepaintThroughRenderPause } from './terminal-render-pause-release';
+import {
+  writeForegroundTerminalChunk,
+  discardForegroundRenderSettle,
+} from './terminal-foreground-render-settle';
 import {
   attachTerminalMouseWheelMultiplier,
   isTerminalTuiOwnedWheelEvent,
@@ -89,6 +94,7 @@ type XtermLike = TerminalScrollTarget & {
   paste(data: string): void;
   write(data: string, callback?: () => void): void;
   reset(): void;
+  resize(cols: number, rows: number): void;
   refresh(start: number, end: number): void;
   onData(callback: (data: string) => void): { dispose(): void };
   onScroll(callback: (viewportY: number) => void): { dispose(): void };
@@ -101,9 +107,90 @@ type FitAddonLike = {
   dispose?(): void;
 };
 
+type WebglAddonLike = {
+  clearTextureAtlas(): void;
+  dispose(): void;
+  onContextLoss(listener: () => void): void;
+};
+
+// While Chromium refuses WebGL context creation (GPU process crashed, or WebGL
+// blocked after repeated resets), every attach attempt burns a canvas and a
+// failed getContext. Latch the first failure and skip attempts until the next
+// wake/reveal recovery boundary clears it.
+let webglAttachFailedSinceRecovery = false;
+
+/**
+ * xterm clears the drawing buffer on dispose but Windows/ANGLE can keep the
+ * driver context alive, so rapid surface churn runs into Chromium's active
+ * WebGL context budget. Release the context and collapse the canvas so the
+ * slot frees immediately. All access is typeof-guarded: an xterm upgrade
+ * degrades this to a no-op.
+ */
+function releaseXtermWebglContext(addon: unknown): void {
+  try {
+    const renderer = (
+      addon as {
+        _renderer?: {
+          _gl?: { getExtension(name: string): { loseContext(): void } | null };
+          _canvas?: { width: number; height: number };
+        };
+      } | null
+    )?._renderer;
+    renderer?._gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    if (renderer?._canvas) {
+      renderer._canvas.width = 0;
+      renderer._canvas.height = 0;
+    }
+  } catch {
+    // Best-effort; the context may already be lost.
+  }
+}
+
 const surfaces = new Map<string, TerminalSurface>();
 function recoverAllTerminalRenderers(): void {
   resetAndRefreshTerminalRenderers(surfaces.values());
+}
+
+// Wake recovery. Windows reclaims GPU contexts across sleep/display-off and
+// window occlusion far more aggressively than macOS, so a resume must retry
+// WebGL and repaint. Strength is tiered like orca's: plain refocus (alt-tab)
+// is frequent and often lands mid-stream — wiping the shared glyph atlas then
+// provokes xterm's page-merge race — so focus keeps the warm atlas and only a
+// genuine visibility resume clears it.
+let wakeRecoveryInstalled = false;
+let wakeRecoveryFrameId: number | null = null;
+let wakeRecoveryClearAtlases = false;
+
+function recoverTerminalsAfterWake(clearAtlases: boolean): void {
+  if (wakeRecoveryFrameId !== null) {
+    // A pending settled pass may only upgrade in strength — a plain focus
+    // landing after a genuine wake must not skip its atlas clear.
+    wakeRecoveryClearAtlases ||= clearAtlases;
+    return;
+  }
+  wakeRecoveryClearAtlases = clearAtlases;
+  for (const surface of surfaces.values()) surface.resumeRenderingAfterWake();
+  // The synchronous pass can run before revealed surfaces are laid out, where
+  // the WebGL renderer drops redraw requests. Follow with a settled frame.
+  wakeRecoveryFrameId = requestAnimationFrame(() => {
+    wakeRecoveryFrameId = null;
+    const clearAtlasesOnSettle = wakeRecoveryClearAtlases;
+    wakeRecoveryClearAtlases = false;
+    if (clearAtlasesOnSettle) {
+      recoverAllTerminalRenderers();
+      return;
+    }
+    for (const surface of surfaces.values()) surface.refreshTerminalViewport();
+  });
+}
+
+function installTerminalWakeRecovery(): void {
+  if (wakeRecoveryInstalled || typeof window === 'undefined') return;
+  wakeRecoveryInstalled = true;
+  window.addEventListener('focus', () => recoverTerminalsAfterWake(false));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') recoverTerminalsAfterWake(true);
+  });
 }
 const sharedTerminalRenderRecovery = new QuietTerminalRenderRecovery(
   recoverAllTerminalRenderers,
@@ -177,7 +264,9 @@ export class TerminalSurface {
   private fontSize: number;
   private terminal: XtermLike | null = null;
   private fitAddon: FitAddonLike | null = null;
-  private webglAddon: { clearTextureAtlas(): void; dispose(): void } | null = null;
+  private webglAddon: WebglAddonLike | null = null;
+  private webglCtor: (new () => WebglAddonLike) | null = null;
+  private webglDisabledAfterContextLoss = false;
   private readonly backgroundSgrDetector = new TerminalBackgroundSgrDetector();
   private inputDisposable: { dispose(): void } | null = null;
   private scrollDisposable: { dispose(): void } | null = null;
@@ -308,9 +397,23 @@ export class TerminalSurface {
     });
     this.resizeObserver.observe(host);
 
+    // Two frames, not one: the frame right after a reveal can still be laying
+    // out the host, and the WebGL renderer silently drops redraw requests until
+    // the surface is attached and measured.
     requestAnimationFrame(() => {
-      if (this.mountedHost !== host) return;
-      this.requestStableFit(false);
+      requestAnimationFrame(() => {
+        if (this.mountedHost !== host) return;
+        this.requestStableFit(false);
+        this.retryWebglAttachOnReveal();
+        // While parked, output kept updating the renderer's per-cell model
+        // without ever presenting a frame, so on reveal the model diff reports
+        // those cells as unchanged and a plain repaint skips them. Rebuild from
+        // the buffer. This goes through the shared recovery rather than this
+        // surface's atlas alone: terminals with matching font settings share one
+        // glyph atlas, and clearing it for a single surface would invalidate the
+        // others' cached glyph coordinates without rebuilding their models.
+        recoverAllTerminalRenderers();
+      });
     });
   }
 
@@ -413,7 +516,90 @@ export class TerminalSurface {
 
   refreshTerminalViewport(): void {
     if (!this.terminal) return;
+    // A paused RenderService swallows refresh() — it latches the request instead
+    // of servicing it — so drive the render directly whenever that gate is up.
+    if (forceRepaintThroughRenderPause(this.terminal)) return;
     this.terminal.refresh(0, Math.max(0, this.terminal.rows - 1));
+  }
+
+  private attachWebglRenderer(): void {
+    if (!this.terminal || this.webglAddon || !this.webglCtor) return;
+    if (this.webglDisabledAfterContextLoss || webglAttachFailedSinceRecovery) return;
+    try {
+      const webglAddon = new this.webglCtor();
+      webglAddon.onContextLoss(() => {
+        try {
+          webglAddon.dispose();
+        } catch {
+          // already torn down
+        }
+        if (this.webglAddon === webglAddon) this.webglAddon = null;
+        // Chromium reclaims terminal contexts under pressure; recreating
+        // immediately can loop the loss and leave xterm blank. Stay on the DOM
+        // renderer until the next wake/reveal boundary retries the attach.
+        this.webglDisabledAfterContextLoss = true;
+
+        // DOM and WebGL renderers can calculate slightly different cell
+        // metrics. Wait until the DOM renderer owns the screen, then refit
+        // the stable grid so panel bounds and PTY dimensions stay aligned.
+        requestAnimationFrame(() => {
+          if (this.disposed || !this.terminal) return;
+          this.fitAndResize(false, true);
+          try {
+            this.terminal.refresh(0, Math.max(0, this.terminal.rows - 1));
+          } catch {
+            // The renderer may be torn down during the recovery frame.
+          }
+        });
+      });
+      this.terminal.loadAddon(webglAddon);
+      this.webglAddon = webglAddon;
+      // A newly attached WebGL canvas starts empty; repaint immediately so the
+      // surface does not look frozen until the next output arrives.
+      try {
+        this.terminal.refresh(0, Math.max(0, this.terminal.rows - 1));
+      } catch {
+        // The surface may be mid-teardown.
+      }
+    } catch (error) {
+      webglAttachFailedSinceRecovery = true;
+      console.warn('[terminal] WebGL unavailable — using DOM renderer', error);
+    }
+  }
+
+  /**
+   * Wake/reveal recovery boundary: clear the context-loss and attach-failure
+   * latches, retry the WebGL attach, and re-align the grid. Called for every
+   * surface on window focus and visibility resume — the only points where
+   * retrying WebGL is safe without looping a context-loss storm.
+   */
+  resumeRenderingAfterWake(): void {
+    if (this.disposed) return;
+    this.webglDisabledAfterContextLoss = false;
+    webglAttachFailedSinceRecovery = false;
+    if (!this.isMountedHostVisible()) return;
+    this.attachWebglRenderer();
+    this.requestStableFit(false);
+  }
+
+  /**
+   * Reveal is a WebGL recovery boundary, matching orca's reveal repaint chain
+   * (reattachWebglIfNeeded runs before the atlas reset). A context lost while
+   * the surface sat hidden — Windows reclaims hidden canvases first — or a
+   * transient attach failure otherwise strands the surface on the DOM
+   * renderer until the next window-level focus cycle: the two renderers
+   * compute subtly different cell metrics, so a revealed pane draws CJK
+   * slightly misaligned and IME composition anchors against the wrong grid.
+   * Users' reliable cure — unfocus the app, refocus, watch the pane visibly
+   * realign — is the wake path running this exact attach. Do it on reveal so
+   * the pane always comes back on the configured renderer.
+   */
+  private retryWebglAttachOnReveal(): void {
+    if (this.disposed || !this.webglCtor || this.webglAddon) return;
+    this.webglDisabledAfterContextLoss = false;
+    webglAttachFailedSinceRecovery = false;
+    this.attachWebglRenderer();
+    this.requestStableFit(false);
   }
 
   close(): void {
@@ -452,7 +638,9 @@ export class TerminalSurface {
     this.cancelColdPark();
     if (!this.terminal && this.mountedHost) void this.mount(this.mountedHost);
     requestAnimationFrame(() => {
-      if (!this.disposed && this.isMountedHostVisible()) recoverAllTerminalRenderers();
+      if (this.disposed || !this.isMountedHostVisible()) return;
+      this.retryWebglAttachOnReveal();
+      recoverAllTerminalRenderers();
     });
   }
 
@@ -525,6 +713,8 @@ export class TerminalSurface {
       this.root.removeEventListener('compositionend', this.compositionEndListener, true);
     }
     this.compositionEndListener = null;
+    if (this.terminal) discardForegroundRenderSettle(this.terminal);
+    if (this.webglAddon) releaseXtermWebglContext(this.webglAddon);
     try {
       this.webglAddon?.dispose();
     } catch {
@@ -580,6 +770,12 @@ export class TerminalSurface {
       getParkingLot().appendChild(root);
 
       const { webLinkHandler, oscLinkHandler } = createTerminalExternalLinkHandlers();
+      // No windowsPty hint: orca ships one for native Windows shells but
+      // explicitly excludes WSL sessions even though its daemon also spawns
+      // wsl.exe through ConPTY, and tessera's terminals are WSL sessions.
+      // Applying it here regressed Korean IME input (composition drawn at
+      // stale cursor positions) — if native cmd/powershell terminals need the
+      // hint later, gate it on the shell kind from terminal_created.
       const terminal = new Terminal({
         cursorBlink: true,
         convertEol: true,
@@ -606,34 +802,23 @@ export class TerminalSurface {
       terminal.unicode.activeVersion = '11';
       attachTerminalMouseWheelMultiplier(terminal);
 
+      // Renderer choice. WebGL everywhere by default — the postinstall patch
+      // (scripts/patch-xterm-webgl-atlas.mjs) fixes the addon's atlas-wipe
+      // no-op and propagates wipes to every renderer sharing the atlas, which
+      // were what garbled Windows/ANGLE. 'dom' stays available as an escape
+      // hatch and as a diagnostic (a report that survives on the DOM renderer
+      // is buffer corruption, not a renderer artifact):
+      //   localStorage.setItem('tessera.terminal.renderer', 'dom')
+      let rendererOverride: string | null = null;
       try {
-        const webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => {
-          try {
-            webglAddon.dispose();
-          } catch {
-            // already torn down
-          }
-          if (this.webglAddon === webglAddon) this.webglAddon = null;
-
-          // DOM and WebGL renderers can calculate slightly different cell
-          // metrics. Wait until the DOM renderer owns the screen, then refit
-          // the stable grid so panel bounds and PTY dimensions stay aligned.
-          requestAnimationFrame(() => {
-            if (this.disposed || this.terminal !== terminal) return;
-            this.fitAndResize(false, true);
-            try {
-              terminal.refresh(0, Math.max(0, terminal.rows - 1));
-            } catch {
-              // The renderer may be torn down during the recovery frame.
-            }
-          });
-        });
-        terminal.loadAddon(webglAddon);
-        this.webglAddon = webglAddon;
-      } catch (error) {
-        console.warn('[terminal] WebGL unavailable — using DOM renderer', error);
+        rendererOverride = window.localStorage.getItem('tessera.terminal.renderer');
+      } catch {
+        // storage unavailable (private mode) — keep the default renderer
       }
+
+      this.webglCtor =
+        rendererOverride === 'dom' ? null : (WebglAddon as new () => WebglAddonLike);
+      this.attachWebglRenderer();
 
       this.root = root;
       this.terminal = terminal;
@@ -868,16 +1053,46 @@ export class TerminalSurface {
       this.lastSequence = message.seq;
       this.replaying = true;
       const restorePoint = this.scrollController?.captureRestorePoint();
-      const shouldRecoverRenderer = this.backgroundSgrDetector.consume(message.data);
+      // Recovery after a replay is unconditional (see onParsed below), but the
+      // detector still consumes the chunk to keep its cross-chunk scan state.
+      this.backgroundSgrDetector.consume(message.data);
       this.terminal?.reset();
-      this.terminal?.write(message.data, () => {
-        if (restorePoint) this.scrollController?.restore(restorePoint);
-        this.scheduleScrollRebuildSettle();
-        if (this.serverGeneration === message.generation) {
-          this.replaying = false;
-        }
-        this.scheduleSurfaceScrollStateSync();
-        if (shouldRecoverRenderer) this.recoverRendererPresentation();
+      // The snapshot serializes wrapped rows with cursor-motion sequences that
+      // only reproduce the original line layout at the grid width they were
+      // serialized on. Replaying at a different width plants misplaced
+      // fragments permanently into the scrollback, so match the snapshot's
+      // grid first and refit to the real pane size after the replay.
+      const snapshotResized =
+        this.terminal
+        && Number.isInteger(message.cols) && Number.isInteger(message.rows)
+        && message.cols >= 2 && message.rows >= 1
+        && (this.terminal.cols !== message.cols || this.terminal.rows !== message.rows);
+      if (snapshotResized) this.terminal?.resize(message.cols, message.rows);
+      if (!this.terminal) return;
+      writeForegroundTerminalChunk(this.terminal, message.data, {
+        forceViewportRefresh: true,
+        // A snapshot replay rewrites the whole grid; always follow up on the
+        // settled frame in case the immediate repaint raced layout.
+        followupViewportRefresh: true,
+        shouldRefreshViewportSynchronously: () => !this.webglAddon,
+        onParsed: () => {
+          if (restorePoint) this.scrollController?.restore(restorePoint);
+          this.scheduleScrollRebuildSettle();
+          if (this.serverGeneration === message.generation) {
+            this.replaying = false;
+          }
+          this.scheduleSurfaceScrollStateSync();
+          // Unconditional, not SGR-gated: a replay rasterizes CJK glyphs into
+          // whatever renderer state preceded the reveal, and that state stays
+          // subtly wrong (whole-pane Korean layout visibly shifts once a later
+          // atlas recovery re-rasterizes it, which is also the moment IME
+          // composition stops garbling). An idle session never gets that
+          // accidental recovery — schedule it deterministically after every
+          // replay instead of waiting for the next output or focus cycle.
+          this.requestStableFit(false);
+          this.retryWebglAttachOnReveal();
+          this.recoverRendererPresentation();
+        },
       });
       return;
     }
@@ -887,11 +1102,16 @@ export class TerminalSurface {
       this.lastSequence = message.seq;
       const restorePoint = this.scrollController?.captureRestorePoint();
       const shouldRecoverRenderer = this.backgroundSgrDetector.consume(message.data);
-      this.terminal?.write(message.data, () => {
-        if (restorePoint) this.scrollController?.restore(restorePoint);
-        this.scheduleScrollRebuildSettle();
-        this.scheduleSurfaceScrollStateSync();
-        if (shouldRecoverRenderer) this.recoverRendererPresentation();
+      if (!this.terminal) return;
+      writeForegroundTerminalChunk(this.terminal, message.data, {
+        forceViewportRefresh: true,
+        shouldRefreshViewportSynchronously: () => !this.webglAddon,
+        onParsed: () => {
+          if (restorePoint) this.scrollController?.restore(restorePoint);
+          this.scheduleScrollRebuildSettle();
+          this.scheduleSurfaceScrollStateSync();
+          if (shouldRecoverRenderer) this.recoverRendererPresentation();
+        },
       });
       return;
     }
@@ -1093,6 +1313,19 @@ export class TerminalSurface {
       // A zero-sized panel can briefly make FitAddon unable to calculate cells.
     } finally {
       if (restorePoint) this.scrollController?.restoreAfterLayout(restorePoint);
+      // Reflow plus the ConPTY resize repaint can strand the viewport in a
+      // blank region: the reflow scroll bumps the controller revision, which
+      // silently invalidates the queued restore. When the user was following
+      // the bottom before the resize, the bottom is an invariant, not a
+      // position — re-assert it once layout settles.
+      if (restorePoint?.intent === 'follow-output') {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (this.disposed || !this.scrollController) return;
+            this.scrollController.scrollToBottom();
+          });
+        });
+      }
       this.scheduleSurfaceScrollStateSync();
       // WebGL can finish a rapid resize with the correct xterm buffer but an
       // empty presentation model. Force the same full repaint and quiet atlas
@@ -1109,8 +1342,12 @@ export class TerminalSurface {
   }
 
   private getDimensions(): { cols: number; rows: number } | undefined {
-    return this.fitAddon?.proposeDimensions()
-      ?? (this.terminal ? { cols: this.terminal.cols, rows: this.terminal.rows } : undefined);
+    const proposed = this.fitAddon?.proposeDimensions();
+    // FitAddon clamps to 2x1 when measuring the 1px parking lot; sending that
+    // to the server would create the PTY and its headless model at a 2-column
+    // grid and permanently wrap early output into 1-2 character fragments.
+    if (proposed && proposed.cols > 2 && proposed.rows > 1) return proposed;
+    return this.terminal ? { cols: this.terminal.cols, rows: this.terminal.rows } : undefined;
   }
 
   private getProposedDimensions(): { cols: number; rows: number } | undefined {
@@ -1215,6 +1452,7 @@ export class TerminalSurface {
 }
 
 export function getTerminalSurface(options: TerminalSurfaceOptions): TerminalSurface {
+  installTerminalWakeRecovery();
   const existing = surfaces.get(options.registryKey);
   if (existing) return existing;
   const surface = new TerminalSurface(options);
