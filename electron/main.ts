@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
-import { getTerminalClipboardKind, readTerminalClipboard } from './terminal-clipboard';
+import { readTerminalClipboard } from './terminal-clipboard';
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
 type TitlebarTheme = 'light' | 'dark';
@@ -1016,9 +1016,6 @@ function broadcastPopoutState(): void {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
-ipcMain.on('get-terminal-clipboard-kind', (event) => {
-  event.returnValue = getTerminalClipboardKind(clipboard);
-});
 ipcMain.handle('read-terminal-clipboard', () => readTerminalClipboard(clipboard));
 ipcMain.on('ui-storage-get-item', (event, key: unknown) => {
   event.returnValue = getUiStorageItem(key);

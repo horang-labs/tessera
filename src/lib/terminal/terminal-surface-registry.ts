@@ -281,6 +281,8 @@ export class TerminalSurface {
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
+  private suppressNextNativePaste = false;
+  private pasteSuppressionTimerId: number | null = null;
   private clipboardPasteQueue: Promise<void> = Promise.resolve();
   private root: HTMLDivElement | null = null;
   private intendedHost: HTMLElement | null = null;
@@ -721,6 +723,11 @@ export class TerminalSurface {
       this.root.removeEventListener('compositionend', this.compositionEndListener, true);
     }
     this.compositionEndListener = null;
+    this.suppressNextNativePaste = false;
+    if (this.pasteSuppressionTimerId !== null) {
+      window.clearTimeout(this.pasteSuppressionTimerId);
+      this.pasteSuppressionTimerId = null;
+    }
     if (this.terminal) discardForegroundRenderSettle(this.terminal);
     if (this.webglAddon) releaseXtermWebglContext(this.webglAddon);
     try {
@@ -860,13 +867,14 @@ export class TerminalSurface {
         }
 
         if (
-          typeof electronClipboard?.getTerminalClipboardKind === 'function'
-          && typeof electronClipboard.readTerminalClipboard === 'function'
+          typeof electronClipboard?.readTerminalClipboard === 'function'
           && isTerminalPasteShortcut(event, inputContext.platform)
-          && electronClipboard.getTerminalClipboardKind() === 'image'
         ) {
+          // xterm encodes bare Ctrl+V as \x16. Handle an explicit desktop paste
+          // before xterm so terminal TUIs receive clipboard text, not a control key.
           event.preventDefault();
           event.stopPropagation();
+          this.armNativePasteSuppression();
           this.notifyTerminalInput();
           this.enqueueClipboardPaste(() => (
             this.pasteDesktopClipboard(terminal, electronClipboard as ElectronTerminalClipboardApi)
@@ -907,6 +915,7 @@ export class TerminalSurface {
       });
       this.syncScrollStateFromController();
       this.pasteListener = (event) => {
+        if (this.consumeNativePasteSuppression(event)) return;
         if (event.clipboardData?.getData('text/plain')) {
           this.armTerminalInputOrigin();
           return;
@@ -968,6 +977,31 @@ export class TerminalSurface {
     this.onInput?.();
   }
 
+  private armNativePasteSuppression(): void {
+    // Chromium may dispatch a paste event after the keydown. The Electron IPC
+    // path already owns this gesture, so suppress that one follow-up event.
+    this.suppressNextNativePaste = true;
+    if (this.pasteSuppressionTimerId !== null) {
+      window.clearTimeout(this.pasteSuppressionTimerId);
+    }
+    this.pasteSuppressionTimerId = window.setTimeout(() => {
+      this.pasteSuppressionTimerId = null;
+      this.suppressNextNativePaste = false;
+    }, 0);
+  }
+
+  private consumeNativePasteSuppression(event: ClipboardEvent): boolean {
+    if (!this.suppressNextNativePaste) return false;
+    this.suppressNextNativePaste = false;
+    if (this.pasteSuppressionTimerId !== null) {
+      window.clearTimeout(this.pasteSuppressionTimerId);
+      this.pasteSuppressionTimerId = null;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
   private armTerminalInputOrigin(): void {
     this.terminalInputOriginArmed = true;
     const epoch = ++this.terminalInputOriginEpoch;
@@ -980,7 +1014,7 @@ export class TerminalSurface {
 
   private reportClipboardPasteError(error: unknown): void {
     if (this.disposed) return;
-    const message = error instanceof Error ? error.message : 'Failed to paste clipboard image.';
+    const message = error instanceof Error ? error.message : 'Failed to paste clipboard.';
     console.warn('[terminal] Clipboard paste failed', error);
     useNotificationStore.getState().showToast(message, 'error');
   }

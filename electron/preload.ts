@@ -1,15 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type {
-  TerminalClipboardKind,
-  TerminalClipboardPayload,
-} from '../src/lib/terminal/terminal-clipboard-paste';
+import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
-  getTerminalClipboardKind: () =>
-    ipcRenderer.sendSync('get-terminal-clipboard-kind') as TerminalClipboardKind,
   readTerminalClipboard: () =>
     ipcRenderer.invoke('read-terminal-clipboard') as Promise<TerminalClipboardPayload>,
   uiStorageGetItem: (key: string) => ipcRenderer.sendSync('ui-storage-get-item', key) as string | null,

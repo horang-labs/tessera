@@ -1,7 +1,4 @@
-import type {
-  TerminalClipboardKind,
-  TerminalClipboardPayload,
-} from '../src/lib/terminal/terminal-clipboard-paste';
+import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
 
 const MAX_CLIPBOARD_IMAGE_DIMENSION = 16_384;
 const MAX_CLIPBOARD_IMAGE_PIXELS = 40_000_000;
@@ -16,11 +13,6 @@ interface ClipboardImageLike {
 interface ClipboardLike {
   readText(): string;
   readImage(): ClipboardImageLike;
-}
-
-export function getTerminalClipboardKind(clipboard: ClipboardLike): TerminalClipboardKind {
-  if (clipboard.readText().length > 0) return 'text';
-  return clipboard.readImage().isEmpty() ? 'empty' : 'image';
 }
 
 /** Read clipboard content for an explicit terminal paste gesture. */

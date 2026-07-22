@@ -36,11 +36,13 @@ test('terminal paste shortcut follows the client platform without intercepting c
       isTerminalPasteShortcut(keyEvent({ key: 'v', metaKey: true }), 'mac'),
       isTerminalPasteShortcut(keyEvent({ key: 'V', ctrlKey: true }), 'linux'),
       isTerminalPasteShortcut(keyEvent({ key: 'v', ctrlKey: true }), 'windows'),
+      isTerminalPasteShortcut(keyEvent({ key: 'v', ctrlKey: true, shiftKey: true }), 'linux'),
+      isTerminalPasteShortcut(keyEvent({ key: 'Insert', shiftKey: true }), 'windows'),
       isTerminalPasteShortcut(keyEvent({ key: 'v', ctrlKey: true }), 'mac'),
       isTerminalPasteShortcut(keyEvent({ key: 'v', metaKey: true, isComposing: true }), 'mac'),
       isTerminalPasteShortcut(keyEvent({ type: 'keyup', key: 'v', metaKey: true }), 'mac'),
     ],
-    [true, true, true, false, false, false],
+    [true, true, true, true, true, false, false, false],
   );
 });
 

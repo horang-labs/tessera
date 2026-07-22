@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  getTerminalClipboardKind,
-  readTerminalClipboard,
-} from '../electron/terminal-clipboard';
+import { readTerminalClipboard } from '../electron/terminal-clipboard';
 
 function clipboardStub(options: {
   text?: string;
@@ -29,17 +26,6 @@ test('desktop terminal clipboard gives text precedence over an available image',
   assert.deepEqual(
     readTerminalClipboard(clipboardStub({ text: 'copied text' })),
     { kind: 'text', text: 'copied text' },
-  );
-});
-
-test('desktop terminal clipboard kind lets ordinary text stay on the xterm paste path', () => {
-  assert.deepEqual(
-    [
-      getTerminalClipboardKind(clipboardStub({ text: 'copied text' })),
-      getTerminalClipboardKind(clipboardStub()),
-      getTerminalClipboardKind(clipboardStub({ emptyImage: true })),
-    ],
-    ['text', 'image', 'empty'],
   );
 });
 

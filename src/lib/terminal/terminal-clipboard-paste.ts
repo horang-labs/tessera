@@ -4,7 +4,6 @@ export interface TerminalClipboardImage {
 }
 
 export interface ElectronTerminalClipboardApi {
-  getTerminalClipboardKind(): TerminalClipboardKind;
   readTerminalClipboard(): Promise<TerminalClipboardPayload>;
 }
 
@@ -12,8 +11,6 @@ export type TerminalClipboardPayload =
   | { kind: 'text'; text: string }
   | { kind: 'image'; image: TerminalClipboardImage }
   | { kind: 'empty' };
-
-export type TerminalClipboardKind = TerminalClipboardPayload['kind'];
 
 export type TerminalClipboardPasteResult = 'text' | 'image' | 'empty';
 
