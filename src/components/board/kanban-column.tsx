@@ -10,6 +10,7 @@ import { getKanbanMultiSessionDragIds } from '@/lib/dnd/panel-session-drag';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 import { useBoardStore } from '@/stores/board-store';
 import { useSelectionStore } from '@/stores/selection-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_DND_MIME, TASK_ENTITY_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
@@ -44,6 +45,12 @@ function KanbanQuickCreateButton({
   const { t } = useI18n();
   const addMenuRef = useRef<HTMLDivElement>(null);
   const isChatColumn = column === 'chat';
+  // Peek 모드에서는 새로 만든 세션도 즉시 Peek로 열어준다 — 그러지 않으면
+  // 카드만 생기고 사용자는 방금 만든 세션을 다시 클릭해야 한다.
+  const handleSessionCreated = useCallback((sessionId: string) => {
+    if (useSettingsStore.getState().settings.kanbanSessionOpenMode !== 'peek') return;
+    useBoardStore.getState().openSessionPeek(sessionId);
+  }, []);
 
   return (
     <div
@@ -83,6 +90,7 @@ function KanbanQuickCreateButton({
           allowCollectionSelection={collection === null}
           scopeId={`kanban-${column}`}
           anchorRef={addMenuRef}
+          onSessionCreated={handleSessionCreated}
           onClose={onClose}
         />
       )}
