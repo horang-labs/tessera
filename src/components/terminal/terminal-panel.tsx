@@ -106,6 +106,7 @@ export function TerminalPanel({
     sessionId: getSessionSelectionId(terminalSessionId),
     launch,
     previewOwned: runtimeOwnership === 'session-preview',
+    peekViewer: runtimeOwnership === 'session-peek',
   }), [
     isDark,
     launch,

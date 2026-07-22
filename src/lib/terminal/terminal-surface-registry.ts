@@ -78,6 +78,8 @@ export interface TerminalSurfaceOptions {
   sessionId?: string | null;
   launch?: { providerId: string; sessionId: string };
   previewOwned?: boolean;
+  /** Read-only peek surface: never claims the viewport or fits to its host. */
+  peekViewer?: boolean;
 }
 
 type XtermLike = TerminalScrollTarget & {
@@ -293,6 +295,7 @@ export class TerminalSurface {
   private serverGeneration: number | null = null;
   private lastSequence = 0;
   private replaying = false;
+  private previewViewer = false;
   private onInput: (() => void) | null = null;
   private terminalInputOriginArmed = false;
   private terminalInputOriginEpoch = 0;
@@ -466,6 +469,7 @@ export class TerminalSurface {
       prefillInput: pendingLaunch?.prefillInput,
       launch: pendingLaunch?.launch ?? this.options.launch,
       previewOwnerToken: this.options.previewOwned ? this.surfaceId : undefined,
+      viewer: this.options.peekViewer === true ? true : undefined,
     });
 
     if (!sent) {
@@ -1007,6 +1011,12 @@ export class TerminalSurface {
 
     if (message.type === 'terminal_started') {
       this.actualTerminalId = message.terminalId;
+      // A preview/peek surface attached to an already-running terminal is a
+      // read-only viewer: the server keeps the owner's grid, so local fits
+      // must not shrink this xterm to the peek panel or the view renders
+      // displaced against the PTY.
+      this.previewViewer = message.reattached
+        && (this.options.previewOwned === true || this.options.peekViewer === true);
       if (this.serverGeneration !== message.generation) {
         this.serverGeneration = message.generation;
         this.lastSequence = 0;
@@ -1298,6 +1308,10 @@ export class TerminalSurface {
   }
 
   private fitAndResize(claim: boolean, shouldFit = true): void {
+    // A preview viewer follows the owner's grid (set by the snapshot replay);
+    // fitting it to the peek panel would desync it from the PTY and the TUI
+    // would render displaced inside the preview.
+    if (this.previewViewer) return;
     if (!this.isMountedHostVisible() || !this.fitAddon || !this.terminal) return;
     let didFit = false;
     let restorePoint: TerminalScrollRestorePoint | null = null;
