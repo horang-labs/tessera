@@ -23,7 +23,7 @@ test('font scale presets provide visibly distinct 13px, 16px, 19px, and 22px roo
   assert.deepEqual(FONT_SCALE_OPTIONS, [0.8125, 1, 1.1875, 1.375]);
   assert.match(settingsDefaultsSource, expectedScales);
   assert.match(layoutSource, /JSON\.stringify\(FONT_SCALE_OPTIONS\)/);
-  assert.match(settingsDefaultsSource, /DEFAULT_FONT_SCALE = 0\.8125/);
+  assert.match(settingsDefaultsSource, /DEFAULT_FONT_SCALE = 1;/);
 });
 
 test('stored font scales migrate to the matching new semantic preset', () => {
