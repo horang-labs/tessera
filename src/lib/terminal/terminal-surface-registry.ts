@@ -208,6 +208,8 @@ const COLD_PARK_DELAY_MS = 30_000;
 const TERMINAL_RESIZE_SETTLE_DELAY_MS = 150;
 /** Upper bound for keystrokes queued while a snapshot replay parses. */
 const MAX_PENDING_REPLAY_INPUT_CHARS = 8_192;
+/** Force-release the replay input latch if no completion ever arrives. */
+const REPLAY_WATCHDOG_TIMEOUT_MS = 10_000;
 
 function getParkingLot(): HTMLElement {
   if (parkingLot?.isConnected) return parkingLot;
@@ -298,6 +300,7 @@ export class TerminalSurface {
   private lastSequence = 0;
   private replaying = false;
   private pendingReplayInput = '';
+  private replayWatchdogTimerId: number | null = null;
   private previewViewer = false;
   private onInput: (() => void) | null = null;
   private terminalInputOriginArmed = false;
@@ -507,6 +510,7 @@ export class TerminalSurface {
 
   /** Replay finished parsing: reopen the input path and flush queued keys. */
   private finishReplayAndFlushInput(): void {
+    this.clearReplayWatchdog();
     this.replaying = false;
     const pending = this.pendingReplayInput;
     this.pendingReplayInput = '';
@@ -516,8 +520,30 @@ export class TerminalSurface {
 
   /** Restart/exit paths: the queued keys no longer target a live view. */
   private discardReplayState(): void {
+    this.clearReplayWatchdog();
     this.replaying = false;
     this.pendingReplayInput = '';
+  }
+
+  /**
+   * Last line of defense for the replay latch: whatever race loses the
+   * completion callback (reconnect mid-parse, renderer teardown), the input
+   * path must never stay closed on a session that looks fully rendered.
+   */
+  private armReplayWatchdog(): void {
+    this.clearReplayWatchdog();
+    this.replayWatchdogTimerId = window.setTimeout(() => {
+      this.replayWatchdogTimerId = null;
+      if (!this.replaying || this.disposed) return;
+      console.warn('[terminal] replay latch watchdog released stuck input path');
+      this.finishReplayAndFlushInput();
+    }, REPLAY_WATCHDOG_TIMEOUT_MS);
+  }
+
+  private clearReplayWatchdog(): void {
+    if (this.replayWatchdogTimerId === null) return;
+    window.clearTimeout(this.replayWatchdogTimerId);
+    this.replayWatchdogTimerId = null;
   }
 
   /** Ask the server to close only a runtime created by this preview token. */
@@ -1091,6 +1117,7 @@ export class TerminalSurface {
       this.serverGeneration = message.generation;
       this.lastSequence = message.seq;
       this.replaying = true;
+      this.armReplayWatchdog();
       const restorePoint = this.scrollController?.captureRestorePoint();
       // Recovery after a replay is unconditional (see onParsed below), but the
       // detector still consumes the chunk to keep its cross-chunk scan state.
@@ -1119,12 +1146,19 @@ export class TerminalSurface {
         // settled frame in case the immediate repaint raced layout.
         followupViewportRefresh: true,
         shouldRefreshViewportSynchronously: () => !this.webglAddon,
+        // A synchronous write failure would otherwise leave the replay latch
+        // locked with no completion callback ever coming.
+        onWriteFailure: () => this.finishReplayAndFlushInput(),
         onParsed: () => {
           if (restorePoint) this.scrollController?.restore(restorePoint);
           this.scheduleScrollRebuildSettle();
-          if (this.serverGeneration === message.generation) {
-            this.finishReplayAndFlushInput();
-          }
+          // Unconditional: this used to be generation-gated, and a
+          // reconnect/generation bump racing the parse left the latch locked
+          // forever — a fully rendered session with permanently dead input.
+          // If a newer snapshot is mid-flight its handler has re-set the
+          // latch and its own completion clears it; briefly reopening input
+          // between the two just sends keys the PTY can already accept.
+          this.finishReplayAndFlushInput();
           this.scheduleSurfaceScrollStateSync();
           // Unconditional, not SGR-gated: a replay rasterizes CJK glyphs into
           // whatever renderer state preceded the reveal, and that state stays
