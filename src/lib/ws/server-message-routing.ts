@@ -27,6 +27,7 @@ import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
 import type { HookCommandStyle } from '../terminal/hook-command';
 import { getRuntimePlatform } from '../system/runtime-platform';
 import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
+import { createOpenCodeOverlayInWsl } from '../terminal/opencode-overlay-wsl';
 import { createTerminalProviderSessionObserver } from '../terminal/provider-session-observer';
 import { getTerminalProviderSessionForTesseraSession } from '../db/terminal-provider-sessions';
 import { observeTerminalProviderSession } from '../terminal/provider-session-observation';
@@ -603,33 +604,54 @@ export async function routeClientTransportMessage({
         providerId = 'opencode';
         const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
         const opencodeResumeId = dbSessions.extractOpenCodeTerminalSessionId(state);
-        try {
-          const overlay = createOpenCodeOverlay(terminalId);
-          launchObserverDisposer = overlay.dispose;
-          launchEnv = {
-            OPENCODE_CONFIG_DIR: overlay.configDir,
-            ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
+        const built = buildProviderTerminalLaunch({
+          providerId: 'opencode',
+          sessionId: structured.sessionId,
+          resume: !!opencodeResumeId,
+          opencodeResumeId,
+        });
+        launchSpec = {
+          program: built.command,
+          args: built.args,
+          prefillInput: message.prefillInput,
+        };
+
+        if (wslTerminalRuntime) {
+          // Windows의 세션별 설정 폴더를 /mnt/c로 넘기면 OpenCode가 수천 개의
+          // 플러그인 의존성 파일을 매번 DrvFS에 설치한다. WSL 안의 공용 폴더를
+          // 준비해 설치 결과를 재사용하고, 반환된 POSIX 경로는 /p 변환 없이 넘긴다.
+          launchEnvFactory = async () => {
+            try {
+              const overlayDir = await createOpenCodeOverlayInWsl();
+              return {
+                OPENCODE_CONFIG_DIR: overlayDir,
+                ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
+              };
+            } catch (error) {
+              logger.error({ error, terminalId }, 'Failed to prepare the OpenCode WSL overlay');
+              throw new Error(
+                `Failed to prepare the OpenCode WSL overlay: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
           };
-          const built = buildProviderTerminalLaunch({
-            providerId: 'opencode',
-            sessionId: structured.sessionId,
-            resume: !!opencodeResumeId,
-            opencodeResumeId,
-          });
-          launchSpec = {
-            program: built.command,
-            args: built.args,
-            prefillInput: message.prefillInput,
-          };
-        } catch (error) {
-          launchObserverDisposer?.();
-          sendToConnection(connectionId, {
-            type: 'terminal_error',
-            terminalId: message.terminalId,
-            surfaceId: message.surfaceId,
-            message: error instanceof Error ? error.message : 'Unable to prepare the OpenCode invocation.',
-          });
-          return;
+        } else {
+          try {
+            const overlay = createOpenCodeOverlay(terminalId);
+            launchObserverDisposer = overlay.dispose;
+            launchEnv = {
+              OPENCODE_CONFIG_DIR: overlay.configDir,
+              ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
+            };
+          } catch (error) {
+            launchObserverDisposer?.();
+            sendToConnection(connectionId, {
+              type: 'terminal_error',
+              terminalId: message.terminalId,
+              surfaceId: message.surfaceId,
+              message: error instanceof Error ? error.message : 'Unable to prepare the OpenCode invocation.',
+            });
+            return;
+          }
         }
       } else if (!terminalExists && message.launchIntent) {
         try {

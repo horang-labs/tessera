@@ -599,6 +599,31 @@ test('codex overlay placement and hook style follow the terminal runtime', () =>
   );
 });
 
+test('OpenCode WSL sessions prepare a guest-native shared overlay', () => {
+  const branchStart = routingSource.indexOf(
+    '} else if (!terminalExists && isStructuredOpenCode && structured) {',
+  );
+  const branchEnd = routingSource.indexOf(
+    '} else if (!terminalExists && message.launchIntent) {',
+    branchStart,
+  );
+  assert.ok(branchStart >= 0 && branchEnd > branchStart);
+  const openCodeBranch = routingSource.slice(branchStart, branchEnd);
+  const wslStart = openCodeBranch.indexOf('if (wslTerminalRuntime) {');
+  const nativeStart = openCodeBranch.indexOf('} else {', wslStart);
+  assert.ok(wslStart >= 0 && nativeStart > wslStart);
+
+  const wslBranch = openCodeBranch.slice(wslStart, nativeStart);
+  const nativeBranch = openCodeBranch.slice(nativeStart);
+  assert.match(wslBranch, /launchEnvFactory = async \(\) =>/);
+  assert.match(wslBranch, /await createOpenCodeOverlayInWsl\(\)/);
+  assert.match(wslBranch, /OPENCODE_CONFIG_DIR: overlayDir/);
+  assert.doesNotMatch(wslBranch, /createOpenCodeOverlay\(terminalId\)/);
+  assert.doesNotMatch(wslBranch, /launchObserverDisposer/);
+  assert.match(nativeBranch, /createOpenCodeOverlay\(terminalId\)/);
+  assert.match(nativeBranch, /launchObserverDisposer = overlay\.dispose/);
+});
+
 test('login-shell profiles cannot silently displace the injected CODEX_HOME overlay', () => {
   // profile이 CODEX_HOME을 export해도 -c 본문의 재단언이 오버레이로 되돌린다
   // (orca powershell-osc133-bootstrap의 ORCA_CODEX_HOME 복원 미러).
