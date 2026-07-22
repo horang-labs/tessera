@@ -696,7 +696,6 @@ export async function routeClientTransportMessage({
           connectionId,
           surfaceId: message.surfaceId,
           previewOwnerToken: message.previewOwnerToken,
-          viewer: message.viewer,
           terminalId,
           cwd: message.cwd,
           sessionId,

@@ -40,8 +40,6 @@ export interface TerminalCreateOptions {
   surfaceId: string;
   /** Token that may conditionally release a runtime created by a transient preview. */
   previewOwnerToken?: string;
-  /** Read-only attach (kanban peek): never claims the viewport or resizes the PTY. */
-  viewer?: boolean;
   cwd?: string | null;
   sessionId?: string | null;
   shellKind?: TerminalShellKind;

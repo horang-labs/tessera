@@ -808,7 +808,7 @@ export class TerminalManager {
     runtime: TerminalRuntime,
     options: Pick<
       TerminalCreateOptions,
-      'connectionId' | 'surfaceId' | 'cols' | 'rows' | 'appearance' | 'previewOwnerToken' | 'viewer'
+      'connectionId' | 'surfaceId' | 'cols' | 'rows' | 'appearance'
     >,
     reattached: boolean,
   ): Promise<void> {
@@ -824,16 +824,8 @@ export class TerminalManager {
     const snapshotSeq = runtime.sequence;
     const fallbackSnapshot = runtime.outputBuffer.join('');
     runtime.subscribers.set(subscriberKey, subscriber);
-    // A preview attach (kanban peek) must not steal the viewport or resize
-    // the live PTY: resizing reflows the real session to the peek panel's
-    // grid, and the pane the user returns to renders displaced until it
-    // reclaims. A preview only takes over when nothing else owns the
-    // viewport (it created the runtime, or every owner detached).
-    const previewAttach = Boolean(options.previewOwnerToken) || options.viewer === true;
-    if (!previewAttach || runtime.viewportOwner === null) {
-      runtime.viewportOwner = subscriberKey;
-    }
-    if (options.cols && options.rows && runtime.viewportOwner === subscriberKey) {
+    runtime.viewportOwner = subscriberKey;
+    if (options.cols && options.rows) {
       this.resizeRuntime(runtime, options.cols, options.rows);
     }
     this.sendStarted(runtime, subscriber, reattached);
