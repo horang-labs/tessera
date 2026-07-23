@@ -53,7 +53,7 @@ test('kanban stripes keep GUI unread priority while PTY processing takes precede
   );
   assert.match(
     kanbanCardSource,
-    /visibleTaskUnread = hasTerminalProcessingSession \? false : hasUnreadSession/,
+    /visibleTaskUnread = hasTerminalProcessingSession\s*\?\s*false\s*:\s*hasVisibleTaskUnread/,
   );
   assert.ok(chatUnreadBranch < chatProcessingBranch, 'chat card unread stripe must precede processing stripe');
   assert.ok(taskUnreadBranch < taskProcessingBranch, 'task card unread stripe must precede processing stripe');

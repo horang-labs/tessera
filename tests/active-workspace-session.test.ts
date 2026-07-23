@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveActiveWorkspaceSessionId } from '../src/lib/session/active-workspace-session';
+import {
+  resolveActiveWorkspaceSessionId,
+  resolveVisibleWorkspaceSessionId,
+} from '../src/lib/session/active-workspace-session';
 import {
   buildWorkspaceExplorerSessionId,
   buildWorkspaceFileSessionId,
@@ -51,5 +54,38 @@ test('active workspace session ignores non-workspace special sessions', () => {
       activeSessionId: null,
     }),
     null,
+  );
+});
+
+test('full-board Peek only treats the open Peek session as visible', () => {
+  assert.equal(
+    resolveVisibleWorkspaceSessionId({
+      activeSessionId: 'hidden-tab-session',
+      isKanbanPeekLayout: true,
+      peekSessionId: 'peek-session',
+    }),
+    'peek-session',
+  );
+});
+
+test('dismissed full-board Peek does not fall back to the hidden tab session', () => {
+  assert.equal(
+    resolveVisibleWorkspaceSessionId({
+      activeSessionId: 'hidden-tab-session',
+      isKanbanPeekLayout: true,
+      peekSessionId: null,
+    }),
+    null,
+  );
+});
+
+test('split and list layouts continue using the active workspace session', () => {
+  assert.equal(
+    resolveVisibleWorkspaceSessionId({
+      activeSessionId: 'active-session',
+      isKanbanPeekLayout: false,
+      peekSessionId: null,
+    }),
+    'active-session',
   );
 });

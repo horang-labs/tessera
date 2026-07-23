@@ -10,6 +10,7 @@ import {
 } from '@/lib/chat/session-client-effects';
 import { serverMessageToReplayEvents } from '@/lib/chat/server-message-to-replay-events';
 import { useChatStore } from '@/stores/chat-store';
+import { useBoardStore } from '@/stores/board-store';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
@@ -17,6 +18,7 @@ import { useNotificationStore } from '@/stores/notification-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useRateLimitStore } from '@/stores/rate-limit-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionPrStore } from '@/stores/session-pr-store';
 import { useSkillAnalysisStore } from '@/stores/skill-analysis-store';
 import { useTaskStore } from '@/stores/task-store';
@@ -28,6 +30,7 @@ import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
+import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
@@ -42,6 +45,19 @@ interface PendingTerminalRebound {
 }
 
 const pendingTerminalRebounds = new Map<string, PendingTerminalRebound>();
+
+function getVisibleWorkspaceSessionId(activeSessionId: string | null): string | null {
+  const boardState = useBoardStore.getState();
+  const settingsState = useSettingsStore.getState();
+  return resolveVisibleWorkspaceSessionId({
+    activeSessionId,
+    peekSessionId: boardState.peekSessionId,
+    isKanbanPeekLayout:
+      boardState.viewMode === 'board'
+      && settingsState.settings.kanbanSessionOpenMode === 'peek'
+      && !settingsState.sidebarCollapsed,
+  });
+}
 
 export function handleIncomingServerMessage({
   msg,
@@ -100,7 +116,7 @@ export function handleIncomingServerMessage({
 
     case 'notification':
       sessionStore.touchSessionActivity(msg.sessionId);
-      handleNotificationMessage(msg, sessionStore.activeSessionId);
+      handleNotificationMessage(msg, getVisibleWorkspaceSessionId(sessionStore.activeSessionId));
       if (msg.event === 'completed') {
         finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
         sessionStore.updateSessionStatus(msg.sessionId, 'completed');
@@ -125,7 +141,10 @@ export function handleIncomingServerMessage({
         if (location) useTabStore.getState().pinTab(location.tabId);
       }
       if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
-        handleTerminalSessionStateMessage(msg, sessionStore.activeSessionId);
+        handleTerminalSessionStateMessage(
+          msg,
+          getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
+        );
       }
       return { wasReconnect };
     }
@@ -197,7 +216,10 @@ export function handleIncomingServerMessage({
 
     case 'interactive_prompt':
       sessionStore.touchSessionActivity(msg.sessionId);
-      handleInteractivePromptMessage(msg, sessionStore.activeSessionId);
+      handleInteractivePromptMessage(
+        msg,
+        getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
+      );
       return { wasReconnect };
 
     case 'error': {

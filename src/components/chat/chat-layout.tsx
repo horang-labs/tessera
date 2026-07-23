@@ -46,9 +46,9 @@ import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { ALL_PROJECTS_SENTINEL } from "@/lib/constants/project-strip";
 import {
-  isSpecialSession,
-} from "@/lib/constants/special-sessions";
-import { resolveActiveWorkspaceSessionId } from "@/lib/session/active-workspace-session";
+  resolveActiveWorkspaceSessionId,
+  resolveVisibleWorkspaceSessionId,
+} from "@/lib/session/active-workspace-session";
 import { activateSessionPanel } from "@/lib/session/focus-session-panel";
 import { resolveSessionTabOpenMode } from "@/lib/terminal/terminal-preview-policy";
 
@@ -98,6 +98,7 @@ export function ChatLayout() {
   const { t } = useI18n();
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   const viewMode = useBoardStore((state) => state.viewMode);
+  const peekSessionId = useBoardStore((state) => state.peekSessionId);
   const selectedBoardSessionId = useBoardStore((state) => state.selectedBoardSessionId);
   const kanbanSessionOpenMode = useSettingsStore(
     (state) => state.settings.kanbanSessionOpenMode,
@@ -144,6 +145,11 @@ export function ChatLayout() {
   const [projectsLoaded, setProjectsLoaded] = useState(initiallyHasProjects);
   const isCompactViewport = viewportWidth < COMPACT_VIEWPORT_BREAKPOINT;
   const isKanbanPeekLayout = isKanbanPeekMode && !sidebarCollapsed;
+  const visibleWorkspaceSessionId = resolveVisibleWorkspaceSessionId({
+    activeSessionId,
+    peekSessionId,
+    isKanbanPeekLayout,
+  });
 
   const sidebarBaseMinWidth =
     viewMode === "board" ? BOARD_SIDEBAR_MIN_WIDTH : LIST_SIDEBAR_MIN_WIDTH;
@@ -387,10 +393,10 @@ export function ChatLayout() {
   );
 
   useEffect(() => {
-    if (activeSessionId && !isSpecialSession(activeSessionId)) {
-      markSessionAsRead(activeSessionId);
+    if (visibleWorkspaceSessionId) {
+      markSessionAsRead(visibleWorkspaceSessionId);
     }
-  }, [activeSessionId, markSessionAsRead]);
+  }, [markSessionAsRead, visibleWorkspaceSessionId]);
 
   // Bridge Effect: sync activeSessionId from session-store → panel-store.
   useEffect(

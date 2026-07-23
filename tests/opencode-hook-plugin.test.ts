@@ -275,6 +275,33 @@ test('OpenCode waits for all real text parts and ignores synthetic expansion tex
   }
 });
 
+test('OpenCode completes a real busy turn even when prompt text parts are missed', async () => {
+  const plugin = await loadPlugin({ resumeId: 'ses_resume' });
+  try {
+    await settlePosts(1, plugin.payloads);
+    await plugin.event({
+      event: {
+        type: 'message.updated',
+        properties: { info: { id: 'msg-missed-parts', sessionID: 'ses_resume', role: 'user' } },
+      },
+    });
+    await plugin.event({
+      event: { type: 'session.status', properties: { sessionID: 'ses_resume', status: { type: 'busy' } } },
+    });
+    await plugin.event({
+      event: { type: 'session.status', properties: { sessionID: 'ses_resume', status: { type: 'idle' } } },
+    });
+
+    await settlePosts(2, plugin.payloads);
+    assert.deepEqual(plugin.payloads[1], {
+      hook_event_name: 'Stop',
+      session_id: 'ses_resume',
+    });
+  } finally {
+    plugin.restore();
+  }
+});
+
 test('OpenCode does not emit Stop for background busy and tolerates idle before the final part', async () => {
   const plugin = await loadPlugin({ resumeId: 'ses_resume' });
   try {
