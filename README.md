@@ -54,7 +54,9 @@ Open agent sessions, terminals, and files as movable tabs so you can reshape the
 
 Open new panels, continue an existing conversation, tune reasoning, select models, choose permissions, use voice input (browser runtime only), add `@` references, attach images, and send context-rich prompts from one composer.
 
-![Composer controls and rich context input](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/composer-controls.gif)
+<p align="center">
+  <img src="https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/composer-controls.gif" alt="Composer controls and rich context input" width="25%">
+</p>
 
 ### Agent state, tool logs, and diffs
 
@@ -69,7 +71,7 @@ Keep each agent session tied to its task and worktree while tracking tool calls,
 See and edit the active instructions and memory for the session at a glance, including user and project scopes, global memory, and past work summaries.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/session-context-panel.png" alt="Session instructions and memory in the Tessera Context panel" width="420">
+  <img src="https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/session-context-panel.png" alt="Session instructions and memory in the Tessera Context panel" width="25%">
 </p>
 
 ## Install
