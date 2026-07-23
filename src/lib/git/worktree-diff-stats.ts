@@ -101,13 +101,7 @@ interface NumstatAggregate {
   files: Map<string, WorktreeFileDiffStats>;
 }
 
-async function collectNumstat(
-  workDir: string,
-  agentEnvironment: AgentEnvironment,
-): Promise<NumstatAggregate | null> {
-  const stdout = await runGit(workDir, ['diff', '--numstat', 'HEAD', '--'], agentEnvironment);
-  if (stdout === null) return null;
-
+function parseNumstat(stdout: string): NumstatAggregate {
   let added = 0;
   let removed = 0;
   let changedFiles = 0;
@@ -150,6 +144,14 @@ async function collectNumstat(
   return { added, removed, changedFiles, deletedFiles, files };
 }
 
+async function collectNumstat(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<NumstatAggregate | null> {
+  const stdout = await runGit(workDir, ['diff', '--numstat', 'HEAD', '--'], agentEnvironment);
+  return stdout === null ? null : parseNumstat(stdout);
+}
+
 async function collectNameStatus(
   workDir: string,
   agentEnvironment: AgentEnvironment,
@@ -179,11 +181,15 @@ async function collectUntracked(
   ], agentEnvironment);
   if (stdout === null) return null;
 
+  return { paths: parseUntrackedPaths(stdout) };
+}
+
+function parseUntrackedPaths(stdout: string): string[] {
   const paths: string[] = [];
   for (const entry of stdout.split('\0')) {
     if (entry) paths.push(entry);
   }
-  return { paths };
+  return paths;
 }
 
 /**
@@ -258,7 +264,6 @@ export async function computeWorktreeFileDiffStats(
 ): Promise<Map<string, WorktreeFileDiffStats> | null> {
   try {
     const resolved = await resolveFilesystemPath(workDir);
-    const pathModule = getPathModule(resolved);
     if (!(await isGitWorkTree(resolved, agentEnvironment))) return null;
 
     const [numstat, untracked] = await Promise.all([
@@ -268,32 +273,70 @@ export async function computeWorktreeFileDiffStats(
 
     if (!numstat || !untracked) return null;
 
-    const files = new Map(numstat.files);
-    if (untracked.paths.length > UNTRACKED_LINECOUNT_MAX_FILES) {
-      // Too many untracked files to read individually — record them with an
-      // unknown (zero) added count rather than opening every file.
-      for (const relPath of untracked.paths) {
-        files.set(relPath, { added: 0, removed: 0 });
-      }
-    } else {
-      const untrackedCounts = await mapWithConcurrency(
-        untracked.paths,
-        NEWLINE_COUNT_CONCURRENCY,
-        async (relPath) => ({
-          relPath,
-          count: await countFileNewlinesCapped(pathModule.join(resolved, relPath)),
-        }),
-      );
-      for (const { relPath, count } of untrackedCounts) {
-        files.set(relPath, { added: count ?? 0, removed: 0 });
-      }
-    }
-
-    return files;
+    return buildWorktreeFileDiffStats(resolved, numstat, untracked.paths);
   } catch (error) {
     logger.warn({ error, workDir }, 'computeWorktreeFileDiffStats failed');
     return null;
   }
+}
+
+/**
+ * Build the per-file stats from outputs already collected by a batched git
+ * probe. This lets Windows-hosted WSL callers keep the entire snapshot behind
+ * one wsl.exe bridge instead of spawning more bridge processes for numstat and
+ * untracked files.
+ */
+export async function computeWorktreeFileDiffStatsFromRaw(
+  workDir: string,
+  numstatRaw: string | null,
+  untrackedRaw: string | null,
+): Promise<Map<string, WorktreeFileDiffStats> | null> {
+  if (numstatRaw === null || untrackedRaw === null) return null;
+
+  try {
+    const resolved = await resolveFilesystemPath(workDir);
+    return buildWorktreeFileDiffStats(
+      resolved,
+      parseNumstat(numstatRaw),
+      parseUntrackedPaths(untrackedRaw),
+    );
+  } catch (error) {
+    logger.warn({ error, workDir }, 'computeWorktreeFileDiffStatsFromRaw failed');
+    return null;
+  }
+}
+
+async function buildWorktreeFileDiffStats(
+  resolvedWorkDir: string,
+  numstat: NumstatAggregate,
+  untrackedPaths: string[],
+): Promise<Map<string, WorktreeFileDiffStats>> {
+  const pathModule = getPathModule(resolvedWorkDir);
+
+  const files = new Map(numstat.files);
+  if (untrackedPaths.length > UNTRACKED_LINECOUNT_MAX_FILES) {
+    // Too many untracked files to read individually — record them with an
+    // unknown (zero) added count rather than opening every file.
+    for (const relPath of untrackedPaths) {
+      files.set(relPath, { added: 0, removed: 0 });
+    }
+    return files;
+  }
+
+  const untrackedCounts = await mapWithConcurrency(
+    untrackedPaths,
+    NEWLINE_COUNT_CONCURRENCY,
+    async (relPath) => ({
+      relPath,
+      count: await countFileNewlinesCapped(pathModule.join(resolvedWorkDir, relPath)),
+    }),
+  );
+
+  for (const { relPath, count } of untrackedCounts) {
+    files.set(relPath, { added: count ?? 0, removed: 0 });
+  }
+
+  return files;
 }
 
 function inferGitEnvironment(workDir: string): AgentEnvironment {

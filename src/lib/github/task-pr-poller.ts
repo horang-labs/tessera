@@ -9,6 +9,7 @@ import logger from '@/lib/logger';
 import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
 import { getElectronAuthUserId } from '@/lib/auth/electron-user';
 import { SettingsManager } from '@/lib/settings/manager';
+import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import { syncAllEligibleTaskPrs } from './task-pr-sync';
 import { syncAllEligibleSessionPrs } from './session-pr-sync';
@@ -64,7 +65,13 @@ class TaskPrPoller {
       const startedAt = Date.now();
       const agentEnvironment = await resolvePollerAgentEnvironment();
       await syncAllEligibleTaskPrs({ agentEnvironment });
-      await syncAllEligibleSessionPrs({ agentEnvironment });
+      // Bare-session PR state is only visible for live runtimes. Sweeping every
+      // historical session at startup can launch hundreds of WSL/gh probes and
+      // contend with terminal input while the first session is opening.
+      await syncAllEligibleSessionPrs({
+        agentEnvironment,
+        sessionIds: getActiveSessionIds(),
+      });
       logger.debug({ reason, durationMs: Date.now() - startedAt }, 'PR poll complete');
     } catch (err) {
       logger.error({ err, reason }, 'PR poll error');
