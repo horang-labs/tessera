@@ -52,6 +52,31 @@ export function isTerminalPasteShortcut(
     && !event.metaKey;
 }
 
+export function isTerminalCopyShortcut(
+  event: TerminalKeyEvent,
+  platform: TerminalClientPlatform,
+  hasSelection: boolean,
+): boolean {
+  if (
+    event.type !== 'keydown'
+    || event.isComposing
+    || event.key.toLowerCase() !== 'c'
+    || event.altKey
+  ) {
+    return false;
+  }
+
+  if (platform === 'mac') {
+    return event.metaKey
+      && !event.ctrlKey
+      && (event.shiftKey || hasSelection);
+  }
+
+  return event.ctrlKey
+    && !event.metaKey
+    && (event.shiftKey || hasSelection);
+}
+
 /**
  * Returns input that must bypass xterm's default keyboard encoder.
  *

@@ -3,6 +3,7 @@ import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clip
 const MAX_CLIPBOARD_IMAGE_DIMENSION = 16_384;
 const MAX_CLIPBOARD_IMAGE_PIXELS = 40_000_000;
 const MAX_CLIPBOARD_IMAGE_PNG_BYTES = 20 * 1024 * 1024;
+const MAX_CLIPBOARD_TEXT_BYTES = 4 * 1024 * 1024;
 
 interface ClipboardImageLike {
   isEmpty(): boolean;
@@ -13,6 +14,24 @@ interface ClipboardImageLike {
 interface ClipboardLike {
   readText(): string;
   readImage(): ClipboardImageLike;
+}
+
+interface ClipboardWriterLike {
+  writeText(text: string): void;
+}
+
+/** Write a validated terminal selection to the desktop clipboard. */
+export function writeTerminalClipboardText(
+  clipboard: ClipboardWriterLike,
+  text: unknown,
+): void {
+  if (typeof text !== 'string') {
+    throw new Error('Terminal clipboard text must be a string.');
+  }
+  if (Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_TEXT_BYTES) {
+    throw new Error('Terminal selection is too large to copy.');
+  }
+  clipboard.writeText(text);
 }
 
 /** Read clipboard content for an explicit terminal paste gesture. */

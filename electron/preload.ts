@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
   readTerminalClipboard: () =>
     ipcRenderer.invoke('read-terminal-clipboard') as Promise<TerminalClipboardPayload>,
+  writeTerminalClipboardText: (text: string) =>
+    ipcRenderer.invoke('write-terminal-clipboard-text', text) as Promise<void>,
   uiStorageGetItem: (key: string) => ipcRenderer.sendSync('ui-storage-get-item', key) as string | null,
   uiStorageSetItem: (key: string, value: string) =>
     ipcRenderer.sendSync('ui-storage-set-item', { key, value }),

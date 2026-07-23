@@ -35,13 +35,16 @@ interface ReproWindow extends Window {
   __tesseraTerminalScrollRepro?: {
     bufferType(): 'normal' | 'alternate' | null;
     capturePtyInput(): boolean;
+    clearSelection(): void;
     firstVisibleRowTag(): string | null;
     isAtBottom(): boolean | null;
     metrics(): { baseY: number; viewportY: number; rows: number } | null;
     mouseReporting(): boolean | null;
+    selectText(text: string): string | null;
     takeCapturedPtyInput(): string[];
     visibleText(): string | null;
     viewportY(): number | null;
+    writeOutput(data: string): Promise<boolean>;
   };
 }
 
@@ -97,10 +100,37 @@ export function TerminalScrollReproClient() {
         });
         return true;
       },
+      clearSelection: () => {
+        const terminal = (surface as unknown as {
+          terminal: { clearSelection(): void } | null;
+        }).terminal;
+        terminal?.clearSelection();
+      },
       mouseReporting: () => (
         (surface as unknown as { terminal: { element?: HTMLElement } | null })
           .terminal?.element?.classList.contains('enable-mouse-events') ?? null
       ),
+      selectText: (text) => {
+        const terminal = (surface as unknown as {
+          terminal: {
+            buffer: { active: ReproTerminalBuffer };
+            cols: number;
+            getSelection(): string;
+            rows: number;
+            select(column: number, row: number, length: number): void;
+          } | null;
+        }).terminal;
+        if (!terminal) return null;
+        const lastBufferRow = terminal.buffer.active.baseY + terminal.rows;
+        for (let row = 0; row < lastBufferRow; row += 1) {
+          const line = terminal.buffer.active.getLine(row)?.translateToString() ?? '';
+          const column = line.indexOf(text);
+          if (column < 0) continue;
+          terminal.select(column, row, text.length);
+          return terminal.getSelection();
+        }
+        return null;
+      },
       takeCapturedPtyInput: () => capturedPtyInput.splice(0, capturedPtyInput.length),
       bufferType: () => (
         (surface as unknown as {
@@ -152,6 +182,16 @@ export function TerminalScrollReproClient() {
           terminal: { buffer: { active: ReproTerminalBuffer } } | null;
         }).terminal?.buffer.active.viewportY ?? null
       ),
+      writeOutput: (data) => new Promise((resolve) => {
+        const terminal = (surface as unknown as {
+          terminal: { write(value: string, callback: () => void): void } | null;
+        }).terminal;
+        if (!terminal) {
+          resolve(false);
+          return;
+        }
+        terminal.write(data, () => resolve(true));
+      }),
     };
     return () => {
       captureDisposable?.dispose();

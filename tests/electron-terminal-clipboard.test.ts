@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readTerminalClipboard } from '../electron/terminal-clipboard';
+import {
+  readTerminalClipboard,
+  writeTerminalClipboardText,
+} from '../electron/terminal-clipboard';
 
 function clipboardStub(options: {
   text?: string;
@@ -52,6 +55,21 @@ test('desktop terminal clipboard reports empty content without fabricating input
 test('desktop terminal clipboard rejects images with unsafe dimensions', () => {
   assert.throws(
     () => readTerminalClipboard(clipboardStub({ width: 20_000, height: 20_000 })),
+    /too large/,
+  );
+});
+
+test('desktop terminal clipboard writes a validated selection as text', () => {
+  const writes: string[] = [];
+  writeTerminalClipboardText({ writeText: (text) => writes.push(text) }, 'selected output');
+  assert.deepEqual(writes, ['selected output']);
+});
+
+test('desktop terminal clipboard rejects invalid and oversized selection writes', () => {
+  const clipboard = { writeText: (_text: string) => {} };
+  assert.throws(() => writeTerminalClipboardText(clipboard, null), /must be a string/);
+  assert.throws(
+    () => writeTerminalClipboardText(clipboard, 'x'.repeat(4 * 1024 * 1024 + 1)),
     /too large/,
   );
 });

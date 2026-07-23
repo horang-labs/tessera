@@ -232,6 +232,16 @@ test('terminal text and image paste cross the Electron clipboard boundary throug
   assert.doesNotMatch(terminalSurfaceSource, /getTerminalClipboardKind/);
 });
 
+test('terminal selection copy crosses Electron only when the copy shortcut owns the key event', () => {
+  assert.match(electronMainSource, /writeTerminalClipboardText\(clipboard, text\)/);
+  assert.match(electronPreloadSource, /writeTerminalClipboardText:/);
+  assert.match(electronPreloadSource, /ipcRenderer\.invoke\('write-terminal-clipboard-text', text\)/);
+  assert.match(terminalSurfaceSource, /isTerminalCopyShortcut\(/);
+  assert.match(terminalSurfaceSource, /terminal\.hasSelection\(\)/);
+  assert.match(terminalSurfaceSource, /terminal\.getSelection\(\)/);
+  assert.match(terminalSurfaceSource, /writeTerminalClipboardText\(selection\)/);
+});
+
 test('terminal websocket protocol covers process lifecycle', () => {
   for (const type of [
     'terminal_create',

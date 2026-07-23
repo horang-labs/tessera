@@ -5,6 +5,7 @@ export interface TerminalClipboardImage {
 
 export interface ElectronTerminalClipboardApi {
   readTerminalClipboard(): Promise<TerminalClipboardPayload>;
+  writeTerminalClipboardText(text: string): Promise<void>;
 }
 
 export type TerminalClipboardPayload =

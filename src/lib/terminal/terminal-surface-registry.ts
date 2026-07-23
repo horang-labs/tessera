@@ -25,6 +25,7 @@ import type {
 } from './types';
 import {
   detectTerminalClientPlatform,
+  isTerminalCopyShortcut,
   isTerminalPasteShortcut,
   resolveTerminalInputAction,
 } from './terminal-key-input';
@@ -94,6 +95,8 @@ type XtermLike = TerminalScrollTarget & {
   loadAddon(addon: unknown): void;
   open(element: HTMLElement): void;
   focus(): void;
+  getSelection(): string;
+  hasSelection(): boolean;
   paste(data: string): void;
   write(data: string, callback?: () => void): void;
   reset(): void;
@@ -867,6 +870,27 @@ export class TerminalSurface {
         }
 
         if (
+          typeof electronClipboard?.writeTerminalClipboardText === 'function'
+          && isTerminalCopyShortcut(
+            event,
+            inputContext.platform,
+            terminal.hasSelection(),
+          )
+        ) {
+          // Bare Ctrl+C remains SIGINT unless xterm has a selection. Copy the
+          // selection explicitly so xterm cannot encode the chord as PTY input.
+          event.preventDefault();
+          event.stopPropagation();
+          const selection = terminal.getSelection();
+          if (selection) {
+            void electronClipboard.writeTerminalClipboardText(selection).catch((error: unknown) => {
+              this.reportClipboardCopyError(error);
+            });
+          }
+          return false;
+        }
+
+        if (
           typeof electronClipboard?.readTerminalClipboard === 'function'
           && isTerminalPasteShortcut(event, inputContext.platform)
         ) {
@@ -1016,6 +1040,13 @@ export class TerminalSurface {
     if (this.disposed) return;
     const message = error instanceof Error ? error.message : 'Failed to paste clipboard.';
     console.warn('[terminal] Clipboard paste failed', error);
+    useNotificationStore.getState().showToast(message, 'error');
+  }
+
+  private reportClipboardCopyError(error: unknown): void {
+    if (this.disposed) return;
+    const message = error instanceof Error ? error.message : 'Failed to copy terminal selection.';
+    console.warn('[terminal] Clipboard copy failed', error);
     useNotificationStore.getState().showToast(message, 'error');
   }
 

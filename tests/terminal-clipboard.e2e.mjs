@@ -141,6 +141,55 @@ try {
     true,
   );
 
+  const copyMarker = `TESSERA_COPY_SELECTION_${Date.now()}`;
+  assert.equal(
+    await page.evaluate((marker) => (
+      window.__tesseraTerminalScrollRepro?.writeOutput(`\r\n${marker}\r\n`)
+    ), copyMarker),
+    true,
+  );
+  const selectedText = await page.evaluate((marker) => (
+    window.__tesseraTerminalScrollRepro?.selectText(marker) ?? ''
+  ), copyMarker);
+  assert.equal(selectedText, copyMarker, 'the copy regression requires a visible terminal selection');
+  await electronApp.evaluate(({ clipboard }) => clipboard.writeText('stale clipboard text'));
+  await takePtyInput(page);
+  await page.keyboard.press('Control+C');
+  await page.waitForTimeout(250);
+  assert.equal(
+    await electronApp.evaluate(({ clipboard }) => clipboard.readText()),
+    selectedText,
+    'Ctrl+C with a terminal selection must copy the selected text',
+  );
+  assert.equal(
+    (await takePtyInput(page)).join('').includes('\x03'),
+    false,
+    'Ctrl+C with a terminal selection must not interrupt the PTY',
+  );
+
+  await electronApp.evaluate(({ clipboard }) => clipboard.writeText('stale explicit copy'));
+  await page.keyboard.press('Control+Shift+C');
+  await page.waitForTimeout(250);
+  assert.equal(
+    await electronApp.evaluate(({ clipboard }) => clipboard.readText()),
+    selectedText,
+    'Ctrl+Shift+C must explicitly copy the terminal selection',
+  );
+  assert.equal(
+    (await takePtyInput(page)).join(''),
+    '',
+    'Ctrl+Shift+C must not emit PTY input',
+  );
+  await page.evaluate(() => window.__tesseraTerminalScrollRepro?.clearSelection());
+  await takePtyInput(page);
+  await page.keyboard.press('Control+C');
+  const interruptInput = await waitForPtyInput(page, (input) => input.includes('\x03'));
+  assert.equal(
+    interruptInput.includes('\x03'),
+    true,
+    'Ctrl+C without a terminal selection must still interrupt the PTY',
+  );
+
   const marker = `TESSERA_CLIPBOARD_TEXT_${Date.now()}`;
   await electronApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), marker);
   await takePtyInput(page);
