@@ -66,6 +66,7 @@ import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
+import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -275,6 +276,8 @@ export class CodexAdapter implements CliProvider {
   }
 
   createTerminalSessionObserver = createCodexTerminalSessionObserver;
+
+  detectTerminalConversationReset = codexScreenShowsConversationReset;
 
   canResumeTerminalAfterRestart(providerState: string | null): boolean {
     if (!providerState) return false;

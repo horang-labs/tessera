@@ -50,6 +50,14 @@ export interface TerminalCreateOptions {
   paneToken?: string;
   /** Native agent provider launched inside this PTY. */
   providerId?: string;
+  /**
+   * Provider-owned reader that recognizes a conversation reset from what the
+   * PTY currently shows (Codex/OpenCode report nothing when it happens).
+   */
+  detectConversationReset?: (options: {
+    visibleText: string;
+    currentProviderSessionId: string;
+  }) => boolean;
   /** Provider-declared behavior for light/dark changes in an already-running TUI. */
   appearanceChangePolicy?: TerminalAppearanceChangePolicy;
   /** Provider-declared handling for ED3 emitted by a resize redraw. */

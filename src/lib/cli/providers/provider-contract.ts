@@ -158,6 +158,18 @@ export interface CliProvider {
   }): boolean;
 
   /**
+   * Recognizes, from what the PTY currently shows, that the running conversation
+   * was reset in place (`/clear`, `/new`). Codex and OpenCode mint the next
+   * session id lazily — nothing is reported until the next prompt — so the
+   * screen is the only signal available at the moment it happens, and it is
+   * independent of how the command was issued (typed, completed, or picked).
+   */
+  detectTerminalConversationReset?(options: {
+    visibleText: string;
+    currentProviderSessionId: string;
+  }): boolean;
+
+  /**
    * Checks whether this CLI binary is available in the requested environment
    * ("native" host vs. "wsl"). When omitted, implementations fall back to a
    * same-host binary probe.

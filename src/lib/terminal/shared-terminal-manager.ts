@@ -1,5 +1,7 @@
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import logger from '@/lib/logger';
 import { getManagedSessionWorkDir } from '@/lib/git/session-diff-refresh';
+import { forkTerminalSessionForProviderReset } from './provider-session-reset';
 import { scheduleRecompute } from '@/lib/git/worktree-diff-stats-cache';
 import { workspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-watch-manager';
 import { TerminalManager } from './terminal-manager';
@@ -52,6 +54,15 @@ function createSharedState(): SharedTerminalManagerState {
       },
       onSessionStateChange: ({ message, userId }) => {
         state.sendToUser?.(userId, message);
+      },
+      onTerminalConversationReset: ({ terminalId, userId }) => {
+        try {
+          forkTerminalSessionForProviderReset({ manager: state.manager, terminalId, userId });
+        } catch (error) {
+          // A reset that cannot be forked must never disturb the PTY: the agent
+          // has already reset, and the fork still lands on the next prompt.
+          logger.warn({ error, terminalId }, 'Terminal conversation reset fork skipped');
+        }
       },
       onSessionRuntimeRebound: ({ previousSessionId, sessionId, terminalId, userId }) => {
         state.sendToUser?.(userId, {

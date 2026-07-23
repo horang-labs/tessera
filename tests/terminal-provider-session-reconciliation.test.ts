@@ -9,6 +9,7 @@ process.env.NODE_ENV = 'test';
 
 let dbSessions: typeof import('@/lib/db/sessions');
 let reconcileTerminalProviderSession: typeof import('@/lib/terminal/provider-session-reconciliation').reconcileTerminalProviderSession;
+let createPendingTerminalProviderSessionFork: typeof import('@/lib/terminal/provider-session-reconciliation').createPendingTerminalProviderSessionFork;
 let extractTerminalProviderSessionIdentity: typeof import('@/lib/terminal/provider-session-identity').extractTerminalProviderSessionIdentity;
 
 before(async () => {
@@ -23,6 +24,7 @@ before(async () => {
   projects.registerProject('project-1', '/tmp/project-1', 'Project 1');
   dbSessions = sessions;
   reconcileTerminalProviderSession = reconciliation.reconcileTerminalProviderSession;
+  createPendingTerminalProviderSessionFork = reconciliation.createPendingTerminalProviderSessionFork;
   extractTerminalProviderSessionIdentity = identity.extractTerminalProviderSessionIdentity;
 });
 
@@ -157,6 +159,120 @@ test('duplicate and stale-pane observations resolve to the existing child', () =
     previousSessionId: 'dedup-parent',
     previousProviderSessionId: 'dedup-parent',
   });
+});
+
+test('a reset fork waits for its provider identity and then adopts it', () => {
+  dbSessions.createSession('reset-parent', 'project-1', 'Investigate login', 'codex', {
+    workDir: '/tmp/project-1',
+    providerState: JSON.stringify({
+      kind: 'terminal',
+      launched: true,
+      codexSessionId: 'rollout-before-clear',
+    }),
+  });
+
+  const fork = createPendingTerminalProviderSessionFork('reset-parent');
+  assert.ok(fork);
+  assert.equal(fork.projectId, 'project-1');
+  const forked = dbSessions.getSession(fork.sessionId);
+  // A reset starts an empty conversation, so it is titled like any new session
+  // and the first prompt replaces the placeholder.
+  assert.match(forked?.title ?? '', /^Session \d+$/u);
+  assert.equal(forked?.provider, 'codex');
+  assert.deepEqual(JSON.parse(forked?.provider_state ?? '{}'), {
+    kind: 'terminal',
+    launched: true,
+    terminalProviderSessionPending: true,
+  });
+
+  // The rollout Codex mints on the next prompt belongs to the waiting session,
+  // and no second fork is created for it.
+  const adopted = reconcileTerminalProviderSession({
+    sourceSessionId: fork.sessionId,
+    identity: {
+      providerId: 'codex',
+      providerSessionId: 'rollout-after-clear',
+      transcriptPath: '/tmp/rollout-after-clear.jsonl',
+    },
+  });
+  assert.deepEqual(adopted, {
+    kind: 'unchanged',
+    sessionId: fork.sessionId,
+    previousSessionId: fork.sessionId,
+  });
+  assert.deepEqual(JSON.parse(dbSessions.getSession(fork.sessionId)?.provider_state ?? '{}'), {
+    kind: 'terminal',
+    launched: true,
+    terminalProviderSessionId: 'rollout-after-clear',
+    codexSessionId: 'rollout-after-clear',
+  });
+  assert.equal(dbSessions.getSession('reset-parent')?.deleted, 0);
+});
+
+test('a reset that never happened hands the PTY back and drops the empty fork', () => {
+  dbSessions.createSession('mispredicted-parent', 'project-1', 'Keep talking', 'codex', {
+    providerState: JSON.stringify({
+      kind: 'terminal',
+      launched: true,
+      codexSessionId: 'rollout-kept',
+    }),
+  });
+  reconcileTerminalProviderSession({
+    sourceSessionId: 'mispredicted-parent',
+    identity: { providerId: 'codex', providerSessionId: 'rollout-kept' },
+  });
+
+  const fork = createPendingTerminalProviderSessionFork('mispredicted-parent');
+  assert.ok(fork);
+
+  const recovered = reconcileTerminalProviderSession({
+    sourceSessionId: fork.sessionId,
+    identity: { providerId: 'codex', providerSessionId: 'rollout-kept' },
+  });
+  assert.deepEqual(recovered, {
+    kind: 'existing',
+    sessionId: 'mispredicted-parent',
+    previousSessionId: fork.sessionId,
+  });
+  assert.equal(dbSessions.getSession(fork.sessionId), undefined);
+});
+
+test('a PTY with no provider conversation yet is never pre-forked', () => {
+  dbSessions.createSession('untouched-pty', 'project-1', 'Fresh PTY', 'codex', {
+    providerState: JSON.stringify({ kind: 'terminal', launched: true }),
+  });
+  assert.equal(createPendingTerminalProviderSessionFork('untouched-pty'), null);
+
+  dbSessions.createSession('gui-reset', 'project-1', 'GUI session', 'codex', {
+    providerState: JSON.stringify({ kind: 'chat', threadId: 'thread-gui-reset' }),
+  });
+  assert.equal(createPendingTerminalProviderSessionFork('gui-reset'), null);
+  assert.equal(createPendingTerminalProviderSessionFork('missing-session'), null);
+});
+
+test('a hook-reported reset is titled as a new session, a fork keeps the parent title', () => {
+  dbSessions.createSession('origin-parent', 'project-1', 'Investigate login', 'claude-code', {
+    providerState: JSON.stringify({ kind: 'terminal', launched: true }),
+  });
+  reconcileTerminalProviderSession({
+    sourceSessionId: 'origin-parent',
+    identity: { providerId: 'claude-code', providerSessionId: 'origin-parent-provider' },
+  });
+
+  const reset = reconcileTerminalProviderSession({
+    sourceSessionId: 'origin-parent',
+    identity: { providerId: 'claude-code', providerSessionId: 'cleared-child' },
+    origin: 'reset',
+  });
+  assert.equal(reset.kind, 'created');
+  assert.match(dbSessions.getSession(reset.sessionId)?.title ?? '', /^Session \d+$/u);
+
+  const forked = reconcileTerminalProviderSession({
+    sourceSessionId: 'origin-parent',
+    identity: { providerId: 'claude-code', providerSessionId: 'branched-child' },
+  });
+  assert.equal(forked.kind, 'created');
+  assert.equal(dbSessions.getSession(forked.sessionId)?.title, 'Investigate login (Fork)');
 });
 
 test('GUI sessions are ignored by the PTY provider-session reconciler', () => {

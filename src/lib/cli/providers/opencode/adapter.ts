@@ -27,6 +27,7 @@ import { updateProviderStateWithRetry } from '../../process-manager-side-effects
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { opencodeProtocolParser } from './protocol-parser';
+import { openCodeScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 import {
   buildOpenCodePermissionEnv,
   composeOpenCodeModelId,
@@ -121,6 +122,8 @@ export class OpenCodeAdapter implements CliProvider {
   getTerminalInterruptInputPolicy(): 'none' {
     return 'none';
   }
+
+  detectTerminalConversationReset = openCodeScreenShowsConversationReset;
 
   async isAvailable(environment?: 'native' | 'wsl'): Promise<boolean> {
     if (environment) {

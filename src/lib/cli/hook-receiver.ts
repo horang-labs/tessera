@@ -212,6 +212,11 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         pane: entry,
         identity: providerIdentity,
         activation: discoveredInBackground ? 'background' : 'active',
+        // SessionStart(source=clear) is a conversation reset, not a branch of the
+        // current one: the child starts empty and must be titled like a new session.
+        ...(event === 'SessionStart' && readString(payload.source) === 'clear'
+          ? { origin: 'reset' as const }
+          : {}),
       });
       if (observation.ignored) return send(204);
       sessionId = observation.sessionId;

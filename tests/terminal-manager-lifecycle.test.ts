@@ -1152,3 +1152,50 @@ test('a wedged headless model cannot freeze reattach: fallback snapshot then liv
     .join('');
   assert.match(liveForB, /live-after-reattach/, 'live output must resume after the fallback snapshot');
 });
+
+test('a provider-detected conversation reset is reported once per bound session', async () => {
+  const spawned: FakePty[] = [];
+  const resets: Array<{ terminalId: string; userId: string }> = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      onTerminalConversationReset: (state) => resets.push(state),
+      createHeadlessModel: () => {
+        let text = '';
+        return {
+          write: (data: string) => { text += data; },
+          resize: () => {},
+          snapshot: async () => ({ data: '', cols: 100, rows: 30, alternateScreen: false }),
+          readVisibleText: () => text,
+          dispose: () => {},
+        };
+      },
+    },
+  );
+
+  await manager.create(createOptions({
+    terminalId: 'terminal-reset',
+    sessionId: 'session-reset',
+    providerId: 'codex',
+    detectConversationReset: ({ visibleText, currentProviderSessionId }) =>
+      visibleText.includes(`codex resume ${currentProviderSessionId}`),
+  }));
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+
+  // Nothing is bound yet: an empty PTY has no conversation to fork away from.
+  spawned[0].emitData('To continue this session, run codex resume rollout-1\r\n');
+  await settle();
+  assert.deepEqual(resets, []);
+
+  manager.activateProviderSessionIdentity('terminal-reset', 'user-a', 'rollout-1');
+  spawned[0].emitData('To continue this session, run codex resume rollout-1\r\n');
+  await settle();
+  assert.deepEqual(resets, [{ terminalId: 'terminal-reset', userId: 'user-a' }]);
+
+  // The same screen must not fork again while it stays on screen.
+  spawned[0].emitData('more output\r\n');
+  await settle();
+  assert.equal(resets.length, 1);
+});
