@@ -48,7 +48,11 @@ next-env.d.ts
 
 # IDE / Tools
 .claude/
+agent/
 .playwright-cli/
+AGENTS.md
+CLAUDE.md
+skills-lock.json
 _bmad-output/
 aidlc-docs/
 prd-doc/

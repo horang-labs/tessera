@@ -1,19 +1,61 @@
 import { create } from 'zustand';
-import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import { i18n } from '@/lib/i18n';
 import {
   readUiStorageItem,
   removeUiStorageItem,
   writeUiStorageItem,
 } from '@/lib/persistence/ui-storage';
+import type {
+  MemoryFileSessionRef,
+  WorkspaceFileSessionRef,
+} from '@/lib/workspace-tabs/special-session';
+
+type PeekFileRef = WorkspaceFileSessionRef | MemoryFileSessionRef;
+
+function isSamePeekFile(left: PeekFileRef | null, right: PeekFileRef): boolean {
+  if (!left || left.type !== right.type || left.sourceSessionId !== right.sourceSessionId) {
+    return false;
+  }
+  if (left.type === 'workspace-file' && right.type === 'workspace-file') {
+    return left.kind === right.kind && left.path === right.path;
+  }
+  return left.type === 'memory-file'
+    && right.type === 'memory-file'
+    && left.memoryKind === right.memoryKind
+    && left.fileName === right.fileName;
+}
+
+function confirmDiscardPeekFileChanges(state: Pick<BoardState, 'peekFileDirty'>): boolean {
+  if (!state.peekFileDirty || typeof window === 'undefined') return true;
+  return window.confirm(i18n.t('memoryPanel.fileTab.discardChangesConfirm'));
+}
 
 export type ViewMode = 'list' | 'board';
+export const DEFAULT_PEEK_FILE_SIDECAR_WIDTH = 460;
+export const MIN_PEEK_FILE_SIDECAR_WIDTH = 300;
+export const MAX_PEEK_FILE_SIDECAR_WIDTH = 900;
 
 interface BoardState {
   // View mode for the selected project. Persisted per project below.
   viewMode: ViewMode;
   projectViewModes: Record<string, ViewMode>;
   setViewMode: (mode: ViewMode) => void;
+
+  // Transient Kanban Peek state. Selection survives light-dismiss so the
+  // utility panel can keep showing the last inspected session.
+  peekSessionId: string | null;
+  selectedBoardSessionId: string | null;
+  peekFileRef: PeekFileRef | null;
+  peekFileDirty: boolean;
+  peekFileSidecarWidth: number;
+  openSessionPeek: (sessionId: string) => void;
+  openPeekFile: (fileRef: PeekFileRef) => void;
+  closePeekFile: () => void;
+  setPeekFileDirty: (dirty: boolean) => void;
+  setPeekFileSidecarWidth: (width: number) => void;
+  closeSessionPeek: () => boolean;
+  clearSessionPeek: () => boolean;
 
   // Kanban drag-and-drop state
   draggingTaskId: string | null;
@@ -95,6 +137,7 @@ const SELECTED_PROJECT_DIR_KEY = 'ccw:selectedProjectDir';
 const ALL_PROJECTS_EXPANDED_SECTIONS_KEY = 'ccw:allProjectsExpandedSections';
 const LIST_RUNNING_FILTER_KEY = 'ccw:listRunningFilterActive';
 const ACTIVE_COLLECTION_FILTER_KEY = 'ccw:activeCollectionFilter';
+const PEEK_FILE_SIDECAR_WIDTH_KEY = 'ccw:peekFileSidecarWidth';
 
 function isViewMode(value: unknown): value is ViewMode {
   return value === 'list' || value === 'board';
@@ -233,12 +276,25 @@ function saveBooleanFlag(key: string, value: boolean): void {
   }
 }
 
+function loadPeekFileSidecarWidth(): number {
+  if (typeof window === 'undefined') return DEFAULT_PEEK_FILE_SIDECAR_WIDTH;
+  try {
+    const value = Number(readUiStorageItem(PEEK_FILE_SIDECAR_WIDTH_KEY));
+    return Number.isFinite(value)
+      && value >= MIN_PEEK_FILE_SIDECAR_WIDTH
+      && value <= MAX_PEEK_FILE_SIDECAR_WIDTH
+      ? value
+      : DEFAULT_PEEK_FILE_SIDECAR_WIDTH;
+  } catch {
+    return DEFAULT_PEEK_FILE_SIDECAR_WIDTH;
+  }
+}
+
 function resolveProjectViewMode(
   projectDir: string | null,
   projectViewModes: Record<string, ViewMode>,
   fallback: ViewMode,
 ): ViewMode {
-  if (projectDir === ALL_PROJECTS_SENTINEL) return 'list';
   if (projectDir && projectViewModes[projectDir]) return projectViewModes[projectDir];
   return fallback;
 }
@@ -247,12 +303,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   viewMode: loadViewMode(),
   projectViewModes: loadProjectViewModes(),
   setViewMode: (mode) => {
-    // All Projects mode only supports list view — block board switch
-    if (mode === 'board' && get().selectedProjectDir === ALL_PROJECTS_SENTINEL) return;
     if (get().viewMode === mode) return;
+    if (mode !== 'board' && !confirmDiscardPeekFileChanges(get())) return;
     set((state) => {
       const nextProjectViewModes =
-        state.selectedProjectDir && state.selectedProjectDir !== ALL_PROJECTS_SENTINEL
+        state.selectedProjectDir
           ? {
               ...state.projectViewModes,
               [state.selectedProjectDir]: mode,
@@ -267,11 +322,70 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       return {
         viewMode: mode,
         projectViewModes: nextProjectViewModes,
+        ...(mode !== 'board' && {
+          peekSessionId: null,
+          peekFileRef: null,
+          peekFileDirty: false,
+        }),
       };
     });
     void captureTelemetryEvent('workspace_view_changed', {
       view: mode === 'board' ? 'kanban' : 'list',
     });
+  },
+
+  peekSessionId: null,
+  selectedBoardSessionId: null,
+  peekFileRef: null,
+  peekFileDirty: false,
+  peekFileSidecarWidth: loadPeekFileSidecarWidth(),
+  openSessionPeek: (sessionId) => set((state) => {
+    const keepFile = state.peekFileRef?.sourceSessionId === sessionId;
+    if (!keepFile && !confirmDiscardPeekFileChanges(state)) return state;
+    return {
+      peekSessionId: sessionId,
+      selectedBoardSessionId: sessionId,
+      peekFileRef: keepFile ? state.peekFileRef : null,
+      peekFileDirty: keepFile ? state.peekFileDirty : false,
+    };
+  }),
+  openPeekFile: (fileRef) => set((state) => {
+    if (!isSamePeekFile(state.peekFileRef, fileRef) && !confirmDiscardPeekFileChanges(state)) {
+      return state;
+    }
+    return {
+      peekFileRef: fileRef,
+      peekFileDirty: isSamePeekFile(state.peekFileRef, fileRef) && state.peekFileDirty,
+      selectedBoardSessionId: state.peekSessionId ?? fileRef.sourceSessionId,
+    };
+  }),
+  closePeekFile: () => set((state) => {
+    if (!confirmDiscardPeekFileChanges(state)) return state;
+    return { peekFileRef: null, peekFileDirty: false };
+  }),
+  setPeekFileDirty: (dirty) => set({ peekFileDirty: dirty }),
+  setPeekFileSidecarWidth: (width) => {
+    const normalized = Math.round(Math.min(
+      MAX_PEEK_FILE_SIDECAR_WIDTH,
+      Math.max(MIN_PEEK_FILE_SIDECAR_WIDTH, width),
+    ));
+    try { writeUiStorageItem(PEEK_FILE_SIDECAR_WIDTH_KEY, String(normalized)); } catch { /* ignore */ }
+    set({ peekFileSidecarWidth: normalized });
+  },
+  closeSessionPeek: () => {
+    if (!confirmDiscardPeekFileChanges(get())) return false;
+    set({ peekSessionId: null, peekFileRef: null, peekFileDirty: false });
+    return true;
+  },
+  clearSessionPeek: () => {
+    if (!confirmDiscardPeekFileChanges(get())) return false;
+    set({
+      peekSessionId: null,
+      peekFileRef: null,
+      peekFileDirty: false,
+      selectedBoardSessionId: null,
+    });
+    return true;
   },
 
   draggingTaskId: null,
@@ -363,9 +477,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
 
   selectedProjectDir: loadNullableString(SELECTED_PROJECT_DIR_KEY),
   setSelectedProjectDir: (dir) => {
+    if (get().selectedProjectDir === dir) return;
+    if (!confirmDiscardPeekFileChanges(get())) return;
     set((state) => {
       const nextProjectViewModes =
-        state.selectedProjectDir && state.selectedProjectDir !== ALL_PROJECTS_SENTINEL
+        state.selectedProjectDir
           ? {
               ...state.projectViewModes,
               [state.selectedProjectDir]: state.viewMode,
@@ -376,6 +492,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         selectedProjectDir: dir,
         projectViewModes: nextProjectViewModes,
         viewMode: resolveProjectViewMode(dir, nextProjectViewModes, state.viewMode),
+        peekSessionId: null,
+        peekFileRef: null,
+        peekFileDirty: false,
+        selectedBoardSessionId: null,
       };
     });
     const { projectViewModes, viewMode } = get();

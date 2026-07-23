@@ -7,18 +7,20 @@ export interface CollectionSessionSnapshot {
   id: string;
   isRunning: boolean;
   unreadCount?: number;
+  kind?: 'chat' | 'terminal';
 }
 
 export interface CollectionStatusFlags {
-  hasLiveSession: boolean;
+  hasVisibleRuntimeSession: boolean;
   hasProcessingSession: boolean;
+  hasTerminalProcessingSession: boolean;
   hasUnreadSession: boolean;
   hasAwaitingUserSession: boolean;
 }
 
 export function getCollectionSessionSnapshots(
   tasks: Pick<TaskEntity, 'sessions'>[],
-  chats: Pick<UnifiedSession, 'id' | 'isRunning' | 'unreadCount'>[],
+  chats: Pick<UnifiedSession, 'id' | 'isRunning' | 'unreadCount' | 'kind'>[],
 ): CollectionSessionSnapshot[] {
   const snapshots: CollectionSessionSnapshot[] = [];
 
@@ -27,6 +29,7 @@ export function getCollectionSessionSnapshots(
       snapshots.push({
         id: session.id,
         isRunning: session.isRunning,
+        kind: session.kind,
       });
     }
   }
@@ -36,6 +39,7 @@ export function getCollectionSessionSnapshots(
       id: chat.id,
       isRunning: chat.isRunning,
       unreadCount: chat.unreadCount,
+      kind: chat.kind,
     });
   }
 
@@ -43,14 +47,16 @@ export function getCollectionSessionSnapshots(
 }
 
 export function getPrioritizedCollectionIndicatorStatus({
-  hasLiveSession,
+  hasVisibleRuntimeSession,
   hasProcessingSession,
+  hasTerminalProcessingSession,
   hasUnreadSession,
   hasAwaitingUserSession,
 }: CollectionStatusFlags): CollectionIndicatorStatus | null {
   if (hasAwaitingUserSession) return 'awaiting-user';
+  if (hasTerminalProcessingSession) return 'processing';
   if (hasUnreadSession) return 'unread';
   if (hasProcessingSession) return 'processing';
-  if (hasLiveSession) return 'running';
+  if (hasVisibleRuntimeSession) return 'running';
   return null;
 }

@@ -17,6 +17,7 @@ import { buildProjectCollectionGroups, filterCollectionGroupsByRunning } from '@
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -54,7 +55,9 @@ export function AllProjectsList({
   const visibleProjects = useMemo(() => {
     if (!isRunningFilterActive) return projects;
     return projects.filter((project) =>
-      project.sessions.some((session) => !session.archived && session.isRunning),
+      project.sessions.some((session) =>
+        !session.archived && resolveSessionRuntimePresentation(session).showRunning
+      ),
     );
   }, [isRunningFilterActive, projects]);
 
@@ -188,7 +191,9 @@ function AllProjectSection({
     [project.sessions]
   );
   const runningSessionCount = useMemo(
-    () => project.sessions.filter((session) => !session.archived && session.isRunning).length,
+    () => project.sessions.filter((session) =>
+      !session.archived && resolveSessionRuntimePresentation(session).showRunning
+    ).length,
     [project.sessions],
   );
   const sectionSessionCount = isRunningFilterActive ? runningSessionCount : visibleSessionCount;

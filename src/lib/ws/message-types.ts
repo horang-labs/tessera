@@ -7,8 +7,12 @@ import type { SessionReplayEvent } from '@/lib/session-replay-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
-import type { TerminalLaunchIntent, TerminalShellKind } from '@/lib/terminal/types';
-import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type {
+  TerminalAppearance,
+  TerminalLaunchIntent,
+  TerminalShellKind,
+} from '@/lib/terminal/types';
 
 // ========== ContentBlock 타입 정의 (클립보드 이미지 붙여넣기) ==========
 
@@ -64,7 +68,7 @@ export type SessionSpawnConfig = {
 
 // Client → Server messages
 export type ClientMessage =
-  | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
+  | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null; executionMode?: AgentExecutionMode } & ProviderRuntimeControls)
   | { type: 'close_session'; requestId: string; sessionId: string }
   | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string }
   | { type: 'translate_message'; requestId: string; sessionId: string; messageId: string }
@@ -74,9 +78,6 @@ export type ClientMessage =
   | { type: 'mark_as_read'; requestId: string; sessionId: string } // NEW - for FEAT-002
   | { type: 'cancel_generation'; requestId: string; sessionId: string }
   | { type: 'compact_session'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }
-  | { type: 'set_session_goal'; requestId: string; sessionId: string; update: SessionGoalUpdate; spawnConfig?: SessionSpawnConfig; displayContent?: string }
-  | { type: 'refresh_session_goal'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }
-  | { type: 'clear_session_goal'; requestId: string; sessionId: string; spawnConfig?: SessionSpawnConfig; displayContent?: string }
   | ({ type: 'set_permission_mode'; requestId: string; sessionId: string; mode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'set_model'; requestId: string; sessionId: string; model: string }
   | { type: 'set_reasoning_effort'; requestId: string; sessionId: string; reasoningEffort: string | null }
@@ -87,9 +88,49 @@ export type ClientMessage =
   | { type: 'list_providers'; requestId: string }
   | { type: 'refresh_providers'; requestId: string }
   | { type: 'check_cli_status'; requestId: string }
-  | { type: 'terminal_create'; requestId: string; terminalId: string; cwd?: string | null; sessionId?: string | null; shellKind?: TerminalShellKind; cols?: number; rows?: number; launchIntent?: TerminalLaunchIntent }
-  | { type: 'terminal_input'; requestId: string; terminalId: string; data: string }
-  | { type: 'terminal_resize'; requestId: string; terminalId: string; cols: number; rows: number }
+  | {
+      type: 'terminal_create';
+      requestId: string;
+      terminalId: string;
+      surfaceId: string;
+      previewOwnerToken?: string;
+      cwd?: string | null;
+      sessionId?: string | null;
+      shellKind?: TerminalShellKind;
+      cols?: number;
+      rows?: number;
+      appearance?: TerminalAppearance;
+      launchIntent?: TerminalLaunchIntent;
+      prefillInput?: string;
+      launch?: { providerId: string; sessionId: string };
+    }
+  | { type: 'terminal_detach'; requestId: string; terminalId: string; surfaceId: string }
+  | {
+      type: 'terminal_release_preview';
+      requestId: string;
+      terminalId: string;
+      sessionId?: string | null;
+      previewOwnerToken: string;
+    }
+  | { type: 'terminal_input'; requestId: string; terminalId: string; surfaceId: string; data: string }
+  | {
+      type: 'terminal_set_appearance';
+      requestId: string;
+      terminalId: string;
+      surfaceId: string;
+      appearance: TerminalAppearance;
+    }
+  | {
+      type: 'terminal_resize';
+      requestId: string;
+      terminalId: string;
+      surfaceId: string;
+      cols: number;
+      rows: number;
+      claim?: boolean;
+      /** Repaint a live TUI after an authoritative snapshot replay. */
+      replayRefresh?: boolean;
+    }
   | { type: 'terminal_close'; requestId: string; terminalId: string }
   | { type: 'subscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string }
   | { type: 'unsubscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string };
@@ -208,7 +249,7 @@ export type ModelUsageEntry = {
 };
 
 export type AppServerMessage =
-  | ({ type: 'session_created'; sessionId: string; status: 'ready'; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
+  | ({ type: 'session_created'; sessionId: string; status: 'ready'; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null; kind?: 'chat' | 'terminal' } & ProviderRuntimeControls)
   | ({ type: 'session_started'; sessionId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'session_closed'; sessionId: string }
   | {
@@ -241,13 +282,102 @@ export type AppServerMessage =
         modelUsage?: ModelUsageEntry[];
       };
     }
+  | {
+      type: 'session_state';
+      sessionId: string;
+      terminalId: string;
+      status: 'running' | 'completed' | 'input_required' | 'idle';
+      hookEvent: string;
+      preview?: string;
+      /** Active child work prevents an Escape fallback from settling the turn. */
+      hasWorkingSubagents?: boolean;
+      /**
+       * 이 상태 인스턴스의 발생시각(epoch ms). 클라의 알림 dedup 키 재료. 서버가
+       * 상태 기록 시 한 번 찍어 저장하고 replay에도 같은 값을 실어, 재연결/리로드로
+       * 같은 완료가 다시 도착해도 알림이 중복 발화하지 않게 한다.
+       */
+      stateAt?: number;
+    }
+  | {
+      type: 'terminal_session_runtime';
+      sessionId: string;
+      terminalId: string;
+      running: boolean;
+    }
+  | {
+      type: 'terminal_session_rebound';
+      previousSessionId: string;
+      sessionId: string;
+      terminalId: string;
+    }
+  | {
+      type: 'terminal_session_runtime_snapshot';
+      activeSessionIds: string[];
+      reboundSessions?: Array<{
+        previousSessionId: string;
+        sessionId: string;
+        terminalId: string;
+      }>;
+    }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
-  | { type: 'terminal_started'; terminalId: string; cwd: string; shell: string }
   | { type: 'terminal_prefill_written'; terminalId: string }
   | { type: 'terminal_prefill_cancelled'; terminalId: string; message: string }
-  | { type: 'terminal_output'; terminalId: string; data: string }
-  | { type: 'terminal_exit'; terminalId: string; exitCode: number; signal?: number }
-  | { type: 'terminal_error'; terminalId: string; message: string }
+  | {
+      type: 'terminal_appearance';
+      terminalId: string;
+      surfaceId: string;
+      appearance: TerminalAppearance;
+      restartRequired: boolean;
+      restartAllowed: boolean;
+      restartIntent?: TerminalLaunchIntent;
+    }
+  | {
+      type: 'terminal_started';
+      terminalId: string;
+      surfaceId: string;
+      generation: number;
+      cwd: string;
+      shell: string;
+      reattached: boolean;
+      appearance?: TerminalAppearance;
+    }
+  | {
+      type: 'terminal_snapshot';
+      terminalId: string;
+      surfaceId: string;
+      generation: number;
+      seq: number;
+      data: string;
+      cols: number;
+      rows: number;
+      fallback?: boolean;
+      alternateScreen?: boolean;
+      scrollbackAnsi?: string;
+      pendingEscapeTailAnsi?: string;
+    }
+  | {
+      type: 'terminal_output';
+      terminalId: string;
+      surfaceId: string;
+      generation: number;
+      seq: number;
+      data: string;
+    }
+  | {
+      type: 'terminal_exit';
+      terminalId: string;
+      surfaceId: string;
+      generation: number;
+      exitCode: number;
+      signal?: number;
+    }
+  | {
+      type: 'terminal_error';
+      terminalId: string;
+      surfaceId?: string;
+      generation?: number;
+      message: string;
+    }
   | {
       type: 'interactive_prompt';
       sessionId: string;
@@ -326,8 +456,6 @@ export type AppServerMessage =
     }
   | { type: 'session_stopped'; sessionId: string }
   | { type: 'session_idle_closed'; sessionId: string }
-  | { type: 'session_goal_updated'; sessionId: string; goal: SessionGoal }
-  | { type: 'session_goal_cleared'; sessionId: string }
   | ({ type: 'rate_limit_update' } & ProviderRateLimitsSnapshot)
   | { type: 'model_config_updated'; providerId: 'claude-code' }
   | {
@@ -364,6 +492,10 @@ export type AppServerMessage =
       sessionId: string;
       title: string;
       previousTitle: string;
+      /** False for a deterministic placeholder that remains eligible for AI replacement. */
+      hasCustomTitle?: boolean;
+      /** Suppress rename feedback for automatic local placeholder replacement. */
+      silent?: boolean;
     }
   | {
       type: 'session_title_generation';

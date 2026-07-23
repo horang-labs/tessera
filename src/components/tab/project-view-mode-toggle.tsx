@@ -2,7 +2,6 @@
 
 import { memo, useCallback } from 'react';
 import { useBoardStore } from '@/stores/board-store';
-import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { saveCurrentKanbanScrollPosition } from '@/lib/kanban-scroll-position';
 import { cn } from '@/lib/utils';
 import { ViewModeToggle } from './view-mode-toggle';
@@ -32,7 +31,7 @@ export const ProjectViewModeToggle = memo(function ProjectViewModeToggle({
     [activeCollectionFilter, selectedProjectDir, setViewMode, viewMode],
   );
 
-  if (!selectedProjectDir || selectedProjectDir === ALL_PROJECTS_SENTINEL) return null;
+  if (!selectedProjectDir) return null;
 
   return (
     <div

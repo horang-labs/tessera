@@ -56,7 +56,10 @@ interface MemoryRowItem {
   fileName: string;
   relativePath: string;
   icon: ReactNode;
+  /** Host filesystem path, used by the context menu's open/reveal actions. */
   path: string;
+  /** Path as the session's CLI sees it; what the user is shown. */
+  displayPath: string;
   description: string;
   statusLabel?: string;
   shadowed?: boolean;
@@ -260,6 +263,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
         relativePath: guideline.fileName,
         icon: <BookText className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />,
         path: guideline.path,
+        displayPath: guideline.displayPath,
         description: statusLabel,
         statusLabel,
         shadowed: guideline.status === "shadowed",
@@ -278,6 +282,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
         ? <BookOpen className="h-3.5 w-3.5 shrink-0 text-(--accent)" />
         : <FileText className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />,
       path: joinDisplayPath(data.memoryDir, file.relativePath),
+      displayPath: joinDisplayPath(data.memoryDirDisplay, file.relativePath),
       description: getMemoryFileDescription(data.provider, file, t),
       type: file.type,
       emphasis: file.isIndex || file.relativePath === "memory_summary.md",
@@ -300,7 +305,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "user-scope",
           title: t("memoryPanel.sections.userScopeTitle"),
           description: t("memoryPanel.sections.codexUserScopeDescription"),
-          folderPath: globalGuidelines[0] ? getDisplayDir(globalGuidelines[0].path) : data.instructionRoots.user,
+          folderPath: globalGuidelines[0] ? getDisplayDir(globalGuidelines[0].displayPath) : data.instructionRootsDisplay.user,
           icon: <User className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: globalGuidelines,
           emptyLabel: t("memoryPanel.empty.noUserInstructions"),
@@ -309,7 +314,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "project-scope",
           title: t("memoryPanel.sections.projectScopeTitle"),
           description: t("memoryPanel.sections.codexProjectScopeDescription"),
-          folderPath: projectGuidelines[0] ? getDisplayDir(projectGuidelines[0].path) : data.instructionRoots.project ?? "",
+          folderPath: projectGuidelines[0] ? getDisplayDir(projectGuidelines[0].displayPath) : data.instructionRootsDisplay.project ?? "",
           icon: <Folder className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: projectGuidelines,
           emptyLabel: t("memoryPanel.empty.noProjectInstructions"),
@@ -318,7 +323,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "user-global-memory",
           title: t("memoryPanel.sections.codexGlobalMemoryTitle"),
           description: t("memoryPanel.sections.codexGlobalMemoryDescription"),
-          folderPath: data.memoryDir,
+          folderPath: data.memoryDirDisplay,
           icon: <Brain className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: globalMemoryRows,
         },
@@ -326,7 +331,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "rollout-summaries",
           title: t("memoryPanel.sections.rolloutSummariesTitle"),
           description: t("memoryPanel.sections.rolloutSummariesDescription"),
-          folderPath: joinDisplayPath(data.memoryDir, "rollout_summaries"),
+          folderPath: joinDisplayPath(data.memoryDirDisplay, "rollout_summaries"),
           icon: <FileText className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: rolloutRows,
         },
@@ -334,7 +339,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "ad-hoc-notes",
           title: t("memoryPanel.sections.adHocNotesTitle"),
           description: t("memoryPanel.sections.adHocNotesDescription"),
-          folderPath: joinDisplayPath(data.memoryDir, "extensions/ad_hoc/notes"),
+          folderPath: joinDisplayPath(data.memoryDirDisplay, "extensions/ad_hoc/notes"),
           icon: <BookText className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: adHocRows,
         },
@@ -342,7 +347,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "memory-skills",
           title: t("memoryPanel.sections.memorySkillsTitle"),
           description: t("memoryPanel.sections.memorySkillsDescription"),
-          folderPath: joinDisplayPath(data.memoryDir, "skills"),
+          folderPath: joinDisplayPath(data.memoryDirDisplay, "skills"),
           icon: <BookOpen className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: skillRows,
         },
@@ -359,7 +364,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "user-scope",
           title: t("memoryPanel.sections.userScopeTitle"),
           description: t("memoryPanel.sections.opencodeUserScopeDescription"),
-          folderPath: data.instructionRoots.user,
+          folderPath: data.instructionRootsDisplay.user,
           icon: <User className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: globalGuidelines,
           emptyLabel: t("memoryPanel.empty.noUserInstructions"),
@@ -368,7 +373,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "project-scope",
           title: t("memoryPanel.sections.projectScopeTitle"),
           description: t("memoryPanel.sections.opencodeProjectScopeDescription"),
-          folderPath: data.instructionRoots.project ?? "",
+          folderPath: data.instructionRootsDisplay.project ?? "",
           icon: <Folder className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: projectGuidelines,
           emptyLabel: t("memoryPanel.empty.noProjectInstructions"),
@@ -381,7 +386,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "user-scope",
           title: t("memoryPanel.sections.userScopeTitle"),
           description: t("memoryPanel.sections.claudeUserScopeDescription"),
-          folderPath: globalGuidelines[0] ? getDisplayDir(globalGuidelines[0].path) : data.instructionRoots.user,
+          folderPath: globalGuidelines[0] ? getDisplayDir(globalGuidelines[0].displayPath) : data.instructionRootsDisplay.user,
           icon: <User className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: globalGuidelines,
           emptyLabel: t("memoryPanel.empty.noUserInstructions"),
@@ -390,7 +395,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           key: "project-scope",
           title: t("memoryPanel.sections.projectScopeTitle"),
           description: t("memoryPanel.sections.claudeProjectScopeDescription"),
-          folderPath: projectGuidelines[0] ? getDisplayDir(projectGuidelines[0].path) : data.instructionRoots.project ?? "",
+          folderPath: projectGuidelines[0] ? getDisplayDir(projectGuidelines[0].displayPath) : data.instructionRootsDisplay.project ?? "",
           icon: <Folder className="h-3.5 w-3.5 text-(--text-muted)" />,
           rows: projectGuidelines,
           emptyLabel: t("memoryPanel.empty.noProjectInstructions"),
@@ -399,7 +404,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
         key: "project-memory",
         title: t("memoryPanel.sections.claudeProjectMemoryTitle"),
         description: t("memoryPanel.sections.claudeProjectMemoryDescription"),
-        folderPath: data.memoryDir,
+        folderPath: data.memoryDirDisplay,
         icon: <Brain className="h-3.5 w-3.5 text-(--text-muted)" />,
         rows: projectMemoryRows,
         emptyLabel: t("memoryPanel.empty.noMemoryFiles"),
@@ -417,8 +422,9 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
 
   const openRow = useCallback((row: MemoryRowItem, pin: boolean) => {
     if (!sessionId) return;
-    if (pin) openMemoryFileTab(sessionId, row.kind, row.relativePath);
-    else previewMemoryFileTab(sessionId, row.kind, row.relativePath);
+    const options = { preferKanbanPeek: true };
+    if (pin) openMemoryFileTab(sessionId, row.kind, row.relativePath, options);
+    else previewMemoryFileTab(sessionId, row.kind, row.relativePath, options);
   }, [sessionId]);
 
   const handleCreate = useCallback(async () => {
@@ -453,7 +459,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
 
       setCreateOpen(false);
       setCreateName("");
-      openMemoryFileTab(sessionId, "memory", fileName);
+      openMemoryFileTab(sessionId, "memory", fileName, { preferKanbanPeek: true });
       void loadMemories();
       toast.success(t("memoryPanel.toast.created", { fileName }));
     } catch (error) {
@@ -518,7 +524,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           onClick={() => openRow(row, false)}
           onDoubleClick={() => openRow(row, true)}
           className="flex w-full min-w-0 items-start gap-2 py-1.5 pl-8 pr-8 text-left"
-          title={row.path}
+          title={row.displayPath}
           data-testid={`memory-row-${row.kind}-${row.relativePath}`}
         >
           <span className="mt-0.5">{row.icon}</span>
@@ -644,7 +650,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
         <EmptyState
           title={t("memoryPanel.empty.noFilesTitle")}
           body={t("memoryPanel.empty.noFilesBody", {
-            path: state.data?.memoryDir ?? t("memoryPanel.empty.providerMemoryFolder"),
+            path: state.data?.memoryDirDisplay ?? t("memoryPanel.empty.providerMemoryFolder"),
           })}
           action={canCreateProjectMemory ? (
             <Button

@@ -16,7 +16,6 @@ import {
   Plus,
   Sparkles,
   Trash2,
-  TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
 import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
@@ -27,17 +26,14 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useBoardStore } from '@/stores/board-store';
 import {
-  selectAnyAwaitingUserPrompt,
-  selectAnyTurnInFlight,
-  selectIsAwaitingUserPrompt,
-  selectIsTurnInFlight,
-  useChatStore,
-} from '@/stores/chat-store';
+  useAnySessionAwaitingUser,
+  useIsSessionAwaitingUser,
+} from '@/hooks/use-session-awaiting-user';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore, selectHasRunningWorkflow, selectAnyRunningWorkflow } from '@/stores/session-store';
+import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
 import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
@@ -59,6 +55,11 @@ import { ProviderLogoMark } from './provider-brand';
 import { ProviderQuickMenu } from './provider-quick-menu';
 import { detectPrMismatch, prMismatchTooltip } from './task-pr-badge';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
+import {
+  useIsSessionProcessing,
+  useSessionProcessingSummary,
+} from '@/hooks/use-session-processing';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -483,16 +484,18 @@ function SubSessionRow({
   const isActive = sess.id === activeSessionId;
   const isSelected = useSelectionStore((state) => state.selectedIds.has(sess.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
-  const isProcessingTurn = useChatStore(selectIsTurnInFlight(sess.id));
-  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(sess.id));
-  const isProcessing = isProcessingTurn || isWorkflowRunning;
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(sess.id));
-  const liveIsRunning = useSessionStore((state) => {
+  const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
+  const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
+  const liveSession = useSessionStore((state) => {
     for (const project of state.projects) {
       const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return session.isRunning;
+      if (session) return session;
     }
-    return sess.isRunning;
+    return undefined;
+  });
+  const runtimePresentation = resolveSessionRuntimePresentation({
+    kind: liveSession?.kind ?? sess.kind,
+    isRunning: liveSession?.isRunning ?? sess.isRunning,
   });
   const hasUnread = useSessionStore((state) => {
     if (isActive) return false;
@@ -508,9 +511,10 @@ function SubSessionRow({
         id: sess.id,
         title: sess.title,
         lastModified: sess.lastModified,
-        isRunning: liveIsRunning,
+        isRunning: liveSession?.isRunning ?? sess.isRunning,
+        kind: liveSession?.kind ?? sess.kind,
       }) as UnifiedSession,
-    [liveIsRunning, sess],
+    [liveSession, sess],
   );
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -591,7 +595,8 @@ function SubSessionRow({
             isProcessing={isProcessing}
             isAwaitingUser={isAwaitingUser}
             hasUnread={hasUnread}
-            isRunning={liveIsRunning}
+            isRunning={runtimePresentation.showRunning}
+            sessionKind={liveSession?.kind ?? sess.kind}
             placement="corner"
             surface="sidebar"
           />
@@ -602,7 +607,8 @@ function SubSessionRow({
             isProcessing={isProcessing}
             isAwaitingUser={isAwaitingUser}
             hasUnread={hasUnread}
-            isRunning={liveIsRunning}
+            isRunning={runtimePresentation.showRunning}
+            sessionKind={liveSession?.kind ?? sess.kind}
             placement="leading"
             surface="sidebar"
           />
@@ -624,7 +630,7 @@ function SubSessionRow({
 
       {isHovered && !isRenaming && (
         <div className="flex shrink-0 items-center gap-0.5">
-          {liveIsRunning && onStopProcess && (
+          {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
               onClick={handleStopProcess}
               className="rounded p-0.5 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
@@ -711,19 +717,23 @@ export function TaskItemRow({
     getSidebarActionSurface({ isActive: isTaskActive, isSelected }),
   );
   const taskSessionIds = task.sessions.map((session) => session.id);
-  const hasRunningSession = useSessionStore((state) =>
+  const hasVisibleRuntimeSession = useSessionStore((state) =>
     taskSessionIds.some((id) => {
       for (const project of state.projects) {
         const session = project.sessions.find((item) => item.id === id);
-        if (session) return session.isRunning;
+        if (session) return resolveSessionRuntimePresentation(session).showRunning;
       }
-      return false;
+      const snapshot = task.sessions.find((session) => session.id === id);
+      return snapshot
+        ? resolveSessionRuntimePresentation(snapshot).showRunning
+        : false;
     }),
   );
-  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(taskSessionIds));
-  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(taskSessionIds));
-  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
-  const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
+  const {
+    hasProcessingSession,
+    hasTerminalProcessingSession,
+  } = useSessionProcessingSummary(task.sessions);
+  const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
   const hasUnreadSession = useSessionStore((state) =>
     !isTaskActive &&
     taskSessionIds.some((id) => {
@@ -735,7 +745,7 @@ export function TaskItemRow({
       return false;
     }),
   );
-  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasRunningSession;
+  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasVisibleRuntimeSession;
   const {
     inputRef: renameInputRef,
     isRenaming,
@@ -754,8 +764,8 @@ export function TaskItemRow({
   const canDrag = canCollectionDnd || canPanelSessionDnd;
   const titleFadeStyle: React.CSSProperties | undefined = isHovered && !isRenaming
     ? {
-        WebkitMaskImage: hasRunningSession ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
-        maskImage: hasRunningSession ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
+        WebkitMaskImage: hasVisibleRuntimeSession ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
+        maskImage: hasVisibleRuntimeSession ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
       }
     : undefined;
 
@@ -775,7 +785,7 @@ export function TaskItemRow({
 
     for (const session of task.sessions) {
       const liveSession = useSessionStore.getState().getSession(session.id);
-      if (liveSession?.isRunning ?? session.isRunning) {
+      if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onStopProcess?.(session.id);
       }
     }
@@ -803,6 +813,7 @@ export function TaskItemRow({
           title: session.title,
           lastModified: session.lastModified,
           isRunning: session.isRunning,
+          kind: session.kind,
         } as UnifiedSession,
         event,
       );
@@ -820,6 +831,7 @@ export function TaskItemRow({
         title: session.title,
         lastModified: session.lastModified,
         isRunning: session.isRunning,
+        kind: session.kind,
       } as UnifiedSession,
     );
   }, [isRenaming, onSessionDoubleClick, task.sessions]);
@@ -845,16 +857,6 @@ export function TaskItemRow({
               : getWorktreeIconClass(task.workflowStatus),
           )}
         />
-        {showStatus && (
-          <ItemStatusIndicator
-            isProcessing={hasProcessingSession}
-            isAwaitingUser={hasAwaitingUserSession}
-            hasUnread={hasUnreadSession}
-            isRunning={hasRunningSession}
-            placement="corner"
-            surface="sidebar"
-          />
-        )}
         {(() => {
           // Skip mismatch badge when PR sync is unsupported — we have no
           // reliable prStatus to compare against the column.
@@ -867,16 +869,22 @@ export function TaskItemRow({
             <span
               title={reason}
               aria-label={reason}
-              className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--sidebar-bg) cursor-help"
+              className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--sidebar-bg) cursor-help"
               data-testid="task-pr-mismatch-badge"
-            >
-              <TriangleAlert
-                className="h-full w-full text-(--status-warning-text)"
-                strokeWidth={2.5}
-              />
-            </span>
+            />
           );
         })()}
+        {showStatus && (
+          <ItemStatusIndicator
+            isProcessing={hasProcessingSession}
+            isAwaitingUser={hasAwaitingUserSession}
+            hasUnread={hasUnreadSession}
+            isRunning={hasVisibleRuntimeSession}
+            sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
+            placement="corner"
+            surface="sidebar"
+          />
+        )}
         {task.worktreeMissing && (
           <span
             aria-hidden
@@ -940,7 +948,8 @@ export function TaskItemRow({
                 isProcessing={hasProcessingSession}
                 isAwaitingUser={hasAwaitingUserSession}
                 hasUnread={hasUnreadSession}
-                isRunning={hasRunningSession}
+                isRunning={hasVisibleRuntimeSession}
+                sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                 placement="corner"
                 surface="sidebar"
               />
@@ -953,7 +962,8 @@ export function TaskItemRow({
                 isProcessing={hasProcessingSession}
                 isAwaitingUser={hasAwaitingUserSession}
                 hasUnread={hasUnreadSession}
-                isRunning={hasRunningSession}
+                isRunning={hasVisibleRuntimeSession}
+                sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                 placement="inline"
                 surface="sidebar"
               />
@@ -1007,7 +1017,7 @@ export function TaskItemRow({
         <div
           className={cn(
             'pointer-events-none absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
-            hasRunningSession ? 'w-28' : 'w-24',
+            hasVisibleRuntimeSession ? 'w-28' : 'w-24',
             isHovered && !isRenaming ? 'opacity-100' : 'pointer-events-none opacity-0',
           )}
         >
@@ -1017,7 +1027,7 @@ export function TaskItemRow({
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">
-            {hasRunningSession && onStopProcess && (
+            {hasVisibleRuntimeSession && onStopProcess && (
               <StopProcessButton
                 onClick={handleStopProcess}
                 className="rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
@@ -1173,11 +1183,14 @@ export function ChatItemRow({
   const isSelected = useSelectionStore((state) => state.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const [isHovered, setIsHovered] = useState(false);
-  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
-  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
-  const isProcessing = isProcessingTurn || isWorkflowRunning;
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
-  const liveIsRunning = useSessionStore((state) => state.getSession(session.id)?.isRunning ?? session.isRunning);
+  const isProcessing = useIsSessionProcessing(session.id, session.kind);
+  const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
+  const liveSession = useSessionStore((state) => state.getSession(session.id));
+  const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
+  const runtimePresentation = resolveSessionRuntimePresentation({
+    kind: liveSession?.kind ?? session.kind,
+    isRunning: liveIsRunning,
+  });
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(session.id));
   const workflowStatus = session.workflowStatus;
   const workflowColor = workflowStatus
@@ -1186,6 +1199,14 @@ export function ChatItemRow({
   const workflowIconFill = workflowStatus
     ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
+  // Trailing badges mirror the worktree row's trailing group. The diff badge
+  // shows whenever the chat has worktree diff stats — provider icons on or off.
+  // With provider icons on, the leading slot holds the provider logo, so the
+  // chat bubble rides the trailing edge — ALWAYS shown for chats (colored by
+  // status when set, neutral gray when the chat has no status). Provider-off
+  // rows already carry the bubble in the leading slot instead.
+  const showTrailingDiff = !!session.diffStats && session.diffStats.changedFiles > 0;
+  const showTrailingBubble = showProviderIcons;
   const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
@@ -1212,8 +1233,8 @@ export function ChatItemRow({
   const canDrag = (!disableDnd || allowPanelSessionDnd) && !isRenaming;
   const titleFadeStyle: React.CSSProperties | undefined = isHovered && !isRenaming
     ? {
-        WebkitMaskImage: liveIsRunning ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
-        maskImage: liveIsRunning ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
+        WebkitMaskImage: runtimePresentation.canStop ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
+        maskImage: runtimePresentation.canStop ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
       }
     : undefined;
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -1304,7 +1325,8 @@ export function ChatItemRow({
             isProcessing={isProcessing}
             isAwaitingUser={isAwaitingUser}
             hasUnread={hasUnread}
-            isRunning={liveIsRunning}
+            isRunning={runtimePresentation.showRunning}
+            sessionKind={liveSession?.kind ?? session.kind}
             placement="corner"
             surface="sidebar"
           />
@@ -1337,10 +1359,40 @@ export function ChatItemRow({
           )}
         </div>
 
+        {/* Trailing group mirrors the worktree row: diff first, then a status-
+            colored chat bubble. Diff shows regardless of provider icons; the
+            bubble only when the provider logo holds the leading slot. Hidden on
+            hover so the quick-action buttons show. */}
+        {!isRenaming && (showTrailingDiff || showTrailingBubble) && (
+          <span
+            className={cn(
+              'flex shrink-0 items-center gap-1.5 transition-opacity duration-150',
+              isHovered ? 'opacity-0' : 'opacity-100',
+            )}
+          >
+            <DiffStatsBadge stats={session.diffStats} />
+            {showTrailingBubble && (
+              workflowColor && workflowIconFill ? (
+                <WorkflowMessageSquareIcon
+                  className="h-3.5 w-3.5 opacity-95"
+                  style={{ color: workflowColor }}
+                  fillColor={workflowIconFill}
+                  testId={`collection-chat-status-bubble-${session.id}`}
+                />
+              ) : (
+                <MessageSquare
+                  className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
+                  data-testid={`collection-chat-status-bubble-${session.id}`}
+                />
+              )
+            )}
+          </span>
+        )}
+
         <div
           className={cn(
             'pointer-events-none absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
-            liveIsRunning ? 'w-28' : 'w-24',
+            runtimePresentation.canStop ? 'w-28' : 'w-24',
             isHovered && !isRenaming ? 'opacity-100' : 'pointer-events-none opacity-0',
           )}
         >
@@ -1350,7 +1402,7 @@ export function ChatItemRow({
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">
-            {liveIsRunning && onStopProcess && (
+            {runtimePresentation.canStop && onStopProcess && (
               <StopProcessButton
                 onClick={handleStopProcess}
                 className="rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"

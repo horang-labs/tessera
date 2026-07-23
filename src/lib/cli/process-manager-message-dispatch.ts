@@ -167,9 +167,9 @@ export function applyManagedParsedMessageSideEffect({
       }
       return;
     case 'auto_generate_title':
-      // Fired on every successful turn completion (all providers). Auto-title
-      // self-gates to once-per-session; output translation gates on its own
-      // settings + per-message dedup.
+      // Fired on every successful turn completion (all providers). Optional AI
+      // refinement self-gates to once per session; output translation gates on
+      // its own settings and per-message deduplication.
       autoGenerateTitle(sessionId, userId);
       translateAssistantMessage(sessionId, userId);
       return;

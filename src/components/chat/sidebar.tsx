@@ -34,6 +34,7 @@ import { useCollectionStore } from '@/stores/collection-store';
 import { useTaskStore } from '@/stores/task-store';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import { Tooltip } from '@/components/ui/tooltip';
 import {
@@ -530,7 +531,7 @@ export function Sidebar() {
 
     for (const project of projects) {
       for (const session of project.sessions) {
-        if (!session.archived && session.isRunning) {
+        if (!session.archived && resolveSessionRuntimePresentation(session).canStop) {
           sessionIds.add(session.id);
         }
       }

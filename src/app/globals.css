@@ -679,22 +679,6 @@ body {
   animation: session-processing 1.5s ease-in-out infinite;
 }
 
-/* Tab carousel slide animations */
-@keyframes carousel-from-left {
-  from { transform: translateX(-40px); opacity: 0.3; }
-  to { transform: translateX(0); opacity: 1; }
-}
-@keyframes carousel-from-right {
-  from { transform: translateX(40px); opacity: 0.3; }
-  to { transform: translateX(0); opacity: 1; }
-}
-.carousel-slide-left {
-  animation: carousel-from-right 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-.carousel-slide-right {
-  animation: carousel-from-left 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
 .pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }

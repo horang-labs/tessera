@@ -12,6 +12,16 @@ export interface I18nMessages {
       gitDesc: string;
     };
     language: string;
+    executionMode: {
+      title: string;
+      description: string;
+      existingSessions: string;
+      recommended: string;
+      ptyOnly: string;
+      unsupported: string;
+      pty: { label: string; description: string };
+      gui: { label: string; description: string };
+    };
     profile: {
       title: string;
       description: string;
@@ -28,8 +38,8 @@ export interface I18nMessages {
     notifications: string;
     sound: string;
     toast: string;
-    autoGenerateTitle: string;
-    autoGenerateTitleDesc: string;
+    aiTitleRefinement: string;
+    aiTitleRefinementDesc: string;
     translate: {
       title: string;
       enabled: string;
@@ -63,6 +73,22 @@ export interface I18nMessages {
       dark: string;
       auto: string;
     };
+    terminalTheme: {
+      title: string;
+      description: string;
+      light: string;
+      dark: string;
+      presets: {
+        liftedNeutral: string;
+        coolPorcelain: string;
+        blueFrost: string;
+        pureWhite: string;
+        neutralCharcoal: string;
+        graphiteBlue: string;
+        deepNavy: string;
+        softSlate: string;
+      };
+    };
     fontSize: string;
     fontSizePresets: {
       small: string;
@@ -75,6 +101,12 @@ export interface I18nMessages {
     showProviderIconsDesc: string;
     showRecentWork: string;
     showRecentWorkDesc: string;
+    kanbanSessionOpenMode: {
+      title: string;
+      description: string;
+      split: { label: string; description: string };
+      peek: { label: string; description: string };
+    };
     enterKey: {
       label: string;
       send: string;
@@ -107,6 +139,8 @@ export interface I18nMessages {
       refreshProviders: string;
       providerNeedsLoginTooltip: string;
       needsLoginShort: string;
+      providerNotInstalledTooltip: string;
+      notInstalledShort: string;
       needsLoginTitle: string;
       loginInstructionPrefix: string;
       loginInstructionSuffix: string;
@@ -320,6 +354,9 @@ export interface I18nMessages {
     usingWindowsTools: string;
     usingWslTools: string;
     usingLocalTools: string;
+    executionModeTitle: string;
+    executionModeDescription: string;
+    executionModeNote: string;
     telemetryTitle: string;
     telemetryDescription: string;
     aiCli: string;
@@ -350,6 +387,7 @@ export interface I18nMessages {
     limitedMode: string;
     loading: string;
     loadFailed: string;
+    saveFailed: string;
   };
   chat: {
     newSession: string;
@@ -362,6 +400,7 @@ export interface I18nMessages {
     reconnecting: string;
     disconnected: string;
     reconnect: string;
+    loadingSession: string;
     loadingHistory: string;
     thinking: string;
     send: string;
@@ -397,10 +436,6 @@ export interface I18nMessages {
     codexFastEnabled: string;
     codexFastDisabled: string;
     codexCompactDuringTurn: string;
-    codexGoalEditMissing: string;
-    codexGoalChanged: string;
-    codexGoalObjectiveRequired: string;
-    codexGoalTooLong: string;
     cancelHint: string;
     cancelButton: string;
     attachFile: string;
@@ -460,6 +495,7 @@ export interface I18nMessages {
     newTabDefault: string;
     openGitPanel: string;
     closeGitPanel: string;
+    renameTab: string;
     closeTab: string;
     closeOtherTabs: string;
     closeTabsToLeft: string;
@@ -487,39 +523,6 @@ export interface I18nMessages {
       networkError: string;
       reconnecting: string;
       maxRetriesReached: string;
-    };
-  };
-  goal: {
-    title: string;
-    start: string;
-    edit: string;
-    save: string;
-    pause: string;
-    resume: string;
-    clear: string;
-    complete: string;
-    refresh: string;
-    notSet: string;
-    objectiveLabel: string;
-    objectivePlaceholder: string;
-    inputPlaceholder: string;
-    steerPlaceholder: string;
-    tokensUsed: string;
-    status: {
-      active: string;
-      paused: string;
-      blocked: string;
-      usageLimited: string;
-      budgetLimited: string;
-      complete: string;
-    };
-    statusBar: {
-      active: string;
-      paused: string;
-      blocked: string;
-      usageLimited: string;
-      budgetLimited: string;
-      complete: string;
     };
   };
   notifications: {
@@ -593,16 +596,12 @@ export interface I18nMessages {
     switchSession: string;
     nextSession: string;
     prevSession: string;
-    nextTab: string;
-    prevTab: string;
     settings: string;
     showHelp: string;
   };
   shortcut: {
     newTab: string;
     closeTab: string;
-    nextTab: string;
-    prevTab: string;
     toggleSidebar: string;
     toggleView: string;
     splitRight: string;
@@ -730,6 +729,7 @@ export interface I18nMessages {
     closePanel: string;
     tooSmallToSplit: string;
     cannotCloseLastPanel: string;
+    dropToInsertPath: string;
   };
   sidebar: {
     noProjects: string;
@@ -880,38 +880,7 @@ export interface I18nMessages {
       git: string;
       diff: string;
       files: string;
-      tools: string;
       context: string;
-    };
-    tools: {
-      title: string;
-      live: string;
-      idle: string;
-      noSessionTitle: string;
-      noSessionBody: string;
-      noActivityTitle: string;
-      noActivityBody: string;
-      noMatchingEvents: string;
-      noSavedToolOutput: string;
-      loadToolOutputFailed: string;
-      loadingSavedOutput: string;
-      noErrorOutput: string;
-      columns: {
-        time: string;
-        kind: string;
-        event: string;
-      };
-      filters: {
-        all: string;
-        cmd: string;
-        read: string;
-        search: string;
-        edit: string;
-        issue: string;
-        task: string;
-        todo: string;
-        web: string;
-      };
     };
     empty: {
       noWorktreeTitle: string;
@@ -1013,6 +982,7 @@ export interface I18nMessages {
       globalScope: string;
       projectScope: string;
       unsavedChanges: string;
+      discardChangesConfirm: string;
       save: string;
       saveShortcut: string;
       noUnsavedChanges: string;
@@ -1055,6 +1025,7 @@ export interface I18nMessages {
       totalTasks: string;
       running: string;
       emptyColumn: string;
+      selectProjectToCreate: string;
       viewList: string;
       viewBoard: string;
       viewListShort: string;
@@ -1091,6 +1062,9 @@ export interface I18nMessages {
       launcherTitle: string;
       launcherSubtitle: string;
       startAsLabel: string;
+      agentUiLabel: string;
+      shellLabel: string;
+      shellDescription: string;
       continueButtonTooltip: string;
       continueFromLabel: string;
       continueSourcePrefix: string;

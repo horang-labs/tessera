@@ -30,7 +30,6 @@ export const CODEX_0_144_1_SLASH_COMMAND_NAMES = [
   'init',
   'compact',
   'plan',
-  'goal',
   'agent',
   'side',
   'btw',
@@ -79,7 +78,6 @@ export type CodexSlashCommandSupport =
 export type CodexNativeSlashCommand =
   | 'fast'
   | 'compact'
-  | 'goal'
   | 'model'
   | 'permissions'
   | 'skills'
@@ -122,7 +120,7 @@ export interface CodexSlashCommandPickerItem {
 
 const NATIVE_COMMANDS = new Set<CodexCanonicalSlashCommand>([
   'model', 'permissions', 'skills', 'rename', 'new', 'archive', 'delete', 'fork',
-  'compact', 'plan', 'goal', 'copy', 'diff', 'mention', 'status', 'clear',
+  'compact', 'plan', 'copy', 'diff', 'mention', 'status', 'clear',
 ]);
 
 const TERMINAL_DIRECT_COMMANDS = new Set<CodexCanonicalSlashCommand>([
@@ -172,13 +170,6 @@ const OFFICIAL_COMMAND_ALIASES = new Map<string, string>(
   Object.entries(CODEX_0_144_1_SLASH_COMMAND_ALIASES),
 );
 
-function isGoalAlias(name: string): boolean {
-  const repeatedOs = name.startsWith('g') && name.endsWith('al')
-    ? name.slice(1, -2)
-    : '';
-  return repeatedOs.length > 0 && /^o+$/.test(repeatedOs);
-}
-
 function commandSupport(command: CodexCanonicalSlashCommand): CodexSlashCommandSupport {
   if (NATIVE_COMMANDS.has(command)) return 'native';
   if (TERMINAL_DIRECT_COMMANDS.has(command)) return 'terminal-direct';
@@ -195,7 +186,6 @@ function terminalMode(command: CodexCanonicalSlashCommand): CodexTerminalMode | 
 export function resolveCodexSlashCommandName(name: string): string | null {
   if (!name || name !== name.toLowerCase()) return null;
   if (name === 'fast') return 'fast';
-  if (isGoalAlias(name)) return 'goal';
   return OFFICIAL_COMMAND_ALIASES.get(name)
     ?? (OFFICIAL_COMMAND_NAMES.has(name) ? name : null);
 }
@@ -219,7 +209,7 @@ export function getCodexSlashCommandsForPicker(
 ): CodexSlashCommandPickerItem[] {
   return CODEX_0_144_1_SLASH_COMMAND_NAMES.flatMap((name) => {
     const support = commandSupport(name);
-    if (support === 'hidden' || name === 'compact' || name === 'goal') return [];
+    if (support === 'hidden' || name === 'compact') return [];
     if (!isCodexSlashCommandAvailable(name, availability)) return [];
     return [{
       name,

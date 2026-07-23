@@ -1,10 +1,11 @@
 import type { ChildProcess } from 'child_process';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { ContentBlock } from '@/lib/ws/message-types';
+import type { CliEnvironment } from '../cli-exec';
 import type { ParsedMessage } from './message-types';
 import type { GeneratedTitle, SpawnOptions, SpawnResult, TranslatedText } from './session-types';
 import type { SkillSource } from './skill-types';
-import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
 
 /**
  * Three-state connection status for a given CLI × environment combination.
@@ -30,6 +31,31 @@ export type CliProbeFailureKind = 'ok' | 'spawn_error' | 'timeout' | 'nonzero_ex
 
 export type CliCommandSource = 'default' | 'override';
 export type CliCommandShape = 'bare_command' | 'absolute_path' | 'relative_path' | 'other';
+
+/** How a provider TUI reacts when the host terminal changes light/dark mode. */
+export type TerminalAppearanceChangePolicy = 'live' | 'restart';
+
+/** How a provider TUI uses ED3 while redrawing after SIGWINCH. */
+export type TerminalResizeScrollbackPolicy = 'native' | 'preserve-on-ed3';
+
+/** How accepted terminal input indicates an agent-turn interrupt. */
+export type TerminalInterruptInputPolicy = 'none' | 'single-escape';
+
+export interface ProviderTerminalSessionObservation {
+  activation: 'active' | 'background';
+  providerSessionId: string;
+  transcriptPath?: string;
+}
+
+export interface ProviderTerminalSessionObserver {
+  ready(): Promise<void>;
+  dispose(): void;
+}
+
+export interface ProviderTerminalSessionObserverOptions {
+  currentProviderSessionId: () => string | undefined;
+  onObservation: (observation: ProviderTerminalSessionObservation) => void;
+}
 
 export interface CliProbeSummary {
   ok: boolean;
@@ -72,6 +98,10 @@ export interface CheckStatusOptions {
   userId?: string;
 }
 
+export interface ProviderRateLimitOptions {
+  environment: CliEnvironment;
+}
+
 /**
  * CliProvider is the primary abstraction for plugging in different coding-agent
  * CLIs (Claude, Codex, Gemini, OpenCode, etc.).
@@ -99,11 +129,57 @@ export interface CliProvider {
   getDisplayName(): string;
 
   /**
+   * Declares whether an already-running TUI can follow the terminal's
+   * standardized color-scheme notification or must be resumed after restart.
+   */
+  getTerminalAppearanceChangePolicy(): TerminalAppearanceChangePolicy;
+
+  /** Declares whether SIGWINCH redraw ED3 must preserve host scrollback. */
+  getTerminalResizeScrollbackPolicy(): TerminalResizeScrollbackPolicy;
+
+  /** Declares whether one accepted Escape interrupts the active terminal turn. */
+  getTerminalInterruptInputPolicy(): TerminalInterruptInputPolicy;
+
+  /**
+   * Interprets provider-owned persisted state to decide whether terminating a
+   * PTY can be followed by a lossless resume of the same provider session.
+   */
+  canResumeTerminalAfterRestart?(providerState: string | null): boolean;
+
+  /** Watches provider-owned artifacts for native CLI session forks. */
+  createTerminalSessionObserver?(
+    options: ProviderTerminalSessionObserverOptions,
+  ): ProviderTerminalSessionObserver;
+
+  /** Classifies a provider hook that may belong to a non-active fork child. */
+  isBackgroundTerminalSessionFork?(options: {
+    currentProviderSessionId: string;
+    observedProviderSessionId: string;
+  }): boolean;
+
+  /**
+   * Recognizes, from what the PTY currently shows, that the running conversation
+   * was reset in place (`/clear`, `/new`). Codex and OpenCode mint the next
+   * session id lazily — nothing is reported until the next prompt — so the
+   * screen is the only signal available at the moment it happens, and it is
+   * independent of how the command was issued (typed, completed, or picked).
+   */
+  detectTerminalConversationReset?(options: {
+    visibleText: string;
+    currentProviderSessionId: string;
+  }): boolean;
+
+  /**
    * Checks whether this CLI binary is available in the requested environment
    * ("native" host vs. "wsl"). When omitted, implementations fall back to a
    * same-host binary probe.
    */
   isAvailable(environment?: 'native' | 'wsl'): Promise<boolean>;
+
+  /** Reads account-wide usage limits without requiring a provider session. */
+  fetchRateLimits?(
+    options: ProviderRateLimitOptions,
+  ): Promise<ProviderRateLimitsSnapshot | null>;
 
   /**
    * Returns the CLI arguments to pass to spawn() for the given options.
@@ -203,13 +279,6 @@ export interface CliProvider {
    * Optional: start provider-native context compaction for the session.
    */
   compactThread?(proc: ChildProcess, sessionId: string): Promise<boolean>;
-
-  /**
-   * Optional: manage provider-native persistent session goals.
-   */
-  setGoal?(proc: ChildProcess, sessionId: string, update: SessionGoalUpdate): Promise<SessionGoal>;
-  getGoal?(proc: ChildProcess, sessionId: string): Promise<SessionGoal | null>;
-  clearGoal?(proc: ChildProcess, sessionId: string): Promise<boolean>;
 
   /**
    * Optional: create a SkillSource bound to a specific session's CLI process.

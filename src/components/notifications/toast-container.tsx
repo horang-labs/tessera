@@ -8,6 +8,8 @@ import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useBoardStore } from '@/stores/board-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { ToastNotification } from './toast-notification';
 import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
@@ -55,21 +57,21 @@ function ActionToastItem({ t: toastItem, onDismiss }: { t: ActionToast; onDismis
       exit={{ x: -400, opacity: 0 }}
       transition={{ type: 'spring', damping: 25, stiffness: 300 }}
       className={cn(
-        'w-[320px] rounded-lg border border-(--toast-border)',
+        'w-[17rem] rounded-lg border border-(--toast-border)',
         'bg-(--toast-bg) hover:bg-(--toast-bg-hover) transition-colors',
-        'flex items-center gap-2.5 p-3',
+        'flex items-center gap-2 p-2.5',
       )}
       style={{ boxShadow: 'var(--toast-shadow)' }}
       role="status"
     >
-      <div className="w-5 h-5 rounded-md bg-(--toast-icon-bg) border border-(--toast-icon-border) flex items-center justify-center shrink-0">
-        <Icon className="w-3 h-3" style={{ color }} />
+      <div className="w-4 h-4 rounded bg-(--toast-icon-bg) border border-(--toast-icon-border) flex items-center justify-center shrink-0">
+        <Icon className="w-2.5 h-2.5" style={{ color }} />
       </div>
-      <span className="text-[13px] font-medium text-(--text-primary) flex-1 min-w-0 truncate">{toastItem.message}</span>
+      <span className="text-[0.6875rem] font-medium text-(--text-primary) flex-1 min-w-0 truncate">{toastItem.message}</span>
       {toastItem.action && (
         <button
           onClick={(e) => { e.stopPropagation(); toastItem.action!.onClick(); onDismissRef.current(); }}
-          className="shrink-0 text-[12px] font-medium text-(--accent) hover:underline"
+          className="shrink-0 text-[0.625rem] font-medium text-(--accent) hover:underline"
         >
           {toastItem.action.label}
         </button>
@@ -112,6 +114,14 @@ export function ToastContainer() {
 
     clearUnreadCount(sessionId);
     wsClient.sendMarkAsRead(sessionId);
+
+    // Kanban peek mode: open the session in the board peek panel instead of a tab
+    const boardStore = useBoardStore.getState();
+    const peekMode = useSettingsStore.getState().settings.kanbanSessionOpenMode === 'peek';
+    if (boardStore.viewMode === 'board' && peekMode) {
+      boardStore.openSessionPeek(sessionId);
+      return;
+    }
 
     // Tab-aware session focus: use findSessionLocation (same as sidebar click handler)
     const tabStore = useTabStore.getState();

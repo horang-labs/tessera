@@ -19,10 +19,13 @@ import { snapshotTelemetryStartupDataState } from './src/lib/telemetry/server-st
 import { setModelConfigBroadcast, triggerModelConfigRefresh } from './src/lib/model-config/refresh';
 import { ensureRemoteModelConfigLoaded } from './src/lib/model-config/remote-config';
 import logger from './src/lib/logger';
+import { getServerPort } from './src/lib/server-port';
+import { handleHookRequest } from './src/lib/cli/hook-receiver';
+import { warmWindowsConptyOnce } from './src/lib/terminal/windows-conpty-warmup';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
-const port = parseInt(process.env.PORT || (dev ? '3100' : '3000'), 10);
+const port = getServerPort();
 const dir = process.env.TESSERA_APP_ROOT || process.cwd();
 
 loadEnvConfig(dir, dev, console, true);
@@ -60,6 +63,14 @@ async function startServer() {
 
   // Attach request handler after Next.js is prepared
   server.on('request', (req, res) => {
+    // 상태 사이드채널: PTY claude 훅만 여기서 처리하고 Next로 넘기지 않는다.
+    if (req.method === 'POST' && req.url) {
+      const pathname = req.url.split('?')[0];
+      if (pathname === '/__tessera/hook') {
+        void handleHookRequest(req, res);
+        return;
+      }
+    }
     handle(req, res);
   });
 
@@ -76,6 +87,10 @@ async function startServer() {
   server.listen(port, hostname, () => {
     // Start WebSocket server on the same HTTP server
     wsServer.start(server);
+
+    // Pay the first ConPTY spawn cost (~seconds on Windows) before the user
+    // opens their first terminal.
+    warmWindowsConptyOnce();
 
     // Start rate limit poller
     rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));

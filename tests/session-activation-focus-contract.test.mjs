@@ -34,6 +34,10 @@ test('tab clicks refocus the active panel even when the tab is already active', 
   assert.doesNotMatch(tabBar, /if \(tabId === tabStore\.activeTabId\) return/);
 });
 
+test('tab click focus restoration does not steal focus from the title editor', () => {
+  assert.match(focusHelper, /activeElement\?\.getAttribute\('data-tab-title-editor'\) === 'true'/);
+});
+
 test('session-open surfaces activate the located panel instead of only activeSessionId', () => {
   for (const source of [
     clickHandlers,

@@ -2,7 +2,7 @@
 
 import { memo, useState, useCallback, useRef } from 'react';
 import type React from 'react';
-import { GitBranch, MessageSquare, Plus, Tag, TriangleAlert } from 'lucide-react';
+import { GitBranch, MessageSquare, Plus, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
@@ -11,19 +11,18 @@ import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useBoardStore } from '@/stores/board-store';
 import {
-  selectAnyAwaitingUserPrompt,
-  selectAnyTurnInFlight,
-  selectIsAwaitingUserPrompt,
-  selectIsTurnInFlight,
-  useChatStore,
-} from '@/stores/chat-store';
+  useAnySessionAwaitingUser,
+  useIsSessionAwaitingUser,
+} from '@/hooks/use-session-awaiting-user';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore, selectHasRunningWorkflow, selectAnyRunningWorkflow } from '@/stores/session-store';
+import { useSessionStore } from '@/stores/session-store';
+import { useNotificationStore } from '@/stores/notification-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
 import type { UnifiedSession } from '@/types/chat';
+import type { Collection } from '@/types/collection';
 import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
@@ -41,6 +40,11 @@ import {
 import { DiffStatsBadge } from '@/components/chat/diff-stats-badge';
 import { ProviderLogoMark } from '@/components/chat/provider-brand';
 import { TaskPrBadge, detectPrMismatch, prMismatchTooltip } from '@/components/chat/task-pr-badge';
+import {
+  useIsSessionProcessing,
+  useSessionProcessingSummary,
+} from '@/hooks/use-session-processing';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 // --- Helpers ---
 
@@ -67,13 +71,19 @@ function formatRelativeTime(
 }
 
 /** Collection name label with Tag icon (matching list view) */
-function CollectionLabel({ collectionId, isActive }: { collectionId?: string | null; isActive?: boolean }) {
+function CollectionLabel({
+  collectionId,
+  projectId,
+  isActive,
+}: {
+  collectionId?: string | null;
+  projectId: string;
+  isActive?: boolean;
+}) {
   const { t } = useI18n();
   const collectionsByProject = useCollectionStore((state) => state.collectionsByProject);
   const config = collectionId
-    ? Object.values(collectionsByProject)
-        .flat()
-        .find((collection) => collection.id === collectionId)
+    ? collectionsByProject[projectId]?.find((collection) => collection.id === collectionId)
     : null;
   const label = collectionId ? config?.label : t('task.creation.noCollection');
 
@@ -114,6 +124,7 @@ interface KanbanChatCardProps {
   onMoveToProject?: (taskId: string) => void;
   onMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onStopProcess?: (sessionId: string) => void;
+  collections?: Collection[];
 }
 
 export const KanbanChatCard = memo(function KanbanChatCard({
@@ -136,15 +147,15 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   onMoveToProject,
   onMoveToCollection,
   onStopProcess,
+  collections: scopedCollections,
 }: KanbanChatCardProps) {
   const { t } = useI18n();
-  const collections = useCollectionStore((state) => state.collections);
+  const currentProjectCollections = useCollectionStore((state) => state.collections);
+  const collections = scopedCollections ?? currentProjectCollections;
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
-  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
-  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
-  const isProcessing = isProcessingTurn || isWorkflowRunning;
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
+  const isProcessing = useIsSessionProcessing(session.id, session.kind);
+  const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const isGeneratingTitle = useSessionStore((s) => s.generatingTitleIds.has(session.id));
   const isJustDropped = useBoardStore((s) => s.justDroppedId === session.id);
   const isDragging = useBoardStore((s) => s.draggingTaskId === session.id);
@@ -172,23 +183,41 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const workflowIconFill = workflowStatus
     ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
-  const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
+  // unreadCount는 session-store에서 직접 구독한다. prop의 session.unreadCount는
+  // board→scope→column 경유라, 완료 시 terminal-session-store(isProcessing) 리렌더와
+  // board 리렌더 타이밍이 어긋나면 낡은 값을 읽어 unread를 놓친다(칸반 카드는 memo).
+  // 리스트뷰가 쓰는 것과 같은 직접 구독으로 타이밍을 일치시킨다.
+  const liveUnreadCount = useSessionStore((state) => {
+    for (const project of state.projects) {
+      const s = project.sessions.find((item) => item.id === session.id);
+      if (s) return s.unreadCount ?? 0;
+    }
+    return session.unreadCount ?? 0;
+  });
+  const hasUnreadNotification = useNotificationStore((state) =>
+    state.notifications.some((notification) =>
+      notification.sessionId === session.id && !notification.read
+    )
+  );
+  const hasUnread = !isActive && (liveUnreadCount > 0 || hasUnreadNotification);
+  const runtimePresentation = resolveSessionRuntimePresentation(session);
+  const visibleUnread = session.kind === 'terminal' && isProcessing ? false : hasUnread;
   const stripeClass = isAwaitingUser
     ? 'task-stripe task-stripe-attention'
-    : hasUnread
+    : visibleUnread
       ? 'task-stripe task-stripe-unread'
       : isProcessing
         ? 'task-stripe task-stripe-processing'
-        : session.isRunning
+        : runtimePresentation.showRunning
           ? 'task-stripe task-stripe-running'
           : null;
   const stripeLabel = isAwaitingUser
     ? t('status.inputRequired')
-    : hasUnread
+    : visibleUnread
       ? t('status.unreadNotification')
       : isProcessing
         ? t('status.processing')
-        : session.isRunning
+        : runtimePresentation.showRunning
           ? t('status.sessionRunning')
           : null;
   const titleAnimationKey = isGeneratingTitle
@@ -309,17 +338,35 @@ export const KanbanChatCard = memo(function KanbanChatCard({
       >
         {/* Main row: icon + content */}
         <div className="flex items-start gap-2.5">
-          {/* Provider mark with Discord-style status overlay */}
-          <span className="relative mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-            {showProviderIcons ? (
-              <ProviderLogoMark
-                providerId={session.provider}
-                className={KANBAN_PROVIDER_MARK_CLASS}
-                iconClassName={KANBAN_PROVIDER_ICON_CLASS}
-                data-testid={`kanban-chat-agent-icon-${session.id}`}
-              />
-            ) : (
-              workflowColor && workflowIconFill ? (
+          {/* Provider mark aligns with the first title line; the chat bubble sits
+              one text line below it, mirroring the worktree card's branch icon. */}
+          <span className="mt-[3px] flex flex-col shrink-0 items-center gap-[5px]">
+            {showProviderIcons && (
+              <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                <ProviderLogoMark
+                  providerId={session.provider}
+                  className={KANBAN_PROVIDER_MARK_CLASS}
+                  iconClassName={KANBAN_PROVIDER_ICON_CLASS}
+                  data-testid={`kanban-chat-agent-icon-${session.id}`}
+                />
+                <ItemStatusIndicator
+                  isProcessing={isProcessing}
+                  isAwaitingUser={isAwaitingUser}
+                  hasUnread={hasUnread}
+                  isRunning={runtimePresentation.showRunning}
+                  sessionKind={session.kind}
+                  placement="corner"
+                  surface="board"
+                />
+              </span>
+            )}
+            <span
+              className={cn(
+                'relative flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                showProviderIcons && 'translate-y-[1px]',
+              )}
+            >
+              {workflowColor && workflowIconFill ? (
                 <WorkflowMessageSquareIcon
                   className="h-3.5 w-3.5 opacity-95"
                   style={{ color: workflowColor }}
@@ -334,16 +381,19 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                   )}
                   data-testid={`kanban-chat-bubble-${session.id}`}
                 />
-              )
-            )}
-            <ItemStatusIndicator
-              isProcessing={isProcessing}
-              isAwaitingUser={isAwaitingUser}
-              hasUnread={hasUnread}
-              isRunning={session.isRunning}
-              placement="corner"
-              surface="board"
-            />
+              )}
+              {!showProviderIcons && (
+                <ItemStatusIndicator
+                  isProcessing={isProcessing}
+                  isAwaitingUser={isAwaitingUser}
+                  hasUnread={hasUnread}
+                  isRunning={runtimePresentation.showRunning}
+                  sessionKind={session.kind}
+                  placement="corner"
+                  surface="board"
+                />
+              )}
+            </span>
           </span>
 
           {/* Content */}
@@ -387,7 +437,11 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 </span>
               )}
 
-              <CollectionLabel collectionId={session.collectionId} isActive={isActive && !isSelected} />
+              <CollectionLabel
+                collectionId={session.collectionId}
+                projectId={session.projectDir}
+                isActive={isActive && !isSelected}
+              />
               <DiffStatsBadge stats={session.diffStats} className="ml-auto" />
             </div>
           </div>
@@ -410,7 +464,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
               : undefined,
           }}
         >
-          {session.isRunning && onStopProcess && (
+          {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
               onClick={(e) => {
                 e.stopPropagation();
@@ -478,9 +532,9 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           onDelete={handleDelete}
           onOpenInNewTab={handleOpenInNewTab}
           onGenerateTitle={onGenerateTitle ? () => onGenerateTitle(session.id) : undefined}
-          isRunning={session.isRunning}
+          isRunning={runtimePresentation.showRunning}
           onMoveToProject={onMoveToProject ? handleMoveToProject : undefined}
-          onStopProcess={session.isRunning ? handleStopProcess : undefined}
+          onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}
@@ -593,23 +647,32 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       provider: taskSession.provider,
       lastModified: taskSession.lastModified,
       isRunning: taskSession.isRunning,
+      kind: taskSession.kind,
     } as UnifiedSession;
   }, [liveProjects]);
-  const hasRunningSession = useSessionStore((state) =>
+  const hasVisibleRuntimeSession = useSessionStore((state) =>
     taskSessionIds.some((id) => {
       for (const p of state.projects) {
         const s = p.sessions.find((ss) => ss.id === id);
-        if (s) return s.isRunning;
+        if (s) return resolveSessionRuntimePresentation(s).showRunning;
       }
-      return false;
+      const snapshot = task.sessions.find((session) => session.id === id);
+      return snapshot
+        ? resolveSessionRuntimePresentation(snapshot).showRunning
+        : false;
     })
   );
-  const hasProcessingTurn = useChatStore(selectAnyTurnInFlight(taskSessionIds));
-  const hasWorkflowRunning = useSessionStore(selectAnyRunningWorkflow(taskSessionIds));
-  const hasProcessingSession = hasProcessingTurn || hasWorkflowRunning;
-  const hasAwaitingUserSession = useChatStore(selectAnyAwaitingUserPrompt(taskSessionIds));
+  const {
+    hasProcessingSession,
+    hasTerminalProcessingSession,
+  } = useSessionProcessingSummary(task.sessions);
+  const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
+  // task에 활성 세션이 하나라도 있으면 unread를 통째로 억제하던 `!isActive` 가드를
+  // 제거한다. multi-session task에서 한 세션이 활성이면 다른 완료+안읽음 세션의 unread가
+  // 다 숨겨져 초록 running 스트라이프로 밀리던 버그(리스트뷰는 단일세션+활성일 때만
+  // 억제해 이 문제가 없었다). 활성 세션 자체는 아래 개별 제외로 이미 빠진다.
   const hasUnreadSession = useSessionStore((state) =>
-    !isActive && taskSessionIds.some((id) => {
+    taskSessionIds.some((id) => {
       if (id === activeSessionId) return false;
       for (const p of state.projects) {
         const s = p.sessions.find((ss) => ss.id === id);
@@ -618,28 +681,42 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       return false;
     })
   );
-  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasRunningSession;
+  const hasUnreadNotification = useNotificationStore((state) =>
+    state.notifications.some((notification) =>
+      notification.sessionId !== activeSessionId
+      && taskSessionIds.includes(notification.sessionId)
+      && !notification.read
+    )
+  );
+  const hasVisibleTaskUnread = hasUnreadSession || hasUnreadNotification;
+  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasVisibleTaskUnread || hasVisibleRuntimeSession;
+
+  // PTY turn processing is the live state and outranks stale unread. Once the
+  // turn completes, processing clears and the unread completion becomes yellow.
+  const visibleTaskUnread = hasTerminalProcessingSession
+    ? false
+    : hasVisibleTaskUnread;
 
   // Left-edge status stripe — mirrors the session dot so the signal
-  // travels on two channels. Priority: awaiting user input > unread > processing > running.
+  // travels on two channels. PTY processing outranks stale unread state.
   // Applied as a card-level class so the stroke follows `rounded-lg`
   // corners instead of drawing a straight line past them.
   const stripeClass = hasAwaitingUserSession
     ? 'task-stripe task-stripe-attention'
-    : hasUnreadSession
+    : visibleTaskUnread
       ? 'task-stripe task-stripe-unread'
       : hasProcessingSession
         ? 'task-stripe task-stripe-processing'
-        : hasRunningSession
+        : hasVisibleRuntimeSession
           ? 'task-stripe task-stripe-running'
           : null;
   const stripeLabel = hasAwaitingUserSession
     ? t('status.inputRequired')
-    : hasUnreadSession
+    : visibleTaskUnread
       ? t('status.unreadNotification')
       : hasProcessingSession
         ? t('status.processing')
-        : hasRunningSession
+        : hasVisibleRuntimeSession
           ? t('status.sessionRunning')
           : null;
 
@@ -696,7 +773,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
 
     for (const session of task.sessions) {
       const liveSession = useSessionStore.getState().getSession(session.id);
-      if (liveSession?.isRunning ?? session.isRunning) {
+      if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onSessionStopProcess?.(session.id);
       }
     }
@@ -864,8 +941,9 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 <ItemStatusIndicator
                   isProcessing={hasProcessingSession}
                   isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
+                  hasUnread={visibleTaskUnread}
+                  isRunning={hasVisibleRuntimeSession}
+                  sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                   placement="corner"
                   surface="board"
                 />
@@ -875,8 +953,9 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 <ItemStatusIndicator
                   isProcessing={hasProcessingSession}
                   isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
-                  isRunning={hasRunningSession}
+                  hasUnread={visibleTaskUnread}
+                  isRunning={hasVisibleRuntimeSession}
+                  sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                   placement="inline"
                   surface="board"
                 />
@@ -913,28 +992,24 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg)"
                   />
                 )}
-                {!showProviderIcons && (
-                  <ItemStatusIndicator
-                    isProcessing={hasProcessingSession}
-                    isAwaitingUser={hasAwaitingUserSession}
-                    hasUnread={hasUnreadSession}
-                    isRunning={hasRunningSession}
-                    placement="corner"
-                    surface="board"
-                  />
-                )}
                 {prMismatch && (
                   <span
                     title={prMismatchReason ?? undefined}
                     aria-label={prMismatchReason ?? undefined}
-                    className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--board-card-bg) cursor-help"
+                    className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-(--status-error-text) ring-1 ring-(--board-card-bg) cursor-help"
                     data-testid="task-pr-mismatch-badge"
-                  >
-                    <TriangleAlert
-                      className="h-full w-full text-(--status-warning-text)"
-                      strokeWidth={2.5}
-                    />
-                  </span>
+                  />
+                )}
+                {!showProviderIcons && (
+                  <ItemStatusIndicator
+                    isProcessing={hasProcessingSession}
+                    isAwaitingUser={hasAwaitingUserSession}
+                    hasUnread={visibleTaskUnread}
+                    isRunning={hasVisibleRuntimeSession}
+                    sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
+                    placement="corner"
+                    surface="board"
+                  />
                 )}
               </span>
             ) : null}
@@ -942,13 +1017,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 <span
                   title={prMismatchReason ?? undefined}
                   aria-label={prMismatchReason ?? undefined}
-                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-(--board-card-bg) cursor-help"
+                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center cursor-help"
                   data-testid="task-pr-mismatch-badge"
                 >
-                  <TriangleAlert
-                    className="h-full w-full text-(--status-warning-text)"
-                    strokeWidth={2.5}
-                  />
+                  <span className="h-1.5 w-1.5 rounded-full bg-(--status-error-text)" />
                 </span>
             )}
           </span>
@@ -985,7 +1057,11 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
 
             {/* Meta row: collection + status indicators */}
             <div className="flex items-center gap-2 min-w-0 mt-1">
-              <CollectionLabel collectionId={task.collectionId} isActive={isActive} />
+              <CollectionLabel
+                collectionId={task.collectionId}
+                projectId={task.projectId}
+                isActive={isActive}
+              />
               <span className="ml-auto inline-flex items-center gap-1.5">
                 <TaskPrBadge
                   workflowStatus={task.workflowStatus}
@@ -1018,7 +1094,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
               : undefined,
           }}
         >
-          {hasRunningSession && onSessionStopProcess && (
+          {hasVisibleRuntimeSession && onSessionStopProcess && (
             <StopProcessButton
               onClick={handleStopProcess}
               className="p-0.5 rounded text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
@@ -1159,17 +1235,24 @@ function KanbanSubSessionItem({
   const [isHovered, setIsHovered] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
-  const isProcessingTurn = useChatStore(selectIsTurnInFlight(session.id));
-  const isWorkflowRunning = useSessionStore(selectHasRunningWorkflow(session.id));
-  const isProcessing = isProcessingTurn || isWorkflowRunning;
+  const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const liveSession = useSessionStore((state) => state.getSession(session.id));
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(session.id));
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
+  const runtimePresentation = resolveSessionRuntimePresentation({
+    kind: liveSession?.kind ?? session.kind,
+    isRunning: liveIsRunning,
+  });
   const liveUnreadCount = liveSession?.unreadCount ?? 0;
-  const hasLiveUnread = !isActive && liveUnreadCount > 0;
-  const isAwaitingUser = useChatStore(selectIsAwaitingUserPrompt(session.id));
+  const hasUnreadNotification = useNotificationStore((state) =>
+    state.notifications.some((notification) =>
+      notification.sessionId === session.id && !notification.read
+    )
+  );
+  const hasLiveUnread = !isActive && (liveUnreadCount > 0 || hasUnreadNotification);
+  const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const displayTitle = liveSession?.title ?? session.title;
   const isArchived = liveSession?.archived ?? false;
   const canOpenMenu = Boolean(
@@ -1178,7 +1261,7 @@ function KanbanSubSessionItem({
       onOpenInNewTab ||
       onGenerateTitle ||
       onMoveToProject ||
-      (liveIsRunning && onStopProcess),
+      (runtimePresentation.canStop && onStopProcess),
   );
 
   const {
@@ -1275,7 +1358,8 @@ function KanbanSubSessionItem({
               isProcessing={isProcessing}
               isAwaitingUser={isAwaitingUser}
               hasUnread={hasLiveUnread}
-              isRunning={liveIsRunning}
+              isRunning={runtimePresentation.showRunning}
+              sessionKind={liveSession?.kind ?? session.kind}
               placement="corner"
               surface="board"
             />
@@ -1286,7 +1370,8 @@ function KanbanSubSessionItem({
               isProcessing={isProcessing}
               isAwaitingUser={isAwaitingUser}
               hasUnread={hasLiveUnread}
-              isRunning={liveIsRunning}
+              isRunning={runtimePresentation.showRunning}
+              sessionKind={liveSession?.kind ?? session.kind}
               placement="leading"
               surface="board"
             />
@@ -1332,9 +1417,9 @@ function KanbanSubSessionItem({
           onDelete={handleDelete}
           onOpenInNewTab={onOpenInNewTab ? handleOpenInNewTab : undefined}
           onGenerateTitle={onGenerateTitle ? handleGenerateTitle : undefined}
-          isRunning={liveIsRunning}
+          isRunning={runtimePresentation.showRunning}
           onMoveToProject={onMoveToProject ? handleMoveToProject : undefined}
-          onStopProcess={liveIsRunning && onStopProcess ? handleStopProcess : undefined}
+          onStopProcess={runtimePresentation.canStop && onStopProcess ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}

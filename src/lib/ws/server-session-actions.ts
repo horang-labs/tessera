@@ -6,10 +6,9 @@ import type { AskUserQuestionItem } from '@/types/cli-jsonl-schemas';
 import * as dbSessions from '../db/sessions';
 import logger from '../logger';
 import { sessionOrchestrator } from '../session/session-orchestrator';
-import { generateSessionTitle } from '../session/title-generator';
+import { applyImmediateSessionTitle } from '../session/immediate-session-title';
 import { sessionHistory } from '../session-history';
 import { persistCreatedSessionRecord } from '../session/session-persistence';
-import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import { buildCodexSkillContent } from '../chat/build-codex-skill-content';
 import {
   classifyCodexSlashCommand,
@@ -18,6 +17,11 @@ import {
 import { buildUserMessageDisplayContent } from '../chat/build-user-message-display-content';
 import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh';
 import { SettingsManager } from '../settings/manager';
+import {
+  getProviderExecutionCapabilities,
+  resolveSessionCreationExecutionMode,
+  type AgentExecutionMode,
+} from '../session/agent-execution-mode';
 import { translateMessageText } from '../session/message-translator';
 import {
   isSessionHandedOffToTerminal,
@@ -33,7 +37,6 @@ import type {
   TextContentBlock,
 } from './message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
-import type { SessionGoalUpdate } from '@/types/session-goal';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 type SessionHistoryMessage = Extract<ServerTransportMessage, { type: 'session_history' }>;
@@ -56,13 +59,6 @@ const CODEX_MCP_ELICITATION_TOOL_NAME = 'CodexMcpElicitation';
 const CODEX_PERMISSIONS_REQUEST_TOOL_NAME = 'CodexPermissionsRequest';
 const LIVE_EVENT_VERSION = 1;
 
-const AUTO_TITLE_PLACEHOLDER_TITLES = new Set([
-  'New Task',
-  '새 태스크',
-  '新しいタスク',
-  '新建任务',
-]);
-
 type SessionControlRequest = Pick<
   Extract<ClientMessage, { sessionId: string }>,
   'sessionId'
@@ -79,6 +75,7 @@ interface CreateSessionActionOptions extends SessionActionOptions, ProviderRunti
   workDir?: string;
   model?: string;
   reasoningEffort?: string | null;
+  executionMode?: AgentExecutionMode;
 }
 
 interface CloseSessionActionOptions extends SessionActionOptions {
@@ -115,13 +112,6 @@ interface InteractiveResponseActionOptions extends SessionActionOptions {
   toolUseId: string;
 }
 
-interface SessionGoalActionOptions extends SessionActionOptions {
-  displayContent?: string;
-  sessionId: string;
-  spawnConfig?: SessionSpawnConfig;
-  update?: SessionGoalUpdate;
-}
-
 interface SessionCompactActionOptions extends SessionActionOptions {
   displayContent?: string;
   sessionId: string;
@@ -152,6 +142,7 @@ export async function createSessionFromWebSocket({
   collaborationMode,
   approvalPolicy,
   sandboxMode,
+  executionMode: requestedExecutionMode,
 }: CreateSessionActionOptions): Promise<void> {
   try {
     const resolvedProviderId = providerId.trim();
@@ -160,6 +151,32 @@ export async function createSessionFromWebSocket({
         type: 'error',
         code: 'provider_required',
         message: 'providerId is required to create a session',
+      });
+      return;
+    }
+
+    const executionCapabilities = getProviderExecutionCapabilities(resolvedProviderId);
+    if (!executionCapabilities.pty && !executionCapabilities.gui) {
+      sendToUser(userId, {
+        type: 'error',
+        code: 'unsupported_execution_mode',
+        message: 'Provider has no supported execution mode',
+      });
+      return;
+    }
+    const settings = await SettingsManager.load(userId, { silent: true });
+    let executionMode: AgentExecutionMode;
+    try {
+      executionMode = resolveSessionCreationExecutionMode(
+        requestedExecutionMode,
+        settings.agentExecutionMode,
+        executionCapabilities,
+      );
+    } catch (error) {
+      sendToUser(userId, {
+        type: 'error',
+        code: 'unsupported_execution_mode',
+        message: error instanceof Error ? error.message : 'Unsupported execution mode',
       });
       return;
     }
@@ -185,6 +202,7 @@ export async function createSessionFromWebSocket({
       resolvedWorkDir,
       title: result.title,
       providerId: resolvedProviderId,
+      executionMode,
       model,
       reasoningEffort,
       serviceTier,
@@ -196,6 +214,7 @@ export async function createSessionFromWebSocket({
       status: 'ready',
       workDir: resolvedWorkDir,
       provider: resolvedProviderId,
+      kind: dbSessions.extractSessionKind(dbSessions.getSession(result.sessionId)?.provider_state ?? null),
       ...(permissionMode && { permissionMode: permissionMode as any }),
       ...(model && { model }),
       ...(reasoningEffort !== undefined && { reasoningEffort }),
@@ -352,6 +371,19 @@ async function sendSessionMessageFromWebSocketUnlocked({
     typeof content === 'string' ? 'string' : `ContentBlock[${content.length}]`;
   logger.debug({ userId, sessionId, contentType, skillName }, 'WebSocket send_message received');
 
+  // Server floor: terminal-kind sessions must never spawn a headless CLI. The
+  // router normally submits text to the live PTY; direct callers get an
+  // explicit error instead of silently dropping a user action.
+  if (dbSessions.extractSessionKind(dbSessions.getSession(sessionId)?.provider_state ?? null) === 'terminal') {
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: 'terminal_input_route_required',
+      message: 'Terminal session input must be routed through the live PTY.',
+    });
+    return;
+  }
+
   const existingProcess = processManager.getProcess(sessionId);
   const providerId = existingProcess?.provider.getProviderId()
     ?? dbSessions.getSession(sessionId)?.provider;
@@ -396,7 +428,7 @@ async function sendSessionMessageFromWebSocketUnlocked({
     await translateOutgoingContent(content, userId, forceTranslateInput === true);
 
   sessionHistory.recordUserMessage(sessionId, resolvedDisplayContent, undefined, messageId);
-  await maybeAutoSetSessionTitle(sessionId, resolvedDisplayContent);
+  maybeAutoSetSessionTitle(sessionId, resolvedDisplayContent);
 
   // Attach the translated (sent) text to the user's message as a message_translation
   // event — resolving the optimistic "translating…" state on the client. Persisted via
@@ -486,121 +518,6 @@ export function translateMessageFromWebSocket({
   protocolAdapter.translateMessageById(sessionId, userId, messageId);
 }
 
-export async function setSessionGoalFromWebSocket({
-  displayContent,
-  sendToUser,
-  sessionId,
-  spawnConfig,
-  update,
-  userId,
-}: SessionGoalActionOptions): Promise<void> {
-  try {
-    const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
-    if (!ok) return;
-
-    recordGoalCommandDisplayContent(sessionId, displayContent);
-    const goal = await processManager.setSessionGoal(sessionId, update ?? {});
-    if (!goal) {
-      sendToUser(userId, {
-        type: 'error',
-        sessionId,
-        code: 'session_goal_unavailable',
-        message: 'This provider does not support session goals.',
-      });
-      return;
-    }
-
-    sendToUser(userId, {
-      type: 'session_goal_updated',
-      sessionId,
-      goal,
-    });
-    logger.info({ sessionId, userId, status: goal.status }, 'Session goal updated');
-  } catch (err) {
-    logger.error({ sessionId, userId, error: err }, 'Failed to set session goal');
-    sendToUser(userId, {
-      type: 'error',
-      sessionId,
-      code: 'session_goal_set_failed',
-      message: `Failed to update goal: ${(err as Error).message}`,
-    });
-  }
-}
-
-export async function refreshSessionGoalFromWebSocket({
-  displayContent,
-  sendToUser,
-  sessionId,
-  spawnConfig,
-  userId,
-}: SessionGoalActionOptions): Promise<void> {
-  try {
-    const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
-    if (!ok) return;
-
-    recordGoalCommandDisplayContent(sessionId, displayContent);
-    const goal = await processManager.refreshSessionGoal(sessionId);
-    sendToUser(userId, goal
-      ? {
-          type: 'session_goal_updated',
-          sessionId,
-          goal,
-        }
-      : {
-          type: 'session_goal_cleared',
-          sessionId,
-        });
-    logger.info({ sessionId, userId, hasGoal: !!goal }, 'Session goal refreshed');
-  } catch (err) {
-    logger.error({ sessionId, userId, error: err }, 'Failed to refresh session goal');
-    sendToUser(userId, {
-      type: 'error',
-      sessionId,
-      code: 'session_goal_refresh_failed',
-      message: `Failed to refresh goal: ${(err as Error).message}`,
-    });
-  }
-}
-
-export async function clearSessionGoalFromWebSocket({
-  displayContent,
-  sendToUser,
-  sessionId,
-  spawnConfig,
-  userId,
-}: SessionGoalActionOptions): Promise<void> {
-  try {
-    const ok = await ensureSessionProcess({ sessionId, userId, sendToUser, spawnConfig });
-    if (!ok) return;
-
-    recordGoalCommandDisplayContent(sessionId, displayContent);
-    const cleared = await processManager.clearSessionGoal(sessionId);
-    if (!cleared) {
-      sendToUser(userId, {
-        type: 'error',
-        sessionId,
-        code: 'session_goal_clear_failed',
-        message: 'Failed to clear goal.',
-      });
-      return;
-    }
-
-    sendToUser(userId, {
-      type: 'session_goal_cleared',
-      sessionId,
-    });
-    logger.info({ sessionId, userId }, 'Session goal cleared');
-  } catch (err) {
-    logger.error({ sessionId, userId, error: err }, 'Failed to clear session goal');
-    sendToUser(userId, {
-      type: 'error',
-      sessionId,
-      code: 'session_goal_clear_failed',
-      message: `Failed to clear goal: ${(err as Error).message}`,
-    });
-  }
-}
-
 export async function compactSessionFromWebSocket({
   displayContent,
   sendToUser,
@@ -644,15 +561,6 @@ export async function compactSessionFromWebSocket({
       message: `Failed to compact session: ${(err as Error).message}`,
     });
   }
-}
-
-function recordGoalCommandDisplayContent(sessionId: string, displayContent?: string): void {
-  const trimmed = displayContent?.trim();
-  if (!trimmed) {
-    return;
-  }
-
-  sessionHistory.recordUserMessage(sessionId, trimmed);
 }
 
 function recordCompactCommandDisplayContent(sessionId: string, displayContent?: string): void {
@@ -1064,31 +972,11 @@ export function runProcessManagerControlAction({
   logger.info({ userId, sessionId, success, ...logMetadata }, logMessage);
 }
 
-function isAutoTitlePlaceholderTitle(title: string): boolean {
-  const normalized = title.trim();
-  return normalized.startsWith('Session ') || AUTO_TITLE_PLACEHOLDER_TITLES.has(normalized);
-}
-
-async function maybeAutoSetSessionTitle(
+function maybeAutoSetSessionTitle(
   sessionId: string,
   displayContent: string | ContentBlock[],
-): Promise<void> {
+): void {
   try {
-    const dbSession = dbSessions.getSession(sessionId);
-    if (
-      !dbSession ||
-      dbSession.has_custom_title ||
-      !isAutoTitlePlaceholderTitle(dbSession.title)
-    ) {
-      return;
-    }
-
-    const events = await sessionHistory.readEvents(sessionId);
-    const userMessageCount = events.filter((event) => event.type === 'user_message').length;
-    if (userMessageCount !== 1) {
-      return;
-    }
-
     const titleText =
       typeof displayContent === 'string'
         ? displayContent
@@ -1096,11 +984,7 @@ async function maybeAutoSetSessionTitle(
             .filter((block): block is TextContentBlock => block.type === 'text')
             .map((block) => block.text)
             .join(' ');
-    const autoTitle = generateSessionTitle(titleText);
-    if (autoTitle) {
-      dbSessions.updateSession(sessionId, { title: autoTitle }, { skipTimestamp: true });
-      syncSingleSessionTaskTitleFromSession(sessionId, autoTitle);
-    }
+    applyImmediateSessionTitle(sessionId, titleText);
   } catch (err) {
     logger.warn({ sessionId, error: err }, 'Failed to auto-set session title');
   }

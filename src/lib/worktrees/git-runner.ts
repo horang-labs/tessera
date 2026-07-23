@@ -56,7 +56,10 @@ function runGitCommand(
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     };
-    const child = spawnCli('git', args, options, agentEnvironment);
+    // git resolves from WSL's default PATH and needs nothing from the user's
+    // shell rc, so skip the WSL login shell here — sourcing heavy rc files
+    // (nvm, oh-my-zsh) on every git call dominated worktree creation time.
+    const child = spawnCli('git', args, options, agentEnvironment, { loginShell: false });
 
     // Reject on a timer rather than spawn's `timeout`: a wedged grandchild
     // (hook, fsmonitor) inherits the stdio pipes and keeps 'close' from

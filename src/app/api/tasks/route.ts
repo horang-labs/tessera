@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { processManager } from '@/lib/cli/process-manager';
+import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import * as dbTasks from '@/lib/db/tasks';
 import { collectionExists } from '@/lib/db/collections';
 import { generateTaskId } from '@/types/task-entity';
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const activeSessionIds = processManager.getActiveSessionIds();
+    const activeSessionIds = getActiveSessionIds(userId);
     const rawTasks = dbTasks.getTasks(projectId, activeSessionIds);
     const worktreePresence = await Promise.all(
       rawTasks.map(async (task) => ({
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
       worktreeBranch: typeof worktreeBranch === 'string' ? worktreeBranch : undefined,
     });
 
-    const activeSessionIds = processManager.getActiveSessionIds();
+    const activeSessionIds = getActiveSessionIds();
     const task = dbTasks.getTask(id, activeSessionIds);
     logger.info({ taskId: id, projectId }, 'Task created via API');
     broadcastTaskMutation(auth.userId, {

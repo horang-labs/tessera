@@ -23,7 +23,8 @@ interface NotificationState {
   toasts: ActionToast[];
 
   // Notification actions
-  addNotification: (notification: Omit<Notification, 'id' | 'timestamp' | 'read' | 'dismissed'>) => void;
+  /** Returns false when a notification with the same dedupKey already exists (nothing added). */
+  addNotification: (notification: Omit<Notification, 'id' | 'timestamp' | 'read' | 'dismissed'>) => boolean;
   dismissNotification: (id: string) => void;
   dismissToast: (id: string) => void;
   dismissAll: () => void;
@@ -47,7 +48,14 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   soundTrigger: 0,
   toasts: [],
 
-  addNotification: (notification) =>
+  addNotification: (notification) => {
+    // Orca식 dedup: 같은 dedupKey가 이미 있으면(dismissed 무관) 재발화를 무시한다.
+    // 재연결/리로드 replay와 근접 이중(Stop+result)이 unread/sound를 부풀리는 걸 막는다.
+    if (notification.dedupKey) {
+      const seen = get().notifications.some((n) => n.dedupKey === notification.dedupKey);
+      if (seen) return false;
+    }
+
     set((state) => {
       const updatedExisting = state.notifications.map((n) =>
         n.sessionId === notification.sessionId && !n.dismissed
@@ -69,7 +77,9 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       }
 
       return { notifications: updated };
-    }),
+    });
+    return true;
+  },
 
   dismissNotification: (id) =>
     set((state) => ({

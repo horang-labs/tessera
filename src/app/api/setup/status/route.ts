@@ -16,7 +16,13 @@ export async function GET(request: NextRequest) {
     }
 
     const settings = await SettingsManager.load(auth.userId);
-    const status = await buildSetupStatus(settings, { userId: auth.userId });
+    // 온보딩 picker의 선택은 "계속"을 누르기 전까지 설정에 저장되지 않으므로
+    // 쿼리로 전달된 모드를 우선한다. 없으면 저장된 설정 기준.
+    const modeParam = request.nextUrl.searchParams.get('execution_mode');
+    const executionMode = modeParam === 'pty' || modeParam === 'gui'
+      ? modeParam
+      : settings.agentExecutionMode;
+    const status = await buildSetupStatus(settings, { userId: auth.userId, executionMode });
     const source = request.nextUrl.searchParams.get('telemetry_source');
     const trigger = parseSetupTelemetryTrigger(
       request.nextUrl.searchParams.get('telemetry_trigger'),

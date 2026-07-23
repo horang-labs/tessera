@@ -3,6 +3,7 @@ import { join, basename, resolve } from 'path';
 import { homedir } from 'os';
 import logger from '../logger';
 import { execCli, isRunningInWsl, type CliEnvironment } from '../cli/cli-exec';
+import { getWslHostedWindowsHomeMountPath } from '../filesystem/path-environment';
 
 export interface SkillInfo {
   name: string;
@@ -65,33 +66,65 @@ function lastNonEmptyLine(value: string): string | null {
   return lines.at(-1) ?? null;
 }
 
+/**
+ * The `wsl`-on-Windows probe below spawns a `wsl.exe` process, which the Context
+ * panel resolves up to three times per open. The answer is a fixed property of
+ * the host + environment for the life of the process, so cache the resolved
+ * directory per environment and skip the repeat spawns. Only successful probe
+ * results are cached; a transient failure falls through to `getClaudeConfigDir()`
+ * (a pure homedir lookup) and is retried next time. Cleared by
+ * `invalidateClaudeConfigDirCache` when the agent environment setting changes.
+ */
+const claudeConfigDirCache = new Map<CliEnvironment, string>();
+
+export function invalidateClaudeConfigDirCache(): void {
+  claudeConfigDirCache.clear();
+}
+
 export async function resolveClaudeConfigDirForEnvironment(
   environment: CliEnvironment,
 ): Promise<string> {
   const configuredDir = process.env.CLAUDE_CONFIG_DIR?.trim();
   if (configuredDir) return resolve(configuredDir);
 
+  const cached = claudeConfigDirCache.get(environment);
+  if (cached) return cached;
+
   if (environment === 'wsl' && process.platform === 'win32') {
+    // `loginShell: false` → a plain `wsl sh -c`, not the user's `-i -l` login
+    // shell. `wslpath` is on WSL's default PATH and reads only `$HOME` (set by
+    // wsl.exe from /etc/passwd, independent of rc files), so sourcing the user's
+    // rc buys nothing here — it only spends hundreds of ms per call re-reading
+    // ~/.zshrc/~/.profile (and previously tripped over a broken
+    // `. "$HOME/.cargo/env"` line). Git resolves its status the same way.
     const result = await execCli(
       'sh',
-      ['-lc', 'wslpath -w "$HOME/.claude" 2>/dev/null || printf %s "$HOME/.claude"'],
+      ['-c', 'wslpath -w "$HOME/.claude" 2>/dev/null || printf %s "$HOME/.claude"'],
       'wsl',
       5000,
+      { loginShell: false },
     );
     const resolvedDir = lastNonEmptyLine(result.stdout);
-    if (result.ok && resolvedDir) return resolvedDir;
+    if (result.ok && resolvedDir) {
+      claudeConfigDirCache.set(environment, resolvedDir);
+      return resolvedDir;
+    }
   }
 
   if (environment === 'native' && isRunningInWsl()) {
-    const result = await execCli(
-      'powershell.exe',
-      ['-NoProfile', '-Command', '[Environment]::GetFolderPath("UserProfile")'],
-      'native',
-      5000,
-    );
-    const windowsHome = lastNonEmptyLine(result.stdout);
-    const wslConfigDir = windowsHome ? toWslPath(`${windowsHome}\\.claude`) : null;
-    if (result.ok && wslConfigDir) return wslConfigDir;
+    // Deliberately not a PowerShell probe: reaching a Windows CLI from WSL
+    // wraps the call in an outer `powershell.exe -Command`, and PowerShell
+    // strips double quotes when it forwards arguments to a native command, so
+    // `GetFolderPath("UserProfile")` arrives unparseable and the lookup fails
+    // silently back to the WSL home. The cmd.exe probe needs no quoting and
+    // verifies the mount exists.
+    try {
+      const dir = join(await getWslHostedWindowsHomeMountPath(), '.claude');
+      claudeConfigDirCache.set(environment, dir);
+      return dir;
+    } catch {
+      // Fall through: the Windows profile is not reachable from this distro.
+    }
   }
 
   return getClaudeConfigDir();

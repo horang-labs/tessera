@@ -1,6 +1,6 @@
 {
   "name": "@horang-labs/tessera",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Open-source web and desktop workspace for AI coding agents",
   "private": false,
   "license": "AGPL-3.0-only",
@@ -77,12 +77,18 @@
     "electron:build:all": "npm run electron:prebuild && electron-builder build --publish never",
     "npm:prepack": "npm run build && npm run server:compile",
     "prepack": "npm run npm:prepack",
-    "postinstall": "node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
+    "postinstall": "node scripts/patch-xterm-webgl-atlas.mjs && node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "0.12.0-beta.289",
+    "@xterm/addon-search": "0.17.0-beta.289",
+    "@xterm/addon-serialize": "0.15.0-beta.289",
+    "@xterm/addon-unicode11": "0.10.0-beta.289",
+    "@xterm/addon-web-links": "0.13.0-beta.289",
+    "@xterm/addon-webgl": "0.20.0-beta.288",
+    "@xterm/headless": "6.1.0-beta.289",
+    "@xterm/xterm": "6.1.0-beta.289",
     "agentation": "^3.0.2",
     "bcryptjs": "^3.0.3",
     "chokidar": "^4.0.3",

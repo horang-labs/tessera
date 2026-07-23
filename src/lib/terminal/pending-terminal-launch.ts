@@ -10,9 +10,13 @@
 import type { TerminalLaunchIntent } from './types';
 
 export interface PendingTerminalLaunch {
-  intent: TerminalLaunchIntent;
+  intent?: TerminalLaunchIntent;
   sourceSessionId?: string;
   locksSourceSession?: boolean;
+  /** terminal-mode: 서버가 argv(--session-id/--settings)를 조립할 구조화 launch */
+  launch?: { providerId: string; sessionId: string };
+  /** provider TUI 실행 후 입력창에 프리필할 텍스트 (개행 없이 write, 자동 실행 안 함) */
+  prefillInput?: string;
 }
 
 const pendingLaunches = new Map<string, PendingTerminalLaunch>();

@@ -4,6 +4,8 @@ import {
   AlertCircle,
   ChevronRight,
   Copy,
+  Eye,
+  EyeOff,
   FileText,
   Folder,
   FolderOpen,
@@ -20,11 +22,13 @@ import {
   useWorkspaceFilesLiveSync,
 } from "@/hooks/use-workspace-files-live-sync";
 import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
+import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
+import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
 import {
   openWorkspaceFileTab,
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
-import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
+import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import {
   copyText,
   toAbsoluteWorkspacePath,
@@ -157,6 +161,8 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
+  const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
+  const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
   const {
     error,
     files,
@@ -173,12 +179,18 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     subscriberId,
   });
 
+  const baseFiles = useMemo(
+    () => (showHiddenFiles
+      ? files
+      : files.filter((filePath) => !isHiddenWorkspaceRelativePath(filePath))),
+    [files, showHiddenFiles],
+  );
   const visibleFiles = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return files;
-    return files
+    if (!trimmed) return baseFiles;
+    return baseFiles
       .filter((filePath) => filePath.toLowerCase().includes(trimmed));
-  }, [files, query]);
+  }, [baseFiles, query]);
   const fileTree = useMemo(() => buildFileTree(visibleFiles), [visibleFiles]);
   const isSearching = query.trim().length > 0;
 
@@ -216,6 +228,11 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
                 position: { x: event.clientX, y: event.clientY },
               });
             }}
+            onDragStart={(event) => {
+              if (!sessionId) return;
+              setWorkspaceDirectoryDragData(event.dataTransfer, sessionId, node.path, absolutePath);
+            }}
+            draggable={Boolean(sessionId)}
             className="group flex min-w-0 items-center gap-1.5 border-l-2 border-l-transparent py-1.5 pr-2 text-left text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
             style={{ paddingLeft }}
             title={node.path}
@@ -270,17 +287,21 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           onClick={() => {
             if (!sessionId) return;
             setSelectedPath(node.path);
-            previewWorkspaceFileTab(sessionId, "file", node.path);
+            previewWorkspaceFileTab(sessionId, "file", node.path, {
+              preferKanbanPeek: true,
+            });
           }}
           onDoubleClick={() => {
             if (!sessionId) return;
             setSelectedPath(node.path);
-            openWorkspaceFileTab(sessionId, "file", node.path);
+            openWorkspaceFileTab(sessionId, "file", node.path, {
+              preferKanbanPeek: true,
+            });
           }}
           onDragStart={(event) => {
             if (!sessionId) return;
             setSelectedPath(node.path);
-            setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", node.path);
+            setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", node.path, absolutePath);
           }}
           draggable={Boolean(sessionId)}
           className="flex min-w-0 items-center gap-2 border-l-transparent py-1.5 pr-2 text-left transition-colors"
@@ -333,11 +354,27 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
                 Files
               </p>
               <p className="truncate text-[11px] text-(--text-muted)">
-                {files.length.toLocaleString()} files
+                {baseFiles.length.toLocaleString()} files
                 {truncated ? " · truncated" : ""}
               </p>
             </div>
           </div>
+          <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
+            <button
+              type="button"
+              onClick={toggleShowHiddenFiles}
+              className={cn(
+                "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors",
+                showHiddenFiles
+                  ? "border-(--accent) bg-(--accent)/10 text-(--text-primary)"
+                  : "border-(--input-border) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+              )}
+              aria-label={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
+              aria-pressed={showHiddenFiles}
+            >
+              {showHiddenFiles ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+            </button>
+          </Tooltip>
         </div>
         <label className="mt-3 flex h-8 items-center gap-2 rounded-md border border-(--input-border) bg-(--chat-bg) px-2.5 focus-within:border-(--accent)">
           <Search className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />

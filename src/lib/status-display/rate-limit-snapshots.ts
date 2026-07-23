@@ -52,7 +52,7 @@ export function buildCodexRateLimitSnapshot(
       key: 'primary',
       usedPercent: snapshot.primary.usedPercent ?? 0,
       resetsAt: epochToIso(snapshot.primary.resetsAt),
-      windowDurationMins: snapshot.primary.windowDurationMins ?? null,
+      windowDurationMins: snapshot.primary.windowDurationMins ?? 300,
     });
   }
 
@@ -61,7 +61,7 @@ export function buildCodexRateLimitSnapshot(
       key: 'secondary',
       usedPercent: snapshot.secondary.usedPercent ?? 0,
       resetsAt: epochToIso(snapshot.secondary.resetsAt),
-      windowDurationMins: snapshot.secondary.windowDurationMins ?? null,
+      windowDurationMins: snapshot.secondary.windowDurationMins ?? 10080,
     });
   }
 

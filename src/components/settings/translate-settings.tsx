@@ -241,119 +241,134 @@ export default function TranslateSettings() {
   const { t } = useI18n();
   const translate = useSettingsStore((state) => state.settings.translate);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="space-y-4">
-      <h3 className="font-medium text-(--text-primary)">{t('settings.translate.title')}</h3>
-
-      <div className="flex items-center justify-between">
-        <label className="text-sm text-(--text-secondary)">
-          {t('settings.translate.enabled')}
-        </label>
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <span
+            className={`inline-block w-3 text-(--text-tertiary) text-xs transition-transform ${
+              expanded ? 'rotate-90' : ''
+            }`}
+          >
+            {'>'}
+          </span>
+          <h3 className="font-medium text-(--text-primary)">{t('settings.translate.title')}</h3>
+        </button>
         <Toggle
           checked={translate.enabled}
           onChange={(next) => updateSettings({ translate: { ...translate, enabled: next } })}
         />
       </div>
 
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-(--text-secondary)">
-          {t('settings.translate.sourceLanguage')}
-        </label>
-        <select
-          value={translate.sourceLanguage}
-          onChange={(e) =>
-            updateSettings({
-              translate: { ...translate, sourceLanguage: e.target.value as Language },
-            })
-          }
-          className={SELECT_CLASS}
-        >
-          {LANGUAGE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      {expanded && (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-(--text-secondary)">
+              {t('settings.translate.sourceLanguage')}
+            </label>
+            <select
+              value={translate.sourceLanguage}
+              onChange={(e) =>
+                updateSettings({
+                  translate: { ...translate, sourceLanguage: e.target.value as Language },
+                })
+              }
+              className={SELECT_CLASS}
+            >
+              {LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-(--text-secondary)">
-          {t('settings.translate.targetLanguage')}
-        </label>
-        <select
-          value={translate.targetLanguage}
-          onChange={(e) =>
-            updateSettings({
-              translate: { ...translate, targetLanguage: e.target.value as Language },
-            })
-          }
-          className={SELECT_CLASS}
-        >
-          {LANGUAGE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </div>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-(--text-secondary)">
+              {t('settings.translate.targetLanguage')}
+            </label>
+            <select
+              value={translate.targetLanguage}
+              onChange={(e) =>
+                updateSettings({
+                  translate: { ...translate, targetLanguage: e.target.value as Language },
+                })
+              }
+              className={SELECT_CLASS}
+            >
+              {LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-(--text-secondary)">
-          {t('settings.translate.sendShortcut')}
-        </label>
-        <ShortcutRecorder
-          value={translate.sendShortcut}
-          onChange={(next) => updateSettings({ translate: { ...translate, sendShortcut: next } })}
-        />
-        <p className="text-[11px] text-(--text-tertiary)">{t('settings.translate.sendShortcutHint')}</p>
-      </div>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-(--text-secondary)">
+              {t('settings.translate.sendShortcut')}
+            </label>
+            <ShortcutRecorder
+              value={translate.sendShortcut}
+              onChange={(next) => updateSettings({ translate: { ...translate, sendShortcut: next } })}
+            />
+            <p className="text-[11px] text-(--text-tertiary)">{t('settings.translate.sendShortcutHint')}</p>
+          </div>
 
-      <TranslateDirectionSettings
-        sectionTitle={t('settings.translate.inputSection')}
-        value={translate.input}
-        onChangeProvider={(provider) =>
-          updateSettings({
-            translate: { ...translate, input: { ...translate.input, provider } },
-          })
-        }
-        onChangeModel={(model) =>
-          updateSettings({
-            translate: {
-              ...translate,
-              input: { ...translate.input, model: model || undefined },
-            },
-          })
-        }
-        onChangePrompt={(promptTemplate) =>
-          updateSettings({
-            translate: { ...translate, input: { ...translate.input, promptTemplate } },
-          })
-        }
-      />
+          <TranslateDirectionSettings
+            sectionTitle={t('settings.translate.inputSection')}
+            value={translate.input}
+            onChangeProvider={(provider) =>
+              updateSettings({
+                translate: { ...translate, input: { ...translate.input, provider } },
+              })
+            }
+            onChangeModel={(model) =>
+              updateSettings({
+                translate: {
+                  ...translate,
+                  input: { ...translate.input, model: model || undefined },
+                },
+              })
+            }
+            onChangePrompt={(promptTemplate) =>
+              updateSettings({
+                translate: { ...translate, input: { ...translate.input, promptTemplate } },
+              })
+            }
+          />
 
-      <TranslateDirectionSettings
-        sectionTitle={t('settings.translate.outputSection')}
-        value={translate.output}
-        onChangeProvider={(provider) =>
-          updateSettings({
-            translate: { ...translate, output: { ...translate.output, provider } },
-          })
-        }
-        onChangeModel={(model) =>
-          updateSettings({
-            translate: {
-              ...translate,
-              output: { ...translate.output, model: model || undefined },
-            },
-          })
-        }
-        onChangePrompt={(promptTemplate) =>
-          updateSettings({
-            translate: { ...translate, output: { ...translate.output, promptTemplate } },
-          })
-        }
-      />
+          <TranslateDirectionSettings
+            sectionTitle={t('settings.translate.outputSection')}
+            value={translate.output}
+            onChangeProvider={(provider) =>
+              updateSettings({
+                translate: { ...translate, output: { ...translate.output, provider } },
+              })
+            }
+            onChangeModel={(model) =>
+              updateSettings({
+                translate: {
+                  ...translate,
+                  output: { ...translate.output, model: model || undefined },
+                },
+              })
+            }
+            onChangePrompt={(promptTemplate) =>
+              updateSettings({
+                translate: { ...translate, output: { ...translate.output, promptTemplate } },
+              })
+            }
+          />
+        </div>
+      )}
     </div>
   );
 }

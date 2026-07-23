@@ -1,0 +1,15 @@
+/* xterm 6 renders its own scrollbar, so keep Chromium's native one hidden. */
+.tessera-terminal-surface .xterm-viewport {
+  overflow-y: scroll !important;
+  scrollbar-width: none;
+}
+
+.tessera-terminal-surface .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.tessera-terminal-surface .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider {
+  border-radius: 4px;
+}

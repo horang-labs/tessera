@@ -415,8 +415,12 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
   },
 
   closePanel: (panelId) => {
+    get().closePanelInTab(get().activeTabId, panelId);
+  },
+
+  closePanelInTab: (tabId, panelId) => {
     const state = get();
-    const tabData = state.tabPanels[state.activeTabId];
+    const tabData = state.tabPanels[tabId];
     if (!tabData) return;
 
     // Guard: 마지막 패널 보호
@@ -443,14 +447,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     set({
       tabPanels: {
         ...state.tabPanels,
-        [state.activeTabId]: newTabData,
+        [tabId]: newTabData,
       },
     });
 
     assertInvariants(newTabData);
 
     // 활성 패널 닫기인 경우만 session-store 동기화
-    if (isClosingActive) {
+    if (tabId === state.activeTabId && isClosingActive) {
       const newSessionId = newPanels[newActivePanelId]?.sessionId ?? null;
       useSessionStore.getState().setActiveSession(newSessionId);
     }
@@ -527,6 +531,26 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     // 활성 패널인 경우만 session-store 동기화
     if (tabId === state.activeTabId && panelId === tabData.activePanelId) {
       useSessionStore.getState().setActiveSession(nextPanels[nextActivePanelId]?.sessionId ?? null);
+    }
+  },
+
+  rebindSession: (previousSessionId, sessionId) => {
+    const state = get();
+    let changed = false;
+    const tabPanels = Object.fromEntries(Object.entries(state.tabPanels).map(([tabId, tabData]) => {
+      let tabChanged = false;
+      const panels = Object.fromEntries(Object.entries(tabData.panels).map(([panelId, panel]) => {
+        if (panel.sessionId !== previousSessionId) return [panelId, panel];
+        changed = true;
+        tabChanged = true;
+        return [panelId, { ...panel, sessionId }];
+      }));
+      return [tabId, tabChanged ? { ...tabData, panels } : tabData];
+    }));
+    if (!changed) return;
+    set({ tabPanels });
+    if (useSessionStore.getState().activeSessionId === previousSessionId) {
+      useSessionStore.getState().setActiveSession(sessionId);
     }
   },
 

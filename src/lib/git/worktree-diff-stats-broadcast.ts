@@ -14,12 +14,11 @@ let unsubscribe: (() => void) | null = null;
 export function installDiffStatsBroadcast(): void {
   if (unsubscribe) return;
   unsubscribe = subscribeDiffStats((workDir, stats, userIds, previousStats) => {
-    // Only propagate stats to sessions/tasks that are actually bound to a
-    // worktree branch. Plain chats that happen to share a workDir should
-    // never show a diff badge.
-    const rows = dbSessions
-      .getSessionsByWorkDir(workDir)
-      .filter((r) => typeof r.worktree_branch === 'string' && r.worktree_branch.length > 0);
+    // Propagate stats to every session sharing this workDir — standalone chats
+    // included, not just worktree-branch-bound sessions. A chat working inside a
+    // git worktree produces a real diff and should show the badge too. Task
+    // auto-promotion below still keys off task_id, so it stays task-only.
+    const rows = dbSessions.getSessionsByWorkDir(workDir);
     if (rows.length === 0) return;
     const sessionIds = rows.map((r) => r.id);
     const taskIds = Array.from(

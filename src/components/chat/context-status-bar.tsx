@@ -10,8 +10,6 @@ import { buildStatusDisplayModel } from '@/lib/status-display/build-status-displ
 import { Tooltip } from '@/components/ui/tooltip';
 import type { ModelUsageEntry } from '@/lib/ws/message-types';
 import { cn } from '@/lib/utils';
-import { useI18n } from '@/lib/i18n';
-import type { SessionGoal } from '@/types/session-goal';
 
 interface ContextStatusBarProps {
   sessionId: string;
@@ -99,63 +97,8 @@ function rateLimitColor(utilization: number): string {
   return 'text-zinc-400';
 }
 
-function formatGoalDuration(seconds: number): string {
-  const safeSeconds = Math.max(0, Math.floor(seconds));
-  if (safeSeconds >= 3600) {
-    const hours = Math.floor(safeSeconds / 3600);
-    const minutes = Math.floor((safeSeconds % 3600) / 60);
-    return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
-  }
-  if (safeSeconds >= 60) {
-    const minutes = Math.floor(safeSeconds / 60);
-    const remainingSeconds = safeSeconds % 60;
-    return remainingSeconds > 0 ? `${minutes}m${remainingSeconds}s` : `${minutes}m`;
-  }
-  return `${safeSeconds}s`;
-}
-
-function getGoalStatusText(
-  goal: SessionGoal,
-  t: ReturnType<typeof useI18n>['t'],
-): string {
-  const duration = formatGoalDuration(goal.timeUsedSeconds);
-  switch (goal.status) {
-    case 'active':
-      return t('goal.statusBar.active', { duration });
-    case 'paused':
-      return t('goal.statusBar.paused');
-    case 'blocked':
-      return t('goal.statusBar.blocked');
-    case 'usageLimited':
-      return t('goal.statusBar.usageLimited');
-    case 'budgetLimited':
-      return t('goal.statusBar.budgetLimited', { duration });
-    case 'complete':
-      return t('goal.statusBar.complete', { duration });
-  }
-}
-
-function goalStatusColor(goal: SessionGoal): string {
-  switch (goal.status) {
-    case 'active':
-      return 'text-emerald-300';
-    case 'paused':
-      return 'text-amber-300';
-    case 'blocked':
-      return 'text-rose-300';
-    case 'usageLimited':
-      return 'text-orange-300';
-    case 'budgetLimited':
-      return 'text-sky-300';
-    case 'complete':
-      return 'text-zinc-400';
-  }
-}
-
 export function ContextStatusBar({ sessionId, isReadOnly }: ContextStatusBarProps) {
-  const { t } = useI18n();
   const providerId = useSessionStore((s) => s.getSession(sessionId)?.provider?.trim() ?? null);
-  const goal = useSessionStore((s) => s.getSession(sessionId)?.goal ?? null);
   const usage = useUsageStore((s) => s.sessionUsage.get(sessionId));
   const rateLimits = useRateLimitStore((s) => providerId ? s.limitsByProvider[providerId] ?? null : null);
   const configuredModel = useSettingsStore((s) =>
@@ -272,17 +215,6 @@ export function ContextStatusBar({ sessionId, isReadOnly }: ContextStatusBarProp
         </span>
       )}
 
-      {goal && (
-        <>
-          {dot}
-          <span
-            className={cn('min-w-0 truncate', goalStatusColor(goal))}
-            title={goal.objective}
-          >
-            {getGoalStatusText(goal, t)}
-          </span>
-        </>
-      )}
     </div>
   );
 }

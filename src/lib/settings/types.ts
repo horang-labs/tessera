@@ -2,6 +2,11 @@ import type { PermissionMode } from '@/lib/ws/message-types';
 import type { ShortcutId } from '@/lib/keyboard/registry';
 import type { GitActionId } from '@/lib/git/action-templates';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type {
+  TerminalDarkThemePresetId,
+  TerminalLightThemePresetId,
+} from '@/lib/terminal/terminal-theme';
 
 export type Language = 'en' | 'ko' | 'zh' | 'ja';
 export type Theme = 'light' | 'dark' | 'auto';
@@ -9,6 +14,7 @@ export type EnterKeyBehavior = 'send' | 'newline';
 export type SttEngine = 'webSpeech' | 'gemini';
 export type AgentEnvironment = 'native' | 'wsl';
 export type WindowsCloseBehavior = 'ask' | 'tray' | 'quit';
+export type KanbanSessionOpenMode = 'split' | 'peek';
 export type CliCommandOverrides = Record<string, Partial<Record<AgentEnvironment, string>>>;
 
 export interface SetupState {
@@ -46,11 +52,14 @@ export interface TelemetrySettings {
 
 export interface UserSettings {
   language: Language;
+  /** Preferred interaction surface for newly created agent sessions. */
+  agentExecutionMode: AgentExecutionMode;
   profile: UserProfileSettings;
   notifications: {
     soundEnabled: boolean;
     showToast: boolean;
-    autoGenerateTitle: boolean;
+    /** Optional LLM replacement for the deterministic title shown immediately. */
+    aiTitleRefinement: boolean;
   };
   translate: {
     enabled: boolean;
@@ -63,6 +72,8 @@ export interface UserSettings {
     sendShortcut: string;
   };
   theme: Theme;
+  terminalThemeLightPreset: TerminalLightThemePresetId;
+  terminalThemeDarkPreset: TerminalDarkThemePresetId;
   fontSize: number;
   enterKeyBehavior: EnterKeyBehavior;
   defaultPermissionMode: PermissionMode;
@@ -72,6 +83,8 @@ export interface UserSettings {
   inactivePanelDimming: number;
   showProviderIcons: boolean;
   showRecentWork: boolean;
+  /** How selecting a session card behaves while the Kanban board is active. */
+  kanbanSessionOpenMode: KanbanSessionOpenMode;
   sttEngine: SttEngine;
   geminiApiKey: string;
   favoriteSkills: string[];

@@ -973,6 +973,23 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
     logger.info('Migration v28 applied: sessions.service_tier column added');
   }
+
+  if (fromVersion < 29) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS terminal_provider_sessions (
+        provider_id         TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL,
+        tessera_session_id  TEXT NOT NULL UNIQUE,
+        transcript_path     TEXT,
+        created_at          TEXT NOT NULL,
+        updated_at          TEXT NOT NULL,
+        PRIMARY KEY (provider_id, provider_session_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_terminal_provider_sessions_tessera
+        ON terminal_provider_sessions(tessera_session_id);
+    `);
+    logger.info('Migration v29 applied: terminal provider session registry added');
+  }
 }
 
 /**

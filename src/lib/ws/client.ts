@@ -8,10 +8,10 @@ import type {
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
-import type { SessionGoalUpdate } from '@/types/session-goal';
-import type { TerminalLaunchIntent } from '@/lib/terminal/types';
+import type { TerminalAppearance, TerminalLaunchIntent } from '@/lib/terminal/types';
 import { v4 as uuidv4 } from 'uuid';
 import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
+import { useSessionStore } from '@/stores/session-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import {
@@ -34,6 +34,13 @@ export class WebSocketClient {
   private cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null) => void> = new Map();
   private serverMessageListeners: Set<ServerMessageListener> = new Set();
   private wasReconnect = false;
+  private connectionGeneration = 0;
+  private readonly pendingTerminalCloses = new Set<string>();
+  private readonly pendingPreviewReleases = new Map<string, {
+    terminalId: string;
+    sessionId?: string | null;
+    previewOwnerToken: string;
+  }>();
 
   connect(userId: string) {
     // Skip if already connected/connecting with same user
@@ -55,10 +62,22 @@ export class WebSocketClient {
       this.ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
       this.ws.onopen = () => {
+        this.connectionGeneration += 1;
+        useSessionStore.getState().beginRuntimeConnection();
         if (this.reconnectAttempt > 0) {
           this.wasReconnect = true;
         }
         this.reconnectAttempt = 0;
+        // A close can be requested while the renderer is reconnecting. Flush it
+        // before connected surfaces issue their reattach creates.
+        for (const terminalId of this.pendingTerminalCloses) {
+          this.sendRequest('terminal_close', { terminalId });
+        }
+        this.pendingTerminalCloses.clear();
+        for (const release of this.pendingPreviewReleases.values()) {
+          this.sendRequest('terminal_release_preview', release);
+        }
+        this.pendingPreviewReleases.clear();
         useChatStore.getState().setConnectionStatus('connected', 0);
         // Prime the SSoT provider list so UIs mounted later read it synchronously.
         useProvidersStore.getState().fetch();
@@ -186,6 +205,7 @@ export class WebSocketClient {
     providerId: string;
     model?: string;
     reasoningEffort?: string | null;
+    executionMode?: import('@/lib/session/agent-execution-mode').AgentExecutionMode;
   } & ProviderRuntimeControls) {
     const payload = args;
     this.sendRequest('create_session', {
@@ -201,6 +221,7 @@ export class WebSocketClient {
       ...(payload.sandboxMode && { sandboxMode: payload.sandboxMode }),
       ...(payload.serviceTier !== undefined && { serviceTier: payload.serviceTier }),
       ...(payload.fastMode !== undefined && { fastMode: payload.fastMode }),
+      ...(payload.executionMode && { executionMode: payload.executionMode }),
     });
   }
 
@@ -256,36 +277,6 @@ export class WebSocketClient {
 
   compactSession(sessionId: string, spawnConfig?: SessionSpawnConfig, displayContent?: string) {
     this.sendRequest('compact_session', {
-      sessionId,
-      ...(spawnConfig && { spawnConfig }),
-      ...(displayContent && { displayContent }),
-    });
-  }
-
-  setSessionGoal(
-    sessionId: string,
-    update: SessionGoalUpdate,
-    spawnConfig?: SessionSpawnConfig,
-    displayContent?: string,
-  ) {
-    this.sendRequest('set_session_goal', {
-      sessionId,
-      update,
-      ...(spawnConfig && { spawnConfig }),
-      ...(displayContent && { displayContent }),
-    });
-  }
-
-  refreshSessionGoal(sessionId: string, spawnConfig?: SessionSpawnConfig, displayContent?: string) {
-    this.sendRequest('refresh_session_goal', {
-      sessionId,
-      ...(spawnConfig && { spawnConfig }),
-      ...(displayContent && { displayContent }),
-    });
-  }
-
-  clearSessionGoal(sessionId: string, spawnConfig?: SessionSpawnConfig, displayContent?: string) {
-    this.sendRequest('clear_session_goal', {
       sessionId,
       ...(spawnConfig && { spawnConfig }),
       ...(displayContent && { displayContent }),
@@ -376,26 +367,75 @@ export class WebSocketClient {
 
   createTerminal(args: {
     terminalId: string;
+    surfaceId: string;
     cwd?: string | null;
     sessionId?: string | null;
     shellKind?: 'default' | 'cmd' | 'powershell' | 'wsl';
     cols?: number;
     rows?: number;
+    appearance?: TerminalAppearance;
     launchIntent?: TerminalLaunchIntent;
+    prefillInput?: string;
+    launch?: { providerId: string; sessionId: string };
+    previewOwnerToken?: string;
   }): boolean {
+    // A deliberate restart supersedes a close queued during a disconnect.
+    this.pendingTerminalCloses.delete(args.terminalId);
     return this.sendRequest('terminal_create', args);
   }
 
-  sendTerminalInput(terminalId: string, data: string) {
-    this.sendRequest('terminal_input', { terminalId, data });
+  detachTerminal(terminalId: string, surfaceId: string): boolean {
+    return this.sendRequest('terminal_detach', { terminalId, surfaceId });
   }
 
-  resizeTerminal(terminalId: string, cols: number, rows: number) {
-    this.sendRequest('terminal_resize', { terminalId, cols, rows });
+  releasePreviewTerminal(args: {
+    terminalId: string;
+    sessionId?: string | null;
+    previewOwnerToken: string;
+  }): boolean {
+    const sent = this.sendRequest('terminal_release_preview', args);
+    if (!sent) this.pendingPreviewReleases.set(args.previewOwnerToken, args);
+    return sent;
   }
 
-  closeTerminal(terminalId: string) {
-    this.sendRequest('terminal_close', { terminalId });
+  sendTerminalInput(terminalId: string, surfaceId: string, data: string): boolean {
+    return this.sendRequest('terminal_input', { terminalId, surfaceId, data });
+  }
+
+  setTerminalAppearance(
+    terminalId: string,
+    surfaceId: string,
+    appearance: TerminalAppearance,
+  ): boolean {
+    return this.sendRequest('terminal_set_appearance', { terminalId, surfaceId, appearance });
+  }
+
+  resizeTerminal(
+    terminalId: string,
+    surfaceId: string,
+    cols: number,
+    rows: number,
+    claim = false,
+    replayRefresh = false,
+  ): boolean {
+    return this.sendRequest('terminal_resize', {
+      terminalId,
+      surfaceId,
+      cols,
+      rows,
+      claim,
+      replayRefresh,
+    });
+  }
+
+  closeTerminal(terminalId: string): boolean {
+    const sent = this.sendRequest('terminal_close', { terminalId });
+    if (!sent) this.pendingTerminalCloses.add(terminalId);
+    return sent;
+  }
+
+  getConnectionGeneration(): number {
+    return this.connectionGeneration;
   }
 
   subscribeWorkspaceFiles(sessionId: string, subscriberId: string): boolean {

@@ -19,6 +19,7 @@ let setTaskArchived: typeof import('../src/lib/archive/archive-service')['setTas
 let setCodexThreadControlRequestExecutorForTests:
   typeof import('../src/lib/cli/providers/codex/thread-control-client')['setCodexThreadControlRequestExecutorForTests'];
 let processManager: typeof import('../src/lib/cli/process-manager')['processManager'];
+let terminalManager: typeof import('../src/lib/terminal/shared-terminal-manager')['terminalManager'];
 
 test.before(async () => {
   database = await import('../src/lib/db/database');
@@ -31,6 +32,7 @@ test.before(async () => {
   ({ setTaskArchived } = await import('../src/lib/archive/archive-service'));
   ({ setCodexThreadControlRequestExecutorForTests } = await import('../src/lib/cli/providers/codex/thread-control-client'));
   ({ processManager } = await import('../src/lib/cli/process-manager'));
+  ({ terminalManager } = await import('../src/lib/terminal/shared-terminal-manager'));
 
   await database.initDatabase();
   dbProjects.registerProject('project-lifecycle', dataDir, 'Lifecycle Project', 'codex');
@@ -118,6 +120,95 @@ test('archive RPC failure preserves local state and task partial success is comp
     threadId: calls[0].threadId,
   });
   assert.equal(dbTasks.getTask('task-archive')?.archived, false);
+});
+
+test('archive falls back to the project work dir when the session worktree is gone', async () => {
+  const missingWorkDir = path.join(dataDir, 'worktrees', 'deleted-branch');
+  dbTasks.createTask({ id: 'task-missing-worktree', projectId: 'project-lifecycle', title: 'Missing worktree' });
+  dbSessions.createSession('archive-missing-worktree', 'project-lifecycle', 'Missing worktree', 'codex', {
+    workDir: missingWorkDir,
+    taskId: 'task-missing-worktree',
+    providerState: JSON.stringify({ threadId: 'thread-missing-worktree' }),
+  });
+
+  const workDirs: Array<string | undefined> = [];
+  setCodexThreadControlRequestExecutorForTests(async (context, method) => {
+    assert.equal(method, 'thread/archive');
+    workDirs.push(context.workDir);
+    return {};
+  });
+
+  await setTaskArchived('task-missing-worktree', true, 'user-1');
+
+  assert.deepEqual(workDirs, [dataDir]);
+  assert.equal(dbTasks.getTask('task-missing-worktree')?.archived, true);
+});
+
+test('archiving a chat stops its live PTY runtime', async (t) => {
+  const sessionId = 'archive-live-pty';
+  dbSessions.createSession(sessionId, 'project-lifecycle', 'Archive live PTY', 'claude-code', {
+    workDir: dataDir,
+  });
+  t.after(async () => {
+    await terminalManager.closeSession(sessionId, 'user-1');
+  });
+
+  await terminalManager.create({
+    terminalId: 'archive-live-pty-terminal',
+    userId: 'user-1',
+    connectionId: 'archive-live-pty-connection',
+    surfaceId: 'archive-live-pty-surface',
+    cwd: dataDir,
+    sessionId,
+    shellKind: 'default',
+    cols: 80,
+    rows: 24,
+    launchSpec: {
+      program: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      cwd: dataDir,
+    },
+  });
+  assert.equal(terminalManager.getActiveSessionIds('user-1').has(sessionId), true);
+
+  await archiveSession(sessionId, true, 'user-1');
+
+  assert.equal(terminalManager.getActiveSessionIds('user-1').has(sessionId), false);
+});
+
+test('archiving a task stops the live PTY runtimes of its sessions', async (t) => {
+  const taskId = 'archive-live-pty-task';
+  const sessionId = 'archive-live-pty-task-session';
+  dbTasks.createTask({ id: taskId, projectId: 'project-lifecycle', title: 'Archive PTY task' });
+  dbSessions.createSession(sessionId, 'project-lifecycle', 'Task PTY', 'claude-code', {
+    workDir: dataDir,
+    taskId,
+  });
+  t.after(async () => {
+    await terminalManager.closeSession(sessionId, 'user-1');
+  });
+
+  await terminalManager.create({
+    terminalId: 'archive-live-pty-task-terminal',
+    userId: 'user-1',
+    connectionId: 'archive-live-pty-task-connection',
+    surfaceId: 'archive-live-pty-task-surface',
+    cwd: dataDir,
+    sessionId,
+    shellKind: 'default',
+    cols: 80,
+    rows: 24,
+    launchSpec: {
+      program: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      cwd: dataDir,
+    },
+  });
+  assert.equal(terminalManager.getActiveSessionIds('user-1').has(sessionId), true);
+
+  await setTaskArchived(taskId, true, 'user-1');
+
+  assert.equal(terminalManager.getActiveSessionIds('user-1').has(sessionId), false);
 });
 
 test('delete preserves local data on remote failure and removes it after success', async () => {

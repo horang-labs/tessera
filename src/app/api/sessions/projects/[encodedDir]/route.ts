@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processManager } from '@/lib/cli/process-manager';
+import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { validateEncodedPath } from '@/lib/validation/path';
 import * as dbProjects from '@/lib/db/projects';
@@ -63,7 +64,7 @@ export async function GET(
       );
     }
 
-    const activeSessionIds = processManager.getActiveSessionIds();
+    const activeSessionIds = getActiveSessionIds(userId);
     const generatingSessionIds = processManager.getGeneratingSessionIds();
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
 
@@ -76,17 +77,20 @@ export async function GET(
       lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
       ...(runtimeConfigs.get(row.id) ?? {}),
     }));
-    // Diff badge is only meaningful for sessions bound to a worktree branch.
+    // Diff badge shows for any session whose work dir is a git worktree —
+    // standalone chats included, not just worktree-branch-bound sessions. A
+    // chat created inside a worktree directory has a workDir but no
+    // worktreeBranch, yet still produces a real diff. computeWorktreeDiffStats
+    // returns null for non-git paths, so this stays safe for plain dirs.
     const diffStatsByWorkDir = getCachedOrScheduleBulk(
-      mapped.map((s) => (s.worktreeBranch ? s.workDir : undefined)),
+      mapped.map((s) => s.workDir ?? undefined),
       userId,
     );
     const sessions = mapped.map((s) => ({
       ...s,
-      diffStats:
-        s.worktreeBranch && s.workDir
-          ? diffStatsByWorkDir.get(s.workDir) ?? undefined
-          : undefined,
+      diffStats: s.workDir
+        ? diffStatsByWorkDir.get(s.workDir) ?? undefined
+        : undefined,
     }));
 
     const hasMore = result.nextCursor !== null;

@@ -5,6 +5,7 @@ import * as dbSessions from "@/lib/db/sessions";
 import { execCli, isRunningInWsl, type CliEnvironment } from "@/lib/cli/cli-exec";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 import { getMemoryProviderKind } from "@/lib/memory/memory-provider";
+import { toMemoryDisplayPath } from "@/lib/memory/memory-display-path";
 import {
   directoryExists,
   MemoryApiError,
@@ -61,9 +62,18 @@ export async function resolveCodexHomeForEnvironment(
   if (configuredDir) return path.resolve(configuredDir);
 
   if (environment === "wsl" && process.platform === "win32") {
+    // Intentionally keeps the login shell (no `loginShell: false`), unlike the
+    // claude/opencode probes: this reads `$CODEX_HOME`, which the user exports
+    // from their rc. The real codex CLI is also spawned through the login shell,
+    // so it sees that same `$CODEX_HOME` — dropping it here would make the panel
+    // show a different home than the CLI actually uses. Do not "optimize" this
+    // to a non-login shell for consistency; the latency is the correct trade.
     const result = await execCli(
       "sh",
-      ["-lc", 'printf "%s" "${CODEX_HOME:-$HOME/.codex}"'],
+      // `-c`, not `-lc`: the WSL bridge already ran this through the login shell,
+      // so a second one only re-reads ~/.profile (where a broken line can kill
+      // the probe). `$CODEX_HOME` is already exported into this shell's env.
+      ["-c", 'printf "%s" "${CODEX_HOME:-$HOME/.codex}"'],
       "wsl",
       5000,
     );
@@ -77,7 +87,11 @@ export async function resolveCodexHomeForEnvironment(
       [
         "-NoProfile",
         "-Command",
-        "$home = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }; Write-Output $home",
+        // `$home` is a PowerShell automatic variable: assigning to it is a
+        // no-op, so the probe used to echo the Windows profile itself and drop
+        // the `.codex` suffix. Keep this script free of double quotes too —
+        // PowerShell strips them when forwarding arguments to a native command.
+        "$codexDir = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }; Write-Output $codexDir",
       ],
       "native",
       5000,
@@ -193,6 +207,7 @@ export async function listCodexGuidelines(
     label: target.label,
     fileName: target.fileName,
     path: target.absolutePath,
+    displayPath: toMemoryDisplayPath(target.absolutePath, environment),
     status: target.status,
     statusLabel: target.statusLabel,
     ...(await statFileSafe(target.absolutePath)),

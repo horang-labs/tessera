@@ -14,6 +14,7 @@ const PANEL_DIRECTION_EPSILON = 1;
 import { useEffect, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { KeyboardManager } from '@/lib/keyboard/keyboard-manager';
+import { setGlobalShortcutKeys } from '@/lib/keyboard/terminal-passthrough';
 import { SHORTCUT_IDS, type ShortcutId } from '@/lib/keyboard/registry';
 import { getEffectiveShortcut } from '@/lib/keyboard/effective';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS } from '@/stores/panel-store';
@@ -26,26 +27,6 @@ import { v4 as uuidv4 } from 'uuid';
 export interface UseKeyboardShortcutsOptions {
   /** Reserved for future use (help toggle). Currently unused. */
   onToggleHelp?: () => void;
-}
-
-// 탭 전환 시 새 활성 탭의 activePanelId 입력 영역으로 포커스 이동.
-// panel-wrapper.tsx의 isActive useEffect는 isActive가 true→true로 유지되므로
-// 단축키 탭 전환에서는 트리거되지 않아 이 헬퍼가 별도로 처리한다.
-// 셀렉터 우선순위는 panel-wrapper.tsx와 동일하게 유지한다.
-function focusActivePanelInput(tabId: string): void {
-  requestAnimationFrame(() => {
-    const tabData = usePanelStore.getState().tabPanels[tabId];
-    const panelId = tabData?.activePanelId;
-    if (!panelId) return;
-    const panelEl = document.querySelector(`[data-panel-id="${panelId}"]`);
-    if (!panelEl) return;
-    const prompt = panelEl.querySelector<HTMLElement>('[data-interactive-prompt]');
-    if (prompt) { prompt.focus(); return; }
-    const textarea = panelEl.querySelector('textarea');
-    if (textarea) { textarea.focus(); return; }
-    const createBtn = panelEl.querySelector<HTMLElement>('[data-testid="empty-panel-create-session"]');
-    createBtn?.focus();
-  });
 }
 
 function getActivePanelSize(activePanelId: string): { width: number; height: number } | null {
@@ -140,10 +121,6 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   const createTerminalPanel = usePanelStore((state) => state.createTerminalPanel);
   const setActivePanelId = usePanelStore((state) => state.setActivePanelId);
 
-  const tabs = useTabStore((state) => state.tabs);
-  const activeTabId = useTabStore((state) => state.activeTabId);
-  const setActiveTab = useTabStore((state) => state.setActiveTab);
-
   // Use the same code path as the UI "+" button (tab-bar.tsx) — creates an empty tab,
   // not a full session. Session is materialized lazily when the user sends a message.
   const handleNewTab = useCallback(() => {
@@ -152,26 +129,17 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
 
   // Same code path as the tab × button (tab-item.tsx) — closes the currently-active tab.
   const handleCloseTab = useCallback(() => {
+    // Kanban peek is the topmost close target; a dirty file sidecar may veto
+    // via confirm, in which case the tab underneath must stay open too.
+    const { peekSessionId, peekFileRef, closeSessionPeek } = useBoardStore.getState();
+    if (peekSessionId || peekFileRef) {
+      closeSessionPeek();
+      return;
+    }
     const { activeTabId: id, closeTab } = useTabStore.getState();
     if (!id) return;
     closeTab(id);
   }, []);
-
-  const handleNextTab = useCallback(() => {
-    if (tabs.length <= 1) return;
-    const idx = tabs.findIndex((t) => t.id === activeTabId);
-    const nextId = tabs[(idx + 1) % tabs.length].id;
-    setActiveTab(nextId);
-    focusActivePanelInput(nextId);
-  }, [tabs, activeTabId, setActiveTab]);
-
-  const handlePrevTab = useCallback(() => {
-    if (tabs.length <= 1) return;
-    const idx = tabs.findIndex((t) => t.id === activeTabId);
-    const prevId = tabs[(idx - 1 + tabs.length) % tabs.length].id;
-    setActiveTab(prevId);
-    focusActivePanelInput(prevId);
-  }, [tabs, activeTabId, setActiveTab]);
 
   const handleToggleSidebar = useCallback(() => {
     settingsStore.toggleSidebar();
@@ -236,8 +204,6 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   const handlers: Partial<Record<ShortcutId, () => void | Promise<void>>> = {
     'new-tab':        handleNewTab,
     'close-tab':      handleCloseTab,
-    'next-tab':       handleNextTab,
-    'prev-tab':       handlePrevTab,
     'toggle-sidebar': handleToggleSidebar,
     'toggle-view':    handleToggleView,
     'split-right':    handleSplitRight,
@@ -252,18 +218,24 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
 
   useEffect(() => {
     const manager = new KeyboardManager();
+    const activeKeys: string[] = [];
     for (const id of SHORTCUT_IDS) {
       const handler = handlers[id];
       if (!handler) continue;
       const key = getEffectiveShortcut(id, overrides);
       if (!key) continue;
       manager.register(key, () => { void handler(); }, { ignoreInputFields: false });
+      activeKeys.push(key);
     }
-    return () => manager.unregisterAll();
+    setGlobalShortcutKeys(activeKeys);
+    return () => {
+      manager.unregisterAll();
+      setGlobalShortcutKeys([]);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     overrides,
-    handleNewTab, handleCloseTab, handleNextTab, handlePrevTab,
+    handleNewTab, handleCloseTab,
     handleToggleSidebar, handleToggleView, handleSplitRight, handleSplitDown,
     handleToggleTerminal, handleFocusPanel,
   ]);

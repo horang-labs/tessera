@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useMemo } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Archive, ArchiveRestore, CircleStop, Pencil, Trash2, ExternalLink, FolderInput, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -146,7 +147,20 @@ export function TaskContextMenu({
     'cursor-default'
   );
 
-  const handleMenuKeyDown = useMenuNavigation(menuRef);
+  const navigateMenu = useMenuNavigation(menuRef);
+
+  // The menu renders through a portal, so DOM-wise it sits on document.body —
+  // but React still bubbles its events up the JSX tree, which lands on the card
+  // that owns the menu. Without this, clicking Stop Process or Delete also fires
+  // the card's onClick and opens Peek. Isolate every interaction event here.
+  const stopEventPropagation = useCallback((e: SyntheticEvent) => {
+    e.stopPropagation();
+  }, []);
+
+  const handleMenuKeyDown = useCallback((e: ReactKeyboardEvent<HTMLElement>) => {
+    e.stopPropagation();
+    navigateMenu(e);
+  }, [navigateMenu]);
 
   const handleStatusChange = useCallback((status: string) => {
     onClose();
@@ -217,6 +231,10 @@ export function TaskContextMenu({
       )}
       style={{ top: menuPos.top, left: menuPos.left, width: MENU_WIDTH }}
       onKeyDown={handleMenuKeyDown}
+      onClick={stopEventPropagation}
+      onDoubleClick={stopEventPropagation}
+      onMouseDown={stopEventPropagation}
+      onContextMenu={stopEventPropagation}
       data-testid="task-context-menu"
     >
       {isRunning && onStopProcess && (

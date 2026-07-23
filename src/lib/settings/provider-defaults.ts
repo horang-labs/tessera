@@ -22,9 +22,14 @@ import {
   DEFAULT_PROFILE_AVATAR_DATA_URL,
   DEFAULT_PROFILE_DISPLAY_NAME,
 } from './profile-defaults';
+import { normalizeTerminalThemePresetId } from '@/lib/terminal/terminal-theme';
 
-export const FONT_SCALE_OPTIONS = [0.8125, 0.875, 1, 1.25] as const;
-export const DEFAULT_FONT_SCALE = 0.875;
+export const FONT_SCALE_OPTIONS = [0.8125, 1, 1.1875, 1.375] as const;
+export const DEFAULT_FONT_SCALE = 1;
+export const FONT_SCALE_MIGRATIONS: Readonly<Record<number, number>> = {
+  0.9375: 1,
+  1.25: 1.375,
+};
 type ClaudeAccessMode = Extract<
   ProviderSessionAccessMode,
   'default' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions'
@@ -40,8 +45,8 @@ type OpenCodeAccessMode = Extract<
 
 /**
  * Normalize fontSize to one of FONT_SCALE_OPTIONS. Legacy px values (12-20)
- * from prior versions collapse to 1 since the old setting never actually took
- * effect — users experienced the default size regardless of the stored number.
+ * from prior versions collapse to the default since the old setting never
+ * actually took effect.
  */
 export function normalizeFontScale(raw: unknown): number {
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
@@ -50,11 +55,8 @@ export function normalizeFontScale(raw: unknown): number {
   if (raw >= 2) {
     return DEFAULT_FONT_SCALE;
   }
-  // Preserve the semantic "large" choice for users upgrading from the old
-  // preset list, where 0.9375 sat exactly between the new medium and large.
-  if (raw === 0.9375) {
-    return 1;
-  }
+  const migratedScale = FONT_SCALE_MIGRATIONS[raw];
+  if (migratedScale !== undefined) return migratedScale;
   let best: number = FONT_SCALE_OPTIONS[0];
   let bestDelta = Math.abs(raw - best);
   for (const option of FONT_SCALE_OPTIONS) {
@@ -353,6 +355,12 @@ function normalizeWindowsCloseBehavior(value: unknown): UserSettings['windowsClo
   return value === 'tray' || value === 'quit' ? value : 'ask';
 }
 
+function normalizeKanbanSessionOpenMode(
+  value: unknown,
+): UserSettings['kanbanSessionOpenMode'] {
+  return value === 'split' ? 'split' : 'peek';
+}
+
 function normalizeProviderSessionMode(
   providerId: string,
   value: unknown,
@@ -504,6 +512,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       : undefined;
   const defaults = {
     language: 'en',
+    agentExecutionMode: 'pty',
     profile: {
       displayName: DEFAULT_PROFILE_DISPLAY_NAME,
       avatarDataUrl: DEFAULT_PROFILE_AVATAR_DATA_URL,
@@ -511,7 +520,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     notifications: {
       soundEnabled: true,
       showToast: true,
-      autoGenerateTitle: true,
+      aiTitleRefinement: true,
     },
     translate: {
       enabled: false,
@@ -522,6 +531,8 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       sendShortcut: 'meta+enter',
     },
     theme: 'auto',
+    terminalThemeLightPreset: 'lifted-neutral',
+    terminalThemeDarkPreset: 'neutral-charcoal',
     fontSize: DEFAULT_FONT_SCALE,
     enterKeyBehavior: 'send',
     defaultPermissionMode: 'default',
@@ -548,6 +559,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     inactivePanelDimming: 30,
     showProviderIcons: true,
     showRecentWork: true,
+    kanbanSessionOpenMode: 'peek',
     sttEngine: 'webSpeech',
     geminiApiKey: '',
     favoriteSkills: [],
@@ -620,18 +632,30 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
   return {
     ...defaults,
     ...raw,
+    agentExecutionMode: raw?.agentExecutionMode === 'gui' ? 'gui' : 'pty',
     defaultModel: normalizedClaudeModel,
+    terminalThemeLightPreset: normalizeTerminalThemePresetId(
+      'light',
+      raw?.terminalThemeLightPreset,
+    ),
+    terminalThemeDarkPreset: normalizeTerminalThemePresetId(
+      'dark',
+      raw?.terminalThemeDarkPreset,
+    ),
     fontSize: normalizeFontScale(raw?.fontSize),
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
     showRecentWork: raw?.showRecentWork ?? defaults.showRecentWork,
+    kanbanSessionOpenMode: normalizeKanbanSessionOpenMode(raw?.kanbanSessionOpenMode),
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
     managedWorktreePathTemplate: normalizeManagedWorktreePathTemplate(raw?.managedWorktreePathTemplate),
     windowsCloseBehavior: normalizeWindowsCloseBehavior(raw?.windowsCloseBehavior),
     profile: normalizeProfileSettings(raw?.profile, defaults.profile),
     notifications: {
-      ...defaults.notifications,
-      ...(raw?.notifications ?? {}),
+      soundEnabled: raw?.notifications?.soundEnabled ?? defaults.notifications.soundEnabled,
+      showToast: raw?.notifications?.showToast ?? defaults.notifications.showToast,
+      aiTitleRefinement:
+        raw?.notifications?.aiTitleRefinement ?? defaults.notifications.aiTitleRefinement,
     },
     translate: {
       ...defaults.translate,

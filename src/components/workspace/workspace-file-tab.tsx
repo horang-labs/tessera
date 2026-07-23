@@ -94,13 +94,19 @@ function shouldRefreshForSession(
 export function WorkspaceFileTab({
   fileRef,
   panelId,
+  surfaceActive = false,
+  onClose,
+  onFileRefChange,
 }: {
   fileRef: WorkspaceFileSessionRef;
   panelId: string;
+  surfaceActive?: boolean;
+  onClose?: () => void;
+  onFileRefChange?: (fileRef: WorkspaceFileSessionRef) => void;
 }) {
   const { kind, path, sourceSessionId } = fileRef;
   const tabId = useContext(TabIdContext);
-  const isTabActive = useTabStore((state) => state.activeTabId === tabId);
+  const isTabActive = useTabStore((state) => surfaceActive || state.activeTabId === tabId);
   const isDocumentVisible = useDocumentVisibility();
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-tab");
   const panelCount = usePanelStore(
@@ -186,6 +192,15 @@ export function WorkspaceFileTab({
 
     const renameTarget = findRenameTarget(msg, path);
     if (renameTarget) {
+      if (onFileRefChange) {
+        onFileRefChange({
+          type: "workspace-file",
+          sourceSessionId,
+          kind,
+          path: renameTarget,
+        });
+        return;
+      }
       assignSession(
         panelId,
         buildWorkspaceFileSessionId(sourceSessionId, kind, renameTarget),
@@ -201,7 +216,7 @@ export function WorkspaceFileTab({
     if (msg.hasMoreChangedPaths || msg.changedPaths.includes(path)) {
       refreshFile();
     }
-  }, [assignSession, kind, loadFile, panelId, path, refreshFile, sourceSessionId]);
+  }, [assignSession, kind, loadFile, onFileRefChange, panelId, path, refreshFile, sourceSessionId]);
 
   useWorkspaceFilesLiveSync({
     enabled: isTabActive && isDocumentVisible,
@@ -272,6 +287,10 @@ export function WorkspaceFileTab({
       loading={state.loading}
       mode={fileRef.kind}
       onClose={() => {
+        if (onClose) {
+          onClose();
+          return;
+        }
         if (panelCount >= 2) {
           closePanel(panelId);
         } else {

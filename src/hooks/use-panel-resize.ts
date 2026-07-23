@@ -16,7 +16,7 @@ interface UsePanelResizeOptions {
 
 interface UsePanelResizeResult {
   isDragging: boolean;            // useState -- PanelDivider 시각 스타일용
-  handleMouseDown: (e: React.MouseEvent) => void;
+  handlePointerDown: (e: React.PointerEvent) => void;
 }
 
 export function usePanelResize({
@@ -39,12 +39,16 @@ export function usePanelResize({
   }); // 의존성 배열 없음 -- 매 렌더마다 동기화
 
   // 이벤트 핸들러를 ref로 보관하여 cleanup 시 동일 참조 사용
-  const handleMouseMoveRef = useRef<((e: MouseEvent) => void) | null>(null);
-  const handleMouseUpRef = useRef<(() => void) | null>(null);
+  const handlePointerMoveRef = useRef<((e: PointerEvent) => void) | null>(null);
+  const handlePointerUpRef = useRef<(() => void) | null>(null);
+  const handlePointerCancelRef = useRef<(() => void) | null>(null);
+  const handleWindowBlurRef = useRef<(() => void) | null>(null);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();   // BR-DIVIDER-005: 이벤트 전파 차단
+    if (isDraggingRef.current) return;
 
     isDraggingRef.current = true;
     setIsDragging(true);
@@ -54,8 +58,7 @@ export function usePanelResize({
     // BR-DIVIDER-003: 전역 커서 설정
     document.body.style.cursor = direction === 'horizontal' ? 'col-resize' : 'row-resize';
 
-    // handleMouseMove 정의
-    const handleMouseMove = (moveEvent: MouseEvent) => {
+    const handlePointerMove = (moveEvent: PointerEvent) => {
       if (!isDraggingRef.current) return;
 
       const container = containerRef.current;
@@ -77,15 +80,16 @@ export function usePanelResize({
       onRatioChangeRef.current(clampedRatio);
     };
 
-    // handleMouseUp 정의
-    const handleMouseUp = () => {
+    const stopDragging = () => {
       if (!isDraggingRef.current) return;
 
       isDraggingRef.current = false;
       setIsDragging(false);
 
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerUp);
+      document.removeEventListener('pointercancel', handlePointerCancel);
+      window.removeEventListener('blur', handleWindowBlur);
 
       // BR-RESIZE-006: 복원
       document.body.style.userSelect = '';
@@ -93,22 +97,39 @@ export function usePanelResize({
       document.body.style.cursor = '';
     };
 
-    handleMouseMoveRef.current = handleMouseMove;
-    handleMouseUpRef.current = handleMouseUp;
+    const handlePointerUp = () => stopDragging();
+    const handlePointerCancel = () => {
+      onRatioChangeRef.current(initialRatio);
+      stopDragging();
+    };
+    const handleWindowBlur = () => stopDragging();
+
+    handlePointerMoveRef.current = handlePointerMove;
+    handlePointerUpRef.current = handlePointerUp;
+    handlePointerCancelRef.current = handlePointerCancel;
+    handleWindowBlurRef.current = handleWindowBlur;
 
     // BR-RESIZE-001: document 전역 등록 (구분선 이탈해도 드래그 유지)
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('pointermove', handlePointerMove);
+    document.addEventListener('pointerup', handlePointerUp);
+    document.addEventListener('pointercancel', handlePointerCancel);
+    window.addEventListener('blur', handleWindowBlur);
   };
 
   // BR-RESIZE-005: 언마운트 시 정리
   useEffect(() => {
     return () => {
-      if (handleMouseMoveRef.current) {
-        document.removeEventListener('mousemove', handleMouseMoveRef.current);
+      if (handlePointerMoveRef.current) {
+        document.removeEventListener('pointermove', handlePointerMoveRef.current);
       }
-      if (handleMouseUpRef.current) {
-        document.removeEventListener('mouseup', handleMouseUpRef.current);
+      if (handlePointerUpRef.current) {
+        document.removeEventListener('pointerup', handlePointerUpRef.current);
+      }
+      if (handlePointerCancelRef.current) {
+        document.removeEventListener('pointercancel', handlePointerCancelRef.current);
+      }
+      if (handleWindowBlurRef.current) {
+        window.removeEventListener('blur', handleWindowBlurRef.current);
       }
       if (isDraggingRef.current) {
         document.body.style.userSelect = '';
@@ -117,5 +138,5 @@ export function usePanelResize({
     };
   }, []); // 마운트/언마운트 시 한 번만
 
-  return { isDragging, handleMouseDown };
+  return { isDragging, handlePointerDown };
 }

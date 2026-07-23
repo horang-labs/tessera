@@ -3,7 +3,10 @@ import path from 'path';
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import * as dbTasks from '@/lib/db/tasks';
-import { processManager } from '@/lib/cli/process-manager';
+import {
+  closeSessionRuntimes,
+  getActiveSessionIds,
+} from '@/lib/session/active-session-runtime';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { isManagedWorktreePath, removeManagedWorktree } from '@/lib/worktrees/managed';
@@ -179,7 +182,7 @@ async function mapChat(row: SessionRow): Promise<ArchiveItem> {
       title: row.title,
       provider: row.provider,
       lastModified: row.updated_at,
-      isRunning: processManager.getActiveSessionIds().has(row.id),
+      isRunning: getActiveSessionIds().has(row.id),
     }],
   };
 }
@@ -210,7 +213,7 @@ async function mapTask(task: TaskEntity): Promise<ArchiveItem> {
 
 export async function listArchiveItems(options: ArchiveListOptions = {}): Promise<ArchiveListResult> {
   const normalizedProjectId = options.projectId && options.projectId !== 'all' ? options.projectId : undefined;
-  const activeSessionIds = processManager.getActiveSessionIds();
+  const activeSessionIds = getActiveSessionIds();
   const kind = options.kind ?? 'all';
   const limit = normalizePageLimit(options.limit);
   const offset = normalizeOffset(options.cursor);
@@ -297,7 +300,7 @@ export async function restoreArchivedChat(sessionId: string, userId?: string): P
 }
 
 export async function setTaskArchived(taskId: string, archived: boolean, userId?: string): Promise<void> {
-  const task = dbTasks.getTask(taskId, processManager.getActiveSessionIds());
+  const task = dbTasks.getTask(taskId, getActiveSessionIds());
   if (!task) {
     throw new Error('Task not found');
   }
@@ -326,20 +329,15 @@ export async function setTaskArchived(taskId: string, archived: boolean, userId?
     }
 
     if (archived) {
-      for (const session of task.sessions) {
-        if (!processManager.getProcess(session.id)) continue;
-        try {
-          await processManager.closeSession(session.id);
-        } catch (error) {
-          logger.warn({ taskId, sessionId: session.id, error }, 'Task archived but a session process did not stop cleanly');
-        }
-      }
+      await Promise.all(
+        task.sessions.map((session) => closeSessionRuntimes(session.id, userId)),
+      );
     }
   });
 }
 
 export async function permanentlyDeleteArchivedTask(userId: string, taskId: string): Promise<void> {
-  const task = dbTasks.getTask(taskId, processManager.getActiveSessionIds());
+  const task = dbTasks.getTask(taskId, getActiveSessionIds());
   if (!task) {
     throw new Error('Task not found');
   }
@@ -372,7 +370,7 @@ export async function removeArchivedTaskWorktree(taskId: string, userId?: string
   if (!item.worktreeManaged) {
     throw new Error('Worktree is not managed by this app');
   }
-  const activeIds = processManager.getActiveSessionIds();
+  const activeIds = getActiveSessionIds();
   if (item.sessions.some((session) => activeIds.has(session.id))) {
     throw new Error('Cannot delete worktree while sessions are running');
   }
@@ -395,7 +393,7 @@ export async function removeArchivedWorktrees(
     projectId: options.projectId,
     query: options.query,
   });
-  const activeIds = processManager.getActiveSessionIds();
+  const activeIds = getActiveSessionIds();
   const runGit = await createArchiveGitRunner(userId);
 
   for (const item of items) {
@@ -444,7 +442,7 @@ async function removeArchivedWorktree(
   }
 
   try {
-    const activeIds = processManager.getActiveSessionIds();
+    const activeIds = getActiveSessionIds();
     if (item.sessions.some((session) => activeIds.has(session.id))) {
       return false;
     }

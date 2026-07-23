@@ -3,8 +3,15 @@ import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { collectionExists } from '@/lib/db/collections';
 import { taskExists } from '@/lib/db/tasks';
+import * as dbSessions from '@/lib/db/sessions';
 import logger from '@/lib/logger';
 import { persistCreatedSessionRecord } from '@/lib/session/session-persistence';
+import {
+  getProviderExecutionCapabilities,
+  resolveSessionCreationExecutionMode,
+  type AgentExecutionMode,
+} from '@/lib/session/agent-execution-mode';
+import { SettingsManager } from '@/lib/settings/manager';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 
 /**
@@ -37,6 +44,7 @@ export async function POST(req: NextRequest) {
       worktreeBranch,
       taskId,
       collectionId,
+      executionMode: rawExecutionMode,
     } = body;
 
     const resolvedWorkDir = workDir || process.cwd();
@@ -55,6 +63,32 @@ export async function POST(req: NextRequest) {
 
     if (!resolvedProviderId) {
       return NextResponse.json({ error: 'providerId is required' }, { status: 400 });
+    }
+
+    const settings = await SettingsManager.load(userId, { silent: true });
+    const executionCapabilities = getProviderExecutionCapabilities(resolvedProviderId);
+    if (!executionCapabilities.pty && !executionCapabilities.gui) {
+      return NextResponse.json({ error: 'Provider has no supported execution mode' }, { status: 400 });
+    }
+    if (
+      rawExecutionMode !== undefined
+      && rawExecutionMode !== 'pty'
+      && rawExecutionMode !== 'gui'
+    ) {
+      return NextResponse.json({ error: 'executionMode must be pty or gui' }, { status: 400 });
+    }
+    let executionMode: AgentExecutionMode;
+    try {
+      executionMode = resolveSessionCreationExecutionMode(
+        rawExecutionMode,
+        settings.agentExecutionMode,
+        executionCapabilities,
+      );
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Unsupported execution mode' },
+        { status: 400 },
+      );
     }
 
     if (normalizedWorktreeBranch && !normalizedTaskId) {
@@ -99,6 +133,7 @@ export async function POST(req: NextRequest) {
         resolvedWorkDir,
         title: result.title,
         providerId: resolvedProviderId,
+        executionMode,
         parentProjectId: typeof parentProjectId === 'string' ? parentProjectId : undefined,
         taskId: normalizedTaskId,
         collectionId: typeof collectionId === 'string' && collectionId.trim().length > 0 ? collectionId.trim() : undefined,
@@ -118,6 +153,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         ...result,
+        kind: dbSessions.extractSessionKind(dbSessions.getSession(result.sessionId)?.provider_state ?? null),
         provider: resolvedProviderId,
         model,
         reasoningEffort,

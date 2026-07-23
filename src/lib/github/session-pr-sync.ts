@@ -29,6 +29,11 @@ export interface SessionPrUpdate {
   remoteBranchExists?: boolean;
 }
 
+interface EligibleSessionPrRow {
+  id: string;
+  work_dir: string | null;
+}
+
 type Listener = (update: SessionPrUpdate) => void;
 
 const GLOBAL_KEY = Symbol.for('tessera.sessionPrSync');
@@ -181,13 +186,20 @@ function markUnsupportedIfChanged(sessionId: string): void {
 }
 
 /**
- * Sweep every session that has a workdir but no task_id. Used by the
- * background poller to catch out-of-band PR changes for bare sessions.
+ * Sweep sessions that have a workdir but no task_id. The background poller
+ * passes the live runtime IDs so historical sessions do not generate WSL/gh
+ * work; callers may omit the filter for an explicit full reconciliation.
  */
 export async function syncAllEligibleSessionPrs(
-  options: { agentEnvironment?: AgentEnvironment } = {},
+  options: {
+    agentEnvironment?: AgentEnvironment;
+    sessionIds?: ReadonlySet<string>;
+  } = {},
 ): Promise<void> {
-  const rows = dbSessions.getSessionsEligibleForBareSessionPrSync();
+  const rows = filterEligibleSessionPrRows(
+    dbSessions.getSessionsEligibleForBareSessionPrSync(),
+    options.sessionIds,
+  );
   const CONCURRENCY = 3;
   let cursor = 0;
 
@@ -202,4 +214,12 @@ export async function syncAllEligibleSessionPrs(
 
   const workers = Array.from({ length: Math.min(CONCURRENCY, rows.length) }, () => worker());
   await Promise.all(workers);
+}
+
+export function filterEligibleSessionPrRows<T extends EligibleSessionPrRow>(
+  rows: T[],
+  sessionIds?: ReadonlySet<string>,
+): T[] {
+  if (!sessionIds) return rows;
+  return rows.filter((row) => sessionIds.has(row.id));
 }

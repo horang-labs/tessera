@@ -6,6 +6,7 @@ import { getDb } from './database';
 import logger from '../logger';
 import type { WorkflowStatus, TaskEntity, TaskSession } from '@/types/task-entity';
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
+import { extractSessionKind } from './sessions';
 
 export interface TaskRow {
   id: string;
@@ -49,6 +50,7 @@ interface SessionForTask {
   id: string;
   title: string;
   provider: string;
+  provider_state: string | null;
   updated_at: string;
 }
 
@@ -142,7 +144,7 @@ function loadTaskSessions(
 ): { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean } {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT id, title, provider, updated_at, work_dir, worktree_managed
+    SELECT id, title, provider, provider_state, updated_at, work_dir, worktree_managed
     FROM sessions
     WHERE task_id = ? AND deleted = 0
     ORDER BY updated_at DESC
@@ -154,6 +156,7 @@ function loadTaskSessions(
     provider: r.provider,
     lastModified: r.updated_at,
     isRunning: activeSessionIds.has(r.id),
+    kind: extractSessionKind(r.provider_state),
   }));
 
   // Derive workDir from the first session that has one

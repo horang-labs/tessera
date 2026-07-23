@@ -39,7 +39,7 @@ export interface TabSnapshot {
  *
  * 불변 조건:
  * - INV-TAB-01: id는 생성 후 불변
- * - INV-TAB-02: MVP에서 title은 항상 null
+ * - INV-TAB-02: title은 null이거나 사용자가 지정한 탭 이름
  *
  * 주의: 패널 상태는 panel-store.tabPanels[tab.id]에서 읽어야 함.
  * snapshot 필드는 제거됨 — panel-store가 단일 진실 공급원(SSOT).
@@ -49,7 +49,7 @@ export interface Tab {
   readonly id: string;
   /** 이 탭이 속한 프로젝트. null이면 모든 프로젝트에서 보이는 전역 탭. */
   projectDir: string | null;
-  /** 수동 지정 탭 이름. MVP에서는 항상 null (P1 기능). */
+  /** 수동 지정 탭 이름. null이면 활성 패널의 제목을 사용한다. */
   title: string | null;
   /** 프리뷰 탭 여부. 채팅 프리뷰와 파일 프리뷰는 서로 다른 슬롯으로 재사용됨. */
   isPreview: boolean;
@@ -168,6 +168,12 @@ export interface TabStoreActions {
   pinTab(tabId: string): void;
 
   /**
+   * 탭에 수동 지정 이름을 저장하고 프리뷰를 고정한다.
+   * null이면 파생 제목으로 되돌린다.
+   */
+  renameTab(tabId: string, title: string | null): void;
+
+  /**
    * 탭이 표시하는 세션을 기준으로 탭의 프로젝트 소유권을 보정.
    * All Projects의 빈 전역 탭에서 세션을 만든 뒤 실제 프로젝트 탭으로 귀속할 때 사용.
    */
@@ -179,6 +185,11 @@ export interface TabStoreActions {
    * @returns 탭+패널 위치 또는 null (찾지 못한 경우)
    */
   findSessionLocation(sessionId: string): { tabId: string; panelId: string } | null;
+
+  /**
+   * 세션의 화면을 정리한다. 단일 패널 탭은 닫고, 분할 탭은 해당 패널만 제거한다.
+   */
+  retireSessionSurface(sessionId: string): void;
 
   /**
    * 활성 탭의 현재 상태를 TabSnapshot으로 반환.

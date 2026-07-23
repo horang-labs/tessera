@@ -3,24 +3,17 @@
 import type React from "react";
 import {
   AlertCircle,
-  ArrowDown,
-  ArrowUp,
   CheckCircle2,
   ChevronDown,
   Cloud,
   CloudOff,
-  Combine,
   Copy,
   ExternalLink,
   FileText,
   GitCompare,
   GitCommitHorizontal,
-  GitMerge,
   GitPullRequest,
   LoaderCircle,
-  RefreshCw,
-  RotateCcw,
-  X,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -33,55 +26,8 @@ import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions"
 import { cn } from "@/lib/utils";
 import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
 import {
-  type ActiveGitAction,
-  computeGitFooterButtonStates,
   FILE_STATE_META,
-  getGitHubActionBlockReason,
 } from "./git-panel-shared";
-
-function GitActionForm({
-  title,
-  children,
-  onConfirm,
-  onCancel,
-  confirmLabel,
-  disabled = false,
-}: {
-  title: string;
-  children: React.ReactNode;
-  onConfirm: () => void;
-  onCancel: () => void;
-  confirmLabel: string;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="rounded-xl border border-(--accent)/30 bg-(--chat-bg) p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-muted)">
-          {title}
-        </p>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md p-0.5 text-(--text-muted) hover:text-(--text-primary)"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      {children}
-      <div className="mt-2 flex gap-2">
-        <Button
-          size="sm"
-          onClick={onConfirm}
-          disabled={disabled}
-          className="flex-1"
-        >
-          {confirmLabel}
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 function formatShortCount(value: number): string {
   if (value < 1000) return String(value);
@@ -659,7 +605,9 @@ export function GitPanelContentSection({
                 Changed files
               </span>
               <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
-                {changedFileCount}
+                {data.changedFilesTruncated
+                  ? (data.changedFilesTotal ?? `${changedFileCount}+`)
+                  : changedFileCount}
               </span>
             </div>
             <ScrollArea className="flex-1">
@@ -675,7 +623,7 @@ export function GitPanelContentSection({
                       onDragStart={(event) => {
                         if (!sessionId) return;
                         setSelectedPath(file.path);
-                        setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path);
+                        setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path, absolutePath);
                       }}
                       className={cn(
                         "group relative border-l-2 transition-colors",
@@ -750,7 +698,7 @@ export function GitPanelContentSection({
                                 return;
                               }
                               setSelectedPath(file.path);
-                              setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path);
+                              setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path, absolutePath);
                             }}
                             draggable={Boolean(sessionId && canOpenReadOnly)}
                             disabled={!canOpenReadOnly}
@@ -779,6 +727,15 @@ export function GitPanelContentSection({
                 })}
               </div>
             </ScrollArea>
+            {data.changedFilesTruncated ? (
+              <div className="px-2 pb-1 text-[10px] leading-snug text-(--text-muted)">
+                {data.changedFilesTotal != null
+                  ? `Showing ${changedFileCount} of ${data.changedFilesTotal} changed files. `
+                  : `Showing the first ${changedFileCount} changed files; the repository has many more. `}
+                Add large or generated folders (e.g. .venv, node_modules) to
+                .gitignore to see the rest.
+              </div>
+            ) : null}
           </div>
         )
       )}
@@ -792,318 +749,5 @@ export function GitPanelContentSection({
       />
     ) : null}
     </>
-  );
-}
-
-export function GitPanelFooterSection({
-  actionInput,
-  activeAction,
-  checksUrl,
-  data,
-  isSessionBusy,
-  mergePrPromptDraft,
-  mergePrPromptPreview,
-  mergeSource,
-  fetching,
-  onActionInputChange,
-  onCreatePr,
-  onFetch,
-  onMerge,
-  onMergePr,
-  onMergePrPromptChange,
-  onOpenAction,
-  onOpenExternal,
-  onPull,
-  onPush,
-  onResetMergePrPrompt,
-  onSetMergeSource,
-  onSetPrBaseBranch,
-  onCloseAction,
-  onCommit,
-  prBaseBranch,
-}: {
-  actionInput: string;
-  activeAction: ActiveGitAction;
-  checksUrl: string | null;
-  data: GitPanelData;
-  isSessionBusy: boolean;
-  mergePrPromptDraft: string;
-  mergePrPromptPreview: string;
-  mergeSource: string;
-  fetching: boolean;
-  onActionInputChange: (value: string) => void;
-  onCloseAction: () => void;
-  onCommit: () => void;
-  onCreatePr: () => void;
-  onFetch: () => void;
-  onMerge: () => void;
-  onMergePr: () => void;
-  onMergePrPromptChange: (value: string) => void;
-  onOpenAction: (action: Exclude<ActiveGitAction, null>) => void;
-  onOpenExternal: (url: string | null | undefined) => void;
-  onPull: () => void;
-  onPush: () => void;
-  onResetMergePrPrompt: () => void;
-  onSetMergeSource: (value: string) => void;
-  onSetPrBaseBranch: (value: string) => void;
-  prBaseBranch: string;
-}) {
-  const availableBranches = (data.branches ?? []).filter((branch) => branch !== data.branch);
-  const mergePrPromptIsDirty = mergePrPromptDraft !== mergePrPromptPreview;
-  const githubActionBlockReason = getGitHubActionBlockReason(data.github);
-  const isGithubActionBlocked = Boolean(githubActionBlockReason);
-  const {
-    showMergePr,
-    commitDisabled,
-    pushDisabled,
-    pullDisabled,
-    syncDisabled,
-    createPrDisabled,
-    mergePrDisabled,
-  } = computeGitFooterButtonStates(data, isSessionBusy, activeAction);
-  const fetchDisabled = isSessionBusy || activeAction !== null || fetching;
-
-  return (
-    <div className="border-t border-(--chat-header-border) px-3 py-3 space-y-2">
-      {activeAction === "commit" ? (
-        <GitActionForm
-          title="Commit"
-          confirmLabel="Commit"
-          onConfirm={onCommit}
-          onCancel={onCloseAction}
-        >
-          <textarea
-            value={actionInput}
-            onChange={(event) => onActionInputChange(event.target.value)}
-            placeholder="Optional: hint for the AI commit message…"
-            rows={2}
-            className="w-full resize-none rounded-lg border border-(--divider) bg-(--sidebar-bg) px-3 py-2 text-xs text-(--text-primary) outline-none placeholder:text-(--text-muted) focus:border-(--accent)"
-          />
-        </GitActionForm>
-      ) : null}
-
-      {activeAction === "merge" ? (
-        <GitActionForm
-          title="Sync (merge into current branch)"
-          confirmLabel="Merge"
-          disabled={!mergeSource || mergeSource === data.branch}
-          onConfirm={onMerge}
-          onCancel={onCloseAction}
-        >
-          <div className="space-y-2">
-            <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-(--text-muted)">
-                Source
-              </label>
-              <select
-                value={mergeSource}
-                onChange={(event) => onSetMergeSource(event.target.value)}
-                className="w-full rounded-lg border border-(--divider) bg-(--sidebar-bg) px-3 py-2 text-xs text-(--text-primary) outline-none focus:border-(--accent)"
-              >
-                {availableBranches.map((branch) => (
-                  <option key={branch} value={branch}>
-                    {branch}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-(--text-muted)">↓ into</span>
-              <span className="truncate rounded-md bg-(--sidebar-hover) px-2 py-0.5 font-mono text-[10px] text-(--text-primary)">
-                {data.branch}
-              </span>
-            </div>
-          </div>
-        </GitActionForm>
-      ) : null}
-
-      {activeAction === "create-pr" ? (
-        <GitActionForm
-          title="Create Pull Request"
-          confirmLabel="Create PR"
-          onConfirm={onCreatePr}
-          onCancel={onCloseAction}
-          disabled={isGithubActionBlocked}
-        >
-          <div className="space-y-2">
-            <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-[0.14em] text-(--text-muted)">
-                Base branch
-              </label>
-              <select
-                value={prBaseBranch}
-                onChange={(event) => onSetPrBaseBranch(event.target.value)}
-                className="w-full rounded-lg border border-(--divider) bg-(--sidebar-bg) px-3 py-2 text-xs text-(--text-primary) outline-none focus:border-(--accent)"
-              >
-                {availableBranches.map((branch) => (
-                  <option key={branch} value={branch}>
-                    {branch}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <textarea
-              value={actionInput}
-              onChange={(event) => onActionInputChange(event.target.value)}
-              placeholder="Optional: context for the PR description…"
-              rows={2}
-              className="w-full resize-none rounded-lg border border-(--divider) bg-(--sidebar-bg) px-3 py-2 text-xs text-(--text-primary) outline-none placeholder:text-(--text-muted) focus:border-(--accent)"
-            />
-          </div>
-        </GitActionForm>
-      ) : null}
-
-      {activeAction === "merge-pr" ? (
-        <GitActionForm
-          title="Merge Pull Request"
-          confirmLabel="Merge PR"
-          onConfirm={onMergePr}
-          onCancel={onCloseAction}
-          disabled={isGithubActionBlocked || !mergePrPromptDraft.trim()}
-        >
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <label
-                  htmlFor="git-merge-pr-prompt-draft"
-                  className="block text-[10px] font-medium uppercase tracking-[0.14em] text-(--text-muted)"
-                >
-                  Prompt
-                </label>
-                <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  <span className="rounded-full border border-(--divider) px-2 py-0.5 text-[10px] font-medium text-(--text-muted)">
-                    This run only
-                  </span>
-                  {mergePrPromptIsDirty ? (
-                    <span className="rounded-full border border-(--accent)/30 bg-(--accent)/10 px-2 py-0.5 text-[10px] font-medium text-(--accent)">
-                      Edited
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-              <Tooltip content="Reset to configured prompt" side="top">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  onClick={onResetMergePrPrompt}
-                  disabled={!mergePrPromptIsDirty}
-                  aria-label="Reset Merge PR prompt"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                </Button>
-              </Tooltip>
-            </div>
-            <textarea
-              id="git-merge-pr-prompt-draft"
-              value={mergePrPromptDraft}
-              onChange={(event) => onMergePrPromptChange(event.target.value)}
-              rows={5}
-              className="max-h-44 min-h-28 w-full resize-y rounded-lg border border-(--divider) bg-(--sidebar-bg) px-3 py-2 font-mono text-[11px] leading-5 text-(--text-primary) outline-none placeholder:text-(--text-muted) focus:border-(--accent)"
-            />
-          </div>
-        </GitActionForm>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-1">
-        <Tooltip content="Commit" side="top">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => onOpenAction("commit")}
-            disabled={commitDisabled}
-            aria-label="Commit"
-          >
-            <GitCommitHorizontal className="h-4 w-4" />
-          </Button>
-        </Tooltip>
-        <Tooltip content="Push" side="top">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={onPush}
-            disabled={pushDisabled}
-            aria-label="Push"
-          >
-            <ArrowUp className="h-4 w-4" />
-          </Button>
-        </Tooltip>
-        <Tooltip content="Fetch" side="top">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={onFetch}
-            disabled={fetchDisabled}
-            aria-label="Fetch"
-          >
-            <RefreshCw className={cn("h-4 w-4", fetching && "animate-spin")} />
-          </Button>
-        </Tooltip>
-        {showMergePr ? (
-          <Tooltip content={githubActionBlockReason ?? "Merge Pull Request"} side="top">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => onOpenAction("merge-pr")}
-              disabled={mergePrDisabled || isGithubActionBlocked}
-              aria-label="Merge Pull Request"
-            >
-              <GitMerge className="h-4 w-4" />
-            </Button>
-          </Tooltip>
-        ) : (
-          <Tooltip content={githubActionBlockReason ?? "Create Pull Request"} side="top">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => onOpenAction("create-pr")}
-              disabled={createPrDisabled}
-              aria-label="Create Pull Request"
-            >
-              <GitPullRequest className="h-4 w-4" />
-            </Button>
-          </Tooltip>
-        )}
-        <Tooltip content="Sync (merge into current branch)" side="top">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => onOpenAction("merge")}
-            disabled={syncDisabled}
-            aria-label="Sync"
-          >
-            <Combine className="h-4 w-4" />
-          </Button>
-        </Tooltip>
-        <Tooltip content="Pull" side="top">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={onPull}
-            disabled={pullDisabled}
-            aria-label="Pull"
-          >
-            <ArrowDown className="h-4 w-4" />
-          </Button>
-        </Tooltip>
-
-        {checksUrl ? (
-          <>
-            <div className="mx-1 h-5 w-px bg-(--divider)" aria-hidden />
-            <Tooltip content="Open CI checks" side="top">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => onOpenExternal(checksUrl)}
-                aria-label="Open CI checks"
-              >
-                <CheckCircle2 className="h-4 w-4" />
-              </Button>
-            </Tooltip>
-          </>
-        ) : null}
-      </div>
-    </div>
   );
 }

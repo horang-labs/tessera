@@ -1,9 +1,14 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  readTerminalClipboard: () =>
+    ipcRenderer.invoke('read-terminal-clipboard') as Promise<TerminalClipboardPayload>,
+  writeTerminalClipboardText: (text: string) =>
+    ipcRenderer.invoke('write-terminal-clipboard-text', text) as Promise<void>,
   uiStorageGetItem: (key: string) => ipcRenderer.sendSync('ui-storage-get-item', key) as string | null,
   uiStorageSetItem: (key: string, value: string) =>
     ipcRenderer.sendSync('ui-storage-set-item', { key, value }),
@@ -55,8 +60,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('open-board-window', payload),
   closeBoardPopouts: () => ipcRenderer.invoke('close-board-popouts'),
   getPopoutState: () => ipcRenderer.invoke('get-popout-state'),
+  openExternalUrl: (url: string) => ipcRenderer.invoke('shell-open-external-url', url),
   openFilePath: (path: string) => ipcRenderer.invoke('shell-open-path', path),
   revealFilePath: (path: string) => ipcRenderer.invoke('shell-show-item-in-folder', path),
+  // Absolute host path for a File dragged in from Finder/Explorer. The renderer
+  // cannot read File.path directly (removed in Electron 32), so webUtils is the
+  // only supported way to resolve an OS-dropped file to a filesystem path.
+  getDroppedFilePath: (file: File): string => webUtils.getPathForFile(file),
   onPopoutStateChanged: (callback: (count: number) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { count?: number }) => {
       if (typeof payload?.count === 'number') {

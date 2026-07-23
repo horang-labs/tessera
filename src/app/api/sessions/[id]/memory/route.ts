@@ -21,6 +21,10 @@ import {
   resolveSessionMemoryDir,
 } from "@/lib/memory/claude-memory";
 import { getMemoryProviderKind } from "@/lib/memory/memory-provider";
+import {
+  toMemoryDisplayPath,
+  toOptionalMemoryDisplayPath,
+} from "@/lib/memory/memory-display-path";
 import type { MemoryListData } from "@/types/memory";
 
 export async function GET(
@@ -57,9 +61,14 @@ export async function GET(
         sessionId: id,
         provider,
         memoryDir: context.memoryDir,
+        memoryDirDisplay: toMemoryDisplayPath(context.memoryDir, agentEnvironment),
         instructionRoots: {
           user: context.codexHome,
           project: context.projectRoot,
+        },
+        instructionRootsDisplay: {
+          user: toMemoryDisplayPath(context.codexHome, agentEnvironment),
+          project: toOptionalMemoryDisplayPath(context.projectRoot, agentEnvironment),
         },
         root: "project",
         exists: context.exists,
@@ -81,9 +90,14 @@ export async function GET(
         sessionId: id,
         provider,
         memoryDir: context.opencodeConfigDir,
+        memoryDirDisplay: toMemoryDisplayPath(context.opencodeConfigDir, agentEnvironment),
         instructionRoots: {
           user: context.opencodeConfigDir,
           project: context.projectRoot,
+        },
+        instructionRootsDisplay: {
+          user: toMemoryDisplayPath(context.opencodeConfigDir, agentEnvironment),
+          project: toOptionalMemoryDisplayPath(context.projectRoot, agentEnvironment),
         },
         root: "project",
         exists: false,
@@ -112,9 +126,14 @@ export async function GET(
       sessionId: id,
       provider,
       memoryDir: context.memoryDir,
+      memoryDirDisplay: toMemoryDisplayPath(context.memoryDir, agentEnvironment),
       instructionRoots: {
         user: userInstructionRoot,
         project: projectInstructionRoot,
+      },
+      instructionRootsDisplay: {
+        user: toMemoryDisplayPath(userInstructionRoot, agentEnvironment),
+        project: toOptionalMemoryDisplayPath(projectInstructionRoot, agentEnvironment),
       },
       root: context.root,
       exists: context.exists,

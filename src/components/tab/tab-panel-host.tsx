@@ -1,9 +1,10 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { useTabStore } from '@/stores/tab-store';
 import { usePanelStore, TabIdContext } from '@/stores/panel-store';
 import PanelContainer from '@/components/panel/panel-container';
+import { orderMountedTabIds } from '@/lib/tab/mounted-tab-order';
 
 /**
  * Manages the LRU-bounded set of mounted PanelContainer instances.
@@ -47,15 +48,23 @@ const TabSlot = memo(function TabSlot({ tabId, isActive }: { tabId: string; isAc
 });
 
 export const TabPanelHost = memo(function TabPanelHost() {
+  const tabs = useTabStore((state) => state.tabs);
   const lruTabIds = useTabStore((state) => state.lruTabIds);
   const activeTabId = useTabStore((state) => state.activeTabId);
+  // LRU order changes on every activation. Rendering in that order moves the
+  // existing xterm DOM between siblings, which resets its native scrollTop.
+  // Keep LRU membership while using the stable tab-bar order for the DOM.
+  const mountedTabIds = useMemo(
+    () => orderMountedTabIds(tabs, lruTabIds),
+    [lruTabIds, tabs],
+  );
 
   return (
     <div
       style={{ position: 'relative', flex: 1, overflow: 'hidden' }}
       data-testid="tab-panel-host"
     >
-      {lruTabIds.map((tabId) => (
+      {mountedTabIds.map((tabId) => (
         <TabSlot key={tabId} tabId={tabId} isActive={tabId === activeTabId} />
       ))}
     </div>

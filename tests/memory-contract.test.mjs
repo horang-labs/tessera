@@ -189,9 +189,9 @@ test('memory panel groups files by visible scope while keeping folder paths visi
   assert.match(memoryPanelSource, /t\("memoryPanel\.sections\.rolloutSummariesTitle"\)/);
   assert.match(memoryPanelSource, /t\("memoryPanel\.sections\.adHocNotesTitle"\)/);
   assert.match(memoryPanelSource, /t\("memoryPanel\.sections\.memorySkillsTitle"\)/);
-  assert.match(memoryPanelSource, /data\.instructionRoots\.user/);
-  assert.match(memoryPanelSource, /data\.instructionRoots\.project \?\? ""/);
-  assert.match(memoryPanelSource, /folderPath: data\.memoryDir/);
+  assert.match(memoryPanelSource, /data\.instructionRootsDisplay\.user/);
+  assert.match(memoryPanelSource, /data\.instructionRootsDisplay\.project \?\? ""/);
+  assert.match(memoryPanelSource, /folderPath: data\.memoryDirDisplay/);
   assert.match(memoryPanelSource, /title=\{section\.folderPath\}/);
   assert.match(memoryPanelSource, /section\.key === "user-scope"/);
   assert.match(memoryPanelSource, /section\.key === "project-scope"/);
@@ -209,7 +209,7 @@ test('memory rows are visually nested under scopes and reuse the file context me
 });
 
 test('memory file paths use native row tooltips without a custom hover preview', () => {
-  assert.match(memoryPanelSource, /title=\{row\.path\}/);
+  assert.match(memoryPanelSource, /title=\{row\.displayPath\}/);
   assert.doesNotMatch(memoryPanelSource, /group-hover:delay-700/);
   assert.doesNotMatch(memoryPanelSource, /line-clamp-2 break-all/);
 });

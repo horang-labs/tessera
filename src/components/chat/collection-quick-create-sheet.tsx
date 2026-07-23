@@ -19,7 +19,12 @@ import {
 import { useSettingsStore } from '@/stores/settings-store';
 import type { Collection } from '@/types/collection';
 import type { WorkflowStatus } from '@/types/task-entity';
-import { CliProviderChipSelector } from './cli-provider-chip-selector';
+import {
+  CliProviderChipSelector,
+  CliProviderRefreshButton,
+} from './cli-provider-chip-selector';
+import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
+import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
 
 type QuickCreateMode = 'chat' | 'task';
 type QuickCreatePlacement = 'side' | 'top';
@@ -49,6 +54,32 @@ const ANCHORED_SHEET_WIDTH = 272;
 const ANCHORED_SHEET_GAP = 8;
 const ANCHORED_VIEWPORT_MARGIN = 12;
 
+interface CollectionQuickCreateModeShortcutInput {
+  key: string;
+  repeat: boolean;
+  targetTagName: string;
+  targetType: string;
+  targetName: string;
+  executionModeInputName: string;
+}
+
+export function shouldSubmitCollectionQuickCreateFromModeShortcut({
+  key,
+  repeat,
+  targetTagName,
+  targetType,
+  targetName,
+  executionModeInputName,
+}: CollectionQuickCreateModeShortcutInput): boolean {
+  return (
+    key === ' '
+    && !repeat
+    && targetTagName === 'INPUT'
+    && targetType === 'radio'
+    && targetName === executionModeInputName
+  );
+}
+
 export function CollectionQuickCreateSheet({
   collection,
   collections = [],
@@ -73,7 +104,10 @@ export function CollectionQuickCreateSheet({
   const { createWorktreeSession } = useWorktreeSession();
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
+  const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
   const [selectedProvider, setSelectedProvider] = useState('');
+  const [executionMode, setExecutionModeState] = useState(defaultExecutionMode);
+  const executionModeTouchedRef = useRef(false);
   const [isTaskExpanded, setIsTaskExpanded] = useState(initialMode === 'task');
   const [taskTitle, setTaskTitle] = useState('');
   const [branchSlug, setBranchSlug] = useState(() => buildManagedWorktreeSlug());
@@ -91,8 +125,21 @@ export function CollectionQuickCreateSheet({
   const canCreateTask = hasTaskMode && allowedModes.includes('task');
   const canSelectCollection = allowCollectionSelection;
   const resolvedScopeId = scopeId ?? collection?.id ?? 'uncategorized';
+  const executionModeInputName = `collection-execution-mode-${resolvedScopeId}`;
   const isContinuation = Boolean(continuationSourceTitle);
   const taskTelemetrySource = resolveTaskTelemetrySource(scopeId);
+  const isSelectedExecutionModeSupported = getProviderExecutionCapabilities(
+    selectedProvider,
+  )[executionMode];
+
+  useEffect(() => {
+    if (!executionModeTouchedRef.current) setExecutionModeState(defaultExecutionMode);
+  }, [defaultExecutionMode]);
+
+  const setExecutionMode = useCallback((nextMode: typeof executionMode) => {
+    executionModeTouchedRef.current = true;
+    setExecutionModeState(nextMode);
+  }, []);
 
   const selectedCollection = useMemo(() => {
     if (!canSelectCollection) return collection;
@@ -215,12 +262,17 @@ export function CollectionQuickCreateSheet({
       setError(t('errors.providerRequired'));
       return;
     }
+    if (!isSelectedExecutionModeSupported) {
+      setError(t('settings.executionMode.unsupported'));
+      return;
+    }
     setSubmittingMode('chat');
     try {
       const sessionId = await createSession({
         workDir: projectDir,
         providerId: selectedProvider,
         collectionId: selectedCollection?.id,
+        executionMode,
       });
       if (!sessionId) return;
 
@@ -229,12 +281,16 @@ export function CollectionQuickCreateSheet({
     } finally {
       setSubmittingMode(null);
     }
-  }, [createSession, onClose, onSessionCreated, projectDir, selectedCollection?.id, selectedProvider, t]);
+  }, [createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, selectedCollection?.id, selectedProvider, t]);
 
   const handleCreateTask = useCallback(async () => {
     setError(null);
     if (!selectedProvider) {
       setError(t('errors.providerRequired'));
+      return;
+    }
+    if (!isSelectedExecutionModeSupported) {
+      setError(t('settings.executionMode.unsupported'));
       return;
     }
     const trimmedTaskTitle = taskTitle.trim();
@@ -255,6 +311,7 @@ export function CollectionQuickCreateSheet({
         projectDir,
         parentProjectId: projectId,
         providerId: selectedProvider,
+        executionMode,
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
         branchSlug: normalizedBranchSlug,
@@ -285,6 +342,8 @@ export function CollectionQuickCreateSheet({
     }
   }, [
     createWorktreeSession,
+    executionMode,
+    isSelectedExecutionModeSupported,
     onClose,
     onSessionCreated,
     branchSlug,
@@ -299,6 +358,28 @@ export function CollectionQuickCreateSheet({
     taskTelemetrySource,
     workflowStatus,
   ]);
+
+  const handleSheetKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (!shouldSubmitCollectionQuickCreateFromModeShortcut({
+      key: event.key,
+      repeat: event.repeat,
+      targetTagName: target.tagName,
+      targetType: target.type,
+      targetName: target.name,
+      executionModeInputName,
+    })) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (submittingMode !== null) return;
+    if (isTaskExpanded) {
+      void handleCreateTask();
+      return;
+    }
+    void handleCreateChat();
+  }, [executionModeInputName, handleCreateChat, handleCreateTask, isTaskExpanded, submittingMode]);
 
   const sheetContainerClassName = useAnchoredPortal
     ? cn(
@@ -328,6 +409,7 @@ export function CollectionQuickCreateSheet({
       className={sheetContainerClassName}
       style={sheetStyle}
       onClick={(event) => event.stopPropagation()}
+      onKeyDown={handleSheetKeyDown}
       data-testid={`collection-quick-create-${resolvedScopeId}`}
     >
       <div className="flex items-center justify-between gap-2 border-b border-[color-mix(in_srgb,var(--accent)_28%,var(--divider))] bg-[color-mix(in_srgb,var(--accent)_18%,var(--input-bg))] px-2.5 py-2">
@@ -351,44 +433,64 @@ export function CollectionQuickCreateSheet({
         </button>
       </div>
 
-      <div className="space-y-2.5 p-2.5">
-        <div className="space-y-1">
-          <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
-            {t('settings.provider.label')}
-          </span>
-          <CliProviderChipSelector
-            value={selectedProvider}
-            onChange={setSelectedProvider}
-            className="gap-1"
-            chipClassName="px-2 py-0.5 text-[10px]"
-          />
-        </div>
+      <div className="px-2.5 py-2">
+        <div className="space-y-2">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+                {t('settings.provider.label')}
+              </span>
+              <CliProviderRefreshButton />
+            </div>
+            <CliProviderChipSelector
+              value={selectedProvider}
+              onChange={setSelectedProvider}
+              executionMode={executionMode}
+              showRefresh={false}
+              className="gap-1"
+              chipClassName="px-2 py-0.5 text-[10px]"
+            />
+          </div>
 
-        {canSelectCollection && (
           <div className="space-y-1">
             <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
-              {t('task.creation.collectionLabel')}
+              {t('task.creation.agentUiLabel')}
             </span>
-            <select
-              value={rawSelectedCollectionId ?? ''}
-              onChange={(event) => setSelectedCollectionId(event.target.value || null)}
-              className="w-full rounded-lg border border-(--divider) bg-(--input-bg) px-2.5 py-1.5 text-[13px] text-(--sidebar-text-active) outline-none transition-colors focus:border-(--accent)"
-              data-testid={`collection-quick-create-select-${resolvedScopeId}`}
-            >
-              <option value="">{t('task.creation.noCollection')}</option>
-              {collections.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
+            <ExecutionModeSelector
+              value={executionMode}
+              onChange={setExecutionMode}
+              providerId={selectedProvider}
+              density="compact"
+              name={executionModeInputName}
+            />
           </div>
-        )}
+
+          {canSelectCollection && (
+            <div className="space-y-1">
+              <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+                {t('task.creation.collectionLabel')}
+              </span>
+              <select
+                value={rawSelectedCollectionId ?? ''}
+                onChange={(event) => setSelectedCollectionId(event.target.value || null)}
+                className="w-full rounded-lg border border-(--divider) bg-(--input-bg) px-2.5 py-1.5 text-[13px] text-(--sidebar-text-active) outline-none transition-colors focus:border-(--accent)"
+                data-testid={`collection-quick-create-select-${resolvedScopeId}`}
+              >
+                <option value="">{t('task.creation.noCollection')}</option>
+                {collections.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
 
         {(canCreateChat || canCreateTask) && (
           <div
             className={cn(
-              'grid gap-1 rounded-lg border border-[color-mix(in_srgb,var(--accent)_12%,var(--divider))] bg-(--sidebar-bg) p-1',
+              'mt-3 grid gap-1 rounded-lg border border-[color-mix(in_srgb,var(--accent)_12%,var(--divider))] bg-(--sidebar-bg) p-1',
               canCreateChat && canCreateTask ? 'grid-cols-2' : 'grid-cols-1',
             )}
           >
@@ -396,7 +498,7 @@ export function CollectionQuickCreateSheet({
               <button
                 type="button"
                 onClick={handleCreateChat}
-                disabled={submittingMode !== null || !selectedProvider}
+                disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
                 className={cn(
                   'flex w-full flex-col items-start rounded-lg border px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                   !isTaskExpanded
@@ -407,7 +509,7 @@ export function CollectionQuickCreateSheet({
               >
                 <MessageSquare className="h-3.5 w-3.5 text-(--accent-hover)" />
                 <span className="mt-1.5 block text-[13px] font-semibold text-(--sidebar-text-active)">
-                  {isContinuation ? t('task.creation.continueChatLabel') : t('task.newChat.chat')}
+                  {isContinuation ? t('task.creation.continueChatLabel') : t('chat.newSession')}
                 </span>
                 <span className="mt-0.5 block text-[10px] leading-[13px] text-(--text-muted)">
                   {submittingMode === 'chat'
@@ -426,7 +528,7 @@ export function CollectionQuickCreateSheet({
                   setIsTaskExpanded(true);
                   requestAnimationFrame(() => titleInputRef.current?.focus());
                 }}
-                disabled={submittingMode !== null || !selectedProvider}
+                disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
                 className={cn(
                   'flex w-full flex-col items-start rounded-lg border px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                   isTaskExpanded
@@ -448,7 +550,7 @@ export function CollectionQuickCreateSheet({
         )}
 
         {canCreateTask && isTaskExpanded && (
-          <div className="space-y-2 rounded-lg border border-[color-mix(in_srgb,var(--accent)_14%,var(--divider))] bg-(--sidebar-bg) p-2">
+          <div className="mt-2 space-y-1.5 rounded-lg border border-[color-mix(in_srgb,var(--accent)_14%,var(--divider))] bg-(--sidebar-bg) p-2">
             <div className="space-y-1">
               <label
                 htmlFor={`collection-task-title-${resolvedScopeId}`}
@@ -555,7 +657,7 @@ export function CollectionQuickCreateSheet({
               <button
                 type="button"
                 onClick={() => void handleCreateTask()}
-                disabled={submittingMode !== null || !selectedProvider}
+                disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
                 className="rounded-md bg-(--accent) px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-(--accent-hover) disabled:cursor-not-allowed disabled:opacity-60"
                 data-testid={`collection-task-submit-${resolvedScopeId}`}
               >

@@ -13,6 +13,13 @@ export type {
   CliConnectionStatus,
   CliStatusResult,
   CheckStatusOptions,
+  TerminalAppearanceChangePolicy,
+  TerminalInterruptInputPolicy,
+  TerminalResizeScrollbackPolicy,
+  ProviderTerminalSessionObservation,
+  ProviderTerminalSessionObserver,
+  ProviderTerminalSessionObserverOptions,
+  ProviderRateLimitOptions,
 } from './provider-contract';
 export type { ParsedMessage, ParsedMessageSideEffect } from './message-types';
 export type {

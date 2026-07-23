@@ -1,14 +1,17 @@
 "use client";
 
-import { AlertCircle, FileText, FolderTree, LoaderCircle, Search } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, FileText, FolderTree, LoaderCircle, Search } from "lucide-react";
 import { useContext, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   useDocumentVisibility,
   useStableWorkspaceFilesSubscriberId,
   useWorkspaceFilesLiveSync,
 } from "@/hooks/use-workspace-files-live-sync";
 import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
+import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
+import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
 import { openWorkspaceFileTab } from "@/lib/workspace-tabs/open-workspace-tab";
 import type { WorkspaceExplorerSessionRef } from "@/lib/workspace-tabs/special-session";
 import { TabIdContext } from "@/stores/panel-store";
@@ -58,6 +61,8 @@ export function WorkspaceExplorerTab({
   const isDocumentVisible = useDocumentVisibility();
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-explorer-tab");
   const [query, setQuery] = useState("");
+  const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
+  const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
   const {
     error,
     files,
@@ -73,13 +78,19 @@ export function WorkspaceExplorerTab({
     subscriberId,
   });
 
+  const baseFiles = useMemo(
+    () => (showHiddenFiles
+      ? files
+      : files.filter((filePath) => !isHiddenWorkspaceRelativePath(filePath))),
+    [files, showHiddenFiles],
+  );
   const visibleFiles = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return files.slice(0, 500);
-    return files
+    if (!trimmed) return baseFiles.slice(0, 500);
+    return baseFiles
       .filter((filePath) => filePath.toLowerCase().includes(trimmed))
       .slice(0, 500);
-  }, [files, query]);
+  }, [baseFiles, query]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
@@ -91,19 +102,37 @@ export function WorkspaceExplorerTab({
               <h2 className="text-sm font-semibold text-(--text-primary)">Files</h2>
             </div>
             <p className="mt-1 text-xs text-(--text-muted)">
-              {files.length.toLocaleString()} files
+              {baseFiles.length.toLocaleString()} files
               {truncated ? " · truncated" : ""}
             </p>
           </div>
-          <label className="flex h-9 w-[min(24rem,45vw)] items-center gap-2 rounded-md border border-(--input-border) bg-(--sidebar-bg) px-3 focus-within:border-(--accent)">
-            <Search className="h-4 w-4 shrink-0 text-(--text-muted)" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search files"
-              className="min-w-0 flex-1 bg-transparent text-sm text-(--text-primary) outline-none placeholder:text-(--text-muted)"
-            />
-          </label>
+          <div className="flex items-center gap-2">
+            <label className="flex h-9 w-[min(24rem,45vw)] items-center gap-2 rounded-md border border-(--input-border) bg-(--sidebar-bg) px-3 focus-within:border-(--accent)">
+              <Search className="h-4 w-4 shrink-0 text-(--text-muted)" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search files"
+                className="min-w-0 flex-1 bg-transparent text-sm text-(--text-primary) outline-none placeholder:text-(--text-muted)"
+              />
+            </label>
+            <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
+              <button
+                type="button"
+                onClick={toggleShowHiddenFiles}
+                className={cn(
+                  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border transition-colors",
+                  showHiddenFiles
+                    ? "border-(--accent) bg-(--accent)/10 text-(--text-primary)"
+                    : "border-(--input-border) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+                )}
+                aria-label={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
+                aria-pressed={showHiddenFiles}
+              >
+                {showHiddenFiles ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+              </button>
+            </Tooltip>
+          </div>
         </div>
       </div>
 

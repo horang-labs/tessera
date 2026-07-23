@@ -84,6 +84,10 @@ export interface GitPanelData {
   defaultBranch: string | null;
   branches: string[];
   changedFiles: GitChangedFile[];
+  /** Total number of changed files before capping to `changedFiles`. */
+  changedFilesTotal?: number;
+  /** True when `changedFiles` was capped and omits some entries. */
+  changedFilesTruncated?: boolean;
   recentCommits: GitCommitSummary[];
   github: GitHubPanelState;
   diffStats?: WorktreeDiffStats | null;
@@ -105,4 +109,8 @@ export interface GitDiffData {
 export interface GitChangedFilesData {
   sessionId: string;
   changedFiles: GitChangedFile[];
+  /** Total number of changed files before capping to `changedFiles`. */
+  changedFilesTotal?: number;
+  /** True when `changedFiles` was capped and omits some entries. */
+  changedFilesTruncated?: boolean;
 }

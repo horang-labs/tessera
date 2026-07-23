@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ItemStatusIndicator } from '../src/components/chat/work-item-primitives.tsx';
-import {
-  FONT_SCALE_OPTIONS,
-  normalizeFontScale,
-} from '../src/lib/settings/provider-defaults.ts';
+import * as workItemPrimitives from '../src/components/chat/work-item-primitives.tsx';
+import * as providerDefaults from '../src/lib/settings/provider-defaults.ts';
+
+const { ItemStatusIndicator } = workItemPrimitives.default ?? workItemPrimitives;
+const { FONT_SCALE_OPTIONS, normalizeFontScale } = providerDefaults.default ?? providerDefaults;
 
 const settingsDefaultsSource = fs.readFileSync(
   new URL('../src/lib/settings/provider-defaults.ts', import.meta.url),
@@ -17,20 +17,23 @@ const layoutSource = fs.readFileSync(
   new URL('../src/app/layout.tsx', import.meta.url),
   'utf8',
 );
-test('font scale presets keep the default and provide a substantially larger maximum', () => {
-  const expectedScales = /\[0\.8125, 0\.875, 1, 1\.25\]/;
+test('font scale presets provide visibly distinct 13px, 16px, 19px, and 22px root sizes', () => {
+  const expectedScales = /\[0\.8125, 1, 1\.1875, 1\.375\]/;
 
-  assert.deepEqual(FONT_SCALE_OPTIONS, [0.8125, 0.875, 1, 1.25]);
+  assert.deepEqual(FONT_SCALE_OPTIONS, [0.8125, 1, 1.1875, 1.375]);
   assert.match(settingsDefaultsSource, expectedScales);
-  assert.match(layoutSource, expectedScales);
-  assert.match(settingsDefaultsSource, /DEFAULT_FONT_SCALE = 0\.875/);
+  assert.match(layoutSource, /JSON\.stringify\(FONT_SCALE_OPTIONS\)/);
+  assert.match(settingsDefaultsSource, /DEFAULT_FONT_SCALE = 1;/);
 });
 
-test('legacy large font scale upgrades without shrinking', () => {
+test('stored font scales migrate to the matching new semantic preset', () => {
   assert.equal(normalizeFontScale(0.9375), 1);
-  assert.equal(normalizeFontScale(0.875), 0.875);
-  assert.equal(normalizeFontScale(1.25), 1.25);
-  assert.match(layoutSource, /if \(raw === 0\.9375\) raw = 1/);
+  assert.equal(normalizeFontScale(0.8125), 0.8125);
+  assert.equal(normalizeFontScale(0.875), 0.8125);
+  assert.equal(normalizeFontScale(1), 1);
+  assert.equal(normalizeFontScale(1.125), 1.1875);
+  assert.equal(normalizeFontScale(1.25), 1.375);
+  assert.match(layoutSource, /JSON\.stringify\(FONT_SCALE_MIGRATIONS\)/);
 });
 
 function renderStatusIndicator({
@@ -38,6 +41,7 @@ function renderStatusIndicator({
   isAwaitingUser = false,
   isProcessing = false,
   isRunning = false,
+  sessionKind,
   placement = 'corner',
   surface = 'sidebar',
 } = {}) {
@@ -46,10 +50,23 @@ function renderStatusIndicator({
     isAwaitingUser,
     isProcessing,
     isRunning,
+    sessionKind,
     placement,
     surface,
   }));
 }
+
+test('PTY processing can outrank unread without changing the GUI default', () => {
+  const gui = renderStatusIndicator({ hasUnread: true, isProcessing: true });
+  const pty = renderStatusIndicator({
+    hasUnread: true,
+    isProcessing: true,
+    sessionKind: 'terminal',
+  });
+
+  assert.doesNotMatch(gui, /animate-spin/);
+  assert.match(pty, /animate-spin/);
+});
 
 test('sidebar corner status indicators render enlarged sizes and offset', () => {
   const awaiting = renderStatusIndicator({ isAwaitingUser: true });

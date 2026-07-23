@@ -1,25 +1,38 @@
 import { create } from 'zustand';
 import type { SessionStatus, ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { WorkflowStatus } from '@/types/task-entity';
-import type { SessionGoal } from '@/types/session-goal';
 import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
 import { useTaskStore } from './task-store';
+import { useTabStore } from './tab-store';
 import { toast } from './notification-store';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import {
+  applySessionRuntimeLiveness,
+  beginSessionRuntimeConnection,
+  createSessionRuntimeLiveness,
+  forgetSessionRuntime,
+  recordSessionRuntimeEvent,
+  recordSessionRuntimeSnapshot,
+  resolveSessionRuntimeLiveness,
+  type SessionRuntimeLiveness,
+} from '@/lib/session/session-runtime-liveness';
 
 
 export interface SessionState {
   // Core state - NEW (project-grouped)
   projects: ProjectGroup[];
   activeSessionId: string | null;
+  runtimeLiveness: SessionRuntimeLiveness;
 
   // REQ-002: Session creation loading state
   creatingSessionId: string | null;
 
   // REQ-003: Session loading indicator state
   loadingSessionId: string | null;
+
+  beginRuntimeConnection: () => void;
 
   // Actions - Project loading
   loadProjects: () => Promise<void>;
@@ -42,11 +55,18 @@ export interface SessionState {
     runtimeConfig?: Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'fastMode' | 'sessionMode' | 'accessMode'>,
   ) => void;
   markSessionStopped: (sessionId: string) => void;
+  /**
+   * PTY 런타임 생존 상태를 가볍게 반영한다(사이드바 배지·Running 카운트가 읽는 필드).
+   * markSessionRunning과 달리 telemetry 발화나
+   * tesseraSessionId/runtimeConfig 덮어쓰기 같은 부수효과가 없다.
+   */
+  setSessionRunning: (sessionId: string, running: boolean) => void;
+  applyGuiRuntimeSnapshot: (activeSessionIds: string[]) => void;
+  applyTerminalRuntimeSnapshot: (activeSessionIds: string[]) => void;
   updateSessionRuntimeConfig: (
     sessionId: string,
     runtimeConfig: Partial<Pick<UnifiedSession, 'model' | 'reasoningEffort' | 'serviceTier' | 'fastMode' | 'sessionMode' | 'accessMode'>>,
   ) => void;
-  updateSessionGoal: (sessionId: string, goal: SessionGoal | null) => void;
   setCreatingSession: (sessionId: string | null) => void;
   setLoadingSession: (sessionId: string | null) => void;
   getSession: (sessionId: string) => UnifiedSession | undefined;
@@ -108,8 +128,12 @@ export interface SessionState {
 
 }
 
-function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSession {
-  return {
+function mapApiSessionToUnified(
+  s: any,
+  fallbackProjectDir: string,
+  runtimeLiveness?: SessionRuntimeLiveness,
+): UnifiedSession {
+  const session: UnifiedSession = {
     id: s.id,
     title: s.title,
     projectDir: s.projectDir ?? fallbackProjectDir,
@@ -122,6 +146,7 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     hasCustomTitle: s.hasCustomTitle ?? false,
     workflowStatus: s.workflowStatus ?? undefined,
     worktreeBranch: s.worktreeBranch ?? undefined,
+    kind: s.kind ?? undefined,
     workDir: s.workDir ?? undefined,
     archived: s.archived ?? false,
     archivedAt: s.archivedAt ?? undefined,
@@ -133,11 +158,13 @@ function mapApiSessionToUnified(s: any, fallbackProjectDir: string): UnifiedSess
     serviceTier: 'serviceTier' in s ? s.serviceTier : undefined,
     fastMode: 'fastMode' in s ? s.fastMode : undefined,
     hasStarted: s.hasStarted ?? s.isRunning ?? false,
-    goal: 'goal' in s ? s.goal : undefined,
     taskId: s.taskId ?? undefined,
     collectionId: s.collectionId ?? undefined,
     diffStats: s.diffStats ?? undefined,
   };
+  return runtimeLiveness
+    ? resolveSessionRuntimeLiveness(session, runtimeLiveness)
+    : session;
 }
 
 function applyTaskWorkflowStatusToProjects(
@@ -305,8 +332,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   projects: [],
   activeSessionId: null,
+  runtimeLiveness: createSessionRuntimeLiveness(),
   creatingSessionId: null,
   loadingSessionId: null,
+
+  beginRuntimeConnection: () =>
+    set({ runtimeLiveness: beginSessionRuntimeConnection() }),
 
   // Project loading
   loadProjects: async () => {
@@ -351,7 +382,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         };
       });
 
-      set({ projects });
+      set((state) => ({
+        projects: applySessionRuntimeLiveness(projects, state.runtimeLiveness),
+      }));
+      const loadedProjects = get().projects;
 
       // Initialize turn lifecycle state from server isGenerating state.
       const generatingSessionIds: string[] = [];
@@ -372,7 +406,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const savedId = sessionStorage.getItem('activeSessionId');
         // Verify saved session still exists in loaded projects
         if (savedId) {
-          const exists = projects.some((p) =>
+          const exists = loadedProjects.some((p) =>
             p.sessions.some((s) => s.id === savedId)
           );
           if (exists) autoActiveId = savedId;
@@ -383,12 +417,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // Fallback: first running session or first session of current project
       if (!autoActiveId) {
-        const currentProject = projects.find((p) => p.isCurrent);
+        const currentProject = loadedProjects.find((p) => p.isCurrent);
         if (currentProject && currentProject.sessions.length > 0) {
           const runningSession = currentProject.sessions.find((s) => s.isRunning);
           autoActiveId = runningSession?.id || currentProject.sessions[0].id;
-        } else if (projects.length > 0 && projects[0].sessions.length > 0) {
-          autoActiveId = projects[0].sessions[0].id;
+        } else if (loadedProjects.length > 0 && loadedProjects[0].sessions.length > 0) {
+          autoActiveId = loadedProjects[0].sessions[0].id;
         }
       }
 
@@ -427,7 +461,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const existingIds = new Set(p.sessions.map((s) => s.id));
           const newSessions = data.sessions
             .filter((s: any) => !existingIds.has(s.id))
-            .map((s: any) => mapApiSessionToUnified(s, encodedDir));
+            .map((s: any) => mapApiSessionToUnified(s, encodedDir, state.runtimeLiveness));
 
           const allSessions = [...p.sessions, ...newSessions];
           // allLoaded: server says no more, OR no new sessions to display (all empty/dupes)
@@ -470,7 +504,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const existingIds = new Set(p.sessions.map((s) => s.id));
           const newSessions = data.sessions
             .filter((s: any) => !existingIds.has(s.id))
-            .map((s: any) => mapApiSessionToUnified(s, encodedDir));
+            .map((s: any) => mapApiSessionToUnified(s, encodedDir, state.runtimeLiveness));
 
           return {
             ...p,
@@ -595,6 +629,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         projects: updatedProjects,
         activeSessionId: newActiveId,
         runningWorkflowSessionIds,
+        runtimeLiveness: forgetSessionRuntime(state.runtimeLiveness, sessionId),
       };
     }),
 
@@ -761,6 +796,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     set((state) => ({
+      runtimeLiveness: recordSessionRuntimeEvent(
+        state.runtimeLiveness,
+        'gui',
+        sessionId,
+        true,
+      ),
       projects: state.projects.map((project) => ({
         ...project,
         sessions: project.sessions.map((s) =>
@@ -804,6 +845,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
       return {
         runningWorkflowSessionIds,
+        runtimeLiveness: recordSessionRuntimeEvent(
+          state.runtimeLiveness,
+          'gui',
+          sessionId,
+          false,
+        ),
         projects: state.projects.map((project) => ({
           ...project,
           sessions: project.sessions.map((s) =>
@@ -817,6 +864,59 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               : s
           ),
         })),
+      };
+    }),
+
+  setSessionRunning: (sessionId, running) =>
+    set((state) => {
+      // 값이 실제로 바뀔 때만 새 참조를 만들어 불필요한 리렌더를 막는다
+      // hook replay에서 동일한 상태가 다시 와도 불필요한 리렌더를 하지 않는다.
+      let changed = false;
+      const projects = state.projects.map((project) => ({
+        ...project,
+        sessions: project.sessions.map((s) => {
+          if (s.id !== sessionId || s.isRunning === running) return s;
+          changed = true;
+          return {
+            ...s,
+            isRunning: running,
+            hasStarted: running ? true : s.hasStarted,
+            status: (running ? 'running' : 'stopped') as SessionStatus,
+          };
+        }),
+      }));
+      const runtimeLiveness = recordSessionRuntimeEvent(
+        state.runtimeLiveness,
+        'terminal',
+        sessionId,
+        running,
+      );
+      return changed ? { projects, runtimeLiveness } : { runtimeLiveness };
+    }),
+
+  applyGuiRuntimeSnapshot: (activeSessionIds) =>
+    set((state) => {
+      const runtimeLiveness = recordSessionRuntimeSnapshot(
+        state.runtimeLiveness,
+        'gui',
+        activeSessionIds,
+      );
+      return {
+        runtimeLiveness,
+        projects: applySessionRuntimeLiveness(state.projects, runtimeLiveness),
+      };
+    }),
+
+  applyTerminalRuntimeSnapshot: (activeSessionIds) =>
+    set((state) => {
+      const runtimeLiveness = recordSessionRuntimeSnapshot(
+        state.runtimeLiveness,
+        'terminal',
+        activeSessionIds,
+      );
+      return {
+        runtimeLiveness,
+        projects: applySessionRuntimeLiveness(state.projects, runtimeLiveness),
       };
     }),
 
@@ -850,18 +950,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       })),
     })),
 
-  updateSessionGoal: (sessionId, goal) =>
-    set((state) => ({
-      projects: state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((s) =>
-          s.id === sessionId
-            ? { ...s, goal }
-            : s
-        ),
-      })),
-    })),
-
   setCreatingSession: (sessionId) => set({ creatingSessionId: sessionId }),
 
   /**
@@ -881,22 +969,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // Unread count actions
   incrementUnreadCount: (sessionId) =>
-    set((state) => {
-      if (state.activeSessionId === sessionId) {
-        return state; // Don't increment for active session
-      }
-
-      return {
-        projects: state.projects.map((project) => ({
-          ...project,
-          sessions: project.sessions.map((s) =>
-            s.id === sessionId
-              ? { ...s, unreadCount: (s.unreadCount || 0) + 1 }
-              : s
-          ),
-        })),
-      };
-    }),
+    set((state) => ({
+      // Notification handlers already decide whether the session is visibly
+      // active. Re-checking the hidden tab's activeSessionId here breaks
+      // full-board Peek after light-dismiss.
+      projects: state.projects.map((project) => ({
+        ...project,
+        sessions: project.sessions.map((s) =>
+          s.id === sessionId
+            ? { ...s, unreadCount: (s.unreadCount || 0) + 1 }
+            : s
+        ),
+      })),
+    })),
 
   clearUnreadCount: (sessionId) =>
     set((state) => ({
@@ -1099,6 +1184,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
         if (!response.ok) {
           throw new Error('Failed to update archive status');
+        }
+
+        if (archived) {
+          useTabStore.getState().retireSessionSurface(sessionId);
         }
 
         if (result.cleanupError) {

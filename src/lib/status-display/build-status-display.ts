@@ -13,22 +13,34 @@ function severityFromPercent(percent: number): 'normal' | 'warning' | 'danger' {
   return 'normal';
 }
 
-function formatDurationLabel(windowDurationMins: number | null): { label: string; shortLabel: string } | null {
+export function formatDurationLabel(windowDurationMins: number | null): {
+  label: string;
+  shortLabel: string;
+  detailLabel: string;
+} | null {
   if (windowDurationMins == null || windowDurationMins <= 0) return null;
 
   if (windowDurationMins % 10080 === 0) {
     const weeks = windowDurationMins / 10080;
-    return { label: `${weeks}w`, shortLabel: `${weeks}w` };
+    return {
+      label: `${weeks}w`,
+      shortLabel: `${weeks}w`,
+      detailLabel: weeks === 1 ? 'Weekly limit' : `${weeks}-week limit`,
+    };
   }
   if (windowDurationMins % 1440 === 0) {
     const days = windowDurationMins / 1440;
-    return { label: `${days}d`, shortLabel: `${days}d` };
+    return { label: `${days}d`, shortLabel: `${days}d`, detailLabel: `${days}-day limit` };
   }
   if (windowDurationMins % 60 === 0) {
     const hours = windowDurationMins / 60;
-    return { label: `${hours}h`, shortLabel: `${hours}h` };
+    return { label: `${hours}h`, shortLabel: `${hours}h`, detailLabel: `${hours}-hour limit` };
   }
-  return { label: `${windowDurationMins}m`, shortLabel: `${windowDurationMins}m` };
+  return {
+    label: `${windowDurationMins}m`,
+    shortLabel: `${windowDurationMins}m`,
+    detailLabel: `${windowDurationMins}-minute limit`,
+  };
 }
 
 function titleCaseToken(value: string): string {

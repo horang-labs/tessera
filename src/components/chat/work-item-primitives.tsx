@@ -6,6 +6,7 @@ import type React from 'react';
 import { Archive, Check, CircleStop, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { WorkflowStatus } from '@/types/task-entity';
+import type { UnifiedSession } from '@/types/chat';
 
 type ItemSurface = 'board' | 'sidebar';
 type ItemStatusPlacement = 'corner' | 'leading' | 'inline';
@@ -29,6 +30,7 @@ export function ItemStatusIndicator({
   isAwaitingUser,
   isProcessing,
   isRunning,
+  sessionKind,
   placement,
   surface,
 }: {
@@ -36,6 +38,8 @@ export function ItemStatusIndicator({
   isAwaitingUser?: boolean;
   isProcessing: boolean;
   isRunning: boolean;
+  /** PTY turns outrank stale unread state; GUI keeps its existing priority. */
+  sessionKind?: UnifiedSession['kind'];
   placement: ItemStatusPlacement;
   surface: ItemSurface;
 }) {
@@ -65,6 +69,21 @@ export function ItemStatusIndicator({
     );
   }
 
+  const showsProcessing = isProcessing && (sessionKind === 'terminal' || !hasUnread);
+
+  if (showsProcessing) {
+    return (
+      <span
+        className={cn(
+          getPlacementClassName(placement, true, isEnlargedSidebarCorner),
+          ringClass,
+          isEnlargedSidebarCorner ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
+          'animate-spin rounded-full border border-(--success) border-t-transparent',
+        )}
+      />
+    );
+  }
+
   if (hasUnread) {
     return (
       <span
@@ -73,19 +92,6 @@ export function ItemStatusIndicator({
           ringClass,
           isEnlargedSidebarCorner ? 'h-[0.6875rem] w-[0.6875rem]' : 'h-[6px] w-[6px]',
           'rounded-full bg-[#facc15]',
-        )}
-      />
-    );
-  }
-
-  if (isProcessing) {
-    return (
-      <span
-        className={cn(
-          getPlacementClassName(placement, true, isEnlargedSidebarCorner),
-          ringClass,
-          isEnlargedSidebarCorner ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
-          'animate-spin rounded-full border border-(--success) border-t-transparent',
         )}
       />
     );

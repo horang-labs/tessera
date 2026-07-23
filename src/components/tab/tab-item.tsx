@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
-import { hasAnyAwaitingUserPrompt, hasAnyTurnInFlight, useChatStore } from '@/stores/chat-store';
+import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
 import type { Tab } from '@/types/tab';
@@ -14,6 +14,7 @@ import type { Panel, TabPanelData } from '@/types/panel';
 import { SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
 import { getSpecialSessionTitle, getSpecialSessionTitleKey, isSpecialSession } from '@/lib/constants/special-sessions';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
+import { useAnySessionProcessing } from '@/hooks/use-session-processing';
 
 /** Delay before activating a tab when a session drag hovers over it. */
 const TAB_HOVER_ACTIVATE_DELAY = 500;
@@ -207,12 +208,12 @@ export const TabItem = memo(function TabItem({
   // Derive display values
   // Active tab: use live panel-store data; inactive tab: use snapshot
   let displayTitle = t('chat.newTabDefault');
-  if (specialTitleKey) {
+  if (tab.title !== null) {
+    displayTitle = tab.title;
+  } else if (specialTitleKey) {
     displayTitle = t(specialTitleKey);
   } else if (activePanelSessionId && isSpecialSession(activePanelSessionId)) {
     displayTitle = getSpecialSessionTitle(activePanelSessionId, t) ?? displayTitle;
-  } else if (tab.title !== null) {
-    displayTitle = tab.title;
   } else if (activePanelTerminalId) {
     displayTitle = 'Terminal';
   } else if (activePanelSessionId && session) {
@@ -248,34 +249,12 @@ export const TabItem = memo(function TabItem({
         .sort()
         .join(',');
 
-  const isGeneratingTurn = useChatStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return hasAnyTurnInFlight(state, panelSessionIds.split(','));
-      },
-      [panelSessionIds],
-    ),
+  const isGenerating = useAnySessionProcessing(
+    panelSessionIds ? panelSessionIds.split(',') : [],
   );
-  // A background workflow keeps the tab "running" even after the turn ends.
-  const hasRunningWorkflow = useSessionStore(
-    useCallback(
-      (state) =>
-        !!panelSessionIds &&
-        panelSessionIds.split(',').some((id) => state.runningWorkflowSessionIds.has(id)),
-      [panelSessionIds],
-    ),
-  );
-  const isGenerating = isGeneratingTurn || hasRunningWorkflow;
 
-  const isAwaitingUser = useChatStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return hasAnyAwaitingUserPrompt(state, panelSessionIds.split(','));
-      },
-      [panelSessionIds],
-    ),
+  const isAwaitingUser = useAnySessionAwaitingUser(
+    panelSessionIds ? panelSessionIds.split(',') : [],
   );
 
   // Unread indicator — any session in this tab has unreadCount > 0.
@@ -298,15 +277,54 @@ export const TabItem = memo(function TabItem({
   const hoverActivateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressClickAfterDragRef = useRef(false);
   const [isSessionDragHover, setIsSessionDragHover] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleInput, setTitleInput] = useState(displayTitle);
 
   // Event handlers — all stable references via useCallback
 
   const handleClick = useCallback(
     function handleClick() {
-      if (suppressClickAfterDragRef.current) return;
+      if (suppressClickAfterDragRef.current || isEditingTitle) return;
       onActivate(tab.id);
     },
-    [onActivate, tab.id],
+    [isEditingTitle, onActivate, tab.id],
+  );
+
+  const handleDoubleClick = useCallback(
+    function handleDoubleClick(e: React.MouseEvent) {
+      e.stopPropagation();
+      setTitleInput(displayTitle);
+      setIsEditingTitle(true);
+    },
+    [displayTitle],
+  );
+
+  const commitTitleEdit = useCallback(() => {
+    const nextTitle = titleInput.trim();
+    if (!nextTitle && tab.title !== null) {
+      useTabStore.getState().renameTab(tab.id, null);
+    } else if (nextTitle && nextTitle !== displayTitle) {
+      useTabStore.getState().renameTab(tab.id, nextTitle);
+    }
+    setIsEditingTitle(false);
+  }, [displayTitle, tab.id, tab.title, titleInput]);
+
+  const cancelTitleEdit = useCallback(() => {
+    setTitleInput(displayTitle);
+    setIsEditingTitle(false);
+  }, [displayTitle]);
+
+  const handleTitleInputKeyDown = useCallback(
+    function handleTitleInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitTitleEdit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelTitleEdit();
+      }
+    },
+    [cancelTitleEdit, commitTitleEdit],
   );
 
   const handleCloseMouseDown = useCallback(
@@ -438,7 +456,7 @@ export const TabItem = memo(function TabItem({
 
   return (
     <div
-      draggable
+      draggable={!isEditingTitle}
       role="tab"
       aria-selected={isActive}
       aria-controls={`${tab.id}-panel`}
@@ -459,6 +477,7 @@ export const TabItem = memo(function TabItem({
         isSessionDragHover && !isDragOver && 'border-b-(--accent) bg-(--accent)/10',
       )}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
@@ -490,9 +509,28 @@ export const TabItem = memo(function TabItem({
       ) : null}
 
       {/* Title area — truncated with ellipsis (BR-UI-022) */}
-      <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
-        {label}
-      </span>
+      {isEditingTitle ? (
+        <input
+          type="text"
+          value={titleInput}
+          onChange={(e) => setTitleInput(e.target.value)}
+          onBlur={commitTitleEdit}
+          onKeyDown={handleTitleInputKeyDown}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label={t('chat.renameTab', { title: displayTitle })}
+          className="h-6 min-w-0 flex-1 rounded border border-(--input-border) bg-(--input-bg) px-1.5 text-sm font-medium text-(--text-primary) outline-none focus:ring-1 focus:ring-(--accent)"
+          data-testid="tab-title-input"
+          data-tab-title-editor="true"
+          autoFocus
+        />
+      ) : (
+        <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
+          {label}
+        </span>
+      )}
 
       {/* Close button — always visible (BR-UI-024) */}
       <ShortcutTooltip id="close-tab" label={t('shortcut.closeTab')}>

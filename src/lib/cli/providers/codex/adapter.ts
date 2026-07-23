@@ -36,8 +36,8 @@ import type {
   CliStatusResult,
   CliRawLogSink,
 } from '../types';
+import { createCodexTerminalSessionObserver } from './terminal-session-observer';
 import type { ContentBlock } from '@/lib/ws/message-types';
-import type { SessionGoal, SessionGoalUpdate } from '@/types/session-goal';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
   CodexApprovalPolicy,
@@ -65,6 +65,8 @@ import { updateProviderStateWithRetry } from '../../process-manager-side-effects
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
+import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
+import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -205,32 +207,6 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
   return typeof model === 'string' && model.trim() ? model.trim() : null;
 }
 
-function normalizeCodexGoal(raw: unknown): SessionGoal | null {
-  if (!raw || typeof raw !== 'object') {
-    return null;
-  }
-
-  const goal = raw as Record<string, unknown>;
-  if (
-    typeof goal.threadId !== 'string' ||
-    typeof goal.objective !== 'string' ||
-    !['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'].includes(String(goal.status))
-  ) {
-    return null;
-  }
-
-  return {
-    threadId: goal.threadId,
-    objective: goal.objective,
-    status: goal.status as SessionGoal['status'],
-    tokenBudget: typeof goal.tokenBudget === 'number' ? goal.tokenBudget : null,
-    tokensUsed: typeof goal.tokensUsed === 'number' ? goal.tokensUsed : 0,
-    timeUsedSeconds: typeof goal.timeUsedSeconds === 'number' ? goal.timeUsedSeconds : 0,
-    createdAt: typeof goal.createdAt === 'number' ? goal.createdAt : 0,
-    updatedAt: typeof goal.updatedAt === 'number' ? goal.updatedAt : 0,
-  };
-}
-
 // =============================================================================
 // CodexAdapter
 // =============================================================================
@@ -287,6 +263,32 @@ export class CodexAdapter implements CliProvider {
     return 'Codex';
   }
 
+  getTerminalAppearanceChangePolicy(): 'restart' {
+    return 'restart';
+  }
+
+  getTerminalResizeScrollbackPolicy(): 'preserve-on-ed3' {
+    return 'preserve-on-ed3';
+  }
+
+  getTerminalInterruptInputPolicy(): 'single-escape' {
+    return 'single-escape';
+  }
+
+  createTerminalSessionObserver = createCodexTerminalSessionObserver;
+
+  detectTerminalConversationReset = codexScreenShowsConversationReset;
+
+  canResumeTerminalAfterRestart(providerState: string | null): boolean {
+    if (!providerState) return false;
+    try {
+      const resumeId = (JSON.parse(providerState) as Record<string, unknown>).codexSessionId;
+      return typeof resumeId === 'string' && resumeId.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // CliProvider: isAvailable
   // ---------------------------------------------------------------------------
@@ -296,6 +298,10 @@ export class CodexAdapter implements CliProvider {
       return probeBinaryAvailable('codex', environment);
     }
     return isBinaryAvailable('codex');
+  }
+
+  async fetchRateLimits({ environment }: { environment: 'native' | 'wsl' }) {
+    return fetchCodexRateLimitSnapshot(environment);
   }
 
   /**
@@ -364,7 +370,7 @@ export class CodexAdapter implements CliProvider {
    * rather than CLI flags.
    */
   getCliArgs(_options: SpawnOptions): string[] {
-    return ['app-server', '--enable', 'goals'];
+    return ['app-server'];
   }
 
   // ---------------------------------------------------------------------------
@@ -586,109 +592,13 @@ export class CodexAdapter implements CliProvider {
       `${JSON.stringify(rateLimitRequest)}\n`,
     );
 
-    const threadId = this._processThreadIds.get(proc);
-    if (!threadId) {
-      logger.debug('CodexAdapter: skipped initial goal read; no threadId', { sessionId });
-      return rateLimitOk;
-    }
-
-    const goalRequestId = this._nextRequestId++;
-    const goalRequest: JsonRpcRequest = {
-      jsonrpc: '2.0',
-      id: goalRequestId,
-      method: 'thread/goal/get',
-      params: { threadId },
-    };
-
-    codexProtocolParser.trackPendingRequest(sessionId, goalRequestId, 'thread/goal/get');
-    const goalOk = this._writeStdin(
-      proc,
-      'on_session_ready_goal_get',
-      `${JSON.stringify(goalRequest)}\n`,
-    );
-    logger.debug('CodexAdapter: requested initial rate limits and goal', {
+    logger.debug('CodexAdapter: requested initial rate limits', {
       sessionId,
       rateLimitRequestId,
-      goalRequestId,
       rateLimitOk,
-      goalOk,
     });
-    return rateLimitOk || goalOk;
+    return rateLimitOk;
   }
-
-  async setGoal(
-    proc: ChildProcess,
-    sessionId: string,
-    update: SessionGoalUpdate,
-  ): Promise<SessionGoal> {
-    const threadId = this._processThreadIds.get(proc);
-    if (!threadId) {
-      throw new Error('Codex thread is not ready');
-    }
-
-    const requestId = this._nextRequestId++;
-    const request: JsonRpcRequest = {
-      jsonrpc: '2.0',
-      id: requestId,
-      method: 'thread/goal/set',
-      params: {
-        threadId,
-        ...(update.objective !== undefined ? { objective: update.objective } : {}),
-        ...(update.status !== undefined ? { status: update.status } : {}),
-        ...(update.tokenBudget !== undefined ? { tokenBudget: update.tokenBudget } : {}),
-      },
-    };
-
-    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/goal/set');
-    this._writeStdin(proc, 'goal_set', `${JSON.stringify(request)}\n`);
-    const response = await this._awaitResponse(proc, requestId, 'thread/goal/set');
-    const goal = normalizeCodexGoal(response.result?.goal);
-    if (!goal) {
-      throw new Error('Codex goal response was missing a valid goal');
-    }
-    return goal;
-  }
-
-  async getGoal(proc: ChildProcess, sessionId: string): Promise<SessionGoal | null> {
-    const threadId = this._processThreadIds.get(proc);
-    if (!threadId) {
-      throw new Error('Codex thread is not ready');
-    }
-
-    const requestId = this._nextRequestId++;
-    const request: JsonRpcRequest = {
-      jsonrpc: '2.0',
-      id: requestId,
-      method: 'thread/goal/get',
-      params: { threadId },
-    };
-
-    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/goal/get');
-    this._writeStdin(proc, 'goal_get', `${JSON.stringify(request)}\n`);
-    const response = await this._awaitResponse(proc, requestId, 'thread/goal/get');
-    return normalizeCodexGoal(response.result?.goal);
-  }
-
-  async clearGoal(proc: ChildProcess, sessionId: string): Promise<boolean> {
-    const threadId = this._processThreadIds.get(proc);
-    if (!threadId) {
-      throw new Error('Codex thread is not ready');
-    }
-
-    const requestId = this._nextRequestId++;
-    const request: JsonRpcRequest = {
-      jsonrpc: '2.0',
-      id: requestId,
-      method: 'thread/goal/clear',
-      params: { threadId },
-    };
-
-    codexProtocolParser.trackPendingRequest(sessionId, requestId, 'thread/goal/clear');
-    this._writeStdin(proc, 'goal_clear', `${JSON.stringify(request)}\n`);
-    const response = await this._awaitResponse(proc, requestId, 'thread/goal/clear');
-    return response.result?.cleared === true;
-  }
-
   async compactThread(proc: ChildProcess, sessionId: string): Promise<boolean> {
     if (codexProtocolParser.getActiveTurnId(sessionId)) {
       logger.warn('CodexAdapter: refusing thread/compact/start during an active turn', { sessionId });

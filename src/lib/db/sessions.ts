@@ -4,8 +4,8 @@
 
 import fs from 'fs';
 import { getDb } from './database';
+import { deleteTerminalProviderSessionsForTesseraSession } from './terminal-provider-sessions';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
-import type { SessionGoal } from '@/types/session-goal';
 
 export interface SessionRow {
   id: string;
@@ -166,6 +166,7 @@ export function createSession(
  * Delete a session record.
  */
 export function deleteSession(id: string): void {
+  deleteTerminalProviderSessionsForTesseraSession(id);
   getDb().prepare('DELETE FROM sessions WHERE id = ?').run(id);
 }
 
@@ -311,6 +312,17 @@ export function getArchivedChatSessions(
     ORDER BY COALESCE(s.archived_at, s.updated_at) DESC
     ${limitSql}
   `).all(...params) as SessionRow[];
+}
+
+/** Sessions a project currently shows, used to number a new placeholder title. */
+export function countActiveSessionsInProject(projectId: string): number {
+  const row = getDb().prepare(`
+    SELECT COUNT(*) as cnt
+    FROM sessions s
+    LEFT JOIN tasks t ON t.id = s.task_id
+    WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL}
+  `).get(projectId) as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
 }
 
 export function countArchivedChatSessions(projectId?: string, query?: string): number {
@@ -478,6 +490,7 @@ export function mapSessionRowToApi(
 ) {
   const isRunning = activeSessionIds.has(row.id);
   const isGenerating = generatingSessionIds.has(row.id);
+  const kind = extractSessionKind(row.provider_state);
   const hasStarted = isRunning || hasProviderConversationState(row.provider_state) || hasSessionHistoryFile(row.id);
   return {
     id: row.id,
@@ -488,7 +501,7 @@ export function mapSessionRowToApi(
     isRunning,
     isGenerating,
     hasStarted,
-    status: isRunning ? 'running' : ('completed' as const),
+    status: isRunning ? ('running' as const) : kind === 'terminal' ? ('stopped' as const) : ('completed' as const),
     projectDir: row.project_id,
     workDir: row.work_dir ?? undefined,
     workflowStatus: row.workflow_status ?? undefined,
@@ -500,7 +513,7 @@ export function mapSessionRowToApi(
     model: row.model ?? undefined,
     reasoningEffort: row.reasoning_effort ?? undefined,
     serviceTier: row.service_tier ?? undefined,
-    goal: extractSessionGoal(row.provider_state) ?? undefined,
+    kind,
     taskId: row.task_id ?? undefined,
     collectionId: row.collection_id ?? undefined,
   };
@@ -515,6 +528,9 @@ function hasProviderConversationState(providerState: string | null): boolean {
       typeof value?.threadId === 'string' && value.threadId.trim().length > 0
     ) || (
       typeof value?.opencodeSessionId === 'string' && value.opencodeSessionId.trim().length > 0
+    ) || (
+      typeof value?.opencodeTerminalSessionId === 'string'
+      && value.opencodeTerminalSessionId.trim().length > 0
     );
   } catch {
     return false;
@@ -538,32 +554,42 @@ export function extractThreadId(providerState: string | null): string | undefine
   }
 }
 
-export function extractSessionGoal(providerState: string | null): SessionGoal | null {
-  if (!providerState) return null;
+/** provider_state.kind ('chat'|'terminal'). 미기록/파싱실패 시 'chat'(기존 동작 보존). */
+export function extractSessionKind(providerState: string | null): 'chat' | 'terminal' {
+  if (!providerState) return 'chat';
   try {
-    const value = JSON.parse(providerState).goal;
-    if (!value || typeof value !== 'object') return null;
-    if (
-      typeof value.threadId !== 'string' ||
-      typeof value.objective !== 'string' ||
-      !['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'].includes(String(value.status))
-    ) {
-      return null;
-    }
-
-    return {
-      threadId: value.threadId,
-      objective: value.objective,
-      status: value.status,
-      tokenBudget: typeof value.tokenBudget === 'number' ? value.tokenBudget : null,
-      tokensUsed: typeof value.tokensUsed === 'number' ? value.tokensUsed : 0,
-      timeUsedSeconds: typeof value.timeUsedSeconds === 'number' ? value.timeUsedSeconds : 0,
-      createdAt: typeof value.createdAt === 'number' ? value.createdAt : 0,
-      updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : 0,
-    };
+    return JSON.parse(providerState).kind === 'terminal' ? 'terminal' : 'chat';
   } catch {
-    return null;
+    return 'chat';
   }
+}
+
+/** codex 터미널 resume용 rollout session_id 추출. */
+export function extractCodexTerminalSessionId(providerState: string | null): string | undefined {
+  if (!providerState) return undefined;
+  try {
+    const v = JSON.parse(providerState).codexSessionId;
+    return typeof v === 'string' && v.trim().length > 0 ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * codex SessionStart 훅 수신 시 rollout session_id를 provider_state에 병합 기록.
+ * chat이 쓴 threadId 등 다른 키는 보존(별도 키 codexSessionId에 저장 → 모드 간 교차 resume 방지).
+ * launched=true·kind='terminal'도 세팅.
+ */
+export function markCodexTerminalSession(sessionId: string, codexSessionId: string): void {
+  const id = codexSessionId?.trim();
+  if (!id) return;
+  const row = getSession(sessionId);
+  let prev: Record<string, unknown> = {};
+  try { prev = row?.provider_state ? JSON.parse(row.provider_state) : {}; } catch { prev = {}; }
+  if (prev.launched === true && prev.codexSessionId === id) return; // idempotent
+  updateSession(sessionId, {
+    provider_state: JSON.stringify({ ...prev, kind: 'terminal', launched: true, codexSessionId: id }),
+  });
 }
 
 /**
@@ -578,6 +604,35 @@ export function extractOpenCodeSessionId(providerState: string | null): string |
   } catch {
     return undefined;
   }
+}
+
+/** OpenCode PTY 전용 session id. GUI/ACP의 opencodeSessionId와 교차 resume하지 않는다. */
+export function extractOpenCodeTerminalSessionId(providerState: string | null): string | undefined {
+  if (!providerState) return undefined;
+  try {
+    const value = JSON.parse(providerState).opencodeTerminalSessionId;
+    return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function markOpenCodeTerminalSession(sessionId: string, opencodeSessionId: string): void {
+  const id = opencodeSessionId?.trim();
+  if (!id) return;
+  const row = getSession(sessionId);
+  if (!row) return;
+  let prev: Record<string, unknown> = {};
+  try { prev = row.provider_state ? JSON.parse(row.provider_state) : {}; } catch { prev = {}; }
+  if (prev.launched === true && prev.opencodeTerminalSessionId === id) return;
+  updateSession(sessionId, {
+    provider_state: JSON.stringify({
+      ...prev,
+      kind: 'terminal',
+      launched: true,
+      opencodeTerminalSessionId: id,
+    }),
+  });
 }
 
 /**

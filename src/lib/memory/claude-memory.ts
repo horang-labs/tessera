@@ -7,6 +7,7 @@ import { resolveClaudeConfigDirForEnvironment } from "@/lib/skill/skill-loader";
 import { normalizeCwdForCliEnvironment } from "@/lib/cli/spawn-cli";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 import { isClaudeMemoryProvider } from "@/lib/memory/memory-provider";
+import { toMemoryDisplayPath } from "@/lib/memory/memory-display-path";
 import type { CliEnvironment } from "@/lib/cli/cli-exec";
 import type { SessionRow } from "@/lib/db/sessions";
 import {
@@ -283,6 +284,7 @@ export async function listGuidelines(
     label: target.label,
     fileName: "CLAUDE.md",
     path: target.absolutePath,
+    displayPath: toMemoryDisplayPath(target.absolutePath, environment),
     status: "active",
     statusLabel: "Active",
     statusReason: "active",

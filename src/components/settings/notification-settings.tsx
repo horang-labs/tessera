@@ -48,20 +48,20 @@ export default function NotificationSettings() {
 
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
-          <label htmlFor="autoGenerateTitle" className="text-sm text-(--text-secondary)">
-            {t('settings.autoGenerateTitle')}
+          <label htmlFor="aiTitleRefinement" className="text-sm text-(--text-secondary)">
+            {t('settings.aiTitleRefinement')}
           </label>
           <span className="text-[11px] text-(--text-tertiary)">
-            {t('settings.autoGenerateTitleDesc')}
+            {t('settings.aiTitleRefinementDesc')}
           </span>
         </div>
         <input
           type="checkbox"
-          id="autoGenerateTitle"
-          checked={notifications.autoGenerateTitle ?? true}
+          id="aiTitleRefinement"
+          checked={notifications.aiTitleRefinement ?? false}
           onChange={(e) =>
             updateSettings({
-              notifications: { ...notifications, autoGenerateTitle: e.target.checked },
+              notifications: { ...notifications, aiTitleRefinement: e.target.checked },
             })
           }
           className="w-4 h-4 accent-(--accent)"

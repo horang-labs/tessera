@@ -1,6 +1,7 @@
 import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { processManager } from '@/lib/cli/process-manager';
+import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
@@ -12,6 +13,7 @@ import {
 } from '@/lib/projects/current-project';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
+import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -39,7 +41,7 @@ export async function GET(req: NextRequest) {
     const limitPerStatus = parseInt(searchParams.get('limitPerStatus') || '100000', 10);
 
     // Get active/generating session IDs from process manager
-    const activeSessionIds = processManager.getActiveSessionIds();
+    const activeSessionIds = getActiveSessionIds(userId);
     const generatingSessionIds = processManager.getGeneratingSessionIds();
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
     const agentEnvironment = await getAgentEnvironment(userId);
@@ -70,11 +72,23 @@ export async function GET(req: NextRequest) {
     const projectResults = projects.map((project) => {
       const result = dbSessions.getSessionsByProjectGrouped(project.id, { limitPerStatus });
 
-      const sessions = result.sessions.map((row) => ({
+      const mapped = result.sessions.map((row) => ({
         ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
         lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
+      }));
+      // Diff badge for any session whose work dir is a git worktree (standalone
+      // chats included). Cache-miss workDirs schedule a compute + WS push.
+      const diffStatsByWorkDir = getCachedOrScheduleBulk(
+        mapped.map((s) => s.workDir ?? undefined),
+        userId,
+      );
+      const sessions = mapped.map((s) => ({
+        ...s,
+        diffStats: s.workDir
+          ? diffStatsByWorkDir.get(s.workDir) ?? undefined
+          : undefined,
       }));
 
       return {

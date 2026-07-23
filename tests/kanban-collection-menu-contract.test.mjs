@@ -14,14 +14,14 @@ const collectionMoveSubmenuSource = fs.readFileSync(
 test('kanban cards render the Other collection label for uncategorized cards', () => {
   assert.match(
     kanbanCardSource,
-    /function CollectionLabel\(\{ collectionId, isActive \}: \{ collectionId\?: string \| null;/,
+    /function CollectionLabel\(\{[\s\S]*collectionId,[\s\S]*projectId,[\s\S]*isActive,[\s\S]*collectionId\?: string \| null;[\s\S]*projectId: string;/,
   );
   assert.match(
     kanbanCardSource,
     /const label = collectionId \? config\?\.label : t\('task\.creation\.noCollection'\);/,
   );
-  assert.match(kanbanCardSource, /<CollectionLabel collectionId=\{session\.collectionId\}/);
-  assert.match(kanbanCardSource, /<CollectionLabel collectionId=\{task\.collectionId\}/);
+  assert.match(kanbanCardSource, /collectionId=\{session\.collectionId\}[\s\S]*projectId=\{session\.projectDir\}/);
+  assert.match(kanbanCardSource, /collectionId=\{task\.collectionId\}[\s\S]*projectId=\{task\.projectId\}/);
 });
 
 test('collection move submenu tolerates cursor travel from trigger to submenu', () => {

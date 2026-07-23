@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   shell,
   dialog,
@@ -15,6 +16,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
+import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
+import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
 type TitlebarTheme = 'light' | 'dark';
@@ -406,7 +409,21 @@ if (process.env.TESSERA_DISABLE_GPU === '1') {
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-gpu-compositing');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
+} else {
+  // Blink force-loses the oldest WebGL context past 16 per renderer, and every
+  // attached terminal surface holds one. Inactive tabs stay mounted (LRU) and
+  // parked surfaces keep their terminal alive, so a busy workspace exceeds 16
+  // and evicted surfaces are silently downgraded to the DOM renderer mid-session.
+  // 128 covers real layouts while keeping a bound so context leaks still surface.
+  app.commandLine.appendSwitch('max-active-webgl-contexts', '128');
 }
+
+// The embedded server listens on 127.0.0.1 only, but windows load http://localhost.
+// On hosts where connecting to ::1 stalls (observed ~210ms per connect with WSL /
+// VPN network stacks), every fresh renderer connection pays that penalty. Pin
+// localhost to IPv4 in Chromium's resolver; keeping the literal "localhost" URL
+// preserves the renderer origin (localStorage, IndexedDB).
+app.commandLine.appendSwitch('host-resolver-rules', 'MAP localhost 127.0.0.1');
 
 let mainWindow: BrowserWindow | null = null;
 const popoutWindows = new Set<BrowserWindow>();
@@ -417,6 +434,8 @@ let isQuitRequested = false;
 let isQuitCleanupStarted = false;
 let closeRequestSequence = 0;
 let activeCloseRequest: Promise<void> | null = null;
+let activeQuitConfirmation: Promise<void> | null = null;
+let terminalSummarySequence = 0;
 
 type WindowCloseAction = 'quit' | 'tray' | 'cancel';
 type WindowsCloseBehavior = 'ask' | 'tray' | 'quit';
@@ -427,11 +446,100 @@ type PendingCloseRequest = {
 
 const WINDOW_CLOSE_RESPONSE_TIMEOUT_MS = 15_000;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 8_000;
+const TERMINAL_SUMMARY_TIMEOUT_MS = 1_500;
 const pendingCloseRequests = new Map<string, PendingCloseRequest>();
+type TerminalRuntimeSummary = { activeCount: number; sessionCount: number };
+type PendingTerminalSummary = {
+  resolve: (summary: TerminalRuntimeSummary) => void;
+  timeout: NodeJS.Timeout;
+};
+const pendingTerminalSummaries = new Map<string, PendingTerminalSummary>();
 let windowsCloseBehavior: WindowsCloseBehavior = 'ask';
 
-function requestAppQuit(): void {
+function resolveTerminalSummary(
+  requestId: string,
+  summary: TerminalRuntimeSummary,
+): void {
+  const pending = pendingTerminalSummaries.get(requestId);
+  if (!pending) return;
+  clearTimeout(pending.timeout);
+  pendingTerminalSummaries.delete(requestId);
+  pending.resolve(summary);
+}
+
+function resolveAllTerminalSummaries(): void {
+  for (const requestId of [...pendingTerminalSummaries.keys()]) {
+    resolveTerminalSummary(requestId, { activeCount: -1, sessionCount: -1 });
+  }
+}
+
+function requestTerminalSummary(): Promise<TerminalRuntimeSummary> {
+  const child = serverProcess;
+  if (!child?.connected) {
+    return Promise.resolve({ activeCount: 0, sessionCount: 0 });
+  }
+
+  const requestId = `terminal-summary-${Date.now()}-${++terminalSummarySequence}`;
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingTerminalSummaries.delete(requestId);
+      log('warn', 'Timed out while checking active terminals before quit');
+      resolve({ activeCount: -1, sessionCount: -1 });
+    }, TERMINAL_SUMMARY_TIMEOUT_MS);
+    timeout.unref?.();
+    pendingTerminalSummaries.set(requestId, { resolve, timeout });
+
+    try {
+      child.send({ type: 'terminal_summary_request', requestId }, (error) => {
+        if (!error) return;
+        log('warn', `Terminal summary IPC failed: ${error.message}`);
+        resolveTerminalSummary(requestId, { activeCount: -1, sessionCount: -1 });
+      });
+    } catch (error) {
+      log('warn', `Terminal summary IPC threw: ${error instanceof Error ? error.message : String(error)}`);
+      resolveTerminalSummary(requestId, { activeCount: -1, sessionCount: -1 });
+    }
+  });
+}
+
+async function confirmTerminalQuit(activeCount: number): Promise<boolean> {
+  if (activeCount === 0) return true;
+
+  const isKorean = app.getLocale().toLowerCase().startsWith('ko');
+  const summaryUnavailable = activeCount < 0;
+  const options = {
+    type: 'warning' as const,
+    title: 'Tessera',
+    message: isKorean
+      ? (summaryUnavailable
+          ? '터미널 상태를 확인하지 못했습니다. Tessera를 종료할까요?'
+          : `실행 중인 터미널 ${activeCount}개를 종료할까요?`)
+      : (summaryUnavailable
+          ? 'Terminal status is unavailable. Quit Tessera?'
+          : `Quit ${activeCount} active terminal${activeCount === 1 ? '' : 's'}?`),
+    detail: isKorean
+      ? (summaryUnavailable
+          ? '종료하면 실행 중인 터미널 작업이 함께 중단될 수 있습니다.'
+          : 'Tessera를 종료하면 터미널에서 실행 중인 Claude Code/Codex 작업도 함께 종료됩니다.')
+      : (summaryUnavailable
+          ? 'Quitting may stop active terminal work.'
+          : 'Quitting Tessera will also stop the Claude Code/Codex work running in these terminals.'),
+    buttons: isKorean ? ['취소', 'Tessera 종료'] : ['Cancel', 'Quit Tessera'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const result = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options);
+  return result.response === 1;
+}
+
+async function beginAppQuit(): Promise<void> {
   if (isQuitRequested) return;
+
+  const summary = await requestTerminalSummary();
+  if (!(await confirmTerminalQuit(summary.activeCount))) return;
 
   isQuitRequested = true;
   isQuitting = true;
@@ -442,6 +550,13 @@ function requestAppQuit(): void {
   }
   destroyTray();
   app.quit();
+}
+
+function requestAppQuit(): void {
+  if (isQuitRequested || activeQuitConfirmation) return;
+  activeQuitConfirmation = beginAppQuit().finally(() => {
+    activeQuitConfirmation = null;
+  });
 }
 
 function getWindowsCloseAction(win: BrowserWindow): WindowCloseAction {
@@ -628,9 +743,26 @@ async function startServer(): Promise<number> {
       reject(new Error('Server failed to start within 60 seconds'));
     }, 60_000);
 
-    serverProcess.on('message', (msg: { type: string; port?: number; message?: string }) => {
+    serverProcess.on('message', (msg: {
+      type: string;
+      port?: number;
+      message?: string;
+      requestId?: string;
+      activeCount?: number;
+      sessionCount?: number;
+    }) => {
       log('debug', `Server message: ${JSON.stringify(msg)}`);
-      if (msg?.type === 'ready') {
+      if (
+        msg?.type === 'terminal_summary'
+        && typeof msg.requestId === 'string'
+        && typeof msg.activeCount === 'number'
+        && typeof msg.sessionCount === 'number'
+      ) {
+        resolveTerminalSummary(msg.requestId, {
+          activeCount: msg.activeCount,
+          sessionCount: msg.sessionCount,
+        });
+      } else if (msg?.type === 'ready') {
         clearTimeout(timeout);
         serverPort = msg.port as number;
         resolve(serverPort);
@@ -642,6 +774,7 @@ async function startServer(): Promise<number> {
     });
 
     serverProcess.on('exit', (code) => {
+      resolveAllTerminalSummaries();
       log(isQuitting ? 'debug' : 'error', `Server child exited with code ${code}`);
       serverProcess = null;
       if (!isQuitting) {
@@ -890,6 +1023,10 @@ function broadcastPopoutState(): void {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
+ipcMain.handle('read-terminal-clipboard', () => readTerminalClipboard(clipboard));
+ipcMain.handle('write-terminal-clipboard-text', (_event, text: unknown) => (
+  writeTerminalClipboardText(clipboard, text)
+));
 ipcMain.on('ui-storage-get-item', (event, key: unknown) => {
   event.returnValue = getUiStorageItem(key);
 });
@@ -900,6 +1037,20 @@ ipcMain.on('ui-storage-set-item', (event, payload: unknown) => {
 ipcMain.on('ui-storage-remove-item', (event, key: unknown) => {
   removeUiStorageItem(key);
   event.returnValue = true;
+});
+ipcMain.handle('shell-open-external-url', async (_event, rawUrl: unknown) => {
+  const targetUrl = normalizeExternalHttpUrl(rawUrl);
+  if (!targetUrl) return { ok: false, error: 'invalid_url' };
+
+  try {
+    await shell.openExternal(targetUrl);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 });
 ipcMain.handle('shell-open-path', async (_event, rawPath: unknown) => {
   const targetPath = resolveShellPath(rawPath);
@@ -1110,7 +1261,12 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (!isQuitRequested) {
+    event.preventDefault();
+    requestAppQuit();
+    return;
+  }
   isQuitRequested = true;
   isQuitting = true;
   destroyTray();

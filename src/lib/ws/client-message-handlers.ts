@@ -10,14 +10,19 @@ import {
 } from '@/lib/chat/session-client-effects';
 import { serverMessageToReplayEvents } from '@/lib/chat/server-message-to-replay-events';
 import { useChatStore } from '@/stores/chat-store';
+import { useBoardStore } from '@/stores/board-store';
+import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
 import { useNotificationStore } from '@/stores/notification-store';
+import { usePanelStore } from '@/stores/panel-store';
 import { useRateLimitStore } from '@/stores/rate-limit-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionPrStore } from '@/stores/session-pr-store';
 import { useSkillAnalysisStore } from '@/stores/skill-analysis-store';
 import { useTaskStore } from '@/stores/task-store';
+import { useTabStore } from '@/stores/tab-store';
 import { useUsageStore } from '@/stores/usage-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { i18n } from '@/lib/i18n';
@@ -25,12 +30,33 @@ import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
+import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
   providersListCallbacks: Map<string, (providers: ProviderMeta[]) => void>;
   cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null) => void>;
   wasReconnect: boolean;
+}
+
+interface PendingTerminalRebound {
+  destinationSessionId: string;
+  sourceSessionIds: Set<string>;
+}
+
+const pendingTerminalRebounds = new Map<string, PendingTerminalRebound>();
+
+function getVisibleWorkspaceSessionId(activeSessionId: string | null): string | null {
+  const boardState = useBoardStore.getState();
+  const settingsState = useSettingsStore.getState();
+  return resolveVisibleWorkspaceSessionId({
+    activeSessionId,
+    peekSessionId: boardState.peekSessionId,
+    isKanbanPeekLayout:
+      boardState.viewMode === 'board'
+      && settingsState.settings.kanbanSessionOpenMode === 'peek'
+      && !settingsState.sidebarCollapsed,
+  });
 }
 
 export function handleIncomingServerMessage({
@@ -60,6 +86,7 @@ export function handleIncomingServerMessage({
 
     case 'session_closed':
       sessionStore.removeSession(msg.sessionId);
+      useTerminalSessionStore.getState().clearSession(msg.sessionId);
       chatStore.clearSession(msg.sessionId);
       useUsageStore.getState().clearUsage(msg.sessionId);
       useCommandStore.getState().clearSession(msg.sessionId);
@@ -78,14 +105,6 @@ export function handleIncomingServerMessage({
       useCommandStore.getState().clearSession(msg.sessionId);
       return { wasReconnect };
 
-    case 'session_goal_updated':
-      sessionStore.updateSessionGoal(msg.sessionId, msg.goal);
-      return { wasReconnect };
-
-    case 'session_goal_cleared':
-      sessionStore.updateSessionGoal(msg.sessionId, null);
-      return { wasReconnect };
-
     case 'replay_events':
       sessionStore.touchSessionActivity(msg.sessionId, getLatestReplayEventTimestamp(msg.events));
       if (shouldStartTurnFromReplayEvents(sessionStore, msg.sessionId, msg.events)) {
@@ -97,7 +116,7 @@ export function handleIncomingServerMessage({
 
     case 'notification':
       sessionStore.touchSessionActivity(msg.sessionId);
-      handleNotificationMessage(msg, sessionStore.activeSessionId);
+      handleNotificationMessage(msg, getVisibleWorkspaceSessionId(sessionStore.activeSessionId));
       if (msg.event === 'completed') {
         finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
         sessionStore.updateSessionStatus(msg.sessionId, 'completed');
@@ -111,9 +130,96 @@ export function handleIncomingServerMessage({
       );
       return { wasReconnect };
 
+    case 'session_state': {
+      // 유령 running 방지는 store의 runtimeExited 마커가 담당한다. 세션 목록의
+      // isRunning으로 여기서 드롭하면, 목록이 낡아 있는 동안(HTTP refetch 전)
+      // 도착한 진짜 running이 영구 유실된다 — session_state는 hook 이벤트
+      // 시점에만 push되고 재전송이 없다.
+      const changed = useTerminalSessionStore.getState().applySessionState(msg);
+      if (changed && msg.status === 'running') {
+        const location = useTabStore.getState().findSessionLocation(msg.sessionId);
+        if (location) useTabStore.getState().pinTab(location.tabId);
+      }
+      if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
+        handleTerminalSessionStateMessage(
+          msg,
+          getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
+        );
+      }
+      return { wasReconnect };
+    }
+
+    case 'terminal_session_runtime':
+      sessionStore.setSessionRunning(msg.sessionId, msg.running);
+      if (msg.running) {
+        removePendingTerminalReboundSource(msg.terminalId, msg.sessionId);
+        useTerminalSessionStore.getState().markRuntimeStarted(msg.sessionId);
+      } else {
+        useTerminalSessionStore.getState().markRuntimeStopped(msg.sessionId);
+        cancelPendingTerminalReboundsForDestination(msg.sessionId);
+        retireStoppedTerminalSessionSurface(msg.sessionId);
+      }
+      return { wasReconnect };
+
+    case 'terminal_session_rebound':
+      applyTerminalSessionRebound(msg.terminalId, msg.previousSessionId, msg.sessionId);
+      return { wasReconnect };
+
+    case 'terminal_session_runtime_snapshot': {
+      const authoritativeReboundTerminalIds = new Set(
+        (msg.reboundSessions ?? []).map((rebound) => rebound.terminalId),
+      );
+      for (const terminalId of pendingTerminalRebounds.keys()) {
+        if (!authoritativeReboundTerminalIds.has(terminalId)) {
+          pendingTerminalRebounds.delete(terminalId);
+        }
+      }
+      for (const rebound of msg.reboundSessions ?? []) {
+        applyTerminalSessionRebound(
+          rebound.terminalId,
+          rebound.previousSessionId,
+          rebound.sessionId,
+        );
+      }
+      sessionStore.applyTerminalRuntimeSnapshot(msg.activeSessionIds);
+      const activeTerminalIds = new Set(msg.activeSessionIds);
+      for (const pending of [...pendingTerminalRebounds.values()]) {
+        if (!activeTerminalIds.has(pending.destinationSessionId)) {
+          cancelPendingTerminalReboundsForDestination(pending.destinationSessionId);
+        }
+      }
+      for (const sessionId of msg.activeSessionIds) {
+        useTerminalSessionStore.getState().markRuntimeStarted(sessionId);
+      }
+      // terminal-session-store에 이미 hook 상태가 있는 세션은 세션 목록(projects)
+      // 로드 전이라도 snapshot 기준으로 정리한다 — 연결 직후에는 projects가 아직
+      // 비어 있어 아래 순회가 아무것도 강등하지 못한다.
+      for (const sessionId of Object.keys(useTerminalSessionStore.getState().bySessionId)) {
+        if (!activeTerminalIds.has(sessionId)) {
+          useTerminalSessionStore.getState().markRuntimeStopped(sessionId);
+        }
+      }
+      for (const project of sessionStore.projects) {
+        for (const session of project.sessions) {
+          // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
+          // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
+          if (session.id.startsWith('temp-')) continue;
+          if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
+            useTerminalSessionStore.getState().markRuntimeStopped(session.id);
+            if (isPendingTerminalReboundSource(session.id)) continue;
+            retireStoppedTerminalSessionSurface(session.id);
+          }
+        }
+      }
+      return { wasReconnect };
+    }
+
     case 'interactive_prompt':
       sessionStore.touchSessionActivity(msg.sessionId);
-      handleInteractivePromptMessage(msg, sessionStore.activeSessionId);
+      handleInteractivePromptMessage(
+        msg,
+        getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
+      );
       return { wasReconnect };
 
     case 'error': {
@@ -289,6 +395,80 @@ export function handleIncomingServerMessage({
   }
 }
 
+function applyTerminalSessionRebound(
+  terminalId: string,
+  previousSessionId: string,
+  sessionId: string,
+): void {
+  const terminalStore = useTerminalSessionStore.getState();
+  terminalStore.markRuntimeStopped(previousSessionId);
+  terminalStore.markRuntimeStarted(sessionId);
+  useSessionStore.getState().setSessionRunning(previousSessionId, false);
+
+  const pending = pendingTerminalRebounds.get(terminalId) ?? {
+    destinationSessionId: sessionId,
+    sourceSessionIds: new Set<string>(),
+  };
+  pending.sourceSessionIds.add(previousSessionId);
+  pending.destinationSessionId = sessionId;
+  pendingTerminalRebounds.set(terminalId, pending);
+  if (tryApplyPendingTerminalRebound(terminalId)) {
+    return;
+  }
+  void Promise.resolve(useSessionStore.getState().loadProjects()).then(
+    () => { tryApplyPendingTerminalRebound(terminalId); },
+    () => {},
+  );
+}
+
+function tryApplyPendingTerminalRebound(terminalId: string): boolean {
+  const pending = pendingTerminalRebounds.get(terminalId);
+  if (!pending) return true;
+  const terminalState = useTerminalSessionStore.getState()
+    .bySessionId[pending.destinationSessionId];
+  if (terminalState?.runtimeExited) {
+    cancelPendingTerminalReboundsForDestination(pending.destinationSessionId);
+    return true;
+  }
+  const sessionStore = useSessionStore.getState();
+  if (!sessionStore.getSession(pending.destinationSessionId)) return false;
+
+  for (const sourceSessionId of pending.sourceSessionIds) {
+    usePanelStore.getState().rebindSession(sourceSessionId, pending.destinationSessionId);
+  }
+  sessionStore.setSessionRunning(pending.destinationSessionId, true);
+  pendingTerminalRebounds.delete(terminalId);
+  return true;
+}
+
+function cancelPendingTerminalReboundsForDestination(sessionId: string): void {
+  for (const [terminalId, pending] of pendingTerminalRebounds) {
+    if (pending.destinationSessionId !== sessionId) continue;
+    pendingTerminalRebounds.delete(terminalId);
+    for (const sourceSessionId of pending.sourceSessionIds) {
+      retireStoppedTerminalSessionSurface(sourceSessionId);
+    }
+  }
+}
+
+function isPendingTerminalReboundSource(sessionId: string): boolean {
+  return [...pendingTerminalRebounds.values()]
+    .some((pending) => pending.sourceSessionIds.has(sessionId));
+}
+
+function removePendingTerminalReboundSource(terminalId: string, sessionId: string): void {
+  const pending = pendingTerminalRebounds.get(terminalId);
+  if (!pending) return;
+  pending.sourceSessionIds.delete(sessionId);
+  if (pending.sourceSessionIds.size === 0) pendingTerminalRebounds.delete(terminalId);
+}
+
+function retireStoppedTerminalSessionSurface(sessionId: string): void {
+  const session = useSessionStore.getState().getSession(sessionId);
+  if (session?.kind !== 'terminal' || session.archived) return;
+  useTabStore.getState().retireSessionSurface(sessionId);
+}
+
 function replayEventsIndicateActiveTurn(
   events: Extract<ServerTransportMessage, { type: 'replay_events' }>['events'],
 ): boolean {
@@ -353,9 +533,8 @@ function addCreatedSession(
     (sum, project) => sum + project.sessions.length,
     0,
   );
-  // Session exists in DB but CLI isn't spawned until the first message.
-  // isRunning=false reflects the real process state; markSessionRunning flips
-  // it to true once the session_started event arrives.
+  // Session exists in DB but has no backing runtime yet. GUI sessions start on
+  // first input; PTY sessions start when their terminal view is first opened.
   sessionStore.addSession({
     id: msg.sessionId,
     title: i18n.t('chat.sessionDefaultTitle', { count: totalSessions + 1 }),
@@ -363,10 +542,11 @@ function addCreatedSession(
     workDir: msg.workDir,
     isRunning: false,
     hasStarted: false,
-    status: 'starting',
+    status: msg.kind === 'terminal' ? 'stopped' : 'starting',
     createdAt: new Date().toISOString(),
     lastModified: new Date().toISOString(),
     archived: false,
+    kind: msg.kind,
     provider: msg.provider,
     model: msg.model,
     reasoningEffort: msg.reasoningEffort,
@@ -397,6 +577,30 @@ function handleNotificationMessage(
   }
 
   notificationStore.playSound();
+}
+
+function handleTerminalSessionStateMessage(
+  msg: Extract<ServerTransportMessage, { type: 'session_state' }>,
+  activeSessionId: string | null,
+): void {
+  const notificationStore = useNotificationStore.getState();
+  if (msg.sessionId === activeSessionId) {
+    notificationStore.playSound();
+    return;
+  }
+
+  const added = notificationStore.addNotification({
+    sessionId: msg.sessionId,
+    type: msg.status === 'completed' ? 'completed' : 'input_required',
+    preview: msg.preview
+      ?? (msg.status === 'completed'
+        ? 'Terminal task completed'
+        : 'Terminal is waiting for input'),
+    dedupKey: msg.stateAt != null
+      ? `${msg.sessionId}:${msg.status}:${msg.stateAt}`
+      : undefined,
+  });
+  if (added) useSessionStore.getState().incrementUnreadCount(msg.sessionId);
 }
 
 function handleInteractivePromptMessage(
@@ -432,6 +636,9 @@ function handleSessionListMessage(
   const generatingSessionIds: string[] = [];
   const titleGeneratingSessionIds = msg.titleGeneratingSessionIds ?? [];
   const chatStore = useChatStore.getState();
+  useSessionStore.getState().applyGuiRuntimeSnapshot(
+    msg.sessions.map((session) => session.id),
+  );
   for (const session of msg.sessions || []) {
     const hasActivePrompt = Boolean(session.activeInteractivePrompt);
     if ('activeInteractivePrompt' in session) {
@@ -472,8 +679,11 @@ function handleSessionTitleUpdatedMessage(
   const previousTitle = msg.previousTitle;
   const nextTitle = msg.title;
 
-  sessionStore.updateSessionTitle(msg.sessionId, nextTitle, true);
+  sessionStore.updateSessionTitle(msg.sessionId, nextTitle, msg.hasCustomTitle ?? true);
   useTaskStore.getState().syncLinkedTaskTitle(msg.sessionId, nextTitle);
+  if (msg.silent) {
+    return;
+  }
   useNotificationStore.getState().showToastWithAction(
     `"${nextTitle}"`,
     'success',

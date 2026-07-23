@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useContext, useEffect, useMemo, useRef } from "react";
+import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { selectIsTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionNavigation } from "@/hooks/use-session-navigation";
@@ -13,32 +13,61 @@ import { MessageInput } from "./message-input";
 import { WorkflowStatusBar } from "./workflow/workflow-status-bar";
 import { TodoStatusBar } from "./todo/todo-status-bar";
 import { InteractivePromptOverlay } from "./interactive-prompt-overlay";
-import { MessageSquare, AlertCircle, X as XIcon } from "lucide-react";
+import { MessageSquare, AlertCircle, LoaderCircle, X as XIcon } from "lucide-react";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
 import { Button } from "@/components/ui/button";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useI18n } from "@/lib/i18n";
+import { TerminalPanel } from "@/components/terminal/terminal-panel";
+import { getSessionTerminalId } from "@/lib/terminal/terminal-surface-registry";
+import { shouldShowSessionHeader } from "@/lib/terminal/session-header-visibility";
 
 interface ChatAreaProps {
   sessionId: string;
   panelId: string;
+  presentation?: 'panel' | 'peek';
 }
 
-export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaProps) {
+const PEEK_LOADING_DELAY_MS = 300;
+
+export const ChatArea = memo(function ChatArea({
+  sessionId,
+  panelId,
+  presentation = 'panel',
+}: ChatAreaProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
+  const isPeek = presentation === 'peek';
+  const [peekLoadingReadySessionId, setPeekLoadingReadySessionId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isPeek) return;
+    const timer = setTimeout(() => {
+      setPeekLoadingReadySessionId(sessionId);
+    }, PEEK_LOADING_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [isPeek, sessionId]);
+  const shouldShowPeekLoading = isPeek && peekLoadingReadySessionId === sessionId;
   // Side-by-side panels in the active tab are all on-screen even though only
   // one is the panel-store's "active" panel; gating autoscroll on isPanelActive
   // froze the unfocused panel's viewport during streaming (issue #16).
-  const isViewActive = useTabStore((state) => state.activeTabId === tabId);
+  const isViewActive = useTabStore((state) => isPeek || state.activeTabId === tabId);
+  const isPreviewTab = useTabStore(
+    (state) => !isPeek && (state.tabs.find((tab) => tab.id === tabId)?.isPreview ?? false),
+  );
   const { windowedMessages, hasMore, loadMore, isLoadingMore } =
     useWindowedMessages(sessionId);
   const isSinglePanel = usePanelStore(
-    (state) => Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length <= 1,
+    (state) => isPeek
+      || Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length <= 1,
   );
 
   const session = useSessionStore((state) => state.getSession(sessionId));
+  // 생성 중(낙관적 temp 세션): 서버 세션이 아직 없어서 PTY attach가 불가능하다 —
+  // TerminalPanel을 붙이면 존재하지 않는 세션으로 terminal_create가 나가 에러가 뜬다.
+  // 전역 creatingSessionId 슬롯은 동시 생성 시 덮여서 믿을 수 없다 — temp- 접두가
+  // 낙관적 세션의 결정적 마커다(use-session-crud만 이 접두로 id를 만든다).
+  const isPendingCreation = sessionId.startsWith('temp-');
   const messages = useChatStore((state) => state.messages.get(sessionId));
   const error = useChatStore((state) => state.errors.get(sessionId));
   const clearError = useChatStore((state) => state.clearError);
@@ -65,8 +94,8 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
       return;
     }
     autoLoadedSessionIdRef.current = session.id;
-    void viewSession(session);
-  }, [session, historyLoaded, viewSession]);
+    void viewSession(session, { activate: !isPeek });
+  }, [session, historyLoaded, isPeek, viewSession]);
   const groupedMessagesForSearch = useMemo(
     () => groupMessages(windowedMessages),
     [windowedMessages],
@@ -75,6 +104,18 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
     windowedMessages,
     groupedMessagesForSearch,
     sessionId,
+  );
+
+  // terminal-mode: 이 세션이 터미널 kind면 채팅 본문(메시지/컴포저) 대신 xterm 터미널을
+  // 렌더하고, 마운트 시 provider PTY를 프롬프트 없이 자동 기동한다. 단일 패널에서는
+  // 탭 제목과 중복되는 Header를 숨기고, 멀티 패널에서는 패널 제어를 위해 유지한다.
+  const sessionProvider = session?.provider;
+  const isTerminalSession = session?.kind === "terminal";
+  // 세션당 안정적 terminalId. 렌더러 메모리가 아니라 서버의 session binding이 실제
+  // PTY 소유권을 가지므로 reload/다중 창에서도 같은 런타임으로 attach된다.
+  const terminalId = useMemo(
+    () => (isTerminalSession ? getSessionTerminalId(sessionId) : null),
+    [isTerminalSession, sessionId],
   );
 
   if (!sessionId) {
@@ -103,7 +144,7 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
           <Button
             onClick={() => {
               clearError(sessionId);
-              viewSession(session);
+              viewSession(session, { activate: !isPeek });
             }}
           >
             {t("chat.retry")}
@@ -113,8 +154,11 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
     );
   }
 
-  if (messages === undefined) {
-    return <ChatAreaSkeleton isSinglePanel={isSinglePanel} />;
+  // 터미널 세션은 메시지 히스토리 도착을 기다릴 이유가 없다 — GUI 메시지 골격을
+  // 그리면 PTY로 교체될 때 깜빡인다. 터미널 분기로 바로 진행한다.
+  if (messages === undefined && !isTerminalSession) {
+    if (!isPeek) return <ChatAreaSkeleton isSinglePanel={isSinglePanel} />;
+    return shouldShowPeekLoading ? <SessionPeekLoading /> : null;
   }
 
   const isUnifiedSession = "isRunning" in session;
@@ -133,59 +177,115 @@ export const ChatArea = memo(function ChatArea({ sessionId, panelId }: ChatAreaP
 
   return (
     <div className="flex-1 flex flex-col h-full bg-(--chat-bg)">
-      <Header
-        sessionId={sessionId}
-        panelId={panelId}
-        isSinglePanel={isSinglePanel}
-        search={{
-          isOpen: messageSearch.isSearchOpen,
-          query: messageSearch.query,
-          matchCount: messageSearch.matches.length,
-          activeMatchIndex: messageSearch.activeMatchIndex,
-          hasMore,
-          onOpen: messageSearch.openSearch,
-          onClose: messageSearch.closeSearch,
-          onQueryChange: messageSearch.setQuery,
-          onNext: messageSearch.goToNextMatch,
-          onPrevious: messageSearch.goToPreviousMatch,
-        }}
-      />
-
-      <div className="flex-1 overflow-hidden">
-        <MessageList
-          messages={windowedMessages}
-          isLoading={isLoading}
+      {!isPeek && shouldShowSessionHeader({ isTerminalSession, isSinglePanel }) && (
+        <Header
           sessionId={sessionId}
-          hasMore={hasMore}
-          onLoadMore={loadMore}
-          isLoadingMore={isLoadingMore}
+          panelId={panelId}
           isSinglePanel={isSinglePanel}
-          isTabActive={isViewActive}
-          isTurnInFlight={isTurnInFlight}
           search={{
-            activeMatchMessageId: messageSearch.activeMatch?.messageId ?? null,
-            activeGroupedRowIndex: messageSearch.activeGroupedRowIndex,
+            isOpen: messageSearch.isSearchOpen,
+            query: messageSearch.query,
+            matchCount: messageSearch.matches.length,
+            activeMatchIndex: messageSearch.activeMatchIndex,
+            hasMore,
+            onOpen: messageSearch.openSearch,
+            onClose: messageSearch.closeSearch,
+            onQueryChange: messageSearch.setQuery,
+            onNext: messageSearch.goToNextMatch,
+            onPrevious: messageSearch.goToPreviousMatch,
           }}
         />
+      )}
+
+      <div className="flex-1 overflow-hidden">
+        {isTerminalSession ? (
+          isPendingCreation ? (
+            // 생성 대기 표면: 터미널 기본 배경(TERMINAL_LIGHT/DARK_THEME)과 같은 색만
+            // 유지해 GUI 골격 없이 실제 TerminalPanel로 이어지게 한다.
+            <div
+              className="h-full w-full bg-[#fafaf9] dark:bg-[#161616]"
+              data-testid="terminal-pending-surface"
+            />
+          ) : terminalId && sessionProvider ? (
+            <TerminalPanel
+              key={terminalId}
+              panelId={panelId}
+              terminalId={terminalId}
+              terminalSessionId={sessionId}
+              runtimeOwnership={isPeek
+                ? 'session-peek'
+                : isPreviewTab
+                  ? 'session-preview'
+                  : 'session-retained'}
+              surfaceActive={isPeek}
+              startupOverlay={shouldShowPeekLoading ? <SessionPeekLoading /> : undefined}
+              launch={{ providerId: sessionProvider, sessionId }}
+            />
+          ) : null
+        ) : (
+          <MessageList
+            messages={windowedMessages}
+            isLoading={isLoading}
+            sessionId={sessionId}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            isLoadingMore={isLoadingMore}
+            isSinglePanel={isSinglePanel}
+            isTabActive={isViewActive}
+            isTurnInFlight={isTurnInFlight}
+            search={{
+              activeMatchMessageId: messageSearch.activeMatch?.messageId ?? null,
+              activeGroupedRowIndex: messageSearch.activeGroupedRowIndex,
+            }}
+          />
+        )}
       </div>
 
-      {!isReadOnly && <InteractivePromptOverlay sessionId={sessionId} />}
+      {/* 채팅 전용 하단 UI — 터미널 세션에서는 숨긴다(입력은 터미널에 직접). */}
+      {!isTerminalSession && (
+        <>
+          {!isReadOnly && <InteractivePromptOverlay sessionId={sessionId} />}
 
-      <div className="max-h-[45vh] overflow-y-auto">
-        <WorkflowStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
-        <TodoStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
-      </div>
+          <div className="max-h-[45vh] overflow-y-auto">
+            <WorkflowStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
+            <TodoStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
+          </div>
 
-      <MessageInput
-        sessionId={sessionId}
-        isDisabled={isInputDisabled}
-        isReadOnly={isReadOnly}
-        isStopped={isStopped}
-        isSinglePanel={isSinglePanel}
-      />
+          <MessageInput
+            sessionId={sessionId}
+            isDisabled={isInputDisabled}
+            isReadOnly={isReadOnly}
+            isStopped={isStopped}
+            isSinglePanel={isSinglePanel}
+            surfaceActive={isPeek}
+          />
+        </>
+      )}
     </div>
   );
 });
+
+function SessionPeekLoading() {
+  const { t } = useI18n();
+
+  return (
+    <div
+      className="flex h-full flex-1 items-center justify-center bg-(--chat-bg)"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      data-testid="kanban-session-peek-loading"
+    >
+      <div className="flex flex-col items-center gap-3 text-center">
+        <LoaderCircle
+          className="h-7 w-7 animate-spin text-(--accent) motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+        <p className="text-sm text-(--text-muted)">{t("chat.loadingSession")}</p>
+      </div>
+    </div>
+  );
+}
 
 function SessionNotFound({ sessionId }: { sessionId: string }) {
   const { t } = useI18n();

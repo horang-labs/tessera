@@ -123,9 +123,13 @@ function MemoryViewModeToggle({
 export function MemoryFileTab({
   memoryRef,
   panelId,
+  onClose,
+  onDirtyChange,
 }: {
   memoryRef: MemoryFileSessionRef;
   panelId: string;
+  onClose?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useI18n();
   const { fileName, sourceSessionId, memoryKind } = memoryRef;
@@ -158,6 +162,11 @@ export function MemoryFileTab({
   const readOnly = state.data?.readOnly ?? false;
   const visibleFileName = state.data?.fileName ?? displayFileName(fileName);
   dirtyRef.current = dirty;
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
 
   useEffect(() => {
     if (readOnly && viewMode === "edit") setViewMode("preview");
@@ -339,12 +348,16 @@ export function MemoryFileTab({
   }, [saveFile, viewMode]);
 
   const handleClose = useCallback(() => {
+    if (onClose) {
+      onClose();
+      return;
+    }
     if (panelCount >= 2) {
       closePanel(panelId);
     } else {
       assignSession(panelId, null);
     }
-  }, [assignSession, closePanel, panelCount, panelId]);
+  }, [assignSession, closePanel, onClose, panelCount, panelId]);
 
   async function copyContent() {
     try {
@@ -422,6 +435,7 @@ export function MemoryFileTab({
             className="h-8 w-8 shrink-0"
             onClick={handleClose}
             aria-label={t("memoryPanel.fileTab.closeMemoryPanel")}
+            data-testid="memory-file-close"
           >
             <X className="h-4 w-4" />
           </Button>

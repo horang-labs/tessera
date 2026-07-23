@@ -734,6 +734,19 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     });
   },
 
+  renameTab: (tabId: string, title: string | null): void => {
+    const state = get();
+    if (!state.tabs.some((tab) => tab.id === tabId)) return;
+
+    set({
+      tabs: state.tabs.map((tab): Tab =>
+        tab.id === tabId
+          ? { ...tab, title, isPreview: title === null ? tab.isPreview : false }
+          : tab,
+      ),
+    });
+  },
+
   syncTabProjectFromSession: (tabId: string, sessionId: string | null): void => {
     const state = get();
     const tab = state.tabs.find((item) => item.id === tabId);
@@ -765,6 +778,22 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     }
 
     return null;
+  },
+
+  retireSessionSurface: (sessionId: string): void => {
+    const location = get().findSessionLocation(sessionId);
+    if (!location) return;
+
+    const panelStore = usePanelStore.getState();
+    const tabData = panelStore.tabPanels[location.tabId];
+    if (!tabData) return;
+
+    if (Object.keys(tabData.panels).length === 1) {
+      get().closeTab(location.tabId);
+      return;
+    }
+
+    panelStore.closePanelInTab(location.tabId, location.panelId);
   },
 
   getActiveTabSnapshot: (): TabSnapshot => {

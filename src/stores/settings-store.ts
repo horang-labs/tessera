@@ -5,7 +5,7 @@ import type { ServerHostInfo } from '@/lib/system/types';
 import { DEFAULT_SETTINGS } from '@/lib/settings/defaults';
 import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 import { i18n } from '@/lib/i18n';
-import type { ViewMode } from '@/stores/board-store';
+import { useBoardStore, type ViewMode } from '@/stores/board-store';
 
 export const SETTINGS_STORAGE_KEY = 'tessera:settings';
 export const SETTINGS_SYNC_CHANNEL = 'tessera:settings-sync';
@@ -144,6 +144,7 @@ interface SettingsState {
   serverHostInfo: ServerHostInfo | null;
   isOpen: boolean;
   isLoading: boolean;
+  pendingSaveCount: number;
 
   // REQ-007: Sidebar toggle state
   sidebarCollapsed: boolean;
@@ -172,6 +173,7 @@ export const useSettingsStore = create<SettingsState>()(
       serverHostInfo: null,
       isOpen: false,
       isLoading: false,
+      pendingSaveCount: 0,
       sidebarCollapsed: false, // BR-TOGGLE-001: 기본 펼침
       sidebarWidths: {
         list: LIST_SIDEBAR_MIN_WIDTH,
@@ -181,7 +183,10 @@ export const useSettingsStore = create<SettingsState>()(
       sidebarWidth: LIST_SIDEBAR_MIN_WIDTH, // 레거시 호환용 alias (list width)
 
       open: () => set({ isOpen: true }),
-      close: () => set({ isOpen: false }),
+      close: () => {
+        if (get().pendingSaveCount > 0) return;
+        set({ isOpen: false });
+      },
       applyExternalSettings: (externalSettings) => {
         const settings = normalizeUserSettings(externalSettings);
         set({ settings });
@@ -189,8 +194,15 @@ export const useSettingsStore = create<SettingsState>()(
       },
 
       // REQ-007: Sidebar toggle
-      toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-      setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+      toggleSidebar: () => {
+        const collapsed = !get().sidebarCollapsed;
+        if (collapsed && !useBoardStore.getState().closeSessionPeek()) return;
+        set({ sidebarCollapsed: collapsed });
+      },
+      setSidebarCollapsed: (collapsed) => {
+        if (collapsed && !useBoardStore.getState().closeSessionPeek()) return;
+        set({ sidebarCollapsed: collapsed });
+      },
 
       // REQ-002: Sidebar resize
       getSidebarWidth: (mode, projectDir) => {
@@ -229,13 +241,22 @@ export const useSettingsStore = create<SettingsState>()(
 
       updateSettings: async (partial, options) => {
         const prior = get().settings;
+        if (
+          partial.kanbanSessionOpenMode
+          && partial.kanbanSessionOpenMode !== prior.kanbanSessionOpenMode
+          && partial.kanbanSessionOpenMode !== 'peek'
+          && !useBoardStore.getState().closeSessionPeek()
+        ) return;
         const updated = normalizeUserSettings({
           ...prior,
           ...partial,
           lastModified: new Date().toISOString(),
         });
 
-        set({ settings: updated });
+        set((state) => ({
+          settings: updated,
+          pendingSaveCount: state.pendingSaveCount + 1,
+        }));
         broadcastSettingsSnapshot(updated);
 
         if (partial.language) {
@@ -263,6 +284,10 @@ export const useSettingsStore = create<SettingsState>()(
           if (partial.language) {
             syncI18nLanguage(prior.language);
           }
+        } finally {
+          set((state) => ({
+            pendingSaveCount: Math.max(0, state.pendingSaveCount - 1),
+          }));
         }
 
         // Environment and CLI command overrides change which binaries are reachable.

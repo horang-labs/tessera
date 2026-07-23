@@ -12,7 +12,7 @@ const restCreate = read('../src/app/api/sessions/route.ts');
 const wsActions = read('../src/lib/ws/server-session-actions.ts');
 
 test('schema declares model, reasoning effort, and service tier columns', () => {
-  assert.match(schema, /SCHEMA_VERSION = 28/);
+  assert.match(schema, /SCHEMA_VERSION = 29/);
   assert.match(schema, /model\s+TEXT/);
   assert.match(schema, /reasoning_effort TEXT/);
   assert.match(schema, /service_tier\s+TEXT/);

@@ -12,12 +12,17 @@ import {
 } from '@/lib/telemetry/client';
 import { ProviderLogoMark } from './provider-brand';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
+import { useSettingsStore } from '@/stores/settings-store';
+import { ProviderExecutionBadge } from './provider-execution-badge';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 interface CliProviderChipSelectorProps {
   value: string;
   onChange: (providerId: string) => void;
   className?: string;
   chipClassName?: string;
+  executionMode?: AgentExecutionMode;
+  showRefresh?: boolean;
 }
 
 export function CliProviderChipSelector({
@@ -25,6 +30,8 @@ export function CliProviderChipSelector({
   onChange,
   className,
   chipClassName,
+  executionMode,
+  showRefresh = true,
 }: CliProviderChipSelectorProps) {
   const { t } = useI18n();
   const providers = useProvidersStore((s) => s.providers);
@@ -32,6 +39,8 @@ export function CliProviderChipSelector({
   const loading = useProvidersStore((s) => s.loading);
   const fetchProviders = useProvidersStore((s) => s.fetch);
   const refreshProviders = useProvidersStore((s) => s.refresh);
+  const defaultExecutionMode = useSettingsStore((s) => s.settings.agentExecutionMode);
+  const agentExecutionMode = executionMode ?? defaultExecutionMode;
   const reportedIssueKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -45,6 +54,12 @@ export function CliProviderChipSelector({
   const list = useMemo(() => providers ?? [], [providers]);
   const selectable = useMemo(() => list.filter((p) => p.status === 'connected'), [list]);
   const needsLogin = useMemo(() => list.filter((p) => p.status === 'needs_login'), [list]);
+  // PTY 모드는 카탈로그 전부 노출(orca식 어드바이저리): 미설치도 회색 칩으로 보여준다.
+  // GUI 모드는 기존대로 미설치를 숨긴다(직접 spawn이라 노출해도 쓸 수 없음).
+  const notInstalled = useMemo(
+    () => (agentExecutionMode === 'pty' ? list.filter((p) => p.status === 'not_installed') : []),
+    [agentExecutionMode, list],
+  );
   const isEmpty = selectable.length === 0;
   const hasOnlyNeedsLogin = isEmpty && needsLogin.length > 0;
 
@@ -118,6 +133,7 @@ export function CliProviderChipSelector({
             isSingle={selectable.length === 1}
             onClick={() => selectable.length > 1 && onChange(provider.id)}
             chipClassName={chipClassName}
+            preferredExecutionMode={agentExecutionMode}
           />
         ))}
         {needsLogin.map((provider) => (
@@ -128,20 +144,15 @@ export function CliProviderChipSelector({
             chipClassName={chipClassName}
           />
         ))}
-        <button
-          type="button"
-          onClick={refreshProviders}
-          disabled={loading}
-          title={t('settings.cliStatus.refreshProviders')}
-          aria-label="Refresh providers"
-          className={cn(
-            'inline-flex h-6 w-6 items-center justify-center rounded-full text-(--text-muted) hover:bg-(--input-bg) hover:text-(--text-primary) transition-colors',
-            loading && 'animate-spin cursor-wait',
-          )}
-          data-testid="provider-refresh"
-        >
-          <RefreshCw className="h-3 w-3" />
-        </button>
+        {notInstalled.map((provider) => (
+          <ProviderChip
+            key={provider.id}
+            provider={provider}
+            variant="not-installed"
+            chipClassName={chipClassName}
+          />
+        ))}
+        {showRefresh && <CliProviderRefreshButton />}
       </div>
 
       {isEmpty && !loading && (
@@ -162,15 +173,40 @@ function ProviderChip({
   onClick,
   variant = 'connected',
   chipClassName,
+  preferredExecutionMode,
 }: {
   provider: ProviderMeta;
   isSelected?: boolean;
   isSingle?: boolean;
   onClick?: () => void;
-  variant?: 'connected' | 'needs-login';
+  variant?: 'connected' | 'needs-login' | 'not-installed';
   chipClassName?: string;
+  preferredExecutionMode?: 'pty' | 'gui';
 }) {
   const { t } = useI18n();
+
+  if (variant === 'not-installed') {
+    return (
+      <span
+        title={t('settings.cliStatus.providerNotInstalledTooltip', { provider: provider.displayName })}
+        className={cn(
+          'inline-flex cursor-help items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 text-[11px] font-medium',
+          'border-(--divider) bg-transparent text-(--text-muted) opacity-70',
+          chipClassName,
+        )}
+        data-testid={`provider-chip-${provider.id}`}
+        data-status="not_installed"
+      >
+        <ProviderLogoMark
+          providerId={provider.id}
+          className="h-3.5 w-3.5 rounded-[3px] grayscale"
+          iconClassName="h-2.5 w-2.5"
+        />
+        <span>{provider.displayName}</span>
+        <span className="text-[10px] opacity-70">{t('settings.cliStatus.notInstalledShort')}</span>
+      </span>
+    );
+  }
 
   if (variant === 'needs-login') {
     return (
@@ -216,6 +252,37 @@ function ProviderChip({
         iconClassName="h-2.5 w-2.5"
       />
       <span>{provider.displayName}</span>
+      {preferredExecutionMode && (
+        <ProviderExecutionBadge
+          preferredMode={preferredExecutionMode}
+          providerId={provider.id}
+          testId={`provider-chip-${provider.id}-pty-only`}
+        />
+      )}
+    </button>
+  );
+}
+
+export function CliProviderRefreshButton({ className }: { className?: string }) {
+  const { t } = useI18n();
+  const loading = useProvidersStore((state) => state.loading);
+  const refreshProviders = useProvidersStore((state) => state.refresh);
+
+  return (
+    <button
+      type="button"
+      onClick={refreshProviders}
+      disabled={loading}
+      title={t('settings.cliStatus.refreshProviders')}
+      aria-label={t('settings.cliStatus.refreshProviders')}
+      className={cn(
+        'inline-flex h-6 w-6 items-center justify-center rounded-full text-(--text-muted) transition-colors hover:bg-(--input-bg) hover:text-(--text-primary)',
+        loading && 'animate-spin cursor-wait',
+        className,
+      )}
+      data-testid="provider-refresh"
+    >
+      <RefreshCw className="h-3 w-3" />
     </button>
   );
 }
