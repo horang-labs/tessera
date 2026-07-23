@@ -2,20 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 
-test('existing users keep the split Kanban session layout by default', () => {
-  assert.equal(normalizeUserSettings({}).kanbanSessionOpenMode, 'split');
+test('new installations open Kanban sessions in Peek by default', () => {
+  assert.equal(normalizeUserSettings({}).kanbanSessionOpenMode, 'peek');
 });
 
-test('Peek is preserved as a valid Kanban session open mode', () => {
+test('split is preserved as a valid Kanban session open mode', () => {
   assert.equal(
-    normalizeUserSettings({ kanbanSessionOpenMode: 'peek' }).kanbanSessionOpenMode,
-    'peek',
+    normalizeUserSettings({ kanbanSessionOpenMode: 'split' }).kanbanSessionOpenMode,
+    'split',
   );
 });
 
-test('unknown Kanban session open modes fall back to split view', () => {
+test('unknown Kanban session open modes fall back to Peek', () => {
   assert.equal(
     normalizeUserSettings({ kanbanSessionOpenMode: 'drawer' as never }).kanbanSessionOpenMode,
-    'split',
+    'peek',
   );
 });

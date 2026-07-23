@@ -25,7 +25,7 @@ import {
 import { normalizeTerminalThemePresetId } from '@/lib/terminal/terminal-theme';
 
 export const FONT_SCALE_OPTIONS = [0.8125, 1, 1.1875, 1.375] as const;
-export const DEFAULT_FONT_SCALE = 0.8125;
+export const DEFAULT_FONT_SCALE = 1;
 export const FONT_SCALE_MIGRATIONS: Readonly<Record<number, number>> = {
   0.9375: 1,
   1.25: 1.375,
@@ -358,7 +358,7 @@ function normalizeWindowsCloseBehavior(value: unknown): UserSettings['windowsClo
 function normalizeKanbanSessionOpenMode(
   value: unknown,
 ): UserSettings['kanbanSessionOpenMode'] {
-  return value === 'peek' ? 'peek' : 'split';
+  return value === 'split' ? 'split' : 'peek';
 }
 
 function normalizeProviderSessionMode(
@@ -520,7 +520,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     notifications: {
       soundEnabled: true,
       showToast: true,
-      aiTitleRefinement: false,
+      aiTitleRefinement: true,
     },
     translate: {
       enabled: false,
@@ -559,7 +559,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     inactivePanelDimming: 30,
     showProviderIcons: true,
     showRecentWork: true,
-    kanbanSessionOpenMode: 'split',
+    kanbanSessionOpenMode: 'peek',
     sttEngine: 'webSpeech',
     geminiApiKey: '',
     favoriteSkills: [],
