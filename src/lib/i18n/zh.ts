@@ -228,7 +228,7 @@ export const zh: I18nMessages = {
     },
     agentEnv: {
       label: '代理环境',
-      desc: '选择在Windows上运行代理的环境',
+      desc: '选择在Windows上运行代理的环境 — 适用于终端（PTY）和聊天（GUI）会话',
       native: 'Windows原生',
       nativeDesc: '直接在Windows中运行代理',
       wsl: 'Windows Subsystem for Linux',

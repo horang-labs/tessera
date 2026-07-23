@@ -45,13 +45,49 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
   const submittedMessageOrder = []
   const textPartsByMessage = new Map()
 
+  const hookUrl = () =>
+    "http://127.0.0.1:" + hookPort + "/__tessera/hook?session=" + encodeURIComponent(tesseraSessionID)
+
+  // WSL2 기본 NAT에서 게스트의 127.0.0.1은 Windows 호스트 리스너에 닿지 않는다.
+  // fetch 실패 시 curl.exe(Windows interop 프로세스 — 그쪽 loopback이 곧 호스트)로
+  // 재시도한다. hook-command.ts의 이중 curl과 같은 전략: interop PATH의 curl.exe
+  // 먼저, automount root가 /mnt가 아닐 수 있으니 /mnt/c 절대경로는 2차 폴백.
+  const isWslGuest = () => Boolean(readString(process.env.WSL_DISTRO_NAME))
+  const spawnCurl = async (curlBin, payload) => {
+    try {
+      const { spawn } = await import("node:child_process")
+      return await new Promise((resolve) => {
+        const child = spawn(
+          curlBin,
+          [
+            "-sS", "--connect-timeout", "3", "--max-time", "5", "--noproxy", "127.0.0.1",
+            "-X", "POST", hookUrl(),
+            "-H", "Content-Type: application/json",
+            "-H", "X-Tessera-Pane-Token: " + paneToken,
+            "--data-binary", "@-",
+          ],
+          { stdio: ["pipe", "ignore", "ignore"] },
+        )
+        const timer = setTimeout(() => { try { child.kill() } catch {} resolve(false) }, 6000)
+        child.on("error", () => { clearTimeout(timer); resolve(false) })
+        child.on("close", (code) => { clearTimeout(timer); resolve(code === 0) })
+        child.stdin.on("error", () => {})
+        child.stdin.end(JSON.stringify(payload))
+      })
+    } catch {
+      return false
+    }
+  }
+  const postHookViaWindowsCurl = async (payload) =>
+    (await spawnCurl("curl.exe", payload)) || spawnCurl("/mnt/c/Windows/System32/curl.exe", payload)
+
   const postHook = async (payload) => {
     if (!hookPort || !paneToken || !tesseraSessionID) return false
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 1000)
     try {
       const response = await fetch(
-        "http://127.0.0.1:" + hookPort + "/__tessera/hook?session=" + encodeURIComponent(tesseraSessionID),
+        hookUrl(),
         {
           method: "POST",
           headers: {
@@ -65,6 +101,7 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
       return response.ok
     } catch {
       // Lifecycle observation must never break or delay the OpenCode TUI.
+      if (isWslGuest()) return postHookViaWindowsCurl(payload)
       return false
     } finally {
       clearTimeout(timer)

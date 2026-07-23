@@ -19,6 +19,14 @@ const CLAUDE_LIFECYCLE_EVENTS = [
   // 유일한 감지 수단이라 모든 도구('*')에 발화한다. AskUserQuestion 분류도 겸한다.
   'PreToolUse',
   'PostToolUse',
+  'PostToolUseFailure',
+  'PermissionRequest',
+];
+const CODEX_LIFECYCLE_EVENTS = [
+  ...BASE_LIFECYCLE_EVENTS,
+  'PreToolUse',
+  'PermissionRequest',
+  'PostToolUse',
 ];
 
 function hooks(settingsJson: string): Record<string, unknown> {
@@ -42,18 +50,23 @@ test('Claude tool hooks fire for every tool to detect background-revived turns',
   >;
   assert.equal(claudeHooks.PreToolUse[0]?.matcher, '*');
   assert.equal(claudeHooks.PostToolUse[0]?.matcher, '*');
+  assert.equal(claudeHooks.PostToolUseFailure[0]?.matcher, '*');
+  assert.equal(claudeHooks.PermissionRequest[0]?.matcher, '*');
   // lifecycle hook들은 matcher가 없어야 한다(모든 발생에 발화).
   assert.equal(claudeHooks.Stop[0]?.matcher, undefined);
 });
 
-test('Codex terminal overlay keeps the base lifecycle hooks', () => {
+test('Codex terminal overlay observes tool progress and permission requests', () => {
   const codexHooks = hooks(buildCodexHookSettingsJson());
-  assertEvents(codexHooks, BASE_LIFECYCLE_EVENTS);
+  assertEvents(codexHooks, CODEX_LIFECYCLE_EVENTS);
+  assert.equal((codexHooks.PermissionRequest as Array<{ matcher?: string }>)[0]?.matcher, undefined);
 });
 
-test('OpenCode terminal plugin normalizes to the base lifecycle events', () => {
-  assert.deepEqual([...OPENCODE_TESSERA_LIFECYCLE_EVENTS], BASE_LIFECYCLE_EVENTS);
+test('OpenCode terminal plugin emits its declared lifecycle and input-wait events', () => {
   const emittedEvents = [...buildOpenCodeHookPluginSource().matchAll(/hook_event_name:\s*"([^"]+)"/g)]
     .map((match) => match[1]);
-  assert.deepEqual([...new Set(emittedEvents)].sort(), [...BASE_LIFECYCLE_EVENTS].sort());
+  assert.deepEqual(
+    [...new Set(emittedEvents)].sort(),
+    [...OPENCODE_TESSERA_LIFECYCLE_EVENTS].sort(),
+  );
 });

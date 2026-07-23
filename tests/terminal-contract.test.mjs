@@ -434,7 +434,9 @@ test('pending terminal startup can be cancelled and duplicate IDs are single-fli
 });
 
 test('launched TUIs exit instead of falling through to a command shell', () => {
-  assert.match(terminalResolverSource, /const inner = `exec \$\{buildPosixCommand/);
+  // inner는 CODEX_HOME 재단언 뒤 반드시 exec로 끝난다 — TUI 종료 후 셸로
+  // 떨어지지 않는다는 계약은 exec가 지킨다.
+  assert.match(terminalResolverSource, /\+ `exec \$\{buildPosixCommand\(launch\.program, launch\.args\)\}`/);
   assert.match(terminalResolverSource, /`exec \$\{buildPosixCommand\(launch\.program, launch\.args\)\}`/);
   assert.match(terminalResolverSource, /args: launch \? \['\/c'/);
   assert.doesNotMatch(terminalResolverSource, /NoExit/);
@@ -565,6 +567,78 @@ test('macOS terminal startup preserves user login PATH and executable node-pty h
   assert.match(terminalManagerSource, /fs\.chmodSync\(helperPath, stat\.mode \| 0o755\)/);
   assert.match(terminalManagerSource, /buildSpawnEnv\(env\)/);
   assert.match(terminalResolverSource, /platform === 'darwin' \? \['-l'\] : \[\]/);
+});
+
+test('WSL terminals cross hook coordinates and overlay homes via WSLENV', () => {
+  // 훅 좌표 3종은 값 그대로(플래그 없음) 크로스.
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_PANE_TOKEN' \}/);
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_SESSION_ID' \}/);
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_HOOK_PORT' \}/);
+  // 오버레이 홈은 값이 이미 게스트 POSIX 경로('/')면 /p 변환을 붙이지 않는다 —
+  // Windows 경로일 때만 경로 변환(orca endpointFlag 미러).
+  assert.match(terminalManagerSource, /\{ name: 'CODEX_HOME', path: !terminalEnv\.CODEX_HOME\?\.startsWith\('\/'\) \}/);
+  assert.match(terminalManagerSource, /\{ name: 'OPENCODE_CONFIG_DIR', path: !terminalEnv\.OPENCODE_CONFIG_DIR\?\.startsWith\('\/'\) \}/);
+});
+
+test('codex overlay placement and hook style follow the terminal runtime', () => {
+  // win32 + agentEnvironment 'wsl' → 게스트 파일시스템 오버레이(게스트 심링크),
+  // 그 외 → 호스트 오버레이. 훅 스타일도 같은 판정을 공유한다(스폰과 일치).
+  assert.match(routingSource, /wslTerminalRuntime = getRuntimePlatform\(\) === 'win32' && agentEnvironment === 'wsl'/);
+  assert.match(routingSource, /await createCodexOverlayInWsl\(terminalId, hookCommandStyle\)/);
+  assert.match(routingSource, /createCodexOverlay\(terminalId, hookCommandStyle\)/);
+  assert.match(routingSource, /buildClaudeHookSettingsJson\(hookCommandStyle\)/);
+  // 오버레이 실패는 제네릭 error가 아니라 terminal_error로 표면에 알린다.
+  assert.match(routingSource, /Failed to prepare the Codex overlay/);
+  // 느린 오버레이 준비는 opening 윈도우 안(launchEnvFactory)에서 실행돼야
+  // close_session 취소와 중복 create 방지가 그 구간을 지킨다.
+  assert.match(routingSource, /launchEnvFactory = async \(\) =>/);
+  assert.match(terminalManagerSource, /await options\.launchEnvFactory\(\)/);
+  assert.match(
+    terminalManagerSource,
+    /launchEnvFactory \? await options\.launchEnvFactory\(\) : undefined\);\n\s*assertOpeningActive\(\);/,
+  );
+});
+
+test('OpenCode WSL sessions prepare a guest-native shared overlay', () => {
+  const branchStart = routingSource.indexOf(
+    '} else if (!terminalExists && isStructuredOpenCode && structured) {',
+  );
+  const branchEnd = routingSource.indexOf(
+    '} else if (!terminalExists && message.launchIntent) {',
+    branchStart,
+  );
+  assert.ok(branchStart >= 0 && branchEnd > branchStart);
+  const openCodeBranch = routingSource.slice(branchStart, branchEnd);
+  const wslStart = openCodeBranch.indexOf('if (wslTerminalRuntime) {');
+  const nativeStart = openCodeBranch.indexOf('} else {', wslStart);
+  assert.ok(wslStart >= 0 && nativeStart > wslStart);
+
+  const wslBranch = openCodeBranch.slice(wslStart, nativeStart);
+  const nativeBranch = openCodeBranch.slice(nativeStart);
+  assert.match(wslBranch, /launchEnvFactory = async \(\) =>/);
+  assert.match(wslBranch, /await createOpenCodeOverlayInWsl\(\)/);
+  assert.match(wslBranch, /OPENCODE_CONFIG_DIR: overlayDir/);
+  assert.doesNotMatch(wslBranch, /createOpenCodeOverlay\(terminalId\)/);
+  assert.doesNotMatch(wslBranch, /launchObserverDisposer/);
+  assert.match(nativeBranch, /createOpenCodeOverlay\(terminalId\)/);
+  assert.match(nativeBranch, /launchObserverDisposer = overlay\.dispose/);
+});
+
+test('login-shell profiles cannot silently displace the injected CODEX_HOME overlay', () => {
+  // profile이 CODEX_HOME을 export해도 -c 본문의 재단언이 오버레이로 되돌린다
+  // (orca powershell-osc133-bootstrap의 ORCA_CODEX_HOME 복원 미러).
+  const reassert = /if \[ -n "\$\{TESSERA_CODEX_HOME:-\}" \]; then CODEX_HOME="\$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; /;
+  const matches = terminalResolverSource.match(new RegExp(reassert, 'g')) ?? [];
+  assert.equal(matches.length, 2, 'WSL inner와 posix -c 본문 모두 재단언해야 한다');
+  assert.match(routingSource, /TESSERA_CODEX_HOME: overlayHome/);
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_CODEX_HOME', path: !terminalEnv\.TESSERA_CODEX_HOME\?\.startsWith\('\/'\) \}/);
+});
+
+test('PowerShell argv quoting survives the PS 5.1 native argument binder', () => {
+  // --settings JSON처럼 큰따옴표+공백을 가진 인자가 자식 argv에서 쪼개지지 않게
+  // CommandLineToArgvW 규칙(\" + 직전 백슬래시 배가)으로 선-이스케이프한다.
+  assert.match(terminalResolverSource, /value\.replace\(\/\(\\\\\*\)"\/g/);
+  assert.match(terminalResolverSource, /NativeCommandParameterBinder/);
 });
 
 test('terminal startup normalizes inherited color capability flags', () => {

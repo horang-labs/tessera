@@ -10,6 +10,7 @@ import {
 import { invalidateAgentEnvironmentCache } from '@/lib/cli/spawn-cli';
 import { invalidateCliStatusSnapshot } from '@/lib/cli/connection-checker';
 import { invalidateProviderSessionOptionsCache } from '@/lib/cli/provider-session-options';
+import { invalidateTerminalProviderDetection } from '@/lib/terminal/provider-detection';
 import { pruneExpiredArchivedWorktrees } from '@/lib/archive/archive-service';
 import { getServerHostInfo } from '@/lib/system/server-host';
 import logger from '@/lib/logger';
@@ -76,6 +77,8 @@ export async function PUT(request: NextRequest) {
     invalidateCliStatusSnapshot();
     if (previousSettings.agentEnvironment !== settings.agentEnvironment) {
       invalidateProviderSessionOptionsCache(userId);
+      // PTY 감지 캐시는 환경(native/wsl)별 PATH 세계라 환경 전환 시 재프로브.
+      invalidateTerminalProviderDetection();
     }
     if (shouldPruneArchivedWorktreesForSettingsUpdate(previousSettings, settings)) {
       await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, userId);

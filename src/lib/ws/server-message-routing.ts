@@ -22,8 +22,12 @@ import { resolveTerminalProviderSessionReference } from '../terminal/provider-se
 import { detectTerminalProviders } from '../terminal/provider-detection';
 import { SettingsManager } from '../settings/manager';
 import { createCodexOverlay } from '../terminal/codex-overlay';
+import { createCodexOverlayInWsl } from '../terminal/codex-overlay-wsl';
 import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
+import type { HookCommandStyle } from '../terminal/hook-command';
+import { getRuntimePlatform } from '../system/runtime-platform';
 import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
+import { createOpenCodeOverlayInWsl } from '../terminal/opencode-overlay-wsl';
 import { createTerminalProviderSessionObserver } from '../terminal/provider-session-observer';
 import { getTerminalProviderSessionForTesseraSession } from '../db/terminal-provider-sessions';
 import { observeTerminalProviderSession } from '../terminal/provider-session-observation';
@@ -505,6 +509,12 @@ export async function routeClientTransportMessage({
 
       // create/cwd allowlist용 sessionId(기존 동작 유지).
       const sessionId = structured?.sessionId ?? message.sessionId ?? null;
+      // 훅 스타일·codex 오버레이 위치는 "CLI가 실제로 도는 런타임"을 따른다 —
+      // resolveShellKind와 같은 소스(getAgentEnvironment)라 스폰과 항상 일치한다.
+      const agentEnvironment = structured ? await getAgentEnvironment(userId) : 'native';
+      const wslTerminalRuntime = getRuntimePlatform() === 'win32' && agentEnvironment === 'wsl';
+      const hookCommandStyle: HookCommandStyle =
+        getRuntimePlatform() === 'win32' && !wslTerminalRuntime ? 'windows-cmd' : 'posix';
       const manager = bindTerminalSender(sendToConnection);
       const terminalId = sessionId
         ? manager.reserveTerminalId(userId, message.terminalId, sessionId)
@@ -514,6 +524,7 @@ export async function routeClientTransportMessage({
       let launchSpec: TerminalLaunchSpec | undefined;
       let providerId: string | undefined;
       let launchEnv: Record<string, string> | undefined;
+      let launchEnvFactory: (() => Promise<Record<string, string> | undefined>) | undefined;
       let launchObserverDisposer: (() => void) | undefined;
       let appearanceChangePolicy: TerminalCreateOptions['appearanceChangePolicy'];
       let resizeScrollbackPolicy: TerminalCreateOptions['resizeScrollbackPolicy'];
@@ -524,7 +535,7 @@ export async function routeClientTransportMessage({
 
       if (!terminalExists && isStructuredClaude && structured) {
         providerId = 'claude-code';
-        const settingsJson = buildClaudeHookSettingsJson();
+        const settingsJson = buildClaudeHookSettingsJson(hookCommandStyle);
         // Claude emits SessionStart as soon as its empty TUI opens, but does not
         // persist a resumable conversation until the first prompt is submitted.
         // Tessera records that prompt synchronously, so canonical history is the
@@ -568,38 +579,79 @@ export async function routeClientTransportMessage({
           prefillInput: message.prefillInput,
         };
         // CODEX_HOME 오버레이 생성(hooks.json 주입) — env로만 자식에 전달.
-        launchEnv = { CODEX_HOME: createCodexOverlay(terminalId) };
+        // win32+wsl은 게스트 파일시스템 안에 만든다(호스트 오버레이는 게스트 codex가
+        // 못 쓴다: 계정 홈 불일치 + Windows 심링크 EPERM). factory로 넘겨 opening
+        // 윈도우 안에서 실행한다 — WSL VM 콜드 부팅으로 수십 초 걸릴 수 있어서,
+        // 여기서 await하면 close_session 취소도 중복 create 방지도 그 구간을 못
+        // 지킨다. 실패는 create()가 terminal_error로 표면화한다 — 조용히 빈
+        // CODEX_HOME을 주면 codex가 로그인 화면부터 띄운다.
+        launchEnvFactory = async () => {
+          try {
+            const overlayHome = wslTerminalRuntime
+              ? await createCodexOverlayInWsl(terminalId, hookCommandStyle)
+              : createCodexOverlay(terminalId, hookCommandStyle);
+            // TESSERA_CODEX_HOME: login 셸 profile이 CODEX_HOME을 덮어도 -c 본문의
+            // 재단언(terminal-resolver)이 오버레이로 되돌릴 수 있게 원본을 함께 전달.
+            return { CODEX_HOME: overlayHome, TESSERA_CODEX_HOME: overlayHome };
+          } catch (error) {
+            logger.error({ error, terminalId }, 'Failed to prepare the Codex overlay');
+            throw new Error(
+              `Failed to prepare the Codex overlay: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        };
       } else if (!terminalExists && isStructuredOpenCode && structured) {
         providerId = 'opencode';
         const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
         const opencodeResumeId = dbSessions.extractOpenCodeTerminalSessionId(state);
-        try {
-          const overlay = createOpenCodeOverlay(terminalId);
-          launchObserverDisposer = overlay.dispose;
-          launchEnv = {
-            OPENCODE_CONFIG_DIR: overlay.configDir,
-            ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
+        const built = buildProviderTerminalLaunch({
+          providerId: 'opencode',
+          sessionId: structured.sessionId,
+          resume: !!opencodeResumeId,
+          opencodeResumeId,
+        });
+        launchSpec = {
+          program: built.command,
+          args: built.args,
+          prefillInput: message.prefillInput,
+        };
+
+        if (wslTerminalRuntime) {
+          // Windows의 세션별 설정 폴더를 /mnt/c로 넘기면 OpenCode가 수천 개의
+          // 플러그인 의존성 파일을 매번 DrvFS에 설치한다. WSL 안의 공용 폴더를
+          // 준비해 설치 결과를 재사용하고, 반환된 POSIX 경로는 /p 변환 없이 넘긴다.
+          launchEnvFactory = async () => {
+            try {
+              const overlayDir = await createOpenCodeOverlayInWsl();
+              return {
+                OPENCODE_CONFIG_DIR: overlayDir,
+                ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
+              };
+            } catch (error) {
+              logger.error({ error, terminalId }, 'Failed to prepare the OpenCode WSL overlay');
+              throw new Error(
+                `Failed to prepare the OpenCode WSL overlay: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
           };
-          const built = buildProviderTerminalLaunch({
-            providerId: 'opencode',
-            sessionId: structured.sessionId,
-            resume: !!opencodeResumeId,
-            opencodeResumeId,
-          });
-          launchSpec = {
-            program: built.command,
-            args: built.args,
-            prefillInput: message.prefillInput,
-          };
-        } catch (error) {
-          launchObserverDisposer?.();
-          sendToConnection(connectionId, {
-            type: 'terminal_error',
-            terminalId: message.terminalId,
-            surfaceId: message.surfaceId,
-            message: error instanceof Error ? error.message : 'Unable to prepare the OpenCode invocation.',
-          });
-          return;
+        } else {
+          try {
+            const overlay = createOpenCodeOverlay(terminalId);
+            launchObserverDisposer = overlay.dispose;
+            launchEnv = {
+              OPENCODE_CONFIG_DIR: overlay.configDir,
+              ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
+            };
+          } catch (error) {
+            launchObserverDisposer?.();
+            sendToConnection(connectionId, {
+              type: 'terminal_error',
+              terminalId: message.terminalId,
+              surfaceId: message.surfaceId,
+              message: error instanceof Error ? error.message : 'Unable to prepare the OpenCode invocation.',
+            });
+            return;
+          }
         }
       } else if (!terminalExists && message.launchIntent) {
         try {
@@ -712,6 +764,7 @@ export async function routeClientTransportMessage({
           appearanceRestartIntent: launchSpec?.handoffSessionId ? message.launchIntent : undefined,
           appearance: message.appearance,
           launchEnv,
+          launchEnvFactory,
           launchObserverDisposer,
         });
       } catch (error) {
@@ -907,10 +960,11 @@ async function resolveCliStatusesForUser(userId: string) {
   const settings = await SettingsManager.load(userId, { silent: true });
 
   if (settings.agentExecutionMode === 'pty') {
-    const detections = await detectTerminalProviders({ force: true });
+    const agentEnvironment = await getAgentEnvironment(userId);
+    const detections = await detectTerminalProviders({ force: true, environment: agentEnvironment });
     return detections.map((detection) => ({
       providerId: detection.providerId,
-      environment: 'native' as const,
+      environment: agentEnvironment,
       status: detection.installed ? 'connected' as const : 'not_installed' as const,
     }));
   }
@@ -931,7 +985,10 @@ async function resolveProvidersForUser(
   const settings = await SettingsManager.load(userId, { silent: true });
 
   if (settings.agentExecutionMode === 'pty') {
-    const detections = await detectTerminalProviders({ force: options.force });
+    const detections = await detectTerminalProviders({
+      force: options.force,
+      environment: await getAgentEnvironment(userId),
+    });
     return detections.map((detection) => ({
       id: detection.providerId,
       displayName: resolveProviderDisplayName(detection.providerId),

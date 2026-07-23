@@ -228,7 +228,7 @@ export const en: I18nMessages = {
     },
     agentEnv: {
       label: 'Agent Environment',
-      desc: 'Choose where the agent runs on Windows',
+      desc: 'Choose where the agent runs on Windows — applies to both terminal (PTY) and chat (GUI) sessions',
       native: 'Windows native',
       nativeDesc: 'Run the agent directly in Windows',
       wsl: 'Windows Subsystem for Linux',

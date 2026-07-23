@@ -105,6 +105,12 @@ export function useSessionCrud() {
       }
 
       const tempSessionId = `temp-${uuidv4()}`;
+      // kind를 서버 응답 전에 미리 확정한다 — 없으면 kind===undefined가 GUI로
+      // 폴백해 POST 왕복 내내 레거시 채팅 UI가 그려졌다가 PTY로 교체된다(깜빡임).
+      // 서버 판정(resolveSessionCreationExecutionMode)과 같은 규칙: 명시 요청 우선,
+      // 미지정이면 글로벌 기본.
+      const effectiveExecutionMode = options.executionMode
+        ?? useSettingsStore.getState().settings.agentExecutionMode;
       const optimisticSession: UnifiedSession = {
         id: tempSessionId,
         title: t('panel.creating'),
@@ -121,6 +127,7 @@ export function useSessionCrud() {
         provider: resolvedProviderId,
         taskId: options.taskId,
         collectionId: options.collectionId,
+        kind: effectiveExecutionMode === 'pty' ? 'terminal' : 'chat',
       };
 
       sessionStore.addSession(optimisticSession);

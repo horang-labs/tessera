@@ -182,6 +182,9 @@ export function handleIncomingServerMessage({
       }
       for (const project of sessionStore.projects) {
         for (const session of project.sessions) {
+          // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
+          // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
+          if (session.id.startsWith('temp-')) continue;
           if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
             useTerminalSessionStore.getState().markRuntimeStopped(session.id);
             if (isPendingTerminalReboundSource(session.id)) continue;

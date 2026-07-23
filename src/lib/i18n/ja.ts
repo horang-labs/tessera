@@ -228,7 +228,7 @@ export const ja: I18nMessages = {
     },
     agentEnv: {
       label: 'エージェント環境',
-      desc: 'Windowsでエージェントを実行する環境を選択',
+      desc: 'Windowsでエージェントを実行する環境を選択 — ターミナル（PTY）とチャット（GUI）の両方のセッションに適用されます',
       native: 'Windows ネイティブ',
       nativeDesc: 'Windowsで直接エージェントを実行',
       wsl: 'Windows Subsystem for Linux',

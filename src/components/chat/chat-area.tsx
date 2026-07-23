@@ -63,6 +63,11 @@ export const ChatArea = memo(function ChatArea({
   );
 
   const session = useSessionStore((state) => state.getSession(sessionId));
+  // 생성 중(낙관적 temp 세션): 서버 세션이 아직 없어서 PTY attach가 불가능하다 —
+  // TerminalPanel을 붙이면 존재하지 않는 세션으로 terminal_create가 나가 에러가 뜬다.
+  // 전역 creatingSessionId 슬롯은 동시 생성 시 덮여서 믿을 수 없다 — temp- 접두가
+  // 낙관적 세션의 결정적 마커다(use-session-crud만 이 접두로 id를 만든다).
+  const isPendingCreation = sessionId.startsWith('temp-');
   const messages = useChatStore((state) => state.messages.get(sessionId));
   const error = useChatStore((state) => state.errors.get(sessionId));
   const clearError = useChatStore((state) => state.clearError);
@@ -149,7 +154,9 @@ export const ChatArea = memo(function ChatArea({
     );
   }
 
-  if (messages === undefined) {
+  // 터미널 세션은 메시지 히스토리 도착을 기다릴 이유가 없다 — GUI 메시지 골격을
+  // 그리면 PTY로 교체될 때 깜빡인다. 터미널 분기로 바로 진행한다.
+  if (messages === undefined && !isTerminalSession) {
     if (!isPeek) return <ChatAreaSkeleton isSinglePanel={isSinglePanel} />;
     return shouldShowPeekLoading ? <SessionPeekLoading /> : null;
   }
@@ -192,7 +199,14 @@ export const ChatArea = memo(function ChatArea({
 
       <div className="flex-1 overflow-hidden">
         {isTerminalSession ? (
-          terminalId && sessionProvider ? (
+          isPendingCreation ? (
+            // 생성 대기 표면: 터미널 기본 배경(TERMINAL_LIGHT/DARK_THEME)과 같은 색만
+            // 유지해 GUI 골격 없이 실제 TerminalPanel로 이어지게 한다.
+            <div
+              className="h-full w-full bg-[#fafaf9] dark:bg-[#161616]"
+              data-testid="terminal-pending-surface"
+            />
+          ) : terminalId && sessionProvider ? (
             <TerminalPanel
               key={terminalId}
               panelId={panelId}

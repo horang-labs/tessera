@@ -228,7 +228,7 @@ export const ko: I18nMessages = {
     },
     agentEnv: {
       label: '에이전트 환경',
-      desc: 'Windows에서 에이전트를 실행할 환경 선택',
+      desc: 'Windows에서 에이전트를 실행할 환경 선택 — 터미널(PTY)과 채팅(GUI) 세션 모두에 적용됩니다',
       native: 'Windows 네이티브',
       nativeDesc: 'Windows에서 직접 에이전트 실행',
       wsl: 'Windows Subsystem for Linux',

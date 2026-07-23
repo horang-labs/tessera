@@ -14,6 +14,7 @@ import {
 import { getServerPort } from '@/lib/server-port';
 import { revokePaneTokensForTerminal } from './pane-token-registry';
 import { cleanupCodexOverlayForTerminal } from './codex-overlay';
+import { cleanupCodexOverlayInWsl } from './codex-overlay-wsl';
 import { TerminalHeadlessModel } from './terminal-headless-model';
 import { normalizeTerminalColorEnv } from './terminal-color-env';
 import { createTerminalAppearanceController } from './terminal-appearance-controller';
@@ -370,6 +371,7 @@ export class TerminalManager {
       options.launchObserverDisposer?.();
       revokePaneTokensForTerminal(options.terminalId);
       cleanupCodexOverlayForTerminal(options.terminalId);
+      cleanupCodexOverlayInWsl(options.terminalId);
       this.sendToConnection(options.connectionId, {
         type: 'terminal_error',
         terminalId: options.terminalId,
@@ -533,6 +535,13 @@ export class TerminalManager {
       }, 'Terminal shell resolved');
       traceTerminalStage('spawn:before', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal spawning PTY');
+      // launchEnvFactory는 opening 윈도우 안에서 해석한다 — 게스트 오버레이 생성처럼
+      // 느린 준비가 close_session 취소(cancelledOpeningKeys)와 중복 create 방지
+      // (openingTerminals)의 보호를 받게 하기 위함. 실패는 create()의 catch가
+      // terminal_error로 표면화한다.
+      const launchEnv = options.launchEnv
+        ?? (options.launchEnvFactory ? await options.launchEnvFactory() : undefined);
+      assertOpeningActive();
       const extraEnv: Record<string, string | undefined> = {
         ...(options.paneToken
           ? {
@@ -541,7 +550,7 @@ export class TerminalManager {
               TESSERA_HOOK_PORT: String(getServerPort()),
             }
           : {}),
-        ...(options.launchEnv ?? {}),
+        ...(launchEnv ?? {}),
       };
       const terminalEnv = buildTerminalEnv(
         process.env,
@@ -553,8 +562,13 @@ export class TerminalManager {
           { name: 'TESSERA_SESSION_ID' },
           { name: 'TESSERA_HOOK_PORT' },
           { name: 'TESSERA_OPENCODE_RESUME_ID' },
-          { name: 'CODEX_HOME', path: true },
-          { name: 'OPENCODE_CONFIG_DIR', path: true },
+          // '/'로 시작하면 이미 게스트 POSIX 경로(codex-overlay-wsl.ts) — /p 변환을
+          // 붙이면 오히려 망가진다. Windows 경로일 때만 /p (orca endpointFlag 미러).
+          { name: 'CODEX_HOME', path: !terminalEnv.CODEX_HOME?.startsWith('/') },
+          // profile의 CODEX_HOME export를 login 셸 -c 본문에서 되돌리기 위한 원본
+          // (terminal-resolver의 재단언 스니펫이 소비).
+          { name: 'TESSERA_CODEX_HOME', path: !terminalEnv.TESSERA_CODEX_HOME?.startsWith('/') },
+          { name: 'OPENCODE_CONFIG_DIR', path: !terminalEnv.OPENCODE_CONFIG_DIR?.startsWith('/') },
           { name: 'TERM' },
           { name: 'COLORTERM' },
           { name: 'TERM_PROGRAM' },
@@ -799,6 +813,7 @@ export class TerminalManager {
       }
       revokePaneTokensForTerminal(options.terminalId);
       cleanupCodexOverlayForTerminal(options.terminalId);
+      cleanupCodexOverlayInWsl(options.terminalId);
       options.launchObserverDisposer?.();
       throw error;
     }
@@ -1272,6 +1287,7 @@ export class TerminalManager {
       this.clearSessionBinding(runtime);
       revokePaneTokensForTerminal(runtime.terminalId);
       cleanupCodexOverlayForTerminal(runtime.terminalId);
+      cleanupCodexOverlayInWsl(runtime.terminalId);
       if (runtime.sessionId) {
         this.managerOptions.onSessionRuntimeStateChange?.({
           sessionId: runtime.sessionId,

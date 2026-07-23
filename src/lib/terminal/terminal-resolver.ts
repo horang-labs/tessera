@@ -239,8 +239,19 @@ function buildPosixCommand(program: string, args: string[]): string {
   return [program, ...args].map(quoteBashArg).join(' ');
 }
 
+/**
+ * PowerShell 인용은 두 단계를 통과해야 한다: (1) PS 파서(작은따옴표), (2) 네이티브
+ * 명령 인자 전달. powershell.exe(항상 5.1)의 NativeCommandParameterBinder는 공백
+ * 포함 인자를 큰따옴표로 감싸면서 내부 큰따옴표를 이스케이프하지 않는다(PS 7.2+의
+ * PSNativeCommandArgumentPassing에서만 수정됨) — claude의 --settings JSON처럼
+ * 큰따옴표+공백을 함께 가진 인자는 자식 argv가 쪼개진다. 그래서 값 안의 큰따옴표를
+ * CommandLineToArgvW 규칙(\" + 직전 백슬래시 배가)으로 선-이스케이프한다. 큰따옴표가
+ * 인용부 밖에 놓이는 경우(공백 없는 값)에도 \" 는 리터럴 따옴표로 파싱되므로 안전하다.
+ */
 function quotePowerShellArg(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+  const nativeSafe = value.replace(/(\\*)"/g, (_match, backslashes: string) =>
+    `${backslashes}${backslashes}\\"`);
+  return `'${nativeSafe.replace(/'/g, "''")}'`;
 }
 
 function buildPowerShellCommand(program: string, args: string[]): string {
@@ -276,7 +287,13 @@ function buildWslTerminalScript(cwd: string, launchSpec?: TerminalLaunchSpec): s
     // rc/profile를 먼저 소싱한 뒤 실행한다. TUI 종료 후 셸로 떨어지지 않아야
     // 지연된 slash prefill이 우연히 셸 명령으로 해석되지 않는다.
     // $shell은 export해 inner 셸이 재사용한다(inner는 작은따옴표라 바깥에서 전개되지 않음).
-    const inner = `exec ${buildPosixCommand(launch.program, launch.args)}`;
+    // CODEX_HOME 재단언: 로그인 셸의 profile이 CODEX_HOME을 무조건 export하면
+    // WSLENV로 주입한 per-terminal 오버레이가 덮여 codex가 오버레이(훅/trust)를
+    // 무시한다. profile 소싱이 끝난 -c 본문에서 원본(TESSERA_CODEX_HOME)으로
+    // 되돌린다 — orca의 powershell-osc133-bootstrap(ORCA_CODEX_HOME 복원) 미러.
+    const inner =
+      'if [ -n "${TESSERA_CODEX_HOME:-}" ]; then CODEX_HOME="$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; '
+      + `exec ${buildPosixCommand(launch.program, launch.args)}`;
     lines.push('WSL_LAUNCH_SHELL="$shell"; export WSL_LAUNCH_SHELL');
     lines.push(`exec "$shell" -l -i -c ${quoteBashArg(inner)}`);
   } else {
@@ -414,7 +431,10 @@ export function resolveTerminalShell(options: {
       args: [
         ...loginArgs,
         '-c',
-        `exec ${buildPosixCommand(launch.program, launch.args)}`,
+        // CODEX_HOME 재단언은 buildWslTerminalScript의 inner와 같은 이유 —
+        // macOS -l 셸도 .zprofile이 CODEX_HOME을 덮으면 오버레이가 무시된다.
+        'if [ -n "${TESSERA_CODEX_HOME:-}" ]; then CODEX_HOME="$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; '
+        + `exec ${buildPosixCommand(launch.program, launch.args)}`,
       ],
       cwd,
     };

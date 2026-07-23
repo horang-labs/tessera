@@ -123,7 +123,7 @@ export async function buildSetupStatus(
 
   const [cliStatuses, probedTools] = await Promise.all([
     options.executionMode === 'pty'
-      ? detectTerminalProvidersAsCliStatuses()
+      ? detectTerminalProvidersAsCliStatuses(activeEnvironment)
       : checkStatuses({ userId: options.userId }),
     Promise.all(
       availableEnvironments.map(async (environment) => ({
@@ -170,14 +170,15 @@ export async function buildSetupStatus(
 /**
  * PTY 모드용: which-only 감지 결과를 기존 판정 파이프라인이 먹는
  * CliStatusEntry 형태로 변환한다. 버전/auth 정보는 없다.
- * 참고: PTY 감지는 native 로그인 셸만 프로브하므로 WSL 환경 카드에는
- * 프로바이더가 비어 보인다(summary는 native 기준이라 판정에는 영향 없음).
+ * 활성 환경(native/wsl)의 셸을 프로브하므로 카드도 그 환경 기준으로 채워진다.
  */
-async function detectTerminalProvidersAsCliStatuses(): Promise<CliStatusEntry[]> {
-  const detections = await detectTerminalProviders({ force: true });
+async function detectTerminalProvidersAsCliStatuses(
+  environment: AgentEnvironment,
+): Promise<CliStatusEntry[]> {
+  const detections = await detectTerminalProviders({ force: true, environment });
   return detections.map((detection) => ({
     providerId: detection.providerId,
-    environment: 'native' as const,
+    environment,
     status: detection.installed ? 'connected' as const : 'not_installed' as const,
   }));
 }
