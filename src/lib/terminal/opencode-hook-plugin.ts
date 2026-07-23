@@ -2,6 +2,11 @@ export const OPENCODE_TESSERA_LIFECYCLE_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
   'Stop',
+  // 권한 승인 대기 / 질문 대기 → 사용자 입력 대기(input_required). 승인·답변 후
+  // PostToolUse로 running 복귀시켜 노란 깜빡점을 해소한다.
+  'PermissionRequest',
+  'AskUserQuestion',
+  'PostToolUse',
 ] as const;
 
 /**
@@ -24,6 +29,13 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
   let startSent = false
   let sessionIdle = false
   let turnHasSubmittedPrompt = false
+  // 이번 턴에 세션이 실제로 busy(작업)를 거쳤는지. 완료(Stop) 보고를 프롬프트 캡처
+  // 대신 이 신호에 건다 — 프롬프트 주입/타이밍으로 UserPromptSubmit 캡처를 놓쳐도
+  // idle 완료를 놓치지 않기 위함(Orca 방식). busy를 안 거친 순수 idle은 억제한다.
+  let turnWasActive = false
+  // 권한/질문으로 사용자 입력 대기(input_required)를 보낸 상태인지. 승인·답변 뒤 다음
+  // busy 전이에서 running으로 복귀시켜 노란 깜빡점을 해소하는 데 쓴다.
+  let awaitingUserInput = false
   let postQueue = Promise.resolve()
   let promptFlushTimer
   let idleFinalizeTimer
@@ -136,6 +148,8 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
     startSent = false
     sessionIdle = false
     turnHasSubmittedPrompt = false
+    turnWasActive = false
+    awaitingUserInput = false
     userMessageIDs.clear()
     textPartsByMessage.clear()
     sendStart()
@@ -147,8 +161,13 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
     flushUserPrompts()
     for (const messageID of userMessageIDs) textPartsByMessage.delete(messageID)
     userMessageIDs.clear()
-    if (!turnHasSubmittedPrompt) return
+    // 완료 보고를 프롬프트 캡처에 묶지 않는다(Orca 방식). UserPromptSubmit을 놓친
+    // 턴이라도 세션이 busy를 거쳤으면 idle 완료를 보고한다. busy 없이 온 순수 idle
+    // (세션 로드/resume 직후)만 빈 완료로 억제한다.
+    if (!turnHasSubmittedPrompt && !turnWasActive) return
     turnHasSubmittedPrompt = false
+    turnWasActive = false
+    awaitingUserInput = false
     enqueue({ hook_event_name: "Stop", session_id: targetSessionID })
   }
 
@@ -242,12 +261,49 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
         const sessionID = readString(properties.sessionID)
         if (sessionID !== targetSessionID) return
 
+        // 권한 승인 대기 / 질문 대기 → 사용자 입력 대기(input_required, 노란 깜빡점).
+        // Orca 방식: 상태전이(busy/idle)와 별개로 즉시 방출하고 sessionIdle/turnWasActive/
+        // finalize 타이머는 건드리지 않는다. 승인·답변 뒤 opencode가 다시 busy로 가면 그때
+        // running으로 복귀시켜 대기 표시를 해소한다(아래 busy 처리).
+        if (current.type === "permission.asked") {
+          const perm = readString(properties.permission)
+          const patterns = Array.isArray(properties.patterns)
+            ? properties.patterns.filter((p) => typeof p === "string")
+            : []
+          const detail = patterns.join(", ")
+          enqueue({
+            hook_event_name: "PermissionRequest",
+            session_id: targetSessionID,
+            tool_name: perm || "Tool",
+            tool_input: detail ? { command: detail } : {},
+          })
+          awaitingUserInput = true
+          return
+        }
+        if (current.type === "question.asked") {
+          enqueue({
+            hook_event_name: "AskUserQuestion",
+            session_id: targetSessionID,
+            question: readString(properties.question)
+              || readString(properties.title)
+              || readString(properties.text),
+          })
+          awaitingUserInput = true
+          return
+        }
+
         if (current.type === "session.status") {
           const status = asRecord(properties.status)
           const statusType = readString(status?.type) || readString(properties.status)
           if (statusType === "busy") {
             sessionIdle = false
+            turnWasActive = true
             clearIdleFinalizeTimer()
+            // 권한/질문 대기를 해소하고 다시 작업이 시작되면 running으로 복귀시킨다.
+            if (awaitingUserInput) {
+              awaitingUserInput = false
+              enqueue({ hook_event_name: "PostToolUse", session_id: targetSessionID })
+            }
             return
           }
           if (statusType !== "idle") return

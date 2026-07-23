@@ -71,11 +71,34 @@ function classifyNotification(payload: Record<string, unknown>): { status: Termi
   return null; // idle/기타 Notification은 상태 승격 안 함
 }
 
+/**
+ * OpenCode AskUserQuestion(질문 대기) payload에서 질문 본문 preview를 뽑는다.
+ * 플러그인이 opencode question.asked properties를 그대로 실어 보내므로, 알려진
+ * 위치를 순서대로 시도한다(구조가 버전에 따라 달라도 상태 승격은 유지).
+ */
+function readAskUserQuestionPreview(payload: Record<string, unknown>): string | undefined {
+  const direct = readString(payload.question) || readString(payload.preview) || readString(payload.title);
+  if (direct) return direct;
+  const question = payload.question;
+  if (question && typeof question === 'object') {
+    const text = readString((question as Record<string, unknown>).text)
+      || readString((question as Record<string, unknown>).title);
+    if (text) return text;
+  }
+  return undefined;
+}
+
 /** hook_event_name → 상태. null이면 상태 승격 안 함(idle Notification 등). */
 function mapEventToStatus(
   event: string,
   payload: Record<string, unknown>,
 ): { status: TerminalSessionStatus; preview?: string } | null {
+  // OpenCode 주입 플러그인은 권한 승인 대기(opencode permission.asked)와 질문 대기
+  // (question.asked)를 각각 PermissionRequest / AskUserQuestion 훅으로 보낸다. 둘 다
+  // 사용자 입력 대기(사이드바 노란 깜빡점)로 승격한다. codex/claude와 달리 opencode는
+  // stock Notification을 안 내므로 이 두 훅이 유일한 input_required 신호다.
+  const permissionRequest = classifyPermissionRequestEvent(event, payload);
+  if (permissionRequest) return permissionRequest;
   switch (event) {
     case 'SessionStart':
       return { status: 'idle' };
@@ -85,6 +108,8 @@ function mapEventToStatus(
     case 'Stop':
       // stock Stop payload엔 assistant 텍스트가 없다. 포크 필드가 있으면만 preview로.
       return completedStatus(payload);
+    case 'AskUserQuestion':
+      return { status: 'input_required', preview: readAskUserQuestionPreview(payload) };
     case 'Notification':
       return classifyNotification(payload);
     default:
