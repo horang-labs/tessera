@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   detectTerminalClientPlatform,
+  isTerminalCopyShortcut,
   isTerminalPasteShortcut,
   resolveTerminalInputAction,
   resolveTerminalKeyInput,
@@ -36,11 +37,28 @@ test('terminal paste shortcut follows the client platform without intercepting c
       isTerminalPasteShortcut(keyEvent({ key: 'v', metaKey: true }), 'mac'),
       isTerminalPasteShortcut(keyEvent({ key: 'V', ctrlKey: true }), 'linux'),
       isTerminalPasteShortcut(keyEvent({ key: 'v', ctrlKey: true }), 'windows'),
+      isTerminalPasteShortcut(keyEvent({ key: 'v', ctrlKey: true, shiftKey: true }), 'linux'),
+      isTerminalPasteShortcut(keyEvent({ key: 'Insert', shiftKey: true }), 'windows'),
       isTerminalPasteShortcut(keyEvent({ key: 'v', ctrlKey: true }), 'mac'),
       isTerminalPasteShortcut(keyEvent({ key: 'v', metaKey: true, isComposing: true }), 'mac'),
       isTerminalPasteShortcut(keyEvent({ type: 'keyup', key: 'v', metaKey: true }), 'mac'),
     ],
-    [true, true, true, false, false, false],
+    [true, true, true, true, true, false, false, false],
+  );
+});
+
+test('terminal copy shortcut preserves Ctrl+C interrupt when there is no selection', () => {
+  assert.deepEqual(
+    [
+      isTerminalCopyShortcut(keyEvent({ key: 'c', ctrlKey: true }), 'linux', true),
+      isTerminalCopyShortcut(keyEvent({ key: 'c', ctrlKey: true }), 'linux', false),
+      isTerminalCopyShortcut(keyEvent({ key: 'C', ctrlKey: true, shiftKey: true }), 'windows', false),
+      isTerminalCopyShortcut(keyEvent({ key: 'c', metaKey: true }), 'mac', true),
+      isTerminalCopyShortcut(keyEvent({ key: 'C', metaKey: true, shiftKey: true }), 'mac', false),
+      isTerminalCopyShortcut(keyEvent({ key: 'c', ctrlKey: true }), 'mac', true),
+      isTerminalCopyShortcut(keyEvent({ key: 'c', ctrlKey: true, altKey: true }), 'linux', true),
+    ],
+    [true, false, true, true, true, false, false],
   );
 });
 

@@ -216,15 +216,30 @@ test('single-panel terminal sessions omit only the redundant session header', ()
   assert.match(chatAreaSource, /search=\{\{/);
 });
 
-test('terminal image paste crosses the Electron clipboard boundary through a narrow preload API', () => {
-  assert.match(electronMainSource, /getTerminalClipboardKind\(clipboard\)/);
+test('terminal text and image paste cross the Electron clipboard boundary through one explicit shortcut path', () => {
   assert.match(electronMainSource, /readTerminalClipboard\(clipboard\)/);
-  assert.match(electronPreloadSource, /ipcRenderer\.sendSync\('get-terminal-clipboard-kind'\)/);
   assert.match(electronPreloadSource, /readTerminalClipboard:/);
   assert.match(electronPreloadSource, /ipcRenderer\.invoke\('read-terminal-clipboard'\)/);
+  assert.match(
+    terminalSurfaceSource,
+    /if \(\s*typeof electronClipboard\?\.readTerminalClipboard === 'function'\s*&& isTerminalPasteShortcut\(event, inputContext\.platform\)/,
+  );
   assert.match(terminalSurfaceSource, /pasteTerminalClipboard\(payload/);
   assert.match(terminalSurfaceSource, /uploadTerminalClipboardImage/);
   assert.match(terminalSurfaceSource, /terminal\.paste\(data\)/);
+  assert.doesNotMatch(electronMainSource, /get-terminal-clipboard-kind|getTerminalClipboardKind/);
+  assert.doesNotMatch(electronPreloadSource, /get-terminal-clipboard-kind|getTerminalClipboardKind/);
+  assert.doesNotMatch(terminalSurfaceSource, /getTerminalClipboardKind/);
+});
+
+test('terminal selection copy crosses Electron only when the copy shortcut owns the key event', () => {
+  assert.match(electronMainSource, /writeTerminalClipboardText\(clipboard, text\)/);
+  assert.match(electronPreloadSource, /writeTerminalClipboardText:/);
+  assert.match(electronPreloadSource, /ipcRenderer\.invoke\('write-terminal-clipboard-text', text\)/);
+  assert.match(terminalSurfaceSource, /isTerminalCopyShortcut\(/);
+  assert.match(terminalSurfaceSource, /terminal\.hasSelection\(\)/);
+  assert.match(terminalSurfaceSource, /terminal\.getSelection\(\)/);
+  assert.match(terminalSurfaceSource, /writeTerminalClipboardText\(selection\)/);
 });
 
 test('terminal websocket protocol covers process lifecycle', () => {

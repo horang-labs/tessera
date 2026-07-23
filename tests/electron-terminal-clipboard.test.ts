@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  getTerminalClipboardKind,
   readTerminalClipboard,
+  writeTerminalClipboardText,
 } from '../electron/terminal-clipboard';
 
 function clipboardStub(options: {
@@ -32,17 +32,6 @@ test('desktop terminal clipboard gives text precedence over an available image',
   );
 });
 
-test('desktop terminal clipboard kind lets ordinary text stay on the xterm paste path', () => {
-  assert.deepEqual(
-    [
-      getTerminalClipboardKind(clipboardStub({ text: 'copied text' })),
-      getTerminalClipboardKind(clipboardStub()),
-      getTerminalClipboardKind(clipboardStub({ emptyImage: true })),
-    ],
-    ['text', 'image', 'empty'],
-  );
-});
-
 test('desktop terminal clipboard serializes an image-only clipboard as PNG', () => {
   assert.deepEqual(
     readTerminalClipboard(clipboardStub({ png: Buffer.from('png bytes') })),
@@ -66,6 +55,21 @@ test('desktop terminal clipboard reports empty content without fabricating input
 test('desktop terminal clipboard rejects images with unsafe dimensions', () => {
   assert.throws(
     () => readTerminalClipboard(clipboardStub({ width: 20_000, height: 20_000 })),
+    /too large/,
+  );
+});
+
+test('desktop terminal clipboard writes a validated selection as text', () => {
+  const writes: string[] = [];
+  writeTerminalClipboardText({ writeText: (text) => writes.push(text) }, 'selected output');
+  assert.deepEqual(writes, ['selected output']);
+});
+
+test('desktop terminal clipboard rejects invalid and oversized selection writes', () => {
+  const clipboard = { writeText: (_text: string) => {} };
+  assert.throws(() => writeTerminalClipboardText(clipboard, null), /must be a string/);
+  assert.throws(
+    () => writeTerminalClipboardText(clipboard, 'x'.repeat(4 * 1024 * 1024 + 1)),
     /too large/,
   );
 });

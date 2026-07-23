@@ -31,16 +31,50 @@ export function isTerminalPasteShortcut(
   if (
     event.type !== 'keydown'
     || event.isComposing
-    || event.key.toLowerCase() !== 'v'
     || event.altKey
-    || event.shiftKey
   ) {
     return false;
   }
 
-  return platform === 'mac'
-    ? event.metaKey && !event.ctrlKey
-    : event.ctrlKey && !event.metaKey;
+  if (platform === 'mac') {
+    return event.key.toLowerCase() === 'v'
+      && event.metaKey
+      && !event.ctrlKey
+      && !event.shiftKey;
+  }
+
+  if (event.key === 'Insert') {
+    return event.shiftKey && !event.ctrlKey && !event.metaKey;
+  }
+
+  return event.key.toLowerCase() === 'v'
+    && event.ctrlKey
+    && !event.metaKey;
+}
+
+export function isTerminalCopyShortcut(
+  event: TerminalKeyEvent,
+  platform: TerminalClientPlatform,
+  hasSelection: boolean,
+): boolean {
+  if (
+    event.type !== 'keydown'
+    || event.isComposing
+    || event.key.toLowerCase() !== 'c'
+    || event.altKey
+  ) {
+    return false;
+  }
+
+  if (platform === 'mac') {
+    return event.metaKey
+      && !event.ctrlKey
+      && (event.shiftKey || hasSelection);
+  }
+
+  return event.ctrlKey
+    && !event.metaKey
+    && (event.shiftKey || hasSelection);
 }
 
 /**
