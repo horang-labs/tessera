@@ -17,6 +17,7 @@ import {
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useNotificationStore } from '@/stores/notification-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
@@ -182,7 +183,23 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const workflowIconFill = workflowStatus
     ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
-  const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
+  // unreadCount는 session-store에서 직접 구독한다. prop의 session.unreadCount는
+  // board→scope→column 경유라, 완료 시 terminal-session-store(isProcessing) 리렌더와
+  // board 리렌더 타이밍이 어긋나면 낡은 값을 읽어 unread를 놓친다(칸반 카드는 memo).
+  // 리스트뷰가 쓰는 것과 같은 직접 구독으로 타이밍을 일치시킨다.
+  const liveUnreadCount = useSessionStore((state) => {
+    for (const project of state.projects) {
+      const s = project.sessions.find((item) => item.id === session.id);
+      if (s) return s.unreadCount ?? 0;
+    }
+    return session.unreadCount ?? 0;
+  });
+  const hasUnreadNotification = useNotificationStore((state) =>
+    state.notifications.some((notification) =>
+      notification.sessionId === session.id && !notification.read
+    )
+  );
+  const hasUnread = !isActive && (liveUnreadCount > 0 || hasUnreadNotification);
   const runtimePresentation = resolveSessionRuntimePresentation(session);
   const visibleUnread = session.kind === 'terminal' && isProcessing ? false : hasUnread;
   const stripeClass = isAwaitingUser
@@ -650,8 +667,12 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
+  // task에 활성 세션이 하나라도 있으면 unread를 통째로 억제하던 `!isActive` 가드를
+  // 제거한다. multi-session task에서 한 세션이 활성이면 다른 완료+안읽음 세션의 unread가
+  // 다 숨겨져 초록 running 스트라이프로 밀리던 버그(리스트뷰는 단일세션+활성일 때만
+  // 억제해 이 문제가 없었다). 활성 세션 자체는 아래 개별 제외로 이미 빠진다.
   const hasUnreadSession = useSessionStore((state) =>
-    !isActive && taskSessionIds.some((id) => {
+    taskSessionIds.some((id) => {
       if (id === activeSessionId) return false;
       for (const p of state.projects) {
         const s = p.sessions.find((ss) => ss.id === id);
@@ -660,9 +681,21 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
       return false;
     })
   );
-  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasVisibleRuntimeSession;
+  const hasUnreadNotification = useNotificationStore((state) =>
+    state.notifications.some((notification) =>
+      notification.sessionId !== activeSessionId
+      && taskSessionIds.includes(notification.sessionId)
+      && !notification.read
+    )
+  );
+  const hasVisibleTaskUnread = hasUnreadSession || hasUnreadNotification;
+  const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasVisibleTaskUnread || hasVisibleRuntimeSession;
 
-  const visibleTaskUnread = hasTerminalProcessingSession ? false : hasUnreadSession;
+  // PTY turn processing is the live state and outranks stale unread. Once the
+  // turn completes, processing clears and the unread completion becomes yellow.
+  const visibleTaskUnread = hasTerminalProcessingSession
+    ? false
+    : hasVisibleTaskUnread;
 
   // Left-edge status stripe — mirrors the session dot so the signal
   // travels on two channels. PTY processing outranks stale unread state.
@@ -908,7 +941,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 <ItemStatusIndicator
                   isProcessing={hasProcessingSession}
                   isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
+                  hasUnread={visibleTaskUnread}
                   isRunning={hasVisibleRuntimeSession}
                   sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                   placement="corner"
@@ -920,7 +953,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 <ItemStatusIndicator
                   isProcessing={hasProcessingSession}
                   isAwaitingUser={hasAwaitingUserSession}
-                  hasUnread={hasUnreadSession}
+                  hasUnread={visibleTaskUnread}
                   isRunning={hasVisibleRuntimeSession}
                   sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                   placement="inline"
@@ -971,7 +1004,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   <ItemStatusIndicator
                     isProcessing={hasProcessingSession}
                     isAwaitingUser={hasAwaitingUserSession}
-                    hasUnread={hasUnreadSession}
+                    hasUnread={visibleTaskUnread}
                     isRunning={hasVisibleRuntimeSession}
                     sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                     placement="corner"
@@ -1213,7 +1246,12 @@ function KanbanSubSessionItem({
     isRunning: liveIsRunning,
   });
   const liveUnreadCount = liveSession?.unreadCount ?? 0;
-  const hasLiveUnread = !isActive && liveUnreadCount > 0;
+  const hasUnreadNotification = useNotificationStore((state) =>
+    state.notifications.some((notification) =>
+      notification.sessionId === session.id && !notification.read
+    )
+  );
+  const hasLiveUnread = !isActive && (liveUnreadCount > 0 || hasUnreadNotification);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const displayTitle = liveSession?.title ?? session.title;
   const isArchived = liveSession?.archived ?? false;

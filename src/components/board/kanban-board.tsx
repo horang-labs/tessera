@@ -43,9 +43,9 @@ import {
   getKanbanScrollPositionKey,
   saveKanbanScrollPosition,
 } from '@/lib/kanban-scroll-position';
-import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import type { Collection } from '@/types/collection';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -89,7 +89,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const setCollectionFilter = useBoardStore((s) => s.setCollectionFilter);
   const peekSessionId = useBoardStore((s) => s.peekSessionId);
   const peekFileRef = useBoardStore((s) => s.peekFileRef);
-  const selectedBoardSessionId = useBoardStore((s) => s.selectedBoardSessionId);
   const openSessionPeek = useBoardStore((s) => s.openSessionPeek);
   const closeSessionPeek = useBoardStore((s) => s.closeSessionPeek);
   const kanbanSessionOpenMode = useSettingsStore(
@@ -104,9 +103,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const tasksByProject = useTaskStore((s) => s.tasksByProject);
   // Session store
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
-  const selectionSessionId = getSessionSelectionId(
-    kanbanSessionOpenMode === 'peek' ? selectedBoardSessionId : activeSessionId,
-  );
+  const selectionSessionId = resolveVisibleWorkspaceSessionId({
+    activeSessionId,
+    peekSessionId,
+    isKanbanPeekLayout: kanbanSessionOpenMode === 'peek',
+  });
   const projects = useSessionStore((s) => s.projects);
   const scrollPositionKey = getKanbanScrollPositionKey(selectedProjectDir, activeCollectionFilter);
   const [portfolioProjectFilter, setPortfolioProjectFilter] = useState<string | null>(null);

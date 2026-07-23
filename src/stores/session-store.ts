@@ -969,22 +969,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // Unread count actions
   incrementUnreadCount: (sessionId) =>
-    set((state) => {
-      if (state.activeSessionId === sessionId) {
-        return state; // Don't increment for active session
-      }
-
-      return {
-        projects: state.projects.map((project) => ({
-          ...project,
-          sessions: project.sessions.map((s) =>
-            s.id === sessionId
-              ? { ...s, unreadCount: (s.unreadCount || 0) + 1 }
-              : s
-          ),
-        })),
-      };
-    }),
+    set((state) => ({
+      // Notification handlers already decide whether the session is visibly
+      // active. Re-checking the hidden tab's activeSessionId here breaks
+      // full-board Peek after light-dismiss.
+      projects: state.projects.map((project) => ({
+        ...project,
+        sessions: project.sessions.map((s) =>
+          s.id === sessionId
+            ? { ...s, unreadCount: (s.unreadCount || 0) + 1 }
+            : s
+        ),
+      })),
+    })),
 
   clearUnreadCount: (sessionId) =>
     set((state) => ({

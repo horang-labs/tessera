@@ -29,6 +29,7 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
   let startSent = false
   let sessionIdle = false
   let turnHasSubmittedPrompt = false
+  let turnSawUserMessage = false
   // 이번 턴에 세션이 실제로 busy(작업)를 거쳤는지. 완료(Stop) 보고를 프롬프트 캡처
   // 대신 이 신호에 건다 — 프롬프트 주입/타이밍으로 UserPromptSubmit 캡처를 놓쳐도
   // idle 완료를 놓치지 않기 위함(Orca 방식). busy를 안 거친 순수 idle은 억제한다.
@@ -185,6 +186,7 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
     startSent = false
     sessionIdle = false
     turnHasSubmittedPrompt = false
+    turnSawUserMessage = false
     turnWasActive = false
     awaitingUserInput = false
     userMessageIDs.clear()
@@ -196,15 +198,18 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
     idleFinalizeTimer = undefined
     clearPromptFlushTimer()
     flushUserPrompts()
+    const shouldEmitStop =
+      turnHasSubmittedPrompt || (turnWasActive && turnSawUserMessage)
     for (const messageID of userMessageIDs) textPartsByMessage.delete(messageID)
     userMessageIDs.clear()
     // 완료 보고를 프롬프트 캡처에 묶지 않는다(Orca 방식). UserPromptSubmit을 놓친
     // 턴이라도 세션이 busy를 거쳤으면 idle 완료를 보고한다. busy 없이 온 순수 idle
     // (세션 로드/resume 직후)만 빈 완료로 억제한다.
-    if (!turnHasSubmittedPrompt && !turnWasActive) return
     turnHasSubmittedPrompt = false
+    turnSawUserMessage = false
     turnWasActive = false
     awaitingUserInput = false
+    if (!shouldEmitStop) return
     enqueue({ hook_event_name: "Stop", session_id: targetSessionID })
   }
 
@@ -265,6 +270,7 @@ export const TesseraLifecyclePlugin = async ({ directory }) => {
             return
           }
           if (!messageID || submittedMessageIDs.has(messageID)) return
+          turnSawUserMessage = true
           userMessageIDs.add(messageID)
           if (textPartsByMessage.has(messageID)) schedulePromptFlush()
           if (sessionIdle) scheduleFinalizeTurn()
