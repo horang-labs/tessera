@@ -146,7 +146,9 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    previewWorkspaceFileTab(sessionId, "diff", file.path);
+    previewWorkspaceFileTab(sessionId, "diff", file.path, {
+      preferKanbanPeek: true,
+    });
   }, [
     controller.changedFileCount,
     controller.data?.github.pullRequest,
@@ -166,7 +168,9 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    openWorkspaceFileTab(sessionId, "diff", file.path);
+    openWorkspaceFileTab(sessionId, "diff", file.path, {
+      preferKanbanPeek: true,
+    });
   }, [
     controller.changedFileCount,
     controller.data?.github.pullRequest,
@@ -186,7 +190,9 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    openWorkspaceFileTab(sessionId, "file", file.path);
+    openWorkspaceFileTab(sessionId, "file", file.path, {
+      preferKanbanPeek: true,
+    });
   }, [
     controller.changedFileCount,
     controller.data?.github.pullRequest,
