@@ -90,7 +90,7 @@ export async function GET(
   }
 
   try {
-    const result = await workspaceFileWatchManager.getIndexedSnapshotForRoot(root)
+    const result = await workspaceFileWatchManager.ensureSnapshotForRoot(root)
       ?? await walkWorkspaceFiles(root);
     return NextResponse.json({
       files: result.files,

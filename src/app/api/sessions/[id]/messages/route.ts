@@ -4,6 +4,7 @@ import * as dbSessions from '@/lib/db/sessions';
 import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
 import { sessionHistory } from '@/lib/session-history';
+import { workspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-watch-manager';
 
 function buildEmptyHistoryResponse(sessionId: string): NextResponse {
   return NextResponse.json({
@@ -44,6 +45,11 @@ export async function GET(
     if (!dbSession) {
       return jsonError('not_found', 'Session not found', 404);
     }
+
+    // Opening a session is the earliest signal that its Files tab may be used.
+    // Network-share workspaces (WSL paths served from Windows) take hundreds of
+    // ms per walk, so start building the index before the tab is clicked.
+    workspaceFileWatchManager.warmSessionWorkspace(id);
 
     const hasHistory = await sessionHistory.historyExists(id);
     if (!hasHistory) {

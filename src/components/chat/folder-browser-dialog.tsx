@@ -25,7 +25,8 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useSettingsStore } from '@/stores/settings-store';
-import type { AgentEnvironment } from '@/lib/settings/types';
+import type { AgentEnvironment, UserSettings } from '@/lib/settings/types';
+import type { ServerHostInfo } from '@/lib/system/types';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
@@ -44,6 +45,11 @@ interface BrowseResponse {
   isGitRepo: boolean;
 }
 
+interface SettingsResponse {
+  settings: UserSettings;
+  serverHostInfo?: ServerHostInfo;
+}
+
 interface FolderBrowserDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -58,6 +64,7 @@ export function FolderBrowserDialog({
   const { t } = useI18n();
   const electronPlatform = useElectronPlatform();
   const agentEnvironment = useSettingsStore((state) => state.settings.agentEnvironment);
+  const applyExternalSettings = useSettingsStore((state) => state.applyExternalSettings);
   const serverIsWindowsEcosystem = useSettingsStore(
     (state) => state.serverHostInfo?.isWindowsEcosystem ?? false,
   );
@@ -73,17 +80,20 @@ export function FolderBrowserDialog({
   const [showHidden, setShowHidden] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [browseEnvironment, setBrowseEnvironment] = useState<AgentEnvironment>('native');
+  const [isSettingsReady, setIsSettingsReady] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const requestGenerationRef = useRef(0);
+  const settingsReadyRef = useRef(false);
+  const settingsAbortControllerRef = useRef<AbortController | null>(null);
+  const browseAbortControllerRef = useRef<AbortController | null>(null);
   const canBrowseWsl = serverIsWindowsEcosystem || electronPlatform === 'win32';
   const isEnvironmentAllowed = useCallback(
-    (environment: AgentEnvironment) => environment === agentEnvironment,
-    [agentEnvironment],
+    (environment: AgentEnvironment) => (
+      isSettingsReady && environment === agentEnvironment
+    ),
+    [agentEnvironment, isSettingsReady],
   );
-
-  const getInitialBrowseEnvironment = useCallback((): AgentEnvironment => {
-    return canBrowseWsl && agentEnvironment === 'wsl' ? 'wsl' : 'native';
-  }, [agentEnvironment, canBrowseWsl]);
 
   const resetDirectoryState = useCallback(() => {
     setCurrentPath('');
@@ -98,8 +108,23 @@ export function FolderBrowserDialog({
   const fetchDirectory = useCallback(async (
     path?: string,
     hidden?: boolean,
-    environment: AgentEnvironment = agentEnvironment,
+    environment: AgentEnvironment = 'native',
+    existingGeneration?: number,
   ) => {
+    if (!settingsReadyRef.current && existingGeneration === undefined) return;
+
+    const requestGeneration = existingGeneration ?? requestGenerationRef.current + 1;
+    if (existingGeneration === undefined) {
+      requestGenerationRef.current = requestGeneration;
+      settingsAbortControllerRef.current?.abort();
+      settingsAbortControllerRef.current = null;
+    } else if (requestGenerationRef.current !== existingGeneration) {
+      return;
+    }
+
+    browseAbortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    browseAbortControllerRef.current = abortController;
     setIsLoading(true);
     setError(null);
 
@@ -109,7 +134,9 @@ export function FolderBrowserDialog({
       if (hidden) query.set('showHidden', 'true');
       query.set('environment', environment);
       const qs = query.toString();
-      const response = await fetch(`/api/filesystem/browse${qs ? `?${qs}` : ''}`);
+      const response = await fetch(`/api/filesystem/browse${qs ? `?${qs}` : ''}`, {
+        signal: abortController.signal,
+      });
 
       if (!response.ok) {
         const data = await response.json();
@@ -117,6 +144,10 @@ export function FolderBrowserDialog({
       }
 
       const data: BrowseResponse = await response.json();
+      if (
+        abortController.signal.aborted
+        || requestGenerationRef.current !== requestGeneration
+      ) return;
       setCurrentPath(data.currentPath);
       setCurrentFilesystemPath(data.filesystemPath);
       setParentPath(data.parentPath);
@@ -126,22 +157,116 @@ export function FolderBrowserDialog({
       // Scroll list to top when navigating
       if (listRef.current) listRef.current.scrollTop = 0;
     } catch (err) {
+      if (
+        abortController.signal.aborted
+        || requestGenerationRef.current !== requestGeneration
+      ) return;
       setError(err instanceof Error ? err.message : 'Failed to browse');
     } finally {
-      setIsLoading(false);
+      if (
+        !abortController.signal.aborted
+        && requestGenerationRef.current === requestGeneration
+      ) {
+        setIsLoading(false);
+      }
+      if (browseAbortControllerRef.current === abortController) {
+        browseAbortControllerRef.current = null;
+      }
     }
-  }, [agentEnvironment]);
+  }, []);
 
-  // Load home directory on open (reset showHidden)
-  useEffect(() => {
-    if (isOpen) {
-      const initialEnvironment = getInitialBrowseEnvironment();
+  // The persisted renderer snapshot can briefly disagree with a fresh or
+  // restarted server. Resolve the authoritative settings before choosing the
+  // filesystem so the initial browse request cannot cross environments.
+  useEffect(function initializeFolderBrowser() {
+    if (!isOpen) return;
+
+    const requestGeneration = requestGenerationRef.current + 1;
+    requestGenerationRef.current = requestGeneration;
+    settingsReadyRef.current = false;
+    settingsAbortControllerRef.current?.abort();
+    browseAbortControllerRef.current?.abort();
+    const settingsAbortController = new AbortController();
+    settingsAbortControllerRef.current = settingsAbortController;
+    setIsSettingsReady(false);
+    resetDirectoryState();
+    setShowHidden(false);
+    setIsLoading(true);
+
+    void fetchAuthoritativeSettings(settingsAbortController.signal).then((data) => {
+      if (
+        settingsAbortController.signal.aborted
+        || requestGenerationRef.current !== requestGeneration
+      ) return;
+
+      applyExternalSettings(data.settings);
+      useSettingsStore.setState({ serverHostInfo: data.serverHostInfo ?? null });
+      const latest = useSettingsStore.getState();
+      const latestAgentEnvironment = latest.settings.agentEnvironment;
+      const latestCanBrowseWsl = (
+        data.serverHostInfo?.isWindowsEcosystem === true
+        || electronPlatform === 'win32'
+      );
+      const initialEnvironment = (
+        latestCanBrowseWsl && latestAgentEnvironment === 'wsl'
+          ? 'wsl'
+          : 'native'
+      );
+      settingsReadyRef.current = true;
+      setIsSettingsReady(true);
       setBrowseEnvironment(initialEnvironment);
-      resetDirectoryState();
-      setShowHidden(false);
-      fetchDirectory(undefined, false, initialEnvironment);
-    }
-  }, [fetchDirectory, getInitialBrowseEnvironment, isOpen, resetDirectoryState]);
+      void fetchDirectory(undefined, false, initialEnvironment, requestGeneration);
+    }).catch((error: unknown) => {
+      if (
+        isAbortError(error)
+        || settingsAbortController.signal.aborted
+        || requestGenerationRef.current !== requestGeneration
+      ) return;
+      settingsReadyRef.current = false;
+      setIsSettingsReady(false);
+      setError('Failed to load settings');
+      setIsLoading(false);
+    }).finally(() => {
+      if (settingsAbortControllerRef.current === settingsAbortController) {
+        settingsAbortControllerRef.current = null;
+      }
+    });
+
+    return function cancelFolderBrowserRequests() {
+      settingsReadyRef.current = false;
+      requestGenerationRef.current += 1;
+      settingsAbortController.abort();
+      if (settingsAbortControllerRef.current === settingsAbortController) {
+        settingsAbortControllerRef.current = null;
+      }
+      browseAbortControllerRef.current?.abort();
+      browseAbortControllerRef.current = null;
+    };
+  }, [applyExternalSettings, electronPlatform, fetchDirectory, isOpen, resetDirectoryState]);
+
+  useEffect(function synchronizeOpenBrowserEnvironment() {
+    if (!isOpen || !isSettingsReady || !settingsReadyRef.current) return;
+
+    const nextEnvironment = (
+      canBrowseWsl && agentEnvironment === 'wsl'
+        ? 'wsl'
+        : 'native'
+    );
+    if (nextEnvironment === browseEnvironment) return;
+
+    setBrowseEnvironment(nextEnvironment);
+    resetDirectoryState();
+    setShowHidden(false);
+    void fetchDirectory(undefined, false, nextEnvironment);
+  }, [
+    agentEnvironment,
+    browseEnvironment,
+    canBrowseWsl,
+    fetchDirectory,
+    isOpen,
+    isSettingsReady,
+    resetDirectoryState,
+  ]);
 
   const handleNavigate = (path: string) => {
     fetchDirectory(path, showHidden, browseEnvironment);
@@ -286,7 +411,7 @@ export function FolderBrowserDialog({
               size="sm"
               className="shrink-0 h-[38px]"
               onClick={() => fetchDirectory(pathInput.trim(), showHidden, browseEnvironment)}
-              disabled={isLoading}
+              disabled={isLoading || !isSettingsReady}
               title={t('dialog.folderBrowser.go')}
             >
               {t('dialog.folderBrowser.go')}
@@ -358,14 +483,16 @@ export function FolderBrowserDialog({
           ) : error ? (
             <div className="flex flex-col items-center justify-center h-full text-(--text-muted) px-4">
               <p className="text-sm text-(--error)">{error}</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-2"
-                onClick={() => fetchDirectory(undefined, false, browseEnvironment)}
-              >
-                {t('dialog.folderBrowser.goHome')}
-              </Button>
+              {isSettingsReady && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => fetchDirectory(undefined, false, browseEnvironment)}
+                >
+                  {t('dialog.folderBrowser.goHome')}
+                </Button>
+              )}
             </div>
           ) : (
             <div className="py-1">
@@ -465,6 +592,26 @@ export function FolderBrowserDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+async function fetchAuthoritativeSettings(signal: AbortSignal): Promise<SettingsResponse> {
+  const response = await fetch('/api/settings', { signal });
+  if (!response.ok) {
+    throw new Error(`Settings load failed with status ${response.status}`);
+  }
+
+  const data = await response.json() as Partial<SettingsResponse>;
+  if (
+    !data.settings
+    || (data.settings.agentEnvironment !== 'native' && data.settings.agentEnvironment !== 'wsl')
+  ) {
+    throw new Error('Settings response is missing a valid Agent Environment');
+  }
+  return data as SettingsResponse;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function normalizeProjectImportErrorCode(error: unknown): string {

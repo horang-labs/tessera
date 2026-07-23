@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { getFilesystemPathModule } from "@/lib/filesystem/host-path";
+import { isHiddenWorkspaceRelativePath } from "./hidden-workspace-path";
 
 export const MAX_WORKSPACE_FILES = 20000;
 
@@ -34,21 +35,31 @@ export function normalizeWorkspaceRelativePath(filePath: string): string {
     .join("/");
 }
 
-export function isIgnoredWorkspacePath(filePath: string, stats?: { isDirectory(): boolean }): boolean {
+export function isIgnoredWorkspacePath(
+  filePath: string,
+  stats?: { isDirectory(): boolean },
+  options?: { includeHidden?: boolean },
+): boolean {
   const normalized = normalizeWorkspaceRelativePath(filePath);
   if (!normalized) return false;
 
   const parts = normalized.split("/");
-  const basename = parts[parts.length - 1] ?? "";
-  if (basename.startsWith(".") && basename !== ".env.example") {
+  const directoryParts = stats?.isDirectory() ? parts : parts.slice(0, -1);
+
+  // Build/VCS/cache output dirs are always excluded: they hold thousands of
+  // files (blowing past MAX_WORKSPACE_FILES) and the WSL inotify bridge relies
+  // on this set to skip watching them. The show-hidden toggle never surfaces them.
+  if (directoryParts.some((part) => IGNORED_WORKSPACE_DIR_NAMES.has(part))) {
     return true;
   }
 
-  const directoryParts = stats?.isDirectory() ? parts : parts.slice(0, -1);
-  if (directoryParts.some((part) => part.startsWith("."))) {
+  // Other dotfiles (.github, .env, .claude, …) are hidden by default, but the
+  // caller can opt in to stream the full list so a client-side toggle can reveal
+  // them without a re-scan.
+  if (!options?.includeHidden && isHiddenWorkspaceRelativePath(normalized)) {
     return true;
   }
-  return directoryParts.some((part) => IGNORED_WORKSPACE_DIR_NAMES.has(part));
+  return false;
 }
 
 export async function walkWorkspaceFiles(root: string): Promise<WorkspaceFileWalkResult> {
@@ -68,7 +79,9 @@ export async function walkWorkspaceFiles(root: string): Promise<WorkspaceFileWal
     for (const ent of entries) {
       if (truncated) return;
       const childRel = relDir ? `${relDir}/${ent.name}` : ent.name;
-      if (isIgnoredWorkspacePath(childRel, ent)) continue;
+      // Collect dotfiles too — the client filters them via the show-hidden
+      // toggle. Only the always-ignored build/VCS dirs are pruned here.
+      if (isIgnoredWorkspacePath(childRel, ent, { includeHidden: true })) continue;
 
       if (ent.isDirectory()) {
         await recurse(pathModule.join(absDir, ent.name), childRel);

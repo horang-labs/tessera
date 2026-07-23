@@ -11,10 +11,18 @@ import {
   type WorkspaceFileWalkResult,
   walkWorkspaceFiles,
 } from "./workspace-file-scan";
+import {
+  type BridgeEvent,
+  isWslDistroRunning,
+  parseWslUncRoot,
+  WslInotifyBridge,
+  type WslUncRoot,
+} from "./wsl-inotify-bridge";
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 
 type WatchStatus = "starting" | "active" | "fallback";
+type WatchMode = "watch" | "poll";
 type WatchEventName = "add" | "addDir" | "change" | "unlink" | "unlinkDir";
 
 interface WorkspaceFileSubscriber {
@@ -41,28 +49,51 @@ interface WatchEventStats {
 }
 
 interface WorkspaceWatchEntry {
+  bridge: WslInotifyBridge | null;
+  bridgeActive: boolean;
+  closeTimer: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
   files: Set<string>;
+  lastIndexedAt: number;
   pendingAddedPaths: Set<string>;
   pendingChangedPaths: Set<string>;
   pendingDeletedPaths: Set<string>;
   pendingEventsBeforeReady: PendingWatchEvent[];
   pendingHasMoreChangedPaths: boolean;
   pendingTreeChanged: boolean;
+  pollTimer: NodeJS.Timeout | null;
   ready: boolean;
   readyPromise: Promise<void>;
+  refreshing: boolean;
   root: string;
   rootChangeListeners: Map<string, WorkspaceRootChangeListener>;
   status: WatchStatus;
   subscribers: Map<string, WorkspaceFileSubscriber>;
   truncated: boolean;
   version: number;
+  watchMode: WatchMode;
   watcher: FSWatcher | null;
   watcherReadyPromise: Promise<void>;
+  wslRoot: WslUncRoot | null;
 }
 
 const CHANGE_DEBOUNCE_MS = 300;
 const MAX_CHANGED_PATHS_PER_EVENT = 200;
+// Sweep cadence for poll-mode roots. With a live inotify bridge the sweep is
+// only a consistency backstop; without one it is the sole change source and
+// must stay near-real-time.
+const POLL_SWEEP_FAST_MS = 2_000;
+const POLL_SWEEP_SLOW_MS = 60_000;
+const POLL_UNUSED_GRACE_MS = 60_000;
+const POLL_IDLE_CLOSE_MS = 5 * 60_000;
+
+// Recursive watching through the Windows WSL 9P redirector is unreliable:
+// chokidar takes 10s+ to become ready, emits EISDIR storms, and starves the
+// server event loop that also carries PTY input. Keep unrelated SMB shares on
+// their existing watcher path; only Windows-hosted WSL roots use the bridge.
+export function isWindowsHostedWslRoot(root: string): boolean {
+  return parseWslUncRoot(root) !== null;
+}
 
 function subscriberKey(connectionId: string, sessionId: string, subscriberId: string): string {
   return `${connectionId}:${sessionId}:${subscriberId}`;
@@ -124,6 +155,7 @@ export class WorkspaceFileWatchManager {
 
     const entry = this.getOrCreateEntry(root);
     entry.subscribers.set(key, options);
+    this.cancelScheduledClose(entry);
 
     options.sendToUser(options.userId, {
       type: "workspace_file_watch_status",
@@ -164,6 +196,7 @@ export class WorkspaceFileWatchManager {
       onChange: options.onChange,
     };
     entry.rootChangeListeners.set(options.listenerId, listener);
+    this.cancelScheduledClose(entry);
 
     let active = true;
     const dispose = () => {
@@ -260,6 +293,47 @@ export class WorkspaceFileWatchManager {
 
     await entry.readyPromise;
     if (entry.status !== "active" || entry.truncated) return null;
+    return this.serveSnapshot(entry);
+  }
+
+  /**
+   * Like getIndexedSnapshotForRoot, but for Windows-hosted WSL roots it also creates
+   * and bootstraps the index on first use, so repeat requests are served from
+   * memory instead of re-walking the share. Watch-capable roots keep the
+   * passive behavior: no entry is created on behalf of a plain REST read.
+   */
+  async ensureSnapshotForRoot(root: string): Promise<WorkspaceFileWalkResult | null> {
+    const canonicalRoot = await resolveCanonicalWorkspaceRoot(root);
+    const existing = this.entriesByRoot.get(canonicalRoot);
+    if (!existing && !isWindowsHostedWslRoot(canonicalRoot)) {
+      return this.getIndexedSnapshotForRoot(canonicalRoot);
+    }
+
+    const entry = existing ?? this.getOrCreateEntry(canonicalRoot);
+    await entry.readyPromise;
+    if (entry.status !== "active" || entry.truncated) return null;
+    return this.serveSnapshot(entry);
+  }
+
+  /** Fire-and-forget index prewarm for a Windows-hosted WSL workspace. */
+  warmSessionWorkspace(sessionId: string): void {
+    void (async () => {
+      const root = await this.resolveRootForSession(sessionId);
+      if (!root || !isWindowsHostedWslRoot(root)) return;
+      const entry = this.getOrCreateEntry(root);
+      this.touchEntry(entry);
+      await entry.readyPromise;
+    })().catch((error) => {
+      logger.warn({ error, sessionId }, "Workspace index prewarm failed");
+    });
+  }
+
+  private serveSnapshot(entry: WorkspaceWatchEntry): WorkspaceFileWalkResult {
+    this.touchEntry(entry);
+    const staleAfterMs = entry.bridgeActive ? POLL_SWEEP_SLOW_MS : POLL_SWEEP_FAST_MS;
+    if (entry.watchMode === "poll" && Date.now() - entry.lastIndexedAt > staleAfterMs) {
+      void this.refreshPollIndex(entry);
+    }
     return applyMaxFiles(entry.files);
   }
 
@@ -274,26 +348,35 @@ export class WorkspaceFileWatchManager {
   private getOrCreateEntry(root: string): WorkspaceWatchEntry {
     const existing = this.entriesByRoot.get(root);
     if (existing) return existing;
+    const wslRoot = parseWslUncRoot(root);
 
     const entry: WorkspaceWatchEntry = {
+      bridge: null,
+      bridgeActive: false,
+      closeTimer: null,
       debounceTimer: null,
       files: new Set(),
+      lastIndexedAt: 0,
       pendingAddedPaths: new Set(),
       pendingChangedPaths: new Set(),
       pendingDeletedPaths: new Set(),
       pendingEventsBeforeReady: [],
       pendingHasMoreChangedPaths: false,
       pendingTreeChanged: false,
+      pollTimer: null,
       ready: false,
       readyPromise: Promise.resolve(),
+      refreshing: false,
       root,
       rootChangeListeners: new Map(),
       status: "starting",
       subscribers: new Map(),
       truncated: false,
       version: 0,
+      watchMode: wslRoot ? "poll" : "watch",
       watcher: null,
       watcherReadyPromise: Promise.resolve(),
+      wslRoot,
     };
     this.entriesByRoot.set(root, entry);
     this.startWatcher(entry);
@@ -306,6 +389,7 @@ export class WorkspaceFileWatchManager {
       const snapshot = await walkWorkspaceFiles(entry.root);
       entry.files = new Set(snapshot.files);
       entry.truncated = snapshot.truncated;
+      entry.lastIndexedAt = Date.now();
       entry.ready = true;
 
       const pending = entry.pendingEventsBeforeReady.splice(0);
@@ -328,6 +412,19 @@ export class WorkspaceFileWatchManager {
   }
 
   private startWatcher(entry: WorkspaceWatchEntry): void {
+    if (entry.watchMode === "poll") {
+      this.setPollCadence(entry, POLL_SWEEP_FAST_MS);
+      const useBridge = Boolean(entry.wslRoot && process.platform === "win32");
+      if (entry.wslRoot && useBridge) {
+        this.startBridge(entry, entry.wslRoot);
+      }
+      logger.info({
+        root: entry.root,
+        bridge: useBridge,
+      }, "Workspace root is a network share; using poll-based indexing");
+      return;
+    }
+
     let resolveWatcherReady!: () => void;
     entry.watcherReadyPromise = new Promise<void>((resolve) => {
       resolveWatcherReady = resolve;
@@ -347,7 +444,11 @@ export class WorkspaceFileWatchManager {
         followSymlinks: false,
         ignoreInitial: true,
         ignored: (filePath, stats) => (
-          isIgnoredWorkspacePath(toWorkspaceRelativePath(entry.root, String(filePath)), stats)
+          isIgnoredWorkspacePath(
+            toWorkspaceRelativePath(entry.root, String(filePath)),
+            stats,
+            { includeHidden: true },
+          )
         ),
         persistent: true,
       });
@@ -356,7 +457,7 @@ export class WorkspaceFileWatchManager {
         if (!this.isWatchEventName(eventName)) return;
         if (!this.isWatchEventShape(eventName, stats)) return;
         const relativePath = toWorkspaceRelativePath(entry.root, String(filePath));
-        if (!relativePath || isIgnoredWorkspacePath(relativePath)) return;
+        if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
         if (!entry.ready) {
           entry.pendingEventsBeforeReady.push({ eventName, relativePath });
           return;
@@ -442,6 +543,114 @@ export class WorkspaceFileWatchManager {
     }
   }
 
+  private setPollCadence(entry: WorkspaceWatchEntry, intervalMs: number): void {
+    if (entry.pollTimer) clearInterval(entry.pollTimer);
+    const timer = setInterval(() => {
+      if (entry.subscribers.size === 0 && entry.rootChangeListeners.size === 0) return;
+      void this.refreshPollIndex(entry);
+    }, intervalMs);
+    timer.unref?.();
+    entry.pollTimer = timer;
+  }
+
+  private startBridge(entry: WorkspaceWatchEntry, wslRoot: WslUncRoot): void {
+    const bridge = new WslInotifyBridge({
+      root: wslRoot,
+      onEvent: (event) => this.handleBridgeEvent(entry, event),
+      onEstablished: () => {
+        if (this.entriesByRoot.get(entry.root) !== entry) return;
+        entry.bridgeActive = true;
+        this.setPollCadence(entry, POLL_SWEEP_SLOW_MS);
+        // Reconcile anything that changed while watches were being set up.
+        void this.refreshPollIndex(entry);
+        logger.info({ root: entry.root, distro: wslRoot.distro }, "WSL inotify bridge established");
+      },
+      onDown: (reason) => {
+        entry.bridgeActive = false;
+        entry.bridge = null;
+        if (this.entriesByRoot.get(entry.root) !== entry) return;
+        entry.status = "fallback";
+        this.setPollCadence(entry, POLL_SWEEP_FAST_MS);
+        this.emitWatchStatus(entry, "fallback", "wsl_bridge_unavailable");
+        logger.warn({
+          root: entry.root,
+          distro: wslRoot.distro,
+          reason,
+        }, "WSL inotify bridge unavailable; falling back to fast polling (install inotify-tools in the distro for real-time sync)");
+      },
+    });
+    entry.bridge = bridge;
+    bridge.start();
+  }
+
+  private handleBridgeEvent(entry: WorkspaceWatchEntry, event: BridgeEvent): void {
+    const relativePath = normalizeWorkspaceRelativePath(event.relativePath);
+    if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
+    if (!entry.ready) {
+      entry.pendingEventsBeforeReady.push({ eventName: event.eventName, relativePath });
+      return;
+    }
+    this.applyWatchEvent(entry, event.eventName, relativePath);
+    // A moved-in directory carries no per-file events; re-walk to pick up its
+    // contents (refreshing flag coalesces bursts).
+    if (event.eventName === "addDir") void this.refreshPollIndex(entry);
+  }
+
+  private async refreshPollIndex(entry: WorkspaceWatchEntry): Promise<void> {
+    if (entry.refreshing || !entry.ready) return;
+    // Touching \\wsl.localhost boots a stopped distro; after `wsl --shutdown`
+    // stay quiet and serve the last snapshot until the distro is back.
+    if (
+      entry.wslRoot
+      && process.platform === "win32"
+      && !(await isWslDistroRunning(entry.wslRoot.distro))
+    ) {
+      return;
+    }
+    if (entry.refreshing || !entry.ready) return;
+    entry.refreshing = true;
+    try {
+      const snapshot = await walkWorkspaceFiles(entry.root);
+      if (this.entriesByRoot.get(entry.root) !== entry) return;
+      const previous = entry.files;
+      const next = new Set(snapshot.files);
+      entry.files = next;
+      entry.truncated = snapshot.truncated;
+      entry.lastIndexedAt = Date.now();
+
+      let changed = false;
+      for (const filePath of next) {
+        if (previous.has(filePath)) continue;
+        changed = true;
+        this.addPendingPath(entry, entry.pendingAddedPaths, filePath);
+        this.addPendingPath(entry, entry.pendingChangedPaths, filePath);
+      }
+      for (const filePath of previous) {
+        if (next.has(filePath)) continue;
+        changed = true;
+        this.addPendingPath(entry, entry.pendingDeletedPaths, filePath);
+        this.addPendingPath(entry, entry.pendingChangedPaths, filePath);
+      }
+      if (changed) {
+        entry.pendingTreeChanged = true;
+        if (entry.debounceTimer) {
+          clearTimeout(entry.debounceTimer);
+          entry.debounceTimer = null;
+        }
+        this.flushChanges(entry);
+      } else if (!entry.bridgeActive && entry.rootChangeListeners.size > 0) {
+        // A filename-only snapshot cannot see edits to an existing file. In
+        // bridge fallback mode, periodically invalidate terminal git stats so
+        // content-only changes are still observed.
+        this.notifyRootChangeListeners(entry);
+      }
+    } catch (error) {
+      logger.warn({ error, root: entry.root }, "Workspace poll index refresh failed");
+    } finally {
+      entry.refreshing = false;
+    }
+  }
+
   private scheduleChange(
     entry: WorkspaceWatchEntry,
     relativePath: string,
@@ -500,13 +709,7 @@ export class WorkspaceFileWatchManager {
     entry.pendingTreeChanged = false;
     entry.pendingHasMoreChangedPaths = false;
 
-    for (const listener of entry.rootChangeListeners.values()) {
-      try {
-        listener.onChange(entry.root);
-      } catch (error) {
-        logger.warn({ error, listenerId: listener.listenerId, root: entry.root }, "Workspace root change listener failed");
-      }
-    }
+    this.notifyRootChangeListeners(entry);
 
     const subscribersByUser = new Map<string, WorkspaceFileSubscriber[]>();
     for (const subscriber of entry.subscribers.values()) {
@@ -532,6 +735,16 @@ export class WorkspaceFileWatchManager {
     }
   }
 
+  private notifyRootChangeListeners(entry: WorkspaceWatchEntry): void {
+    for (const listener of entry.rootChangeListeners.values()) {
+      try {
+        listener.onChange(entry.root);
+      } catch (error) {
+        logger.warn({ error, listenerId: listener.listenerId, root: entry.root }, "Workspace root change listener failed");
+      }
+    }
+  }
+
   private emitWatchStatus(
     entry: WorkspaceWatchEntry,
     status: Extract<WatchStatus, "active" | "fallback">,
@@ -550,9 +763,57 @@ export class WorkspaceFileWatchManager {
     }
   }
 
+  private touchEntry(entry: WorkspaceWatchEntry): void {
+    if (entry.watchMode !== "poll") return;
+    if (entry.subscribers.size > 0 || entry.rootChangeListeners.size > 0) return;
+    this.scheduleClose(entry, POLL_IDLE_CLOSE_MS);
+  }
+
+  private scheduleClose(entry: WorkspaceWatchEntry, delayMs: number): void {
+    if (entry.closeTimer) clearTimeout(entry.closeTimer);
+    const timer = setTimeout(() => {
+      entry.closeTimer = null;
+      this.closeEntryNow(entry);
+    }, delayMs);
+    timer.unref?.();
+    entry.closeTimer = timer;
+  }
+
+  private cancelScheduledClose(entry: WorkspaceWatchEntry): void {
+    if (!entry.closeTimer) return;
+    clearTimeout(entry.closeTimer);
+    entry.closeTimer = null;
+  }
+
   private closeEntryIfUnused(entry: WorkspaceWatchEntry): void {
+    if (entry.subscribers.size > 0 || entry.rootChangeListeners.size > 0) {
+      this.cancelScheduledClose(entry);
+      return;
+    }
+
+    // Poll-mode entries are expensive to rebuild (a full walk over a network
+    // share), so keep them warm briefly for quick tab re-entry. Watcher-backed
+    // entries keep the original immediate teardown.
+    if (entry.watchMode === "poll") {
+      this.scheduleClose(entry, POLL_UNUSED_GRACE_MS);
+      return;
+    }
+    this.closeEntryNow(entry);
+  }
+
+  private closeEntryNow(entry: WorkspaceWatchEntry): void {
     if (entry.subscribers.size > 0 || entry.rootChangeListeners.size > 0) return;
 
+    this.cancelScheduledClose(entry);
+    if (entry.pollTimer) {
+      clearInterval(entry.pollTimer);
+      entry.pollTimer = null;
+    }
+    if (entry.bridge) {
+      entry.bridge.stop();
+      entry.bridge = null;
+      entry.bridgeActive = false;
+    }
     this.entriesByRoot.delete(entry.root);
     for (const [sessionId, root] of Array.from(this.rootBySessionId.entries())) {
       if (root === entry.root) {
