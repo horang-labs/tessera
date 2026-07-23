@@ -28,7 +28,7 @@ Organize AI coding work by project and collection, then open sessions across per
 
 Run coding agents in terminal (PTY) sessions, rich GUI conversations, or both side by side in the same workspace.
 
-![Claude Code in GUI mode alongside Codex in terminal mode](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/pty-gui-side-by-side.png)
+![Claude Code in GUI mode alongside Codex in terminal mode](https://raw.githubusercontent.com/horang-labs/tessera/main/docs/assets/readme/pty-gui-side-by-side.png)
 
 ### Kanban board workflow
 
@@ -38,11 +38,11 @@ Move implementation work through Todo, Doing, Review, and Done while keeping eac
 
 See every active task across Todo, Doing, Review, Done, and Chat, grouped by project and tied to its agent session and worktree.
 
-![Tessera Kanban board showing active work across workflow stages](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/kanban-overview.png)
+![Tessera Kanban board showing active work across workflow stages](https://raw.githubusercontent.com/horang-labs/tessera/main/docs/assets/readme/kanban-overview.png)
 
 Open any task directly from the board and continue working in its terminal session without losing context.
 
-![A terminal opened from a task on the Tessera Kanban board](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/kanban-task-terminal.png)
+![A terminal opened from a task on the Tessera Kanban board](https://raw.githubusercontent.com/horang-labs/tessera/main/docs/assets/readme/kanban-task-terminal.png)
 
 ### Terminal and file tabs
 
@@ -69,7 +69,7 @@ Keep each agent session tied to its task and worktree while tracking tool calls,
 See and edit the active instructions and memory for the session at a glance, including user and project scopes, global memory, and past work summaries.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/session-context-panel.png" alt="Session instructions and memory in the Tessera Context panel" width="420">
+  <img src="https://raw.githubusercontent.com/horang-labs/tessera/main/docs/assets/readme/session-context-panel.png" alt="Session instructions and memory in the Tessera Context panel" width="420">
 </p>
 
 ## Install
