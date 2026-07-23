@@ -11,6 +11,7 @@
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { SettingsManager } from '../settings/manager';
 import type { AgentEnvironment } from '../settings/types';
+import { invalidateClaudeConfigDirCache } from '../skill/skill-loader';
 import { getSpawnCliCache } from './spawn-cli-cache';
 import {
   buildSpawnEnvironment,
@@ -60,6 +61,9 @@ export function invalidateAgentEnvironmentCache(userId?: string): void {
   }
 
   invalidateSpawnCliRuntimeCache(spawnCliCache);
+  // The Claude config dir is resolved per environment (its WSL probe spawns a
+  // process); drop it too so a native↔wsl switch cannot serve a stale path.
+  invalidateClaudeConfigDirCache();
 }
 
 /**

@@ -62,11 +62,17 @@ export async function resolveCodexHomeForEnvironment(
   if (configuredDir) return path.resolve(configuredDir);
 
   if (environment === "wsl" && process.platform === "win32") {
+    // Intentionally keeps the login shell (no `loginShell: false`), unlike the
+    // claude/opencode probes: this reads `$CODEX_HOME`, which the user exports
+    // from their rc. The real codex CLI is also spawned through the login shell,
+    // so it sees that same `$CODEX_HOME` — dropping it here would make the panel
+    // show a different home than the CLI actually uses. Do not "optimize" this
+    // to a non-login shell for consistency; the latency is the correct trade.
     const result = await execCli(
       "sh",
-      // `-c`, not `-lc` — see resolveClaudeConfigDirForEnvironment: the bridge
-      // already sourced the login shell, and a second one re-reads ~/.profile
-      // where a single broken line kills the probe.
+      // `-c`, not `-lc`: the WSL bridge already ran this through the login shell,
+      // so a second one only re-reads ~/.profile (where a broken line can kill
+      // the probe). `$CODEX_HOME` is already exported into this shell's env.
       ["-c", 'printf "%s" "${CODEX_HOME:-$HOME/.codex}"'],
       "wsl",
       5000,

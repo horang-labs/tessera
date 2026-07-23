@@ -66,28 +66,49 @@ function lastNonEmptyLine(value: string): string | null {
   return lines.at(-1) ?? null;
 }
 
+/**
+ * The `wsl`-on-Windows probe below spawns a `wsl.exe` process, which the Context
+ * panel resolves up to three times per open. The answer is a fixed property of
+ * the host + environment for the life of the process, so cache the resolved
+ * directory per environment and skip the repeat spawns. Only successful probe
+ * results are cached; a transient failure falls through to `getClaudeConfigDir()`
+ * (a pure homedir lookup) and is retried next time. Cleared by
+ * `invalidateClaudeConfigDirCache` when the agent environment setting changes.
+ */
+const claudeConfigDirCache = new Map<CliEnvironment, string>();
+
+export function invalidateClaudeConfigDirCache(): void {
+  claudeConfigDirCache.clear();
+}
+
 export async function resolveClaudeConfigDirForEnvironment(
   environment: CliEnvironment,
 ): Promise<string> {
   const configuredDir = process.env.CLAUDE_CONFIG_DIR?.trim();
   if (configuredDir) return resolve(configuredDir);
 
+  const cached = claudeConfigDirCache.get(environment);
+  if (cached) return cached;
+
   if (environment === 'wsl' && process.platform === 'win32') {
-    // `-c`, not `-lc`: the WSL bridge already runs this through the user's
-    // login shell, so its rc files have been sourced and exported by the time
-    // the snippet runs. Asking for a second login shell re-reads ~/.profile,
-    // and one broken line there (`. "$HOME/.cargo/env"` after uninstalling
-    // Rust is the common one) makes a non-interactive POSIX shell exit 2
-    // before `wslpath` runs — the probe then fell back to the Windows-side
-    // home and the whole session silently pointed at the wrong `.claude`.
+    // `loginShell: false` → a plain `wsl sh -c`, not the user's `-i -l` login
+    // shell. `wslpath` is on WSL's default PATH and reads only `$HOME` (set by
+    // wsl.exe from /etc/passwd, independent of rc files), so sourcing the user's
+    // rc buys nothing here — it only spends hundreds of ms per call re-reading
+    // ~/.zshrc/~/.profile (and previously tripped over a broken
+    // `. "$HOME/.cargo/env"` line). Git resolves its status the same way.
     const result = await execCli(
       'sh',
       ['-c', 'wslpath -w "$HOME/.claude" 2>/dev/null || printf %s "$HOME/.claude"'],
       'wsl',
       5000,
+      { loginShell: false },
     );
     const resolvedDir = lastNonEmptyLine(result.stdout);
-    if (result.ok && resolvedDir) return resolvedDir;
+    if (result.ok && resolvedDir) {
+      claudeConfigDirCache.set(environment, resolvedDir);
+      return resolvedDir;
+    }
   }
 
   if (environment === 'native' && isRunningInWsl()) {
@@ -98,7 +119,9 @@ export async function resolveClaudeConfigDirForEnvironment(
     // silently back to the WSL home. The cmd.exe probe needs no quoting and
     // verifies the mount exists.
     try {
-      return join(await getWslHostedWindowsHomeMountPath(), '.claude');
+      const dir = join(await getWslHostedWindowsHomeMountPath(), '.claude');
+      claudeConfigDirCache.set(environment, dir);
+      return dir;
     } catch {
       // Fall through: the Windows profile is not reachable from this distro.
     }

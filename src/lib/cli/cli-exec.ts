@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { getRuntimePlatform } from '../system/runtime-platform';
 import { getSpawnCliCache } from './spawn-cli-cache';
-import { spawnCliProcess } from './spawn-cli-runtime';
+import { spawnCliProcess, type SpawnCliRuntimeOptions } from './spawn-cli-runtime';
 
 export interface ExecResult {
   /** True iff the process closed with exit code 0 AND did not time out. */
@@ -56,6 +56,12 @@ export function __resetWslDetectionCacheForTests(): void {
  * Routing is delegated to spawn-cli-runtime so status probes and real sessions
  * resolve Windows npm shims (`*.cmd`, `*.ps1`) the same way.
  *
+ * `runtimeOptions.loginShell: false` skips the user's `-i -l` login shell on the
+ * WSL bridge (no rc sourcing — hundreds of ms saved per call). Only pass it for
+ * probes whose command lives on WSL's default PATH and needs nothing from the
+ * user's rc (e.g. `wslpath`, which uses only `$HOME`). Omitting it keeps the
+ * login shell, so existing 4-argument callers are unchanged.
+ *
  * Never throws — all failure modes map to `{ ok: false, ... }`.
  */
 export async function execCli(
@@ -63,6 +69,7 @@ export async function execCli(
   args: string[],
   environment: CliEnvironment,
   timeoutMs: number,
+  runtimeOptions?: SpawnCliRuntimeOptions,
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
     const startedAt = Date.now();
@@ -70,7 +77,7 @@ export async function execCli(
       windowsHide: true,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
-    }, environment, getSpawnCliCache());
+    }, environment, getSpawnCliCache(), runtimeOptions);
 
     let stdout = '';
     let stderr = '';

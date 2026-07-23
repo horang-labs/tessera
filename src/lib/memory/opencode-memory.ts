@@ -62,10 +62,14 @@ export async function resolveOpenCodeConfigDirForEnvironment(
   if (environment === "wsl" && process.platform === "win32") {
     const result = await execCli(
       "sh",
-      // `-c`, not `-lc` — see resolveClaudeConfigDirForEnvironment.
+      // `-c` + `loginShell: false`: this reads only `$HOME` (set by wsl.exe,
+      // not by rc files), so the user's login shell adds nothing but latency.
+      // See resolveClaudeConfigDirForEnvironment. NOTE: codex deliberately does
+      // NOT do this — its probe reads `$CODEX_HOME`, which lives in the rc.
       ["-c", 'printf "%s" "$HOME/.config/opencode"'],
       "wsl",
       5000,
+      { loginShell: false },
     );
     const resolvedDir = lastNonEmptyLine(result.stdout);
     if (result.ok && resolvedDir) return resolvedDir;
