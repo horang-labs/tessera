@@ -128,6 +128,8 @@ export type ClientMessage =
       cols: number;
       rows: number;
       claim?: boolean;
+      /** Repaint a live TUI after an authoritative snapshot replay. */
+      replayRefresh?: boolean;
     }
   | { type: 'terminal_close'; requestId: string; terminalId: string }
   | { type: 'subscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string }
@@ -349,6 +351,9 @@ export type AppServerMessage =
       cols: number;
       rows: number;
       fallback?: boolean;
+      alternateScreen?: boolean;
+      scrollbackAnsi?: string;
+      pendingEscapeTailAnsi?: string;
     }
   | {
       type: 'terminal_output';

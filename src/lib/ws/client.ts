@@ -416,8 +416,16 @@ export class WebSocketClient {
     cols: number,
     rows: number,
     claim = false,
-  ) {
-    this.sendRequest('terminal_resize', { terminalId, surfaceId, cols, rows, claim });
+    replayRefresh = false,
+  ): boolean {
+    return this.sendRequest('terminal_resize', {
+      terminalId,
+      surfaceId,
+      cols,
+      rows,
+      claim,
+      replayRefresh,
+    });
   }
 
   closeTerminal(terminalId: string): boolean {

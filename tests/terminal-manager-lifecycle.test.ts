@@ -28,6 +28,7 @@ before(async () => {
 class FakePty {
   readonly writes: string[] = [];
   readonly resizes: Array<{ cols: number; rows: number }> = [];
+  readonly killSignals: Array<string | undefined> = [];
   killCount = 0;
   private dataListeners: Array<(data: string) => void> = [];
   private exitListeners: Array<(event: { exitCode: number; signal?: number }) => void> = [];
@@ -48,7 +49,8 @@ class FakePty {
     this.resizes.push({ cols, rows });
   }
 
-  kill(): void {
+  kill(signal?: string): void {
+    this.killSignals.push(signal);
     this.killCount += 1;
   }
 
@@ -882,6 +884,46 @@ test('claiming an already-sized viewport does not send a redundant PTY resize', 
   await manager.shutdownAll();
 });
 
+test('cold attach snapshots the source grid before the destination fit and forces a repaint', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ cols: 100, rows: 30 }));
+  delivered.length = 0;
+  await manager.create(createOptions({
+    terminalId: 'reattach-proposal',
+    connectionId: 'connection-b',
+    surfaceId: 'surface-b',
+    cols: 140,
+    rows: 45,
+  }));
+
+  assert.deepEqual(spawned[0].resizes, [], 'attach must not reflow the source before snapshot');
+  const snapshot = delivered.find(({ connectionId, message }) => (
+    connectionId === 'connection-b' && message.type === 'terminal_snapshot'
+  ))?.message;
+  assert.equal(snapshot?.type, 'terminal_snapshot');
+  if (snapshot?.type === 'terminal_snapshot') {
+    assert.deepEqual({ cols: snapshot.cols, rows: snapshot.rows }, { cols: 100, rows: 30 });
+  }
+
+  manager.resize('terminal-a', 'user-a', 'connection-b', 'surface-b', 140, 45, false, true);
+  manager.resize('terminal-a', 'user-a', 'connection-b', 'surface-b', 140, 45, false, true);
+  assert.deepEqual(spawned[0].resizes, [
+    { cols: 140, rows: 45 },
+    { cols: 140, rows: 45 },
+  ]);
+  assert.equal(
+    spawned[0].killSignals.filter((signal) => signal === 'SIGWINCH').length,
+    process.platform === 'win32' ? 0 : 2,
+  );
+  await manager.shutdownAll();
+});
+
 test('PTY spawn normalizes inherited color opt-outs at the manager boundary', async () => {
   let spawnEnv: NodeJS.ProcessEnv | null = null;
   const factory: TerminalPtyFactory = {
@@ -1128,7 +1170,12 @@ test('a wedged headless model cannot freeze reattach: fallback snapshot then liv
 
   delivered.length = 0;
   await Promise.race([
-    manager.create(createOptions({ connectionId: 'connection-b', surfaceId: 'surface-b' })),
+    manager.create(createOptions({
+      connectionId: 'connection-b',
+      surfaceId: 'surface-b',
+      cols: 140,
+      rows: 45,
+    })),
     deadline('reattach froze waiting for the wedged model snapshot'),
   ]);
 
@@ -1139,6 +1186,11 @@ test('a wedged headless model cannot freeze reattach: fallback snapshot then liv
   if (snapshot?.type === 'terminal_snapshot') {
     assert.equal(snapshot.fallback, true, 'wedged model must degrade to the raw fallback snapshot');
     assert.match(snapshot.data, /history-before-park/);
+    assert.deepEqual(
+      { cols: snapshot.cols, rows: snapshot.rows },
+      { cols: 100, rows: 30 },
+      'fallback bytes must replay at the grid that produced them',
+    );
   }
 
   delivered.length = 0;
@@ -1198,4 +1250,50 @@ test('a provider-detected conversation reset is reported once per bound session'
   spawned[0].emitData('more output\r\n');
   await settle();
   assert.equal(resets.length, 1);
+});
+
+test('startup device queries are answered by the server and never reach the browser', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ terminalId: 'terminal-query', sessionId: 'session-query' }));
+  delivered.length = 0;
+
+  // The opening burst codex writes before it draws anything.
+  spawned[0].emitData('\x1b[?2004h\x1b[6n\x1b[?u\x1b[c\x1b[?2026hframe');
+  // The cursor report waits for the model to finish parsing what came before it.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Answered locally, so the querying program never waits on a WS round trip.
+  assert.deepEqual(spawned[0].writes, ['\x1b[1;1R', '\x1b[?1;2c']);
+
+  const output = delivered
+    .filter(({ message }) => message.type === 'terminal_output')
+    .map(({ message }) => (message.type === 'terminal_output' ? message.data : ''))
+    .join('');
+  // The browser must not see the queries it would otherwise answer late, but
+  // everything else — including the kitty query we leave alone — passes through.
+  assert.doesNotMatch(output, /\x1b\[6n/);
+  assert.doesNotMatch(output, /\x1b\[c/);
+  assert.equal(output, '\x1b[?2004h\x1b[?u\x1b[?2026hframe');
+});
+
+test('a cursor report reflects where the program actually left the cursor', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => undefined,
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ terminalId: 'terminal-cursor', sessionId: 'session-cursor' }));
+
+  spawned[0].emitData('\x1b[5;9Hplaced\x1b[6n');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Row 5, column 9 plus the six characters written there.
+  assert.deepEqual(spawned[0].writes, ['\x1b[5;15R']);
 });

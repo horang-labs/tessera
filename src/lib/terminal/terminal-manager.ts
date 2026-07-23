@@ -15,9 +15,17 @@ import { getServerPort } from '@/lib/server-port';
 import { revokePaneTokensForTerminal } from './pane-token-registry';
 import { cleanupCodexOverlayForTerminal } from './codex-overlay';
 import { cleanupCodexOverlayInWsl } from './codex-overlay-wsl';
-import { TerminalHeadlessModel } from './terminal-headless-model';
+import {
+  TerminalHeadlessModel,
+  type TerminalHeadlessSnapshot,
+} from './terminal-headless-model';
 import { normalizeTerminalColorEnv } from './terminal-color-env';
 import { createTerminalAppearanceController } from './terminal-appearance-controller';
+import {
+  createTerminalDeviceQueryController,
+  formatTerminalDeviceQueryReply,
+  type TerminalDeviceQueryKind,
+} from './terminal-device-query-controller';
 import {
   ownsTerminalHandoffLock,
   releaseTerminalHandoffByTerminal,
@@ -166,6 +174,7 @@ interface TerminalRuntime {
   appearanceRestartPending: boolean;
   process: TerminalProcessHandle;
   appearanceController?: ReturnType<typeof createTerminalAppearanceController>;
+  deviceQueryController: ReturnType<typeof createTerminalDeviceQueryController>;
   model: TerminalHeadlessModelLike;
   cols: number;
   rows: number;
@@ -205,7 +214,7 @@ interface TerminalRuntime {
 export type TerminalHeadlessModelLike = Pick<
   TerminalHeadlessModel,
   'write' | 'resize' | 'snapshot' | 'readVisibleText' | 'dispose'
->;
+> & Partial<Pick<TerminalHeadlessModel, 'whenSettled' | 'cursorPosition'>>;
 
 export interface TerminalManagerOptions {
   closeExitGraceMs?: number;
@@ -265,7 +274,7 @@ const CONVERSATION_RESET_SCAN_MS = 250;
 async function resolveSnapshotWithTimeout(
   model: TerminalHeadlessModelLike,
   timeoutMs: number,
-): Promise<{ data: string; cols: number; rows: number }> {
+): Promise<TerminalHeadlessSnapshot> {
   const snapshot = model.snapshot();
   // If the timeout wins, a late rejection from the losing promise must not
   // surface as an unhandled rejection.
@@ -660,6 +669,7 @@ export class TerminalManager {
         appearanceRestartIntent: options.appearanceRestartIntent,
         appearanceRestartPending: false,
         process: processHandle,
+        deviceQueryController: createTerminalDeviceQueryController(),
         model,
         cols,
         rows,
@@ -766,7 +776,7 @@ export class TerminalManager {
         prefillHardTimer = setTimeout(sendPrefill, PREFILL_HARD_TIMEOUT_MS);
       }
 
-      const deliverOutput = (data: string) => {
+      const emitOutput = (data: string) => {
         if (data.length === 0) return;
         // replay 버퍼: 원본 청크 순서/내용 그대로 즉시 누적 — coalescing과 독립.
         this.appendBufferedOutput(runtime, data);
@@ -791,6 +801,20 @@ export class TerminalManager {
         // WS 전송만 한 tick 모아 1회 전송(flood 완화).
         this.queueOutput(runtime, data);
       };
+
+      // CPR/DSR/DA는 여기서 소비한다 — 브라우저 xterm까지 왕복시키면 응답이 늦어
+      // tty ECHO에 `^[[1;1R`로 찍힌다(codex는 기동 즉시 CSI 6n을 보낸다).
+      // resize 트랜잭션 뒤에 두는 이유: 트랜잭션은 원본 청크 경계로 분할 ED3를
+      // 재조립하므로, 그 앞에서 조각을 붙잡으면 경계 신호가 사라진다.
+      const deliverOutput = (raw: string) => {
+        if (raw.length === 0) return;
+        // 세그먼트 순서대로 처리해야 커서 보고가 질의 시점의 위치를 답한다.
+        for (const segment of runtime.deviceQueryController.consumeOutput(raw)) {
+          emitOutput(segment.output);
+          if (segment.query) this.answerDeviceQueries(runtime, segment.query);
+        }
+      };
+
       runtime.resizeOutputTransaction = new TerminalResizeOutputTransaction({
         emit: deliverOutput,
       });
@@ -805,6 +829,9 @@ export class TerminalManager {
         if (pendingColorQueryData) {
           runtime.resizeOutputTransaction?.accept(pendingColorQueryData);
         }
+        // 트랜잭션을 다시 태우면 같은 조각이 컨트롤러에 재보관되어 유실되므로
+        // 하위로 직접 흘린다.
+        emitOutput(runtime.deviceQueryController.drain());
         clearPrefillTimers();
         this.finalizeRuntimeExit(runtime, key, event);
       });
@@ -857,9 +884,6 @@ export class TerminalManager {
     const fallbackSnapshot = runtime.outputBuffer.join('');
     runtime.subscribers.set(subscriberKey, subscriber);
     runtime.viewportOwner = subscriberKey;
-    if (options.cols && options.rows) {
-      this.resizeRuntime(runtime, options.cols, options.rows);
-    }
     this.sendStarted(runtime, subscriber, reattached);
     const runtimeAppearance = runtime.appearanceController?.getAppearance();
     if (
@@ -896,6 +920,13 @@ export class TerminalManager {
         data: snapshot.data,
         cols: snapshot.cols,
         rows: snapshot.rows,
+        alternateScreen: snapshot.alternateScreen,
+        ...(snapshot.scrollbackAnsi !== undefined && {
+          scrollbackAnsi: snapshot.scrollbackAnsi,
+        }),
+        ...(snapshot.pendingEscapeTailAnsi && {
+          pendingEscapeTailAnsi: snapshot.pendingEscapeTailAnsi,
+        }),
       });
     } catch (error) {
       if (runtime.subscribers.get(subscriberKey) !== subscriber) return;
@@ -907,8 +938,10 @@ export class TerminalManager {
         generation: runtime.generation,
         seq: snapshotSeq,
         data: fallbackSnapshot,
-        cols: normalizeTerminalDimension(options.cols, 80, MAX_TERMINAL_COLS),
-        rows: normalizeTerminalDimension(options.rows, 24, MAX_TERMINAL_ROWS),
+        // Raw replay was produced at the live PTY's current grid, not at the
+        // destination panel's requested dimensions.
+        cols: runtime.cols,
+        rows: runtime.rows,
         fallback: true,
       });
     }
@@ -1026,6 +1059,26 @@ export class TerminalManager {
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime || runtime.ended) return;
     runtime.providerSessionId = undefined;
+  }
+
+  /**
+   * Writes the reply for a query consumed from the PTY output. It waits for the
+   * model to finish parsing the output that preceded the query, so a cursor
+   * report describes the position the querying program actually left behind
+   * rather than a mid-chunk guess. A model without those members (test stubs)
+   * degrades to the home position, which is what a fresh grid would report.
+   */
+  private answerDeviceQueries(runtime: TerminalRuntime, query: TerminalDeviceQueryKind): void {
+    const settled = runtime.model.whenSettled?.() ?? Promise.resolve();
+    void settled.then(() => {
+      if (runtime.ended) return;
+      const cursor = runtime.model.cursorPosition?.() ?? { row: 1, column: 1 };
+      try {
+        runtime.process.write(formatTerminalDeviceQueryReply(query, cursor));
+      } catch {
+        // The PTY can exit between emitting the query and receiving its reply.
+      }
+    });
   }
 
   private observeAgentInterruptInput(runtime: TerminalRuntime, data: string): void {
@@ -1158,6 +1211,7 @@ export class TerminalManager {
     cols: number,
     rows: number,
     claim = false,
+    replayRefresh = false,
   ): void {
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime || runtime.ended) return;
@@ -1167,7 +1221,7 @@ export class TerminalManager {
       runtime.viewportOwner = subscriberKey;
     }
     if (runtime.viewportOwner !== subscriberKey) return;
-    this.resizeRuntime(runtime, cols, rows);
+    this.resizeRuntime(runtime, cols, rows, replayRefresh);
   }
 
   detach(terminalId: string, userId: string, connectionId: string, surfaceId: string): void {
@@ -1774,17 +1828,37 @@ export class TerminalManager {
     });
   }
 
-  private resizeRuntime(runtime: TerminalRuntime, cols: number, rows: number): void {
+  private resizeRuntime(
+    runtime: TerminalRuntime,
+    cols: number,
+    rows: number,
+    forceRefresh = false,
+  ): void {
     const normalizedCols = normalizeTerminalDimension(cols, 80, MAX_TERMINAL_COLS);
     const normalizedRows = normalizeTerminalDimension(rows, 24, MAX_TERMINAL_ROWS);
-    if (runtime.cols === normalizedCols && runtime.rows === normalizedRows) return;
+    const dimensionsChanged = runtime.cols !== normalizedCols || runtime.rows !== normalizedRows;
+    if (!dimensionsChanged && !forceRefresh) return;
     if (runtime.resizeScrollbackPolicy === 'preserve-on-ed3') {
       runtime.resizeOutputTransaction?.begin();
     }
     runtime.process.resize(normalizedCols, normalizedRows);
-    runtime.model.resize(normalizedCols, normalizedRows);
-    runtime.cols = normalizedCols;
-    runtime.rows = normalizedRows;
+    if (dimensionsChanged) {
+      runtime.model.resize(normalizedCols, normalizedRows);
+      runtime.cols = normalizedCols;
+      runtime.rows = normalizedRows;
+    }
+
+    if (forceRefresh && getRuntimePlatform() !== 'win32') {
+      // POSIX node-pty only emits SIGWINCH when dimensions change. Snapshot
+      // replay also needs a repaint at the same grid, so mirror Orca's
+      // explicit post-replay signal. ConPTY gets the same-size native resize
+      // above; node-pty does not support signals on Windows.
+      try {
+        runtime.process.kill('SIGWINCH');
+      } catch {
+        // The process may have exited between replay and refresh.
+      }
+    }
   }
 
   private inferInterrupt(
