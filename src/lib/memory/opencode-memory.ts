@@ -6,6 +6,7 @@ import { execCli, isRunningInWsl, type CliEnvironment } from "@/lib/cli/cli-exec
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 import { resolveClaudeConfigDirForEnvironment } from "@/lib/skill/skill-loader";
 import { getMemoryProviderKind } from "@/lib/memory/memory-provider";
+import { toMemoryDisplayPath } from "@/lib/memory/memory-display-path";
 import {
   directoryExists,
   MemoryApiError,
@@ -61,9 +62,14 @@ export async function resolveOpenCodeConfigDirForEnvironment(
   if (environment === "wsl" && process.platform === "win32") {
     const result = await execCli(
       "sh",
-      ["-lc", 'printf "%s" "$HOME/.config/opencode"'],
+      // `-c` + `loginShell: false`: this reads only `$HOME` (set by wsl.exe,
+      // not by rc files), so the user's login shell adds nothing but latency.
+      // See resolveClaudeConfigDirForEnvironment. NOTE: codex deliberately does
+      // NOT do this — its probe reads `$CODEX_HOME`, which lives in the rc.
+      ["-c", 'printf "%s" "$HOME/.config/opencode"'],
       "wsl",
       5000,
+      { loginShell: false },
     );
     const resolvedDir = lastNonEmptyLine(result.stdout);
     if (result.ok && resolvedDir) return resolvedDir;
@@ -345,6 +351,7 @@ export async function listOpenCodeGuidelines(
     label: target.label,
     fileName: target.fileName,
     path: target.absolutePath,
+    displayPath: toMemoryDisplayPath(target.absolutePath, environment),
     status: target.status,
     statusLabel: target.statusLabel,
     statusReason: target.statusReason,
