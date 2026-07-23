@@ -11,6 +11,7 @@ import {
   takePendingTerminalLaunch,
   type PendingTerminalLaunch,
 } from './pending-terminal-launch';
+import { isGlobalShortcutKeydown } from '@/lib/keyboard/terminal-passthrough';
 import { dispatchTerminalLaunchResult } from './terminal-launch-result';
 import { clearClientTerminalHandoff } from './client-terminal-handoff-state';
 import {
@@ -854,6 +855,10 @@ export class TerminalSurface {
         window as Window & { electronAPI?: Partial<ElectronTerminalClipboardApi> }
       ).electronAPI;
       terminal.attachCustomKeyEventHandler((event) => {
+        // App-level shortcuts must bubble to the window listener instead of
+        // being cancelled by xterm or encoded into PTY input.
+        if (isGlobalShortcutKeydown(event)) return false;
+
         if (
           event.type === 'keydown'
           && event.shiftKey

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, Terminal, X } from 'lucide-react';
 import { ChatArea } from '@/components/chat/chat-area';
+import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
 import { WorkspaceFileTab } from '@/components/workspace/workspace-file-tab';
 import { TabIdContext } from '@/stores/panel-store';
@@ -285,17 +286,18 @@ export function SessionPeek({
               <span className="rounded-full border border-(--divider) px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-(--text-muted)">
                 {surfaceBadge}
               </span>
-              <button
-                ref={closeButtonRef}
-                type="button"
-                onClick={onClose}
-                className="rounded-md p-1.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
-                aria-label={t('common.close')}
-                title={t('common.close')}
-                data-testid="kanban-session-peek-close"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <ShortcutTooltip id="close-tab" label={t('common.close')}>
+                <button
+                  ref={closeButtonRef}
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-md p-1.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
+                  aria-label={t('common.close')}
+                  data-testid="kanban-session-peek-close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </ShortcutTooltip>
             </header>
           ) : null}
           <div

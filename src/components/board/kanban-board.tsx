@@ -874,6 +874,10 @@ export const KanbanBoard = memo(function KanbanBoard() {
       useSessionStore.getState().addSession(newSession);
       useChatStore.getState().loadHistory(newSessionId, []);
 
+      if (useSettingsStore.getState().settings.kanbanSessionOpenMode === 'peek') {
+        useBoardStore.getState().openSessionPeek(newSessionId);
+      }
+
       // Assign to active panel
       {
         const ps = usePanelStore.getState();

@@ -100,7 +100,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
       onClick={onClick}
       data-testid="toast-notification"
       className={cn(
-        'w-[320px] rounded-lg border border-(--toast-border) cursor-pointer',
+        'w-[17rem] rounded-lg border border-(--toast-border) cursor-pointer',
         'bg-(--toast-bg)',
         'hover:bg-(--toast-bg-hover) transition-colors'
       )}
@@ -109,18 +109,18 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
       aria-live="assertive"
       aria-atomic="true"
     >
-      <div className="p-3">
-        <div className="flex items-start gap-2.5">
-          <div className="w-5 h-5 rounded-md bg-(--toast-icon-bg) border border-(--toast-icon-border) flex items-center justify-center shrink-0 mt-px">
-            <IconComponent className="w-3 h-3" style={{ color: iconColor }} />
+      <div className="p-2.5">
+        <div className="flex items-start gap-2">
+          <div className="w-4 h-4 rounded bg-(--toast-icon-bg) border border-(--toast-icon-border) flex items-center justify-center shrink-0 mt-px">
+            <IconComponent className="w-2.5 h-2.5" style={{ color: iconColor }} />
           </div>
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-[13px] font-medium truncate text-(--text-primary)">
+              <span className="text-[0.6875rem] font-medium truncate text-(--text-primary)">
                 {sessionTitle}
               </span>
-              <span className="text-[11px] text-(--toast-muted) shrink-0 ml-auto">{relativeTime}</span>
+              <span className="text-[0.625rem] text-(--toast-muted) shrink-0 ml-auto">{relativeTime}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); onDismissRef.current(); }}
                 className="p-0.5 rounded text-(--toast-muted) hover:text-(--text-primary) hover:bg-(--toast-icon-bg) transition-colors shrink-0"
@@ -130,7 +130,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
               </button>
             </div>
 
-            <p className="text-[12px] text-(--toast-muted) leading-snug line-clamp-2 mt-0.5">
+            <p className="text-[0.625rem] text-(--toast-muted) leading-snug line-clamp-2 mt-0.5">
               {notification.preview}
             </p>
 
@@ -146,7 +146,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
                     onClick={(e) => { e.stopPropagation(); handleActionClick(action); }}
                     disabled={isSubmitting}
                     className={cn(
-                      'px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors',
+                      'px-2 py-0.5 rounded text-[0.625rem] font-medium transition-colors',
                       'disabled:opacity-50 disabled:cursor-not-allowed',
                       action.primary
                         ? 'bg-(--text-primary) text-(--toast-bg) hover:opacity-90'
