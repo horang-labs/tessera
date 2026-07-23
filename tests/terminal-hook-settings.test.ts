@@ -62,9 +62,11 @@ test('Codex terminal overlay observes tool progress and permission requests', ()
   assert.equal((codexHooks.PermissionRequest as Array<{ matcher?: string }>)[0]?.matcher, undefined);
 });
 
-test('OpenCode terminal plugin normalizes to the base lifecycle events', () => {
-  assert.deepEqual([...OPENCODE_TESSERA_LIFECYCLE_EVENTS], BASE_LIFECYCLE_EVENTS);
+test('OpenCode terminal plugin emits its declared lifecycle and input-wait events', () => {
   const emittedEvents = [...buildOpenCodeHookPluginSource().matchAll(/hook_event_name:\s*"([^"]+)"/g)]
     .map((match) => match[1]);
-  assert.deepEqual([...new Set(emittedEvents)].sort(), [...BASE_LIFECYCLE_EVENTS].sort());
+  assert.deepEqual(
+    [...new Set(emittedEvents)].sort(),
+    [...OPENCODE_TESSERA_LIFECYCLE_EVENTS].sort(),
+  );
 });
