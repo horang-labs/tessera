@@ -111,7 +111,10 @@ export const AppHeader = memo(function AppHeader() {
                     type="button"
                     onClick={toggleGitPanel}
                     className={cn(
-                      'electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
+                      // Lift above the Session Peek backdrop (z-50) so the panel
+                      // toggle stays clickable while a peek is open — otherwise the
+                      // backdrop swallows the click and light-dismisses the peek.
+                      'relative z-[60] electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
                       gitPanelOpen
                         ? 'bg-(--accent)/14 text-(--accent)'
