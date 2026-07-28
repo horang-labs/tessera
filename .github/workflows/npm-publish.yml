@@ -42,9 +42,52 @@ jobs:
         env:
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
 
-      - name: Verify package
+      - name: Verify package installs and boots
         if: ${{ github.event.inputs.dist_tag_version == '' }}
-        run: npm pack --dry-run --ignore-scripts
+        env:
+          SMOKE_PORT: '32123'
+        run: |
+          set -euo pipefail
+
+          # Pack the real tarball — prepack already ran in the Build step.
+          tarball="$(npm pack --ignore-scripts | tail -1)"
+          echo "Packed $tarball"
+
+          # Install exactly the way a user does, with lifecycle scripts NOT
+          # ignored: a prepare/postinstall reaching for a path that the `files`
+          # allowlist strips fails here rather than on the user's machine.
+          npm install -g --prefix "$RUNNER_TEMP/smoke" "./$tarball"
+
+          tessera_bin="$RUNNER_TEMP/smoke/bin/tessera"
+          "$tessera_bin" --version
+
+          # Boot the installed tree for real. --version only reads package.json,
+          # so it would still pass with dist-server/ or .next/ missing from
+          # `files`, or with a node-pty that fails to load; starting the server
+          # is what actually exercises those.
+          export TESSERA_DATA_DIR="$RUNNER_TEMP/smoke-data"
+          "$tessera_bin" --port "$SMOKE_PORT" >"$RUNNER_TEMP/server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 90); do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "::error::tessera exited before serving a request"
+              cat "$RUNNER_TEMP/server.log"
+              exit 1
+            fi
+            # Any HTTP status means the server is up — an auth redirect is fine.
+            status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SMOKE_PORT/" || true)"
+            if [ -n "$status" ] && [ "$status" != "000" ]; then
+              echo "Server responded with HTTP $status"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::tessera did not respond on port $SMOKE_PORT within 90s"
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
 
       - name: Publish package
         if: ${{ github.event.inputs.dist_tag_version == '' }}
