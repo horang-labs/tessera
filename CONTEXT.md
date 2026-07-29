@@ -53,3 +53,19 @@ The mode actually used by a session after applying the user's preferred executio
 ### Session execution mode
 
 The effective execution mode fixed when a session is created. A session cannot switch between GUI and PTY modes, and conversation state cannot resume across those modes.
+
+### Worktree preparation
+
+The one-time work that makes a newly created worktree usable: supplying what Git does not carry over, such as local configuration files a project needs but does not track.
+
+_Avoid_: setup, bootstrap, initialization
+
+### Preparation script
+
+The commands a project runs during worktree preparation. It belongs to the project, so every worktree created from that project inherits it.
+
+_Avoid_: setup script, hook — in Tessera, _setup_ names the first-run onboarding flow instead
+
+### Preparation status
+
+How far a worktree's preparation has progressed, and whether it succeeded. The outcome outlives the run, so a failed preparation stays visible until it is retried.
