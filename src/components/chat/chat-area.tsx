@@ -12,6 +12,7 @@ import { MessageList } from "./message-list";
 import { MessageInput } from "./message-input";
 import { WorkflowStatusBar } from "./workflow/workflow-status-bar";
 import { TodoStatusBar } from "./todo/todo-status-bar";
+import { TerminalChatComposer } from "./terminal-chat-composer";
 import { InteractivePromptOverlay } from "./interactive-prompt-overlay";
 import { MessageSquare, AlertCircle, LoaderCircle, X as XIcon } from "lucide-react";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
@@ -22,6 +23,12 @@ import { useI18n } from "@/lib/i18n";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { getSessionTerminalId } from "@/lib/terminal/terminal-surface-registry";
 import { shouldShowSessionHeader } from "@/lib/terminal/session-header-visibility";
+import { supportsTerminalChatView } from "@/lib/terminal/terminal-chat-view-support";
+import { cancelTerminalChatRefresh } from "@/lib/chat/terminal-chat-live-refresh";
+import {
+  selectTerminalViewMode,
+  useTerminalViewModeStore,
+} from "@/stores/terminal-view-mode-store";
 
 interface ChatAreaProps {
   sessionId: string;
@@ -117,6 +124,29 @@ export const ChatArea = memo(function ChatArea({
     () => (isTerminalSession ? getSessionTerminalId(sessionId) : null),
     [isTerminalSession, sessionId],
   );
+  // PTY 세션을 GUI로 볼 때: 터미널은 그대로 살려두고 위에 채팅을 덮는다(Orca와 동일).
+  // 언마운트하면 PTY가 새로 떠서 스크롤백이 날아간다.
+  const terminalViewMode = useTerminalViewModeStore(selectTerminalViewMode(sessionId));
+  const canToggleTerminalChatView = isTerminalSession && supportsTerminalChatView(sessionProvider);
+  const isTerminalChatView = canToggleTerminalChatView
+    && !isPendingCreation
+    && terminalViewMode === 'chat';
+  // 터미널에서 대화가 계속 진행되므로, 채팅으로 넘어올 때마다 transcript를 다시 읽는다.
+  // 전환 순간에만 걸리도록 ref로 가드 — forceReload가 매 렌더 반복되면 안 된다.
+  const reloadedChatViewKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!session || !isTerminalChatView) {
+      if (!isTerminalChatView) {
+        reloadedChatViewKeyRef.current = null;
+        // 터미널로 돌아갔으면 예약된 갱신도 의미가 없다.
+        cancelTerminalChatRefresh(sessionId);
+      }
+      return;
+    }
+    if (reloadedChatViewKeyRef.current === sessionId) return;
+    reloadedChatViewKeyRef.current = sessionId;
+    void viewSession(session, { forceReload: true, activate: false });
+  }, [session, sessionId, isTerminalChatView, viewSession]);
 
   if (!sessionId) {
     return (
@@ -177,7 +207,11 @@ export const ChatArea = memo(function ChatArea({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-(--chat-bg)">
-      {!isPeek && shouldShowSessionHeader({ isTerminalSession, isSinglePanel }) && (
+      {!isPeek && shouldShowSessionHeader({
+        isTerminalSession,
+        isSinglePanel,
+        canToggleTerminalChatView,
+      }) && (
         <Header
           sessionId={sessionId}
           panelId={panelId}
@@ -197,7 +231,7 @@ export const ChatArea = memo(function ChatArea({
         />
       )}
 
-      <div className="flex-1 overflow-hidden">
+      <div className="relative flex-1 overflow-hidden">
         {isTerminalSession ? (
           isPendingCreation ? (
             // 생성 대기 표면: 터미널 기본 배경(TERMINAL_LIGHT/DARK_THEME)과 같은 색만
@@ -238,6 +272,36 @@ export const ChatArea = memo(function ChatArea({
               activeGroupedRowIndex: messageSearch.activeGroupedRowIndex,
             }}
           />
+        )}
+
+        {/* PTY 위에 덮는 읽기 전용 대화. 밑의 TerminalPanel은 계속 살아 있다. */}
+        {isTerminalChatView && (
+          <div
+            className="absolute inset-0 z-10 flex flex-col bg-(--chat-bg)"
+            data-testid="terminal-chat-overlay"
+          >
+            {/* MessageList는 h-full이라 높이를 부모가 확정해줘야 한다. flex 아이템의
+                기본 min-height:auto 때문에 min-h-0이 없으면 목록이 자연 높이로
+                늘어나 컴포저를 화면 밖으로 밀어낸다. */}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <MessageList
+                messages={windowedMessages}
+                isLoading={isLoading}
+                sessionId={sessionId}
+                hasMore={hasMore}
+                onLoadMore={loadMore}
+                isLoadingMore={isLoadingMore}
+                isSinglePanel={isSinglePanel}
+                isTabActive={isViewActive}
+                isTurnInFlight={isTurnInFlight}
+                search={{
+                  activeMatchMessageId: messageSearch.activeMatch?.messageId ?? null,
+                  activeGroupedRowIndex: messageSearch.activeGroupedRowIndex,
+                }}
+              />
+            </div>
+            <TerminalChatComposer sessionId={sessionId} isSinglePanel={isSinglePanel} />
+          </div>
         )}
       </div>
 

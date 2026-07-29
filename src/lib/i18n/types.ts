@@ -471,6 +471,15 @@ export interface I18nMessages {
     removePanelHint: string;
     releaseSessionHint: string;
     readOnlyPlaceholder: string;
+    terminalReadOnlyNotice: string;
+    terminalWorkingNotice: string;
+    terminalWaitingNotice: string;
+    terminalComposerHint: string;
+    terminalComposerPlaceholder: string;
+    terminalComposerBlocked: string;
+    terminalSendFailed: string;
+    viewAsChat: string;
+    viewAsTerminal: string;
     imageOriginalView: string;
     generateTitle: string;
     generatingTitle: string;

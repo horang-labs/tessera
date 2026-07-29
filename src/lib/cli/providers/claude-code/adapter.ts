@@ -11,7 +11,10 @@
  */
 
 import { randomUUID } from 'crypto';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import type { ChildProcess } from 'child_process';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type {
   CliProvider,
   CheckStatusOptions,
@@ -47,6 +50,11 @@ import {
   createClaudeTerminalSessionObserver,
   isClaudeBackgroundTerminalSessionFork,
 } from './terminal-session-observer';
+import {
+  createClaudeTranscriptDecoderState,
+  decodeClaudeTranscriptLine,
+} from './transcript-decoder';
+import { resolveClaudeTranscriptPath } from './transcript-path';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -133,6 +141,48 @@ export class ClaudeCodeAdapter implements CliProvider {
   createTerminalSessionObserver = createClaudeTerminalSessionObserver;
 
   isBackgroundTerminalSessionFork = isClaudeBackgroundTerminalSessionFork;
+
+  /**
+   * Replays a PTY session's Claude transcript as Tessera history events.
+   * Streamed line-by-line: a long session's transcript can reach tens of MB and
+   * must not be buffered whole just to decode it.
+   */
+  async readTerminalTranscriptEvents(options: {
+    sessionId: string;
+    providerSessionId: string;
+    transcriptPath?: string | null;
+  }): Promise<SessionHistoryEvent[] | null> {
+    const filePath = await resolveClaudeTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+    });
+    if (!filePath) return null;
+
+    const decoderState = createClaudeTranscriptDecoderState(options.sessionId);
+    const events: SessionHistoryEvent[] = [];
+    const stream = createReadStream(filePath, { encoding: 'utf-8' });
+
+    try {
+      const lines = createInterface({ input: stream, crlfDelay: Infinity });
+      for await (const line of lines) {
+        events.push(...decodeClaudeTranscriptLine(line, decoderState));
+      }
+    } catch (error) {
+      // A transcript that vanished mid-read (session cleared, rotated) is the
+      // same "nothing to show" case as never finding one.
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      logger.warn({
+        sessionId: options.sessionId,
+        filePath,
+        error: (error as Error).message,
+      }, 'Failed to read Claude terminal transcript');
+      return null;
+    } finally {
+      stream.destroy();
+    }
+
+    return events;
+  }
 
   /**
    * Checks whether the Claude Code CLI binary is available.

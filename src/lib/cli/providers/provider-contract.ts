@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'child_process';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { ContentBlock } from '@/lib/ws/message-types';
@@ -150,6 +151,24 @@ export interface CliProvider {
   createTerminalSessionObserver?(
     options: ProviderTerminalSessionObserverOptions,
   ): ProviderTerminalSessionObserver;
+
+  /**
+   * Replays a terminal (PTY) session's provider-owned transcript as Tessera
+   * history events, so a conversation that never streamed through ProcessManager
+   * can still render in the chat view. Read-only: implementations MUST NOT write
+   * to the transcript or mutate session state.
+   *
+   * Returns null when the provider cannot locate a transcript for the session —
+   * distinct from an empty array, which means "found it, nothing to show yet".
+   */
+  readTerminalTranscriptEvents?(options: {
+    /** Tessera session id — used for tool-result asset URLs. */
+    sessionId: string;
+    /** The provider's own session id for this PTY session. */
+    providerSessionId: string;
+    /** Hook-reported transcript path, when one was captured. */
+    transcriptPath?: string | null;
+  }): Promise<SessionHistoryEvent[] | null>;
 
   /** Classifies a provider hook that may belong to a non-active fork child. */
   isBackgroundTerminalSessionFork?(options: {
