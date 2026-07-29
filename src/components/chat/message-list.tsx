@@ -175,6 +175,7 @@ function MessageListSessionView({
   const {
     virtualizer,
     autoScroll,
+    canScrollToBottom,
     setAutoScroll,
     handleScroll,
     handleWheel,
@@ -350,7 +351,7 @@ function MessageListSessionView({
   // Virtual items to render
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
-  const showScrollToBottomButton = messages.length > 0 && !autoScroll;
+  const showScrollToBottomButton = messages.length > 0 && !autoScroll && canScrollToBottom;
 
   return (
     <div className="h-full relative">

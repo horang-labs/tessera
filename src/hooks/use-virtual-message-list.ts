@@ -250,6 +250,8 @@ interface UseVirtualMessageListResult {
   virtualizer: Virtualizer<HTMLDivElement, Element>;
   /** Whether the list is auto-scrolling to bottom */
   autoScroll: boolean;
+  /** True only when the list overflows its container — see the hook body. */
+  canScrollToBottom: boolean;
   setAutoScroll: React.Dispatch<React.SetStateAction<boolean>>;
   /** Scroll handler to attach to the scroll container */
   handleScroll: () => void;
@@ -408,6 +410,34 @@ export function useVirtualMessageList({
   };
 
   const totalSize = virtualizer.getTotalSize();
+
+  /**
+   * Whether the list actually has somewhere to scroll to.
+   *
+   * `autoScroll` only flips on through a scroll event or an initial restore, so
+   * a conversation short enough to fit leaves it false forever — nothing ever
+   * scrolls. Anything gated purely on `!autoScroll` would then show up on a list
+   * that is already fully visible.
+   */
+  const [canScrollToBottom, setCanScrollToBottom] = useState(false);
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) {
+      setCanScrollToBottom(false);
+      return;
+    }
+    const measure = () => {
+      setCanScrollToBottom(
+        container.scrollHeight - container.clientHeight > NEAR_BOTTOM_THRESHOLD_PX,
+      );
+    };
+    measure();
+    // Content growth alone does not resize the container, and a pane resize does
+    // not change content — watch the element and re-run on totalSize to cover both.
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [scrollContainerRef, totalSize]);
 
   const captureScrollPosition = useCallback((container: HTMLDivElement): ScrollPositionSnapshot => {
     const scrollTop = container.scrollTop;
@@ -950,6 +980,7 @@ export function useVirtualMessageList({
   return {
     virtualizer,
     autoScroll,
+    canScrollToBottom,
     setAutoScroll: setAutoScrollFromCaller,
     handleScroll,
     handleWheel,
