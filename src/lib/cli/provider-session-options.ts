@@ -1,6 +1,5 @@
 import type { PermissionMode } from '@/lib/ws/message-types';
 import {
-  buildClaudeSessionOptions,
   buildCodexPermissionMapping,
   buildSharedPermissionMapping,
 } from './provider-session-option-definitions';
@@ -13,10 +12,12 @@ import {
   type ProviderSessionOptions,
 } from './provider-session-option-types';
 import { loadCodexSessionOptions } from './provider-session-options-codex';
+import { loadClaudeSessionOptions } from './provider-session-options-claude';
 import { loadOpenCodeSessionOptions } from './provider-session-options-opencode';
-import { ensureModelConfigReady } from '../model-config/remote-config';
+import { mergeCustomModelIds } from './provider-session-custom-models';
 import { getAgentEnvironment } from './spawn-cli';
 import type { AgentEnvironment } from '../settings/types';
+import { SettingsManager } from '../settings/manager';
 
 const CACHE_TTL_MS = 30_000;
 
@@ -96,7 +97,7 @@ async function getSessionOptionsAgentEnvironment(
   userId?: string,
   agentEnvironmentOverride?: AgentEnvironment,
 ): Promise<AgentEnvironment | 'static'> {
-  if (providerId === 'codex' || providerId === 'opencode') {
+  if (providerId === 'claude-code' || providerId === 'codex' || providerId === 'opencode') {
     return agentEnvironmentOverride ?? getAgentEnvironment(userId);
   }
 
@@ -116,21 +117,31 @@ async function loadProviderSessionOptions(
   userId?: string,
   agentEnvironment?: AgentEnvironment | 'static',
 ): Promise<ProviderSessionOptions> {
+  let sessionOptions: ProviderSessionOptions;
   if (providerId === 'codex') {
-    return loadCodexSessionOptions(
+    sessionOptions = await loadCodexSessionOptions(
       userId,
       agentEnvironment === 'static' ? undefined : agentEnvironment,
     );
-  }
-
-  if (providerId === 'opencode') {
-    return loadOpenCodeSessionOptions(
+  } else if (providerId === 'opencode') {
+    sessionOptions = await loadOpenCodeSessionOptions(
+      agentEnvironment === 'static' || !agentEnvironment ? 'native' : agentEnvironment,
+    );
+  } else {
+    sessionOptions = await loadClaudeSessionOptions(
       agentEnvironment === 'static' || !agentEnvironment ? 'native' : agentEnvironment,
     );
   }
 
-  await ensureModelConfigReady();
-  return buildClaudeSessionOptions();
+  if (!userId) {
+    return sessionOptions;
+  }
+
+  const settings = await SettingsManager.load(userId, { silent: true });
+  return mergeCustomModelIds(
+    sessionOptions,
+    settings.providerCustomModels[providerId],
+  );
 }
 
 export function getProviderPermissionMapping(
