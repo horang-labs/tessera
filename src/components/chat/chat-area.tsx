@@ -25,10 +25,11 @@ import { getSessionTerminalId } from "@/lib/terminal/terminal-surface-registry";
 import { shouldShowSessionHeader } from "@/lib/terminal/session-header-visibility";
 import { supportsTerminalChatView } from "@/lib/terminal/terminal-chat-view-support";
 import { cancelTerminalChatRefresh } from "@/lib/chat/terminal-chat-live-refresh";
+import { useTerminalViewMode } from "@/hooks/use-terminal-view-mode";
 import {
-  selectTerminalViewMode,
-  useTerminalViewModeStore,
-} from "@/stores/terminal-view-mode-store";
+  selectIsTerminalTurnProcessing,
+  useTerminalSessionStore,
+} from "@/stores/terminal-session-store";
 
 interface ChatAreaProps {
   sessionId: string;
@@ -126,7 +127,10 @@ export const ChatArea = memo(function ChatArea({
   );
   // PTY 세션을 GUI로 볼 때: 터미널은 그대로 살려두고 위에 채팅을 덮는다(Orca와 동일).
   // 언마운트하면 PTY가 새로 떠서 스크롤백이 날아간다.
-  const terminalViewMode = useTerminalViewModeStore(selectTerminalViewMode(sessionId));
+  const terminalViewMode = useTerminalViewMode(sessionId);
+  const isTerminalTurnProcessing = useTerminalSessionStore(
+    selectIsTerminalTurnProcessing(sessionId),
+  );
   const canToggleTerminalChatView = isTerminalSession && supportsTerminalChatView(sessionProvider);
   const isTerminalChatView = canToggleTerminalChatView
     && !isPendingCreation
@@ -293,7 +297,9 @@ export const ChatArea = memo(function ChatArea({
                 isLoadingMore={isLoadingMore}
                 isSinglePanel={isSinglePanel}
                 isTabActive={isViewActive}
-                isTurnInFlight={isTurnInFlight}
+                isTurnInFlight={isTerminalTurnProcessing}
+                // PTY 세션의 턴은 chat-store가 아니라 provider 훅이 소유한다.
+                forceWaitingIndicator={isTerminalTurnProcessing}
                 search={{
                   activeMatchMessageId: messageSearch.activeMatch?.messageId ?? null,
                   activeGroupedRowIndex: messageSearch.activeGroupedRowIndex,

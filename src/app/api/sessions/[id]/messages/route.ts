@@ -73,7 +73,11 @@ export async function GET(
     // hook leaves prompt-only history behind, which would otherwise shadow the
     // full conversation the provider transcript holds.
     if (supportsTerminalTranscriptHistory(dbSession)) {
-      const terminalResult = await readTerminalSessionHistory(dbSession, { limit, beforeBytes });
+      const terminalResult = await readTerminalSessionHistory(dbSession, {
+        limit,
+        beforeBytes,
+        userId,
+      });
       if (!terminalResult) {
         logger.info({
           userId,

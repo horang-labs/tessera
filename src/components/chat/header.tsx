@@ -33,10 +33,8 @@ import {
 import { useIsSessionProcessing } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
-import {
-  selectTerminalViewMode,
-  useTerminalViewModeStore,
-} from '@/stores/terminal-view-mode-store';
+import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
+import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 
 interface HeaderProps {
   sessionId: string;
@@ -74,7 +72,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
 
   // PTY 세션을 읽기 전용 채팅으로 덮어 보는 토글. transcript를 되읽을 수 있는
   // provider에서만 노출한다 — 그 외에는 보여줄 대화가 없다.
-  const terminalViewMode = useTerminalViewModeStore(selectTerminalViewMode(sessionId));
+  const terminalViewMode = useTerminalViewMode(sessionId);
   const toggleTerminalViewMode = useTerminalViewModeStore((state) => state.toggleMode);
   const canToggleTerminalView = session?.kind === 'terminal'
     && supportsTerminalChatView(session?.provider);

@@ -19,6 +19,7 @@ import { useChatStore } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
+import type { EnhancedMessage } from '@/types/chat';
 import { restoreSessionReplay } from './restore-session-replay';
 
 const REFRESH_DEBOUNCE_MS = 300;
@@ -30,6 +31,83 @@ const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const inFlight = new Set<string>();
 /** Sessions whose transcript changed again while a refresh was still running. */
 const restaleWhileInFlight = new Set<string>();
+
+/**
+ * Messages sent from the chat view that the transcript has not caught up to yet.
+ *
+ * Agents flush their transcript on turn boundaries, not on receipt — Codex was
+ * measured taking ~35s to record a prompt. Hooks, meanwhile, fire immediately.
+ * So the first refresh after a send returns a transcript that predates the
+ * message, and replacing the list wholesale would make the user's own message
+ * vanish until the turn ends. These are re-appended after every refresh and
+ * dropped as soon as the transcript actually contains them.
+ */
+const pendingSends = new Map<string, EnhancedMessage[]>();
+
+/** Stops a send from lingering forever if its turn never lands in the transcript. */
+const PENDING_SEND_TTL_MS = 10 * 60_000;
+
+function normalizeForMatch(content: unknown): string {
+  return typeof content === 'string' ? content.trim() : '';
+}
+
+/**
+ * Registers a message the user just sent to the PTY and shows it immediately.
+ * The chat view has no stream of its own, so without this the send appears to
+ * do nothing until the agent finishes its turn.
+ */
+export function registerPendingTerminalChatMessage(sessionId: string, text: string): void {
+  const message: EnhancedMessage = {
+    id: `terminal-chat-pending-${Date.now()}`,
+    type: 'text',
+    role: 'user',
+    content: text,
+    timestamp: new Date().toISOString(),
+  };
+
+  const queue = pendingSends.get(sessionId) ?? [];
+  queue.push(message);
+  pendingSends.set(sessionId, queue);
+  useChatStore.getState().addMessage(sessionId, message);
+
+  setTimeout(() => {
+    const current = pendingSends.get(sessionId);
+    if (!current) return;
+    const remaining = current.filter((entry) => entry !== message);
+    if (remaining.length) pendingSends.set(sessionId, remaining);
+    else pendingSends.delete(sessionId);
+  }, PENDING_SEND_TTL_MS).unref?.();
+}
+
+/**
+ * Appends still-unconfirmed sends to a freshly read transcript. A pending entry
+ * is confirmed — and dropped — once a user message with the same text appears
+ * in the server's list.
+ */
+function mergePendingMessages(
+  sessionId: string,
+  serverMessages: EnhancedMessage[],
+): EnhancedMessage[] {
+  const queue = pendingSends.get(sessionId);
+  if (!queue?.length) return serverMessages;
+
+  const serverUserTexts = new Set(
+    serverMessages
+      .filter((message) => message.type === 'text' && message.role === 'user')
+      .map((message) => normalizeForMatch((message as { content?: unknown }).content)),
+  );
+
+  const stillPending = queue.filter(
+    (message) => !serverUserTexts.has(
+      normalizeForMatch((message as { content?: unknown }).content),
+    ),
+  );
+
+  if (stillPending.length) pendingSends.set(sessionId, stillPending);
+  else pendingSends.delete(sessionId);
+
+  return stillPending.length ? [...serverMessages, ...stillPending] : serverMessages;
+}
 
 /** True only while this session is actually being shown as a read-only chat. */
 function isLiveTerminalChatView(sessionId: string): boolean {
@@ -70,7 +148,10 @@ async function refreshTerminalChat(sessionId: string): Promise<void> {
     // closed) while the request was in flight — don't clobber whatever replaced it.
     if (!isLiveTerminalChatView(sessionId)) return;
 
-    restoreSessionReplay(sessionId, result);
+    restoreSessionReplay(sessionId, {
+      ...result,
+      messages: mergePendingMessages(sessionId, result.messages ?? []),
+    });
     const session = useSessionStore.getState().getSession(sessionId);
     if (result.pagination && session) {
       useChatStore.getState().setReadOnlyPagination(sessionId, {

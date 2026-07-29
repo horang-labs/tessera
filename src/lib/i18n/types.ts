@@ -12,6 +12,13 @@ export interface I18nMessages {
       gitDesc: string;
     };
     language: string;
+    terminalView: {
+      title: string;
+      description: string;
+      perSessionNote: string;
+      terminal: { label: string; description: string };
+      chat: { label: string; description: string };
+    };
     executionMode: {
       title: string;
       description: string;

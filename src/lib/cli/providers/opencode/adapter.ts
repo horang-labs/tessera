@@ -11,6 +11,7 @@ import type {
   TranslatedText,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import { isBinaryAvailable } from '../registry';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
@@ -27,6 +28,8 @@ import { updateProviderStateWithRetry } from '../../process-manager-side-effects
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { opencodeProtocolParser } from './protocol-parser';
+import { decodeOpenCodeSession } from './transcript-decoder';
+import { exportOpenCodeSession, fingerprintOpenCodeStore } from './transcript-source';
 import { openCodeScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 import {
   buildOpenCodePermissionEnv,
@@ -124,6 +127,34 @@ export class OpenCodeAdapter implements CliProvider {
   }
 
   detectTerminalConversationReset = openCodeScreenShowsConversationReset;
+
+  /**
+   * Identity of the OpenCode store backing this session (see CliProvider).
+   * Stats the database rather than a transcript file — OpenCode has none.
+   */
+  async readTerminalTranscriptFingerprint(options: {
+    providerSessionId: string;
+  }): Promise<string | null> {
+    return fingerprintOpenCodeStore(options.providerSessionId);
+  }
+
+  /**
+   * Replays a PTY session's OpenCode conversation as Tessera history events.
+   * Goes through `opencode export` because the conversation lives in a WAL-mode
+   * SQLite database this process cannot read directly (see transcript-source).
+   */
+  async readTerminalTranscriptEvents(options: {
+    sessionId: string;
+    providerSessionId: string;
+    userId?: string;
+  }): Promise<SessionHistoryEvent[] | null> {
+    const exported = await exportOpenCodeSession({
+      providerSessionId: options.providerSessionId,
+      ...(options.userId ? { userId: options.userId } : {}),
+    });
+    if (!exported) return null;
+    return decodeOpenCodeSession(exported);
+  }
 
   async isAvailable(environment?: 'native' | 'wsl'): Promise<boolean> {
     if (environment) {

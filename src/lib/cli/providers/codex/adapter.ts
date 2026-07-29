@@ -44,6 +44,7 @@ import {
   createCodexTranscriptDecoderState,
   decodeCodexTranscriptLine,
 } from './transcript-decoder';
+import { fingerprintTranscriptFile } from '../claude-code/transcript-path';
 import { resolveCodexTranscriptPath } from './transcript-path';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { AgentEnvironment } from '@/lib/settings/types';
@@ -286,6 +287,17 @@ export class CodexAdapter implements CliProvider {
   createTerminalSessionObserver = createCodexTerminalSessionObserver;
 
   detectTerminalConversationReset = codexScreenShowsConversationReset;
+
+  /** Identity of the rollout file backing this session (see CliProvider). */
+  async readTerminalTranscriptFingerprint(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+  }): Promise<string | null> {
+    return fingerprintTranscriptFile(await resolveCodexTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+    }));
+  }
 
   /**
    * Replays a PTY session's Codex rollout as Tessera history events.

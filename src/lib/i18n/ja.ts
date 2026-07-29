@@ -14,6 +14,19 @@ export const ja: I18nMessages = {
       gitDesc: 'ブランチ命名規則、マージ方式、アクション別プロンプトテンプレートを設定します。',
     },
     language: '言語',
+    terminalView: {
+      title: 'ターミナルセッションの表示',
+      description: 'ターミナル(PTY)セッションを開く画面を選びます。',
+      perSessionNote: '手動で切り替えたセッションはその選択を保持します。',
+      terminal: {
+        label: 'ターミナル',
+        description: '実行中のPTYで開き、すぐに入力できます。',
+      },
+      chat: {
+        label: 'チャット(閲覧のみ)',
+        description: 'エージェントの記録から再現した会話で開きます。',
+      },
+    },
     executionMode: {
       title: 'エージェント実行モード',
       description: '新しいチャットとワークツリーセッションの開き方を選択します。',

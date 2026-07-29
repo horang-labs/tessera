@@ -513,6 +513,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
   const defaults = {
     language: 'en',
     agentExecutionMode: 'pty',
+    terminalSessionDefaultView: 'terminal',
     profile: {
       displayName: DEFAULT_PROFILE_DISPLAY_NAME,
       avatarDataUrl: DEFAULT_PROFILE_AVATAR_DATA_URL,
@@ -633,6 +634,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     ...defaults,
     ...raw,
     agentExecutionMode: raw?.agentExecutionMode === 'gui' ? 'gui' : 'pty',
+    terminalSessionDefaultView: raw?.terminalSessionDefaultView === 'chat' ? 'chat' : 'terminal',
     defaultModel: normalizedClaudeModel,
     terminalThemeLightPreset: normalizeTerminalThemePresetId(
       'light',

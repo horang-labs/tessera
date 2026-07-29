@@ -76,18 +76,41 @@ export function supportsTerminalTranscriptHistory(session: dbSessions.SessionRow
   }
 }
 
-async function transcriptFingerprint(transcriptPath: string | null): Promise<string> {
-  if (!transcriptPath) return 'unresolved';
+/**
+ * Identity of the source a decode came from, so a cached result can be reused
+ * until the provider's own store changes.
+ *
+ * Delegated to the provider: a rollout file is stat'ed by path, while OpenCode
+ * has no path at all (SQLite) and must fingerprint its database instead.
+ * 'unresolved' disables caching rather than risking a stale conversation.
+ */
+async function transcriptFingerprint(
+  session: dbSessions.SessionRow,
+  providerSessionId: string,
+  transcriptPath: string | null,
+  userId?: string,
+): Promise<string> {
+  const provider = cliProviderRegistry.getProvider(session.provider);
+  if (typeof provider.readTerminalTranscriptFingerprint !== 'function') return 'unresolved';
   try {
-    const stats = await fsp.stat(transcriptPath);
-    return `${transcriptPath}:${stats.size}:${stats.mtimeMs}`;
-  } catch {
-    return `${transcriptPath}:missing`;
+    return await provider.readTerminalTranscriptFingerprint({
+      providerSessionId,
+      transcriptPath,
+      ...(userId ? { userId } : {}),
+    }) ?? 'unresolved';
+  } catch (error) {
+    logger.debug({
+      sessionId: session.id,
+      provider: session.provider,
+      error: (error as Error).message,
+    }, 'Terminal transcript fingerprint failed; decoding without cache');
+    return 'unresolved';
   }
 }
 
 async function decodeReplayState(
   session: dbSessions.SessionRow,
+  userId?: string,
 ): Promise<SessionReplayState | null> {
   const provider = cliProviderRegistry.getProvider(session.provider);
   if (typeof provider.readTerminalTranscriptEvents !== 'function') return null;
@@ -103,6 +126,7 @@ async function decodeReplayState(
     sessionId: session.id,
     providerSessionId,
     transcriptPath: binding?.transcript_path ?? null,
+    ...(userId ? { userId } : {}),
   });
   if (!events) return null;
 
@@ -116,20 +140,29 @@ async function decodeReplayState(
  */
 export async function readTerminalSessionReplayState(
   session: dbSessions.SessionRow,
+  userId?: string,
 ): Promise<SessionReplayState | null> {
+  const providerSessionId = readPersistedTerminalProviderSessionId(session);
+  if (!providerSessionId) return null;
+
   const binding = getTerminalProviderSessionForTesseraSession(session.id);
-  const fingerprint = await transcriptFingerprint(binding?.transcript_path ?? null);
+  const fingerprint = await transcriptFingerprint(
+    session,
+    providerSessionId,
+    binding?.transcript_path ?? null,
+    userId,
+  );
 
   const cached = cache.get(session.id);
-  // An unresolved path cannot be fingerprinted, so never serve it from cache —
-  // the transcript may have appeared since the last miss.
+  // An unfingerprintable source is never served from cache — the transcript may
+  // have appeared, or changed, since the last read.
   if (cached && cached.fingerprint === fingerprint && fingerprint !== 'unresolved') {
     // Refresh recency so an actively viewed session is not the next evicted.
     rememberDecoded(session.id, cached);
     return cached.state;
   }
 
-  const state = await decodeReplayState(session);
+  const state = await decodeReplayState(session, userId);
   if (!state) {
     cache.delete(session.id);
     return null;
@@ -147,9 +180,9 @@ export async function readTerminalSessionReplayState(
 /** Page a terminal session's transcript using the same cursor contract as Tessera history. */
 export async function readTerminalSessionHistory(
   session: dbSessions.SessionRow,
-  options: { limit?: number; beforeBytes?: number } = {},
+  options: { limit?: number; beforeBytes?: number; userId?: string } = {},
 ): Promise<TerminalSessionHistoryPage | null> {
-  const state = await readTerminalSessionReplayState(session);
+  const state = await readTerminalSessionReplayState(session, options.userId);
   if (!state) return null;
 
   const { messages, hasMore, nextBeforeBytes } = paginateReplayMessages(state.messages, options);

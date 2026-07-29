@@ -5,7 +5,6 @@ import { ArrowUp, Loader2, Lock, SquareTerminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/stores/notification-store';
-import { useChatStore } from '@/stores/chat-store';
 import {
   selectIsTerminalAwaitingInput,
   selectIsTerminalTurnProcessing,
@@ -13,6 +12,7 @@ import {
 } from '@/stores/terminal-session-store';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { sendTerminalChatMessage } from '@/lib/terminal/terminal-chat-send';
+import { registerPendingTerminalChatMessage } from '@/lib/chat/terminal-chat-live-refresh';
 import { MessageRowShell } from './message-row-shell';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 
@@ -39,7 +39,6 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
   const isProcessing = useTerminalSessionStore(selectIsTerminalTurnProcessing(sessionId));
   const isAwaitingInput = useTerminalSessionStore(selectIsTerminalAwaitingInput(sessionId));
   const setMode = useTerminalViewModeStore((state) => state.setMode);
-  const addMessage = useChatStore((state) => state.addMessage);
 
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -58,20 +57,14 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
       return;
     }
 
-    // 낙관적 표시: transcript에 기록되고 훅이 돌아오기까지 몇 초 걸린다. 그동안
-    // 화면이 그대로면 전송 여부를 알 수 없다. 다음 갱신에서 loadHistory가 목록을
-    // 통째로 교체하므로 진짜 기록으로 자연히 대체된다(중복 없음).
-    addMessage(sessionId, {
-      id: `terminal-chat-pending-${Date.now()}`,
-      type: 'text',
-      role: 'user',
-      content: text,
-      timestamp: new Date().toISOString(),
-    });
+    // 낙관적 표시. 에이전트는 턴이 끝나야 transcript를 flush하므로(codex 실측 ~35초)
+    // 그 전에 도는 갱신이 서버의 옛 목록으로 화면을 덮어쓴다. 등록해 두면 갱신 때마다
+    // 다시 붙었다가, 실제 기록에 나타나는 순간 빠진다.
+    registerPendingTerminalChatMessage(sessionId, text);
 
     setValue('');
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [addMessage, isBlocked, sessionId, t, value]);
+  }, [isBlocked, sessionId, t, value]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -122,6 +115,9 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
             <div className="flex items-end gap-2 px-3 py-2">
               <textarea
                 ref={textareaRef}
+                // MessageList가 빈 영역 클릭 시 이 selector로 입력창을 찾아 포커스한다.
+                // 터미널 세션에서는 MessageInput이 렌더되지 않으므로 중복되지 않는다.
+                data-session-input={sessionId}
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
                 onKeyDown={handleKeyDown}

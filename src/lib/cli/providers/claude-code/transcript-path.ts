@@ -73,6 +73,23 @@ async function findTranscriptByName(
   return stamped[0].candidate;
 }
 
+/**
+ * Cheap identity of a transcript: which file, how big, last written when.
+ * Shared by the Claude and Codex adapters — both back their history with a
+ * single JSONL file that only ever grows.
+ */
+export async function fingerprintTranscriptFile(
+  filePath: string | null,
+): Promise<string | null> {
+  if (!filePath) return null;
+  try {
+    const stats = await fsp.stat(filePath);
+    return `${filePath}:${stats.size}:${stats.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveClaudeTranscriptPath(options: {
   /** Claude's own session id. For PTY sessions this equals the Tessera session id. */
   providerSessionId: string;

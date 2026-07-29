@@ -14,6 +14,19 @@ export const zh: I18nMessages = {
       gitDesc: '分支命名、合并策略以及每个 git 操作发送给 AI 的提示词模板。',
     },
     language: '语言',
+    terminalView: {
+      title: '终端会话视图',
+      description: '选择终端(PTY)会话打开时显示的界面。',
+      perSessionNote: '手动切换过的会话会保留各自的选择。',
+      terminal: {
+        label: '终端',
+        description: '打开正在运行的 PTY，可直接输入。',
+      },
+      chat: {
+        label: '聊天（仅查看）',
+        description: '打开由智能体记录还原的对话。',
+      },
+    },
     executionMode: {
       title: '智能体运行模式',
       description: '选择新聊天和工作树会话的打开方式。',

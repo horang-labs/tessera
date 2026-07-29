@@ -54,7 +54,10 @@ import {
   createClaudeTranscriptDecoderState,
   decodeClaudeTranscriptLine,
 } from './transcript-decoder';
-import { resolveClaudeTranscriptPath } from './transcript-path';
+import {
+  fingerprintTranscriptFile,
+  resolveClaudeTranscriptPath,
+} from './transcript-path';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -141,6 +144,17 @@ export class ClaudeCodeAdapter implements CliProvider {
   createTerminalSessionObserver = createClaudeTerminalSessionObserver;
 
   isBackgroundTerminalSessionFork = isClaudeBackgroundTerminalSessionFork;
+
+  /** Identity of the transcript file backing this session (see CliProvider). */
+  async readTerminalTranscriptFingerprint(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+  }): Promise<string | null> {
+    return fingerprintTranscriptFile(await resolveClaudeTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+    }));
+  }
 
   /**
    * Replays a PTY session's Claude transcript as Tessera history events.

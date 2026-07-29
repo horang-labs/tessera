@@ -14,6 +14,19 @@ export const en: I18nMessages = {
       gitDesc: 'Branch naming, merge strategy, and per-action prompt templates.',
     },
     language: 'Language',
+    terminalView: {
+      title: 'Terminal session view',
+      description: 'Choose the surface terminal (PTY) sessions open on.',
+      perSessionNote: 'Sessions you switch by hand keep their own choice.',
+      terminal: {
+        label: 'Terminal',
+        description: 'Open on the live PTY, ready to type.',
+      },
+      chat: {
+        label: 'Chat (read-only)',
+        description: 'Open on the conversation replayed from the agent transcript.',
+      },
+    },
     executionMode: {
       title: 'Agent execution mode',
       description: 'Choose how new chats and worktree sessions open.',

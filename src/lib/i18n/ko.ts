@@ -14,6 +14,19 @@ export const ko: I18nMessages = {
       gitDesc: '브랜치 네이밍, 병합 전략, git 액션 프롬프트 템플릿을 설정합니다.',
     },
     language: '언어',
+    terminalView: {
+      title: '터미널 세션 화면',
+      description: '터미널(PTY) 세션을 열 때 보여줄 화면을 고릅니다.',
+      perSessionNote: '직접 전환한 세션은 그 선택을 그대로 유지합니다.',
+      terminal: {
+        label: '터미널',
+        description: '실행 중인 PTY로 열어 바로 입력합니다.',
+      },
+      chat: {
+        label: '채팅(보기 전용)',
+        description: '에이전트 기록에서 되살린 대화로 엽니다.',
+      },
+    },
     executionMode: {
       title: '에이전트 실행 모드',
       description: '새 채팅과 워크트리 세션을 여는 방식을 선택합니다.',
