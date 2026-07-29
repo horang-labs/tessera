@@ -4,6 +4,8 @@ export interface I18nMessages {
     sections: {
       general: string;
       generalDesc: string;
+      project: string;
+      projectDesc: string;
       appearance: string;
       appearanceDesc: string;
       development: string;
@@ -248,6 +250,20 @@ export interface I18nMessages {
       retentionConfirmCancel: string;
       retentionConfirmAction: string;
       retentionConfirming: string;
+    };
+    preparation: {
+      title: string;
+      description: string;
+      scriptLabel: string;
+      scriptDesc: string;
+      scriptPlaceholder: string;
+      notRunYet: string;
+      noProject: string;
+      loading: string;
+      saving: string;
+      saved: string;
+      saveFailed: string;
+      loadFailed: string;
     };
     category: {
       session: string;

@@ -218,6 +218,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
+  addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
 }
 
 /**
@@ -989,6 +990,11 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
         ON terminal_provider_sessions(tessera_session_id);
     `);
     logger.info('Migration v29 applied: terminal provider session registry added');
+  }
+
+  if (fromVersion < 30) {
+    addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
+    logger.info('Migration v30 applied: projects.preparation_script column added');
   }
 }
 

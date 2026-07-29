@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useCallback, useState, type ReactNode } from 'react';
-import { GitBranch, MessageSquarePlus, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
+import { FolderGit2, GitBranch, MessageSquarePlus, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import ProfileSettings from './profile-settings';
@@ -21,13 +21,14 @@ import CliDiagnosticsPanel from './cli-diagnostics-panel';
 import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 import AgentExecutionModeSettings from './agent-execution-mode-settings';
+import ProjectPreparationSettings from './project-preparation-settings';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
-type SettingsSectionId = 'general' | 'appearance' | 'development' | 'git';
+type SettingsSectionId = 'general' | 'project' | 'appearance' | 'development' | 'git';
 
 function SettingsCard({
   children,
@@ -87,6 +88,12 @@ export default function SettingsPanel() {
       description: t('settings.sections.generalDesc'),
     },
     {
+      id: 'project' as const,
+      icon: FolderGit2,
+      label: t('settings.sections.project'),
+      description: t('settings.sections.projectDesc'),
+    },
+    {
       id: 'appearance' as const,
       icon: Palette,
       label: t('settings.sections.appearance'),
@@ -117,6 +124,12 @@ export default function SettingsPanel() {
         return (
           <SettingsCard testId="settings-section-appearance">
             <AppearanceSettings />
+          </SettingsCard>
+        );
+      case 'project':
+        return (
+          <SettingsCard testId="settings-section-project-preparation">
+            <ProjectPreparationSettings />
           </SettingsCard>
         );
       case 'git':

@@ -12,7 +12,9 @@ const restCreate = read('../src/app/api/sessions/route.ts');
 const wsActions = read('../src/lib/ws/server-session-actions.ts');
 
 test('schema declares model, reasoning effort, and service tier columns', () => {
-  assert.match(schema, /SCHEMA_VERSION = 29/);
+  // These columns landed in v29; later schema versions keep them.
+  const schemaVersion = Number(schema.match(/SCHEMA_VERSION = (\d+)/)?.[1]);
+  assert.ok(schemaVersion >= 29, `expected schema version >= 29, got ${schemaVersion}`);
   assert.match(schema, /model\s+TEXT/);
   assert.match(schema, /reasoning_effort TEXT/);
   assert.match(schema, /service_tier\s+TEXT/);

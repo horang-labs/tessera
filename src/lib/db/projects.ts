@@ -2,6 +2,7 @@
  * Project CRUD operations backed by SQLite.
  */
 
+import { normalizePreparationScript } from '@/lib/projects/preparation-script-policy';
 import { getDb } from './database';
 
 export interface ProjectRow {
@@ -11,6 +12,7 @@ export interface ProjectRow {
   provider: string | null;
   visible: number; // 0 | 1
   sort_order: number;
+  preparation_script: string | null;
   registered_at: string;
   updated_at: string;
 }
@@ -100,4 +102,16 @@ export function isRegistered(id: string): boolean {
  */
 export function getProject(id: string): ProjectRow | undefined {
   return getDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
+}
+
+/**
+ * Write a project's preparation script and return what was stored.
+ * A blank script is stored as no script at all.
+ */
+export function setPreparationScript(id: string, script: string | null): string | null {
+  const normalized = normalizePreparationScript(script);
+  getDb()
+    .prepare('UPDATE projects SET preparation_script = ?, updated_at = ? WHERE id = ?')
+    .run(normalized, new Date().toISOString(), id);
+  return normalized;
 }
