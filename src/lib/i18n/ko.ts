@@ -748,6 +748,7 @@ export const ko: I18nMessages = {
     tooSmallToSplit: '패널이 너무 작아서 분할할 수 없습니다',
     cannotCloseLastPanel: '마지막 패널은 닫을 수 없습니다',
     dropToInsertPath: '터미널에 경로 삽입',
+    dropToInsertSessionReference: '터미널에 세션 참조 삽입',
   },
   sidebar: {
     noProjects: '프로젝트가 없습니다',

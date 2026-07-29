@@ -741,6 +741,7 @@ export const en: I18nMessages = {
     tooSmallToSplit: 'Panel is too small to split',
     cannotCloseLastPanel: 'Cannot close the last panel',
     dropToInsertPath: 'Insert path into terminal',
+    dropToInsertSessionReference: 'Insert session reference into terminal',
   },
   sidebar: {
     noProjects: 'No projects',
