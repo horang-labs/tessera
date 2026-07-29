@@ -737,6 +737,7 @@ export const ja: I18nMessages = {
     tooSmallToSplit: 'パネルが小さすぎて分割できません',
     cannotCloseLastPanel: '最後のパネルは閉じることができません',
     dropToInsertPath: 'ターミナルにパスを挿入',
+    dropToInsertSessionReference: 'ターミナルにセッション参照を挿入',
   },
   sidebar: {
     noProjects: 'プロジェクトがありません',
