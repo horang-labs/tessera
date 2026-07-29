@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'child_process';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { ContentBlock } from '@/lib/ws/message-types';
@@ -150,6 +151,48 @@ export interface CliProvider {
   createTerminalSessionObserver?(
     options: ProviderTerminalSessionObserverOptions,
   ): ProviderTerminalSessionObserver;
+
+  /**
+   * Replays a terminal (PTY) session's provider-owned transcript as Tessera
+   * history events, so a conversation that never streamed through ProcessManager
+   * can still render in the chat view. Read-only: implementations MUST NOT write
+   * to the transcript or mutate session state.
+   *
+   * Returns null when the provider cannot locate a transcript for the session —
+   * distinct from an empty array, which means "found it, nothing to show yet".
+   */
+  readTerminalTranscriptEvents?(options: {
+    /** Tessera session id — used for tool-result asset URLs. */
+    sessionId: string;
+    /** The provider's own session id for this PTY session. */
+    providerSessionId: string;
+    /** Hook-reported transcript path, when one was captured. */
+    transcriptPath?: string | null;
+    /**
+     * Owner of the session. Providers that shell out must resolve the user's
+     * agent environment (native vs. WSL) from it — running the CLI on the wrong
+     * side reads a different machine's data and reports the session missing.
+     */
+    userId?: string;
+  }): Promise<SessionHistoryEvent[] | null>;
+
+  /**
+   * Cheap identity of whatever `readTerminalTranscriptEvents` would return, used
+   * to decide whether a cached decode is still valid.
+   *
+   * Providers own this because the backing store differs: a rollout file can be
+   * stat'ed, while OpenCode keeps conversations in SQLite and has no path to
+   * stat at all. MUST be much cheaper than the read itself — for OpenCode the
+   * read costs a CLI invocation, so skipping it is the whole point.
+   *
+   * Return null when identity cannot be established; callers then treat the
+   * result as uncacheable rather than serving a stale decode.
+   */
+  readTerminalTranscriptFingerprint?(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+    userId?: string;
+  }): Promise<string | null>;
 
   /** Classifies a provider hook that may belong to a non-active fork child. */
   isBackgroundTerminalSessionFork?(options: {

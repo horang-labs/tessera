@@ -503,6 +503,20 @@ export class TerminalSurface {
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
   }
 
+  /**
+   * Writes text the way a paste would, not a keystroke run.
+   *
+   * xterm decides here whether the TUI has bracketed paste enabled and wraps the
+   * payload accordingly. That matters for multi-line text: sent raw, every
+   * newline reads as a separate submit and one message goes out in fragments.
+   */
+  pasteInput(data: string): boolean {
+    if (this.disposed || this.replaying || this.state.status === 'exited') return false;
+    if (!this.terminal) return false;
+    this.terminal.paste(data);
+    return true;
+  }
+
   /** Ask the server to close only a runtime created by this preview token. */
   releasePreviewRuntime(): void {
     if (this.disposed) return;
@@ -1667,6 +1681,15 @@ export function sendInputToTerminal(terminalId: string, data: string): boolean {
     if (surface.getSnapshot().status === 'running' && surface.sendInput(data)) return true;
   }
   return candidates.some((surface) => surface.sendInput(data));
+}
+
+/** Paste-mode counterpart of sendInputToTerminal (see TerminalSurface.pasteInput). */
+export function pasteInputToTerminal(terminalId: string, data: string): boolean {
+  const candidates = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
+  for (const surface of candidates) {
+    if (surface.getSnapshot().status === 'running' && surface.pasteInput(data)) return true;
+  }
+  return candidates.some((surface) => surface.pasteInput(data));
 }
 
 export function getSessionTerminalId(sessionId: string): string {

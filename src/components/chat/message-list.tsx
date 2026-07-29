@@ -50,6 +50,12 @@ interface MessageListProps {
   isSinglePanel?: boolean;
   isTabActive?: boolean;
   isTurnInFlight?: boolean;
+  /**
+   * Forces the waiting indicator on when the turn is owned outside chat-store —
+   * a PTY session replayed as chat, where the provider's hooks are the only
+   * signal that the agent is working.
+   */
+  forceWaitingIndicator?: boolean;
   search?: {
     activeMatchMessageId: string | null;
     activeGroupedRowIndex: number;
@@ -123,6 +129,7 @@ function MessageListSessionView({
   isSinglePanel = false,
   isTabActive = true,
   isTurnInFlight = false,
+  forceWaitingIndicator = false,
   search,
 }: MessageListProps) {
   'use no memo'; // React Compiler caches virtualizer.getVirtualItems() on the stable instance ref — but the virtualizer is mutable, so we must opt out.
@@ -139,7 +146,8 @@ function MessageListSessionView({
   const projects = useSessionStore((state) => state.projects);
   const providerId = session?.provider;
   const { sendMessage } = useWebSocket();
-  const showWaitingIndicator = useShowWaitingIndicator(sessionId, messages);
+  const showWaitingIndicator =
+    useShowWaitingIndicator(sessionId, messages) || forceWaitingIndicator;
   const hasActivePrompt = useChatStore((state) => state.activeInteractivePrompt.has(sessionId));
   const activeProject = useMemo(() => {
     if (!session) return null;
@@ -167,6 +175,7 @@ function MessageListSessionView({
   const {
     virtualizer,
     autoScroll,
+    canScrollToBottom,
     setAutoScroll,
     handleScroll,
     handleWheel,
@@ -342,7 +351,7 @@ function MessageListSessionView({
   // Virtual items to render
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
-  const showScrollToBottomButton = messages.length > 0 && !autoScroll;
+  const showScrollToBottomButton = messages.length > 0 && !autoScroll && canScrollToBottom;
 
   return (
     <div className="h-full relative">

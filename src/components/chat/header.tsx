@@ -1,7 +1,17 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useContext } from 'react';
-import { Pencil, Check, Hash, X as XIcon, MoreHorizontal, GitBranch, Search } from 'lucide-react';
+import {
+  Pencil,
+  Check,
+  Hash,
+  MessageSquare,
+  X as XIcon,
+  MoreHorizontal,
+  GitBranch,
+  Search,
+  SquareTerminal,
+} from 'lucide-react';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
@@ -22,6 +32,9 @@ import {
 } from '@/lib/chat/codex-native-command-events';
 import { useIsSessionProcessing } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
+import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
+import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 
 interface HeaderProps {
   sessionId: string;
@@ -56,6 +69,14 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const { renameSession, generateTitle, deleteSession } = useSessionCrud();
   const isProcessing = useIsSessionProcessing(sessionId);
   const isAwaitingUser = useIsSessionAwaitingUser(sessionId, session?.kind);
+
+  // PTY 세션을 읽기 전용 채팅으로 덮어 보는 토글. transcript를 되읽을 수 있는
+  // provider에서만 노출한다 — 그 외에는 보여줄 대화가 없다.
+  const terminalViewMode = useTerminalViewMode(sessionId);
+  const toggleTerminalViewMode = useTerminalViewModeStore((state) => state.toggleMode);
+  const canToggleTerminalView = session?.kind === 'terminal'
+    && supportsTerminalChatView(session?.provider);
+  const isTerminalChatView = canToggleTerminalView && terminalViewMode === 'chat';
 
   // Multi-panel unread indicator — active panel's unread is auto-cleared by
   // panel-wrapper, so this only appears on inactive panel headers.
@@ -353,6 +374,27 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
               onClose={search.onClose}
             />
           ) : (
+            <>
+            {canToggleTerminalView && (
+              <button
+                type="button"
+                onClick={() => toggleTerminalViewMode(sessionId)}
+                title={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                aria-label={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                aria-pressed={isTerminalChatView}
+                className={cn(
+                  'rounded p-0.5 transition-all duration-150',
+                  'text-(--text-muted) hover:text-(--sidebar-text-active)',
+                  'hover:bg-(--sidebar-hover)',
+                  isTerminalChatView && 'text-(--sidebar-text-active)',
+                )}
+                data-testid="terminal-view-toggle"
+              >
+                {isTerminalChatView
+                  ? <SquareTerminal className="h-3.5 w-3.5" />
+                  : <MessageSquare className="h-3.5 w-3.5" />}
+              </button>
+            )}
             <button
               type="button"
               onClick={search?.onOpen}
@@ -368,6 +410,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
             >
               <Search className="h-3.5 w-3.5" />
             </button>
+            </>
           )}
 
           {/* More actions button — hover only */}

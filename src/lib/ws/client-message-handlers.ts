@@ -3,6 +3,7 @@ import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import { applySessionReplayEventsToStores } from '@/lib/chat/apply-session-replay-events';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
+import { scheduleTerminalChatRefresh } from '@/lib/chat/terminal-chat-live-refresh';
 import {
   finalizeInFlightTurn,
   startTurnInFlight,
@@ -136,6 +137,10 @@ export function handleIncomingServerMessage({
       // 도착한 진짜 running이 영구 유실된다 — session_state는 hook 이벤트
       // 시점에만 push되고 재전송이 없다.
       const changed = useTerminalSessionStore.getState().applySessionState(msg);
+      // 이 세션을 읽기 전용 채팅으로 보고 있으면 transcript를 다시 읽는다. 상태가
+      // 안 바뀐 훅(도구 연타 중의 running)도 대화는 늘어나므로 changed와 무관하게
+      // 건다 — 내부에서 debounce되고, 채팅 뷰가 아니면 즉시 반환한다.
+      scheduleTerminalChatRefresh(msg.sessionId);
       if (changed && msg.status === 'running') {
         const location = useTabStore.getState().findSessionLocation(msg.sessionId);
         if (location) useTabStore.getState().pinTab(location.tabId);
