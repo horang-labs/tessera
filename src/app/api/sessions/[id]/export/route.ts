@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
+import { getAgentEnvironment, normalizeCwdForCliEnvironment } from '@/lib/cli/spawn-cli';
 import * as dbSessions from '@/lib/db/sessions';
 import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
@@ -67,16 +68,26 @@ export async function POST(
     }
 
     const exportOptions = await readExportOptions(request);
-    const exportPath = await exportSessionLog(sessionId, dbSession.title, exportOptions);
+    const exportPath = await exportSessionLog(sessionId, dbSession.title, {
+      ...exportOptions,
+      userId: auth.userId,
+    });
+    // The path is handed to the agent as prompt text, so it must be spelled the
+    // way that CLI sees the filesystem — a server-local path is unopenable from
+    // a WSL guest (and vice versa).
+    const agentEnvironment = await getAgentEnvironment(auth.userId);
+    const agentPath = normalizeCwdForCliEnvironment(exportPath, agentEnvironment);
 
     logger.info({
       userId: auth.userId,
       sessionId,
       exportPath,
+      agentPath,
+      agentEnvironment,
       partial: Boolean(exportOptions.untilMessageId) || exportOptions.untilMessageIndex !== undefined,
     }, 'Session export requested');
 
-    return NextResponse.json({ exportPath });
+    return NextResponse.json({ exportPath: agentPath });
   } catch (err) {
     const message = (err as Error).message;
 
