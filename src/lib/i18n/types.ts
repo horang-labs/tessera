@@ -257,7 +257,7 @@ export interface I18nMessages {
       scriptLabel: string;
       scriptDesc: string;
       scriptPlaceholder: string;
-      notRunYet: string;
+      runsOnCreate: string;
       noProject: string;
       loading: string;
       saving: string;

@@ -173,7 +173,7 @@ export default function ProjectPreparationSettings() {
             data-testid="project-preparation-script"
           />
           <p className="text-[11px] text-(--text-tertiary)">
-            {t('settings.preparation.notRunYet')}
+            {t('settings.preparation.runsOnCreate')}
           </p>
         </div>
       )}

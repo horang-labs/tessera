@@ -35,6 +35,7 @@ import type {
   TerminalAppearance,
   TerminalProcessHandle,
   TerminalPtyFactory,
+  TerminalResolvedShell,
   TerminalShellKind,
 } from './types';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
@@ -66,6 +67,10 @@ const AGENT_INTERRUPT_SETTLE_MS = 500;
 const INTERRUPTED_LATE_RUNNING_SUPPRESSION_MS = 15_000;
 const CLOSE_EXIT_GRACE_MS = 1500;
 const CLOSE_EXIT_POLL_MS = 250;
+// Stand-ins for the client that a detached runtime does not have. No connection
+// answers to them, so the messages addressed here are dropped rather than sent.
+const DETACHED_CONNECTION_ID = 'detached';
+const DETACHED_SURFACE_ID = 'detached';
 const TERMINAL_TRACE_PATH = getTesseraDataPath('terminal-debug.log');
 const nodeRequire = createRequire(__filename);
 
@@ -497,6 +502,55 @@ export class TerminalManager {
     await this.attachRuntime(runtime, resolvedOptions, !createdByRequest);
   }
 
+  /**
+   * Start a runtime the server owns, with no surface attached to it. Every
+   * other runtime begins with a client message; this one begins with work the
+   * server decided to do, and a surface may attach to it later or never.
+   *
+   * Resolves once the PTY is running, so a caller that must not be blocked by
+   * it should not await. Rejects if the runtime cannot start.
+   */
+  async startDetached(
+    options: Omit<TerminalCreateOptions, 'connectionId' | 'surfaceId'>,
+  ): Promise<void> {
+    if (this.shuttingDown) return;
+
+    const key = this.getKey(options.userId, options.terminalId);
+    if (this.terminals.has(key) || this.openingByTerminalKey.has(key)) return;
+
+    const resolvedOptions: TerminalCreateOptions = {
+      ...options,
+      connectionId: DETACHED_CONNECTION_ID,
+      surfaceId: DETACHED_SURFACE_ID,
+    };
+    const openingKey = this.getOpeningKey(
+      resolvedOptions.userId,
+      resolvedOptions.terminalId,
+      resolvedOptions.sessionId,
+    );
+
+    // Registered the same way create() registers its own, so a surface that
+    // attaches while this is still starting awaits this PTY instead of
+    // spawning a second one for the same terminal.
+    this.cancelledOpeningKeys.delete(key);
+    const opening = this.spawnRuntime(resolvedOptions, key);
+    this.openingTerminals.set(openingKey, opening);
+    this.openingByTerminalKey.set(key, opening);
+    this.openingSessionByTerminalKey.set(key, resolvedOptions.sessionId ?? null);
+    void opening.finally(() => {
+      if (this.openingTerminals.get(openingKey) === opening) {
+        this.openingTerminals.delete(openingKey);
+      }
+      if (this.openingByTerminalKey.get(key) === opening) {
+        this.openingByTerminalKey.delete(key);
+        this.openingSessionByTerminalKey.delete(key);
+      }
+      this.cancelledOpeningKeys.delete(key);
+    }).catch(() => {});
+
+    await opening;
+  }
+
   private async spawnRuntime(
     options: TerminalCreateOptions,
     key: string,
@@ -520,28 +574,36 @@ export class TerminalManager {
       assertOpeningActive();
       traceTerminalStage('load-node-pty:after', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal loaded node-pty');
-      traceTerminalStage('resolve-cwd:before', { terminalId: options.terminalId });
-      const cwdResolution = resolveAllowedTerminalCwd({
-        cwd: options.launchSpec?.cwd ?? options.cwd,
-        sessionId: options.sessionId,
-        allowFallback: !options.launchSpec,
-      });
-      traceTerminalStage('resolve-cwd:after', { terminalId: options.terminalId, cwdResolution });
-      logger.debug({ terminalId: options.terminalId, cwdResolution }, 'Terminal cwd resolved');
-      if (!cwdResolution.ok) {
-        throw new Error(cwdResolution.message);
+      // A resolved shell already names its own program, argv, and directory, so
+      // the cwd allowlist and the shell wrapping below have nothing left to do.
+      let shellKind: TerminalShellKind | undefined;
+      let shell: TerminalResolvedShell;
+      if (options.resolvedShell) {
+        shell = options.resolvedShell;
+      } else {
+        traceTerminalStage('resolve-cwd:before', { terminalId: options.terminalId });
+        const cwdResolution = resolveAllowedTerminalCwd({
+          cwd: options.launchSpec?.cwd ?? options.cwd,
+          sessionId: options.sessionId,
+          allowFallback: !options.launchSpec,
+        });
+        traceTerminalStage('resolve-cwd:after', { terminalId: options.terminalId, cwdResolution });
+        logger.debug({ terminalId: options.terminalId, cwdResolution }, 'Terminal cwd resolved');
+        if (!cwdResolution.ok) {
+          throw new Error(cwdResolution.message);
+        }
+        traceTerminalStage('resolve-shell-kind:before', { terminalId: options.terminalId });
+        shellKind = await this.resolveShellKind(options);
+        assertOpeningActive();
+        traceTerminalStage('resolve-shell-kind:after', { terminalId: options.terminalId, shellKind });
+        logger.debug({ terminalId: options.terminalId, shellKind }, 'Terminal shell kind resolved');
+        traceTerminalStage('resolve-shell:before', { terminalId: options.terminalId });
+        shell = resolveTerminalShell({
+          cwd: cwdResolution.cwd,
+          shellKind,
+          launchSpec: options.launchSpec,
+        });
       }
-      traceTerminalStage('resolve-shell-kind:before', { terminalId: options.terminalId });
-      const shellKind = await this.resolveShellKind(options);
-      assertOpeningActive();
-      traceTerminalStage('resolve-shell-kind:after', { terminalId: options.terminalId, shellKind });
-      logger.debug({ terminalId: options.terminalId, shellKind }, 'Terminal shell kind resolved');
-      traceTerminalStage('resolve-shell:before', { terminalId: options.terminalId });
-      const shell = resolveTerminalShell({
-        cwd: cwdResolution.cwd,
-        shellKind,
-        launchSpec: options.launchSpec,
-      });
       traceTerminalStage('resolve-shell:after', {
         terminalId: options.terminalId,
         command: shell.command,

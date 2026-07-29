@@ -231,9 +231,21 @@ function resolveWindowsNativeTerminalCwd(cwd: string, env: NodeJS.ProcessEnv): s
   return cwd;
 }
 
-function quoteBashArg(value: string): string {
+export function quoteBashArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
+
+/**
+ * POSIX snippet that leaves the user's login shell in `$shell`.
+ * `wsl.exe -e sh -c` starts a non-login shell with none of the PATH the user's
+ * agents run with, so anything meant to run the way they expect has to find
+ * that shell first. Shared so every WSL entry point looks in the same places.
+ */
+export const WSL_LOGIN_SHELL_DISCOVERY = [
+  'shell="${SHELL:-}"',
+  'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
+  'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(command -v bash 2>/dev/null || command -v sh)"; fi',
+];
 
 function buildPosixCommand(program: string, args: string[]): string {
   return [program, ...args].map(quoteBashArg).join(' ');
@@ -275,9 +287,7 @@ function getLaunchArgv(launchSpec?: TerminalLaunchSpec): { program: string; args
 function buildWslTerminalScript(cwd: string, launchSpec?: TerminalLaunchSpec): string {
   const lines = [
     `cd -- ${quoteBashArg(cwd)} 2>/dev/null || cd ~`,
-    'shell="${SHELL:-}"',
-    'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
-    'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(command -v bash 2>/dev/null || command -v sh)"; fi',
+    ...WSL_LOGIN_SHELL_DISCOVERY,
   ];
   const launch = getLaunchArgv(launchSpec);
   if (launch) {

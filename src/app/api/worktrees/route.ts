@@ -3,6 +3,7 @@ import path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import logger from '@/lib/logger';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
+import { startWorktreePreparation } from '@/lib/projects/worktree-preparation';
 import { SettingsManager } from '@/lib/settings/manager';
 import {
   allocateManagedWorktree,
@@ -214,6 +215,14 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+
+  // The worktree exists the moment git succeeds, so its creation is reported
+  // without waiting on preparation — which may take as long as the user's
+  // script does, and whose failure must not cost them the worktree.
+  void startWorktreePreparation({ userId, projectDir, worktreePath, branchName })
+    .catch((error) => {
+      logger.error({ error, branchName, projectDir, worktreePath }, 'Worktree preparation failed to start');
+    });
 
   return NextResponse.json({ worktreePath, branchName });
 }

@@ -46,6 +46,12 @@ export interface TerminalCreateOptions {
   cols?: number;
   rows?: number;
   launchSpec?: TerminalLaunchSpec;
+  /**
+   * Fully resolved argv that skips cwd validation and shell wrapping. Only the
+   * server may supply it, for work it started itself against a directory it
+   * just created; a browser transport must go through launchSpec instead.
+   */
+  resolvedShell?: TerminalResolvedShell;
   /** Provider hook side-channel token minted by server-message-routing. */
   paneToken?: string;
   /** Native agent provider launched inside this PTY. */
