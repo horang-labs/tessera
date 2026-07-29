@@ -20,7 +20,7 @@ import logger from '@/lib/logger';
 import { paginateReplayMessages } from '@/lib/session-history';
 import { reduceSessionReplayEvents, type SessionReplayState } from '@/lib/session-replay-reducer';
 import type { SessionHistoryEvent } from '@/lib/session-replay-types';
-import { resolveTerminalProviderSessionReference } from '@/lib/terminal/provider-session-identity';
+import { readPersistedTerminalProviderSessionId } from '@/lib/terminal/provider-session-identity';
 import type { EnhancedMessage } from '@/types/chat';
 
 interface CacheEntry {
@@ -92,10 +92,10 @@ async function decodeReplayState(
   const provider = cliProviderRegistry.getProvider(session.provider);
   if (typeof provider.readTerminalTranscriptEvents !== 'function') return null;
 
-  const { providerSessionId } = resolveTerminalProviderSessionReference(
-    session.id,
-    session.provider_state,
-  );
+  // provider마다 세션 id 체계가 다르다 — claude만 Tessera 세션 id를 그대로 쓰고,
+  // codex/opencode는 provider_state에 따로 적힌 id를 쓴다. Tessera id를 넘기면
+  // rollout 파일명과 안 맞아 조용히 "기록 없음"이 된다.
+  const providerSessionId = readPersistedTerminalProviderSessionId(session);
   if (!providerSessionId) return null;
 
   const binding = getTerminalProviderSessionForTesseraSession(session.id);

@@ -6,7 +6,7 @@
  * code cannot ask the registry, so the list is mirrored here — keep it in step
  * with the adapters that implement that method.
  */
-const TERMINAL_CHAT_VIEW_PROVIDERS: ReadonlySet<string> = new Set(['claude-code']);
+const TERMINAL_CHAT_VIEW_PROVIDERS: ReadonlySet<string> = new Set(['claude-code', 'codex']);
 
 export function supportsTerminalChatView(providerId: string | null | undefined): boolean {
   return !!providerId && TERMINAL_CHAT_VIEW_PROVIDERS.has(providerId);
