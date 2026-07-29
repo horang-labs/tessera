@@ -6,6 +6,8 @@ export interface I18nMessages {
       generalDesc: string;
       appearance: string;
       appearanceDesc: string;
+      models: string;
+      modelsDesc: string;
       development: string;
       developmentDesc: string;
       git: string;
@@ -207,6 +209,8 @@ export interface I18nMessages {
       customPlaceholder: string;
       customApply: string;
       customHint: string;
+      customEmpty: string;
+      customRemove: string;
     };
     effort: {
       readOnlyTooltip: string;

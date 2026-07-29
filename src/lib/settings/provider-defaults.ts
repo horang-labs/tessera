@@ -137,9 +137,9 @@ export function getProviderSessionDefaultsWithOptions(
 }
 
 /**
- * Build a synthetic model option for a Claude model the user typed that isn't in
- * the curated list. No reasoning-effort tiers are claimed (we can't know what an
- * arbitrary model supports), so the CLI uses its own --effort default.
+ * Build a synthetic option for a stored Claude model that is no longer present in
+ * the current list. No reasoning-effort tiers are claimed because its capabilities
+ * are unknown.
  */
 function buildCustomClaudeModelOption(model: string): ProviderModelOption {
   return {
@@ -225,8 +225,8 @@ export function resolveProviderReasoningEffort(
 
   const reasoningOptions = modelOption?.supportedReasoningEfforts ?? [];
   if (reasoningOptions.length === 0) {
-    // Claude Code model lists are static, so an empty tier list means the model
-    // genuinely supports no effort selection (e.g. Haiku, or a custom model). Drop
+    // For Claude Code, an empty tier list means no effort selection was advertised
+    // (e.g. Haiku, or a custom model). Drop
     // any stale request — otherwise a leftover "ultracode" would follow the user
     // onto a model that can't use it and emit --settings ultracode pointlessly.
     // Codex/OpenCode lists are probed lazily, so an empty list there may just mean
@@ -504,6 +504,41 @@ export function buildProviderSessionDefaultsUpdate(
   };
 }
 
+export function normalizeProviderCustomModelList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    const model = value.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    models.push(model);
+  }
+
+  return models;
+}
+
+export function normalizeProviderCustomModels(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+
+  const normalized: Record<string, string[]> = {};
+  for (const [rawProviderId, rawModels] of Object.entries(raw)) {
+    const providerId = rawProviderId.trim();
+    const models = normalizeProviderCustomModelList(rawModels);
+    if (providerId && models.length > 0) {
+      normalized[providerId] = models;
+    }
+  }
+
+  return normalized;
+}
+
 export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefined): UserSettings {
   const retentionDays =
     typeof raw?.archivedWorktreeRetentionDays === 'number'
@@ -556,6 +591,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
         accessMode: 'opencodeDefault',
       },
     },
+    providerCustomModels: {},
     inactivePanelDimming: 30,
     showProviderIcons: true,
     showRecentWork: true,
@@ -670,6 +706,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       },
     },
     providerDefaults,
+    providerCustomModels: normalizeProviderCustomModels(raw?.providerCustomModels),
     setup: {
       ...defaults.setup,
       ...(raw?.setup ?? {}),
