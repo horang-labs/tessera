@@ -370,9 +370,15 @@ function isWindowsDriveMountPath(value: string): boolean {
 
 async function getWslPathInfo(): Promise<WslPathInfo | null> {
   if (!wslPathInfoPromise) {
-    wslPathInfoPromise = loadWslPathInfo();
+    wslPathInfoPromise = loadWslPathInfo().catch(() => null);
   }
-  return wslPathInfoPromise;
+
+  const wslPathInfo = await wslPathInfoPromise;
+  // Only a successful probe is cached. A failure is usually a race with a
+  // distro that was still starting, and caching it would strand every later
+  // WSL path lookup — file browsing, git, inline images — until restart.
+  if (!wslPathInfo) wslPathInfoPromise = null;
+  return wslPathInfo;
 }
 
 export async function getWslHostedWindowsHomeMountPath(): Promise<string> {
