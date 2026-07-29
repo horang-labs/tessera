@@ -1026,6 +1026,20 @@ export const en: I18nMessages = {
     },
   },
   task: {
+    preparation: {
+      preparing: 'Preparing',
+      failed: 'Preparation failed',
+      title: 'Worktree preparation',
+      runningDescription: 'The preparation script is running in this worktree. Closing this view does not stop it.',
+      failedDescription: 'The preparation script did not finish. Fix it in the project settings, then run it again.',
+      exitCode: 'Exit code {{code}}',
+      noOutput: 'The run produced no output.',
+      interrupted: 'Preparation was still running when the app closed, so it never finished.',
+      rerun: 'Run again',
+      rerunning: 'Starting...',
+      rerunFailed: 'Preparation could not be started.',
+      runNow: 'Run worktree preparation',
+    },
     selector: {
       addProject: 'Open Folder...',
       noProjects: 'No projects',

@@ -1026,6 +1026,20 @@ export const ja: I18nMessages = {
     },
   },
   task: {
+    preparation: {
+      preparing: '準備中',
+      failed: '準備に失敗',
+      title: 'ワークツリーの準備',
+      runningDescription: 'このワークツリーで準備スクリプトが実行中です。この画面を閉じても実行は続きます。',
+      failedDescription: '準備スクリプトが最後まで実行されませんでした。プロジェクト設定で修正してから、もう一度実行してください。',
+      exitCode: '終了コード {{code}}',
+      noOutput: '出力はありません。',
+      interrupted: 'アプリの終了時に準備がまだ実行中だったため、最後まで完了しませんでした。',
+      rerun: '再実行',
+      rerunning: '開始しています...',
+      rerunFailed: '準備を開始できませんでした。',
+      runNow: 'ワークツリーの準備を実行',
+    },
     selector: {
       addProject: 'フォルダーを開く...',
       noProjects: 'プロジェクトなし',

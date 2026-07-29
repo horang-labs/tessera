@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, CircleStop, Pencil, Trash2, ExternalLink, FolderInput, Sparkles } from 'lucide-react';
+import { Archive, ArchiveRestore, CircleStop, Pencil, RefreshCw, Trash2, ExternalLink, FolderInput, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
@@ -30,6 +30,8 @@ export interface TaskContextMenuProps {
   onGenerateTitle?: () => void;
   onMoveToProject?: () => void;
   onStopProcess?: () => void;
+  /** Runs the project's preparation script again on this task's worktree. */
+  onRunPreparation?: () => void;
   onClose: () => void;
 }
 
@@ -55,6 +57,7 @@ export function TaskContextMenu({
   onGenerateTitle,
   onMoveToProject,
   onStopProcess,
+  onRunPreparation,
   onClose,
 }: TaskContextMenuProps) {
   const { t } = useI18n();
@@ -182,6 +185,11 @@ export function TaskContextMenu({
     onClose();
   }, [onClose, onRename]);
 
+  const handleRunPreparation = useCallback(() => {
+    onRunPreparation?.();
+    onClose();
+  }, [onClose, onRunPreparation]);
+
   const handleDelete = useCallback(() => {
     onDelete();
     onClose();
@@ -298,6 +306,18 @@ export function TaskContextMenu({
         >
           <Sparkles className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
           <span>{t('task.contextMenu.generateTitle' as Parameters<typeof t>[0])}</span>
+        </button>
+      )}
+
+      {onRunPreparation && (
+        <button
+          role="menuitem"
+          className={menuItemClass}
+          onClick={handleRunPreparation}
+          data-testid="ctx-run-preparation"
+        >
+          <RefreshCw className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
+          <span>{t('task.preparation.runNow')}</span>
         </button>
       )}
 

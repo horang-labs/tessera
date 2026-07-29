@@ -219,6 +219,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
   addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
+  addPreparationStatusColumns(db);
 }
 
 /**
@@ -996,6 +997,20 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
     logger.info('Migration v30 applied: projects.preparation_script column added');
   }
+
+  if (fromVersion < 31) {
+    addPreparationStatusColumns(db);
+    logger.info('Migration v31 applied: task preparation status columns added');
+  }
+}
+
+/** Preparation status belongs to the worktree, and the task is what owns one. */
+function addPreparationStatusColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'preparation_status', `TEXT NOT NULL DEFAULT 'never_run'`);
+  addColumnIfMissing(db, 'tasks', 'preparation_started_at', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_finished_at', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_exit_code', 'INTEGER');
+  addColumnIfMissing(db, 'tasks', 'preparation_output', 'TEXT');
 }
 
 /**

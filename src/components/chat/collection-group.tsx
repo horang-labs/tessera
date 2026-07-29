@@ -37,6 +37,11 @@ import { DeleteTaskDialog } from './delete-task-dialog';
 import { ItemStatusIndicator } from './work-item-primitives';
 import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  canPrepareTask,
+  useProjectHasPreparationScript,
+  useWorktreePreparation,
+} from '@/hooks/use-worktree-preparation';
 
 async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) {
   try {
@@ -312,6 +317,11 @@ export const CollectionGroup = memo(function CollectionGroup({
   const quickCreateTriggerRef = useRef<HTMLButtonElement>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const chatById = useMemo(() => new Map(chats.map((session) => [session.id, session])), [chats]);
+  const contextMenuTask = contextMenu?.type === 'task' && !contextMenu.isSubSession
+    ? taskById.get(contextMenu.targetId)
+    : undefined;
+  const projectHasPreparationScript = useProjectHasPreparationScript(contextMenuTask?.projectId);
+  const { runPreparation } = useWorktreePreparation();
 
   const openItemContextMenu = useCallback(
     (
@@ -693,6 +703,11 @@ export const CollectionGroup = memo(function CollectionGroup({
           onGenerateTitle={onSessionGenerateTitle ? handleContextMenuGenerateTitle : undefined}
           onMoveToProject={contextMenu.type === 'chat' && !contextMenu.isSubSession ? () => onSessionMoveToProject?.(contextMenu.targetId) : undefined}
           onStopProcess={contextMenu.isRunning ? handleContextMenuStopProcess : undefined}
+          onRunPreparation={
+            contextMenuTask && canPrepareTask(contextMenuTask, projectHasPreparationScript)
+              ? () => void runPreparation(contextMenuTask.id)
+              : undefined
+          }
           onStatusChange={
             contextMenu.type === 'task' && !contextMenu.isSubSession && onTaskStatusChange
               ? (status) => onTaskStatusChange(contextMenu.targetId, status)

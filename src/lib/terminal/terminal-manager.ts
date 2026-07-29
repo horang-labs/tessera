@@ -213,6 +213,7 @@ interface TerminalRuntime {
   backgroundProviderSessionIds: Set<string>;
   reboundFromSessionIds: Set<string>;
   previewOwnerToken?: string;
+  onRuntimeExit?: TerminalCreateOptions['onRuntimeExit'];
 }
 
 /** The runtime only needs these members; tests can inject a stub model. */
@@ -752,6 +753,7 @@ export class TerminalManager {
         backgroundProviderSessionIds: new Set(),
         reboundFromSessionIds: new Set(),
         previewOwnerToken: options.previewOwnerToken,
+        onRuntimeExit: options.onRuntimeExit,
       };
       if (options.appearance) {
         runtime.appearanceController = createTerminalAppearanceController(
@@ -1493,6 +1495,16 @@ export class TerminalManager {
     }
     runtime.model?.dispose();
     this.sendExit(runtime, event);
+    if (runtime.onRuntimeExit) {
+      // The buffer is what a surface attaching now would have been replayed, so
+      // it is also what there is to say about a run nobody watched.
+      const output = runtime.outputBuffer.join('');
+      try {
+        runtime.onRuntimeExit(event, output);
+      } catch (error) {
+        logger.error({ error, terminalId: runtime.terminalId }, 'Terminal exit observer failed');
+      }
+    }
   }
 
   private startSessionObserver(runtime: TerminalRuntime): void {

@@ -38,6 +38,12 @@ interface TerminalPanelProps {
   runtimeOwnership?: 'standalone' | 'session-preview' | 'session-retained' | 'session-peek';
   /** Treat a transient surface as visible/focused without borrowing panel-store state. */
   surfaceActive?: boolean;
+  /**
+   * Leave the PTY running when this surface goes away. Set it for a runtime the
+   * server owns and merely lets a surface watch — closing the view has to detach
+   * from the work, not end it.
+   */
+  detachOnUnmount?: boolean;
   /** Optional overlay shown until the terminal surface reports that it is running. */
   startupOverlay?: ReactNode;
   launch?: { providerId: string; sessionId: string };
@@ -69,6 +75,7 @@ export function TerminalPanel({
   terminalSessionId,
   runtimeOwnership = 'standalone',
   surfaceActive = false,
+  detachOnUnmount = false,
   startupOverlay,
   launch,
 }: TerminalPanelProps) {
@@ -222,14 +229,14 @@ export function TerminalPanel({
 
         if (sessionOwned && previewOwnsRuntimeRef.current) {
           surface.releasePreviewRuntime();
-        } else if (sessionOwned || isTerminalAssignedToAnyPanel(terminalId)) {
+        } else if (detachOnUnmount || sessionOwned || isTerminalAssignedToAnyPanel(terminalId)) {
           surface.dispose();
         } else {
           closeAndDisposeTerminalSurface(surface);
         }
       }, 0);
     };
-  }, [panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId]);
+  }, [detachOnUnmount, panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId]);
 
   useEffect(() => {
     if (connectionStatus !== 'connected' || !isTabActive) return;

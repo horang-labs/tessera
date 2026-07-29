@@ -13,6 +13,19 @@ import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 type TaskCreatedTelemetrySource = 'kanban' | 'list' | 'new_session';
 
+/**
+ * Drop a task that was created only to hold a worktree that never arrived.
+ * Failing to clean up is not worth failing the caller over — the user already
+ * has the worktree error to deal with.
+ */
+async function discardTask(taskId: string): Promise<void> {
+  try {
+    await fetchWithClientId(`/api/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+  } catch (error) {
+    logger.warn({ error, taskId }, 'Could not remove the task left behind by a failed worktree');
+  }
+}
+
 interface CreateWorktreeSessionOptions {
   projectDir: string;
   parentProjectId?: string;
@@ -127,53 +140,13 @@ export function useWorktreeSession() {
         }
       };
 
+      let createdTaskId: string | null = null;
+      let createdTask: TaskEntity | null = null;
+
       try {
-        // 1. Create worktree
-        const response = await fetch('/api/worktrees', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectDir,
-            branchPrefix,
-            branchSlug,
-            baseRef,
-            allowBranchSlugSuffix,
-          }),
-        });
-
-        const result = await response.json().catch(() => ({})) as {
-          branchName?: string;
-          code?: string;
-          error?: string;
-          installUrl?: string;
-          worktreePath?: string;
-        };
-
-        if (!response.ok || !result.worktreePath || !result.branchName) {
-          removePlaceholder();
-          const error =
-            result.error
-            ?? (result.code === 'GIT_NOT_INSTALLED'
-              ? 'Git is required to create a managed worktree.'
-              : result.code === 'PROJECT_NOT_GIT_REPOSITORY'
-                ? 'This project directory is not a Git repository.'
-                : t('errors.unknownError'));
-          if (!suppressErrorToast) {
-            toast.error(error);
-          }
-          return {
-            ok: false,
-            error,
-            status: response.status,
-            code: result.code,
-            branchName: result.branchName,
-            worktreePath: result.worktreePath,
-          };
-        }
-
-        // 2. Create task entity. Do not continue with a worktree-backed chat
-        // if the task row could not be persisted.
-        let createdTaskId: string | null = null;
+        // 1. Create the task. It comes first because the worktree's preparation
+        // starts the moment the worktree exists, and its status is recorded on
+        // the task — so the task has to be there to receive it.
         if (tempId && taskTitle) {
           try {
             const taskRes = await fetchWithClientId('/api/tasks', {
@@ -184,20 +157,12 @@ export function useWorktreeSession() {
                 title: taskTitle,
                 collectionId,
                 workflowStatus,
-                worktreeBranch: result.branchName,
               }),
             });
             if (taskRes.ok) {
               const taskData = await taskRes.json();
-              const realTask: TaskEntity = taskData.task;
-              useTaskStore.getState().finalizePendingTask(tempId, realTask);
-              createdTaskId = realTask.id;
-              void captureTelemetryEvent('task_created', {
-                source,
-                provider_id: resolvedProviderId,
-                has_worktree: Boolean(result.branchName),
-                has_collection: Boolean(collectionId),
-              });
+              createdTask = taskData.task as TaskEntity;
+              createdTaskId = createdTask.id;
             } else {
               removePlaceholder();
               logger.warn('Task creation returned non-ok — aborting worktree session creation');
@@ -219,7 +184,68 @@ export function useWorktreeSession() {
           }
         }
 
-        // 3. Create session
+        // 2. Create worktree
+        const response = await fetch('/api/worktrees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectDir,
+            branchPrefix,
+            branchSlug,
+            baseRef,
+            allowBranchSlugSuffix,
+            ...(createdTaskId && { taskId: createdTaskId }),
+          }),
+        });
+
+        const result = await response.json().catch(() => ({})) as {
+          branchName?: string;
+          code?: string;
+          error?: string;
+          installUrl?: string;
+          worktreePath?: string;
+        };
+
+        if (!response.ok || !result.worktreePath || !result.branchName) {
+          removePlaceholder();
+          // The task only exists to hold this worktree, so it goes with it.
+          if (createdTaskId) await discardTask(createdTaskId);
+          const error =
+            result.error
+            ?? (result.code === 'GIT_NOT_INSTALLED'
+              ? 'Git is required to create a managed worktree.'
+              : result.code === 'PROJECT_NOT_GIT_REPOSITORY'
+                ? 'This project directory is not a Git repository.'
+                : t('errors.unknownError'));
+          if (!suppressErrorToast) {
+            toast.error(error);
+          }
+          return {
+            ok: false,
+            error,
+            status: response.status,
+            code: result.code,
+            branchName: result.branchName,
+            worktreePath: result.worktreePath,
+          };
+        }
+
+        // 3. Show the real task now that its worktree exists. The branch was
+        // recorded server-side while the worktree was created.
+        if (tempId && createdTask) {
+          useTaskStore.getState().finalizePendingTask(tempId, {
+            ...createdTask,
+            worktreeBranch: result.branchName,
+          });
+          void captureTelemetryEvent('task_created', {
+            source,
+            provider_id: resolvedProviderId,
+            has_worktree: Boolean(result.branchName),
+            has_collection: Boolean(collectionId),
+          });
+        }
+
+        // 4. Create session
         const sessionId = await createSession({
           workDir: result.worktreePath,
           ...(taskTitle && { title: taskTitle, hasCustomTitle }),
@@ -253,6 +279,7 @@ export function useWorktreeSession() {
         };
       } catch (err) {
         removePlaceholder();
+        if (createdTaskId) await discardTask(createdTaskId);
         logger.error({ error: err }, 'Worktree session creation failed');
         const message = err instanceof Error ? err.message : t('errors.unknownError');
         if (!suppressErrorToast) {

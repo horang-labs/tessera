@@ -3,6 +3,7 @@ import next from 'next';
 import { loadEnvConfig } from '@next/env';
 import { createServer } from 'http';
 import { initDatabase } from './src/lib/db/database';
+import { interruptRunningPreparations } from './src/lib/db/task-preparation';
 import './src/lib/cli/providers/bootstrap';
 import { wsServer } from './src/lib/ws/server';
 import { processManager } from './src/lib/cli/process-manager';
@@ -33,6 +34,10 @@ snapshotTelemetryStartupDataState();
 
 async function startServer() {
   await initDatabase();
+  // A preparation PTY does not survive the app, so any status still claiming to
+  // be running describes a process that is gone — and a worktree that may be
+  // half prepared.
+  interruptRunningPreparations();
   // Warm the model-config store from disk (no network) so the first API request
   // serving provider options already reflects the last known remote list.
   await ensureRemoteModelConfigLoaded();

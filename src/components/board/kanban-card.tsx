@@ -40,6 +40,7 @@ import {
 import { DiffStatsBadge } from '@/components/chat/diff-stats-badge';
 import { ProviderLogoMark } from '@/components/chat/provider-brand';
 import { TaskPrBadge, detectPrMismatch, prMismatchTooltip } from '@/components/chat/task-pr-badge';
+import { TaskPreparationBadge } from '@/components/task/task-preparation-view';
 import {
   useIsSessionProcessing,
   useSessionProcessingSummary,
@@ -1063,6 +1064,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 isActive={isActive}
               />
               <span className="ml-auto inline-flex items-center gap-1.5">
+                <TaskPreparationBadge
+                  taskId={task.id}
+                  status={task.preparationStatus}
+                />
                 <TaskPrBadge
                   workflowStatus={task.workflowStatus}
                   prStatus={task.prStatus}

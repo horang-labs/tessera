@@ -1019,6 +1019,20 @@ export interface I18nMessages {
     };
   };
   task: {
+    preparation: {
+      preparing: string;
+      failed: string;
+      title: string;
+      runningDescription: string;
+      failedDescription: string;
+      exitCode: string;
+      noOutput: string;
+      interrupted: string;
+      rerun: string;
+      rerunning: string;
+      rerunFailed: string;
+      runNow: string;
+    };
     selector: {
       addProject: string;
       noProjects: string;

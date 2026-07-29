@@ -146,7 +146,7 @@ test('mounted terminals synchronize app theme changes through the PTY appearance
   assert.match(messageTypesSource, /type: 'terminal_set_appearance'/);
   assert.match(
     terminalPanelSource,
-    /}, \[panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId\]\);/,
+    /}, \[detachOnUnmount, panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId\]\);/,
   );
 });
 
