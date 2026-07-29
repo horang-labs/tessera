@@ -100,6 +100,35 @@ export function formatPathForAgentDisplay(
   return filesystemPath;
 }
 
+/**
+ * Rewrite a path the CLI reported — hook payloads, provider transcript
+ * locations — into the form this server can open. Inverse of
+ * `formatPathForAgentDisplay`: the CLI names files in its own environment's
+ * style, so across a bridge the server must translate before touching disk.
+ *
+ * Non-bridged setups already share one path style, so this is a no-op.
+ */
+export async function resolveAgentReportedPath(
+  agentPath: string,
+  environment: FilesystemBrowseEnvironment,
+): Promise<string> {
+  const trimmed = agentPath.trim();
+  if (!trimmed) return agentPath;
+
+  if (environment === 'wsl' && getRuntimePlatform() === 'win32') {
+    const wslPathInfo = await getWslPathInfo();
+    return wslPathInfo
+      ? wslDisplayPathToWindowsFilesystemPath(trimmed, wslPathInfo)
+      : trimmed;
+  }
+
+  if (environment === 'native' && getRuntimePlatform() === 'linux' && isRunningInWsl()) {
+    return windowsDrivePathToWslMountPath(trimmed) ?? trimmed;
+  }
+
+  return trimmed;
+}
+
 function formatWslHostedNativeDisplayPath(filesystemPath: string): string {
   const windowsDrivePath = wslMountPathToWindowsDrivePath(filesystemPath);
   if (windowsDrivePath) return windowsDrivePath;
@@ -296,7 +325,7 @@ function normalizeWslDisplayPath(value: string): string {
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }
 
-function wslDisplayPathToWindowsFilesystemPath(
+export function wslDisplayPathToWindowsFilesystemPath(
   displayPath: string,
   wslPathInfo: WslPathInfo,
 ): string {
