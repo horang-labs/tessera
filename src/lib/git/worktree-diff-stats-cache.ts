@@ -1,6 +1,7 @@
 import * as path from 'path';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { computeWorktreeDiffStats } from './worktree-diff-stats';
+import { isDiffStatsEntryStale } from './worktree-diff-stats-staleness';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
 const DEBOUNCE_MS = 300;
@@ -54,6 +55,33 @@ export function getCachedDiffStats(workDir: string): WorktreeDiffStats | null | 
   const key = normalize(workDir);
   const entry = getState().entries.get(key);
   return entry ? entry.stats : undefined;
+}
+
+/**
+ * True when a cache entry exists but is older than the TTL. A cache miss is
+ * NOT stale — callers distinguish the two because a miss needs a blocking-free
+ * first compute while a stale hit still has a usable value to return meanwhile.
+ */
+export function isDiffStatsStale(workDir: string, now: number = Date.now()): boolean {
+  const entry = getState().entries.get(normalize(workDir));
+  if (!entry) return false;
+  return isDiffStatsEntryStale(entry.computedAt, now);
+}
+
+/**
+ * Cached value for a read path, refreshing it in the background when the entry
+ * has gone stale. The returned value is whatever is cached right now (possibly
+ * stale); the refresh reaches the client via the diff-stats broadcast.
+ */
+export function getCachedDiffStatsRevalidating(
+  workDir: string,
+  userId: string,
+): WorktreeDiffStats | null | undefined {
+  const cached = getCachedDiffStats(workDir);
+  if (cached !== undefined && isDiffStatsStale(workDir)) {
+    scheduleRecompute(workDir, userId);
+  }
+  return cached;
 }
 
 export function subscribeDiffStats(listener: Listener): () => void {
