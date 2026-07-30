@@ -4,6 +4,7 @@ import { loadEnvConfig } from '@next/env';
 import { createServer } from 'http';
 import { initDatabase } from './src/lib/db/database';
 import { interruptRunningPreparations } from './src/lib/db/task-preparation';
+import { markServerShuttingDown } from './src/lib/server-lifecycle';
 import './src/lib/cli/providers/bootstrap';
 import { wsServer } from './src/lib/ws/server';
 import { processManager } from './src/lib/cli/process-manager';
@@ -135,6 +136,9 @@ async function startServer() {
       return;
     }
     shuttingDown = true;
+    // Before anything is torn down: the PTYs about to be killed must not have
+    // their deaths mistaken for scripts finishing.
+    markServerShuttingDown();
 
     logger.info({ signal }, 'Shutting down server...');
 

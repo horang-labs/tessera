@@ -1032,6 +1032,7 @@ export const ja: I18nMessages = {
       title: 'ワークツリーの準備',
       runningDescription: 'このワークツリーで準備スクリプトが実行中です。この画面を閉じても実行は続きます。',
       failedDescription: '準備スクリプトが最後まで実行されませんでした。プロジェクト設定で修正してから、もう一度実行してください。',
+      succeededDescription: '準備スクリプトが完了しました。以下は実行中に出力された内容です。',
       exitCode: '終了コード {{code}}',
       noOutput: '出力はありません。',
       interrupted: 'アプリの終了時に準備がまだ実行中だったため、最後まで完了しませんでした。',

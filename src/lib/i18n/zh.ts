@@ -1032,6 +1032,7 @@ export const zh: I18nMessages = {
       title: '工作树准备',
       runningDescription: '准备脚本正在此工作树中运行。关闭此视图不会中止运行。',
       failedDescription: '准备脚本没有执行完。请在项目设置中修改后重新运行。',
+      succeededDescription: '准备脚本已完成。以下是它运行时的输出。',
       exitCode: '退出码 {{code}}',
       noOutput: '本次运行没有输出。',
       interrupted: '应用关闭时准备仍在运行，因此没有完成。',

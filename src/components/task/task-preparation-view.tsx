@@ -35,14 +35,22 @@ interface StoredPreparation {
 
 interface TaskPreparationViewProps {
   taskId: string;
-  /** Which of the two badge-worthy states opened this. */
-  status: 'running' | 'failed';
+  /**
+   * The run's status right now. A run that ends while this is open keeps the
+   * view open on what it left behind — closing it is the reader's to do.
+   */
+  status: PreparationStatus;
   onOpenChange: (open: boolean) => void;
 }
 
 export function TaskPreparationView({ taskId, status, onOpenChange }: TaskPreparationViewProps) {
   const { t } = useI18n();
   const isRunning = status === 'running';
+  const description = isRunning
+    ? t('task.preparation.runningDescription')
+    : status === 'failed'
+      ? t('task.preparation.failedDescription')
+      : t('task.preparation.succeededDescription');
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
@@ -53,11 +61,7 @@ export function TaskPreparationView({ taskId, status, onOpenChange }: TaskPrepar
         <div className="px-5 pt-5">
           <DialogHeader onClose={() => onOpenChange(false)}>
             <DialogTitle>{t('task.preparation.title')}</DialogTitle>
-            <p className="mt-1 text-xs text-(--text-muted)">
-              {isRunning
-                ? t('task.preparation.runningDescription')
-                : t('task.preparation.failedDescription')}
-            </p>
+            <p className="mt-1 text-xs text-(--text-muted)">{description}</p>
           </DialogHeader>
         </div>
 
@@ -171,8 +175,11 @@ export function TaskPreparationBadge({
   const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
 
-  const badge = resolvePreparationBadge(status ?? 'never_run');
-  if (!badge) return null;
+  const current = status ?? 'never_run';
+  const badge = resolvePreparationBadge(current);
+  // A run that succeeds while its view is open takes the badge away, but not
+  // the view: what the reader opened stays until they close it.
+  if (!badge && !isOpen) return null;
 
   const isRunning = badge === 'running';
   const label = isRunning ? t('task.preparation.preparing') : t('task.preparation.failed');
@@ -185,25 +192,27 @@ export function TaskPreparationBadge({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          event.preventDefault();
-          setIsOpen(true);
-        }}
-        title={label}
-        aria-label={label}
-        className={`${tone} ${isRunning ? 'hover:text-(--text-primary)' : 'hover:opacity-80'}`}
-        data-testid="task-preparation-badge"
-        data-preparation-status={status}
-      >
-        {icon}
-        {presentation === 'label' ? <span>{label}</span> : null}
-      </button>
+      {badge ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            setIsOpen(true);
+          }}
+          title={label}
+          aria-label={label}
+          className={`${tone} ${isRunning ? 'hover:text-(--text-primary)' : 'hover:opacity-80'}`}
+          data-testid="task-preparation-badge"
+          data-preparation-status={status}
+        >
+          {icon}
+          {presentation === 'label' ? <span>{label}</span> : null}
+        </button>
+      ) : null}
 
       {isOpen ? (
-        <TaskPreparationView taskId={taskId} status={badge} onOpenChange={setIsOpen} />
+        <TaskPreparationView taskId={taskId} status={current} onOpenChange={setIsOpen} />
       ) : null}
     </>
   );

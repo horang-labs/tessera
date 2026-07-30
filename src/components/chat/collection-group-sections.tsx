@@ -405,7 +405,11 @@ export function CollectionContextMenu({
         )}
 
         {onRunPreparation && (
-          <button className={menuItemClass} onClick={() => { onRunPreparation(); onClose(); }}>
+          <button
+            className={menuItemClass}
+            onClick={() => { onRunPreparation(); onClose(); }}
+            data-testid="ctx-run-preparation"
+          >
             <RefreshCw className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>{t('task.preparation.runNow')}</span>
           </button>

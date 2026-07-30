@@ -20,6 +20,7 @@ import {
   startTaskPreparation,
 } from '@/lib/db/task-preparation';
 import logger from '@/lib/logger';
+import { isServerShuttingDown } from '@/lib/server-lifecycle';
 import { SettingsManager } from '@/lib/settings/manager';
 import { terminalManager } from '@/lib/terminal/shared-terminal-manager';
 import { broadcastTaskMutation } from '@/lib/ws/mutation-broadcast';
@@ -104,6 +105,17 @@ export async function startWorktreePreparation(
       },
       launchEnv: spec.env,
       onRuntimeExit: (event, output) => {
+        // Shutdown kills this PTY, and that death arrives here looking like a
+        // clean exit. Leaving the status alone keeps it at `running`, which is
+        // what the next startup reads as a run the app cut short.
+        if (isServerShuttingDown()) {
+          logger.info(
+            { taskId: request.taskId, worktreePath: request.worktreePath },
+            'Worktree preparation was cut short by shutdown; leaving it for the next startup',
+          );
+          return;
+        }
+
         const recorded = finishTaskPreparation(request.taskId, event.exitCode, output);
         // Nobody asked for this status, so nobody is polling for it either.
         if (recorded) announcePreparationStatus(request);

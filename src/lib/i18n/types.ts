@@ -1025,6 +1025,7 @@ export interface I18nMessages {
       title: string;
       runningDescription: string;
       failedDescription: string;
+      succeededDescription: string;
       exitCode: string;
       noOutput: string;
       interrupted: string;

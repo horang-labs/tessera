@@ -6,7 +6,12 @@
  * Keyed on the task rather than the worktree path so that it survives a
  * worktree being moved, and so a client only needs the task to find the run.
  */
-const PREPARATION_TERMINAL_PREFIX = 'preparation:';
+/**
+ * Only characters the websocket layer accepts in a terminal identity, or the
+ * browser's attach request is rejected before it reaches the runtime — see
+ * SAFE_TERMINAL_ID in `src/lib/ws/server-message-routing.ts`.
+ */
+const PREPARATION_TERMINAL_PREFIX = 'preparation-';
 
 export function getPreparationTerminalId(taskId: string): string {
   return `${PREPARATION_TERMINAL_PREFIX}${taskId}`;

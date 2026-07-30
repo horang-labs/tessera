@@ -1039,6 +1039,7 @@ export const ko: I18nMessages = {
       title: '워크트리 준비',
       runningDescription: '이 워크트리에서 준비 스크립트가 실행되고 있습니다. 이 창을 닫아도 실행은 계속됩니다.',
       failedDescription: '준비 스크립트가 끝까지 실행되지 못했습니다. 프로젝트 설정에서 고친 뒤 다시 실행하세요.',
+      succeededDescription: '준비 스크립트가 끝났습니다. 아래는 실행하면서 남긴 출력입니다.',
       exitCode: '종료 코드 {{code}}',
       noOutput: '출력이 없습니다.',
       interrupted: '앱이 종료될 때 준비가 아직 실행 중이어서 끝나지 못했습니다.',
