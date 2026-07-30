@@ -188,9 +188,17 @@ export const useSettingsStore = create<SettingsState>()(
         set({ isOpen: false });
       },
       applyExternalSettings: (externalSettings) => {
+        const prior = get().settings;
         const settings = normalizeUserSettings(externalSettings);
         set({ settings });
         syncI18nLanguage(settings.language);
+        if (JSON.stringify(prior.providerCustomModels) !== JSON.stringify(settings.providerCustomModels)) {
+          void import('@/hooks/use-provider-session-options').then(
+            ({ invalidateProviderSessionOptionsClientCache }) => {
+              invalidateProviderSessionOptionsClientCache();
+            },
+          );
+        }
       },
 
       // REQ-007: Sidebar toggle
@@ -301,6 +309,12 @@ export const useSettingsStore = create<SettingsState>()(
           const { useProvidersStore } = await import('@/stores/providers-store');
           useProvidersStore.getState().refresh();
         }
+        if (saved && partial.providerCustomModels) {
+          const { invalidateProviderSessionOptionsClientCache } = await import(
+            '@/hooks/use-provider-session-options'
+          );
+          invalidateProviderSessionOptionsClientCache();
+        }
       },
 
       reset: async () => {
@@ -323,6 +337,10 @@ export const useSettingsStore = create<SettingsState>()(
           if (!response.ok) {
             throw new Error(`Settings reset failed with status ${response.status}`);
           }
+          const { invalidateProviderSessionOptionsClientCache } = await import(
+            '@/hooks/use-provider-session-options'
+          );
+          invalidateProviderSessionOptionsClientCache();
         } catch (error) {
           console.error('Failed to reset settings', error);
           set({ settings: prior });

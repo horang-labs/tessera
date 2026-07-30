@@ -6,6 +6,8 @@ const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 const sectionsSource = read('../src/components/chat/composer-session-control-sections.tsx');
 const controlsSource = read('../src/components/chat/composer-session-controls.tsx');
+const settingsPanelSource = read('../src/components/settings/settings-panel.tsx');
+const customModelSettingsSource = read('../src/components/settings/custom-model-settings.tsx');
 const typesSource = read('../src/lib/i18n/types.ts');
 const localeSources = {
   en: read('../src/lib/i18n/en.ts'),
@@ -14,29 +16,36 @@ const localeSources = {
   zh: read('../src/lib/i18n/zh.ts'),
 };
 
-test('ComposerModelMenu renders a custom-model input gated by allowCustomModel', () => {
-  assert.match(sectionsSource, /allowCustomModel\?\: boolean/);
-  assert.match(sectionsSource, /allowCustomModel\s*&&/);
-  assert.match(sectionsSource, /onChange=\{\(event\) => setCustomValue\(event\.target\.value\)\}/);
-  assert.match(sectionsSource, /submitCustomModel/);
+test('composer model menu stays a closed list', () => {
+  assert.doesNotMatch(sectionsSource, /allowCustomModel/);
+  assert.doesNotMatch(sectionsSource, /submitCustomModel/);
+  assert.doesNotMatch(controlsSource, /customApplyLabel/);
 });
 
-test('composer wires the custom-model field only for claude-code', () => {
-  assert.match(
-    controlsSource,
-    /allowCustomModel=\{providerIdForSticky === 'claude-code'\}/,
-  );
-  for (const key of ['customLabel', 'customPlaceholder', 'customApplyLabel', 'customHint']) {
-    assert.match(controlsSource, new RegExp(`${key}=\\{t\\('settings\\.model\\.`));
-  }
+test('settings exposes custom model ID editors for Claude Code and Codex', () => {
+  assert.match(settingsPanelSource, /id: 'models' as const/);
+  assert.match(settingsPanelSource, /<CustomModelSettings \/>/);
+  assert.match(customModelSettingsSource, /\{ id: 'claude-code', label: 'Claude Code' \}/);
+  assert.match(customModelSettingsSource, /\{ id: 'codex', label: 'Codex' \}/);
+  assert.match(customModelSettingsSource, /providerCustomModels/);
+  assert.match(customModelSettingsSource, /delete next\[providerId\]/);
 });
 
 test('i18n types and every locale declare the custom-model keys', () => {
-  const keys = ['customLabel', 'customPlaceholder', 'customApply', 'customHint'];
+  const keys = [
+    'customLabel',
+    'customPlaceholder',
+    'customApply',
+    'customHint',
+    'customEmpty',
+    'customRemove',
+  ];
   for (const key of keys) {
     assert.match(typesSource, new RegExp(`${key}: string;`), `types.ts missing ${key}`);
     for (const [locale, source] of Object.entries(localeSources)) {
       assert.match(source, new RegExp(`${key}:`), `${locale}.ts missing ${key}`);
     }
   }
+  assert.match(typesSource, /models: string;/);
+  assert.match(typesSource, /modelsDesc: string;/);
 });

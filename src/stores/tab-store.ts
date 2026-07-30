@@ -607,7 +607,20 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   },
 
   createTabWithSession: (sessionId: string): void => {
-    // Ctrl+클릭 시나리오용 시맨틱 래퍼 (내부는 createTab)
+    const state = get();
+    const panelStore = usePanelStore.getState();
+    const tabData = panelStore.tabPanels[state.activeTabId];
+    const activePanel = tabData?.panels[tabData.activePanelId];
+
+    // 선택된 New Tab은 이미 세션을 담기 위한 빈 화면이다. 새 탭을 하나 더
+    // 만들지 않고 이 탭을 고정 세션 탭으로 채운다.
+    if (tabData?.layout.type === 'leaf' && activePanel?.sessionId === null) {
+      panelStore.assignSession(tabData.activePanelId, sessionId);
+      get().syncTabProjectFromSession(state.activeTabId, sessionId);
+      get().pinTab(state.activeTabId);
+      return;
+    }
+
     get().createTab(sessionId);
   },
 

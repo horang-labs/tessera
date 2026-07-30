@@ -54,6 +54,21 @@ test('a WSL session shows the paths its CLI reads, not the host UNC form', () =>
 });
 
 /**
+ * The distro probe shells out to `wsl.exe`, which can lose a race with a distro
+ * that is still starting. Caching that failure would strand every later WSL
+ * lookup — file browsing, git, inline images — until the server restarts.
+ */
+test('a failed distro probe is not cached for the process lifetime', () => {
+  const probe = pathEnvironmentSource.match(
+    /async function getWslPathInfo\(\)[\s\S]*?\n\}/,
+  )?.[0] ?? '';
+
+  assert.match(probe, /if \(!wslPathInfo\) wslPathInfoPromise = null;/);
+  // A rejection must not be cached as a permanently rejected promise either.
+  assert.match(probe, /loadWslPathInfo\(\)\.catch\(\(\) => null\)/);
+});
+
+/**
  * The paths a session shows and the cwd its CLI is spawned with have to be the
  * same string: the Claude memory folder is named after that cwd, so a display
  * path that disagrees points at a directory the agent never reads. Asserting

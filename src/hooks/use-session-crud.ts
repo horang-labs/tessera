@@ -13,6 +13,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useTaskStore } from '@/stores/task-store';
 import { generateSessionTitle } from '@/lib/session/title-generator';
+import { requestSessionRename } from '@/lib/session/rename-session-request';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
@@ -445,44 +446,14 @@ export function useSessionCrud() {
    */
   const renameSession = useCallback(
     async (sessionId: string, newTitle: string) => {
-      const session = sessionStore.getSession(sessionId);
-      const oldTitle = session?.title;
-      const oldHasCustomTitle = session?.hasCustomTitle;
-      const linkedTask = useTaskStore.getState().getTaskBySessionId(sessionId);
-      const oldTaskTitle = linkedTask?.title;
-      sessionStore.updateSessionTitle(sessionId, newTitle, true);
-      useTaskStore.getState().syncLinkedTaskTitle(sessionId, newTitle);
-
       setIsRenaming(true);
-
       try {
-        const response = await fetchWithClientId(`/api/sessions/${sessionId}/rename`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: newTitle }),
-        });
-
-        if (!response.ok) {
-          throw new Error(t('errors.renameSessionFailed'));
-        }
-
-        toast.success(t('notifications.sessionRenamed'));
-      } catch (err) {
-        if (oldTitle) {
-          sessionStore.updateSessionTitle(sessionId, oldTitle, oldHasCustomTitle);
-        }
-        if (linkedTask?.sessions.length === 1 && oldTaskTitle) {
-          useTaskStore.getState().syncLinkedTaskTitle(sessionId, oldTaskTitle);
-        } else if (oldTitle) {
-          useTaskStore.getState().syncLinkedTaskTitle(sessionId, oldTitle);
-        }
-        toast.error(t('errors.renameSessionFailed'));
-        console.error('Rename session error:', err);
+        await requestSessionRename(sessionId, newTitle, t);
       } finally {
         setIsRenaming(false);
       }
     },
-    [sessionStore, t]
+    [t]
   );
 
   /**

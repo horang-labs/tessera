@@ -75,8 +75,13 @@ export async function PUT(request: NextRequest) {
     // Settings changes can flip which providers are reachable; the next
     // list_providers/check_cli_status should probe fresh.
     invalidateCliStatusSnapshot();
-    if (previousSettings.agentEnvironment !== settings.agentEnvironment) {
+    const agentEnvironmentChanged = previousSettings.agentEnvironment !== settings.agentEnvironment;
+    const providerCustomModelsChanged = JSON.stringify(previousSettings.providerCustomModels)
+      !== JSON.stringify(settings.providerCustomModels);
+    if (agentEnvironmentChanged || providerCustomModelsChanged) {
       invalidateProviderSessionOptionsCache(userId);
+    }
+    if (agentEnvironmentChanged) {
       // PTY 감지 캐시는 환경(native/wsl)별 PATH 세계라 환경 전환 시 재프로브.
       invalidateTerminalProviderDetection();
     }

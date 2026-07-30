@@ -53,3 +53,15 @@ The mode actually used by a session after applying the user's preferred executio
 ### Session execution mode
 
 The effective execution mode fixed when a session is created. A session cannot switch between GUI and PTY modes, and conversation state cannot resume across those modes.
+
+### Worktree diff stats
+
+The uncommitted work in a working directory, measured against its last commit and counted as added lines, removed lines, and changed files. Lines in new untracked files count as added. Every session sharing a working directory shows the same stats.
+
+_Avoid_: diff count, change count, line count
+
+### Diff stats safety sweep
+
+The periodic refresh that recomputes worktree diff stats for sessions with a live runtime, so displayed stats cannot stay wrong indefinitely when the signals that normally trigger a recompute all go quiet.
+
+_Avoid_: diff polling, stats refresh loop

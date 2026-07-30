@@ -146,8 +146,8 @@ export interface TabStoreActions {
   reorderTab(dragTabId: string, dropTabId: string): void;
 
   /**
-   * 특정 세션을 새 탭에서 열기 (Ctrl+클릭 시나리오용 시맨틱 래퍼).
-   * 내부적으로 createTab(sessionId)을 호출.
+   * 특정 세션을 고정 탭에서 열기.
+   * 선택된 탭이 빈 단일 패널이면 그 New Tab을 재사용하고, 아니면 새 탭을 생성.
    */
   createTabWithSession(sessionId: string): void;
 
