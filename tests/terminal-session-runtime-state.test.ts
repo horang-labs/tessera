@@ -274,6 +274,38 @@ test('PTY runtime exit closes a retained single-panel session tab', () => {
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
 });
 
+test('stopping a GUI session closes its retained single-panel tab', () => {
+  const guiSessionId = 'gui-session-a';
+  const tabId = 'retained-gui-tab';
+  const panelId = 'retained-gui-panel';
+  useSessionStore.setState({
+    projects: [project(guiSession(guiSessionId, true))],
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: guiSessionId } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'session_stopped',
+    sessionId: guiSessionId,
+  });
+
+  assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
+  assert.equal(useTabStore.getState().findSessionLocation(guiSessionId), null);
+});
+
 test('PTY runtime exit removes its panel without discarding unrelated panels', () => {
   const tabId = 'multi-panel-terminal-tab';
   const terminalPanelId = 'terminal-panel';
@@ -749,6 +781,45 @@ test('archiving a stopped PTY session retires its open surface after the request
 
   assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
+});
+
+test('archiving a GUI session retires its open surface after the request succeeds', async (t) => {
+  const guiSessionId = 'archived-gui-session';
+  const tabId = 'archived-gui-tab';
+  const panelId = 'archived-gui-panel';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  useSessionStore.setState({
+    projects: [project(guiSession(guiSessionId))],
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: guiSessionId } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  useSessionStore.getState().toggleArchive(guiSessionId, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
+  assert.equal(useTabStore.getState().findSessionLocation(guiSessionId), null);
 });
 
 test('PTY runtime exit defers surface retirement while archive rollback is still possible', () => {
