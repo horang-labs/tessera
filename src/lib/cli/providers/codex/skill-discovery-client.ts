@@ -35,7 +35,7 @@ export async function listCodexSkills(
   const result = await executeCodexAppServerRequest<CodexSkillsListResponse>(
     { ...context, environment, workDir: requestedCwd },
     'skills/list',
-    { cwds: [cwd] },
+    { cwds: [cwd], forceReload: true },
   );
   const entries: SkillInfo[] = [];
 

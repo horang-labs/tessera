@@ -317,6 +317,10 @@ export function handleIncomingServerMessage({
       useCommandStore.getState().setCommands(msg.sessionId, msg.commands);
       return { wasReconnect };
 
+    case 'skills_changed':
+      useCommandStore.getState().invalidateSession(msg.sessionId);
+      return { wasReconnect };
+
     case 'providers_list':
       providersListCallbacks.get(msg.requestId)?.(msg.providers);
       providersListCallbacks.delete(msg.requestId);

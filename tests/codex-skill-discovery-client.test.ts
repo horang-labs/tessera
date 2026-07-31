@@ -35,7 +35,7 @@ test('Codex skills are discovered by cwd without creating a thread', async () =>
 
   assert.deepEqual(requests, [{
     method: 'skills/list',
-    params: { cwds: ['/repo'] },
+    params: { cwds: ['/repo'], forceReload: true },
   }]);
   assert.deepEqual(skills, [{
     name: 'diagnosing-bugs',
