@@ -1053,6 +1053,7 @@ export const en: I18nMessages = {
   },
   scripts: {
     noWorktree: 'This chat has no worktree, so there is nothing to run.',
+    readingLog: 'Reading the log...',
     preparation: {
       name: 'Preparation',
       status: {

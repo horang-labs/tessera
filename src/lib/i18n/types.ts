@@ -1046,6 +1046,7 @@ export interface I18nMessages {
   };
   scripts: {
     noWorktree: string;
+    readingLog: string;
     preparation: {
       name: string;
       status: {

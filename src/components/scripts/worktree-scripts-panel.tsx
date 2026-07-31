@@ -84,6 +84,9 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
   const { t } = useI18n();
   const { runPreparation } = useWorktreePreparation();
   const [stored, setStored] = useState<StoredPreparation | null>(null);
+  // "Nothing to read yet" and "the run printed nothing" look the same in the
+  // stored value and read very differently to someone waiting for a log.
+  const [isReading, setIsReading] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
 
   const isRunning = status === 'running';
@@ -93,6 +96,7 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
   useEffect(() => {
     if (isRunning) return;
     let cancelled = false;
+    setIsReading(true);
     void (async () => {
       try {
         const response = await fetchWithClientId(
@@ -103,6 +107,8 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
         if (!cancelled) setStored(data.preparation);
       } catch (error) {
         logger.warn({ error, taskId }, 'Could not read the preparation output');
+      } finally {
+        if (!cancelled) setIsReading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -135,7 +141,7 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
           </span>
           <span className="truncate text-[10px] text-(--text-tertiary)">
             {t(`scripts.preparation.status.${status}`)}
-            {!isRunning && stored?.exitCode !== null && stored?.exitCode !== undefined
+            {!isRunning && !isReading && stored?.exitCode !== null && stored?.exitCode !== undefined
               ? ` · ${t('task.preparation.exitCode', { code: stored.exitCode })}`
               : ''}
           </span>
@@ -167,11 +173,13 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
             />
           </TabIdContext.Provider>
         ) : (
-          <div className="h-full overflow-auto px-3 py-2">
-            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-(--text-secondary)">
-              {wasInterrupted
-                ? t('task.preparation.interrupted')
-                : output || t('task.preparation.noOutput')}
+          <div className="h-full overflow-auto p-2">
+            <pre className="min-h-full whitespace-pre-wrap break-words rounded-md border border-(--divider) bg-(--input-bg) p-2.5 font-mono text-[11px] leading-relaxed text-(--text-primary)">
+              {isReading
+                ? t('scripts.readingLog')
+                : wasInterrupted
+                  ? t('task.preparation.interrupted')
+                  : output || t('task.preparation.noOutput')}
             </pre>
           </div>
         )}

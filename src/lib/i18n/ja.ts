@@ -1053,6 +1053,7 @@ export const ja: I18nMessages = {
   },
   scripts: {
     noWorktree: 'このチャットにはワークツリーがないため、実行するものがありません。',
+    readingLog: 'ログを読み込み中...',
     preparation: {
       name: '準備',
       status: {

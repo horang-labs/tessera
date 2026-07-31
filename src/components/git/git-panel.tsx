@@ -2,11 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Brain, FileText, GitCommitHorizontal, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useGitStore, type GitPanelTab } from "@/stores/git-store";
 import {
   WorktreeScriptsPanel,
-  WorktreeScriptsTabIcon,
   useWorktreeScriptsAvailable,
 } from "@/components/scripts/worktree-scripts-panel";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
@@ -31,21 +30,19 @@ import { cn } from "@/lib/utils";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
 
 /**
- * Only the selected tab carries its name.
+ * Every tab says what it is.
  *
- * Four tabs and a 320px panel do not leave room for four labels — they came
- * out as "Cont..." — and an icon the reader has already chosen needs no words
- * beside it. The name stays reachable as the button's own label.
+ * Four of them and a narrow panel is a tight fit, so the words are what stays
+ * and the icons go: an unlabelled icon row leaves the reader guessing which
+ * mark means which panel, and guessing costs more than an icon buys.
  */
 function GitPanelTabButton({
   active,
   children,
-  icon,
   onClick,
 }: {
   active: boolean;
   children: string;
-  icon: ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -53,21 +50,16 @@ function GitPanelTabButton({
       type="button"
       role="tab"
       aria-selected={active}
-      aria-label={children}
       title={children}
       onClick={onClick}
       className={cn(
-        // The selected tab takes twice the width, because it is the only one
-        // carrying words; the rest share what is left evenly so the row keeps
-        // its rhythm however many there are.
-        "flex h-6 min-w-0 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+        "flex h-6 min-w-0 flex-1 items-center justify-center rounded px-1 text-[11px] font-medium transition-colors",
         active
-          ? "flex-[2] bg-(--sidebar-bg) text-(--text-primary) shadow-sm"
-          : "flex-1 text-(--text-muted) hover:bg-(--sidebar-bg)/60 hover:text-(--text-primary)",
+          ? "bg-(--sidebar-bg) text-(--text-primary) shadow-sm"
+          : "text-(--text-muted) hover:bg-(--sidebar-bg)/60 hover:text-(--text-primary)",
       )}
     >
-      {icon}
-      {active ? <span className="truncate">{children}</span> : null}
+      <span className="truncate">{children}</span>
     </button>
   );
 }
@@ -246,14 +238,12 @@ export function GitPanel({
         >
           <GitPanelTabButton
             active={effectivePanelTab === "git"}
-            icon={<GitCommitHorizontal className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("git")}
           >
             {t("gitPanel.tabs.git")}
           </GitPanelTabButton>
           <GitPanelTabButton
             active={effectivePanelTab === "files"}
-            icon={<FileText className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("files")}
           >
             {t("gitPanel.tabs.files")}
@@ -261,7 +251,6 @@ export function GitPanel({
           {showScriptsTab ? (
             <GitPanelTabButton
               active={effectivePanelTab === "scripts"}
-              icon={<WorktreeScriptsTabIcon className="h-3.5 w-3.5" />}
               onClick={() => handlePanelTabChange("scripts")}
             >
               {t("gitPanel.tabs.scripts")}
@@ -270,7 +259,6 @@ export function GitPanel({
           {showMemoryTab ? (
             <GitPanelTabButton
               active={effectivePanelTab === "memory"}
-              icon={<Brain className="h-3.5 w-3.5" />}
               onClick={() => handlePanelTabChange("memory")}
             >
               {t("gitPanel.tabs.context")}
@@ -291,6 +279,7 @@ export function GitPanel({
         ) : null}
       </div>
 
+      {effectivePanelTab === "scripts" ? null : (
       <GitPanelSummarySection
         data={controller.data}
         loading={controller.loading}
@@ -301,6 +290,7 @@ export function GitPanel({
         onOpenExternal={controller.openExternal}
         showDetails={effectivePanelTab === "git"}
       />
+      )}
 
       {effectivePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
