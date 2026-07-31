@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  COPY_BLOCK_CLOSE_MARKER,
+  COPY_BLOCK_OPEN_MARKER,
+} from '@/lib/projects/preparation-copy-block';
+import {
   PREPARATION_BRANCH_NAME_ENV,
   PREPARATION_PROJECT_DIR_ENV,
   PREPARATION_WORKTREE_DIR_ENV,
-  buildPreparationExecutionSpec,
-} from '@/lib/projects/preparation-execution-spec';
+} from '@/lib/projects/preparation-environment';
+import { buildPreparationExecutionSpec } from '@/lib/projects/preparation-execution-spec';
 
 function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -175,6 +179,27 @@ test('the Windows runner keeps CRLF line endings throughout', () => {
     assert.ok(spec);
     assert.ok(!/[^\r]\n/.test(spec.runnerScript));
     // A blank line stays blank rather than becoming a guarded empty command.
+    assert.equal(spec.runnerScript.split(WINDOWS_GUARD).length - 1, 2);
+  });
+});
+
+test('the Windows runner treats a line starting with # as a comment', () => {
+  withPlatform('win32', () => {
+    const spec = buildPreparationExecutionSpec({
+      ...windowsContext,
+      script: `${COPY_BLOCK_OPEN_MARKER}\ncp "$TESSERA_PROJECT_DIR/.env" .\n${COPY_BLOCK_CLOSE_MARKER}\n  # indented too\nnpm install`,
+    });
+
+    assert.ok(spec);
+    // Markers have to read the same on every platform for a script to move
+    // between machines, so batch learns the comment rather than the marker
+    // changing shape.
+    assert.ok(!spec.runnerScript.includes(`call ${COPY_BLOCK_OPEN_MARKER}`));
+    assert.ok(!spec.runnerScript.includes(`call ${COPY_BLOCK_CLOSE_MARKER}`));
+    assert.ok(!spec.runnerScript.includes('call # indented too'));
+    // Only the comments are skipped; the commands between them still run.
+    assert.ok(spec.runnerScript.includes(`call cp "$TESSERA_PROJECT_DIR/.env" .\r\n${WINDOWS_GUARD}\r\n`));
+    assert.ok(spec.runnerScript.includes(`call npm install\r\n${WINDOWS_GUARD}\r\n`));
     assert.equal(spec.runnerScript.split(WINDOWS_GUARD).length - 1, 2);
   });
 });

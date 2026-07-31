@@ -5,6 +5,7 @@ import { useI18n } from '@/lib/i18n';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import IgnoredFileChecklist from './ignored-file-checklist';
 
 /** Typing pause after which the draft is written back to the project. */
 const SAVE_DELAY_MS = 600;
@@ -171,6 +172,11 @@ export default function ProjectPreparationSettings() {
             disabled={status === 'loading'}
             className="w-full resize-y rounded-md border border-(--input-border) bg-(--input-bg) px-3 py-2 font-mono text-sm text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent) disabled:opacity-60"
             data-testid="project-preparation-script"
+          />
+          <IgnoredFileChecklist
+            projectId={projectId}
+            script={draft}
+            onConfirm={handleChange}
           />
           <p className="text-[11px] text-(--text-tertiary)">
             {t('settings.preparation.runsOnCreate')}

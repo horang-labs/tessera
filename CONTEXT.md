@@ -69,3 +69,9 @@ _Avoid_: setup script, hook — in Tessera, _setup_ names the first-run onboardi
 ### Preparation status
 
 How far a worktree's preparation has progressed, and whether it succeeded. The outcome outlives the run, so a failed preparation stays visible until it is retried.
+
+### Copy block
+
+The marked region of a preparation script that Tessera owns and rewrites in full from the ignored-file checklist. Everything outside it is the user's, including a generated line moved out of it, which is what makes rewriting the block safe to do without asking.
+
+_Avoid_: managed block, generated section

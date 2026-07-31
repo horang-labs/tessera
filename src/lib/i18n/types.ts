@@ -264,6 +264,27 @@ export interface I18nMessages {
       saved: string;
       saveFailed: string;
       loadFailed: string;
+      checklist: {
+        open: string;
+        close: string;
+        description: string;
+        scanning: string;
+        scanFailed: string;
+        empty: string;
+        truncated: string;
+        confirm: string;
+        selected: string;
+        inScriptOnly: string;
+        kind: {
+          configuration: string;
+          instructions: string;
+          dependencies: string;
+          buildOutput: string;
+          logs: string;
+          images: string;
+          unrecognised: string;
+        };
+      };
     };
     category: {
       session: string;

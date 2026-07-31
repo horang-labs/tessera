@@ -23,14 +23,12 @@ import {
 } from '@/lib/terminal/terminal-resolver';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import {
+  PREPARATION_PROJECT_DIR_ENV,
+  PREPARATION_WORKTREE_DIR_ENV,
+  PREPARATION_BRANCH_NAME_ENV,
+} from './preparation-environment';
 import { normalizePreparationScript } from './preparation-script-policy';
-
-/** The original checkout the worktree was created from. */
-export const PREPARATION_PROJECT_DIR_ENV = 'TESSERA_PROJECT_DIR';
-/** The new worktree, which is also the script's working directory. */
-export const PREPARATION_WORKTREE_DIR_ENV = 'TESSERA_WORKTREE_DIR';
-/** The branch the new worktree checked out. */
-export const PREPARATION_BRANCH_NAME_ENV = 'TESSERA_BRANCH_NAME';
 
 const POSIX_RUNNER_NAME = 'preparation-runner.sh';
 const WINDOWS_RUNNER_NAME = 'preparation-runner.cmd';
@@ -191,6 +189,10 @@ function buildPosixRunnerScript(script: string): string {
  * makes the guard reachable: preparation scripts routinely invoke npm or pnpm,
  * which are batch files themselves, and one batch file calling another without
  * `call` never returns to the lines below it.
+ *
+ * A `#` line is dropped rather than translated to `rem`, whose argument batch
+ * still parses for redirection and pipes — a comment holding `>` or `|` would
+ * turn back into a command.
  */
 function buildWindowsRunnerScript(script: string): string {
   let runner = '@echo off\r\nsetlocal EnableExtensions\r\n';
@@ -198,12 +200,24 @@ function buildWindowsRunnerScript(script: string): string {
 
   for (const line of script.split('\n')) {
     const command = line.trim();
-    runner += command
+    runner += command && !isPosixComment(command)
       ? `call ${command}\r\n${WINDOWS_FAIL_FAST_GUARD}\r\n`
       : '\r\n';
   }
 
   return runner;
+}
+
+/**
+ * Whether a line is a comment.
+ *
+ * Batch has no `#` syntax of its own, so nothing that used to run stops
+ * running; what it gains is a comment marker that means the same thing here as
+ * it does in the POSIX runner. That sameness is the point — the block markers
+ * the checklist writes have to survive a script moving between machines.
+ */
+function isPosixComment(command: string): boolean {
+  return command.startsWith('#');
 }
 
 /** Hand the runner to the login shell the terminal would have found. */
