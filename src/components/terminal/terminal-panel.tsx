@@ -47,6 +47,14 @@ interface TerminalPanelProps {
   /** Optional overlay shown until the terminal surface reports that it is running. */
   startupOverlay?: ReactNode;
   launch?: { providerId: string; sessionId: string };
+  /**
+   * The panel's own title bar — drag handle, path, close button.
+   *
+   * A surface embedded in something that already says what it is showing turns
+   * it off: two headers for one terminal read as two things, and a close button
+   * on a run somebody else started raises a question it cannot answer.
+   */
+  showHeader?: boolean;
 }
 
 function isTerminalAssignedToPanel(
@@ -78,6 +86,7 @@ export function TerminalPanel({
   detachOnUnmount = false,
   startupOverlay,
   launch,
+  showHeader = true,
 }: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
   const { t } = useTranslation();
@@ -256,7 +265,7 @@ export function TerminalPanel({
       data-testid="terminal-panel"
       style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
     >
-      {!sessionOwned && (
+      {!sessionOwned && showHeader && (
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-black/10 px-2 text-xs dark:border-white/10">
           <button
             type="button"

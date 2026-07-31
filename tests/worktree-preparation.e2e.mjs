@@ -311,6 +311,15 @@ async function confirmRun() {
   await page.getByTestId('preparation-rerun-confirm').click({ timeout: 15_000 });
 }
 
+/** The script sits behind a disclosure, so that the log keeps the panel. */
+async function readScript() {
+  const body = page.getByTestId('worktree-scripts-script-body');
+  if (await body.count() === 0) {
+    await page.getByTestId('worktree-scripts-script-toggle').click({ timeout: 30_000 });
+  }
+  return body.innerText({ timeout: 15_000 });
+}
+
 async function capture(name) {
   await fs.mkdir(artifactDir, { recursive: true });
   const file = path.join(artifactDir, `${name}.png`);
@@ -372,9 +381,8 @@ async function phase1() {
 
   // The script is recorded as the run starts, so "what is this doing?" has an
   // answer while it is still doing it — not only once it has finished.
-  const runningScript = await view
-    .getByTestId('worktree-scripts-script-body')
-    .innerText({ timeout: 30_000 });
+  const runningScript = await readScript();
+  await capture('phase1-running');
   assert.ok(
     runningScript.includes('preparation-started'),
     `the script should be readable during the run: ${runningScript}`,
@@ -439,7 +447,7 @@ async function phase2(taskId) {
 
   // And the script that produced the log is right there, whole and in order,
   // rather than something to be reconstructed from the output.
-  const scriptShown = await page.getByTestId('worktree-scripts-script-body').innerText();
+  const scriptShown = await readScript();
   assert.ok(
     scriptShown.includes('echo "preparation-boom"') && scriptShown.includes('exit 3'),
     `the panel should show the script the run ran: ${scriptShown}`,

@@ -40,11 +40,6 @@ import { cn } from '@/lib/utils';
 
 const PREPARATION_TAB_ID = 'worktree-preparation';
 const PREPARATION_PANEL_ID = 'worktree-preparation-panel';
-/**
- * How long a script may be before it has to be asked for. Short enough that
- * what opens by default cannot push the log off the panel.
- */
-const SCRIPT_LINES_SHOWN_UNASKED = 12;
 
 interface StoredPreparation {
   status: PreparationStatus;
@@ -179,6 +174,10 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
               terminalSessionId={null}
               surfaceActive
               detachOnUnmount
+              // The row above already names the run and reports its status; the
+              // panel's own bar would repeat that and add a close button for a
+              // process the user did not start.
+              showHeader={false}
             />
           </TabIdContext.Provider>
         ) : (
@@ -198,7 +197,7 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
 }
 
 /**
- * What the run ran, above what it printed.
+ * What the run ran, on request.
  *
  * The log alone leaves the reader working backwards from output to guess at
  * the script: a `npm install` that prints a thousand lines buries the copies
@@ -206,13 +205,14 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
  * The commands are here whole, in order, so the log has something to be read
  * against.
  *
- * Collapsed by default once it grows past a glance — the log is what the panel
- * is usually open for.
+ * Shut until asked for, though. The log is what the panel is open for, and a
+ * script unfolded over it costs the reader the thing they came to see — in a
+ * column this narrow even a short script wraps into half the panel.
  */
 function ScriptSection({ script }: { script: string }) {
   const { t } = useI18n();
+  const [isOpen, setIsOpen] = useState(false);
   const lines = script.split('\n').length;
-  const [isOpen, setIsOpen] = useState(lines <= SCRIPT_LINES_SHOWN_UNASKED);
 
   return (
     <div className="shrink-0 border-b border-(--divider)" data-testid="worktree-scripts-script">
@@ -220,18 +220,18 @@ function ScriptSection({ script }: { script: string }) {
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
-        className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[11px] font-medium text-(--text-muted) transition-colors hover:text-(--text-primary)"
+        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[11px] text-(--text-muted) transition-colors hover:text-(--text-primary)"
         data-testid="worktree-scripts-script-toggle"
       >
-        <ChevronRight className={cn('h-3 w-3 transition-transform', isOpen && 'rotate-90')} />
-        <span>{t('scripts.script')}</span>
+        <ChevronRight className={cn('h-3 w-3 shrink-0 transition-transform', isOpen && 'rotate-90')} />
+        <span className="font-medium">{t('scripts.script')}</span>
         <span className="text-(--text-tertiary)">
           {t('scripts.scriptLines', { count: lines })}
         </span>
       </button>
       {isOpen ? (
         <pre
-          className="max-h-56 overflow-auto whitespace-pre-wrap break-words px-3 pb-2 font-mono text-[11px] leading-relaxed text-(--text-secondary)"
+          className="max-h-44 overflow-auto whitespace-pre-wrap break-words px-3 pb-2 font-mono text-[11px] leading-snug text-(--text-secondary)"
           data-testid="worktree-scripts-script-body"
         >
           {script}

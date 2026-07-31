@@ -500,7 +500,10 @@ test('terminal panels preserve the source session context used to create them', 
 
 test('terminal panels expose a panel drag handle', () => {
   assert.match(terminalPanelSource, /setPanelNodeDragData/);
-  assert.match(terminalPanelSource, /\{!sessionOwned && \(/);
+  // The header carries the handle, so a session-owned panel has neither — and
+  // neither does one embedded in a surface that supplies its own header.
+  assert.match(terminalPanelSource, /\{!sessionOwned && showHeader && \(/);
+  assert.match(terminalPanelSource, /showHeader = true/);
   assert.match(terminalPanelSource, /data-testid="terminal-panel-drag-handle"/);
   assert.match(terminalPanelSource, /data-testid="terminal-panel-empty-drag-region"/);
   assert.match(terminalPanelSource, /draggable/);
