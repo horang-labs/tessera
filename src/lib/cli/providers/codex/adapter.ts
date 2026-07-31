@@ -881,14 +881,14 @@ export class CodexAdapter implements CliProvider {
    * to 100 chars, descriptions to 500 chars. Entries with empty names are
    * filtered out. The `path` field from SkillMetadata is preserved in SkillInfo.
    *
-   * Returns null if no threadId is available for the process.
+   * Skill discovery is scoped by cwd and does not require a conversation turn.
    */
   createSkillSource(sessionId: string, proc: ChildProcess): SkillSource | null {
     return {
       listSkills: async (): Promise<SkillInfo[]> => {
-        const threadId = this._processThreadIds.get(proc);
-        if (!threadId) {
-          logger.debug('CodexAdapter: createSkillSource.listSkills — no threadId', { sessionId });
+        const cwd = this._processRuntimeConfig.get(proc)?.cwd;
+        if (!cwd) {
+          logger.debug('CodexAdapter: createSkillSource.listSkills — no cwd', { sessionId });
           return [];
         }
 
@@ -902,12 +902,12 @@ export class CodexAdapter implements CliProvider {
           jsonrpc: '2.0',
           id: requestId,
           method: 'skills/list',
-          params: { threadId },
+          params: { cwds: [cwd] },
         };
 
         codexProtocolParser.trackPendingRequest(sessionId, requestId, 'skills/list');
         this._writeStdin(proc, 'skills_list', `${JSON.stringify(request)}\n`);
-        logger.debug('CodexAdapter: sent skills/list request', { sessionId, requestId, threadId });
+        logger.debug('CodexAdapter: sent skills/list request', { sessionId, requestId, cwd });
 
         let response: { id: number; result?: Record<string, any>; error?: any };
         try {

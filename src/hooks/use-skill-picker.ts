@@ -153,9 +153,13 @@ export function useSkillPicker(
   );
   const hasLoadedCommands = commands !== undefined;
   const hasBuiltInCommands = builtInCommands.length > 0;
+  const canDiscoverBeforeSession = providerId === 'claude-code'
+    || providerId === 'codex'
+    || providerId === 'opencode';
   const isInactive = isOpen && !hasLoadedCommands
     && (skillsOnlyMode || !hasBuiltInCommands)
-    && isSessionRunning === false;
+    && isSessionRunning === false
+    && !canDiscoverBeforeSession;
   const isLoading = isOpen && !hasLoadedCommands
     && (skillsOnlyMode || !hasBuiltInCommands)
     && !isInactive;
@@ -171,15 +175,11 @@ export function useSkillPicker(
     }
 
     const task = (async () => {
-      if (providerId === 'claude-code' || providerId === 'opencode') {
+      if (providerId === 'opencode') {
         if (isSessionRunning !== false) {
           wsClient.getCommands(sessionId);
+          return;
         }
-        return;
-      }
-
-      if (isSessionRunning === false) {
-        return;
       }
 
       try {
