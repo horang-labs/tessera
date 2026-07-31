@@ -18,6 +18,7 @@ import type { ParsedMessage } from '../types';
 import type { CliCommandInfo, CliMessage } from '../../types';
 import { KNOWN_IGNORED_MESSAGE_TYPES } from '../../protocol-message-types';
 import { buildModelUsageEntries, pickPrimaryModelName } from '../../protocol-adapter-events';
+import { compactStatusFallbackText, parseCompactStatusMetadata } from '../../compact-status';
 import { parseContentBlocks, extractToolResultOutput, extractOutputString } from '../../message-parser';
 import { hookHandler } from '../../hook-handler';
 import { truncateToolResult } from '../../truncate-tool-result';
@@ -727,7 +728,15 @@ export class ClaudeCodeProtocolParser {
       metadata.compactMetadata = raw.compact_metadata || raw.compactMetadata;
     }
 
-    const messageText = raw.content || raw.message?.text || raw.message?.content;
+    // Compaction start/end arrives as a `status` frame, not as text; the client
+    // turns it into the docked compacting bar.
+    const compactStatus = parseCompactStatusMetadata(raw);
+    if (compactStatus) {
+      Object.assign(metadata, compactStatus);
+    }
+
+    const messageText = raw.content || raw.message?.text || raw.message?.content
+      || compactStatusFallbackText(compactStatus);
 
     if (!messageText && !subtype) {
       logger.warn('System message without text or subtype', { sessionId });

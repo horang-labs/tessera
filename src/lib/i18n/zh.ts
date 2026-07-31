@@ -465,6 +465,7 @@ export const zh: I18nMessages = {
     codexFastEnabled: '已启用 Codex Fast 模式',
     codexFastDisabled: '已停用 Codex Fast 模式',
     codexCompactDuringTurn: '请等待当前 Codex 回合结束后再执行 compact。',
+    compactingConversation: '正在压缩对话…',
     cancelHint: '按 ESC 取消...',
     cancelButton: '取消 (ESC)',
     attachFile: '附加文件',
