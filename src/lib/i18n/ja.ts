@@ -268,6 +268,7 @@ export const ja: I18nMessages = {
     preparation: {
       title: 'ワークツリーの準備',
       description: 'このプロジェクトに属するコマンドです。ここから作るすべてのワークツリーが引き継ぎます。',
+      projectLabel: 'プロジェクト',
       scriptLabel: '準備スクリプト',
       scriptDesc: '空欄にすると準備スクリプトなしとして扱います。',
       scriptPlaceholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .\nnpm install',
@@ -1056,6 +1057,7 @@ export const ja: I18nMessages = {
     readingLog: 'ログを読み込み中...',
     script: 'スクリプト',
     scriptLines: '{{count}}行',
+    editScript: '準備スクリプトを編集',
     preparation: {
       name: '準備',
       status: {

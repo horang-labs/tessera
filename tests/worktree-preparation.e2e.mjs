@@ -480,6 +480,18 @@ async function phase2(taskId) {
     afterSuccess.includes('preparation-finished'),
     `a successful run stays readable after its badge goes: ${afterSuccess}`,
   );
+  // The way from a script you are reading to the editor that owns it, opened
+  // on that project rather than on whatever the sidebar had selected.
+  await page.getByTestId('worktree-scripts-edit').click({ timeout: 30_000 });
+  const picker = page.getByTestId('project-preparation-project');
+  await picker.waitFor({ state: 'visible', timeout: 30_000 });
+  assert.equal(
+    await picker.inputValue(),
+    projectDir,
+    'the editor should open on the project the worktree belongs to',
+  );
+  await page.getByTestId('settings-close').click({ timeout: 15_000 });
+
   await leaveScriptsTab();
 
   results.push({ phase: 2, taskId, failedExitCode: failed.exitCode, recovered: succeeded.status });

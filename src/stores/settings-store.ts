@@ -139,10 +139,28 @@ export function isSettingsSyncMessage(message: unknown): message is SettingsSync
     && typeof value.senderId === 'string';
 }
 
+/** The sections the settings panel is divided into. */
+export type SettingsSectionId = 'general' | 'project' | 'appearance' | 'development' | 'git';
+
+/**
+ * What a caller can say about where settings should land.
+ *
+ * A surface that opens settings for a reason usually knows more than "open
+ * settings" — which section, and sometimes which project. Saying it here beats
+ * making the user find it again.
+ */
+export interface OpenSettingsOptions {
+  section?: SettingsSectionId;
+  /** The project whose settings prompted this, when one did. */
+  projectId?: string;
+}
+
 interface SettingsState {
   settings: UserSettings;
   serverHostInfo: ServerHostInfo | null;
   isOpen: boolean;
+  /** Where the panel should open, consumed by the panel as it opens. */
+  openRequest: OpenSettingsOptions | null;
   isLoading: boolean;
   pendingSaveCount: number;
 
@@ -158,7 +176,7 @@ interface SettingsState {
   getSidebarWidth: (mode: ViewMode, projectDir?: string | null) => number;
   setSidebarWidth: (width: number, mode?: ViewMode, projectDir?: string | null) => void;
 
-  open: () => void;
+  open: (options?: OpenSettingsOptions) => void;
   close: () => void;
   updateSettings: (partial: Partial<UserSettings>, options?: UpdateSettingsOptions) => Promise<void>;
   reset: () => Promise<void>;
@@ -172,6 +190,7 @@ export const useSettingsStore = create<SettingsState>()(
       settings: DEFAULT_SETTINGS,
       serverHostInfo: null,
       isOpen: false,
+      openRequest: null,
       isLoading: false,
       pendingSaveCount: 0,
       sidebarCollapsed: false, // BR-TOGGLE-001: 기본 펼침
@@ -182,10 +201,12 @@ export const useSettingsStore = create<SettingsState>()(
       projectSidebarWidths: {},
       sidebarWidth: LIST_SIDEBAR_MIN_WIDTH, // 레거시 호환용 alias (list width)
 
-      open: () => set({ isOpen: true }),
+      open: (options) => set({ isOpen: true, openRequest: options ?? null }),
       close: () => {
         if (get().pendingSaveCount > 0) return;
-        set({ isOpen: false });
+        // The request goes with the panel: reopening from somewhere that says
+        // nothing must not land wherever the last caller pointed.
+        set({ isOpen: false, openRequest: null });
       },
       applyExternalSettings: (externalSettings) => {
         const settings = normalizeUserSettings(externalSettings);

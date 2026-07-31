@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
-import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { useSettingsStore } from '@/stores/settings-store';
+import { resolvePreparationProject } from '@/lib/projects/preparation-project-selection';
 import IgnoredFileChecklist from './ignored-file-checklist';
 
 /** Typing pause after which the draft is written back to the project. */
@@ -26,10 +27,23 @@ export default function ProjectPreparationSettings() {
   const { t } = useI18n();
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const projects = useSessionStore((state) => state.projects);
+  const requestedProjectId = useSettingsStore((state) => state.openRequest?.projectId);
 
-  const projectId =
-    selectedProjectDir && selectedProjectDir !== ALL_PROJECTS_SENTINEL ? selectedProjectDir : null;
-  const projectName = projects.find((project) => project.encodedDir === projectId)?.displayName ?? null;
+  // A preparation script belongs to a project, not to whatever is on screen, so
+  // the editor picks its own — starting where the user is, and free to move.
+  // A new request beats an earlier choice: being sent here for one project and
+  // shown another is worse than losing the pick.
+  const [chosenProjectId, setChosenProjectId] = useState<string | null>(null);
+  const [answeredRequest, setAnsweredRequest] = useState(requestedProjectId);
+  if (requestedProjectId !== answeredRequest) {
+    setAnsweredRequest(requestedProjectId);
+    setChosenProjectId(null);
+  }
+  const projectId = resolvePreparationProject({
+    requested: chosenProjectId ?? requestedProjectId,
+    boardSelection: selectedProjectDir,
+    projects,
+  });
 
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState<EditorStatus>('idle');
@@ -147,11 +161,39 @@ export default function ProjectPreparationSettings() {
         </p>
       ) : (
         <div className="space-y-2">
+          {/* Which project is being edited, and the way to edit another. Every
+              project's script is reachable from here rather than only the one
+              the user happens to be looking at. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <label
+              htmlFor="projectPreparationProject"
+              className="text-sm text-(--text-secondary)"
+            >
+              {t('settings.preparation.projectLabel')}
+            </label>
+            <select
+              id="projectPreparationProject"
+              value={projectId}
+              onChange={(event) => {
+                // What was typed for the project being left still has to land.
+                flushPendingSave();
+                setChosenProjectId(event.target.value);
+              }}
+              className="min-w-0 flex-1 rounded-md border border-(--input-border) bg-(--input-bg) px-2 py-1 text-sm text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
+              data-testid="project-preparation-project"
+            >
+              {projects.map((project) => (
+                <option key={project.encodedDir} value={project.encodedDir}>
+                  {project.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 flex-col gap-0.5">
               <label htmlFor="projectPreparationScript" className="text-sm text-(--text-secondary)">
                 {t('settings.preparation.scriptLabel')}
-                {projectName ? <span className="text-(--text-muted)"> · {projectName}</span> : null}
               </label>
               <span className="text-[11px] text-(--text-tertiary)">
                 {t('settings.preparation.scriptDesc')}

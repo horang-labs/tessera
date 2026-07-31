@@ -268,6 +268,7 @@ export const ko: I18nMessages = {
     preparation: {
       title: '워크트리 준비',
       description: '이 프로젝트에 속한 명령입니다. 여기서 만든 모든 워크트리가 이어받습니다.',
+      projectLabel: '프로젝트',
       scriptLabel: '준비 스크립트',
       scriptDesc: '비워 두면 준비 스크립트가 없는 것으로 봅니다.',
       scriptPlaceholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .\nnpm install',
@@ -1063,6 +1064,7 @@ export const ko: I18nMessages = {
     readingLog: '로그를 불러오는 중...',
     script: '스크립트',
     scriptLines: '{{count}}줄',
+    editScript: '준비 스크립트 편집',
     preparation: {
       name: '준비',
       status: {

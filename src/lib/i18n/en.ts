@@ -268,6 +268,7 @@ export const en: I18nMessages = {
     preparation: {
       title: 'Worktree preparation',
       description: 'Commands that belong to this project. Every worktree created from it inherits them.',
+      projectLabel: 'Project',
       scriptLabel: 'Preparation script',
       scriptDesc: 'Leave it empty for no preparation script.',
       scriptPlaceholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .\nnpm install',
@@ -1056,6 +1057,7 @@ export const en: I18nMessages = {
     readingLog: 'Reading the log...',
     script: 'Script',
     scriptLines: '{{count}} lines',
+    editScript: 'Edit the preparation script',
     preparation: {
       name: 'Preparation',
       status: {

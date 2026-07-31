@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Loader2,
   Minus,
+  Pencil,
   RefreshCw,
   ScrollText,
 } from 'lucide-react';
@@ -35,6 +36,7 @@ import {
   canRerunPreparation,
   type PreparationStatus,
 } from '@/lib/projects/preparation-status-policy';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useTaskStore } from '@/stores/task-store';
 import { cn } from '@/lib/utils';
 
@@ -78,7 +80,11 @@ export function WorktreeScriptsPanel({ sessionId }: { sessionId: string | null }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="worktree-scripts-panel">
-      <PreparationRow taskId={task.id} status={task.preparationStatus ?? 'never_run'} />
+      <PreparationRow
+        taskId={task.id}
+        projectId={task.projectId}
+        status={task.preparationStatus ?? 'never_run'}
+      />
     </div>
   );
 }
@@ -90,9 +96,18 @@ export function WorktreeScriptsPanel({ sessionId }: { sessionId: string | null }
  * run that has ended has no terminal left, so what it printed is read back
  * from the task. Both live in the same place, which is the point.
  */
-function PreparationRow({ taskId, status }: { taskId: string; status: PreparationStatus }) {
+function PreparationRow({
+  taskId,
+  projectId,
+  status,
+}: {
+  taskId: string;
+  projectId: string;
+  status: PreparationStatus;
+}) {
   const { t } = useI18n();
   const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
+  const openSettings = useSettingsStore((state) => state.open);
   const [stored, setStored] = useState<StoredPreparation | null>(null);
   // "Nothing to read yet" and "the run printed nothing" look the same in the
   // stored value and read very differently to someone waiting for a log.
@@ -146,6 +161,18 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
               : ''}
           </span>
         </div>
+        {/* Reading a script and wanting to change it is the same moment, so the
+            way to its editor is here rather than back through the menus. */}
+        <button
+          type="button"
+          onClick={() => openSettings({ section: 'project', projectId })}
+          title={t('scripts.editScript')}
+          aria-label={t('scripts.editScript')}
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+          data-testid="worktree-scripts-edit"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
         <button
           type="button"
           onClick={() => requestPreparation(taskId)}

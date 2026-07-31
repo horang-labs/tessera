@@ -268,6 +268,7 @@ export const zh: I18nMessages = {
     preparation: {
       title: '工作树准备',
       description: '属于该项目的命令。从该项目创建的每个工作树都会继承它们。',
+      projectLabel: '项目',
       scriptLabel: '准备脚本',
       scriptDesc: '留空表示没有准备脚本。',
       scriptPlaceholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .\nnpm install',
@@ -1056,6 +1057,7 @@ export const zh: I18nMessages = {
     readingLog: '正在读取日志...',
     script: '脚本',
     scriptLines: '{{count}} 行',
+    editScript: '编辑准备脚本',
     preparation: {
       name: '准备',
       status: {

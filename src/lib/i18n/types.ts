@@ -254,6 +254,7 @@ export interface I18nMessages {
     preparation: {
       title: string;
       description: string;
+      projectLabel: string;
       scriptLabel: string;
       scriptDesc: string;
       scriptPlaceholder: string;
@@ -1049,6 +1050,7 @@ export interface I18nMessages {
     readingLog: string;
     script: string;
     scriptLines: string;
+    editScript: string;
     preparation: {
       name: string;
       status: {
