@@ -11,6 +11,7 @@ import {
   computeCompactProgressPercent,
 } from '@/lib/chat/compact-progress';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
+import { MessageRowShell } from './message-row-shell';
 
 interface CompactStatusBarProps {
   sessionId: string;
@@ -61,6 +62,10 @@ export function CompactStatusBar({ sessionId, isSinglePanel }: CompactStatusBarP
   return (
     <div className="pt-1.5" data-testid="compact-status-bar">
       <div className={cn('w-full', isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-4')}>
+        {/* MessageRowShell is what puts this on the composer's left edge — the
+            composer nests the same shell inside the panel shell, so without it
+            the pill starts further left than the input it sits above. */}
+        <MessageRowShell>
         {/* Sized to its content and left-aligned — this is a transient status
             line, not a card that should span the composer. */}
         <section
@@ -88,6 +93,7 @@ export function CompactStatusBar({ sessionId, isSinglePanel }: CompactStatusBarP
             {percent}%
           </span>
         </section>
+        </MessageRowShell>
       </div>
     </div>
   );
