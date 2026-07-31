@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
 import { processManager } from '@/lib/cli/process-manager';
+import logger from '@/lib/logger';
 
 /**
  * GET /api/sessions/[id]/skills
  *
  * Returns the list of skills available for the given session's CLI provider.
  * Skills are discovered via the SkillSource attached to the active process.
- * If the session has no active process or the provider does not support skill
- * discovery, returns an empty skills array.
+ * A missing/unavailable live skill source is retryable and must not be
+ * represented as a valid empty skill list.
  */
 export async function GET(
   request: NextRequest,
@@ -34,12 +35,30 @@ export async function GET(
     const skillSource = processInfo?.skillSource;
 
     if (!skillSource) {
-      return NextResponse.json({ skills: [] });
+      return NextResponse.json(
+        { error: 'Skill discovery is not ready', retryable: true },
+        { status: 503 },
+      );
     }
 
-    const skills = await skillSource.listSkills();
-    return NextResponse.json({ skills });
-  } catch {
-    return NextResponse.json({ skills: [] });
+    try {
+      const skills = await skillSource.listSkills();
+      return NextResponse.json({ skills });
+    } catch (error) {
+      logger.warn({
+        sessionId: id,
+        error: error instanceof Error ? error.message : String(error),
+      }, 'Session skill discovery failed');
+      return NextResponse.json(
+        { error: 'Skill discovery temporarily failed', retryable: true },
+        { status: 503 },
+      );
+    }
+  } catch (error) {
+    logger.error({
+      sessionId: id,
+      error: error instanceof Error ? error.message : String(error),
+    }, 'Failed to serve session skills');
+    return NextResponse.json({ error: 'Failed to load skills' }, { status: 500 });
   }
 }

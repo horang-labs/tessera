@@ -1080,6 +1080,14 @@ export class CodexProtocolParser {
       case 'account/rateLimits/updated':
         return [this.buildRateLimitUpdateMessage(params.rateLimits)];
 
+      case 'skills/changed':
+        return [{
+          serverMessage: {
+            type: 'skills_changed',
+            sessionId,
+          },
+        }];
+
       case 'error': {
         // Codex sends turn errors as:
         //   { method: 'error', params: { error: { message, codexErrorInfo, additionalDetails }, willRetry, threadId, turnId } }
