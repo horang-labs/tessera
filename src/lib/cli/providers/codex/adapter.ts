@@ -21,8 +21,11 @@
 
 import { randomUUID } from 'crypto';
 import fs from 'fs';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import path from 'path';
 import type { ChildProcess } from 'child_process';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type {
   CliProvider,
   SpawnOptions,
@@ -37,6 +40,12 @@ import type {
   CliRawLogSink,
 } from '../types';
 import { createCodexTerminalSessionObserver } from './terminal-session-observer';
+import {
+  createCodexTranscriptDecoderState,
+  decodeCodexTranscriptLine,
+} from './transcript-decoder';
+import { fingerprintTranscriptFile } from '../claude-code/transcript-path';
+import { resolveCodexTranscriptPath } from './transcript-path';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
@@ -278,6 +287,59 @@ export class CodexAdapter implements CliProvider {
   createTerminalSessionObserver = createCodexTerminalSessionObserver;
 
   detectTerminalConversationReset = codexScreenShowsConversationReset;
+
+  /** Identity of the rollout file backing this session (see CliProvider). */
+  async readTerminalTranscriptFingerprint(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+  }): Promise<string | null> {
+    return fingerprintTranscriptFile(await resolveCodexTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+    }));
+  }
+
+  /**
+   * Replays a PTY session's Codex rollout as Tessera history events.
+   * Streamed line-by-line: rollouts routinely reach tens of MB and must not be
+   * buffered whole just to decode them.
+   */
+  async readTerminalTranscriptEvents(options: {
+    sessionId: string;
+    providerSessionId: string;
+    transcriptPath?: string | null;
+  }): Promise<SessionHistoryEvent[] | null> {
+    const filePath = await resolveCodexTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+    });
+    if (!filePath) return null;
+
+    const decoderState = createCodexTranscriptDecoderState();
+    const events: SessionHistoryEvent[] = [];
+    const stream = createReadStream(filePath, { encoding: 'utf-8' });
+
+    try {
+      const lines = createInterface({ input: stream, crlfDelay: Infinity });
+      for await (const line of lines) {
+        events.push(...decodeCodexTranscriptLine(line, decoderState));
+      }
+    } catch (error) {
+      // A rollout that vanished mid-read (overlay cleaned up) is the same
+      // "nothing to show" case as never finding one.
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      logger.warn({
+        sessionId: options.sessionId,
+        filePath,
+        error: (error as Error).message,
+      }, 'Failed to read Codex terminal transcript');
+      return null;
+    } finally {
+      stream.destroy();
+    }
+
+    return events;
+  }
 
   canResumeTerminalAfterRestart(providerState: string | null): boolean {
     if (!providerState) return false;

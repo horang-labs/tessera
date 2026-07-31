@@ -53,7 +53,9 @@ import { forceRepaintThroughRenderPause } from './terminal-render-pause-release'
 import {
   writeForegroundTerminalChunk,
   discardForegroundRenderSettle,
+  refreshForegroundTerminalViewport,
 } from './terminal-foreground-render-settle';
+import { TerminalCompositionGuard } from './terminal-ime-composition-guard';
 import {
   attachTerminalMouseWheelMultiplier,
   isTerminalTuiOwnedWheelEvent,
@@ -293,6 +295,8 @@ export class TerminalSurface {
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
+  private compositionGuard: TerminalCompositionGuard | null = null;
+  private compositionDeferredRefresh = false;
   private suppressNextNativePaste = false;
   private pasteSuppressionTimerId: number | null = null;
   private clipboardPasteQueue: Promise<void> = Promise.resolve();
@@ -505,6 +509,20 @@ export class TerminalSurface {
   sendInput(data: string): boolean {
     if (this.disposed || this.replaying || this.state.status === 'exited') return false;
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
+  }
+
+  /**
+   * Writes text the way a paste would, not a keystroke run.
+   *
+   * xterm decides here whether the TUI has bracketed paste enabled and wraps the
+   * payload accordingly. That matters for multi-line text: sent raw, every
+   * newline reads as a separate submit and one message goes out in fragments.
+   */
+  pasteInput(data: string): boolean {
+    if (this.disposed || this.replaying || this.state.status === 'exited') return false;
+    if (!this.terminal) return false;
+    this.terminal.paste(data);
+    return true;
   }
 
   /** Ask the server to close only a runtime created by this preview token. */
@@ -762,6 +780,11 @@ export class TerminalSurface {
       this.root.removeEventListener('compositionend', this.compositionEndListener, true);
     }
     this.compositionEndListener = null;
+    // Before terminal.dispose(): the guard has to hand xterm's composition
+    // helper back its own method while that helper still exists.
+    this.compositionGuard?.dispose();
+    this.compositionGuard = null;
+    this.compositionDeferredRefresh = false;
     this.suppressNextNativePaste = false;
     if (this.pasteSuppressionTimerId !== null) {
       window.clearTimeout(this.pasteSuppressionTimerId);
@@ -890,6 +913,12 @@ export class TerminalSurface {
         window as Window & { electronAPI?: Partial<ElectronTerminalClipboardApi> }
       ).electronAPI;
       terminal.attachCustomKeyEventHandler((event) => {
+        // CoreBrowserTerminal consults this handler before its own composition
+        // handling, making it the last point where xterm's deferred composition
+        // end can still be repaired — past here, a key that force-finalizes the
+        // composition commits against whatever offset the pending timer left.
+        if (event.type === 'keydown') this.compositionGuard?.syncCompositionEnd();
+
         // App-level shortcuts must bubble to the window listener instead of
         // being cancelled by xterm or encoded into PTY input.
         if (isGlobalShortcutKeydown(event)) return false;
@@ -999,6 +1028,11 @@ export class TerminalSurface {
         if (event.data) this.notifyTerminalInput();
       };
       root.addEventListener('compositionend', this.compositionEndListener, true);
+      this.compositionGuard = new TerminalCompositionGuard({
+        root,
+        terminal,
+        onCompositionSettled: () => this.flushCompositionDeferredRefresh(),
+      });
     } catch (error) {
       this.updateState(
         'error',
@@ -1265,12 +1299,27 @@ export class TerminalSurface {
     }
   }
 
+  private flushCompositionDeferredRefresh(): void {
+    if (!this.compositionDeferredRefresh) return;
+    this.compositionDeferredRefresh = false;
+    if (!this.terminal) return;
+    refreshForegroundTerminalViewport(this.terminal, !this.webglAddon);
+  }
+
   private applyTerminalOutput(data: string): void {
     const restorePoint = this.scrollController?.captureRestorePoint();
     const shouldRecoverRenderer = this.backgroundSgrDetector.consume(data);
     if (!this.terminal) return;
+    // A forced full-grid refresh drives xterm's onRender, and every onRender
+    // re-places the IME helper textarea on the CLI cursor — which is what
+    // knocks Korean compositions apart mid-syllable while an agentic CLI
+    // repaints its prompt. Composition state is client-only, so output
+    // arriving now cannot describe what is being composed: skip the forced
+    // repaint and replay it once the composition commits.
+    const composing = this.compositionGuard?.isComposing() ?? false;
+    if (composing) this.compositionDeferredRefresh = true;
     writeForegroundTerminalChunk(this.terminal, data, {
-      forceViewportRefresh: true,
+      forceViewportRefresh: !composing,
       shouldRefreshViewportSynchronously: () => !this.webglAddon,
       onParsed: () => {
         if (restorePoint) this.scrollController?.restore(restorePoint);
@@ -1667,6 +1716,15 @@ export function sendInputToTerminal(terminalId: string, data: string): boolean {
     if (surface.getSnapshot().status === 'running' && surface.sendInput(data)) return true;
   }
   return candidates.some((surface) => surface.sendInput(data));
+}
+
+/** Paste-mode counterpart of sendInputToTerminal (see TerminalSurface.pasteInput). */
+export function pasteInputToTerminal(terminalId: string, data: string): boolean {
+  const candidates = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
+  for (const surface of candidates) {
+    if (surface.getSnapshot().status === 'running' && surface.pasteInput(data)) return true;
+  }
+  return candidates.some((surface) => surface.pasteInput(data));
 }
 
 export function getSessionTerminalId(sessionId: string): string {

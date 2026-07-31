@@ -46,6 +46,12 @@ _Avoid_: terminal launched, TUI started
 
 An optional structured-chat execution mode available only to GUI-capable providers. Claude Code, Codex, and OpenCode are currently GUI-capable. When GUI mode is preferred for a provider without that capability, the session uses PTY mode.
 
+### Effective CLI model catalog
+
+The model IDs, display names, default selection, and declared capabilities exposed by the coding-agent CLI's currently active effective configuration for use in GUI mode. Tessera reads this catalog without changing the CLI or external provider configuration; inactive external-provider profiles are excluded and a configuration change replaces the catalog.
+
+_Avoid_: CC Switch model list, provider list
+
 ### Effective execution mode
 
 The mode actually used by a session after applying the user's preferred execution mode to the selected provider's capabilities.

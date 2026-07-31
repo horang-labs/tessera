@@ -3,6 +3,9 @@ import type { ShortcutId } from '@/lib/keyboard/registry';
 import type { GitActionId } from '@/lib/git/action-templates';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+
+/** Surface a PTY session opens on: its terminal, or the read-only chat view. */
+export type TerminalSessionDefaultView = 'terminal' | 'chat';
 import type {
   TerminalDarkThemePresetId,
   TerminalLightThemePresetId,
@@ -54,6 +57,14 @@ export interface UserSettings {
   language: Language;
   /** Preferred interaction surface for newly created agent sessions. */
   agentExecutionMode: AgentExecutionMode;
+  /**
+   * Which surface a terminal (PTY) session opens on when it has no per-session
+   * preference yet. Distinct from `agentExecutionMode`, which decides what kind
+   * of session gets created; this only picks the view for one that already is a
+   * PTY session. Defaults to the terminal — the PTY is what those sessions are
+   * for, and the chat view is a read-only lens over the same conversation.
+   */
+  terminalSessionDefaultView: TerminalSessionDefaultView;
   profile: UserProfileSettings;
   notifications: {
     soundEnabled: boolean;

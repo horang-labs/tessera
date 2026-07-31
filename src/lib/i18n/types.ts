@@ -14,6 +14,13 @@ export interface I18nMessages {
       gitDesc: string;
     };
     language: string;
+    terminalView: {
+      title: string;
+      description: string;
+      perSessionNote: string;
+      terminal: { label: string; description: string };
+      chat: { label: string; description: string };
+    };
     executionMode: {
       title: string;
       description: string;
@@ -452,6 +459,8 @@ export interface I18nMessages {
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
+    promptDensityDecrease: string;
+    promptDensityIncrease: string;
     otherInputPlaceholder: string;
     otherInputPlaceholderWithHint: string;
     submissionFailed: string;
@@ -475,6 +484,15 @@ export interface I18nMessages {
     removePanelHint: string;
     releaseSessionHint: string;
     readOnlyPlaceholder: string;
+    terminalReadOnlyNotice: string;
+    terminalWorkingNotice: string;
+    terminalWaitingNotice: string;
+    terminalComposerHint: string;
+    terminalComposerPlaceholder: string;
+    terminalComposerBlocked: string;
+    terminalSendFailed: string;
+    viewAsChat: string;
+    viewAsTerminal: string;
     imageOriginalView: string;
     generateTitle: string;
     generatingTitle: string;

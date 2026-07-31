@@ -4,6 +4,10 @@ import * as dbSessions from '@/lib/db/sessions';
 import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
 import { sessionHistory } from '@/lib/session-history';
+import {
+  readTerminalSessionHistory,
+  supportsTerminalTranscriptHistory,
+} from '@/lib/session/terminal-session-history';
 import { workspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-watch-manager';
 
 function buildEmptyHistoryResponse(sessionId: string): NextResponse {
@@ -51,12 +55,6 @@ export async function GET(
     // ms per walk, so start building the index before the tab is clicked.
     workspaceFileWatchManager.warmSessionWorkspace(id);
 
-    const hasHistory = await sessionHistory.historyExists(id);
-    if (!hasHistory) {
-      logger.info({ userId, sessionId: id, provider: dbSession.provider }, 'Session has no Tessera history yet');
-      return buildEmptyHistoryResponse(id);
-    }
-
     const { searchParams } = new URL(request.url);
     const limit = parseInt(searchParams.get('limit') || '100', 10);
     const beforeBytesParam = searchParams.get('beforeBytes');
@@ -69,6 +67,50 @@ export async function GET(
     }
     if (beforeBytes !== undefined && (!Number.isFinite(beforeBytes) || beforeBytes < 0)) {
       return jsonError('invalid_params', 'Invalid beforeBytes cursor', 400);
+    }
+
+    // Terminal sessions are checked before Tessera history: the UserPromptSubmit
+    // hook leaves prompt-only history behind, which would otherwise shadow the
+    // full conversation the provider transcript holds.
+    if (supportsTerminalTranscriptHistory(dbSession)) {
+      const terminalResult = await readTerminalSessionHistory(dbSession, {
+        limit,
+        beforeBytes,
+        userId,
+      });
+      if (!terminalResult) {
+        logger.info({
+          userId,
+          sessionId: id,
+          provider: dbSession.provider,
+        }, 'Terminal session has no readable provider transcript');
+        return buildEmptyHistoryResponse(id);
+      }
+
+      logger.info({
+        userId,
+        sessionId: id,
+        messageCount: terminalResult.messages.length,
+        hasMore: terminalResult.hasMore,
+      }, 'Terminal session messages loaded from provider transcript');
+
+      return NextResponse.json({
+        sessionId: id,
+        messages: terminalResult.messages,
+        pagination: {
+          hasMore: terminalResult.hasMore,
+          nextBeforeBytes: terminalResult.nextBeforeBytes,
+        },
+        // A read-only replay never has a prompt awaiting an answer — the TUI owns it.
+        ...(beforeBytes === undefined ? { activeInteractivePrompt: null } : {}),
+        ...(beforeBytes === undefined ? { todoSnapshot: terminalResult.todoSnapshot } : {}),
+      });
+    }
+
+    const hasHistory = await sessionHistory.historyExists(id);
+    if (!hasHistory) {
+      logger.info({ userId, sessionId: id, provider: dbSession.provider }, 'Session has no Tessera history yet');
+      return buildEmptyHistoryResponse(id);
     }
 
     const result = await sessionHistory.readSession(id, {

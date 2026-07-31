@@ -171,3 +171,12 @@ export function writeForegroundTerminalChunk(
 export function discardForegroundRenderSettle(terminal: ForegroundTerminalOutputTarget): void {
   cancelScheduledViewportSettleRefresh(terminal);
 }
+
+// Replay the repaint that writes skipped while something (an in-flight IME
+// composition) needed the viewport left alone.
+export function refreshForegroundTerminalViewport(
+  terminal: ForegroundTerminalOutputTarget,
+  synchronously: boolean,
+): void {
+  refreshVisibleRows(terminal, synchronously);
+}
