@@ -781,6 +781,7 @@ export interface I18nMessages {
     stopped: string;
     stopProcess: string;
     processing: string;
+    inputRequired: string;
     unreadNotification: string;
     sessionRunning: string;
     runningProcesses: string;

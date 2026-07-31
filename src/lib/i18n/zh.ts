@@ -794,6 +794,7 @@ export const zh: I18nMessages = {
     stopped: '已停止',
     stopProcess: '停止进程',
     processing: '处理中',
+    inputRequired: '等待输入',
     unreadNotification: '未读通知',
     sessionRunning: '会话运行中',
     runningProcesses: '运行中的进程',
