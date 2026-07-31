@@ -775,6 +775,17 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     });
   },
 
+  setTabProject: (tabId: string, projectDir: string): void => {
+    const state = get();
+    if (!state.tabs.some((item) => item.id === tabId)) return;
+
+    set({
+      tabs: state.tabs.map((item): Tab =>
+        item.id === tabId ? { ...item, projectDir } : item,
+      ),
+    });
+  },
+
   findSessionLocation: (sessionId: string): { tabId: string; panelId: string } | null => {
     const state = get();
     const panelStore = usePanelStore.getState();

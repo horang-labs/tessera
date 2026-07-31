@@ -1066,6 +1066,10 @@ export interface I18nMessages {
       taskCreationFailed: string;
       launcherTitle: string;
       launcherSubtitle: string;
+      projectLabel: string;
+      projectPlaceholder: string;
+      projectSelectionHint: string;
+      selectProjectHint: string;
       startAsLabel: string;
       agentUiLabel: string;
       shellLabel: string;

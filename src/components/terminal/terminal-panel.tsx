@@ -34,6 +34,7 @@ interface TerminalPanelProps {
   panelId: string;
   terminalId: string;
   terminalSessionId: string | null;
+  terminalCwd?: string | null;
   /** Determines whether unmount detaches, or may close a preview-created PTY. */
   runtimeOwnership?: 'standalone' | 'session-preview' | 'session-retained' | 'session-peek';
   /** Treat a transient surface as visible/focused without borrowing panel-store state. */
@@ -67,6 +68,7 @@ export function TerminalPanel({
   panelId,
   terminalId,
   terminalSessionId,
+  terminalCwd = null,
   runtimeOwnership = 'standalone',
   surfaceActive = false,
   startupOverlay,
@@ -102,7 +104,7 @@ export function TerminalPanel({
     theme: getTerminalTheme(isDark, selectedThemePreset),
     appearanceMode: isDark ? 'dark' : 'light',
     fontSize: terminalFontSize,
-    cwd: getInitialTerminalCwd(terminalSessionId),
+    cwd: getInitialTerminalCwd(terminalSessionId, terminalCwd),
     sessionId: getSessionSelectionId(terminalSessionId),
     launch,
     previewOwned: runtimeOwnership === 'session-preview',
@@ -115,6 +117,7 @@ export function TerminalPanel({
     tabId,
     terminalFontSize,
     terminalId,
+    terminalCwd,
     terminalSessionId,
   ]);
   const {

@@ -7,8 +7,11 @@ import {
   getExecutionModeSelectorOptions,
 } from '@/components/session/execution-mode-selector';
 import {
+  resolveEmptyPanelProjectId,
   shouldLaunchFromEmptyPanelShortcut,
 } from '@/components/panel/empty-panel-state';
+import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
 import {
   shouldSubmitCollectionQuickCreateFromModeShortcut,
 } from '@/components/chat/collection-quick-create-sheet';
@@ -48,6 +51,22 @@ test('Space launches from a focused execution-mode radio without enabling text-i
   assert.equal(shouldLaunchFromEmptyPanelShortcut(' ', 'execution-mode-radio'), true);
   assert.equal(shouldLaunchFromEmptyPanelShortcut(' ', 'text-entry'), false);
   assert.equal(shouldLaunchFromEmptyPanelShortcut('x', 'execution-mode-radio'), false);
+});
+
+test('All Projects requires an explicit launcher project while a project scope resolves itself', () => {
+  assert.equal(resolveEmptyPanelProjectId(ALL_PROJECTS_SENTINEL, null), null);
+  assert.equal(
+    resolveEmptyPanelProjectId(ALL_PROJECTS_SENTINEL, 'project-b'),
+    'project-b',
+  );
+  assert.equal(resolveEmptyPanelProjectId('project-a', null), 'project-a');
+});
+
+test('a standalone shell honors the project cwd selected in the launcher', () => {
+  assert.equal(
+    getInitialTerminalCwd(null, '/workspace/project-b'),
+    '/workspace/project-b',
+  );
 });
 
 test('Space submits collection quick create from its focused execution-mode radio', () => {
