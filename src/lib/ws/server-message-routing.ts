@@ -90,6 +90,20 @@ export function logReceivedClientTransportMessage(
   }, 'WebSocket message received');
 }
 
+// Messages whose sessionId is only a workspace-root lookup key, not a handle on
+// a live session. The workspace file feature already treats an unknown session
+// as an empty workspace — both the REST route and the watch manager resolve the
+// root through resolveSessionWorkspaceFilesystemRoot and answer with an empty
+// list / a `missing_work_dir` fallback. Rejecting them here turned a background
+// subscription into a user-facing error toast whenever a panel followed the
+// optimistic `temp-` session that exists while creation is in flight. Ownership
+// is still enforced; only the existence check is skipped.
+// Unrelated to the terminal-handoff exemptions in routeClientTransportMessage.
+const EXISTENCE_OPTIONAL_MESSAGE_TYPES: ReadonlySet<ClientMessage['type']> = new Set([
+  'subscribe_workspace_files',
+  'unsubscribe_workspace_files',
+]);
+
 export function verifyClientSessionAccess(
   userId: string,
   message: ClientMessage,
@@ -123,6 +137,9 @@ export function verifyClientSessionAccess(
   // ownership, so for unspawned sessions we trust the authenticated user.
   const session = dbSessions.getSession(message.sessionId);
   if (!session) {
+    if (EXISTENCE_OPTIONAL_MESSAGE_TYPES.has(message.type)) {
+      return true;
+    }
     logger.warn('Session not found', {
       sessionId: message.sessionId,
       messageType: message.type,
