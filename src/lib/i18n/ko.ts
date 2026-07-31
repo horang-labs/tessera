@@ -799,6 +799,7 @@ export const ko: I18nMessages = {
     stopped: '중지됨',
     stopProcess: '프로세스 정지',
     processing: '처리 중',
+    inputRequired: '입력 필요',
     unreadNotification: '읽지 않은 알림',
     sessionRunning: '세션 실행 중',
     runningProcesses: '실행 중인 프로세스',
