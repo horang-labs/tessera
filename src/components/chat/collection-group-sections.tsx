@@ -30,7 +30,6 @@ import {
   useIsSessionAwaitingUser,
 } from '@/hooks/use-session-awaiting-user';
 import { useCollectionStore } from '@/stores/collection-store';
-import { useProvidersStore } from '@/stores/providers-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -60,6 +59,7 @@ import {
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -692,7 +692,7 @@ export function TaskItemRow({
   renamingSessionId?: string | null;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
-  onAddSession: (providerId?: string) => void;
+  onAddSession: (providerId?: string, executionMode?: AgentExecutionMode) => void;
   onStopProcess?: (sessionId: string) => void;
   disableDnd?: boolean;
   allowPanelSessionDnd?: boolean;
@@ -1056,12 +1056,8 @@ export function TaskItemRow({
               onClick={(event) => {
                 event.stopPropagation();
                 event.preventDefault();
-                const providers = useProvidersStore.getState().providers;
-                const selectable = (providers ?? []).filter((p) => p.status === 'connected');
-                if (selectable.length === 1) {
-                  onAddSession(selectable[0].id);
-                  return;
-                }
+                // Always open the menu — even with a single provider the session
+                // still needs its PTY/GUI choice.
                 const rect = addButtonRef.current?.getBoundingClientRect();
                 if (rect) setProviderMenuAnchor(rect);
               }}
@@ -1130,7 +1126,7 @@ export function TaskItemRow({
         <ProviderQuickMenu
           anchorRect={providerMenuAnchor}
           currentProviderId={task.sessions[0]?.provider}
-          onSelect={(providerId) => onAddSession(providerId)}
+          onSelect={(providerId, executionMode) => onAddSession(providerId, executionMode)}
           onClose={() => setProviderMenuAnchor(null)}
         />
       )}

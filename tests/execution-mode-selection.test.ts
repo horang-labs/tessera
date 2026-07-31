@@ -12,6 +12,10 @@ import {
 import {
   shouldSubmitCollectionQuickCreateFromModeShortcut,
 } from '@/components/chat/collection-quick-create-sheet';
+import {
+  getQuickMenuExecutionCapabilities,
+  resolveQuickMenuExecutionMode,
+} from '@/components/chat/provider-quick-menu';
 
 test('an explicit supported execution mode overrides the global default for one session', () => {
   assert.equal(
@@ -84,4 +88,29 @@ test('Space submits collection quick create from its focused execution-mode radi
     }),
     false,
   );
+});
+
+test('the add-session menu offers a mode as long as one listed provider can run it', () => {
+  assert.deepEqual(
+    getQuickMenuExecutionCapabilities(['claude-code', 'codex', 'opencode']),
+    { pty: true, gui: true },
+  );
+  assert.deepEqual(getQuickMenuExecutionCapabilities([]), { pty: false, gui: false });
+  assert.deepEqual(
+    getQuickMenuExecutionCapabilities(['unknown-provider']),
+    { pty: false, gui: false },
+  );
+});
+
+test('the add-session menu keeps the global default when the listed providers support it', () => {
+  assert.equal(resolveQuickMenuExecutionMode('gui', { pty: true, gui: true }), 'gui');
+  assert.equal(resolveQuickMenuExecutionMode('pty', { pty: true, gui: true }), 'pty');
+});
+
+test('the add-session menu falls back rather than disabling every provider it lists', () => {
+  assert.equal(resolveQuickMenuExecutionMode('gui', { pty: true, gui: false }), 'pty');
+  assert.equal(resolveQuickMenuExecutionMode('pty', { pty: false, gui: true }), 'gui');
+  // Nothing runnable to fall back to (empty/unknown list) — keep the request as-is
+  // instead of throwing while the menu renders its empty state.
+  assert.equal(resolveQuickMenuExecutionMode('gui', { pty: false, gui: false }), 'gui');
 });
