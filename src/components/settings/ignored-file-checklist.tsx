@@ -16,6 +16,12 @@ interface IgnoredFileChecklistProps {
   projectId: string;
   /** The script as the editor currently holds it, block and all. */
   script: string;
+  /**
+   * True while the editor has yet to read the stored script. Ticking then would
+   * rewrite a script the checklist has not seen, so the whole of it stays shut
+   * until the editor knows what it is holding.
+   */
+  disabled: boolean;
   /** Hands back the script with its block rewritten from the ticks. */
   onScriptChange: (nextScript: string) => void;
 }
@@ -32,6 +38,7 @@ interface IgnoredFileChecklistProps {
 export default function IgnoredFileChecklist({
   projectId,
   script,
+  disabled,
   onScriptChange,
 }: IgnoredFileChecklistProps) {
   const { t } = useI18n();
@@ -132,7 +139,8 @@ export default function IgnoredFileChecklist({
       <button
         type="button"
         onClick={toggleOpen}
-        className="text-[11px] text-(--accent) hover:underline"
+        disabled={disabled}
+        className="text-[11px] text-(--accent) hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
         data-testid="ignored-file-checklist-toggle"
       >
         {isOpen ? t('settings.preparation.checklist.close') : t('settings.preparation.checklist.open')}

@@ -344,6 +344,67 @@ async function phaseABlockMovedAboveIsRewrittenThere() {
   assert.ok(stored.includes('npm install'), 'and so did everything else outside it');
 }
 
+async function phaseTheChecklistWaitsForTheEditorToLoad() {
+  // Hold the load open. Until it lands the editor is showing an empty script,
+  // and a tick then would rewrite a script the checklist has never seen —
+  // taking with it every line the project already had.
+  let release = null;
+  const held = new Promise((resolve) => { release = resolve; });
+  let heldRequests = 0;
+  await page.route('**/api/projects/preparation-script**', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.continue();
+      return;
+    }
+    heldRequests += 1;
+    await held;
+    // The page may have moved on by the time the hold lifts.
+    await route.continue().catch(() => {});
+  });
+
+  await setStoredScript('npm run bootstrap');
+  await page.goto(`${origin}/chat`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.waitForSelector('[data-testid="chat-layout"]', { timeout: 60_000 });
+  const strip = page.locator(`[data-testid="project-strip-${projectDir}"]`);
+  await strip.waitFor({ state: 'visible', timeout: 30_000 });
+  await strip.click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().click({ timeout: 30_000 });
+  await page.getByTestId('settings-nav-project').click({ timeout: 30_000 });
+
+  // The editor disables itself while a load is in flight; that is the moment
+  // the checklist has to be shut too.
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="project-preparation-script"]')?.disabled === true,
+    null,
+    { timeout: 30_000 },
+  );
+  assert.ok(heldRequests > 0, 'the load was never actually held');
+  assert.equal(
+    await page.getByTestId('ignored-file-checklist-toggle').isDisabled(),
+    true,
+    'the checklist is shut while the script is loading',
+  );
+
+  // Left routed: the hold is lifted for good, so later loads pass straight
+  // through, and unrouting here would cancel the request still in flight.
+  release();
+  await page.waitForFunction(
+    () => !document.querySelector('[data-testid="ignored-file-checklist-toggle"]')?.disabled,
+    null,
+    { timeout: 30_000 },
+  );
+
+  await expandChecklist();
+  const stored = await waitForStoredScript(
+    (script) => script.includes(OPEN_MARKER),
+    'the defaults were never written once the load landed',
+  );
+  assert.ok(stored.startsWith('npm run bootstrap'), 'the loaded script was not lost');
+
+  const shown = await page.getByTestId('project-preparation-script').inputValue();
+  assert.equal(shown, stored, 'what is on screen is what is stored');
+}
+
 // ----------------------------------------------------------------- main ---
 
 const phases = [
@@ -352,6 +413,7 @@ const phases = [
   ['reopening reads the block, not the defaults', phaseReopeningReadsTheBlockNotTheDefaults],
   ['clearing removes the block entirely', phaseClearingRemovesTheBlockEntirely],
   ['a block moved above is rewritten there', phaseABlockMovedAboveIsRewrittenThere],
+  ['the checklist waits for the editor to load', phaseTheChecklistWaitsForTheEditorToLoad],
 ];
 
 let failure = null;

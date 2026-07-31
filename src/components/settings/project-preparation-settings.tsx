@@ -66,9 +66,15 @@ export default function ProjectPreparationSettings() {
   // Only the newest load may write into the editor; a slower reply for the
   // project we just left must not overwrite the one now on screen.
   const loadRequestRef = useRef(0);
+  // Nor may a reply overwrite an edit made while it was still in flight. A tick
+  // from the checklist is such an edit, and it is already on its way to the
+  // project — putting the loaded script back would take it off the screen while
+  // leaving it stored, and the next keystroke would then save it away.
+  const editedSinceLoadRef = useRef(false);
   const loadScript = useCallback(async (targetProjectId: string) => {
     const requestId = loadRequestRef.current + 1;
     loadRequestRef.current = requestId;
+    editedSinceLoadRef.current = false;
     setDraft('');
     setStatus('loading');
     try {
@@ -78,6 +84,7 @@ export default function ProjectPreparationSettings() {
       if (!response.ok) throw new Error(`Load failed with ${response.status}`);
       const data = await response.json() as { preparationScript: string | null };
       if (loadRequestRef.current !== requestId) return;
+      if (editedSinceLoadRef.current) return;
       setDraft(data.preparationScript ?? '');
       setStatus('idle');
     } catch {
@@ -97,6 +104,7 @@ export default function ProjectPreparationSettings() {
   useEffect(() => flushPendingSave, [flushPendingSave, projectId]);
 
   const handleChange = (value: string) => {
+    editedSinceLoadRef.current = true;
     setDraft(value);
     if (!projectId) return;
 
@@ -176,6 +184,7 @@ export default function ProjectPreparationSettings() {
           <IgnoredFileChecklist
             projectId={projectId}
             script={draft}
+            disabled={status === 'loading'}
             onScriptChange={handleChange}
           />
           <div className="space-y-1.5 border-t border-(--divider) pt-3">
