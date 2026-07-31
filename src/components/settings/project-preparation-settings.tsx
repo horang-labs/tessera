@@ -46,7 +46,10 @@ export default function ProjectPreparationSettings() {
   });
 
   const [draft, setDraft] = useState('');
-  const [status, setStatus] = useState<EditorStatus>('idle');
+  // Loading from the first render, not idle: the load is started by an effect,
+  // so an idle first frame would say the empty draft is the project's script.
+  // The checklist believes that and would fill a script it has never seen.
+  const [status, setStatus] = useState<EditorStatus>('loading');
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<{ projectId: string; script: string } | null>(null);

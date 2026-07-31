@@ -50,10 +50,15 @@ const KIND_ORDER: Record<IgnoredFileCandidateKind, number> = {
 /**
  * Build the checklist for a scan against the script as it currently stands.
  *
+ * A tick means "this path is copied by the script", so what arrives ticked has
+ * to be what the script actually says — a box ticked beside a command that is
+ * not there would be a lie the next glance catches.
+ *
  * A block that exists is the last thing confirmed, so it decides the ticks on
- * its own — including the candidates deliberately left out of it. Falling back
+ * its own, including the candidates deliberately left out of it: falling back
  * to the defaults there would put back, on every reopen, exactly what the user
- * unticked. Only a script that has never had a block takes the defaults.
+ * unticked. The defaults are only ever a starting point for a script with
+ * nothing in it, which is the one case where they are about to be written.
  */
 export function buildIgnoredFileChecklist(
   scanned: IgnoredFileCandidate[],
@@ -69,7 +74,7 @@ export function buildIgnoredFileChecklist(
     ...scanned.map((candidate) => toEntry(candidate, false)),
   ].sort(byReadingOrder);
 
-  const ticked = hasCopyBlock(script)
+  const ticked = hasCopyBlock(script) || script.trim() !== ''
     ? copied
     : scanned.filter(isIgnoredFileCandidateTickedByDefault);
 

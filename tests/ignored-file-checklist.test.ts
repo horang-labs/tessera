@@ -15,10 +15,18 @@ const SCAN = [
   file('scratch.txt'),
 ];
 
-test('a script with no block yet takes the defaults', () => {
-  const { tickedPaths } = buildIgnoredFileChecklist(SCAN, 'npm install');
+test('an empty script takes the defaults, which is what it is about to be filled with', () => {
+  const { tickedPaths } = buildIgnoredFileChecklist(SCAN, '');
 
   assert.deepEqual([...tickedPaths].sort(), ['.claude', '.env.local']);
+});
+
+test('a script somebody wrote arrives with nothing ticked', () => {
+  // The defaults are not written into a script that already has lines in it,
+  // so showing them ticked would claim copies the script does not make.
+  const { tickedPaths } = buildIgnoredFileChecklist(SCAN, 'npm install');
+
+  assert.deepEqual(tickedPaths, []);
 });
 
 test('once a block exists it decides the ticks, so unticking survives a reopen', () => {
@@ -66,12 +74,16 @@ test('what a worktree is missing is read first, what it is better off without la
   ]);
 });
 
-test('an emptied block is no block, so the defaults come back', () => {
+test('unticking everything stays unticked, rather than the defaults coming back', () => {
+  // Emptying the block leaves the user's own line, and that line is the script.
+  // Reading the defaults back in would undo, on the next look, what they just
+  // did — the tick and the command have to keep saying the same thing.
   const cleared = rewriteCopyBlock(rewriteCopyBlock('npm install', [directory('.claude')]), []);
+  assert.equal(cleared, 'npm install');
 
   const { tickedPaths } = buildIgnoredFileChecklist(SCAN, cleared);
 
-  assert.deepEqual([...tickedPaths].sort(), ['.claude', '.env.local']);
+  assert.deepEqual(tickedPaths, []);
 });
 
 test('an empty scan against an empty script offers nothing', () => {

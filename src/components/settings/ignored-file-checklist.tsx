@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import type { IgnoredFileCandidate } from '@/lib/projects/ignored-file-candidates';
 import {
   buildIgnoredFileChecklist,
   type ChecklistEntry,
 } from '@/lib/projects/ignored-file-checklist';
-import { hasCopyBlock, rewriteCopyBlock } from '@/lib/projects/preparation-copy-block';
+import { rewriteCopyBlock } from '@/lib/projects/preparation-copy-block';
 
 /** How far the checklist has got with the project's ignored files. */
 type ScanStatus = 'idle' | 'scanning' | 'ready' | 'failed';
@@ -17,9 +17,9 @@ interface IgnoredFileChecklistProps {
   /** The script as the editor currently holds it, block and all. */
   script: string;
   /**
-   * True while the editor has yet to read the stored script. Ticking then would
-   * rewrite a script the checklist has not seen, so the whole of it stays shut
-   * until the editor knows what it is holding.
+   * True while the editor has yet to read the stored script. The scan waits for
+   * it: ticking the defaults into a script the checklist has not seen would
+   * write over what is stored, so nothing may be ticked before it arrives.
    */
   disabled: boolean;
   /** Hands back the script with its block rewritten from the ticks. */
@@ -29,10 +29,10 @@ interface IgnoredFileChecklistProps {
 /**
  * Fills the preparation script in from the files git ignores.
  *
- * It expands under the editor rather than opening on top of it: the settings
+ * It sits under the editor rather than opening on top of it: the settings
  * panel is a modal already, and inline means every tick can be watched landing
  * in the editor above. There is nothing to confirm — a tick writes its command
- * straight away, and untickng takes it straight back out, so what the list
+ * straight away, and unticking takes it straight back out, so what the list
  * shows and what the script says are never out of step.
  */
 export default function IgnoredFileChecklist({
@@ -43,7 +43,10 @@ export default function IgnoredFileChecklist({
 }: IgnoredFileChecklistProps) {
   const { t } = useI18n();
 
-  const [isOpen, setIsOpen] = useState(false);
+  // Open from the start. The list is the point of this editor for most people —
+  // a script is usually a handful of copies and an install — and a list nobody
+  // expands is a list that may as well not be there.
+  const [isOpen, setIsOpen] = useState(true);
   const [status, setStatus] = useState<ScanStatus>('idle');
   const [entries, setEntries] = useState<ChecklistEntry[]>([]);
   /** How many ignored entries the checkout has, before any were dropped. */
@@ -99,10 +102,15 @@ export default function IgnoredFileChecklist({
       setTruncated(scanned.truncated);
       setStatus('ready');
 
-      // With no block yet, what came back ticked is a suggestion nothing has
-      // acted on. Writing it now is what makes expanding the list the single
-      // click that accepts the defaults — and unticking is how it is refused.
-      if (!hasCopyBlock(current) && checklist.tickedPaths.length > 0) {
+      // An empty script gets the defaults written into it, which is what makes
+      // opening the editor enough to start from something — unticking is how
+      // they are refused.
+      //
+      // Only an empty one. The list opens by itself now, so anything written
+      // here happens to someone who has merely looked: filling a script that
+      // was blank is a beginning, but adding to a script somebody wrote is
+      // editing their work behind their back.
+      if (current.trim() === '' && checklist.tickedPaths.length > 0) {
         writeTicks(current, checklist.entries, new Set(checklist.tickedPaths));
       }
     } catch {
@@ -111,16 +119,25 @@ export default function IgnoredFileChecklist({
     }
   }, [projectId, writeTicks]);
 
-  const toggleOpen = () => {
-    if (isOpen) {
-      setIsOpen(false);
-      return;
-    }
-    setIsOpen(true);
-    // The scan runs on expanding, not on opening the settings panel: nobody
-    // pays for reading a repository they were not asking about.
+  /**
+   * Which project the list on screen belongs to.
+   *
+   * A ref rather than state: it guards the scan below, and a render of its own
+   * would only re-run the guard it just satisfied.
+   */
+  const scannedProjectRef = useRef<string | null>(null);
+
+  // Scan once the editor knows what script it holds — reading a repository is
+  // cheap, but ticking the defaults into a script nobody has read yet would
+  // write over it. A different project is a different list, so it scans again.
+  useEffect(() => {
+    if (disabled || !isOpen) return;
+    if (scannedProjectRef.current === projectId) return;
+    scannedProjectRef.current = projectId;
     void scan();
-  };
+  }, [disabled, isOpen, projectId, scan]);
+
+  const toggleOpen = () => setIsOpen(!isOpen);
 
   const toggleTick = (path: string) => {
     const next = new Set(tickedPaths);
@@ -147,12 +164,17 @@ export default function IgnoredFileChecklist({
       </button>
 
       {isOpen ? (
-        <div className="space-y-2 rounded-md border border-(--divider) bg-(--bg-secondary) p-3">
+        <div
+          className="space-y-2 rounded-md border border-(--divider) bg-(--bg-secondary) p-3"
+          data-testid="ignored-file-checklist-body"
+        >
           <p className="text-[11px] text-(--text-tertiary)">
             {t('settings.preparation.checklist.description')}
           </p>
 
-          {status === 'scanning' ? (
+          {/* `idle` is the wait before the scan may start, which to a reader is
+              the same wait as the scan itself. */}
+          {status === 'idle' || status === 'scanning' ? (
             <p className="text-sm text-(--text-muted)">
               {t('settings.preparation.checklist.scanning')}
             </p>

@@ -166,15 +166,23 @@ async function openSettingsProjectSection() {
   await page.getByTestId('project-preparation-script').waitFor({ state: 'visible', timeout: 30_000 });
 }
 
+/**
+ * Have the list on screen.
+ *
+ * The checklist is expanded from the start, so usually there is nothing to
+ * click and what takes time is the scan — which itself waits for the editor to
+ * have read the script. Only a checklist somebody collapsed needs the click.
+ */
 async function expandChecklist() {
-  await page.getByTestId('ignored-file-checklist-toggle').click();
-  // The scan runs on expanding, so the list only exists once git has answered.
+  if (await page.getByTestId('ignored-file-checklist-body').count() === 0) {
+    await page.getByTestId('ignored-file-checklist-toggle').click();
+  }
   await page.getByTestId('ignored-file-checklist-list').waitFor({ state: 'visible', timeout: 60_000 });
 }
 
 async function collapseChecklist() {
   await page.getByTestId('ignored-file-checklist-toggle').click();
-  await page.getByTestId('ignored-file-checklist-list').waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.getByTestId('ignored-file-checklist-body').waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
 /** Every candidate the checklist is showing, in the order it shows them. */
@@ -220,10 +228,8 @@ async function buildFixture() {
 
 // --------------------------------------------------------------- phases ---
 
-async function phaseExpandingAcceptsTheDefaults() {
+async function phaseAnEmptyScriptGetsTheDefaults() {
   await openSettingsProjectSection();
-  // A line of the user's own, so where the block lands can be seen.
-  await page.getByTestId('project-preparation-script').fill('npm install');
   await expandChecklist();
 
   assert.deepEqual(
@@ -237,20 +243,66 @@ async function phaseExpandingAcceptsTheDefaults() {
     'configuration and instructions arrive ticked, the heavy entries do not',
   );
 
-  // Expanding is the single click that accepts them: there is nothing to confirm.
+  // Nothing to confirm: a script with nothing in it is filled from the list.
   const stored = await waitForStoredScript(
     (script) => script.includes(OPEN_MARKER) && script.includes(CLOSE_MARKER),
-    'expanding never wrote the defaults',
+    'an empty script never got the defaults',
   );
 
-  assert.ok(stored.startsWith('npm install'), 'the block goes below what the user typed');
-  assert.ok(stored.trimEnd().endsWith(CLOSE_MARKER), 'and nothing follows it');
+  assert.ok(stored.trimEnd().endsWith(CLOSE_MARKER), 'nothing follows the block');
   assert.ok(stored.includes('cp "$TESSERA_PROJECT_DIR/.env.local" .'), 'the file copy is there');
   assert.ok(stored.includes('cp -R "$TESSERA_PROJECT_DIR/.claude" .'), 'the directory copy is recursive');
   assert.ok(!stored.includes('node_modules'), 'nothing unticked was written');
 
   const shown = await page.getByTestId('project-preparation-script').inputValue();
   assert.equal(shown, stored, 'the editor shows what was stored');
+
+  // The phases below read against a line of the user's own above the block,
+  // which is what a script in use actually looks like.
+  const editor = page.getByTestId('project-preparation-script');
+  await editor.fill(`npm install\n\n${stored}`);
+  await editor.blur();
+  await waitForStoredScript(
+    (script) => script.startsWith('npm install') && script.includes(OPEN_MARKER),
+    'the user\'s own line never reached the stored script',
+  );
+}
+
+/**
+ * The list opens by itself, so opening the editor is something a user does
+ * while merely looking. A script somebody already wrote must survive that
+ * untouched — filling a blank is a beginning, adding to their work is not.
+ */
+async function phaseAWrittenScriptIsLeftAlone() {
+  await setStoredScript('npm run bootstrap');
+  await openSettingsProjectSection();
+  await expandChecklist();
+
+  assert.deepEqual(
+    await tickedPaths(),
+    [],
+    'with a script that has no block, nothing reads as copied',
+  );
+
+  // Long enough that a write would have landed; the script has to be unchanged.
+  await page.waitForTimeout(2_000);
+  assert.equal(
+    await readStoredScript(),
+    'npm run bootstrap',
+    'looking at the list must not rewrite a script that was already there',
+  );
+
+  // And ticking is still what puts the block in, below what they wrote.
+  await tickFor('.env.local').check();
+  const stored = await waitForStoredScript(
+    (script) => script.includes(OPEN_MARKER),
+    'a tick never reached the script',
+  );
+  assert.ok(stored.startsWith('npm run bootstrap'), 'the block goes below what the user typed');
+  assert.ok(stored.includes('cp "$TESSERA_PROJECT_DIR/.env.local" .'), 'the tick was written');
+
+  // Left as the next phases expect to find it.
+  await setStoredScript(null);
 }
 
 async function phaseATickLandsInTheScriptAtOnce() {
@@ -372,7 +424,7 @@ async function phaseTheChecklistWaitsForTheEditorToLoad() {
   await page.getByTestId('settings-nav-project').click({ timeout: 30_000 });
 
   // The editor disables itself while a load is in flight; that is the moment
-  // the checklist has to be shut too.
+  // the checklist may not offer anything to tick.
   await page.waitForFunction(
     () => document.querySelector('[data-testid="project-preparation-script"]')?.disabled === true,
     null,
@@ -382,7 +434,14 @@ async function phaseTheChecklistWaitsForTheEditorToLoad() {
   assert.equal(
     await page.getByTestId('ignored-file-checklist-toggle').isDisabled(),
     true,
-    'the checklist is shut while the script is loading',
+    'the checklist cannot be worked while the script is loading',
+  );
+  // The list is expanded by default, so what has to hold back is the scan: a
+  // tick before the script arrives would rewrite a script never seen.
+  assert.equal(
+    await page.getByTestId('ignored-file-checklist-list').count(),
+    0,
+    'nothing may be tickable while the script is still loading',
   );
 
   // Left routed: the hold is lifted for good, so later loads pass straight
@@ -395,11 +454,11 @@ async function phaseTheChecklistWaitsForTheEditorToLoad() {
   );
 
   await expandChecklist();
-  const stored = await waitForStoredScript(
-    (script) => script.includes(OPEN_MARKER),
-    'the defaults were never written once the load landed',
-  );
-  assert.ok(stored.startsWith('npm run bootstrap'), 'the loaded script was not lost');
+  // The script that arrived had lines in it, so the scan leaves it alone; what
+  // is being checked is that it survived the wait rather than being replaced.
+  await page.waitForTimeout(2_000);
+  const stored = await readStoredScript();
+  assert.equal(stored, 'npm run bootstrap', 'the loaded script was not lost');
 
   const shown = await page.getByTestId('project-preparation-script').inputValue();
   assert.equal(shown, stored, 'what is on screen is what is stored');
@@ -408,12 +467,13 @@ async function phaseTheChecklistWaitsForTheEditorToLoad() {
 // ----------------------------------------------------------------- main ---
 
 const phases = [
-  ['expanding accepts the defaults', phaseExpandingAcceptsTheDefaults],
+  ['an empty script gets the defaults', phaseAnEmptyScriptGetsTheDefaults],
   ['a tick lands in the script at once', phaseATickLandsInTheScriptAtOnce],
   ['reopening reads the block, not the defaults', phaseReopeningReadsTheBlockNotTheDefaults],
   ['clearing removes the block entirely', phaseClearingRemovesTheBlockEntirely],
   ['a block moved above is rewritten there', phaseABlockMovedAboveIsRewrittenThere],
   ['the checklist waits for the editor to load', phaseTheChecklistWaitsForTheEditorToLoad],
+  ['a written script is left alone', phaseAWrittenScriptIsLeftAlone],
 ];
 
 let failure = null;
