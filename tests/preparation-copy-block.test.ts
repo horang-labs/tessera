@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   COPY_BLOCK_CLOSE_MARKER,
+  COPY_BLOCK_NOTICE,
   COPY_BLOCK_OPEN_MARKER,
   buildCopyCommand,
   hasCopyBlock,
@@ -68,26 +69,45 @@ test('confirming an empty checklist against an empty script leaves nothing behin
   assert.equal(rewriteCopyBlock('', []), '');
 });
 
-test('a first confirmation puts the block above what the script already ran', () => {
+test('a block written for the first time goes below what the user has typed', () => {
   const rewritten = rewriteCopyBlock('npm install', [file('.env.local'), directory('.claude')]);
 
   assert.equal(rewritten, [
+    'npm install',
+    '',
     COPY_BLOCK_OPEN_MARKER,
     '# Rewritten from the checklist. Move a line out of this block to keep your own version.',
     'cp "$TESSERA_PROJECT_DIR/.env.local" .',
     'cp -R "$TESSERA_PROJECT_DIR/.claude" .',
     COPY_BLOCK_CLOSE_MARKER,
-    '',
-    'npm install',
   ].join('\n'));
 });
 
-test('confirming again rewrites the block in place, leaving the rest of the script alone', () => {
+test('a block moved above an install step is rewritten where it now stands', () => {
+  // Copying has to happen first for anything that installs from what was
+  // copied, and moving the block is how that is arranged.
+  const moved = [
+    COPY_BLOCK_OPEN_MARKER,
+    '# Rewritten from the checklist. Move a line out of this block to keep your own version.',
+    'cp "$TESSERA_PROJECT_DIR/.env.local" .',
+    COPY_BLOCK_CLOSE_MARKER,
+    '',
+    'npm install',
+  ].join('\n');
+
+  const rewritten = rewriteCopyBlock(moved, [directory('.claude')]);
+
+  assert.ok(rewritten.startsWith(COPY_BLOCK_OPEN_MARKER), 'it stayed at the top');
+  assert.ok(rewritten.endsWith('npm install'));
+  assert.deepEqual(readCopiedCandidates(rewritten), [directory('.claude')]);
+});
+
+test('rewriting again leaves the rest of the script alone', () => {
   const first = rewriteCopyBlock('npm install\nnpm run build', [file('.env.local')]);
   const second = rewriteCopyBlock(first, [directory('.claude')]);
 
   assert.deepEqual(readCopiedCandidates(second), [directory('.claude')]);
-  assert.ok(second.endsWith('npm install\nnpm run build'));
+  assert.ok(second.startsWith('npm install\nnpm run build'));
   assert.ok(!second.includes('.env.local'));
 });
 
@@ -123,6 +143,41 @@ test('an unpaired opening marker never swallows the lines below it', () => {
   assert.ok(rewritten.includes('npm install'));
   assert.ok(rewritten.includes('cp "$TESSERA_PROJECT_DIR/.env" .'));
   assert.deepEqual(readCopiedCandidates(rewritten), [directory('.claude')]);
+});
+
+test('a stray opening marker above the block is not paired with the block\'s closer', () => {
+  // Otherwise every line between the two would be inside the block, and the
+  // next rewrite would replace the user's commands along with it.
+  const withStray = [
+    COPY_BLOCK_OPEN_MARKER,
+    'npm install',
+    '',
+    COPY_BLOCK_OPEN_MARKER,
+    COPY_BLOCK_NOTICE,
+    'cp -R "$TESSERA_PROJECT_DIR/.claude" .',
+    COPY_BLOCK_CLOSE_MARKER,
+  ].join('\n');
+
+  assert.deepEqual(readCopiedCandidates(withStray), [directory('.claude')]);
+  assert.ok(
+    rewriteCopyBlock(withStray, [file('.env')]).includes('npm install'),
+    'the command between the markers survived',
+  );
+});
+
+test('a stray closing marker above the block does not stand in for the block\'s own', () => {
+  const withStray = [
+    COPY_BLOCK_CLOSE_MARKER,
+    'npm install',
+    '',
+    COPY_BLOCK_OPEN_MARKER,
+    COPY_BLOCK_NOTICE,
+    'cp -R "$TESSERA_PROJECT_DIR/.claude" .',
+    COPY_BLOCK_CLOSE_MARKER,
+  ].join('\n');
+
+  assert.deepEqual(readCopiedCandidates(withStray), [directory('.claude')]);
+  assert.ok(rewriteCopyBlock(withStray, [file('.env')]).includes('npm install'));
 });
 
 test('an unpaired closing marker never swallows the lines above it', () => {

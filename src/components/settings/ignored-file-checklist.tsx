@@ -7,7 +7,7 @@ import {
   buildIgnoredFileChecklist,
   type ChecklistEntry,
 } from '@/lib/projects/ignored-file-checklist';
-import { rewriteCopyBlock } from '@/lib/projects/preparation-copy-block';
+import { hasCopyBlock, rewriteCopyBlock } from '@/lib/projects/preparation-copy-block';
 
 /** How far the checklist has got with the project's ignored files. */
 type ScanStatus = 'idle' | 'scanning' | 'ready' | 'failed';
@@ -17,20 +17,22 @@ interface IgnoredFileChecklistProps {
   /** The script as the editor currently holds it, block and all. */
   script: string;
   /** Hands back the script with its block rewritten from the ticks. */
-  onConfirm: (nextScript: string) => void;
+  onScriptChange: (nextScript: string) => void;
 }
 
 /**
  * Fills the preparation script in from the files git ignores.
  *
  * It expands under the editor rather than opening on top of it: the settings
- * panel is a modal already, and inline means the rewritten block is visible in
- * the editor the moment it is confirmed.
+ * panel is a modal already, and inline means every tick can be watched landing
+ * in the editor above. There is nothing to confirm — a tick writes its command
+ * straight away, and untickng takes it straight back out, so what the list
+ * shows and what the script says are never out of step.
  */
 export default function IgnoredFileChecklist({
   projectId,
   script,
-  onConfirm,
+  onScriptChange,
 }: IgnoredFileChecklistProps) {
   const { t } = useI18n();
 
@@ -51,6 +53,20 @@ export default function IgnoredFileChecklist({
   // otherwise put back the ticks the user has since changed.
   const scanRequestRef = useRef(0);
 
+  /** Put the block in the script, as the ticks now stand. */
+  const writeTicks = useCallback((
+    currentScript: string,
+    currentEntries: ChecklistEntry[],
+    ticked: ReadonlySet<string>,
+  ) => {
+    onScriptChange(rewriteCopyBlock(
+      currentScript,
+      currentEntries
+        .filter((entry) => ticked.has(entry.path))
+        .map(({ path, isDirectory }) => ({ path, isDirectory })),
+    ));
+  }, [onScriptChange]);
+
   const scan = useCallback(async () => {
     const requestId = scanRequestRef.current + 1;
     scanRequestRef.current = requestId;
@@ -68,17 +84,25 @@ export default function IgnoredFileChecklist({
       };
       if (scanRequestRef.current !== requestId) return;
 
-      const checklist = buildIgnoredFileChecklist(scanned.candidates, scriptRef.current);
+      const current = scriptRef.current;
+      const checklist = buildIgnoredFileChecklist(scanned.candidates, current);
       setEntries(checklist.entries);
       setTickedPaths(new Set(checklist.tickedPaths));
       setScannedTotal(scanned.total);
       setTruncated(scanned.truncated);
       setStatus('ready');
+
+      // With no block yet, what came back ticked is a suggestion nothing has
+      // acted on. Writing it now is what makes expanding the list the single
+      // click that accepts the defaults — and unticking is how it is refused.
+      if (!hasCopyBlock(current) && checklist.tickedPaths.length > 0) {
+        writeTicks(current, checklist.entries, new Set(checklist.tickedPaths));
+      }
     } catch {
       if (scanRequestRef.current !== requestId) return;
       setStatus('failed');
     }
-  }, [projectId]);
+  }, [projectId, writeTicks]);
 
   const toggleOpen = () => {
     if (isOpen) {
@@ -92,16 +116,10 @@ export default function IgnoredFileChecklist({
   };
 
   const toggleTick = (path: string) => {
-    setTickedPaths((current) => {
-      const next = new Set(current);
-      if (!next.delete(path)) next.add(path);
-      return next;
-    });
-  };
-
-  const confirm = () => {
-    const ticked = entries.filter((entry) => tickedPaths.has(entry.path));
-    onConfirm(rewriteCopyBlock(script, ticked.map(({ path, isDirectory }) => ({ path, isDirectory }))));
+    const next = new Set(tickedPaths);
+    if (!next.delete(path)) next.add(path);
+    setTickedPaths(next);
+    writeTicks(script, entries, next);
   };
 
   const tickedCount = entries.reduce(
@@ -145,7 +163,7 @@ export default function IgnoredFileChecklist({
           ) : null}
 
           {status === 'ready' && entries.length > 0 ? (
-            <>
+            <div className="space-y-2" data-testid="ignored-file-checklist-list">
               <ul className="max-h-64 space-y-0.5 overflow-y-auto">
                 {entries.map((entry) => (
                   <li key={entry.path}>
@@ -179,20 +197,10 @@ export default function IgnoredFileChecklist({
                 </p>
               ) : null}
 
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <span className="text-[11px] text-(--text-tertiary)">
-                  {t('settings.preparation.checklist.selected', { count: tickedCount })}
-                </span>
-                <button
-                  type="button"
-                  onClick={confirm}
-                  className="rounded-md bg-(--accent) px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-(--accent-hover)"
-                  data-testid="ignored-file-checklist-confirm"
-                >
-                  {t('settings.preparation.checklist.confirm')}
-                </button>
-              </div>
-            </>
+              <span className="block text-[11px] text-(--text-tertiary)">
+                {t('settings.preparation.checklist.selected', { count: tickedCount })}
+              </span>
+            </div>
           ) : null}
         </div>
       ) : null}

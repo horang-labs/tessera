@@ -176,11 +176,25 @@ export default function ProjectPreparationSettings() {
           <IgnoredFileChecklist
             projectId={projectId}
             script={draft}
-            onConfirm={handleChange}
+            onScriptChange={handleChange}
           />
-          <p className="text-[11px] text-(--text-tertiary)">
-            {t('settings.preparation.runsOnCreate')}
-          </p>
+          <div className="space-y-1.5 border-t border-(--divider) pt-3">
+            <p className="text-[11px] text-(--text-tertiary)">
+              {t('settings.preparation.runsOnCreate')}
+            </p>
+            <dl className="space-y-1">
+              {([
+                ['TESSERA_PROJECT_DIR', 'settings.preparation.variables.projectDir'],
+                ['TESSERA_WORKTREE_DIR', 'settings.preparation.variables.worktreeDir'],
+                ['TESSERA_BRANCH_NAME', 'settings.preparation.variables.branchName'],
+              ] as const).map(([name, description]) => (
+                <div key={name} className="flex flex-wrap items-baseline gap-x-2">
+                  <dt className="font-mono text-[11px] text-(--text-secondary)">{name}</dt>
+                  <dd className="text-[11px] text-(--text-tertiary)">{t(description)}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
         </div>
       )}
     </div>

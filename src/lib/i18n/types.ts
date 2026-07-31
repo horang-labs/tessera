@@ -264,6 +264,11 @@ export interface I18nMessages {
       saved: string;
       saveFailed: string;
       loadFailed: string;
+      variables: {
+        projectDir: string;
+        worktreeDir: string;
+        branchName: string;
+      };
       checklist: {
         open: string;
         close: string;
@@ -272,7 +277,6 @@ export interface I18nMessages {
         scanFailed: string;
         empty: string;
         truncated: string;
-        confirm: string;
         selected: string;
         inScriptOnly: string;
         kind: {

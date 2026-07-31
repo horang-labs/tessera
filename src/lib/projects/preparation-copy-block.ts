@@ -92,9 +92,12 @@ export function readCopiedCandidates(script: string): IgnoredFileCandidate[] {
  * of the script where it was.
  *
  * With no candidates left the block goes too, markers and all, so a script
- * that copies nothing looks like one that never copied anything. With no block
- * present the new one leads, because copying has to happen before whatever
- * installs or builds from what was copied.
+ * that copies nothing looks like one that never copied anything.
+ *
+ * A block that has never been written goes at the end, below whatever the user
+ * has typed: the checklist rewrites it on every tick, and lines that move
+ * under the cursor are lines nobody can type against. Where it already sits is
+ * where it stays, so moving it above an install step keeps it there.
  */
 export function rewriteCopyBlock(
   script: string,
@@ -108,19 +111,19 @@ export function rewriteCopyBlock(
 
   if (!bounds) {
     if (block.length === 0) return lines.join('\n');
-    // A blank line keeps the block from reading as part of what follows it.
-    // What follows is untouched, blank leading lines included: the script
+    // A blank line keeps the block from reading as part of what precedes it.
+    // What precedes is untouched, trailing blank lines included: the script
     // outside the block is the user's, and tidying it is not this rewrite's
     // business.
     const rest = lines.join('\n');
-    return rest.trim() ? `${block.join('\n')}\n\n${rest}` : block.join('\n');
+    return rest.trim() ? `${rest}\n\n${block.join('\n')}` : block.join('\n');
   }
 
   const before = lines.slice(0, bounds.open);
-  let after = lines.slice(bounds.close + 1);
-  // Removing the block takes the blank line that separated it, so clearing the
-  // checklist does not leave the script starting with an empty line.
-  if (block.length === 0 && after[0] === '') after = after.slice(1);
+  const after = lines.slice(bounds.close + 1);
+  // Removing the block takes the blank line that separated it from what came
+  // before, so clearing the checklist does not leave a gap where it stood.
+  if (block.length === 0 && before.at(-1) === '') before.pop();
 
   return [...before, ...block, ...after].join('\n');
 }
@@ -135,18 +138,24 @@ function readCopyCommand(line: string): IgnoredFileCandidate | null {
 /**
  * Where the block starts and ends, or null when the script has no whole one.
  *
- * A marker without its partner is left to the user as the ordinary text it now
- * is: treating half a block as a block is how a rewrite would eat the lines
- * around it.
+ * The first closing marker is paired with the nearest opening marker above it,
+ * the way brackets pair. A stray marker is thereby left outside the block as
+ * the ordinary text it now is — pairing a stray opener with a real closer is
+ * how a rewrite would eat every line between them.
  */
 function findBlockBounds(lines: string[]): { open: number; close: number } | null {
-  const open = lines.findIndex((line) => line.trim() === COPY_BLOCK_OPEN_MARKER);
-  if (open === -1) return null;
+  const opens: number[] = [];
 
-  const close = lines.findIndex(
-    (line, index) => index > open && line.trim() === COPY_BLOCK_CLOSE_MARKER,
-  );
-  return close === -1 ? null : { open, close };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (line === COPY_BLOCK_OPEN_MARKER) {
+      opens.push(index);
+    } else if (line === COPY_BLOCK_CLOSE_MARKER && opens.length > 0) {
+      return { open: opens[opens.length - 1], close: index };
+    }
+  }
+
+  return null;
 }
 
 /**

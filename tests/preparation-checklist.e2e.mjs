@@ -29,6 +29,7 @@ const projectDir = path.join(fixtureDir, projectName);
 
 const OPEN_MARKER = '# >>> tessera: files copied into each worktree >>>';
 const CLOSE_MARKER = '# <<< tessera <<<';
+const NOTICE = '# Rewritten from the checklist. Move a line out of this block to keep your own version.';
 
 const serverOutput = [];
 let server = null;
@@ -146,10 +147,6 @@ async function waitForStoredScript(predicate, label, timeoutMs = 20_000) {
 
 // -------------------------------------------------------------------- ui ---
 
-function checklist() {
-  return page.getByTestId('ignored-file-checklist');
-}
-
 function tickFor(candidatePath) {
   return page.getByTestId(`ignored-file-tick-${candidatePath}`);
 }
@@ -172,12 +169,12 @@ async function openSettingsProjectSection() {
 async function expandChecklist() {
   await page.getByTestId('ignored-file-checklist-toggle').click();
   // The scan runs on expanding, so the list only exists once git has answered.
-  await page.getByTestId('ignored-file-checklist-confirm').waitFor({ state: 'visible', timeout: 60_000 });
+  await page.getByTestId('ignored-file-checklist-list').waitFor({ state: 'visible', timeout: 60_000 });
 }
 
 async function collapseChecklist() {
   await page.getByTestId('ignored-file-checklist-toggle').click();
-  await page.getByTestId('ignored-file-checklist-confirm').waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.getByTestId('ignored-file-checklist-list').waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
 /** Every candidate the checklist is showing, in the order it shows them. */
@@ -223,56 +220,64 @@ async function buildFixture() {
 
 // --------------------------------------------------------------- phases ---
 
-async function phaseDefaultsAreOfferedButNotImposed() {
+async function phaseExpandingAcceptsTheDefaults() {
   await openSettingsProjectSection();
+  // A line of the user's own, so where the block lands can be seen.
+  await page.getByTestId('project-preparation-script').fill('npm install');
   await expandChecklist();
 
-  const listed = await listedPaths();
   assert.deepEqual(
-    [...listed].sort(),
+    [...(await listedPaths())].sort(),
     ['.claude', '.env.local', 'debug.log', 'dist', 'node_modules'],
     'the collapsed scan lists every ignored entry exactly once',
   );
-
   assert.deepEqual(
     (await tickedPaths()).sort(),
     ['.claude', '.env.local'],
     'configuration and instructions arrive ticked, the heavy entries do not',
   );
 
-  // Nothing has been written yet: listing is not confirming.
-  assert.equal(await readStoredScript(), '', 'expanding the checklist writes nothing');
-}
-
-async function phaseConfirmingWritesTheBlock() {
-  // A line of the user's own, to prove the rewrite leaves it alone.
-  await page.getByTestId('project-preparation-script').fill('npm install');
-  await page.getByTestId('ignored-file-checklist-confirm').click();
-
+  // Expanding is the single click that accepts them: there is nothing to confirm.
   const stored = await waitForStoredScript(
     (script) => script.includes(OPEN_MARKER) && script.includes(CLOSE_MARKER),
-    'the confirmed block never reached the project',
+    'expanding never wrote the defaults',
   );
 
-  assert.match(stored, /^# >>> tessera/, 'the block leads, so copying happens before installing');
+  assert.ok(stored.startsWith('npm install'), 'the block goes below what the user typed');
+  assert.ok(stored.trimEnd().endsWith(CLOSE_MARKER), 'and nothing follows it');
   assert.ok(stored.includes('cp "$TESSERA_PROJECT_DIR/.env.local" .'), 'the file copy is there');
   assert.ok(stored.includes('cp -R "$TESSERA_PROJECT_DIR/.claude" .'), 'the directory copy is recursive');
   assert.ok(!stored.includes('node_modules'), 'nothing unticked was written');
-  assert.ok(stored.trimEnd().endsWith('npm install'), 'the user\'s own line survived');
 
   const shown = await page.getByTestId('project-preparation-script').inputValue();
   assert.equal(shown, stored, 'the editor shows what was stored');
 }
 
-async function phaseReopeningReadsTheBlockNotTheDefaults() {
-  // The block is the tick state now, so unticking has to survive a reopen.
+async function phaseATickLandsInTheScriptAtOnce() {
   await tickFor('.env.local').uncheck();
-  await page.getByTestId('ignored-file-checklist-confirm').click();
-  await waitForStoredScript(
+
+  const withoutEnv = await waitForStoredScript(
     (script) => !script.includes('.env.local'),
     'unticking never removed the command',
   );
+  assert.ok(withoutEnv.includes('.claude'), 'the other tick stayed where it was');
+  assert.ok(withoutEnv.startsWith('npm install'), 'and the user\'s line is still first');
 
+  await tickFor('dist').check();
+  const withDist = await waitForStoredScript(
+    (script) => script.includes('dist'),
+    'ticking never added the command',
+  );
+  assert.ok(withDist.includes('cp -R "$TESSERA_PROJECT_DIR/dist" .'), 'the new copy is there');
+
+  await tickFor('dist').uncheck();
+  await waitForStoredScript(
+    (script) => !script.includes('dist'),
+    'unticking never took it back out',
+  );
+}
+
+async function phaseReopeningReadsTheBlockNotTheDefaults() {
   await collapseChecklist();
   await expandChecklist();
 
@@ -281,11 +286,16 @@ async function phaseReopeningReadsTheBlockNotTheDefaults() {
     ['.claude'],
     'reopening ticks what the block holds, not what the defaults would',
   );
+  // Reopening must not write the defaults back either, or unticking would be
+  // undone every time the list is looked at.
+  assert.ok(
+    !(await readStoredScript()).includes('.env.local'),
+    'the unticked default stayed out',
+  );
 }
 
 async function phaseClearingRemovesTheBlockEntirely() {
   await tickFor('.claude').uncheck();
-  await page.getByTestId('ignored-file-checklist-confirm').click();
 
   const stored = await waitForStoredScript(
     (script) => !script.includes(OPEN_MARKER),
@@ -296,20 +306,13 @@ async function phaseClearingRemovesTheBlockEntirely() {
   assert.equal(stored, 'npm install', 'only the user\'s own line remains');
 }
 
-async function phaseALineMovedOutOfTheBlockIsKept() {
-  // Put a block back, then move one of its lines below the closing marker —
-  // the gesture the notice inside the block describes.
-  await tickFor('.claude').check();
-  await tickFor('.env.local').check();
-  await page.getByTestId('ignored-file-checklist-confirm').click();
-  await waitForStoredScript(
-    (script) => script.includes('.env.local') && script.includes('.claude'),
-    'the block was not written back',
-  );
-
+async function phaseABlockMovedAboveIsRewrittenThere() {
+  // Copying has to run before anything that installs from what was copied, and
+  // moving the block is how that is arranged. A line moved out of it is the
+  // user's own from then on — the gesture the notice inside the block names.
   const moved = [
     OPEN_MARKER,
-    '# Rewritten from the checklist. Move a line out of this block to keep your own version.',
+    NOTICE,
     'cp -R "$TESSERA_PROJECT_DIR/.claude" .',
     CLOSE_MARKER,
     'cp "$TESSERA_PROJECT_DIR/.env.local" .',
@@ -328,12 +331,12 @@ async function phaseALineMovedOutOfTheBlockIsKept() {
   );
 
   await tickFor('dist').check();
-  await page.getByTestId('ignored-file-checklist-confirm').click();
   const stored = await waitForStoredScript(
     (script) => script.includes('dist'),
     'the new tick never reached the block',
   );
 
+  assert.ok(stored.startsWith(OPEN_MARKER), 'the block stayed where it was moved to');
   assert.ok(
     stored.includes(`${CLOSE_MARKER}\ncp "$TESSERA_PROJECT_DIR/.env.local" .`),
     'the line moved out of the block survived the rewrite',
@@ -344,11 +347,11 @@ async function phaseALineMovedOutOfTheBlockIsKept() {
 // ----------------------------------------------------------------- main ---
 
 const phases = [
-  ['defaults are offered but not imposed', phaseDefaultsAreOfferedButNotImposed],
-  ['confirming writes the block', phaseConfirmingWritesTheBlock],
+  ['expanding accepts the defaults', phaseExpandingAcceptsTheDefaults],
+  ['a tick lands in the script at once', phaseATickLandsInTheScriptAtOnce],
   ['reopening reads the block, not the defaults', phaseReopeningReadsTheBlockNotTheDefaults],
   ['clearing removes the block entirely', phaseClearingRemovesTheBlockEntirely],
-  ['a line moved out of the block is kept', phaseALineMovedOutOfTheBlockIsKept],
+  ['a block moved above is rewritten there', phaseABlockMovedAboveIsRewrittenThere],
 ];
 
 let failure = null;
