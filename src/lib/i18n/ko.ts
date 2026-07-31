@@ -479,6 +479,8 @@ export const ko: I18nMessages = {
     worktreeDeleted: '워크트리 삭제됨',
     askUserTitle: '입력이 필요합니다',
     askUserKeyboardHint: '↑↓: 이동 · Space: 선택 · Enter: 제출 · Esc: 거절',
+    promptDensityDecrease: '더 작게 보기',
+    promptDensityIncrease: '더 크게 보기',
     otherInputPlaceholder: '직접 입력...',
     otherInputPlaceholderWithHint: '직접 입력... (Esc 또는 ↑로 돌아가기)',
     submissionFailed: '제출에 실패했습니다.',

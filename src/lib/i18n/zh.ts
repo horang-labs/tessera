@@ -477,6 +477,8 @@ export const zh: I18nMessages = {
     worktreeDeleted: '工作树已删除',
     askUserTitle: '需要你的输入',
     askUserKeyboardHint: '↑↓: 移动 · Space: 选择 · Enter: 提交 · Esc: 拒绝',
+    promptDensityDecrease: '缩小面板',
+    promptDensityIncrease: '放大面板',
     otherInputPlaceholder: '请输入...',
     otherInputPlaceholderWithHint: '请输入...（Esc 或 ↑ 返回）',
     submissionFailed: '提交失败。',

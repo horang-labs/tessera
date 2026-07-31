@@ -477,6 +477,8 @@ export const en: I18nMessages = {
     worktreeDeleted: 'Worktree deleted',
     askUserTitle: 'Input needed',
     askUserKeyboardHint: '↑↓: Navigate · Space: Select · Enter: Submit · Esc: Decline',
+    promptDensityDecrease: 'Make panel smaller',
+    promptDensityIncrease: 'Make panel larger',
     otherInputPlaceholder: 'Type your answer...',
     otherInputPlaceholderWithHint: 'Type your answer... (Esc or ↑ to go back)',
     submissionFailed: 'Submission failed.',

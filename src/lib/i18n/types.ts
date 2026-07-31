@@ -459,6 +459,8 @@ export interface I18nMessages {
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
+    promptDensityDecrease: string;
+    promptDensityIncrease: string;
     otherInputPlaceholder: string;
     otherInputPlaceholderWithHint: string;
     submissionFailed: string;

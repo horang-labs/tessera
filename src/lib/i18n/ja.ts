@@ -477,6 +477,8 @@ export const ja: I18nMessages = {
     worktreeDeleted: 'ワークツリー削除済み',
     askUserTitle: '入力が必要です',
     askUserKeyboardHint: '↑↓: 移動 · Space: 選択 · Enter: 送信 · Esc: 辞退',
+    promptDensityDecrease: 'パネルを小さく',
+    promptDensityIncrease: 'パネルを大きく',
     otherInputPlaceholder: '入力してください...',
     otherInputPlaceholderWithHint: '入力してください...（Esc または ↑ で戻る）',
     submissionFailed: '送信に失敗しました。',
