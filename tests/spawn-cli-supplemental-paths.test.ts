@@ -12,10 +12,6 @@ function emptyCache(): SpawnCliCache {
     didResolveLoginShell: false,
     loginShellEnvironment: null,
     didResolveLoginShellEnvironment: false,
-    loginShellPath: null,
-    didResolveLoginShellPath: false,
-    wslLoginShell: null,
-    didResolveWslLoginShell: false,
   };
 }
 
@@ -49,7 +45,6 @@ test('explicit CODEX_HOME overrides only its login-shell supplement', () => {
     HTTPS_PROXY: 'https://login-shell-proxy.test',
   };
   cache.didResolveLoginShellEnvironment = true;
-  cache.didResolveLoginShellPath = true;
 
   const env = buildSpawnEnvironment(
     {
