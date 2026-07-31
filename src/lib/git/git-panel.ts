@@ -14,7 +14,10 @@ import {
   computeWorktreeFileDiffStats,
   computeWorktreeFileDiffStatsFromRaw,
 } from "@/lib/git/worktree-diff-stats";
-import { getCachedDiffStats } from "@/lib/git/worktree-diff-stats-cache";
+import {
+  getCachedDiffStats,
+  getCachedDiffStatsRevalidating,
+} from "@/lib/git/worktree-diff-stats-cache";
 import { getAgentEnvironment, spawnCli } from "@/lib/cli/spawn-cli";
 import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
 import { getRuntimePlatform } from "@/lib/system/runtime-platform";
@@ -991,8 +994,14 @@ export async function getGitPanelData(
     changedFilesTruncated: changedFiles.truncated,
     recentCommits: parseRecentCommits(recentCommitsRaw ?? ""),
     github,
+    // changedFiles below is always freshly probed, so serving a stale cached
+    // diffStats next to it puts two contradicting numbers in one panel. Reading
+    // through the revalidating accessor re-arms the cache whenever the panel is
+    // opened, which is also the moment a user is most likely to notice a lie.
     diffStats: sessionContext.worktreeBranch
-      ? getCachedDiffStats(workDir) ?? undefined
+      ? (userId
+        ? getCachedDiffStatsRevalidating(workDir, userId)
+        : getCachedDiffStats(workDir)) ?? undefined
       : undefined,
     prStatus: prContext?.prStatus ?? bareSessionPr?.prStatus,
     prUnsupported:

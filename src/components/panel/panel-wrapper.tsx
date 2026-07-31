@@ -9,25 +9,53 @@ import { useTabStore } from '@/stores/tab-store';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { wsClient } from '@/lib/ws/client';
 import { PanelDropZone, type DropEdge } from './panel-drop-zone';
-import { PANEL_NODE_DRAG_MIME, SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
+import {
+  PANEL_NODE_DRAG_MIME,
+  PANEL_SESSION_DRAG_MIME,
+  SESSION_DRAG_MIME,
+  TAB_DRAG_MIME,
+  TAB_PANEL_TREE_DND_MIME,
+} from '@/types/panel';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import {
   getWorkspaceFileDragAbsolutePath,
   hasWorkspaceFileDragData,
   isPathInsertOnlyDragData,
+  isSessionReferenceDragData,
   parsePanelNodeDragData,
   parsePanelTitleDragData,
 } from '@/lib/dnd/panel-session-drag';
+import { insertSessionReferenceIntoTerminal } from '@/lib/session/session-reference';
 import {
   insertFilePathIntoTerminal,
   resolvePanelTerminalId,
 } from '@/lib/terminal/terminal-file-path-insert';
+import { getTerminalPromptBounds } from '@/lib/terminal/terminal-surface-registry';
 import {
   getNativeFileDropAbsolutePaths,
   isNativeFileDrag,
 } from '@/lib/dnd/native-file-drop';
 import { focusPanelControl } from '@/lib/session/focus-session-panel';
+
+/**
+ * Drags that rearrange panes. They also carry `SESSION_DRAG_MIME`, so a
+ * terminal pane must not mistake them for a context reference.
+ */
+const LAYOUT_DRAG_MIMES = [
+  PANEL_SESSION_DRAG_MIME,
+  PANEL_NODE_DRAG_MIME,
+  TAB_DRAG_MIME,
+  TAB_PANEL_TREE_DND_MIME,
+] as const;
+
+/**
+ * A session dropped on the CLI's input box becomes a context reference;
+ * everywhere else in the pane keeps the normal split/replace behaviour, which
+ * is by far the more common drop. Used as the strip's height only when the
+ * prompt cannot be located.
+ */
+const SESSION_INSERT_ZONE_FALLBACK_HEIGHT = 56;
 
 /** Edge zone threshold — the outer 25% of each edge triggers a split. */
 const EDGE_THRESHOLD = 0.25;
@@ -81,6 +109,11 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   // --- DnD state ---
   const [dropEdge, setDropEdge] = useState<DropEdge | null>(null);
   const [insertPathHint, setInsertPathHint] = useState(false);
+  /** Insert strip geometry relative to the pane; null when inactive. */
+  const [sessionInsertZone, setSessionInsertZone] = useState<
+    { top: number; height: number } | null
+  >(null);
+  const sessionInsertZoneRef = useRef(false);
   const dropEdgeRef = useRef<DropEdge | null>(null);
   const dragCounterRef = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -143,6 +176,30 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     isNativeFileDrag(e.dataTransfer) && resolveInsertTargetTerminalId() !== null
   ), [resolveInsertTargetTerminalId]);
 
+  /**
+   * Terminal sessions render no composer, so a session dropped on the pane
+   * itself is how they receive a reference — it is typed into the prompt the
+   * way the composer would have inserted it.
+   *
+   * Layout drags carry the same session MIME but mean "move this pane", so
+   * they keep the split/replace behaviour.
+   */
+  const isTerminalSessionRefTarget = useCallback((e: React.DragEvent) => {
+    if (!isSessionReferenceDragData(e.dataTransfer)) return false;
+    const isLayoutDrag = LAYOUT_DRAG_MIMES.some((mime) => e.dataTransfer.types.includes(mime));
+    return !isLayoutDrag && resolveInsertTargetTerminalId() !== null;
+  }, [resolveInsertTargetTerminalId]);
+
+  /** Client-coordinate band that accepts the reference: the CLI's input box. */
+  const resolveSessionInsertZoneBounds = useCallback((rect: DOMRect) => {
+    const terminalId = resolveInsertTargetTerminalId();
+    const promptBounds = terminalId ? getTerminalPromptBounds(terminalId) : null;
+    return promptBounds ?? {
+      top: rect.bottom - SESSION_INSERT_ZONE_FALLBACK_HEIGHT,
+      bottom: rect.bottom,
+    };
+  }, [resolveInsertTargetTerminalId]);
+
   const isPanelCompatibleDrag = useCallback((e: React.DragEvent) => {
     // OS file drags carry the synthetic 'Files' type and no in-app payload;
     // accept only over a terminal pane, where the drop inserts the path.
@@ -179,6 +236,23 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     const rect = wrapperRef.current?.getBoundingClientRect();
     if (!rect) return;
 
+    const insertBounds = isTerminalSessionRefTarget(e)
+      ? resolveSessionInsertZoneBounds(rect)
+      : null;
+    const inSessionInsertZone = insertBounds !== null
+      && e.clientY >= insertBounds.top
+      && e.clientY <= insertBounds.bottom;
+    sessionInsertZoneRef.current = inSessionInsertZone;
+    setSessionInsertZone(inSessionInsertZone && insertBounds
+      ? { top: insertBounds.top - rect.top, height: insertBounds.bottom - insertBounds.top }
+      : null);
+    if (inSessionInsertZone) {
+      dropEdgeRef.current = null;
+      setDropEdge(null);
+      setInsertPathHint(false);
+      return;
+    }
+
     // Insert-only drags (folders, OS files) have no split behavior, so the
     // whole pane acts as center.
     const edge = isNativeFile || isPathInsertOnlyDragData(e.dataTransfer)
@@ -190,7 +264,13 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       edge === 'center' &&
       (isNativeFile ? isNativeFilePathInsertTarget(e) : isTerminalPathInsertTarget(e)),
     );
-  }, [isPanelCompatibleDrag, isTerminalPathInsertTarget, isNativeFilePathInsertTarget]);
+  }, [
+    isPanelCompatibleDrag,
+    isTerminalPathInsertTarget,
+    isNativeFilePathInsertTarget,
+    isTerminalSessionRefTarget,
+    resolveSessionInsertZoneBounds,
+  ]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
@@ -199,18 +279,23 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     if (dragCounterRef.current <= 0) {
       dragCounterRef.current = 0;
       dropEdgeRef.current = null;
+      sessionInsertZoneRef.current = false;
       setDropEdge(null);
       setInsertPathHint(false);
+      setSessionInsertZone(null);
     }
   }, [isPanelCompatibleDrag]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const currentEdge = dropEdgeRef.current;
+    const droppedInSessionInsertZone = sessionInsertZoneRef.current;
     dragCounterRef.current = 0;
     dropEdgeRef.current = null;
+    sessionInsertZoneRef.current = false;
     setDropEdge(null);
     setInsertPathHint(false);
+    setSessionInsertZone(null);
 
     // OS (Finder/Explorer) file drop → insert each absolute path into the PTY.
     if (currentEdge === 'center' && isNativeFilePathInsertTarget(e)) {
@@ -235,6 +320,28 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       if (filePath && targetTerminalId && insertFilePathIntoTerminal(targetTerminalId, filePath)) {
         usePanelStore.getState().setActivePanelId(panelId);
         focusPanelControl(panelId);
+      }
+      return;
+    }
+
+    // Session dropped on a terminal pane's insert strip → type its export
+    // reference at the prompt, mirroring what the composer does for chat
+    // sessions.
+    if (droppedInSessionInsertZone && isTerminalSessionRefTarget(e)) {
+      const referencedSessionId = e.dataTransfer.getData(SESSION_DRAG_MIME);
+      const targetTerminalId = resolveInsertTargetTerminalId();
+      if (referencedSessionId && targetTerminalId) {
+        const title = useSessionStore.getState().getSession(referencedSessionId)?.title
+          ?? referencedSessionId.slice(0, 8);
+        // Unlike a path insert this needs a round trip (the session is exported
+        // first), so the focus move waits for the text to actually land.
+        void insertSessionReferenceIntoTerminal(targetTerminalId, referencedSessionId, title)
+          .then((inserted) => {
+            if (!inserted) return;
+            usePanelStore.getState().setActivePanelId(panelId);
+            focusPanelControl(panelId);
+          })
+          .catch(() => toast.error(t('errors.sessionExportFailed')));
       }
       return;
     }
@@ -424,7 +531,15 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     if (session) {
       viewSession(session, { forceReload: true });
     }
-  }, [panelId, t, viewSession, isTerminalPathInsertTarget, isNativeFilePathInsertTarget, resolveInsertTargetTerminalId]);
+  }, [
+    panelId,
+    t,
+    viewSession,
+    isTerminalPathInsertTarget,
+    isNativeFilePathInsertTarget,
+    isTerminalSessionRefTarget,
+    resolveInsertTargetTerminalId,
+  ]);
 
   return (
     <div
@@ -456,6 +571,18 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
           edge={dropEdge}
           label={insertPathHint ? t('panel.dropToInsertPath') : undefined}
         />
+      )}
+      {sessionInsertZone && (
+        <div
+          // Solid + denser fill so it never reads as the dashed split overlay.
+          className="pointer-events-none absolute inset-x-1 z-50 flex items-center justify-center rounded-md border-2 border-solid border-(--accent) bg-(--accent)/25"
+          style={{ top: sessionInsertZone.top, height: sessionInsertZone.height }}
+          data-testid="session-insert-drop-zone"
+        >
+          <span className="rounded-md bg-(--accent) px-2 py-1 text-xs font-medium text-white shadow-sm">
+            {t('panel.dropToInsertSessionReference')}
+          </span>
+        </div>
       )}
     </div>
   );

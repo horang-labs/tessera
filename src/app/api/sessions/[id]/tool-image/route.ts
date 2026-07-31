@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs/promises';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
+import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
 import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
 import * as dbSessions from '@/lib/db/sessions';
@@ -56,9 +57,16 @@ export async function GET(
       return jsonError('unsupported_media', 'Tool call path is not an image', 415);
     }
 
+    // The recorded path is the one the CLI saw, which is not always readable by
+    // this process: a Windows-hosted server driving a WSL agent records
+    // `/home/...` and `/mnt/c/...`, neither of which `fs` can open. Re-resolve
+    // against the host filesystem (`\\wsl.localhost\<distro>\...`, `C:\...`)
+    // before touching disk.
+    const hostPath = await resolvePathForHostFilesystem(rawPath);
+
     let stat;
     try {
-      stat = await fs.stat(rawPath);
+      stat = await fs.stat(hostPath);
     } catch {
       return jsonError('file_not_found', 'Image file not found', 404);
     }
@@ -69,7 +77,7 @@ export async function GET(
       return jsonError('file_too_large', 'Image is too large to preview', 413);
     }
 
-    const buffer = await fs.readFile(rawPath);
+    const buffer = await fs.readFile(hostPath);
     return new NextResponse(buffer, {
       headers: {
         'Content-Type': inferImageMime(rawPath) ?? 'application/octet-stream',

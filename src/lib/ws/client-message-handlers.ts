@@ -94,7 +94,8 @@ export function handleIncomingServerMessage({
       useSessionPrStore.getState().clearSession(msg.sessionId);
       return { wasReconnect };
 
-    case 'session_stopped':
+    case 'session_stopped': {
+      const stoppedSession = sessionStore.getSession(msg.sessionId);
       sessionStore.markSessionStopped(msg.sessionId);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
       // The session was stopped, so any workflow still flagged running can no
@@ -104,7 +105,14 @@ export function handleIncomingServerMessage({
       chatStore.setTodoSnapshot(msg.sessionId, []);
       sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       useCommandStore.getState().clearSession(msg.sessionId);
+      // PTY surfaces retire on terminal_session_runtime so a provider session
+      // rebound can transfer the existing panel first. GUI sessions have no
+      // later runtime event, so stopping one must retire its surface here.
+      if (stoppedSession && stoppedSession.kind !== 'terminal') {
+        useTabStore.getState().retireSessionSurface(msg.sessionId);
+      }
       return { wasReconnect };
+    }
 
     case 'replay_events':
       sessionStore.touchSessionActivity(msg.sessionId, getLatestReplayEventTimestamp(msg.events));
