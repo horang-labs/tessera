@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   preparation_finished_at TEXT,
   preparation_exit_code INTEGER,
   preparation_output TEXT,
+  preparation_script TEXT,
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL
 );

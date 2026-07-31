@@ -14,7 +14,15 @@
  */
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, Minus, RefreshCw, ScrollText } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
+  Loader2,
+  Minus,
+  RefreshCw,
+  ScrollText,
+} from 'lucide-react';
 import { TerminalPanel } from '@/components/terminal/terminal-panel';
 import { TabIdContext } from '@/stores/panel-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
@@ -32,11 +40,18 @@ import { cn } from '@/lib/utils';
 
 const PREPARATION_TAB_ID = 'worktree-preparation';
 const PREPARATION_PANEL_ID = 'worktree-preparation-panel';
+/**
+ * How long a script may be before it has to be asked for. Short enough that
+ * what opens by default cannot push the log off the panel.
+ */
+const SCRIPT_LINES_SHOWN_UNASKED = 12;
 
 interface StoredPreparation {
   status: PreparationStatus;
   exitCode: number | null;
   output: string | null;
+  /** What this run ran, with Tessera's variables already expanded. */
+  script: string | null;
 }
 
 /**
@@ -90,10 +105,10 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
 
   const isRunning = status === 'running';
 
-  // Re-read whenever the run ends, so the log that appears is the one it just
-  // wrote rather than whatever the previous run left.
+  // Re-read on every status change: a run records its script as it starts, so
+  // this is what puts the script on screen while the run is still going, and
+  // what replaces the previous run's log with the one that just finished.
   useEffect(() => {
-    if (isRunning) return;
     let cancelled = false;
     setIsReading(true);
     void (async () => {
@@ -111,7 +126,7 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
       }
     })();
     return () => { cancelled = true; };
-  }, [isRunning, taskId, status]);
+  }, [taskId, status]);
 
   // Stored output is what the PTY emitted, escape sequences and all; without
   // a terminal to read them, they have to be flattened first.
@@ -151,6 +166,10 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
 
       {preparationConfirmDialog}
 
+      {/* Mounted only once there is a script, so the section decides whether to
+          open itself against the real thing rather than against nothing. */}
+      {stored?.script ? <ScriptSection script={stored.script} /> : null}
+
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="worktree-scripts-log">
         {isRunning ? (
           <TabIdContext.Provider value={PREPARATION_TAB_ID}>
@@ -175,6 +194,50 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * What the run ran, above what it printed.
+ *
+ * The log alone leaves the reader working backwards from output to guess at
+ * the script: a `npm install` that prints a thousand lines buries the copies
+ * that followed it, and a run that failed early prints almost nothing at all.
+ * The commands are here whole, in order, so the log has something to be read
+ * against.
+ *
+ * Collapsed by default once it grows past a glance — the log is what the panel
+ * is usually open for.
+ */
+function ScriptSection({ script }: { script: string }) {
+  const { t } = useI18n();
+  const lines = script.split('\n').length;
+  const [isOpen, setIsOpen] = useState(lines <= SCRIPT_LINES_SHOWN_UNASKED);
+
+  return (
+    <div className="shrink-0 border-b border-(--divider)" data-testid="worktree-scripts-script">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        aria-expanded={isOpen}
+        className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[11px] font-medium text-(--text-muted) transition-colors hover:text-(--text-primary)"
+        data-testid="worktree-scripts-script-toggle"
+      >
+        <ChevronRight className={cn('h-3 w-3 transition-transform', isOpen && 'rotate-90')} />
+        <span>{t('scripts.script')}</span>
+        <span className="text-(--text-tertiary)">
+          {t('scripts.scriptLines', { count: lines })}
+        </span>
+      </button>
+      {isOpen ? (
+        <pre
+          className="max-h-56 overflow-auto whitespace-pre-wrap break-words px-3 pb-2 font-mono text-[11px] leading-relaxed text-(--text-secondary)"
+          data-testid="worktree-scripts-script-body"
+        >
+          {script}
+        </pre>
+      ) : null}
+    </div>
   );
 }
 

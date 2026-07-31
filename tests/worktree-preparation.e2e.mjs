@@ -370,6 +370,16 @@ async function phase1() {
     `the attached terminal should be showing the live run: ${printed.slice(0, 400)}`,
   );
 
+  // The script is recorded as the run starts, so "what is this doing?" has an
+  // answer while it is still doing it — not only once it has finished.
+  const runningScript = await view
+    .getByTestId('worktree-scripts-script-body')
+    .innerText({ timeout: 30_000 });
+  assert.ok(
+    runningScript.includes('preparation-started'),
+    `the script should be readable during the run: ${runningScript}`,
+  );
+
   // Detaching must not stop the run. The close button, not Escape: the
   // attached terminal has the keyboard.
   await leaveScriptsTab();
@@ -426,6 +436,14 @@ async function phase2(taskId) {
   // The log names the line that failed, not just what it printed: output with
   // nothing to attribute it to is what makes a failed run hard to read.
   assert.ok(shown.includes('+ exit 3'), `the log should trace the failing line: ${shown}`);
+
+  // And the script that produced the log is right there, whole and in order,
+  // rather than something to be reconstructed from the output.
+  const scriptShown = await page.getByTestId('worktree-scripts-script-body').innerText();
+  assert.ok(
+    scriptShown.includes('echo "preparation-boom"') && scriptShown.includes('exit 3'),
+    `the panel should show the script the run ran: ${scriptShown}`,
+  );
 
   // Re-run from the view itself, with a script that now succeeds.
   await setPreparationScript(SUCCESS_SCRIPT);

@@ -1061,6 +1061,8 @@ export const ko: I18nMessages = {
   scripts: {
     noWorktree: '이 대화에는 워크트리가 없어 실행할 것이 없습니다.',
     readingLog: '로그를 불러오는 중...',
+    script: '스크립트',
+    scriptLines: '{{count}}줄',
     preparation: {
       name: '준비',
       status: {

@@ -26,6 +26,13 @@ export interface TaskPreparation {
   finishedAt: string | null;
   exitCode: number | null;
   output: string | null;
+  /**
+   * The script this run ran, as it ran it. Stored with the run rather than read
+   * back from the project, because the project's script is edited — often
+   * because this very run went wrong — and the log would then sit next to a
+   * script that never produced it.
+   */
+  script: string | null;
 }
 
 interface TaskPreparationRow {
@@ -35,6 +42,7 @@ interface TaskPreparationRow {
   preparation_finished_at: string | null;
   preparation_exit_code: number | null;
   preparation_output: string | null;
+  preparation_script: string | null;
 }
 
 export interface TaskPreparationContext {
@@ -82,7 +90,7 @@ export function getTaskPreparation(taskId: string): TaskPreparation | null {
   const db = getDb();
   const row = db.prepare(`
     SELECT id, preparation_status, preparation_started_at, preparation_finished_at,
-           preparation_exit_code, preparation_output
+           preparation_exit_code, preparation_output, preparation_script
     FROM tasks
     WHERE id = ?
   `).get(taskId) as TaskPreparationRow | undefined;
@@ -95,6 +103,7 @@ export function getTaskPreparation(taskId: string): TaskPreparation | null {
     finishedAt: row.preparation_finished_at,
     exitCode: row.preparation_exit_code,
     output: row.preparation_output,
+    script: row.preparation_script,
   };
 }
 
@@ -106,7 +115,7 @@ export function getTaskPreparation(taskId: string): TaskPreparation | null {
  * transaction between them: this runs to completion without yielding, and the
  * database is in-process, so no second claim can land in the middle.
  */
-export function startTaskPreparation(taskId: string): boolean {
+export function startTaskPreparation(taskId: string, script: string): boolean {
   const current = getTaskPreparation(taskId);
   if (!current) return false;
 
@@ -118,9 +127,10 @@ export function startTaskPreparation(taskId: string): boolean {
   db.prepare(`
     UPDATE tasks
     SET preparation_status = ?, preparation_started_at = ?, preparation_finished_at = NULL,
-        preparation_exit_code = NULL, preparation_output = NULL, updated_at = ?
+        preparation_exit_code = NULL, preparation_output = NULL, preparation_script = ?,
+        updated_at = ?
     WHERE id = ?
-  `).run(transition.status, now, now, taskId);
+  `).run(transition.status, now, script, now, taskId);
   return true;
 }
 

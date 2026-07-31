@@ -29,6 +29,7 @@ import {
   buildPreparationExecutionSpec,
   type PreparationExecutionSpec,
 } from './preparation-execution-spec';
+import { expandPreparationVariables } from './preparation-script-preview';
 import { getPreparationTerminalId } from './preparation-terminal-id';
 
 /** Directory under the worktree's own git storage that holds Tessera's runners. */
@@ -84,8 +85,11 @@ export async function startWorktreePreparation(
   if (!spec) return { started: false, reason: 'no_script' };
 
   // Claimed before anything is spawned, so two callers racing to prepare the
-  // same worktree cannot both win.
-  if (!startTaskPreparation(request.taskId)) {
+  // same worktree cannot both win. The script is written down with the claim,
+  // expanded the way the shell's own trace will show it, so the log and the
+  // script beside it describe the same run.
+  const ranScript = expandPreparationVariables(project.preparation_script, spec.env);
+  if (!startTaskPreparation(request.taskId, ranScript)) {
     return { started: false, reason: 'already_running' };
   }
 

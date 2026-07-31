@@ -1054,6 +1054,8 @@ export const en: I18nMessages = {
   scripts: {
     noWorktree: 'This chat has no worktree, so there is nothing to run.',
     readingLog: 'Reading the log...',
+    script: 'Script',
+    scriptLines: '{{count}} lines',
     preparation: {
       name: 'Preparation',
       status: {

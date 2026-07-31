@@ -1054,6 +1054,8 @@ export const ja: I18nMessages = {
   scripts: {
     noWorktree: 'このチャットにはワークツリーがないため、実行するものがありません。',
     readingLog: 'ログを読み込み中...',
+    script: 'スクリプト',
+    scriptLines: '{{count}}行',
     preparation: {
       name: '準備',
       status: {

@@ -1011,6 +1011,7 @@ function addPreparationStatusColumns(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'tasks', 'preparation_finished_at', 'TEXT');
   addColumnIfMissing(db, 'tasks', 'preparation_exit_code', 'INTEGER');
   addColumnIfMissing(db, 'tasks', 'preparation_output', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_script', 'TEXT');
 }
 
 /**

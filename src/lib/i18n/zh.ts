@@ -1054,6 +1054,8 @@ export const zh: I18nMessages = {
   scripts: {
     noWorktree: '此对话没有工作树，因此没有可运行的内容。',
     readingLog: '正在读取日志...',
+    script: '脚本',
+    scriptLines: '{{count}} 行',
     preparation: {
       name: '准备',
       status: {
