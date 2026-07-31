@@ -45,7 +45,12 @@ export const TabBar = memo(function TabBar() {
 
   // Scrollable container ref
   const containerRef = useRef<HTMLDivElement>(null);
-  const [scrollState, setScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+  const endZoneRef = useRef<HTMLDivElement>(null);
+  const [scrollState, setScrollState] = useState({
+    canScrollLeft: false,
+    canScrollRight: false,
+    hasOverflow: false,
+  });
 
   // DnD state (BR-UI-020)
   const dragTabIdRef = useRef<string | null>(null);
@@ -69,21 +74,28 @@ export const TabBar = memo(function TabBar() {
     const container = containerRef.current;
     if (!container) {
       setScrollState((prev) =>
-        prev.canScrollLeft || prev.canScrollRight
-          ? { canScrollLeft: false, canScrollRight: false }
+        prev.canScrollLeft || prev.canScrollRight || prev.hasOverflow
+          ? { canScrollLeft: false, canScrollRight: false, hasOverflow: false }
           : prev,
       );
       return;
     }
 
     const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+    // The end zone lives inside the scroller, so its own width has to come out
+    // before judging overflow — otherwise the zone would keep the "overflowing"
+    // verdict latched on and could never collapse back to zero.
+    const tabsWidth = container.scrollWidth - (endZoneRef.current?.offsetWidth ?? 0);
     const next = {
       canScrollLeft: container.scrollLeft > TAB_SCROLL_EDGE_EPSILON,
       canScrollRight: container.scrollLeft < maxScrollLeft - TAB_SCROLL_EDGE_EPSILON,
+      hasOverflow: tabsWidth > container.clientWidth + TAB_SCROLL_EDGE_EPSILON,
     };
 
     setScrollState((prev) =>
-      prev.canScrollLeft === next.canScrollLeft && prev.canScrollRight === next.canScrollRight
+      prev.canScrollLeft === next.canScrollLeft &&
+      prev.canScrollRight === next.canScrollRight &&
+      prev.hasOverflow === next.hasOverflow
         ? prev
         : next,
     );
@@ -462,11 +474,16 @@ export const TabBar = memo(function TabBar() {
               onContextMenu={handleContextMenu}
             />
           ))}
-          {/* End drop zone — allows moving a tab to the last position.
-              Also gives the last tab enough trailing scroll room to satisfy scroll-px-8. */}
+          {/* End drop zone — gives the last tab enough trailing scroll room to
+              satisfy scroll-px-8, and doubles as a "move to last position" target.
+              Only earns its width while the tabs overflow: otherwise it would push
+              the "+" button away from the last tab for no reason. When collapsed,
+              the trailing spacer past "+" takes over the drop target. */}
           <div
+            ref={endZoneRef}
             className={cn(
-              'electron-no-drag shrink-0 w-8 transition-colors',
+              'electron-no-drag shrink-0 transition-colors',
+              scrollState.hasOverflow ? 'w-8' : 'w-0',
               isWindowsElectron && 'h-[39px]',
               isLinuxElectron && 'h-[39px]',
               isEndZoneDragOver && 'border-l-2 border-l-(--accent)',
@@ -541,15 +558,17 @@ export const TabBar = memo(function TabBar() {
         </button>
       </ShortcutTooltip>
 
-      {/* Spacer — keep this area draggable for frameless Electron windows. */}
+      {/* Spacer — keep this area draggable for frameless Electron windows.
+          Shares the end zone's handlers so a tab dragged here still lands last,
+          which keeps that drop reachable once the end zone collapses to zero. */}
       <div
         className={cn(
           'electron-drag flex-1 transition-colors',
-          isCreateTabDragOver && 'bg-(--accent)/10',
+          (isCreateTabDragOver || isEndZoneDragOver) && 'bg-(--accent)/10',
         )}
-        onDragOver={handleCreateTabDragOver}
-        onDragLeave={handleCreateTabDragLeave}
-        onDrop={handleCreateTabDrop}
+        onDragOver={handleEndZoneDragOver}
+        onDragLeave={handleEndZoneDragLeave}
+        onDrop={handleEndZoneDrop}
         data-testid="tab-bar-new-tab-drop-zone"
       />
 

@@ -10,6 +10,7 @@ import type { UnifiedSession } from '@/types/chat';
 
 type ItemSurface = 'board' | 'sidebar';
 type ItemStatusPlacement = 'corner' | 'leading' | 'inline';
+type ItemStatusSize = 'default' | 'lg';
 
 export function getWorktreeIconClass(status: WorkflowStatus): string {
   switch (status) {
@@ -32,6 +33,7 @@ export function ItemStatusIndicator({
   isRunning,
   sessionKind,
   placement,
+  size = 'default',
   surface,
 }: {
   hasUnread: boolean;
@@ -41,13 +43,16 @@ export function ItemStatusIndicator({
   /** PTY turns outrank stale unread state; GUI keeps its existing priority. */
   sessionKind?: UnifiedSession['kind'];
   placement: ItemStatusPlacement;
+  /** 'lg' opts into the enlarged dots the sidebar corner already uses. */
+  size?: ItemStatusSize;
   surface: ItemSurface;
 }) {
   if (!isProcessing && !isAwaitingUser && !hasUnread && !isRunning) {
     return null;
   }
 
-  const isEnlargedSidebarCorner = surface === 'sidebar' && placement === 'corner';
+  const isEnlarged =
+    size === 'lg' || (surface === 'sidebar' && placement === 'corner');
 
   const ringClass =
     placement === 'inline'
@@ -60,9 +65,9 @@ export function ItemStatusIndicator({
     return (
       <span
         className={cn(
-          getPlacementClassName(placement, false, isEnlargedSidebarCorner),
+          getPlacementClassName(placement, false, isEnlarged),
           ringClass,
-          isEnlargedSidebarCorner ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
+          isEnlarged ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
           'rounded-full bg-[#facc15] attention-dot-blink',
         )}
       />
@@ -75,10 +80,15 @@ export function ItemStatusIndicator({
     return (
       <span
         className={cn(
-          getPlacementClassName(placement, true, isEnlargedSidebarCorner),
+          getPlacementClassName(placement, true, isEnlarged),
           ringClass,
-          isEnlargedSidebarCorner ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
-          'animate-spin rounded-full border border-(--success) border-t-transparent',
+          isEnlarged ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
+          'animate-spin rounded-full',
+          // 'lg' keeps the thicker ring the tab bar has always spun; the small
+          // dots stay hairline because 2px would nearly fill a 7px circle.
+          size === 'lg'
+            ? 'border-2 border-(--success)/30 border-t-(--success)'
+            : 'border border-(--success) border-t-transparent',
         )}
       />
     );
@@ -88,9 +98,9 @@ export function ItemStatusIndicator({
     return (
       <span
         className={cn(
-          getPlacementClassName(placement, false, isEnlargedSidebarCorner),
+          getPlacementClassName(placement, false, isEnlarged),
           ringClass,
-          isEnlargedSidebarCorner ? 'h-[0.6875rem] w-[0.6875rem]' : 'h-[6px] w-[6px]',
+          isEnlarged ? 'h-[0.6875rem] w-[0.6875rem]' : 'h-[6px] w-[6px]',
           'rounded-full bg-[#facc15]',
         )}
       />
@@ -100,9 +110,9 @@ export function ItemStatusIndicator({
   return (
     <span
       className={cn(
-        getPlacementClassName(placement, false, isEnlargedSidebarCorner),
+        getPlacementClassName(placement, false, isEnlarged),
         ringClass,
-        isEnlargedSidebarCorner ? 'h-[0.625rem] w-[0.625rem]' : 'h-[5px] w-[5px]',
+        isEnlarged ? 'h-[0.625rem] w-[0.625rem]' : 'h-[5px] w-[5px]',
         'rounded-full bg-(--success)',
       )}
     />
@@ -312,12 +322,12 @@ export function OverflowMenuButton({
 function getPlacementClassName(
   placement: ItemStatusPlacement,
   isProcessing: boolean,
-  isEnlargedSidebarCorner: boolean,
+  isEnlarged: boolean,
 ): string {
   switch (placement) {
     case 'corner':
       // Industry-standard: top-left of the icon (like Gmail/Jira unread dots).
-      return isEnlargedSidebarCorner
+      return isEnlarged
         ? 'absolute -top-1 -left-1'
         : 'absolute -top-0.5 -left-0.5';
     case 'leading':

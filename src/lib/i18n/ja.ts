@@ -792,6 +792,7 @@ export const ja: I18nMessages = {
     stopped: '停止済み',
     stopProcess: 'プロセスを停止',
     processing: '処理中',
+    inputRequired: '入力待ち',
     unreadNotification: '未読通知',
     sessionRunning: 'セッション実行中',
     runningProcesses: '実行中のプロセス',

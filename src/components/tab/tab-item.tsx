@@ -15,7 +15,9 @@ import { SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/typ
 import { getSpecialSessionTitle, getSpecialSessionTitleKey, isSpecialSession } from '@/lib/constants/special-sessions';
 import { requestSessionRename } from '@/lib/session/rename-session-request';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
-import { useAnySessionProcessing } from '@/hooks/use-session-processing';
+import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
+import { ItemStatusIndicator } from '@/components/chat/work-item-primitives';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 /** Delay before activating a tab when a session drag hovers over it. */
 const TAB_HOVER_ACTIVATE_DELAY = 500;
@@ -290,12 +292,25 @@ export const TabItem = memo(function TabItem({
         .sort()
         .join(',');
 
-  const isGenerating = useAnySessionProcessing(
-    panelSessionIds ? panelSessionIds.split(',') : [],
-  );
+  const { hasProcessingSession: isGenerating, hasTerminalProcessingSession } =
+    useSessionProcessingSummary(panelSessionIds ? panelSessionIds.split(',') : []);
 
   const isAwaitingUser = useAnySessionAwaitingUser(
     panelSessionIds ? panelSessionIds.split(',') : [],
+  );
+
+  // Runtime liveness — the green "session is up but idle" dot the sidebar shows.
+  const isRunning = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!panelSessionIds) return false;
+        return panelSessionIds.split(',').some((id) => {
+          const s = state.getSession(id);
+          return s ? resolveSessionRuntimePresentation(s).showRunning : false;
+        });
+      },
+      [panelSessionIds],
+    ),
   );
 
   // Unread indicator — any session in this tab has unreadCount > 0.
@@ -313,6 +328,29 @@ export const TabItem = memo(function TabItem({
       [panelSessionIds],
     ),
   );
+
+  // Mirror ItemStatusIndicator's own priority so the label/testid describe the
+  // dot that actually renders.
+  const statusKind = isAwaitingUser
+    ? 'awaiting'
+    : isGenerating && (hasTerminalProcessingSession || !hasUnread)
+      ? 'processing'
+      : hasUnread
+        ? 'unread'
+        : isRunning
+          ? 'running'
+          : null;
+
+  const statusLabel =
+    statusKind === 'awaiting'
+      ? t('status.inputRequired')
+      : statusKind === 'processing'
+        ? t('status.processing')
+        : statusKind === 'unread'
+          ? t('status.unreadNotification')
+          : statusKind === 'running'
+            ? t('status.sessionRunning')
+            : undefined;
 
   // Session drag hover state + timer
   const hoverActivateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -543,22 +581,27 @@ export const TabItem = memo(function TabItem({
       data-dragging={String(isDragging)}
       aria-grabbed={isDragging || undefined}
     >
-      {/* Leading indicator — generating spinner takes precedence over user attention/unread dots */}
-      {isGenerating ? (
-        <div className="w-3 h-3 shrink-0 mr-1.5 rounded-full border-2 border-(--success)/30 border-t-(--success) animate-spin" />
-      ) : isAwaitingUser ? (
-        <div
-          className="h-[7px] w-[7px] shrink-0 mr-1.5 rounded-full bg-[#facc15] attention-dot-blink"
-          data-testid="tab-item-attention"
-          aria-label={t('status.inputRequired')}
-        />
-      ) : hasUnread ? (
-        <div
-          className="h-[6px] w-[6px] shrink-0 mr-1.5 rounded-full bg-[#facc15]"
-          data-testid="tab-item-unread"
-          aria-label="Unread messages"
-        />
-      ) : null}
+      {/* Leading indicator — same dots, colors and priority as the sidebar/board */}
+      {statusKind && (
+        <span
+          className="mr-1.5 flex shrink-0 items-center"
+          data-testid="tab-item-status"
+          data-status={statusKind}
+          aria-label={statusLabel}
+          title={statusLabel}
+        >
+          <ItemStatusIndicator
+            isProcessing={isGenerating}
+            isAwaitingUser={isAwaitingUser}
+            hasUnread={hasUnread}
+            isRunning={isRunning}
+            sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
+            placement="inline"
+            size="lg"
+            surface="sidebar"
+          />
+        </span>
+      )}
 
       {/* Title area — truncated with ellipsis (BR-UI-022) */}
       {isEditingTitle ? (
