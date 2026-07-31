@@ -32,8 +32,17 @@ import { normalizePreparationScript } from './preparation-script-policy';
 
 const POSIX_RUNNER_NAME = 'preparation-runner.sh';
 const WINDOWS_RUNNER_NAME = 'preparation-runner.cmd';
-/** Stops a batch run once a command reports a non-zero exit code. */
-const WINDOWS_FAIL_FAST_GUARD = 'if errorlevel 1 exit /b %errorlevel%';
+/**
+ * Stops a batch run once a command reports a non-zero exit code. The leading
+ * `@` keeps the guard itself out of the echo, so what the log shows is the
+ * script the user wrote and not the machinery around it.
+ */
+const WINDOWS_FAIL_FAST_GUARD = '@if errorlevel 1 exit /b %errorlevel%';
+/**
+ * What `set -x` puts in front of each traced line. Dim, because the trace is
+ * there to be scanned past until something goes wrong.
+ */
+const POSIX_TRACE_PROMPT = "$'\\033[2m+ \\033[0m'";
 
 export interface PreparationExecutionContext {
   /** The project's stored preparation script; blank means nothing to run. */
@@ -179,9 +188,18 @@ function buildEnv(
  * `set -e` leads, so a failing line aborts the run before the next one starts.
  * The worktree is entered through its environment value rather than an inlined
  * path, which keeps the runner free of quoting the user could trip over.
+ *
+ * `set -x` then makes the run readable: without it the log holds output with
+ * nothing to attribute it to, and a failure names no line. It is switched on
+ * after the `cd` so the trace shows the user's script rather than Tessera's
+ * scaffolding, and the traced lines are dimmed to set them apart from the
+ * output they produce.
  */
 function buildPosixRunnerScript(script: string): string {
-  return `#!/usr/bin/env bash\nset -e\ncd -- "$${PREPARATION_WORKTREE_DIR_ENV}"\n${script}\n`;
+  return '#!/usr/bin/env bash\nset -e\n'
+    + `cd -- "$${PREPARATION_WORKTREE_DIR_ENV}"\n`
+    + `PS4=${POSIX_TRACE_PROMPT}\nset -x\n`
+    + `${script}\n`;
 }
 
 /**
@@ -193,10 +211,15 @@ function buildPosixRunnerScript(script: string): string {
  * A `#` line is dropped rather than translated to `rem`, whose argument batch
  * still parses for redirection and pipes — a comment holding `>` or `|` would
  * turn back into a command.
+ *
+ * Echo is switched on once the runner's own setup is done, which is batch's
+ * answer to `set -x`: each command appears in the log before it runs, so the
+ * output below it has something to belong to.
  */
 function buildWindowsRunnerScript(script: string): string {
   let runner = '@echo off\r\nsetlocal EnableExtensions\r\n';
   runner += `cd /d "%${PREPARATION_WORKTREE_DIR_ENV}%"\r\n`;
+  runner += '@echo on\r\n';
 
   for (const line of script.split('\n')) {
     const command = line.trim();

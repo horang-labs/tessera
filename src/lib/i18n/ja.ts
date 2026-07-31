@@ -1079,6 +1079,9 @@ export const ja: I18nMessages = {
       rerunning: '開始しています...',
       rerunFailed: '準備を開始できませんでした。',
       runNow: 'ワークツリーの準備を実行',
+      confirmTitle: '準備をもう一度実行しますか？',
+      confirmDescription: '準備スクリプトがこのワークツリーで最初から実行されます。',
+      confirmNote: 'コピーされるファイルは現在の内容を上書きするため、そこで加えた変更は失われます。',
     },
     selector: {
       addProject: 'フォルダーを開く...',

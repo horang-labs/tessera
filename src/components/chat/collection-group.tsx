@@ -321,7 +321,7 @@ export const CollectionGroup = memo(function CollectionGroup({
     ? taskById.get(contextMenu.targetId)
     : undefined;
   const projectHasPreparationScript = useProjectHasPreparationScript(contextMenuTask?.projectId);
-  const { runPreparation } = useWorktreePreparation();
+  const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
 
   const openItemContextMenu = useCallback(
     (
@@ -705,7 +705,7 @@ export const CollectionGroup = memo(function CollectionGroup({
           onStopProcess={contextMenu.isRunning ? handleContextMenuStopProcess : undefined}
           onRunPreparation={
             contextMenuTask && canPrepareTask(contextMenuTask, projectHasPreparationScript)
-              ? () => void runPreparation(contextMenuTask.id)
+              ? () => requestPreparation(contextMenuTask.id)
               : undefined
           }
           onStatusChange={
@@ -717,6 +717,8 @@ export const CollectionGroup = memo(function CollectionGroup({
           }
         />
       )}
+
+      {preparationConfirmDialog}
 
       {taskIdToDelete && (
         <DeleteTaskDialog

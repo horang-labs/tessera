@@ -303,6 +303,14 @@ async function openContextMenu(taskId) {
   await taskRow(taskId).click({ button: 'right', timeout: 30_000 });
 }
 
+/**
+ * Every surface that offers a run asks first, because a run writes over the
+ * worktree. Nothing starts until this is answered.
+ */
+async function confirmRun() {
+  await page.getByTestId('preparation-rerun-confirm').click({ timeout: 15_000 });
+}
+
 async function capture(name) {
   await fs.mkdir(artifactDir, { recursive: true });
   const file = path.join(artifactDir, `${name}.png`);
@@ -399,6 +407,7 @@ async function phase2(taskId) {
 
   await openContextMenu(taskId);
   await page.getByTestId('ctx-run-preparation').click({ timeout: 15_000 });
+  await confirmRun();
 
   const failed = await waitForStatus(taskId, 'failed');
   assert.equal(failed.exitCode, 3, 'the exit code should be the one the script returned');
@@ -414,10 +423,26 @@ async function phase2(taskId) {
   const shown = await waitForViewText(view, 'preparation-boom');
   assert.ok(shown.includes('preparation-boom'), `the view should read back the output: ${shown}`);
   assert.ok(/3/.test(shown), `the view should report the exit code: ${shown}`);
+  // The log names the line that failed, not just what it printed: output with
+  // nothing to attribute it to is what makes a failed run hard to read.
+  assert.ok(shown.includes('+ exit 3'), `the log should trace the failing line: ${shown}`);
 
   // Re-run from the view itself, with a script that now succeeds.
   await setPreparationScript(SUCCESS_SCRIPT);
+
+  // Backing out of the question leaves the failed run exactly as it was: a
+  // dialog that runs anyway is worse than no dialog.
   await page.getByTestId('task-preparation-rerun').click();
+  await page.getByTestId('preparation-rerun-cancel').click({ timeout: 15_000 });
+  await page.waitForTimeout(1_000);
+  assert.equal(
+    (await readPreparation(taskId)).status,
+    'failed',
+    'cancelling the dialog must not start a run',
+  );
+
+  await page.getByTestId('task-preparation-rerun').click();
+  await confirmRun();
   const succeeded = await waitForStatus(taskId, 'succeeded');
   assert.equal(succeeded.exitCode, 0);
   await badgeIn(taskId).waitFor({ state: 'detached', timeout: 30_000 });
@@ -439,6 +464,7 @@ async function phase3(taskId, worktreePath) {
   await setPreparationScript(FAILING_SCRIPT);
   await openContextMenu(taskId);
   await page.getByTestId('ctx-run-preparation').click({ timeout: 15_000 });
+  await confirmRun();
   await waitForStatus(taskId, 'failed');
 
   await restartServer();
@@ -469,6 +495,7 @@ async function phase4(taskId) {
   await setPreparationScript(LONG_SCRIPT);
   await openContextMenu(taskId);
   await page.getByTestId('ctx-run-preparation').click({ timeout: 15_000 });
+  await confirmRun();
   await waitForStatus(taskId, 'running');
 
   await restartServer();

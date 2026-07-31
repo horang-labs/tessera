@@ -1072,6 +1072,9 @@ export interface I18nMessages {
       rerunning: string;
       rerunFailed: string;
       runNow: string;
+      confirmTitle: string;
+      confirmDescription: string;
+      confirmNote: string;
     };
     selector: {
       addProject: string;

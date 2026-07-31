@@ -1086,6 +1086,9 @@ export const ko: I18nMessages = {
       rerunning: '시작하는 중...',
       rerunFailed: '준비를 시작하지 못했습니다.',
       runNow: '워크트리 준비 실행',
+      confirmTitle: '준비를 다시 실행할까요?',
+      confirmDescription: '준비 스크립트가 이 워크트리에서 처음부터 다시 실행됩니다.',
+      confirmNote: '복사해 오는 파일은 지금 있는 내용을 덮어쓰므로, 그 파일에서 수정한 내용은 사라집니다.',
     },
     selector: {
       addProject: '폴더 열기...',

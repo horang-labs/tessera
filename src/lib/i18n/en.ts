@@ -1079,6 +1079,9 @@ export const en: I18nMessages = {
       rerunning: 'Starting...',
       rerunFailed: 'Preparation could not be started.',
       runNow: 'Run worktree preparation',
+      confirmTitle: 'Run preparation again?',
+      confirmDescription: 'The preparation script will run in this worktree from the start.',
+      confirmNote: 'Files it copies in are written over whatever is there now, so anything you changed in them is lost.',
     },
     selector: {
       addProject: 'Open Folder...',

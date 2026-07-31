@@ -13,6 +13,14 @@ test('colour codes are dropped, and the words they wrapped are kept', () => {
   );
 });
 
+test('the dim prefix goes but the traced command stays', () => {
+  // What `set -x` writes for each line of a preparation script: the colours are
+  // for the live terminal, the command is what a stored log is read for.
+  const traced = '\u001b[2m+ \u001b[0mcp /src/.env .\n\u001b[2m+ \u001b[0mnpm install';
+
+  assert.equal(toPlainLogText(traced), '+ cp /src/.env .\n+ npm install');
+});
+
 test('a spinner that rewrites its own line leaves only what it settled on', () => {
   // npm draws progress by moving to column 1, clearing, and printing again.
   const spinner = '\u001b[1G\u001b[0K⠙\u001b[1G\u001b[0K⠹\u001b[1G\u001b[0Kdone';

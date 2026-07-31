@@ -27,7 +27,15 @@ function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
   }
 }
 
-const WINDOWS_GUARD = 'if errorlevel 1 exit /b %errorlevel%';
+const WINDOWS_GUARD = '@if errorlevel 1 exit /b %errorlevel%';
+
+/**
+ * Everything the runner does before it reaches the line the user wrote. The
+ * trailing `set -x` is what puts those lines in the log.
+ */
+const POSIX_PREAMBLE = '#!/usr/bin/env bash\nset -e\n'
+  + `cd -- "$${PREPARATION_WORKTREE_DIR_ENV}"\n`
+  + "PS4=$'\\033[2m+ \\033[0m'\nset -x\n";
 
 const posixContext = {
   projectDir: '/home/work/src/my-repo',
@@ -82,7 +90,7 @@ test('Linux runs a runner script through the user shell in the worktree', () => 
     assert.deepEqual(spec.args, ['-c', `exec bash '${spec.runnerScriptPath}'`]);
     assert.equal(
       spec.runnerScript,
-      '#!/usr/bin/env bash\nset -e\ncd -- "$TESSERA_WORKTREE_DIR"\ncp "$TESSERA_PROJECT_DIR/.env" .\n',
+      `${POSIX_PREAMBLE}cp "$TESSERA_PROJECT_DIR/.env" .\n`,
     );
   });
 });
@@ -140,6 +148,22 @@ test('a POSIX runner stops at the first failing line', () => {
   });
 });
 
+test('a POSIX runner prints each command it is about to run', () => {
+  withPlatform('linux', () => {
+    const spec = buildPreparationExecutionSpec({
+      ...posixContext,
+      script: 'npm install',
+    });
+
+    assert.ok(spec);
+    // Without this the log holds output with nothing to attribute it to, and a
+    // failure names no line. `set -x` comes after the runner's own `cd`, so
+    // what the log shows is the script rather than Tessera's scaffolding.
+    assert.equal(spec.runnerScript, `${POSIX_PREAMBLE}npm install\n`);
+    assert.ok(spec.runnerScript.indexOf('set -x') > spec.runnerScript.indexOf('cd -- '));
+  });
+});
+
 test('Windows runs a batch runner that bails after each failing line', () => {
   withPlatform('win32', () => {
     const spec = buildPreparationExecutionSpec({
@@ -161,6 +185,8 @@ test('Windows runs a batch runner that bails after each failing line', () => {
     // without it a batch command never comes back and later lines never run.
     assert.ok(spec.runnerScript.startsWith('@echo off\r\nsetlocal EnableExtensions\r\n'));
     assert.ok(spec.runnerScript.includes('cd /d "%TESSERA_WORKTREE_DIR%"\r\n'));
+    // Echoing starts after the runner's own setup, so the log shows the script.
+    assert.ok(spec.runnerScript.includes('cd /d "%TESSERA_WORKTREE_DIR%"\r\n@echo on\r\n'));
     assert.ok(spec.runnerScript.endsWith(
       `call echo one\r\n${WINDOWS_GUARD}\r\n`
       + `call npm install\r\n${WINDOWS_GUARD}\r\n`

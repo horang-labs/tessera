@@ -13,7 +13,7 @@
  * a pointer here, and a successful run has no badge at all.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, Minus, RefreshCw, ScrollText } from 'lucide-react';
 import { TerminalPanel } from '@/components/terminal/terminal-panel';
 import { TabIdContext } from '@/stores/panel-store';
@@ -82,12 +82,11 @@ export function WorktreeScriptsPanel({ sessionId }: { sessionId: string | null }
  */
 function PreparationRow({ taskId, status }: { taskId: string; status: PreparationStatus }) {
   const { t } = useI18n();
-  const { runPreparation } = useWorktreePreparation();
+  const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
   const [stored, setStored] = useState<StoredPreparation | null>(null);
   // "Nothing to read yet" and "the run printed nothing" look the same in the
   // stored value and read very differently to someone waiting for a log.
   const [isReading, setIsReading] = useState(true);
-  const [isStarting, setIsStarting] = useState(false);
 
   const isRunning = status === 'running';
 
@@ -114,15 +113,6 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
     return () => { cancelled = true; };
   }, [isRunning, taskId, status]);
 
-  const rerun = useCallback(async () => {
-    setIsStarting(true);
-    try {
-      await runPreparation(taskId);
-    } finally {
-      setIsStarting(false);
-    }
-  }, [runPreparation, taskId]);
-
   // Stored output is what the PTY emitted, escape sequences and all; without
   // a terminal to read them, they have to be flattened first.
   const output = stored?.output ? toPlainLogText(stored.output) : '';
@@ -148,18 +138,18 @@ function PreparationRow({ taskId, status }: { taskId: string; status: Preparatio
         </div>
         <button
           type="button"
-          onClick={() => void rerun()}
-          disabled={isStarting || !canRerun}
+          onClick={() => requestPreparation(taskId)}
+          disabled={!canRerun}
           title={t('task.preparation.rerun')}
           aria-label={t('task.preparation.rerun')}
           className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-40"
           data-testid="task-preparation-rerun"
         >
-          {isStarting
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <RefreshCw className="h-3.5 w-3.5" />}
+          <RefreshCw className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      {preparationConfirmDialog}
 
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="worktree-scripts-log">
         {isRunning ? (

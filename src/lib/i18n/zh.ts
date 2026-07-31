@@ -1079,6 +1079,9 @@ export const zh: I18nMessages = {
       rerunning: '正在启动...',
       rerunFailed: '无法启动准备。',
       runNow: '运行工作树准备',
+      confirmTitle: '要再次运行准备吗？',
+      confirmDescription: '准备脚本将在此工作树中从头运行。',
+      confirmNote: '复制进来的文件会覆盖当前内容，你在这些文件中所做的修改将会丢失。',
     },
     selector: {
       addProject: '打开文件夹...',

@@ -911,7 +911,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   // ── Task context menu state ──
 
-  const { runPreparation } = useWorktreePreparation();
+  const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
   const [taskMenuAnchor, setTaskMenuAnchor] = useState<{ task: TaskEntity; rect: DOMRect } | null>(null);
   const taskMenuProjectHasScript = useProjectHasPreparationScript(taskMenuAnchor?.task.projectId);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
@@ -926,9 +926,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   const handleTaskRunPreparation = useCallback(() => {
     if (!taskMenuAnchor) return;
-    void runPreparation(taskMenuAnchor.task.id);
+    requestPreparation(taskMenuAnchor.task.id);
     setTaskMenuAnchor(null);
-  }, [runPreparation, taskMenuAnchor]);
+  }, [requestPreparation, taskMenuAnchor]);
 
   // Task context menu action handlers
   const handleTaskStatusChange = useCallback((status: string) => {
@@ -1150,6 +1150,8 @@ export const KanbanBoard = memo(function KanbanBoard() {
           onClose={handleTaskMenuClose}
         />
       )}
+
+      {preparationConfirmDialog}
 
       {/* Delete session confirmation dialog */}
       <DeleteSessionDialog
