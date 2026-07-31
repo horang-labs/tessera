@@ -921,6 +921,7 @@ export interface I18nMessages {
       git: string;
       diff: string;
       files: string;
+      scripts: string;
       context: string;
     };
     empty: {
@@ -1041,6 +1042,18 @@ export interface I18nMessages {
       saveTimedOut: string;
       saveFailed: string;
       loadTimedOut: string;
+    };
+  };
+  scripts: {
+    noWorktree: string;
+    preparation: {
+      name: string;
+      status: {
+        never_run: string;
+        running: string;
+        succeeded: string;
+        failed: string;
+      };
     };
   };
   task: {

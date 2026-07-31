@@ -990,7 +990,6 @@ export function TaskItemRow({
         {/* Left of the title, where the hover actions on the trailing edge can
             never cover it — a preparation failure has to stay reachable. */}
         <TaskPreparationBadge
-          taskId={task.id}
           status={task.preparationStatus}
           presentation="icon"
         />

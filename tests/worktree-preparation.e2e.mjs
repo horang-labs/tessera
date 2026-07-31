@@ -201,6 +201,17 @@ function taskRow(taskId) {
   return page.locator(`[data-testid="collection-task-${taskId}"]`).first();
 }
 
+/**
+ * Switch the right-hand panel away from Scripts.
+ *
+ * Leaving the tab detaches the terminal surface; the run behind it carries on,
+ * which is what the phases that call this are checking.
+ */
+async function leaveScriptsTab() {
+  // Inactive tabs show only their icon, so match on the accessible name.
+  await page.getByRole('tab', { name: 'Git' }).first().click({ timeout: 15_000 });
+}
+
 function badgeIn(taskId) {
   return taskRow(taskId).locator('[data-testid="task-preparation-badge"]');
 }
@@ -255,7 +266,7 @@ async function readTerminalText(scope) {
   let text = '';
   while (Date.now() < deadline) {
     text = await page.evaluate(() => {
-      const view = document.querySelector('[data-testid="task-preparation-view"]');
+      const view = document.querySelector('[data-testid="worktree-scripts-panel"]');
       const rows = view?.querySelector('.xterm-rows');
       return rows ? rows.textContent ?? '' : '';
     });
@@ -263,7 +274,7 @@ async function readTerminalText(scope) {
     await page.waitForTimeout(200);
   }
   const diagnosis = await page.evaluate(() => {
-    const view = document.querySelector('[data-testid="task-preparation-view"]');
+    const view = document.querySelector('[data-testid="worktree-scripts-panel"]');
     const screen = view?.querySelector('.xterm-screen');
     return {
       hasView: Boolean(view),
@@ -342,7 +353,7 @@ async function phase1() {
   );
 
   await badge.click();
-  const view = page.getByTestId('task-preparation-view');
+  const view = page.getByTestId('worktree-scripts-panel');
   await view.waitFor({ state: 'visible', timeout: 30_000 });
   await view.locator('.xterm').first().waitFor({ state: 'attached', timeout: 60_000 });
   const printed = await readTerminalText(view);
@@ -353,7 +364,7 @@ async function phase1() {
 
   // Detaching must not stop the run. The close button, not Escape: the
   // attached terminal has the keyboard.
-  await view.getByRole('button').first().click();
+  await leaveScriptsTab();
   await view.waitFor({ state: 'detached', timeout: 15_000 });
   const afterClose = await readPreparation(task.id);
   assert.equal(afterClose.status, 'running', 'closing the view must leave the run alone');
@@ -398,7 +409,7 @@ async function phase2(taskId) {
   assert.equal(await badge.getAttribute('data-preparation-status'), 'failed');
 
   await badge.click();
-  const view = page.getByTestId('task-preparation-view');
+  const view = page.getByTestId('worktree-scripts-panel');
   await view.waitFor({ state: 'visible', timeout: 30_000 });
   const shown = await waitForViewText(view, 'preparation-boom');
   assert.ok(shown.includes('preparation-boom'), `the view should read back the output: ${shown}`);
@@ -410,6 +421,15 @@ async function phase2(taskId) {
   const succeeded = await waitForStatus(taskId, 'succeeded');
   assert.equal(succeeded.exitCode, 0);
   await badgeIn(taskId).waitFor({ state: 'detached', timeout: 30_000 });
+
+  // The badge going away must not take the run with it: the Scripts tab is
+  // still open on it, and what it printed is still there to read.
+  const afterSuccess = await waitForViewText(view, 'preparation-finished');
+  assert.ok(
+    afterSuccess.includes('preparation-finished'),
+    `a successful run stays readable after its badge goes: ${afterSuccess}`,
+  );
+  await leaveScriptsTab();
 
   results.push({ phase: 2, taskId, failedExitCode: failed.exitCode, recovered: succeeded.status });
 }
@@ -462,14 +482,14 @@ async function phase4(taskId) {
   await badge.waitFor({ state: 'visible', timeout: 30_000 });
   assert.equal(await badge.getAttribute('data-preparation-status'), 'failed');
   await badge.click();
-  const view = page.getByTestId('task-preparation-view');
+  const view = page.getByTestId('worktree-scripts-panel');
   await view.waitFor({ state: 'visible', timeout: 30_000 });
   const shown = await view.innerText();
   assert.ok(
     /still running|아직 실행/i.test(shown) || shown.trim().length > 0,
     `the view should explain the interruption: ${shown}`,
   );
-  await view.getByRole('button').first().click();
+  await leaveScriptsTab();
   await view.waitFor({ state: 'detached', timeout: 15_000 });
 
   results.push({ phase: 4, taskId, interrupted: interrupted.status, exitCode: interrupted.exitCode });

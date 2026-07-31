@@ -928,6 +928,7 @@ export const en: I18nMessages = {
       git: 'Git',
       diff: 'Diff',
       files: 'Files',
+      scripts: 'Scripts',
       context: 'Context',
     },
     empty: {
@@ -1048,6 +1049,18 @@ export const en: I18nMessages = {
       saveTimedOut: 'Saving timed out. The filesystem may be unresponsive.',
       saveFailed: 'Failed to save memory file.',
       loadTimedOut: 'The memory file did not load in time. The filesystem may be unresponsive.',
+    },
+  },
+  scripts: {
+    noWorktree: 'This chat has no worktree, so there is nothing to run.',
+    preparation: {
+      name: 'Preparation',
+      status: {
+        never_run: 'Not run yet',
+        running: 'Running',
+        succeeded: 'Succeeded',
+        failed: 'Failed',
+      },
     },
   },
   task: {

@@ -928,6 +928,7 @@ export const zh: I18nMessages = {
       git: 'Git',
       diff: 'Diff',
       files: '文件',
+      scripts: '脚本',
       context: '上下文',
     },
     empty: {
@@ -1048,6 +1049,18 @@ export const zh: I18nMessages = {
       saveTimedOut: '保存超时。文件系统可能无响应。',
       saveFailed: '无法保存记忆文件。',
       loadTimedOut: '记忆文件未能及时加载。文件系统可能无响应。',
+    },
+  },
+  scripts: {
+    noWorktree: '此对话没有工作树，因此没有可运行的内容。',
+    preparation: {
+      name: '准备',
+      status: {
+        never_run: '尚未运行',
+        running: '运行中',
+        succeeded: '成功',
+        failed: '失败',
+      },
     },
   },
   task: {

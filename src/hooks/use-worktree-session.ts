@@ -269,7 +269,18 @@ export function useWorktreeSession() {
         if (createdTaskId && sessionId) {
           useTaskStore.getState().loadTasks(projectId);
           const { useSessionStore } = await import('@/stores/session-store');
-          useSessionStore.getState().loadProjects();
+          const sessionStore = useSessionStore.getState();
+          sessionStore.loadProjects();
+
+          // Preparation started server-side the moment the worktree existed.
+          // If the panel is open, move it to where that run can be watched —
+          // if it is closed, leave it closed and let the badge do the telling.
+          const project = sessionStore.projects.find((entry) => entry.encodedDir === projectDir);
+          if (project?.hasPreparationScript) {
+            const { useGitStore } = await import('@/stores/git-store');
+            const git = useGitStore.getState();
+            if (git.isOpen) git.setPanelTab('scripts');
+          }
         }
         return {
           ok: true,

@@ -928,6 +928,7 @@ export const ja: I18nMessages = {
       git: 'Git',
       diff: 'Diff',
       files: 'ファイル',
+      scripts: 'スクリプト',
       context: 'コンテキスト',
     },
     empty: {
@@ -1048,6 +1049,18 @@ export const ja: I18nMessages = {
       saveTimedOut: '保存がタイムアウトしました。ファイルシステムが応答していない可能性があります。',
       saveFailed: 'メモリファイルを保存できませんでした。',
       loadTimedOut: 'メモリファイルを時間内に読み込めませんでした。ファイルシステムが応答していない可能性があります。',
+    },
+  },
+  scripts: {
+    noWorktree: 'このチャットにはワークツリーがないため、実行するものがありません。',
+    preparation: {
+      name: '準備',
+      status: {
+        never_run: '未実行',
+        running: '実行中',
+        succeeded: '成功',
+        failed: '失敗',
+      },
     },
   },
   task: {

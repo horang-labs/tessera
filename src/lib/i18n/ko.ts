@@ -935,6 +935,7 @@ export const ko: I18nMessages = {
       git: 'Git',
       diff: 'Diff',
       files: '파일',
+      scripts: '스크립트',
       context: '컨텍스트',
     },
     empty: {
@@ -1055,6 +1056,18 @@ export const ko: I18nMessages = {
       saveTimedOut: '저장 시간이 초과되었습니다. 파일시스템이 응답하지 않을 수 있습니다.',
       saveFailed: '메모리 파일을 저장하지 못했습니다.',
       loadTimedOut: '메모리 파일을 제때 불러오지 못했습니다. 파일시스템이 응답하지 않을 수 있습니다.',
+    },
+  },
+  scripts: {
+    noWorktree: '이 대화에는 워크트리가 없어 실행할 것이 없습니다.',
+    preparation: {
+      name: '준비',
+      status: {
+        never_run: '아직 실행 안 함',
+        running: '실행 중',
+        succeeded: '성공',
+        failed: '실패',
+      },
     },
   },
   task: {
