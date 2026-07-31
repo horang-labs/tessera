@@ -888,13 +888,13 @@ export class CodexAdapter implements CliProvider {
   createSkillSource(sessionId: string, proc: ChildProcess): SkillSource | null {
     return {
       listSkills: async (): Promise<SkillInfo[]> => {
-        if (!proc.stdin?.writable) {
-          throw new Error('Codex skill discovery is unavailable: stdin is not writable');
-        }
-
         const cwd = this._processRuntimeConfig.get(proc)?.cwd;
         if (!cwd) {
           throw new Error('Codex skill discovery is unavailable: session cwd is missing');
+        }
+
+        if (!proc.stdin?.writable) {
+          throw new Error('Codex skill discovery is unavailable: stdin is not writable');
         }
 
         const requestId = this._nextRequestId++;

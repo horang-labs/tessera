@@ -1,3 +1,5 @@
+import { sendInputToTerminal } from '@/lib/terminal/terminal-surface-registry';
+
 export interface SessionReferenceExportOptions {
   untilMessageId?: string;
   untilMessageIndex?: number;
@@ -31,6 +33,21 @@ export async function exportSessionReference(
 
 export function formatSessionReference(title: string, exportPath: string): string {
   return `[Session: "${title}" → ${exportPath}]`;
+}
+
+/**
+ * Terminal sessions render no composer (`chat-area.tsx` skips `MessageInput`
+ * for them), so a dropped session reference is typed straight into the PTY —
+ * the same shape the composer would have produced, landing in whatever prompt
+ * the CLI is showing.
+ */
+export async function insertSessionReferenceIntoTerminal(
+  terminalId: string,
+  sessionId: string,
+  title: string,
+): Promise<boolean> {
+  const exportPath = await exportSessionReference(sessionId);
+  return sendInputToTerminal(terminalId, `${formatSessionReference(title, exportPath)} `);
 }
 
 export function formatContinueConversationPrompt(exportPath: string): string {

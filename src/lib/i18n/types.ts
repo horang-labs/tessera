@@ -6,6 +6,8 @@ export interface I18nMessages {
       generalDesc: string;
       appearance: string;
       appearanceDesc: string;
+      models: string;
+      modelsDesc: string;
       development: string;
       developmentDesc: string;
       git: string;
@@ -214,6 +216,8 @@ export interface I18nMessages {
       customPlaceholder: string;
       customApply: string;
       customHint: string;
+      customEmpty: string;
+      customRemove: string;
     };
     effort: {
       readOnlyTooltip: string;
@@ -455,6 +459,8 @@ export interface I18nMessages {
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
+    promptDensityDecrease: string;
+    promptDensityIncrease: string;
     otherInputPlaceholder: string;
     otherInputPlaceholderWithHint: string;
     submissionFailed: string;
@@ -746,6 +752,7 @@ export interface I18nMessages {
     tooSmallToSplit: string;
     cannotCloseLastPanel: string;
     dropToInsertPath: string;
+    dropToInsertSessionReference: string;
   };
   sidebar: {
     noProjects: string;
@@ -1077,6 +1084,10 @@ export interface I18nMessages {
       taskCreationFailed: string;
       launcherTitle: string;
       launcherSubtitle: string;
+      projectLabel: string;
+      projectPlaceholder: string;
+      projectSelectionHint: string;
+      selectProjectHint: string;
       startAsLabel: string;
       agentUiLabel: string;
       shellLabel: string;

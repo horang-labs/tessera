@@ -54,8 +54,10 @@ docs/assets/*
 
 # IDE / Tools
 .claude/
+.codex/
 agent/
 .playwright-cli/
+graphify-out/
 AGENTS.md
 CLAUDE.md
 skills-lock.json

@@ -13,6 +13,7 @@ import type { Tab } from '@/types/tab';
 import type { Panel, TabPanelData } from '@/types/panel';
 import { SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
 import { getSpecialSessionTitle, getSpecialSessionTitleKey, isSpecialSession } from '@/lib/constants/special-sessions';
+import { requestSessionRename } from '@/lib/session/rename-session-request';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { useAnySessionProcessing } from '@/hooks/use-session-processing';
 
@@ -72,6 +73,40 @@ export function getTabDragSessionId(
     .map((panel) => panel.sessionId)
     .filter(Boolean) as string[];
   return sessionIds.length === 1 ? sessionIds[0] : null;
+}
+
+export type TabTitleCommit =
+  | { kind: 'session'; sessionId: string; title: string }
+  | { kind: 'tab'; title: string | null }
+  | { kind: 'noop' };
+
+/**
+ * 탭 제목 편집을 어디에 반영할지 결정한다.
+ *
+ * 탭에 보이는 제목은 활성 패널 세션의 제목이므로, rename 가능한 세션이 있으면
+ * 세션을 rename해야 사이드바·태스크·DB가 함께 따라온다. 탭 전용 제목은 rename할
+ * 세션이 없는 탭(빈 탭, 세션 없는 터미널 패널, 특수 세션)에서만 쓴다.
+ */
+export function resolveTabTitleCommit({
+  nextTitle,
+  displayTitle,
+  tabTitle,
+  renameTargetSessionId,
+}: {
+  nextTitle: string;
+  displayTitle: string;
+  tabTitle: string | null;
+  renameTargetSessionId: string | null;
+}): TabTitleCommit {
+  if (renameTargetSessionId) {
+    if (!nextTitle || nextTitle === displayTitle) return { kind: 'noop' };
+    return { kind: 'session', sessionId: renameTargetSessionId, title: nextTitle };
+  }
+  if (!nextTitle) {
+    return tabTitle !== null ? { kind: 'tab', title: null } : { kind: 'noop' };
+  }
+  if (nextTitle === displayTitle) return { kind: 'noop' };
+  return { kind: 'tab', title: nextTitle };
 }
 
 export function shouldDragTabPanelTree(tabData: TabPanelData | null | undefined): boolean {
@@ -220,6 +255,12 @@ export const TabItem = memo(function TabItem({
     displayTitle = session.title ?? session.id;
   }
 
+  // 특수 세션(Skills Dashboard 등)은 rename 대상이 아니다 — 탭 로컬 제목으로 남긴다.
+  const renameTargetSessionId =
+    activePanelSessionId && !isSpecialSession(activePanelSessionId) && session
+      ? activePanelSessionId
+      : null;
+
   const sessionCount = isActive ? liveSessionCount : deriveSessionCount(inactiveTabData?.panels ?? {});
   const label = formatTabLabel(displayTitle, sessionCount);
 
@@ -300,14 +341,25 @@ export const TabItem = memo(function TabItem({
   );
 
   const commitTitleEdit = useCallback(() => {
-    const nextTitle = titleInput.trim();
-    if (!nextTitle && tab.title !== null) {
-      useTabStore.getState().renameTab(tab.id, null);
-    } else if (nextTitle && nextTitle !== displayTitle) {
-      useTabStore.getState().renameTab(tab.id, nextTitle);
-    }
+    const commit = resolveTabTitleCommit({
+      nextTitle: titleInput.trim(),
+      displayTitle,
+      tabTitle: tab.title,
+      renameTargetSessionId,
+    });
     setIsEditingTitle(false);
-  }, [displayTitle, tab.id, tab.title, titleInput]);
+
+    if (commit.kind === 'session') {
+      // 예전에 붙여둔 탭 로컬 제목이 남아 있으면 새 세션 제목을 계속 가린다.
+      if (tab.title !== null) {
+        useTabStore.getState().renameTab(tab.id, null);
+      }
+      useTabStore.getState().pinTab(tab.id);
+      void requestSessionRename(commit.sessionId, commit.title, t);
+    } else if (commit.kind === 'tab') {
+      useTabStore.getState().renameTab(tab.id, commit.title);
+    }
+  }, [displayTitle, renameTargetSessionId, t, tab.id, tab.title, titleInput]);
 
   const cancelTitleEdit = useCallback(() => {
     setTitleInput(displayTitle);

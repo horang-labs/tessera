@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { useTabStore } from '@/stores/tab-store';
+import { resolveTabTitleCommit } from '@/components/tab/tab-item';
 
 test('a tab can be given a custom title without changing its identity', () => {
   const tab = {
@@ -62,4 +63,62 @@ test('clearing a custom title restores derived-title behavior', () => {
   useTabStore.getState().renameTab(tab.id, null);
 
   assert.deepEqual(useTabStore.getState().tabs, [{ ...tab, title: null }]);
+});
+
+test('editing the tab title renames the active session, not just the tab', () => {
+  assert.deepEqual(
+    resolveTabTitleCommit({
+      nextTitle: 'Deploy script',
+      displayTitle: 'session-1',
+      tabTitle: null,
+      renameTargetSessionId: 'session-1',
+    }),
+    { kind: 'session', sessionId: 'session-1', title: 'Deploy script' },
+  );
+});
+
+test('a tab without a renameable session falls back to a tab-local title', () => {
+  assert.deepEqual(
+    resolveTabTitleCommit({
+      nextTitle: 'Scratch',
+      displayTitle: 'New tab',
+      tabTitle: null,
+      renameTargetSessionId: null,
+    }),
+    { kind: 'tab', title: 'Scratch' },
+  );
+});
+
+test('an empty title clears a tab-local name but never renames a session', () => {
+  assert.deepEqual(
+    resolveTabTitleCommit({
+      nextTitle: '',
+      displayTitle: 'Temporary name',
+      tabTitle: 'Temporary name',
+      renameTargetSessionId: null,
+    }),
+    { kind: 'tab', title: null },
+  );
+
+  assert.deepEqual(
+    resolveTabTitleCommit({
+      nextTitle: '',
+      displayTitle: 'Deploy script',
+      tabTitle: null,
+      renameTargetSessionId: 'session-1',
+    }),
+    { kind: 'noop' },
+  );
+});
+
+test('committing an unchanged title does nothing', () => {
+  assert.deepEqual(
+    resolveTabTitleCommit({
+      nextTitle: 'Deploy script',
+      displayTitle: 'Deploy script',
+      tabTitle: null,
+      renameTargetSessionId: 'session-1',
+    }),
+    { kind: 'noop' },
+  );
 });

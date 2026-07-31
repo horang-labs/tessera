@@ -46,6 +46,12 @@ _Avoid_: terminal launched, TUI started
 
 An optional structured-chat execution mode available only to GUI-capable providers. Claude Code, Codex, and OpenCode are currently GUI-capable. When GUI mode is preferred for a provider without that capability, the session uses PTY mode.
 
+### Effective CLI model catalog
+
+The model IDs, display names, default selection, and declared capabilities exposed by the coding-agent CLI's currently active effective configuration for use in GUI mode. Tessera reads this catalog without changing the CLI or external provider configuration; inactive external-provider profiles are excluded and a configuration change replaces the catalog.
+
+_Avoid_: CC Switch model list, provider list
+
 ### Effective execution mode
 
 The mode actually used by a session after applying the user's preferred execution mode to the selected provider's capabilities.
@@ -53,3 +59,15 @@ The mode actually used by a session after applying the user's preferred executio
 ### Session execution mode
 
 The effective execution mode fixed when a session is created. A session cannot switch between GUI and PTY modes, and conversation state cannot resume across those modes.
+
+### Worktree diff stats
+
+The uncommitted work in a working directory, measured against its last commit and counted as added lines, removed lines, and changed files. Lines in new untracked files count as added. Every session sharing a working directory shows the same stats.
+
+_Avoid_: diff count, change count, line count
+
+### Diff stats safety sweep
+
+The periodic refresh that recomputes worktree diff stats for sessions with a live runtime, so displayed stats cannot stay wrong indefinitely when the signals that normally trigger a recompute all go quiet.
+
+_Avoid_: diff polling, stats refresh loop

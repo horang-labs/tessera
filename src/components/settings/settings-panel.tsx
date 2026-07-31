@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useCallback, useState, type ReactNode } from 'react';
-import { GitBranch, MessageSquarePlus, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
+import { Cpu, GitBranch, MessageSquarePlus, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import ProfileSettings from './profile-settings';
@@ -22,13 +22,14 @@ import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 import AgentExecutionModeSettings from './agent-execution-mode-settings';
 import TerminalViewDefaultSettings from './terminal-view-default-settings';
+import CustomModelSettings from './custom-model-settings';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
-type SettingsSectionId = 'general' | 'appearance' | 'development' | 'git';
+type SettingsSectionId = 'general' | 'appearance' | 'models' | 'development' | 'git';
 
 function SettingsCard({
   children,
@@ -94,6 +95,12 @@ export default function SettingsPanel() {
       description: t('settings.sections.appearanceDesc'),
     },
     {
+      id: 'models' as const,
+      icon: Cpu,
+      label: t('settings.sections.models'),
+      description: t('settings.sections.modelsDesc'),
+    },
+    {
       id: 'development' as const,
       icon: Terminal,
       label: t('settings.sections.development'),
@@ -124,6 +131,12 @@ export default function SettingsPanel() {
         return (
           <SettingsCard testId="settings-section-git">
             <GitSettings />
+          </SettingsCard>
+        );
+      case 'models':
+        return (
+          <SettingsCard testId="settings-section-models">
+            <CustomModelSettings />
           </SettingsCard>
         );
       case 'development':

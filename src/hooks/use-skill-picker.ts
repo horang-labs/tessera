@@ -157,9 +157,13 @@ export function useSkillPicker(
   );
   const hasLoadedCommands = commands !== undefined;
   const hasBuiltInCommands = builtInCommands.length > 0;
+  const canDiscoverBeforeSession = providerId === 'claude-code'
+    || providerId === 'codex'
+    || providerId === 'opencode';
   const isInactive = isOpen && !hasLoadedCommands
     && (skillsOnlyMode || !hasBuiltInCommands)
-    && isSessionRunning === false;
+    && isSessionRunning === false
+    && !canDiscoverBeforeSession;
   const isLoading = isOpen && !hasLoadedCommands
     && (skillsOnlyMode || !hasBuiltInCommands)
     && !isInactive;
@@ -197,22 +201,46 @@ export function useSkillPicker(
       && (useCommandStore.getState().revisions[sessionId] ?? 0) === skillRevision;
 
     const task = (async () => {
-      if (providerId === 'claude-code' || providerId === 'opencode') {
+      if (providerId === 'opencode') {
         if (isSessionRunning !== false) {
           wsClient.getCommands(sessionId);
+          return;
+        }
+      }
+
+      if (providerId === 'codex') {
+        const skills = await loadCodexSkills(sessionId, {
+          shouldContinue: isCurrentLoad,
+        });
+        if (skills !== null && isCurrentLoad()) {
+          setCommands(sessionId, skills);
         }
         return;
       }
 
-      if (isSessionRunning === false) {
-        return;
-      }
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/skills`);
+        if (!response.ok) {
+          throw new Error(`Failed to load skills: ${response.status}`);
+        }
 
-      const skills = await loadCodexSkills(sessionId, {
-        shouldContinue: isCurrentLoad,
-      });
-      if (skills !== null && isCurrentLoad()) {
-        setCommands(sessionId, skills);
+        const data = await response.json();
+        const skills = Array.isArray(data.skills)
+          ? data.skills
+              .filter((skill: any) => skill && typeof skill.name === 'string')
+              .map((skill: any) => ({
+                name: skill.name as string,
+                description: typeof skill.description === 'string' ? skill.description : '',
+              }))
+          : [];
+
+        if (isCurrentLoad()) {
+          setCommands(sessionId, skills);
+        }
+      } catch {
+        if (isCurrentLoad()) {
+          setCommands(sessionId, []);
+        }
       }
     })();
 
@@ -230,7 +258,6 @@ export function useSkillPicker(
   useEffect(
     function loadProviderSkillsWhenReady() {
       if (!sessionId || !providerId || hasLoadedCommands) return;
-      if (isSessionRunning === false) return;
       void loadProviderSkills();
     },
     [hasLoadedCommands, isSessionRunning, loadProviderSkills, providerId, sessionId],

@@ -146,8 +146,8 @@ export interface TabStoreActions {
   reorderTab(dragTabId: string, dropTabId: string): void;
 
   /**
-   * 특정 세션을 새 탭에서 열기 (Ctrl+클릭 시나리오용 시맨틱 래퍼).
-   * 내부적으로 createTab(sessionId)을 호출.
+   * 특정 세션을 고정 탭에서 열기.
+   * 선택된 탭이 빈 단일 패널이면 그 New Tab을 재사용하고, 아니면 새 탭을 생성.
    */
   createTabWithSession(sessionId: string): void;
 
@@ -178,6 +178,11 @@ export interface TabStoreActions {
    * All Projects의 빈 전역 탭에서 세션을 만든 뒤 실제 프로젝트 탭으로 귀속할 때 사용.
    */
   syncTabProjectFromSession(tabId: string, sessionId: string | null): void;
+
+  /**
+   * 세션이 없는 프로젝트 셸처럼 프로젝트 소유권을 직접 지정해야 하는 탭에 사용.
+   */
+  setTabProject(tabId: string, projectDir: string): void;
 
   /**
    * 주어진 세션이 열려 있는 탭과 패널을 찾음 (BR-007).

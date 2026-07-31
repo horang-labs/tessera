@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -37,6 +38,22 @@ test('buildToolImageUrl / buildImageToolResult encode session + toolUseId', () =
     contentType: 'image',
     url: '/api/sessions/s/tool-image?toolUseId=call_x',
   });
+});
+
+// --- the route reads through the host filesystem, not the CLI's path ---
+
+test('tool-image route resolves the recorded path for the host filesystem', () => {
+  const routeSource = fs.readFileSync(
+    new URL('../src/app/api/sessions/[id]/tool-image/route.ts', import.meta.url),
+    'utf8',
+  );
+
+  // A Windows-hosted server driving a WSL agent records `/home/...` and
+  // `/mnt/c/...`; reading those verbatim is what broke inline images there.
+  assert.match(routeSource, /resolvePathForHostFilesystem\(rawPath\)/);
+  assert.match(routeSource, /fs\.stat\(hostPath\)/);
+  assert.match(routeSource, /fs\.readFile\(hostPath\)/);
+  assert.doesNotMatch(routeSource, /fs\.(stat|readFile)\(rawPath\)/);
 });
 
 // --- codex view_image (imageView) end-to-end through the parser ---

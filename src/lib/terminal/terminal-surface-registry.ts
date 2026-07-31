@@ -86,6 +86,14 @@ export interface TerminalSurfaceOptions {
   previewOwned?: boolean;
 }
 
+/**
+ * Rows around the cursor that belong to the CLI's input box — its border above,
+ * and the border plus hint/status line below (Claude Code and Codex both draw
+ * roughly this shape).
+ */
+const PROMPT_BOX_ROWS_ABOVE = 2;
+const PROMPT_BOX_ROWS_BELOW = 2;
+
 type XtermLike = TerminalScrollTarget & {
   cols: number;
   rows: number;
@@ -538,6 +546,33 @@ export class TerminalSurface {
 
   matchesTerminal(terminalId: string): boolean {
     return this.options.terminalId === terminalId || this.actualTerminalId === terminalId;
+  }
+
+  /**
+   * Client-coordinate band covering the CLI's input box, or null when the
+   * terminal is not mounted. A TUI frames its prompt with a border and a status
+   * line around the cursor row, and parks the whole thing wherever the content
+   * ends — so a drop target aimed at "the input area" has to follow the cursor
+   * and span the rows around it.
+   */
+  getPromptBounds(): { top: number; bottom: number } | null {
+    const terminal = this.terminal;
+    const element = terminal?.element;
+    if (!terminal || !element || terminal.rows <= 0) return null;
+
+    const rect = element.getBoundingClientRect();
+    if (rect.height <= 0) return null;
+
+    const rowHeight = rect.height / terminal.rows;
+    const cursorRow = Math.min(terminal.buffer.active.cursorY, terminal.rows - 1);
+    const cursorTop = rect.top + cursorRow * rowHeight;
+    return {
+      top: Math.max(cursorTop - rowHeight * PROMPT_BOX_ROWS_ABOVE, rect.top),
+      bottom: Math.min(
+        cursorTop + rowHeight * (1 + PROMPT_BOX_ROWS_BELOW),
+        rect.bottom,
+      ),
+    };
   }
 
   resetWebglTextureAtlas(): void {
@@ -1694,4 +1729,21 @@ export function pasteInputToTerminal(terminalId: string, data: string): boolean 
 
 export function getSessionTerminalId(sessionId: string): string {
   return `session-${sessionId}`;
+}
+
+/** Where the input box currently sits on screen, preferring the running surface. */
+export function getTerminalPromptBounds(
+  terminalId: string,
+): { top: number; bottom: number } | null {
+  const candidates = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
+  for (const surface of candidates) {
+    if (surface.getSnapshot().status !== 'running') continue;
+    const bounds = surface.getPromptBounds();
+    if (bounds) return bounds;
+  }
+  for (const surface of candidates) {
+    const bounds = surface.getPromptBounds();
+    if (bounds) return bounds;
+  }
+  return null;
 }
