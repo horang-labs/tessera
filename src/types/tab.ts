@@ -180,6 +180,11 @@ export interface TabStoreActions {
   syncTabProjectFromSession(tabId: string, sessionId: string | null): void;
 
   /**
+   * 세션이 없는 프로젝트 셸처럼 프로젝트 소유권을 직접 지정해야 하는 탭에 사용.
+   */
+  setTabProject(tabId: string, projectDir: string): void;
+
+  /**
    * 주어진 세션이 열려 있는 탭과 패널을 찾음 (BR-007).
    * 활성 탭의 live 상태를 먼저 검색 후, 비활성 탭의 스냅샷을 순서대로 검색.
    * @returns 탭+패널 위치 또는 null (찾지 못한 경우)
