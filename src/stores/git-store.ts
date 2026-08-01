@@ -1,11 +1,20 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+/** Which of the right-hand panel's tabs is showing. */
+export type GitPanelTab = 'git' | 'files' | 'scripts' | 'memory'
+
 interface GitPanelUIState {
   isOpen: boolean
   panelWidth: number
   drawerOpen: boolean
   drawerHeight: number
+  /**
+   * Kept here rather than inside the panel so that anything with a reason to
+   * send the user to a particular tab — a preparation badge, a worktree that
+   * has just been created — can open the panel on it.
+   */
+  panelTab: GitPanelTab
 
   toggle: () => void
   open: () => void
@@ -14,6 +23,9 @@ interface GitPanelUIState {
   setDrawerOpen: (open: boolean) => void
   toggleDrawer: () => void
   setDrawerHeight: (height: number) => void
+  setPanelTab: (tab: GitPanelTab) => void
+  /** Open the panel and show one tab, whatever was showing before. */
+  openTab: (tab: GitPanelTab) => void
 }
 
 export const useGitStore = create<GitPanelUIState>()(
@@ -23,6 +35,7 @@ export const useGitStore = create<GitPanelUIState>()(
       panelWidth: 320,
       drawerOpen: false,
       drawerHeight: 320,
+      panelTab: 'git',
 
       toggle: () => set({ isOpen: !get().isOpen }),
       open: () => set({ isOpen: true }),
@@ -31,6 +44,8 @@ export const useGitStore = create<GitPanelUIState>()(
       setDrawerOpen: (open) => set({ drawerOpen: open }),
       toggleDrawer: () => set({ drawerOpen: !get().drawerOpen }),
       setDrawerHeight: (height) => set({ drawerHeight: height }),
+      setPanelTab: (tab) => set({ panelTab: tab }),
+      openTab: (tab) => set({ isOpen: true, panelTab: tab }),
     }),
     {
       name: 'tessera:git-panel',
@@ -38,6 +53,7 @@ export const useGitStore = create<GitPanelUIState>()(
         isOpen: state.isOpen,
         panelWidth: state.panelWidth,
         drawerHeight: state.drawerHeight,
+        panelTab: state.panelTab,
       }),
     }
   )

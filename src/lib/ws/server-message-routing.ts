@@ -7,6 +7,7 @@ import { sessionHistory } from '../session-history';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
 import { bindTerminalSender } from '../terminal/shared-terminal-manager';
+import { isPreparationTerminalId } from '../projects/preparation-terminal-id';
 import {
   resolveTerminalLaunchIntent,
   TerminalLaunchIntentError,
@@ -521,6 +522,15 @@ export async function routeClientTransportMessage({
         : message.terminalId;
       if (sessionId) pendingTerminalReservation = { manager, sessionId, terminalId };
       const terminalExists = manager.hasOrIsOpening(terminalId, userId, sessionId);
+      if (isPreparationTerminalId(terminalId) && !terminalExists) {
+        sendToConnection(connectionId, {
+          type: 'terminal_error',
+          terminalId: message.terminalId,
+          surfaceId: message.surfaceId,
+          message: 'Worktree preparation is no longer running.',
+        });
+        return;
+      }
       let launchSpec: TerminalLaunchSpec | undefined;
       let providerId: string | undefined;
       let launchEnv: Record<string, string> | undefined;

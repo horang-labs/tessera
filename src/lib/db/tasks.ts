@@ -6,6 +6,7 @@ import { getDb } from './database';
 import logger from '../logger';
 import type { WorkflowStatus, TaskEntity, TaskSession } from '@/types/task-entity';
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
+import { readPreparationStatus } from '@/lib/projects/preparation-status-policy';
 import { extractSessionKind } from './sessions';
 
 export interface TaskRow {
@@ -28,6 +29,11 @@ export interface TaskRow {
   pr_unsupported: number;
   remote_branch_exists: number | null;
   pr_head_ref_oid: string | null;
+  preparation_status: string | null;
+  preparation_started_at: string | null;
+  preparation_finished_at: string | null;
+  preparation_exit_code: number | null;
+  preparation_output: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -125,6 +131,7 @@ function mapRowToEntity(
     sortOrder: row.sort_order ?? 0,
     prStatus: readPrStatusFromRow(row),
     prUnsupported: !!row.pr_unsupported,
+    preparationStatus: readPreparationStatus(row.preparation_status),
     remoteBranchExists:
       row.remote_branch_exists === null || row.remote_branch_exists === undefined
         ? undefined

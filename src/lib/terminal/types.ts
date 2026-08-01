@@ -46,6 +46,12 @@ export interface TerminalCreateOptions {
   cols?: number;
   rows?: number;
   launchSpec?: TerminalLaunchSpec;
+  /**
+   * Fully resolved argv that skips cwd validation and shell wrapping. Only the
+   * server may supply it, for work it started itself against a directory it
+   * just created; a browser transport must go through launchSpec instead.
+   */
+  resolvedShell?: TerminalResolvedShell;
   /** Provider hook side-channel token minted by server-message-routing. */
   paneToken?: string;
   /** Native agent provider launched inside this PTY. */
@@ -72,6 +78,16 @@ export interface TerminalCreateOptions {
   appearance?: TerminalAppearance;
   /** Disposes provider resources created before PTY spawn. */
   launchObserverDisposer?: () => void;
+  /**
+   * Called once the runtime's process ends, with the output still held for
+   * replay. Only the server may supply it: it exists so work the server started
+   * with no surface attached can record how it went, and a runtime that ends
+   * with nobody watching would otherwise report to nobody.
+   */
+  onRuntimeExit?: (
+    event: { exitCode: number; signal?: number },
+    output: string,
+  ) => void;
   /** Server-owned environment overrides for the provider process. */
   launchEnv?: Record<string, string>;
   /**

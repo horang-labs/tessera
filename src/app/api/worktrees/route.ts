@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
+import { setTaskWorktreeBranch, taskExists } from '@/lib/db/tasks';
 import logger from '@/lib/logger';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
+import { startWorktreePreparation } from '@/lib/projects/worktree-preparation';
 import { SettingsManager } from '@/lib/settings/manager';
 import {
   allocateManagedWorktree,
@@ -52,12 +54,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { projectDir, branchPrefix, branchSlug, allowBranchSlugSuffix, baseRef } = body as {
+  const { projectDir, branchPrefix, branchSlug, allowBranchSlugSuffix, baseRef, taskId } = body as {
     projectDir?: unknown;
     branchPrefix?: unknown;
     branchSlug?: unknown;
     allowBranchSlugSuffix?: unknown;
     baseRef?: unknown;
+    taskId?: unknown;
   };
 
   // --- Input validation ---
@@ -80,6 +83,14 @@ export async function POST(req: NextRequest) {
 
   if (baseRef !== undefined && typeof baseRef !== 'string') {
     return NextResponse.json({ error: 'baseRef must be a string' }, { status: 400 });
+  }
+
+  if (taskId !== undefined && typeof taskId !== 'string') {
+    return NextResponse.json({ error: 'taskId must be a string' }, { status: 400 });
+  }
+
+  if (taskId !== undefined && !taskExists(taskId)) {
+    return NextResponse.json({ error: `Unknown task: ${taskId}` }, { status: 404 });
   }
 
   // Ensure projectDir is absolute and has no path traversal
@@ -212,6 +223,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: `Failed to create worktree: ${msg}` },
       { status: 500 }
+    );
+  }
+
+  if (taskId) {
+    // Recorded here rather than by a follow-up call from the client, so the
+    // task and its worktree cannot be left disagreeing if that call never
+    // arrives.
+    setTaskWorktreeBranch(taskId, branchName);
+
+    // The worktree exists the moment git succeeds, so its creation is reported
+    // without waiting on preparation — which may take as long as the user's
+    // script does, and whose failure must not cost them the worktree. The
+    // status the run writes to the task is what reports it instead.
+    void startWorktreePreparation({ userId, taskId, projectDir, worktreePath, branchName })
+      .catch((error) => {
+        logger.error({ error, branchName, projectDir, worktreePath }, 'Worktree preparation failed to start');
+      });
+  } else {
+    // Preparation records its status on a task, so a worktree created without
+    // one has nowhere to report to and is left unprepared.
+    logger.warn(
+      { branchName, projectDir, worktreePath },
+      'Worktree created without a task; preparation was not started',
     );
   }
 

@@ -26,7 +26,9 @@ export default function SettingsButton({ className, iconSize = 'default' }: Sett
       variant="ghost"
       size={iconSize === 'lg' ? 'icon-lg' : 'icon'}
       className={cn('relative', className)}
-      onClick={openSettings}
+      // Called with no arguments on purpose: the click event is not a request
+      // for a section, and passing it through would read as one.
+      onClick={() => openSettings()}
       onFocus={preloadSettingsPanel}
       onPointerEnter={preloadSettingsPanel}
       aria-label={t('settings.title')}

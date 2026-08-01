@@ -4,6 +4,8 @@ export interface I18nMessages {
     sections: {
       general: string;
       generalDesc: string;
+      project: string;
+      projectDesc: string;
       appearance: string;
       appearanceDesc: string;
       models: string;
@@ -259,6 +261,46 @@ export interface I18nMessages {
       retentionConfirmCancel: string;
       retentionConfirmAction: string;
       retentionConfirming: string;
+    };
+    preparation: {
+      title: string;
+      description: string;
+      projectLabel: string;
+      scriptLabel: string;
+      scriptDesc: string;
+      scriptPlaceholder: string;
+      runsOnCreate: string;
+      noProject: string;
+      loading: string;
+      saving: string;
+      saved: string;
+      saveFailed: string;
+      loadFailed: string;
+      variables: {
+        projectDir: string;
+        worktreeDir: string;
+        branchName: string;
+      };
+      checklist: {
+        open: string;
+        close: string;
+        description: string;
+        scanning: string;
+        scanFailed: string;
+        empty: string;
+        truncated: string;
+        selected: string;
+        inScriptOnly: string;
+        kind: {
+          configuration: string;
+          instructions: string;
+          dependencies: string;
+          buildOutput: string;
+          logs: string;
+          images: string;
+          unrecognised: string;
+        };
+      };
     };
     category: {
       session: string;
@@ -902,6 +944,7 @@ export interface I18nMessages {
       git: string;
       diff: string;
       files: string;
+      scripts: string;
       context: string;
     };
     empty: {
@@ -1024,7 +1067,41 @@ export interface I18nMessages {
       loadTimedOut: string;
     };
   };
+  scripts: {
+    noWorktree: string;
+    readingLog: string;
+    script: string;
+    scriptLines: string;
+    editScript: string;
+    preparation: {
+      name: string;
+      status: {
+        never_run: string;
+        running: string;
+        succeeded: string;
+        failed: string;
+      };
+    };
+  };
   task: {
+    preparation: {
+      preparing: string;
+      failed: string;
+      title: string;
+      runningDescription: string;
+      failedDescription: string;
+      succeededDescription: string;
+      exitCode: string;
+      noOutput: string;
+      interrupted: string;
+      rerun: string;
+      rerunning: string;
+      rerunFailed: string;
+      runNow: string;
+      confirmTitle: string;
+      confirmDescription: string;
+      confirmNote: string;
+    };
     selector: {
       addProject: string;
       noProjects: string;

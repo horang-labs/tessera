@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Brain, FileText, GitCommitHorizontal, X } from "lucide-react";
+import { X } from "lucide-react";
+import { useGitStore, type GitPanelTab } from "@/stores/git-store";
+import {
+  WorktreeScriptsPanel,
+  useWorktreeScriptsAvailable,
+} from "@/components/scripts/worktree-scripts-panel";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
@@ -24,17 +29,20 @@ import { MemoryPanel } from "@/components/memory/memory-panel";
 import { cn } from "@/lib/utils";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
 
-type GitPanelTab = "git" | "files" | "memory";
-
+/**
+ * Every tab says what it is.
+ *
+ * Four of them and a narrow panel is a tight fit, so the words are what stays
+ * and the icons go: an unlabelled icon row leaves the reader guessing which
+ * mark means which panel, and guessing costs more than an icon buys.
+ */
 function GitPanelTabButton({
   active,
   children,
-  icon,
   onClick,
 }: {
   active: boolean;
-  children: ReactNode;
-  icon: ReactNode;
+  children: string;
   onClick: () => void;
 }) {
   return (
@@ -42,15 +50,15 @@ function GitPanelTabButton({
       type="button"
       role="tab"
       aria-selected={active}
+      title={children}
       onClick={onClick}
       className={cn(
-        "flex h-6 min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+        "flex h-6 min-w-0 flex-1 items-center justify-center rounded px-1 text-[11px] font-medium transition-colors",
         active
           ? "bg-(--sidebar-bg) text-(--text-primary) shadow-sm"
-          : "text-(--text-muted) hover:text-(--text-primary)",
+          : "text-(--text-muted) hover:bg-(--sidebar-bg)/60 hover:text-(--text-primary)",
       )}
     >
-      {icon}
       <span className="truncate">{children}</span>
     </button>
   );
@@ -74,7 +82,10 @@ export function GitPanel({
   const isWindowsElectron = electronPlatform === "win32";
   const isLinuxElectron = electronPlatform === "linux";
   const controller = useGitPanelController(sessionId);
-  const [activePanelTab, setActivePanelTab] = useState<GitPanelTab>("git");
+  // The selection lives in the store so a preparation badge can send the user
+  // straight to the Scripts tab.
+  const activePanelTab = useGitStore((state) => state.panelTab);
+  const setActivePanelTab = useGitStore((state) => state.setPanelTab);
   const openedTelemetryRef = useRef(false);
   const resolvedCloseLabel = closeLabel ?? t("chat.closeGitPanel");
 
@@ -82,12 +93,15 @@ export function GitPanel({
     sessionId ? state.getSession(sessionId)?.provider?.trim() ?? null : null,
   );
   const showMemoryTab = supportsMemoryPanel(sessionProvider);
+  const showScriptsTab = useWorktreeScriptsAvailable(sessionId);
 
   // Derive the visible tab instead of forcing state: if the stored selection
-  // is Context but this session can't show it, fall back to Git for rendering
-  // while preserving the selection for supported providers.
-  const effectivePanelTab: GitPanelTab =
-    !showMemoryTab && activePanelTab === "memory" ? "git" : activePanelTab;
+  // is one this session can't show, fall back to Git for rendering while
+  // preserving the selection for sessions that can.
+  const tabUnavailable =
+    (!showMemoryTab && activePanelTab === "memory")
+    || (!showScriptsTab && activePanelTab === "scripts");
+  const effectivePanelTab: GitPanelTab = tabUnavailable ? "git" : activePanelTab;
 
   useEffect(() => {
     openedTelemetryRef.current = false;
@@ -129,6 +143,7 @@ export function GitPanel({
     });
   }, [
     activePanelTab,
+    setActivePanelTab,
     controller.changedFileCount,
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
@@ -223,22 +238,27 @@ export function GitPanel({
         >
           <GitPanelTabButton
             active={effectivePanelTab === "git"}
-            icon={<GitCommitHorizontal className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("git")}
           >
             {t("gitPanel.tabs.git")}
           </GitPanelTabButton>
           <GitPanelTabButton
             active={effectivePanelTab === "files"}
-            icon={<FileText className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("files")}
           >
             {t("gitPanel.tabs.files")}
           </GitPanelTabButton>
+          {showScriptsTab ? (
+            <GitPanelTabButton
+              active={effectivePanelTab === "scripts"}
+              onClick={() => handlePanelTabChange("scripts")}
+            >
+              {t("gitPanel.tabs.scripts")}
+            </GitPanelTabButton>
+          ) : null}
           {showMemoryTab ? (
             <GitPanelTabButton
               active={effectivePanelTab === "memory"}
-              icon={<Brain className="h-3.5 w-3.5" />}
               onClick={() => handlePanelTabChange("memory")}
             >
               {t("gitPanel.tabs.context")}
@@ -259,6 +279,7 @@ export function GitPanel({
         ) : null}
       </div>
 
+      {effectivePanelTab === "scripts" ? null : (
       <GitPanelSummarySection
         data={controller.data}
         loading={controller.loading}
@@ -269,10 +290,15 @@ export function GitPanel({
         onOpenExternal={controller.openExternal}
         showDetails={effectivePanelTab === "git"}
       />
+      )}
 
       {effectivePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
           <WorkspaceFilePanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+        </div>
+      ) : effectivePanelTab === "scripts" ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <WorktreeScriptsPanel key={sessionId ?? "no-session"} sessionId={sessionId} />
         </div>
       ) : effectivePanelTab === "memory" ? (
         <div className="min-h-0 flex-1">

@@ -71,3 +71,25 @@ _Avoid_: diff count, change count, line count
 The periodic refresh that recomputes worktree diff stats for sessions with a live runtime, so displayed stats cannot stay wrong indefinitely when the signals that normally trigger a recompute all go quiet.
 
 _Avoid_: diff polling, stats refresh loop
+
+### Worktree preparation
+
+The one-time work that makes a newly created worktree usable: supplying what Git does not carry over, such as local configuration files a project needs but does not track.
+
+_Avoid_: setup, bootstrap, initialization
+
+### Preparation script
+
+The commands a project runs during worktree preparation. It belongs to the project, so every worktree created from that project inherits it.
+
+_Avoid_: setup script, hook — in Tessera, _setup_ names the first-run onboarding flow instead
+
+### Preparation status
+
+How far a worktree's preparation has progressed, and whether it succeeded. The outcome outlives the run, so a failed preparation stays visible until it is retried.
+
+### Copy block
+
+The marked region of a preparation script that Tessera owns and rewrites in full from the ignored-file checklist. Everything outside it is the user's, including a generated line moved out of it, which is what makes rewriting the block safe to do without asking.
+
+_Avoid_: managed block, generated section

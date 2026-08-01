@@ -33,6 +33,11 @@ import { PortfolioFilterBar } from './portfolio-filter-bar';
 import { KanbanChatColumn, KanbanWorkflowColumn } from './kanban-column';
 import { KanbanScrollControls } from './kanban-scroll-controls';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
+import {
+  canPrepareTask,
+  useProjectHasPreparationScript,
+  useWorktreePreparation,
+} from '@/hooks/use-worktree-preparation';
 import { DeleteSessionDialog } from '@/components/chat/delete-session-dialog';
 import { DeleteTaskDialog } from '@/components/chat/delete-task-dialog';
 import { MoveProjectDialog } from '@/components/chat/move-project-dialog';
@@ -906,7 +911,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   // ── Task context menu state ──
 
+  const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
   const [taskMenuAnchor, setTaskMenuAnchor] = useState<{ task: TaskEntity; rect: DOMRect } | null>(null);
+  const taskMenuProjectHasScript = useProjectHasPreparationScript(taskMenuAnchor?.task.projectId);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
 
   const handleTaskContextMenu = useCallback((task: TaskEntity, anchorRect: DOMRect) => {
@@ -916,6 +923,12 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const handleTaskMenuClose = useCallback(() => {
     setTaskMenuAnchor(null);
   }, []);
+
+  const handleTaskRunPreparation = useCallback(() => {
+    if (!taskMenuAnchor) return;
+    requestPreparation(taskMenuAnchor.task.id);
+    setTaskMenuAnchor(null);
+  }, [requestPreparation, taskMenuAnchor]);
 
   // Task context menu action handlers
   const handleTaskStatusChange = useCallback((status: string) => {
@@ -1129,9 +1142,16 @@ export const KanbanBoard = memo(function KanbanBoard() {
           onGenerateTitle={handleTaskGenerateTitle}
           isRunning={taskMenuIsRunning}
           onStopProcess={taskMenuIsRunning ? handleTaskStopProcess : undefined}
+          onRunPreparation={
+            canPrepareTask(taskMenuAnchor.task, taskMenuProjectHasScript)
+              ? handleTaskRunPreparation
+              : undefined
+          }
           onClose={handleTaskMenuClose}
         />
       )}
+
+      {preparationConfirmDialog}
 
       {/* Delete session confirmation dialog */}
       <DeleteSessionDialog

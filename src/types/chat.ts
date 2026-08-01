@@ -276,6 +276,8 @@ export interface ProjectGroup {
   displayPath?: string;
   /** Whether this is the current project (matches process.cwd()) */
   isCurrent: boolean;
+  /** Whether the project has a preparation script for its worktrees to run. */
+  hasPreparationScript?: boolean;
   /** Sessions in this project, sorted by lastModified desc */
   sessions: UnifiedSession[];
   /** Total session count (may exceed sessions.length if truncated) */

@@ -38,9 +38,23 @@ interface TerminalPanelProps {
   runtimeOwnership?: 'standalone' | 'session-preview' | 'session-retained' | 'session-peek';
   /** Treat a transient surface as visible/focused without borrowing panel-store state. */
   surfaceActive?: boolean;
+  /**
+   * Leave the PTY running when this surface goes away. Set it for a runtime the
+   * server owns and merely lets a surface watch — closing the view has to detach
+   * from the work, not end it.
+   */
+  detachOnUnmount?: boolean;
   /** Optional overlay shown until the terminal surface reports that it is running. */
   startupOverlay?: ReactNode;
   launch?: { providerId: string; sessionId: string };
+  /**
+   * The panel's own title bar — drag handle, path, close button.
+   *
+   * A surface embedded in something that already says what it is showing turns
+   * it off: two headers for one terminal read as two things, and a close button
+   * on a run somebody else started raises a question it cannot answer.
+   */
+  showHeader?: boolean;
 }
 
 function isTerminalAssignedToPanel(
@@ -69,8 +83,10 @@ export function TerminalPanel({
   terminalSessionId,
   runtimeOwnership = 'standalone',
   surfaceActive = false,
+  detachOnUnmount = false,
   startupOverlay,
   launch,
+  showHeader = true,
 }: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
   const { t } = useTranslation();
@@ -222,14 +238,14 @@ export function TerminalPanel({
 
         if (sessionOwned && previewOwnsRuntimeRef.current) {
           surface.releasePreviewRuntime();
-        } else if (sessionOwned || isTerminalAssignedToAnyPanel(terminalId)) {
+        } else if (detachOnUnmount || sessionOwned || isTerminalAssignedToAnyPanel(terminalId)) {
           surface.dispose();
         } else {
           closeAndDisposeTerminalSurface(surface);
         }
       }, 0);
     };
-  }, [panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId]);
+  }, [detachOnUnmount, panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId]);
 
   useEffect(() => {
     if (connectionStatus !== 'connected' || !isTabActive) return;
@@ -249,7 +265,7 @@ export function TerminalPanel({
       data-testid="terminal-panel"
       style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
     >
-      {!sessionOwned && (
+      {!sessionOwned && showHeader && (
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-black/10 px-2 text-xs dark:border-white/10">
           <button
             type="button"
