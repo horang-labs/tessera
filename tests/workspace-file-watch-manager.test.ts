@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,7 @@ interface TestWatchEntry {
   debounceTimer: NodeJS.Timeout | null;
   files: Set<string>;
   readyPromise: Promise<void>;
+  symlinks: Set<string>;
   watchMode: 'watch' | 'poll';
   watcher: { close(): Promise<void> } | null;
 }
@@ -175,4 +176,54 @@ test('poll-mode refresh diffs the index, notifies listeners, and delays teardown
   entry.closeTimer = null;
   internals.closeEntryNow(entry);
   assert.equal(internals.entriesByRoot.has(canonicalRoot), false);
+});
+
+test('a symlink created after startup lands in the live index with its marker', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-symlink-'));
+  const source = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-symlink-src-'));
+  writeFileSync(path.join(source, 'CLAUDE.md'), 'shared');
+  mkdirSync(path.join(source, 'prd-doc'), { recursive: true });
+  writeFileSync(path.join(source, 'prd-doc/spec.md'), 'spec');
+
+  const manager = new WorkspaceFileWatchManager();
+  const internals = managerInternals(manager);
+  let resolvePrimed!: () => void;
+  const primed = new Promise<void>((resolve) => { resolvePrimed = resolve; });
+  const dispose = await manager.subscribeRootChanges({
+    listenerId: 'terminal:symlink-test',
+    root,
+    onChange: () => resolvePrimed(),
+  });
+
+  try {
+    const canonicalRoot = realpathSync(root);
+    const entry = internals.entriesByRoot.get(canonicalRoot);
+    assert.ok(entry);
+    await entry.readyPromise;
+    // The initial notification only fires once chokidar is ready; without it the
+    // links below can be created before the watcher is listening.
+    await waitFor(primed);
+
+    // chokidar lstats with followSymlinks:false, so both links arrive as "add"
+    // with isFile() === false. Only the one pointing at a file may be indexed.
+    symlinkSync(path.join(source, 'CLAUDE.md'), path.join(root, 'CLAUDE.md'));
+    symlinkSync(path.join(source, 'prd-doc'), path.join(root, 'prd-doc'));
+
+    await waitFor((async () => {
+      while (!entry.files.has('CLAUDE.md')) await new Promise((r) => setTimeout(r, 20));
+    })());
+    assert.ok(entry.symlinks.has('CLAUDE.md'), 'linked file should be marked as a symlink');
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(entry.files.has('prd-doc'), false, 'a directory link must not be indexed as a file');
+    assert.equal(entry.symlinks.has('prd-doc'), false);
+
+    rmSync(path.join(root, 'CLAUDE.md'));
+    await waitFor((async () => {
+      while (entry.files.has('CLAUDE.md')) await new Promise((r) => setTimeout(r, 20));
+    })());
+    assert.equal(entry.symlinks.has('CLAUDE.md'), false, 'removing the link must clear its marker');
+  } finally {
+    dispose();
+  }
 });

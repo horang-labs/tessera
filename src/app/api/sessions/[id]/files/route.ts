@@ -58,6 +58,7 @@ export async function GET(
   if (!root) {
     return NextResponse.json({
       files: [],
+      symlinks: [],
       chats: refs.chats,
       tasks: refs.tasks,
       truncated: false,
@@ -71,6 +72,7 @@ export async function GET(
     if (!stat.isDirectory()) {
       return NextResponse.json({
         files: [],
+        symlinks: [],
         chats: refs.chats,
         tasks: refs.tasks,
         truncated: false,
@@ -81,6 +83,7 @@ export async function GET(
   } catch {
     return NextResponse.json({
       files: [],
+      symlinks: [],
       chats: refs.chats,
       tasks: refs.tasks,
       truncated: false,
@@ -94,6 +97,7 @@ export async function GET(
       ?? await walkWorkspaceFiles(root);
     return NextResponse.json({
       files: result.files,
+      symlinks: result.symlinks,
       chats: refs.chats,
       tasks: refs.tasks,
       truncated: result.truncated,
@@ -102,6 +106,7 @@ export async function GET(
   } catch {
     return NextResponse.json({
       files: [],
+      symlinks: [],
       chats: refs.chats,
       tasks: refs.tasks,
       truncated: false,
