@@ -12,15 +12,29 @@
 
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
+import {
+  isBridgedAgentEnvironment,
+  resolveAgentHomeFilesystemPath,
+  resolveAgentReportedPath,
+  type FilesystemBrowseEnvironment,
+} from '@/lib/filesystem/path-environment';
 import logger from '@/lib/logger';
 
-function resolveProjectsDir(projectsDir?: string): string {
+async function resolveProjectsDir(
+  environment: FilesystemBrowseEnvironment,
+  projectsDir?: string,
+): Promise<string> {
   if (projectsDir) return projectsDir;
-  const configDir = process.env.CLAUDE_CONFIG_DIR?.trim()
-    ? path.resolve(process.env.CLAUDE_CONFIG_DIR)
-    : path.join(os.homedir(), '.claude');
+
+  // `CLAUDE_CONFIG_DIR` describes this server's environment. Across a bridge the
+  // CLI runs on the other side and never saw it, so only its own home applies.
+  const configuredDir = isBridgedAgentEnvironment(environment)
+    ? null
+    : process.env.CLAUDE_CONFIG_DIR?.trim();
+  const configDir = configuredDir
+    ? path.resolve(configuredDir)
+    : path.join(await resolveAgentHomeFilesystemPath(environment), '.claude');
   return path.join(configDir, 'projects');
 }
 
@@ -95,12 +109,21 @@ export async function resolveClaudeTranscriptPath(options: {
   providerSessionId: string;
   /** Hook-reported path, when one was captured. */
   transcriptPath?: string | null;
+  /** Where the CLI runs. Decides whether paths need translating. */
+  environment?: FilesystemBrowseEnvironment;
   /** Overrides the projects root (tests). */
   projectsDir?: string;
 }): Promise<string | null> {
+  const environment = options.environment ?? 'native';
+
+  // The hook reported this path from inside the CLI's own filesystem, so across
+  // a bridge it has to be translated before this process can stat it.
   const hookPath = options.transcriptPath?.trim();
-  if (hookPath && path.extname(hookPath) === '.jsonl' && await isReadableFile(hookPath)) {
-    return hookPath;
+  if (hookPath) {
+    const serverPath = await resolveAgentReportedPath(hookPath, environment);
+    if (path.extname(serverPath) === '.jsonl' && await isReadableFile(serverPath)) {
+      return serverPath;
+    }
   }
 
   const sessionId = options.providerSessionId.trim();
@@ -110,7 +133,7 @@ export async function resolveClaudeTranscriptPath(options: {
   }
 
   const resolved = await findTranscriptByName(
-    resolveProjectsDir(options.projectsDir),
+    await resolveProjectsDir(environment, options.projectsDir),
     `${sessionId}.jsonl`,
   );
   if (!resolved && hookPath) {

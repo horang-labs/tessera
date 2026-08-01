@@ -114,19 +114,52 @@ export async function resolveAgentReportedPath(
 ): Promise<string> {
   const trimmed = agentPath.trim();
   if (!trimmed) return agentPath;
+  if (!isBridgedAgentEnvironment(environment)) return trimmed;
 
-  if (environment === 'wsl' && getRuntimePlatform() === 'win32') {
+  if (environment === 'wsl') {
     const wslPathInfo = await getWslPathInfo();
     return wslPathInfo
       ? wslDisplayPathToWindowsFilesystemPath(trimmed, wslPathInfo)
       : trimmed;
   }
 
-  if (environment === 'native' && getRuntimePlatform() === 'linux' && isRunningInWsl()) {
-    return windowsDrivePathToWslMountPath(trimmed) ?? trimmed;
-  }
+  return windowsDrivePathToWslMountPath(trimmed) ?? trimmed;
+}
 
-  return trimmed;
+/**
+ * Whether the agent's files live on a different filesystem than the server's.
+ *
+ * Only bridged setups need translation: Windows host with a WSL agent, and WSL
+ * host with a native (Windows) agent. Windows host + native agent and Linux
+ * host + WSL agent already share one filesystem and one path style.
+ */
+export function isBridgedAgentEnvironment(
+  environment: FilesystemBrowseEnvironment,
+): boolean {
+  return environment === 'wsl'
+    ? getRuntimePlatform() === 'win32'
+    : getRuntimePlatform() === 'linux' && isRunningInWsl();
+}
+
+/**
+ * The home directory the agent's CLI writes under, as a path this server can
+ * open. Across a bridge the server's own `homedir()` belongs to the wrong side:
+ * a Windows host resolving `~/.claude` for a WSL agent lands in `C:\Users\...`,
+ * which holds another account's transcripts or none at all.
+ *
+ * Callers pairing this with an env var (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+ * `XDG_DATA_HOME`) must drop the var when `isBridgedAgentEnvironment` is true:
+ * those describe the server's own environment, not the CLI's.
+ */
+export async function resolveAgentHomeFilesystemPath(
+  environment: FilesystemBrowseEnvironment,
+): Promise<string> {
+  if (!isBridgedAgentEnvironment(environment)) return homedir();
+  try {
+    return (await resolveBrowsePath(null, environment)).filesystemPath;
+  } catch {
+    return homedir();
+  }
 }
 
 function formatWslHostedNativeDisplayPath(filesystemPath: string): string {
