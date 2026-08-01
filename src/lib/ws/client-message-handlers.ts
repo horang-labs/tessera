@@ -248,6 +248,16 @@ export function handleIncomingServerMessage({
       );
       return { wasReconnect };
 
+    // The message was accepted, but its CLI is held until the worktree's
+    // blocking preparation finishes. Only sent when a message actually waits.
+    case 'session_awaiting_preparation':
+      chatStore.setAwaitingPreparation(msg.sessionId, true);
+      return { wasReconnect };
+
+    case 'session_preparation_settled':
+      chatStore.setAwaitingPreparation(msg.sessionId, false);
+      return { wasReconnect };
+
     case 'error': {
       const errRequestId = 'requestId' in msg ? (msg as { requestId?: string }).requestId : undefined;
       if (errRequestId && providersListCallbacks.has(errRequestId)) {

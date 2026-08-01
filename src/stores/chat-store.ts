@@ -137,6 +137,11 @@ export interface ChatState {
   // Turn lifecycle state. True means the CLI is still processing this session's turn.
   turnInFlightBySession: Record<string, boolean>;
 
+  // Sessions whose message landed but whose CLI has not been started yet,
+  // because the worktree's blocking preparation is still running. Nothing is
+  // shown for a session that never waits, so this stays empty in the usual case.
+  awaitingPreparationBySession: Record<string, boolean>;
+
   // 에러 상태 (NEW)
   errors: Map<string, string>; // sessionId → error message
 
@@ -194,6 +199,7 @@ export interface ChatState {
   recordPromptHistoryItem: (sessionId: string, item: AgentPromptHistoryItem) => void;
   resolvePromptHistoryItem: (sessionId: string, promptId: string) => void;
   setTurnInFlight: (sessionId: string, inFlight: boolean) => void;
+  setAwaitingPreparation: (sessionId: string, awaiting: boolean) => void;
   setTurnsInFlight: (sessionIds: readonly string[]) => void;
   setError: (sessionId: string, message: string) => void;
   clearError: (sessionId: string) => void;
@@ -316,6 +322,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   assistantTextFlushTimers: new Map(),
   readOnlyPagination: new Map(),
   turnInFlightBySession: {},
+  awaitingPreparationBySession: {},
   errors: new Map(),
   toolOutputCache: new Map(),
   activeInteractivePrompt: new Map(),
@@ -480,6 +487,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         inFlight,
       ),
     }));
+  },
+
+  setAwaitingPreparation: (sessionId, awaiting) => {
+    if (Boolean(get().awaitingPreparationBySession[sessionId]) === awaiting) return;
+    set((state) => {
+      const next = { ...state.awaitingPreparationBySession };
+      if (awaiting) next[sessionId] = true;
+      else delete next[sessionId];
+      return { awaitingPreparationBySession: next };
+    });
   },
 
   setTurnsInFlight: (sessionIds) => {

@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  PREPARATION_PHASES,
   PREPARATION_STATUSES,
   applyPreparationEvent,
+  blocksAgentStartup,
   canRerunPreparation,
+  readPreparationPhase,
   readPreparationStatus,
   resolvePreparationBadge,
+  resolveStageCompletion,
 } from '@/lib/projects/preparation-status-policy';
 
 test('preparation starts from every status except one already running', () => {
@@ -103,6 +107,67 @@ test('every status is covered by both the badge and the re-run rules', () => {
     assert.equal(typeof canRerunPreparation(status), 'boolean');
     const badge = resolvePreparationBadge(status);
     assert.ok(badge === null || badge === 'running' || badge === 'failed');
+  }
+});
+
+test('a before stage that succeeded hands over to after, and the run carries on', () => {
+  assert.deepEqual(
+    resolveStageCompletion({ phase: 'before', exitCode: 0, hasAfterScript: true }),
+    { status: 'running', nextPhase: 'after' },
+  );
+});
+
+test('with nothing to run afterwards, a before stage that succeeded ends the run', () => {
+  assert.deepEqual(
+    resolveStageCompletion({ phase: 'before', exitCode: 0, hasAfterScript: false }),
+    { status: 'succeeded', nextPhase: null },
+  );
+});
+
+test('a before stage that failed ends the run there, rather than installing on top of it', () => {
+  assert.deepEqual(
+    resolveStageCompletion({ phase: 'before', exitCode: 1, hasAfterScript: true }),
+    { status: 'failed', nextPhase: null },
+  );
+});
+
+test('the after stage ends the run whichever way it goes', () => {
+  assert.deepEqual(
+    resolveStageCompletion({ phase: 'after', exitCode: 0, hasAfterScript: true }),
+    { status: 'succeeded', nextPhase: null },
+  );
+  assert.deepEqual(
+    resolveStageCompletion({ phase: 'after', exitCode: 2, hasAfterScript: true }),
+    { status: 'failed', nextPhase: null },
+  );
+});
+
+test('an agent waits for a before stage in flight, and for nothing else', () => {
+  assert.equal(blocksAgentStartup('running', 'before'), true);
+
+  // The agent is released the moment `before` is done, so the `after` stage
+  // still running is not something to wait for.
+  assert.equal(blocksAgentStartup('running', 'after'), false);
+
+  // A failed `before` releases it too: a prompt that silently does nothing is
+  // worse than one answered by an agent whose worktree is short a file.
+  for (const status of ['never_run', 'succeeded', 'failed'] as const) {
+    for (const phase of PREPARATION_PHASES) {
+      assert.equal(blocksAgentStartup(status, phase), false);
+    }
+  }
+});
+
+test('a run recorded before the split reads as the before stage', () => {
+  // Those runs ran the whole script, and the whole script is now what `before`
+  // holds — so the agent-startup rules read them the way they behaved.
+  assert.equal(readPreparationPhase(null), 'before');
+  assert.equal(readPreparationPhase(undefined), 'before');
+  assert.equal(readPreparationPhase(''), 'before');
+  assert.equal(readPreparationPhase('nonsense'), 'before');
+
+  for (const phase of PREPARATION_PHASES) {
+    assert.equal(readPreparationPhase(phase), phase);
   }
 });
 

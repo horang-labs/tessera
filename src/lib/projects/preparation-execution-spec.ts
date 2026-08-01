@@ -29,9 +29,17 @@ import {
   PREPARATION_BRANCH_NAME_ENV,
 } from './preparation-environment';
 import { normalizePreparationScript } from './preparation-script-policy';
+import type { PreparationPhase } from './preparation-status-policy';
 
-const POSIX_RUNNER_NAME = 'preparation-runner.sh';
-const WINDOWS_RUNNER_NAME = 'preparation-runner.cmd';
+/**
+ * Each stage writes its own runner. They never run at once, so one name would
+ * work — but a runner left on disk is read when something went wrong, and one
+ * that cannot say which stage wrote it answers the wrong question.
+ */
+const RUNNER_NAMES: Record<PreparationPhase, { posix: string; windows: string }> = {
+  before: { posix: 'preparation-runner.sh', windows: 'preparation-runner.cmd' },
+  after: { posix: 'preparation-after-runner.sh', windows: 'preparation-after-runner.cmd' },
+};
 /**
  * Stops a batch run once a command reports a non-zero exit code. The leading
  * `@` keeps the guard itself out of the echo, so what the log shows is the
@@ -47,6 +55,8 @@ const POSIX_TRACE_PROMPT = "$'\\033[2m+ \\033[0m'";
 export interface PreparationExecutionContext {
   /** The project's stored preparation script; blank means nothing to run. */
   script: string | null | undefined;
+  /** Which stage this script belongs to. Defaults to the blocking one. */
+  phase?: PreparationPhase;
   /** The original checkout, as Tessera stores it. */
   projectDir: string;
   /** The newly created worktree, as Tessera stores it. */
@@ -99,12 +109,13 @@ export function buildPreparationExecutionSpec(
   const platform = getRuntimePlatform();
   const hostEnv = context.env ?? process.env;
   const bridgedThroughWsl = context.agentEnvironment === 'wsl' && platform === 'win32';
+  const runnerNames = RUNNER_NAMES[context.phase ?? 'before'];
 
   if (bridgedThroughWsl) {
     const env = buildEnv(context, (value) => formatPathForAgentDisplay(value, 'wsl'));
     const runnerScriptPath = joinRunnerPath(
       formatPathForAgentDisplay(context.runnerScriptDir, 'wsl'),
-      POSIX_RUNNER_NAME,
+      runnerNames.posix,
     );
     return {
       program: 'wsl.exe',
@@ -122,7 +133,7 @@ export function buildPreparationExecutionSpec(
   if (platform === 'win32') {
     const runnerScriptPath = joinRunnerPath(
       toWindowsStylePath(context.runnerScriptDir, context.worktreePath),
-      WINDOWS_RUNNER_NAME,
+      runnerNames.windows,
     );
     return {
       // `/d` skips any AutoRun command the user's registry would otherwise run
@@ -139,7 +150,7 @@ export function buildPreparationExecutionSpec(
 
   const runnerScriptPath = joinRunnerPath(
     toPosixStylePath(context.runnerScriptDir),
-    POSIX_RUNNER_NAME,
+    runnerNames.posix,
   );
   // Shared with the terminal so preparation runs under the same shell the
   // user's agents are detected and launched with.

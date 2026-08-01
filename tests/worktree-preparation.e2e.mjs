@@ -313,9 +313,9 @@ async function confirmRun() {
 
 /** The script sits behind a disclosure, so that the log keeps the panel. */
 async function readScript() {
-  const body = page.getByTestId('worktree-scripts-script-body');
+  const body = page.getByTestId('worktree-scripts-script-body-before');
   if (await body.count() === 0) {
-    await page.getByTestId('worktree-scripts-script-toggle').click({ timeout: 30_000 });
+    await page.getByTestId('worktree-scripts-script-toggle-before').click({ timeout: 30_000 });
   }
   return body.innerText({ timeout: 15_000 });
 }

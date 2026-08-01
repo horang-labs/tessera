@@ -1107,6 +1107,14 @@ export class TerminalSurface {
   private handleServerMessage(message: ServerTransportMessage): void {
     if (this.disposed || !('terminalId' in message)) return;
 
+    // No PTY exists yet — the agent is being held until the worktree finishes
+    // its blocking preparation — so the surface says so where the terminal
+    // would otherwise sit blank. `terminal_started` replaces this.
+    if (message.type === 'terminal_awaiting_preparation' && message.surfaceId === this.surfaceId) {
+      this.updateState('starting', 'Waiting for preparation to finish before starting the agent...');
+      return;
+    }
+
     if (message.terminalId === this.actualTerminalId && message.type === 'terminal_prefill_written') {
       this.finishPendingLaunch('started');
       return;

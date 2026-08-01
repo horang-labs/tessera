@@ -266,16 +266,25 @@ export interface I18nMessages {
       title: string;
       description: string;
       projectLabel: string;
-      scriptLabel: string;
-      scriptDesc: string;
-      scriptPlaceholder: string;
-      runsOnCreate: string;
+      stage: {
+        before: {
+          label: string;
+          desc: string;
+          placeholder: string;
+        };
+        after: {
+          label: string;
+          desc: string;
+          placeholder: string;
+        };
+      };
       noProject: string;
       loading: string;
       saving: string;
       saved: string;
       saveFailed: string;
       loadFailed: string;
+      variablesLabel: string;
       variables: {
         projectDir: string;
         worktreeDir: string;
@@ -515,6 +524,7 @@ export interface I18nMessages {
     notePrefix: string;
     submitHint: string;
     working: string;
+    awaitingPreparation: string;
     loadingMore: string;
     loadMore: string;
     scrollToBottom: string;
@@ -1074,6 +1084,10 @@ export interface I18nMessages {
     noWorktree: string;
     readingLog: string;
     script: string;
+    stage: {
+      before: string;
+      after: string;
+    };
     scriptLines: string;
     editScript: string;
     preparation: {
