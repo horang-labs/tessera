@@ -98,10 +98,30 @@ function resolveCutoffIndex(messages: EnhancedMessage[], options: SessionExportO
   return messages.length - 1;
 }
 
+/**
+ * Export paths are pasted into prompts verbatim, so the filename is kept short:
+ * a full UUID pair costs 84 characters of prompt before the directory is even
+ * counted. Eight hex characters is enough — measured across every session in
+ * both local databases (3,130 rows) there is not a single prefix collision, and
+ * the full ID stays in the export header for traceability.
+ */
+function shortId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8);
+}
+
+/**
+ * Message IDs come from the provider, so a shared prefix (`msg_01…`) would
+ * leave almost no entropy up front. Session IDs are Tessera's own UUIDs.
+ */
+function shortMessageId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9]/g, '').slice(-8);
+}
+
 function buildPartialExportPath(sessionId: string, options: SessionExportOptions): string {
-  const rawSuffix = options.untilMessageId ?? `message-${options.untilMessageIndex ?? 0}`;
-  const safeSuffix = rawSuffix.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 96) || 'message';
-  return path.join(EXPORT_DIR, `${sessionId}-through-${safeSuffix}.md`);
+  const suffix = options.untilMessageId
+    ? shortMessageId(options.untilMessageId)
+    : `m${options.untilMessageIndex ?? 0}`;
+  return path.join(EXPORT_DIR, `${shortId(sessionId)}-${suffix || 'msg'}.md`);
 }
 
 /**
@@ -216,7 +236,7 @@ export async function exportSessionLog(
   const isPartialExport = Boolean(options.untilMessageId) || options.untilMessageIndex !== undefined;
   const exportPath = isPartialExport
     ? buildPartialExportPath(sessionId, options)
-    : path.join(EXPORT_DIR, `${sessionId}.md`);
+    : path.join(EXPORT_DIR, `${shortId(sessionId)}.md`);
   const historyPath = sessionHistory.getHistoryPath(sessionId);
   const events = await sessionHistory.readEvents(sessionId);
 

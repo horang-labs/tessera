@@ -8,6 +8,12 @@ import { useTabStore } from './tab-store';
 import { toast } from './notification-store';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
+import {
+  findSessionProjectDir,
+  LAST_ACTIVE_PROJECT_DIR_KEY,
+  resolveLastActiveProjectDir,
+} from '@/lib/session/last-active-project';
 import {
   applySessionRuntimeLiveness,
   beginSessionRuntimeConnection,
@@ -24,6 +30,8 @@ export interface SessionState {
   // Core state - NEW (project-grouped)
   projects: ProjectGroup[];
   activeSessionId: string | null;
+  /** Project containing the most recently activated real conversation. */
+  lastActiveProjectDir: string | null;
   runtimeLiveness: SessionRuntimeLiveness;
 
   // REQ-002: Session creation loading state
@@ -332,6 +340,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   projects: [],
   activeSessionId: null,
+  lastActiveProjectDir: null,
   runtimeLiveness: createSessionRuntimeLiveness(),
   creatingSessionId: null,
   loadingSessionId: null,
@@ -387,6 +396,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         projects: applySessionRuntimeLiveness(projects, state.runtimeLiveness),
       }));
       const loadedProjects = get().projects;
+      const storedLastActiveProjectDir = readUiStorageItem(LAST_ACTIVE_PROJECT_DIR_KEY);
+      const lastActiveProjectDir = resolveLastActiveProjectDir(
+        loadedProjects,
+        storedLastActiveProjectDir ?? get().lastActiveProjectDir,
+      );
+      set({ lastActiveProjectDir });
 
       // Initialize turn lifecycle state from server isGenerating state.
       const generatingSessionIds: string[] = [];
@@ -416,14 +431,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // Ignore storage errors
       }
 
-      // Fallback: first running session or first session of current project
+      // Fallback: prefer the last conversation project, then the current project.
       if (!autoActiveId) {
-        const currentProject = loadedProjects.find((p) => p.isCurrent);
-        if (currentProject && currentProject.sessions.length > 0) {
-          const runningSession = currentProject.sessions.find((s) => s.isRunning);
-          autoActiveId = runningSession?.id || currentProject.sessions[0].id;
-        } else if (loadedProjects.length > 0 && loadedProjects[0].sessions.length > 0) {
-          autoActiveId = loadedProjects[0].sessions[0].id;
+        const lastActiveProject = loadedProjects.find(
+          (project) => project.encodedDir === lastActiveProjectDir,
+        );
+        const currentProject = loadedProjects.find((project) => project.isCurrent);
+        const fallbackProject = [lastActiveProject, currentProject, ...loadedProjects]
+          .find((project) => project && project.sessions.length > 0);
+        if (fallbackProject) {
+          const runningSession = fallbackProject.sessions.find((session) => session.isRunning);
+          autoActiveId = runningSession?.id ?? fallbackProject.sessions[0].id;
         }
       }
 
@@ -529,7 +547,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // Session management
   setActiveSession: (sessionId) => {
-    set({ activeSessionId: sessionId });
+    const state = get();
+    const activatedProjectDir = findSessionProjectDir(state.projects, sessionId);
+    set({
+      activeSessionId: sessionId,
+      lastActiveProjectDir: activatedProjectDir ?? state.lastActiveProjectDir,
+    });
     // Persist to sessionStorage for restoration after page refresh
     try {
       if (sessionId !== null) {
@@ -540,9 +563,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch {
       // Ignore storage errors (SSR, private browsing, etc.)
     }
+    if (activatedProjectDir) {
+      writeUiStorageItem(LAST_ACTIVE_PROJECT_DIR_KEY, activatedProjectDir);
+    }
   },
 
-  addSession: (session: UnifiedSession, options) =>
+  addSession: (session: UnifiedSession, options) => {
+    let activatedProjectDir: string | null = null;
     set((state) => {
       // Normalize projectDir — handle undefined from WebSocket messages missing workDir
       const projectDir = session.projectDir || 'unknown';
@@ -574,9 +601,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           nextCursor: null,
           loadBatchIndex: 0,
         };
+        if (options?.activate !== false) activatedProjectDir = newProject.encodedDir;
         return {
           projects: [...state.projects, newProject],
           activeSessionId: options?.activate === false ? state.activeSessionId : session.id,
+          lastActiveProjectDir: options?.activate === false
+            ? state.lastActiveProjectDir
+            : newProject.encodedDir,
         };
       }
 
@@ -590,12 +621,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       project.totalSessions += 1;
       project.loadedCount += 1;
       updatedProjects[projectIndex] = project;
+      if (options?.activate !== false) activatedProjectDir = project.encodedDir;
 
       return {
         projects: updatedProjects,
         activeSessionId: options?.activate === false ? state.activeSessionId : session.id,
+        lastActiveProjectDir: options?.activate === false
+          ? state.lastActiveProjectDir
+          : project.encodedDir,
       };
-    }),
+    });
+    if (activatedProjectDir) {
+      writeUiStorageItem(LAST_ACTIVE_PROJECT_DIR_KEY, activatedProjectDir);
+    }
+  },
 
   removeSession: (sessionId) =>
     set((state) => {

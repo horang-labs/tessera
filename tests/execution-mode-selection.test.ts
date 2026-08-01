@@ -12,6 +12,7 @@ import {
 } from '@/components/panel/empty-panel-state';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
+import { resolveLastActiveProjectDir } from '@/lib/session/last-active-project';
 import {
   shouldSubmitCollectionQuickCreateFromModeShortcut,
 } from '@/components/chat/collection-quick-create-sheet';
@@ -64,6 +65,17 @@ test('All Projects requires an explicit launcher project while a project scope r
     'project-b',
   );
   assert.equal(resolveEmptyPanelProjectId('project-a', null), 'project-a');
+});
+
+test('All Projects defaults to the most recently active conversation project when available', () => {
+  const projects = [
+    { encodedDir: 'project-a' },
+    { encodedDir: 'project-b' },
+  ];
+
+  assert.equal(resolveLastActiveProjectDir(projects, 'project-b'), 'project-b');
+  assert.equal(resolveLastActiveProjectDir(projects, 'removed-project'), null);
+  assert.equal(resolveLastActiveProjectDir(projects, null), null);
 });
 
 test('a standalone shell honors the project cwd selected in the launcher', () => {
