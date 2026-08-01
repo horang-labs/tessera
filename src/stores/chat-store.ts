@@ -220,6 +220,11 @@ export interface ChatState {
     agentContext?: AgentContextEvent[];
     hasOutput?: boolean;
   }) => void;
+  updateToolCallProgress: (sessionId: string, toolUseId: string, progress: {
+    elapsedTimeSeconds: number;
+    heartbeat?: boolean;
+    taskId?: string;
+  }) => void;
   attachMessageTranslation: (sessionId: string, targetMessageId: string, update: {
     translatedContent?: string;
     translationStatus?: 'pending' | 'completed' | 'error';
@@ -826,6 +831,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return msg;
       });
+      const messages = new Map(state.messages);
+      messages.set(sessionId, updatedMessages);
+      return { messages };
+    }),
+
+  updateToolCallProgress: (sessionId, toolUseId, progress) =>
+    set((state) => {
+      const sessionMessages = state.messages.get(sessionId) || [];
+      // Live tool cards carry the `hist-tool-<toolUseId>` id assigned by the
+      // replay reducer; match by toolUseId field as a fallback for safety.
+      const targetId = `hist-tool-${toolUseId}`;
+      let changed = false;
+      const updatedMessages = sessionMessages.map((msg) => {
+        if (
+          'type' in msg &&
+          msg.type === 'tool_call' &&
+          msg.status === 'running' &&
+          (msg.id === targetId || msg.toolUseId === toolUseId)
+        ) {
+          changed = true;
+          return { ...msg, toolProgress: progress };
+        }
+        return msg;
+      });
+      if (!changed) return state;
       const messages = new Map(state.messages);
       messages.set(sessionId, updatedMessages);
       return { messages };
