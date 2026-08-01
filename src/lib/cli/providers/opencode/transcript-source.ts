@@ -20,16 +20,31 @@ import os from 'node:os';
 import path from 'node:path';
 import { getAgentEnvironment, spawnCli } from '../../spawn-cli';
 import { resolveProviderCliCommand } from '../../provider-command';
+import {
+  isBridgedAgentEnvironment,
+  resolveAgentHomeFilesystemPath,
+  type FilesystemBrowseEnvironment,
+} from '@/lib/filesystem/path-environment';
 import logger from '@/lib/logger';
 
 const EXPORT_TIMEOUT_MS = 60_000;
 const PROVIDER_ID = 'opencode';
 const DEFAULT_COMMAND = 'opencode';
 
-/** Mirrors OpenCode's own data directory resolution. */
-function resolveOpenCodeDataDir(): string {
-  const xdg = process.env.XDG_DATA_HOME?.trim();
-  const base = xdg ? path.resolve(xdg) : path.join(os.homedir(), '.local', 'share');
+/**
+ * Mirrors OpenCode's own data directory resolution, resolved against the home
+ * the CLI actually writes under. Across a bridge that is not this server's home,
+ * and `XDG_DATA_HOME` describes this server rather than the CLI.
+ */
+async function resolveOpenCodeDataDir(
+  environment: FilesystemBrowseEnvironment,
+): Promise<string> {
+  const xdg = isBridgedAgentEnvironment(environment)
+    ? null
+    : process.env.XDG_DATA_HOME?.trim();
+  const base = xdg
+    ? path.resolve(xdg)
+    : path.join(await resolveAgentHomeFilesystemPath(environment), '.local', 'share');
   return path.join(base, 'opencode');
 }
 
@@ -49,9 +64,11 @@ async function statPart(filePath: string): Promise<string> {
  */
 export async function fingerprintOpenCodeStore(
   providerSessionId: string,
+  userId?: string,
 ): Promise<string | null> {
   if (!providerSessionId.trim()) return null;
-  const dbPath = path.join(resolveOpenCodeDataDir(), 'opencode.db');
+  const environment = await getAgentEnvironment(userId);
+  const dbPath = path.join(await resolveOpenCodeDataDir(environment), 'opencode.db');
   const [db, wal] = await Promise.all([
     statPart(dbPath),
     statPart(`${dbPath}-wal`),

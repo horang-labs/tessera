@@ -149,10 +149,12 @@ export class ClaudeCodeAdapter implements CliProvider {
   async readTerminalTranscriptFingerprint(options: {
     providerSessionId: string;
     transcriptPath?: string | null;
+    userId?: string;
   }): Promise<string | null> {
     return fingerprintTranscriptFile(await resolveClaudeTranscriptPath({
       providerSessionId: options.providerSessionId,
       transcriptPath: options.transcriptPath ?? null,
+      environment: await getAgentEnvironment(options.userId),
     }));
   }
 
@@ -165,10 +167,12 @@ export class ClaudeCodeAdapter implements CliProvider {
     sessionId: string;
     providerSessionId: string;
     transcriptPath?: string | null;
+    userId?: string;
   }): Promise<SessionHistoryEvent[] | null> {
     const filePath = await resolveClaudeTranscriptPath({
       providerSessionId: options.providerSessionId,
       transcriptPath: options.transcriptPath ?? null,
+      environment: await getAgentEnvironment(options.userId),
     });
     if (!filePath) return null;
 

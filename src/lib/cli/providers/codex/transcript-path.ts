@@ -16,6 +16,12 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { resolveCodexAccountHome } from '@/lib/codex-home';
+import {
+  isBridgedAgentEnvironment,
+  resolveAgentHomeFilesystemPath,
+  resolveAgentReportedPath,
+  type FilesystemBrowseEnvironment,
+} from '@/lib/filesystem/path-environment';
 import logger from '@/lib/logger';
 
 /** sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl — three levels of date nesting. */
@@ -82,20 +88,32 @@ export async function resolveCodexTranscriptPath(options: {
   providerSessionId: string;
   /** Path captured when the PTY session was observed, if any. */
   transcriptPath?: string | null;
+  /** Where the CLI runs. Decides whether paths need translating. */
+  environment?: FilesystemBrowseEnvironment;
   /** Overrides the sessions root (tests). */
   sessionsDir?: string;
 }): Promise<string | null> {
+  const environment = options.environment ?? 'native';
+
+  // Recorded from inside the CLI's own filesystem, so translate before stat.
   const recorded = options.transcriptPath?.trim();
-  if (recorded && path.extname(recorded) === '.jsonl' && await isReadableFile(recorded)) {
-    return recorded;
+  if (recorded) {
+    const serverPath = await resolveAgentReportedPath(recorded, environment);
+    if (path.extname(serverPath) === '.jsonl' && await isReadableFile(serverPath)) {
+      return serverPath;
+    }
   }
 
   const sessionId = options.providerSessionId.trim();
   // Guard against a crafted id escaping the sessions root through the suffix match.
   if (!sessionId || sessionId !== path.basename(sessionId)) return null;
 
-  const sessionsDir = options.sessionsDir
-    ?? path.join(resolveCodexAccountHome(), 'sessions');
+  // `CODEX_HOME` belongs to this server's environment; across a bridge the CLI
+  // never saw it, so the account home is derived from its own home alone.
+  const accountHome = isBridgedAgentEnvironment(environment)
+    ? path.join(await resolveAgentHomeFilesystemPath(environment), '.codex')
+    : resolveCodexAccountHome();
+  const sessionsDir = options.sessionsDir ?? path.join(accountHome, 'sessions');
   const resolved = await findRolloutBySessionId(sessionsDir, sessionId);
 
   if (!resolved && recorded) {
