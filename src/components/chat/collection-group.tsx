@@ -42,8 +42,13 @@ import {
   useProjectHasPreparationScript,
   useWorktreePreparation,
 } from '@/hooks/use-worktree-preparation';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
-async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) {
+async function addSessionToTask(
+  task: TaskEntity,
+  requestedProviderId?: string,
+  requestedExecutionMode?: AgentExecutionMode,
+) {
   try {
     const panelState = usePanelStore.getState();
     const tabData = selectActiveTab(panelState);
@@ -71,6 +76,7 @@ async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) 
         worktreeBranch: task.worktreeBranch || undefined,
         ...runtimeConfig,
         providerId,
+        ...(requestedExecutionMode && { executionMode: requestedExecutionMode }),
       }),
     });
     if (!sessionResponse.ok) throw new Error('Failed to create session');
@@ -475,7 +481,7 @@ export const CollectionGroup = memo(function CollectionGroup({
       renamingSessionId={renamingItem?.type === 'chat' ? renamingItem.id : null}
       isRenameRequested={renamingItem?.type === 'task' && renamingItem.id === task.id}
       onRenameComplete={finishItemRename}
-      onAddSession={(providerId) => addSessionToTask(task, providerId)}
+      onAddSession={(providerId, executionMode) => addSessionToTask(task, providerId, executionMode)}
       onStopProcess={onSessionStopProcess}
       disableDnd={disableDnd}
       allowPanelSessionDnd={allowPanelSessionDnd}

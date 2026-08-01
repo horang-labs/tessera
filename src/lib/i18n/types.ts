@@ -489,6 +489,7 @@ export interface I18nMessages {
     codexFastEnabled: string;
     codexFastDisabled: string;
     codexCompactDuringTurn: string;
+    compactingConversation: string;
     cancelHint: string;
     cancelButton: string;
     attachFile: string;
@@ -501,6 +502,8 @@ export interface I18nMessages {
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
+    promptDensityDecrease: string;
+    promptDensityIncrease: string;
     otherInputPlaceholder: string;
     otherInputPlaceholderWithHint: string;
     submissionFailed: string;
@@ -1160,6 +1163,10 @@ export interface I18nMessages {
       taskCreationFailed: string;
       launcherTitle: string;
       launcherSubtitle: string;
+      projectLabel: string;
+      projectPlaceholder: string;
+      projectSelectionHint: string;
+      selectProjectHint: string;
       startAsLabel: string;
       agentUiLabel: string;
       shellLabel: string;

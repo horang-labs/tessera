@@ -3,7 +3,12 @@ import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 
-export function getInitialTerminalCwd(sessionId?: string | null): string | null {
+export function getInitialTerminalCwd(
+  sessionId?: string | null,
+  explicitCwd?: string | null,
+): string | null {
+  if (explicitCwd) return explicitCwd;
+
   const sessionState = useSessionStore.getState();
   const selectionSessionId = getSessionSelectionId(sessionId ?? null);
   if (selectionSessionId) {

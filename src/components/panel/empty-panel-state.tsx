@@ -1,17 +1,18 @@
 'use client';
 
 import { useState, useCallback, useContext, useEffect, useMemo, useRef, type DragEvent, type MouseEvent } from 'react';
-import { X as XIcon, KeyboardIcon, FolderGit2, ListTodo, MessageSquare, AlertCircle, GripVertical, Plus, Terminal } from 'lucide-react';
+import { X as XIcon, KeyboardIcon, FolderGit2, ListTodo, MessageSquare, AlertCircle, GripVertical, Plus, Terminal, ChevronDown } from 'lucide-react';
 import { usePanelStore, TabIdContext, EMPTY_PANELS } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
+import { useTabStore } from '@/stores/tab-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useWorktreeBaseRefs } from '@/hooks/use-worktree-base-refs';
 import { useWorktreeSession } from '@/hooks/use-worktree-session';
 import { WorktreeStartFromControl } from '@/components/task/worktree-start-from-control';
 import { useI18n } from '@/lib/i18n';
-import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import {
   buildManagedWorktreeBranchName,
@@ -55,10 +56,24 @@ function getEmptyPanelShortcutTargetKind(target: EventTarget | null): EmptyPanel
   ) {
     return 'execution-mode-radio';
   }
-  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+  if (
+    target.tagName === 'INPUT'
+    || target.tagName === 'TEXTAREA'
+    || target.tagName === 'SELECT'
+    || target.isContentEditable
+  ) {
     return 'text-entry';
   }
   return 'other';
+}
+
+export function resolveEmptyPanelProjectId(
+  selectedProjectDir: string | null,
+  allProjectsProjectId: string | null,
+): string | null {
+  return selectedProjectDir === ALL_PROJECTS_SENTINEL
+    ? allProjectsProjectId
+    : selectedProjectDir;
 }
 
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -79,19 +94,29 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const { createSession, isCreating } = useSessionCrud();
   const { createWorktreeSession } = useWorktreeSession();
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
+  const projects = useSessionStore((state) => state.projects);
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const [allProjectsProjectId, setAllProjectsProjectId] = useState<string | null>(null);
+  const requiresProjectSelection = selectedProjectDir === ALL_PROJECTS_SENTINEL;
+  const resolvedProjectId = resolveEmptyPanelProjectId(
+    selectedProjectDir,
+    allProjectsProjectId,
+  );
 
-  const activeProject = useSessionStore((state) => {
-    if (selectedProjectDir && selectedProjectDir !== ALL_PROJECTS_SENTINEL) {
-      return state.projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
+  const activeProject = useMemo(() => {
+    if (resolvedProjectId) {
+      return projects.find((project) => project.encodedDir === resolvedProjectId) ?? null;
     }
-    const selectionSessionId = getSessionSelectionId(state.activeSessionId);
+    if (requiresProjectSelection) return null;
+
+    const selectionSessionId = getSessionSelectionId(activeSessionId);
     if (selectionSessionId) {
-      return state.projects.find((project) =>
+      return projects.find((project) =>
         project.sessions.some((session) => session.id === selectionSessionId)
       ) ?? null;
     }
-    return state.projects[0] ?? null;
-  });
+    return projects[0] ?? null;
+  }, [activeSessionId, projects, requiresProjectSelection, resolvedProjectId]);
   const activeProjectId = activeProject?.encodedDir ?? null;
   const collections = useCollectionStore((state) =>
     activeProjectId ? state.collectionsByProject?.[activeProjectId] ?? EMPTY_COLLECTIONS : EMPTY_COLLECTIONS
@@ -126,6 +151,12 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const setExecutionMode = useCallback((nextMode: typeof executionMode) => {
     executionModeTouchedRef.current = true;
     setExecutionModeState(nextMode);
+  }, []);
+
+  const handleProjectChange = useCallback((projectId: string) => {
+    setAllProjectsProjectId(projectId || null);
+    setSelectedCollectionId(null);
+    setError(null);
   }, []);
 
   useEffect(() => {
@@ -183,7 +214,8 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     setActivePanelId(panelId);
 
     if (mode === 'shell') {
-      assignTerminal(panelId, uuidv4());
+      assignTerminal(panelId, uuidv4(), null, activeProject.decodedPath);
+      useTabStore.getState().setTabProject(tabId, activeProject.encodedDir);
       return;
     }
 
@@ -247,6 +279,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     isSelectedExecutionModeSupported,
     mode,
     panelId,
+    tabId,
     selectedCollectionId,
     selectedBaseRefForCreate,
     selectedProvider,
@@ -311,7 +344,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     </>
   ) : null;
 
-  if (!activeProject) {
+  if (projects.length === 0) {
     return (
       <div
         className="relative flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden bg-(--chat-bg) px-6 py-10 text-(--text-muted)"
@@ -354,11 +387,67 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
 
       <div className="mx-auto w-full max-w-3xl">
         <div className="border-y border-(--divider)">
-          <section className="pb-2 pt-5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+          {requiresProjectSelection ? (
+            <section className="py-4">
+              <label
+                htmlFor={`empty-panel-project-${panelId}`}
+                className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)"
+              >
+                {t('task.creation.projectLabel')}
+              </label>
+              <div className="relative mt-2 max-w-xl">
+                <span
+                  className="pointer-events-none absolute inset-y-0 left-3 flex items-center"
+                  aria-hidden="true"
+                >
+                  {activeProject ? (
+                    <span
+                      className="flex h-5 w-5 items-center justify-center rounded-md text-[10px] font-bold text-white"
+                      style={{ backgroundColor: getProjectColor(activeProject.displayName) }}
+                    >
+                      {activeProject.displayName.charAt(0).toUpperCase()}
+                    </span>
+                  ) : (
+                    <FolderGit2 className="h-4 w-4 text-(--text-muted)" />
+                  )}
+                </span>
+                <select
+                  id={`empty-panel-project-${panelId}`}
+                  value={activeProjectId ?? ''}
+                  onChange={(event) => handleProjectChange(event.target.value)}
+                  className="h-10 w-full appearance-none rounded-xl border border-(--divider) bg-(--input-bg) py-2 pl-11 pr-10 text-sm font-medium text-(--sidebar-text-active) outline-none transition-colors hover:border-(--text-muted)/50 focus:border-(--accent) focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_16%,transparent)]"
+                  data-testid="empty-panel-project-select"
+                  aria-describedby={`empty-panel-project-help-${panelId}`}
+                >
+                  <option value="">{t('task.creation.projectPlaceholder')}</option>
+                  {projects.map((project) => (
+                    <option key={project.encodedDir} value={project.encodedDir}>
+                      {project.displayName}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--text-muted)"
+                  aria-hidden="true"
+                />
+              </div>
+              <p
+                id={`empty-panel-project-help-${panelId}`}
+                className="mt-1.5 max-w-xl truncate px-1 text-[11px] text-(--text-muted)"
+                title={activeProject?.displayPath ?? activeProject?.decodedPath}
+              >
+                {activeProject
+                  ? activeProject.displayPath ?? activeProject.decodedPath
+                  : t('task.creation.projectSelectionHint')}
+              </p>
+            </section>
+          ) : null}
+
+          <section className={cn('py-4', requiresProjectSelection && 'border-t border-(--divider)')}>
+            <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
               {t('settings.provider.label')}
             </span>
-            <div className="mt-3">
+            <div className="mt-2">
               <CliProviderChipSelector
                 value={selectedProvider}
                 onChange={setSelectedProvider}
@@ -369,9 +458,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             </div>
           </section>
 
-          <section className="border-t border-(--divider) py-2">
+          <section className="border-t border-(--divider) py-4">
             <div className="flex items-center gap-3">
-              <span className="w-16 shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+              <span className="w-24 shrink-0 whitespace-nowrap text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
                 {t('task.creation.agentUiLabel')}
               </span>
               <div className="w-fit min-w-0 max-w-full" data-empty-panel-execution-mode>
@@ -386,8 +475,8 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             </div>
           </section>
 
-          <section className="border-t border-(--divider) pb-5 pt-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+          <section className="border-t border-(--divider) py-4">
+            <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
               {t('task.creation.startAsLabel')}
             </span>
 
@@ -408,7 +497,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                   {t('chat.newSession')}
                 </span>
                 <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
-                  {t('task.creation.chatInstantHint')}
+                  {!activeProject && requiresProjectSelection
+                    ? t('task.creation.selectProjectHint')
+                    : t('task.creation.chatInstantHint')}
                 </span>
               </button>
 
@@ -453,7 +544,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               </button>
             </div>
 
-            <div className="mt-5 space-y-4 border-l-2 border-[color-mix(in_srgb,var(--accent)_16%,transparent)] pl-4">
+            <div className="mt-4 max-w-xl space-y-4 border-l-2 border-[color-mix(in_srgb,var(--accent)_16%,transparent)] pl-4">
               {mode === 'task' && (
                 <>
                   <div className="space-y-1.5">
@@ -546,7 +637,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               )}
 
               <div className="space-y-1.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+                <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
                   {t('task.creation.collectionLabel')}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
@@ -582,14 +673,16 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             </div>
           </section>
 
-          <section className="border-t border-(--divider) py-5">
+          <section className="border-t border-(--divider) py-4">
               <div className="flex flex-col gap-4">
                 <div className="max-w-xl text-sm leading-6 text-(--text-secondary)">
-                  {mode === 'task'
-                    ? t('task.creation.taskWorktreeDescription')
-                    : mode === 'shell'
-                      ? t('task.creation.shellDescription')
-                      : t('task.creation.chatInstantHint')}
+                  {!activeProject && requiresProjectSelection
+                    ? t('task.creation.selectProjectHint')
+                    : mode === 'task'
+                      ? t('task.creation.taskWorktreeDescription')
+                      : mode === 'shell'
+                        ? t('task.creation.shellDescription')
+                        : t('task.creation.chatInstantHint')}
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

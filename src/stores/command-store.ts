@@ -8,19 +8,35 @@ export interface CommandInfo {
 interface CommandState {
   /** Commands per session (from CLI initialize response) */
   commands: Record<string, CommandInfo[]>;
+  /** Provider invalidation revision per session. */
+  revisions: Record<string, number>;
   setCommands: (sessionId: string, commands: CommandInfo[]) => void;
   getCommands: (sessionId: string) => CommandInfo[];
+  invalidateSession: (sessionId: string) => void;
   clearSession: (sessionId: string) => void;
 }
 
 export const useCommandStore = create<CommandState>((set, get) => ({
   commands: {},
+  revisions: {},
   setCommands: (sessionId, commands) =>
     set((s) => ({ commands: { ...s.commands, [sessionId]: commands } })),
   getCommands: (sessionId) => get().commands[sessionId] ?? [],
+  invalidateSession: (sessionId) =>
+    set((s) => {
+      const { [sessionId]: _, ...commands } = s.commands;
+      return {
+        commands,
+        revisions: {
+          ...s.revisions,
+          [sessionId]: (s.revisions[sessionId] ?? 0) + 1,
+        },
+      };
+    }),
   clearSession: (sessionId) =>
     set((s) => {
-      const { [sessionId]: _, ...rest } = s.commands;
-      return { commands: rest };
+      const { [sessionId]: _, ...commands } = s.commands;
+      const { [sessionId]: __, ...revisions } = s.revisions;
+      return { commands, revisions };
     }),
 }));

@@ -14,7 +14,6 @@ import {
   useAnySessionAwaitingUser,
   useIsSessionAwaitingUser,
 } from '@/hooks/use-session-awaiting-user';
-import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useNotificationStore } from '@/stores/notification-store';
@@ -27,6 +26,7 @@ import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
 import { ProviderQuickMenu } from '@/components/chat/provider-quick-menu';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { useInlineRename } from '@/hooks/use-inline-rename';
 import {
   ArchiveConfirmButton,
@@ -563,7 +563,7 @@ interface KanbanTaskCardProps {
   onDragStart?: (e: React.DragEvent) => void;
   onDragEnd?: (e: React.DragEvent) => void;
   onDragOverItem?: (e: React.DragEvent) => void;
-  onAddSession?: (task: TaskEntity, providerId?: string) => void;
+  onAddSession?: (task: TaskEntity, providerId?: string, executionMode?: AgentExecutionMode) => void;
   onContextMenu?: (task: TaskEntity, anchorRect: DOMRect) => void;
   onRename?: (taskId: string, newTitle: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
@@ -743,20 +743,16 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const handleAddSession = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    const providers = useProvidersStore.getState().providers;
-    const selectable = (providers ?? []).filter((p) => p.status === 'connected');
-    if (selectable.length === 1) {
-      onAddSession?.(task, selectable[0].id);
-      return;
-    }
+    // Always open the menu — even with a single provider the session still needs
+    // its PTY/GUI choice.
     const rect = addButtonRef.current?.getBoundingClientRect();
     if (rect) setProviderMenuAnchor(rect);
-  }, [task, onAddSession]);
+  }, []);
 
   const handleProviderMenuClose = useCallback(() => setProviderMenuAnchor(null), []);
 
-  const handleProviderSelect = useCallback((providerId: string) => {
-    onAddSession?.(task, providerId);
+  const handleProviderSelect = useCallback((providerId: string, executionMode: AgentExecutionMode) => {
+    onAddSession?.(task, providerId, executionMode);
   }, [task, onAddSession]);
 
   const handleArchiveTask = useCallback(() => {

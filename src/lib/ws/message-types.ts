@@ -475,6 +475,10 @@ export type AppServerMessage =
       timestamp?: string;
     }
   | {
+      type: 'skills_changed';
+      sessionId: string;
+    }
+  | {
       type: 'skill_analysis_progress';
       status: 'scanning' | 'analyzing' | 'completed' | 'failed';
       skillCount?: number;

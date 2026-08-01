@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { buildAgentPromptHistoryItem } from '@/lib/agent-context-summary';
+import { COMPACTING_STATUS } from '@/lib/cli/compact-status';
 import { useChatStore } from '@/stores/chat-store';
 import { useUsageStore } from '@/stores/usage-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -102,6 +103,36 @@ function appendLastMessageIfPresent(sessionId: string, nextState: SessionReplayS
   }
 }
 
+/**
+ * Mirrors compaction phase changes into the store so the docked compacting bar
+ * can show progress. Claude Code brackets a compaction with
+ * `status: "compacting"` → `status: null`; Codex never opens the phase and only
+ * reports `compact_boundary` when it is already done, which closes the
+ * optimistic open that /compact created.
+ */
+function projectCompactStatus(
+  sessionId: string,
+  event: Extract<SessionReplayEvent, { type: 'system' }>,
+): void {
+  const chatStore = useChatStore.getState();
+
+  if (event.subtype === 'status') {
+    const status = event.metadata?.status ?? null;
+    if (status === COMPACTING_STATUS) {
+      chatStore.setCompacting(sessionId, Date.now());
+    } else if (status === null) {
+      chatStore.setCompacting(sessionId, null);
+    }
+    // Any other phase (e.g. "requesting") is unrelated to compaction and must
+    // not close a bar that is still running.
+    return;
+  }
+
+  if (event.subtype === 'compact_boundary') {
+    chatStore.setCompacting(sessionId, null);
+  }
+}
+
 function syncPromptProjection(sessionId: string, nextState: SessionReplayState): void {
   useChatStore.getState().setActiveInteractivePrompt(sessionId, nextState.activeInteractivePrompt);
 }
@@ -153,6 +184,9 @@ function projectReplayStateTransition(
     case 'thinking':
     case 'system':
     case 'progress_hook':
+      if (event.type === 'system') {
+        projectCompactStatus(sessionId, event);
+      }
       if (nextState.messages.length > prevState.messages.length) {
         appendLastMessageIfPresent(sessionId, nextState);
       }

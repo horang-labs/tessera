@@ -21,6 +21,7 @@ import {
   getCodexSlashCommandsForPicker,
   isReservedCodexSlashCommandName,
 } from '@/lib/chat/codex-slash-command-registry';
+import { loadCodexSkills } from '@/lib/chat/codex-skill-loader';
 
 export type SkillInfo = CommandInfo & {
   builtinCommand?:
@@ -75,6 +76,9 @@ export function useSkillPicker(
   // Reactive subscription to command store
   const commands = useCommandStore(
     (s) => (sessionId ? s.commands[sessionId] : undefined),
+  );
+  const skillRevision = useCommandStore(
+    (s) => (sessionId ? (s.revisions[sessionId] ?? 0) : 0),
   );
   const builtInCommands = useMemo<SkillInfo[]>(
     () => {
@@ -153,9 +157,13 @@ export function useSkillPicker(
   );
   const hasLoadedCommands = commands !== undefined;
   const hasBuiltInCommands = builtInCommands.length > 0;
+  const canDiscoverBeforeSession = providerId === 'claude-code'
+    || providerId === 'codex'
+    || providerId === 'opencode';
   const isInactive = isOpen && !hasLoadedCommands
     && (skillsOnlyMode || !hasBuiltInCommands)
-    && isSessionRunning === false;
+    && isSessionRunning === false
+    && !canDiscoverBeforeSession;
   const isLoading = isOpen && !hasLoadedCommands
     && (skillsOnlyMode || !hasBuiltInCommands)
     && !isInactive;
@@ -163,22 +171,50 @@ export function useSkillPicker(
 
   // Track the last input value so we can re-filter when commands arrive
   const lastInputRef = useRef('');
-  const loadPromiseRef = useRef<Promise<void> | null>(null);
+  const loadPromiseRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const loadTokenRef = useRef<object | null>(null);
+
+  useEffect(
+    function invalidateStaleSkillLoad() {
+      loadTokenRef.current = null;
+      return function cancelSkillLoad() {
+        loadTokenRef.current = null;
+      };
+    },
+    [isSessionRunning, providerId, sessionId, skillRevision],
+  );
 
   const loadProviderSkills = useCallback(async () => {
-    if (!sessionId || !providerId || loadPromiseRef.current) {
-      return loadPromiseRef.current ?? Promise.resolve();
+    if (!sessionId || !providerId) {
+      return;
     }
 
+    const loadKey = `${providerId}:${sessionId}:${skillRevision}`;
+    if (loadPromiseRef.current?.key === loadKey) {
+      return loadPromiseRef.current.promise;
+    }
+
+    const loadToken = {};
+    loadTokenRef.current = loadToken;
+    const isCurrentLoad = () =>
+      loadTokenRef.current === loadToken
+      && (useCommandStore.getState().revisions[sessionId] ?? 0) === skillRevision;
+
     const task = (async () => {
-      if (providerId === 'claude-code' || providerId === 'opencode') {
+      if (providerId === 'opencode') {
         if (isSessionRunning !== false) {
           wsClient.getCommands(sessionId);
+          return;
         }
-        return;
       }
 
-      if (isSessionRunning === false) {
+      if (providerId === 'codex') {
+        const skills = await loadCodexSkills(sessionId, {
+          shouldContinue: isCurrentLoad,
+        });
+        if (skills !== null && isCurrentLoad()) {
+          setCommands(sessionId, skills);
+        }
         return;
       }
 
@@ -198,25 +234,34 @@ export function useSkillPicker(
               }))
           : [];
 
-        setCommands(sessionId, skills);
+        if (isCurrentLoad()) {
+          setCommands(sessionId, skills);
+        }
       } catch {
-        setCommands(sessionId, []);
+        if (isCurrentLoad()) {
+          setCommands(sessionId, []);
+        }
       }
     })();
 
-    loadPromiseRef.current = task;
+    const loadEntry = { key: loadKey, promise: task };
+    loadPromiseRef.current = loadEntry;
     try {
       await task;
     } finally {
-      loadPromiseRef.current = null;
+      if (loadPromiseRef.current === loadEntry) {
+        loadPromiseRef.current = null;
+      }
     }
-  }, [isSessionRunning, providerId, sessionId, setCommands]);
+  }, [isSessionRunning, providerId, sessionId, setCommands, skillRevision]);
 
-  useEffect(() => {
-    if (!sessionId || !providerId || hasLoadedCommands) return;
-    if (isSessionRunning === false) return;
-    void loadProviderSkills();
-  }, [hasLoadedCommands, isSessionRunning, loadProviderSkills, providerId, sessionId]);
+  useEffect(
+    function loadProviderSkillsWhenReady() {
+      if (!sessionId || !providerId || hasLoadedCommands) return;
+      void loadProviderSkills();
+    },
+    [hasLoadedCommands, isSessionRunning, loadProviderSkills, providerId, sessionId],
+  );
 
   const filterAndShow = useCallback(
     (value: string, list: SkillInfo[]) => {

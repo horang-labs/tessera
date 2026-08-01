@@ -224,6 +224,8 @@ export const TabBar = memo(function TabBar() {
     const sourcePanel = sourceTabData?.panels[payload.panelId];
     const terminalId = sourcePanel?.terminalId ?? null;
     const terminalSessionId = sourcePanel?.terminalSessionId ?? null;
+    const terminalCwd = sourcePanel?.terminalCwd ?? null;
+    const sourceProjectDir = tabStore.tabs.find((tab) => tab.id === payload.tabId)?.projectDir ?? null;
     if (!sourceTabData || !terminalId || payload.tabId !== previousActiveTabId) return false;
 
     if (Object.keys(sourceTabData.panels).length > 1) {
@@ -236,7 +238,10 @@ export const TabBar = memo(function TabBar() {
     const newTabData = usePanelStore.getState().tabPanels[newTabId];
     const newPanelId = newTabData?.activePanelId;
     if (!newPanelId) return false;
-    usePanelStore.getState().assignTerminal(newPanelId, terminalId, terminalSessionId);
+    usePanelStore.getState().assignTerminal(newPanelId, terminalId, terminalSessionId, terminalCwd);
+    if (sourceProjectDir) {
+      useTabStore.getState().setTabProject(newTabId, sourceProjectDir);
+    }
 
     if (previousActiveTabId && previousActiveTabId !== newTabId) {
       useTabStore.getState().setActiveTab(previousActiveTabId);

@@ -51,6 +51,7 @@ import {
 import type { Collection } from '@/types/collection';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -820,7 +821,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   // ── Add session to existing task (matching list view's addSessionToTask) ──
 
-  const handleAddSessionToTask = useCallback(async (task: TaskEntity, requestedProviderId?: string) => {
+  const handleAddSessionToTask = useCallback(async (
+    task: TaskEntity,
+    requestedProviderId?: string,
+    requestedExecutionMode?: AgentExecutionMode,
+  ) => {
     try {
       // If active panel already has a session, create a new tab
       const panelState = usePanelStore.getState();
@@ -848,6 +853,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
           worktreeBranch: task.worktreeBranch || undefined,
           ...runtimeConfig,
           providerId,
+          ...(requestedExecutionMode && { executionMode: requestedExecutionMode }),
         }),
       });
       if (!res.ok) throw new Error('Failed to create session');

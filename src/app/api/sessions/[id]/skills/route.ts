@@ -2,14 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
 import { processManager } from '@/lib/cli/process-manager';
+import { listClaudeSkills } from '@/lib/cli/providers/claude-code/skill-discovery-client';
+import { listCodexSkills } from '@/lib/cli/providers/codex/skill-discovery-client';
+import { listOpenCodeCommands } from '@/lib/cli/providers/opencode/command-discovery-client';
+import logger from '@/lib/logger';
 
 /**
  * GET /api/sessions/[id]/skills
  *
  * Returns the list of skills available for the given session's CLI provider.
- * Skills are discovered via the SkillSource attached to the active process.
- * If the session has no active process or the provider does not support skill
- * discovery, returns an empty skills array.
+ * Active processes remain authoritative. Fresh GUI sessions use provider-native
+ * discovery that does not start or resume a conversation. Temporary Codex
+ * discovery failures remain retryable instead of becoming a valid empty list.
  */
 export async function GET(
   request: NextRequest,
@@ -31,15 +35,56 @@ export async function GET(
     }
 
     const processInfo = processManager.getProcess(id);
-    const skillSource = processInfo?.skillSource;
+    const providerId = session.provider?.trim();
 
-    if (!skillSource) {
-      return NextResponse.json({ skills: [] });
+    if (providerId === 'codex') {
+      try {
+        const skills = processInfo?.skillSource
+          ? await processInfo.skillSource.listSkills()
+          : await listCodexSkills({
+              userId: auth.userId,
+              workDir: session.work_dir,
+            });
+        return NextResponse.json({ skills });
+      } catch (error) {
+        logger.warn({
+          sessionId: id,
+          error: error instanceof Error ? error.message : String(error),
+        }, 'Codex skill discovery temporarily failed');
+        return NextResponse.json(
+          { error: 'Skill discovery temporarily failed', retryable: true },
+          { status: 503 },
+        );
+      }
     }
 
-    const skills = await skillSource.listSkills();
-    return NextResponse.json({ skills });
-  } catch {
+    if (providerId === 'claude-code') {
+      const reportedCommands = processManager.getCommands(id);
+      if (reportedCommands.length > 0) {
+        return NextResponse.json({ skills: reportedCommands });
+      }
+
+      return NextResponse.json({
+        skills: await listClaudeSkills({
+          userId: auth.userId,
+          workDir: session.work_dir,
+        }),
+      });
+    }
+
+    if (providerId === 'opencode') {
+      const commands = processInfo
+        ? processManager.getCommands(id)
+        : await listOpenCodeCommands({
+            userId: auth.userId,
+            workDir: session.work_dir,
+          });
+      return NextResponse.json({ skills: commands });
+    }
+
+    return NextResponse.json({ skills: [] });
+  } catch (error) {
+    logger.warn({ sessionId: id, error }, 'Failed to discover session skills');
     return NextResponse.json({ skills: [] });
   }
 }

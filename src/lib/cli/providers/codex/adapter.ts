@@ -78,6 +78,7 @@ import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 
 const CLI_TIMEOUT_MS = 120_000;
+const SKILLS_REQUEST_TIMEOUT_MS = 10_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
 const TITLE_REASONING_EFFORT = 'low';
 const PROVIDER_ID = 'codex';
@@ -881,20 +882,19 @@ export class CodexAdapter implements CliProvider {
    * to 100 chars, descriptions to 500 chars. Entries with empty names are
    * filtered out. The `path` field from SkillMetadata is preserved in SkillInfo.
    *
-   * Returns null if no threadId is available for the process.
+   * Skills are scoped by working directory, independently of the active thread.
+   * Requests bypass Codex's cache so an invalidation observes current files.
    */
   createSkillSource(sessionId: string, proc: ChildProcess): SkillSource | null {
     return {
       listSkills: async (): Promise<SkillInfo[]> => {
-        const threadId = this._processThreadIds.get(proc);
-        if (!threadId) {
-          logger.debug('CodexAdapter: createSkillSource.listSkills — no threadId', { sessionId });
-          return [];
+        const cwd = this._processRuntimeConfig.get(proc)?.cwd;
+        if (!cwd) {
+          throw new Error('Codex skill discovery is unavailable: session cwd is missing');
         }
 
         if (!proc.stdin?.writable) {
-          logger.debug('CodexAdapter: createSkillSource.listSkills — stdin not writable', { sessionId });
-          return [];
+          throw new Error('Codex skill discovery is unavailable: stdin is not writable');
         }
 
         const requestId = this._nextRequestId++;
@@ -902,22 +902,30 @@ export class CodexAdapter implements CliProvider {
           jsonrpc: '2.0',
           id: requestId,
           method: 'skills/list',
-          params: { threadId },
+          params: {
+            cwds: [cwd],
+            forceReload: true,
+          },
         };
 
         codexProtocolParser.trackPendingRequest(sessionId, requestId, 'skills/list');
         this._writeStdin(proc, 'skills_list', `${JSON.stringify(request)}\n`);
-        logger.debug('CodexAdapter: sent skills/list request', { sessionId, requestId, threadId });
+        logger.debug('CodexAdapter: sent skills/list request', { sessionId, requestId, cwd });
 
         let response: { id: number; result?: Record<string, any>; error?: any };
         try {
-          response = await this._awaitResponse(proc, requestId, 'skills/list');
+          response = await this._awaitResponse(
+            proc,
+            requestId,
+            'skills/list',
+            SKILLS_REQUEST_TIMEOUT_MS,
+          );
         } catch (err) {
           logger.warn('CodexAdapter: skills/list request failed', {
             sessionId,
             error: (err as Error).message,
           });
-          return [];
+          throw err;
         }
 
         // Parse ListSkillsResponseEvent
