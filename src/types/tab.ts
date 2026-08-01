@@ -108,6 +108,13 @@ export interface TabStoreActions {
   createTab(initialSessionId?: string | null, options?: { insertAfterTabId?: string | null }): string;
 
   /**
+   * 사용자 New Tab 명령을 처리.
+   * 작업이 전혀 없는 빈 단일 패널 탭이 있으면 하나만 남겨 재사용하고, 없으면 새 탭을 생성.
+   * @returns 활성화된 빈 탭의 ID
+   */
+  openNewTab(): string;
+
+  /**
    * 지정한 탭을 닫음.
    * 마지막 탭을 닫으면 빈 탭을 자동 생성 (BR-001).
    */

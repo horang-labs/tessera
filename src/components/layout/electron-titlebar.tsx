@@ -124,7 +124,7 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
     return electronApi.onTitlebarMenuCommand((command) => {
       switch (command) {
         case 'new-tab':
-          useTabStore.getState().createTab();
+          useTabStore.getState().openNewTab();
           break;
         case 'open-settings':
           useSettingsStore.getState().open();

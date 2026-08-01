@@ -172,7 +172,7 @@ export const TabBar = memo(function TabBar() {
   // ---------------------------------------------------------------------------
 
   const handleAddTab = useCallback(function handleAddTab() {
-    useTabStore.getState().createTab();
+    useTabStore.getState().openNewTab();
   }, []);
 
   const clearTabDragState = useCallback(function clearTabDragState() {
