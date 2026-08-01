@@ -173,23 +173,25 @@ export function useSkillPicker(
   const lastInputRef = useRef('');
   const loadPromiseRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const loadTokenRef = useRef<object | null>(null);
+  const skillLoadKey = sessionId && providerId
+    ? `${providerId}:${sessionId}:${skillRevision}`
+    : null;
 
   useEffect(
-    function invalidateStaleSkillLoad() {
-      loadTokenRef.current = null;
-      return function cancelSkillLoad() {
+    function invalidateDifferentSkillLoad() {
+      if (loadPromiseRef.current?.key !== skillLoadKey) {
         loadTokenRef.current = null;
-      };
+      }
     },
-    [isSessionRunning, providerId, sessionId, skillRevision],
+    [skillLoadKey],
   );
 
   const loadProviderSkills = useCallback(async () => {
-    if (!sessionId || !providerId) {
+    if (!sessionId || !providerId || !skillLoadKey) {
       return;
     }
 
-    const loadKey = `${providerId}:${sessionId}:${skillRevision}`;
+    const loadKey = skillLoadKey;
     if (loadPromiseRef.current?.key === loadKey) {
       return loadPromiseRef.current.promise;
     }
@@ -199,6 +201,9 @@ export function useSkillPicker(
     const isCurrentLoad = () =>
       loadTokenRef.current === loadToken
       && (useCommandStore.getState().revisions[sessionId] ?? 0) === skillRevision;
+    const canApplyLoad = () =>
+      isCurrentLoad()
+      && useCommandStore.getState().commands[sessionId] === undefined;
 
     const task = (async () => {
       if (providerId === 'opencode') {
@@ -212,7 +217,7 @@ export function useSkillPicker(
         const skills = await loadCodexSkills(sessionId, {
           shouldContinue: isCurrentLoad,
         });
-        if (skills !== null && isCurrentLoad()) {
+        if (skills !== null && canApplyLoad()) {
           setCommands(sessionId, skills);
         }
         return;
@@ -234,11 +239,11 @@ export function useSkillPicker(
               }))
           : [];
 
-        if (isCurrentLoad()) {
+        if (canApplyLoad()) {
           setCommands(sessionId, skills);
         }
       } catch {
-        if (isCurrentLoad()) {
+        if (canApplyLoad()) {
           setCommands(sessionId, []);
         }
       }
@@ -253,7 +258,7 @@ export function useSkillPicker(
         loadPromiseRef.current = null;
       }
     }
-  }, [isSessionRunning, providerId, sessionId, setCommands, skillRevision]);
+  }, [isSessionRunning, providerId, sessionId, setCommands, skillLoadKey, skillRevision]);
 
   useEffect(
     function loadProviderSkillsWhenReady() {
