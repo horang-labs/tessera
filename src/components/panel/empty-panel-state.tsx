@@ -32,6 +32,7 @@ import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 import { v4 as uuidv4 } from 'uuid';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
+import { resolveLastActiveProjectDir } from '@/lib/session/last-active-project';
 
 interface EmptyPanelStateProps {
   panelId: string;
@@ -96,8 +97,18 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
   const projects = useSessionStore((state) => state.projects);
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
-  const [allProjectsProjectId, setAllProjectsProjectId] = useState<string | null>(null);
+  const lastActiveProjectDir = useSessionStore((state) => state.lastActiveProjectDir);
+  const [allProjectsProjectOverride, setAllProjectsProjectOverride] = useState<
+    string | null | undefined
+  >(undefined);
   const requiresProjectSelection = selectedProjectDir === ALL_PROJECTS_SENTINEL;
+  const defaultAllProjectsProjectId = resolveLastActiveProjectDir(
+    projects,
+    lastActiveProjectDir,
+  );
+  const allProjectsProjectId = allProjectsProjectOverride === undefined
+    ? defaultAllProjectsProjectId
+    : allProjectsProjectOverride;
   const resolvedProjectId = resolveEmptyPanelProjectId(
     selectedProjectDir,
     allProjectsProjectId,
@@ -154,7 +165,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   }, []);
 
   const handleProjectChange = useCallback((projectId: string) => {
-    setAllProjectsProjectId(projectId || null);
+    setAllProjectsProjectOverride(projectId || null);
     setSelectedCollectionId(null);
     setError(null);
   }, []);
