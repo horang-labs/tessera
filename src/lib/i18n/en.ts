@@ -465,6 +465,7 @@ export const en: I18nMessages = {
     codexFastEnabled: 'Codex fast mode enabled',
     codexFastDisabled: 'Codex fast mode disabled',
     codexCompactDuringTurn: 'Wait for the current Codex turn to finish before compacting.',
+    compactingConversation: 'Compacting conversation…',
     cancelHint: 'Press ESC to cancel...',
     cancelButton: 'Cancel (ESC)',
     attachFile: 'Attach file',

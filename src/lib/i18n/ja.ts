@@ -465,6 +465,7 @@ export const ja: I18nMessages = {
     codexFastEnabled: 'Codex Fast モードを有効にしました',
     codexFastDisabled: 'Codex Fast モードを無効にしました',
     codexCompactDuringTurn: '現在の Codex ターンが終了してから compact を実行してください。',
+    compactingConversation: '会話を compact 中…',
     cancelHint: 'ESC で中断...',
     cancelButton: '中断 (ESC)',
     attachFile: 'ファイルを添付',

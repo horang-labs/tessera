@@ -467,6 +467,7 @@ export const ko: I18nMessages = {
     codexFastEnabled: 'Codex Fast 모드를 켰습니다.',
     codexFastDisabled: 'Codex Fast 모드를 껐습니다.',
     codexCompactDuringTurn: '현재 Codex 응답이 끝난 뒤 compact를 실행하세요.',
+    compactingConversation: '대화 compact 중…',
     cancelHint: 'ESC로 생성 중단...',
     cancelButton: '생성 중단 (ESC)',
     attachFile: '파일 첨부',

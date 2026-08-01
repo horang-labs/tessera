@@ -11,6 +11,7 @@ import { Header } from "./header";
 import { MessageList } from "./message-list";
 import { MessageInput } from "./message-input";
 import { WorkflowStatusBar } from "./workflow/workflow-status-bar";
+import { CompactStatusBar } from "./compact-status-bar";
 import { TodoStatusBar } from "./todo/todo-status-bar";
 import { TerminalChatComposer } from "./terminal-chat-composer";
 import { InteractivePromptOverlay } from "./interactive-prompt-overlay";
@@ -319,6 +320,7 @@ export const ChatArea = memo(function ChatArea({
           <div className="max-h-[45vh] overflow-y-auto">
             <WorkflowStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
             <TodoStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
+            <CompactStatusBar sessionId={sessionId} isSinglePanel={isSinglePanel} />
           </div>
 
           <MessageInput

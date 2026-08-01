@@ -105,6 +105,12 @@ export interface ChatState {
   // bar reads this projection instead of depending on the paginated message list.
   todoSnapshots: Map<string, TodoItem[]>;
 
+  // Wall-clock start of an in-flight compaction, keyed by session. Drives the
+  // docked compacting bar. Set from the CLI's `status: "compacting"` frame, or
+  // optimistically when the user runs /compact on a provider that only reports
+  // completion (Codex); cleared when the phase closes.
+  compactingStartedAt: Map<string, number>;
+
   // Assistant text blocks currently waiting for text flush, keyed by session.
   // This drives only the inline streaming dots. It is intentionally separate
   // from turnInFlightBySession, which can stay true during thinking/tools.
@@ -184,6 +190,7 @@ export interface ChatState {
   getScrollPosition: (sessionId: string) => ScrollPositionSnapshot | undefined;
   setActiveInteractivePrompt: (sessionId: string, prompt: ActiveInteractivePrompt | null) => void;
   setTodoSnapshot: (sessionId: string, snapshot: TodoItem[]) => void;
+  setCompacting: (sessionId: string, startedAt: number | null) => void;
   recordPromptHistoryItem: (sessionId: string, item: AgentPromptHistoryItem) => void;
   resolvePromptHistoryItem: (sessionId: string, promptId: string) => void;
   setTurnInFlight: (sessionId: string, inFlight: boolean) => void;
@@ -321,6 +328,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   scrollPositions: new Map(),
   dismissedWorkflowTaskIds: new Set(),
   todoSnapshots: new Map(),
+  compactingStartedAt: new Map(),
 
   isHistoryLoaded: (sessionId) => get().historyLoaded.has(sessionId),
 
@@ -333,6 +341,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updated.set(sessionId, snapshot.map((todo) => ({ ...todo })));
       }
       return { todoSnapshots: updated };
+    }),
+
+  setCompacting: (sessionId, startedAt) =>
+    set((state) => {
+      const current = state.compactingStartedAt.get(sessionId);
+
+      if (startedAt === null) {
+        if (current === undefined) return {};
+        const updated = new Map(state.compactingStartedAt);
+        updated.delete(sessionId);
+        return { compactingStartedAt: updated };
+      }
+
+      // Keep the earliest start. An optimistic open (user ran /compact) must not
+      // be pushed forward by the CLI's own `compacting` frame, which only lands
+      // once the current turn drains — otherwise the bar would restart at 0%.
+      if (current !== undefined) return {};
+
+      const updated = new Map(state.compactingStartedAt);
+      updated.set(sessionId, startedAt);
+      return { compactingStartedAt: updated };
     }),
 
   setDraftInput: (sessionId, text) =>
@@ -757,6 +786,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const clearedTodoSnapshots = new Map(state.todoSnapshots);
       clearedTodoSnapshots.delete(sessionId);
 
+      const clearedCompacting = new Map(state.compactingStartedAt);
+      clearedCompacting.delete(sessionId);
+
       return {
         messages: updatedMessages,
         historyLoaded: clearedHistoryLoaded,
@@ -779,6 +811,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         draftInputs: clearedDrafts,
         scrollPositions: clearedScrollPositions,
         todoSnapshots: clearedTodoSnapshots,
+        compactingStartedAt: clearedCompacting,
       };
     }),
 

@@ -447,6 +447,7 @@ export interface I18nMessages {
     codexFastEnabled: string;
     codexFastDisabled: string;
     codexCompactDuringTurn: string;
+    compactingConversation: string;
     cancelHint: string;
     cancelButton: string;
     attachFile: string;
