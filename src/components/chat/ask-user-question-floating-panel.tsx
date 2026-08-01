@@ -38,6 +38,8 @@ export function AskUserQuestionFloatingPanel({
 }: AskUserQuestionFloatingPanelProps) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const optionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const { sendInteractiveResponse } = useWebSocket();
   const providerId = useSessionStore((state) => state.getSession(sessionId)?.provider);
   const providerBrand = getProviderBrand(providerId);
@@ -153,6 +155,29 @@ export function AskUserQuestionFloatingPanel({
   const refocusContainer = useCallback(() => {
     containerRef.current?.focus();
   }, []);
+
+  // ↑/↓로 옮긴 항목이 스크롤 영역 밖이면 따라 스크롤한다.
+  // 옵션 버튼은 tabIndex={-1}이라 DOM 포커스가 컨테이너에 머물러 브라우저 기본 스크롤이 안 걸린다.
+  // scrollIntoView 대신 scrollTop을 직접 계산하는 이유: 조상(채팅 본문)까지 같이 스크롤되면 안 된다.
+  useEffect(() => {
+    const area = scrollAreaRef.current;
+    const el = optionRefs.current[focusedOptionIdx];
+    if (!area || !el) return;
+
+    // 질문의 첫 옵션이면 header/질문 문구까지 보이도록 fieldset 기준으로 맞춘다
+    const target = el.hasAttribute('data-first-option') ? (el.closest('fieldset') ?? el) : el;
+    const areaBox = area.getBoundingClientRect();
+    const box = target.getBoundingClientRect();
+    const margin = 6;
+    // 타겟이 영역보다 크면(옵션 많은 질문) 하단 정렬은 하지 않는다 — 질문 문구가 위로 잘려 나간다
+    const overflows = box.height > areaBox.height - margin * 2;
+
+    if (box.top < areaBox.top + margin) {
+      area.scrollTop -= areaBox.top + margin - box.top;
+    } else if (!overflows && box.bottom > areaBox.bottom - margin) {
+      area.scrollTop += box.bottom - (areaBox.bottom - margin);
+    }
+  }, [focusedOptionIdx, density]);
 
   // Keyboard: ↑/↓ navigate, Space toggle, Enter select+submit, Esc decline, number keys
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -278,6 +303,7 @@ export function AskUserQuestionFloatingPanel({
 
       {/* Scrollable questions area */}
       <div
+        ref={scrollAreaRef}
         className="overflow-y-auto p-[var(--aqp-body-pad)] space-y-[var(--aqp-block-gap)]"
         style={{ containerType: 'inline-size' }}
       >
@@ -325,7 +351,13 @@ export function AskUserQuestionFloatingPanel({
                     const isFocused = globalIdx === focusedOptionIdx;
 
                     return (
-                      <div key={optKey}>
+                      <div
+                        key={optKey}
+                        ref={(el) => {
+                          optionRefs.current[globalIdx] = el;
+                        }}
+                        data-first-option={optIdx === 0 ? '' : undefined}
+                      >
                         <button
                           type="button"
                           aria-pressed={isSelected}
