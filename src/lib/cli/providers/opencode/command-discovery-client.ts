@@ -10,6 +10,7 @@ import {
 import type { SkillInfo } from '../skill-types';
 
 const DISCOVERY_TIMEOUT_MS = 30_000;
+const LOOPBACK_RETRY_DELAY_MS = 100;
 const COMPACT_COMMAND: SkillInfo = {
   name: 'compact',
   description: 'compact the session',
@@ -29,6 +30,11 @@ interface OpenCodeCommandCatalogEntry {
 export type OpenCodeCommandDiscoveryExecutor = (
   context: OpenCodeCommandDiscoveryContext,
 ) => Promise<unknown>;
+
+export interface OpenCodeCommandCatalogRequestOptions {
+  signal: AbortSignal;
+  authorization?: string;
+}
 
 let discoveryExecutorOverride: OpenCodeCommandDiscoveryExecutor | null = null;
 
@@ -78,6 +84,54 @@ function buildAuthorizationHeader(): string | undefined {
   return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
 }
 
+function waitForLoopbackRetry(signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, LOOPBACK_RETRY_DELAY_MS);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/** HTTP boundary kept separate so bridged localhost readiness is regression-testable. */
+export async function fetchOpenCodeCommandCatalog(
+  url: URL,
+  options: OpenCodeCommandCatalogRequestOptions,
+): Promise<unknown> {
+  while (true) {
+    try {
+      const response = await fetch(url, {
+        headers: options.authorization ? { Authorization: options.authorization } : undefined,
+        signal: options.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`OpenCode command discovery failed with HTTP ${response.status}.`);
+      }
+      return response.json();
+    } catch (error) {
+      // In Windows-host + WSL-agent mode, OpenCode can announce that its WSL
+      // listener is ready before WSL's localhost proxy has exposed the port to
+      // Windows. Node reports those short-lived connection failures as a
+      // TypeError. HTTP and payload errors are ordinary Error/SyntaxError
+      // instances and remain fail-fast.
+      if (options.signal.aborted || !(error instanceof TypeError)) {
+        throw error;
+      }
+      await waitForLoopbackRetry(options.signal);
+    }
+  }
+}
+
 async function requestCatalogFromTransientServer(
   command: string,
   cwd: string,
@@ -118,14 +172,10 @@ async function requestCatalogFromTransientServer(
       const url = new URL(`http://127.0.0.1:${port}/command`);
       url.searchParams.set('directory', cwd);
       const authorization = buildAuthorizationHeader();
-      const response = await fetch(url, {
-        headers: authorization ? { Authorization: authorization } : undefined,
+      return fetchOpenCodeCommandCatalog(url, {
+        authorization,
         signal: abortController.signal,
       });
-      if (!response.ok) {
-        throw new Error(`OpenCode command discovery failed with HTTP ${response.status}.`);
-      }
-      return response.json();
     };
     const onStdout = (chunk: Buffer | string) => {
       stdout = `${stdout}${chunk.toString()}`.slice(-4_000);
