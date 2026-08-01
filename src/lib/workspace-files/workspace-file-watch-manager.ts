@@ -6,6 +6,7 @@ import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-wor
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
 import {
   applyMaxFiles,
+  classifySymlinkTarget,
   isIgnoredWorkspacePath,
   normalizeWorkspaceRelativePath,
   type WorkspaceFileWalkResult,
@@ -40,12 +41,14 @@ interface WorkspaceRootChangeListener {
 
 interface PendingWatchEvent {
   eventName: WatchEventName;
+  isSymlink?: boolean;
   relativePath: string;
 }
 
 interface WatchEventStats {
   isDirectory(): boolean;
   isFile(): boolean;
+  isSymbolicLink?(): boolean;
 }
 
 interface WorkspaceWatchEntry {
@@ -69,6 +72,7 @@ interface WorkspaceWatchEntry {
   rootChangeListeners: Map<string, WorkspaceRootChangeListener>;
   status: WatchStatus;
   subscribers: Map<string, WorkspaceFileSubscriber>;
+  symlinks: Set<string>;
   truncated: boolean;
   version: number;
   watchMode: WatchMode;
@@ -334,7 +338,7 @@ export class WorkspaceFileWatchManager {
     if (entry.watchMode === "poll" && Date.now() - entry.lastIndexedAt > staleAfterMs) {
       void this.refreshPollIndex(entry);
     }
-    return applyMaxFiles(entry.files);
+    return applyMaxFiles(entry.files, entry.symlinks);
   }
 
   private async resolveRootForSession(sessionId: string): Promise<string | null> {
@@ -371,6 +375,7 @@ export class WorkspaceFileWatchManager {
       rootChangeListeners: new Map(),
       status: "starting",
       subscribers: new Map(),
+      symlinks: new Set(),
       truncated: false,
       version: 0,
       watchMode: wslRoot ? "poll" : "watch",
@@ -388,13 +393,14 @@ export class WorkspaceFileWatchManager {
     try {
       const snapshot = await walkWorkspaceFiles(entry.root);
       entry.files = new Set(snapshot.files);
+      entry.symlinks = new Set(snapshot.symlinks);
       entry.truncated = snapshot.truncated;
       entry.lastIndexedAt = Date.now();
       entry.ready = true;
 
       const pending = entry.pendingEventsBeforeReady.splice(0);
       for (const event of pending) {
-        this.applyWatchEvent(entry, event.eventName, event.relativePath);
+        this.dispatchWatchEvent(entry, event.eventName, event.relativePath, event.isSymlink);
       }
 
       if (entry.status !== "fallback") {
@@ -458,11 +464,12 @@ export class WorkspaceFileWatchManager {
         if (!this.isWatchEventShape(eventName, stats)) return;
         const relativePath = toWorkspaceRelativePath(entry.root, String(filePath));
         if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
+        const isSymlink = Boolean(stats?.isSymbolicLink?.());
         if (!entry.ready) {
-          entry.pendingEventsBeforeReady.push({ eventName, relativePath });
+          entry.pendingEventsBeforeReady.push({ eventName, isSymlink, relativePath });
           return;
         }
-        this.applyWatchEvent(entry, eventName, relativePath);
+        this.dispatchWatchEvent(entry, eventName, relativePath, isSymlink);
       });
 
       watcher.on("ready", markWatcherReady);
@@ -493,9 +500,47 @@ export class WorkspaceFileWatchManager {
 
   private isWatchEventShape(eventName: WatchEventName, stats?: WatchEventStats): boolean {
     if (!stats) return true;
-    if (eventName === "add" || eventName === "change") return stats.isFile();
+    // With followSymlinks:false chokidar lstats every entry, so a symlink is
+    // neither isFile() nor isDirectory() and arrives as "add" whatever it points
+    // at. Admit it here; dispatchWatchEvent resolves the target and decides
+    // whether it belongs in the index.
+    if (eventName === "add" || eventName === "change") {
+      return stats.isFile() || Boolean(stats.isSymbolicLink?.());
+    }
     if (eventName === "addDir") return stats.isDirectory();
     return true;
+  }
+
+  /**
+   * Route an event to the index, resolving symlink targets first so the live
+   * index keeps the same rule as the initial walk: linked files are indexed,
+   * linked directories and dangling links are not.
+   */
+  private dispatchWatchEvent(
+    entry: WorkspaceWatchEntry,
+    eventName: WatchEventName,
+    relativePath: string,
+    isSymlink?: boolean,
+  ): void {
+    if (!isSymlink || (eventName !== "add" && eventName !== "change")) {
+      // A plain file appearing at a path that used to be a link (`ln -sfn`
+      // replaced by a real file) has to clear the marker.
+      if (eventName === "add") entry.symlinks.delete(relativePath);
+      this.applyWatchEvent(entry, eventName, relativePath);
+      return;
+    }
+
+    const pathModule = getFilesystemPathModule(entry.root);
+    void classifySymlinkTarget(pathModule.join(entry.root, relativePath))
+      .then((kind) => {
+        if (this.entriesByRoot.get(entry.root) !== entry) return;
+        if (kind !== "file") return;
+        entry.symlinks.add(relativePath);
+        this.applyWatchEvent(entry, eventName, relativePath);
+      })
+      .catch((error) => {
+        logger.warn({ error, relativePath, root: entry.root }, "Failed to classify workspace symlink");
+      });
   }
 
   private applyWatchEvent(
@@ -513,6 +558,7 @@ export class WorkspaceFileWatchManager {
         return;
       case "unlink":
         entry.files.delete(relativePath);
+        entry.symlinks.delete(relativePath);
         this.scheduleChange(entry, relativePath, {
           deleted: true,
           treeChanged: true,
@@ -524,6 +570,7 @@ export class WorkspaceFileWatchManager {
         for (const filePath of Array.from(entry.files)) {
           if (filePath.startsWith(prefix)) {
             entry.files.delete(filePath);
+            entry.symlinks.delete(filePath);
             deletedPaths.push(filePath);
           }
         }
@@ -613,8 +660,11 @@ export class WorkspaceFileWatchManager {
       const snapshot = await walkWorkspaceFiles(entry.root);
       if (this.entriesByRoot.get(entry.root) !== entry) return;
       const previous = entry.files;
+      const previousSymlinks = entry.symlinks;
       const next = new Set(snapshot.files);
+      const nextSymlinks = new Set(snapshot.symlinks);
       entry.files = next;
+      entry.symlinks = nextSymlinks;
       entry.truncated = snapshot.truncated;
       entry.lastIndexedAt = Date.now();
 
@@ -630,6 +680,25 @@ export class WorkspaceFileWatchManager {
         changed = true;
         this.addPendingPath(entry, entry.pendingDeletedPaths, filePath);
         this.addPendingPath(entry, entry.pendingChangedPaths, filePath);
+      }
+      // Swapping a file for a link to the same path leaves the name set
+      // untouched, so only the marker moves. Treat that as a tree change or the
+      // badge would stay stale until some unrelated edit forces a reload. It
+      // also backfills markers for adds the inotify bridge reported without
+      // stat'ing the entry (a 9P stat per event is too expensive there).
+      if (!changed) {
+        for (const filePath of nextSymlinks) {
+          if (previousSymlinks.has(filePath)) continue;
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) {
+        for (const filePath of previousSymlinks) {
+          if (nextSymlinks.has(filePath)) continue;
+          changed = true;
+          break;
+        }
       }
       if (changed) {
         entry.pendingTreeChanged = true;

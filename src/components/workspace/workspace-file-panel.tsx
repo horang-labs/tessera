@@ -10,6 +10,7 @@ import {
   Folder,
   FolderOpen,
   FolderTree,
+  Link2,
   LoaderCircle,
   Search,
 } from "lucide-react";
@@ -40,6 +41,7 @@ interface WorkspaceFileNode {
   type: "file";
   name: string;
   path: string;
+  isSymlink: boolean;
 }
 
 interface WorkspaceDirectoryNode {
@@ -98,7 +100,7 @@ function finalizeDirectory(node: MutableDirectoryNode): WorkspaceDirectoryNode {
   };
 }
 
-function buildFileTree(filePaths: string[]): WorkspaceTreeNode[] {
+function buildFileTree(filePaths: string[], symlinkPaths: Set<string>): WorkspaceTreeNode[] {
   const root = createMutableDirectory("", "");
 
   for (const filePath of filePaths) {
@@ -121,6 +123,7 @@ function buildFileTree(filePaths: string[]): WorkspaceTreeNode[] {
       type: "file",
       name: fileName,
       path: filePath,
+      isSymlink: symlinkPaths.has(filePath),
     });
   }
 
@@ -168,6 +171,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     files,
     loading,
     refreshFiles,
+    symlinks,
     truncated,
     workDir,
   } = useWorkspaceFileList(sessionId);
@@ -191,7 +195,11 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     return baseFiles
       .filter((filePath) => filePath.toLowerCase().includes(trimmed));
   }, [baseFiles, query]);
-  const fileTree = useMemo(() => buildFileTree(visibleFiles), [visibleFiles]);
+  const symlinkPaths = useMemo(() => new Set(symlinks), [symlinks]);
+  const fileTree = useMemo(
+    () => buildFileTree(visibleFiles, symlinkPaths),
+    [symlinkPaths, visibleFiles],
+  );
   const isSearching = query.trim().length > 0;
 
   function toggleDirectory(path: string) {
@@ -305,10 +313,18 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           }}
           draggable={Boolean(sessionId)}
           className="flex min-w-0 items-center gap-2 border-l-transparent py-1.5 pr-2 text-left transition-colors"
-          title={node.path}
+          title={node.isSymlink ? `${node.path} (symbolic link)` : node.path}
           data-testid={`workspace-file-row-${node.path}`}
+          data-symlink={node.isSymlink ? "true" : undefined}
         >
-          <FileText className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
+          {node.isSymlink ? (
+            <Link2
+              className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)"
+              aria-label="Symbolic link"
+            />
+          ) : (
+            <FileText className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
+          )}
           <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
             {node.name}
           </span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Eye, EyeOff, FileText, FolderTree, LoaderCircle, Search } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, FileText, FolderTree, Link2, LoaderCircle, Search } from "lucide-react";
 import { useContext, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -68,6 +68,7 @@ export function WorkspaceExplorerTab({
     files,
     loading,
     refreshFiles,
+    symlinks,
     truncated,
   } = useWorkspaceFileList(explorerRef.sourceSessionId);
 
@@ -91,6 +92,7 @@ export function WorkspaceExplorerTab({
       .filter((filePath) => filePath.toLowerCase().includes(trimmed))
       .slice(0, 500);
   }, [baseFiles, query]);
+  const symlinkPaths = useMemo(() => new Set(symlinks), [symlinks]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
@@ -150,22 +152,30 @@ export function WorkspaceExplorerTab({
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <div className="mx-auto max-w-5xl py-3">
-            {visibleFiles.map((filePath) => (
-              <button
-                key={filePath}
-                type="button"
-                onClick={() => openWorkspaceFileTab(explorerRef.sourceSessionId, "file", filePath)}
-                className={cn(
-                  "grid h-10 w-full grid-cols-[1.5rem_minmax(12rem,1fr)_minmax(12rem,1.5fr)] items-center gap-3 rounded-md px-3 text-left transition-colors",
-                  "text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
-                )}
-                title={filePath}
-              >
-                <FileText className="h-4 w-4 text-(--text-muted)" />
-                <span className="truncate font-mono text-xs">{basename(filePath)}</span>
-                <span className="truncate text-xs text-(--text-muted)">{dirname(filePath)}</span>
-              </button>
-            ))}
+            {visibleFiles.map((filePath) => {
+              const isSymlink = symlinkPaths.has(filePath);
+              return (
+                <button
+                  key={filePath}
+                  type="button"
+                  onClick={() => openWorkspaceFileTab(explorerRef.sourceSessionId, "file", filePath)}
+                  className={cn(
+                    "grid h-10 w-full grid-cols-[1.5rem_minmax(12rem,1fr)_minmax(12rem,1.5fr)] items-center gap-3 rounded-md px-3 text-left transition-colors",
+                    "text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+                  )}
+                  title={isSymlink ? `${filePath} (symbolic link)` : filePath}
+                  data-symlink={isSymlink ? "true" : undefined}
+                >
+                  {isSymlink ? (
+                    <Link2 className="h-4 w-4 text-(--text-muted)" aria-label="Symbolic link" />
+                  ) : (
+                    <FileText className="h-4 w-4 text-(--text-muted)" />
+                  )}
+                  <span className="truncate font-mono text-xs">{basename(filePath)}</span>
+                  <span className="truncate text-xs text-(--text-muted)">{dirname(filePath)}</span>
+                </button>
+              );
+            })}
           </div>
         </ScrollArea>
       )}
