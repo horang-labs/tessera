@@ -267,13 +267,13 @@ export interface I18nMessages {
           placeholder: string;
         };
       };
-      runsOnCreate: string;
       noProject: string;
       loading: string;
       saving: string;
       saved: string;
       saveFailed: string;
       loadFailed: string;
+      variablesLabel: string;
       variables: {
         projectDir: string;
         worktreeDir: string;

@@ -55,6 +55,8 @@ export default function ProjectPreparationSettings() {
     projects,
   });
 
+  const selectedProject = projects.find((project) => project.encodedDir === projectId);
+
   const [drafts, setDrafts] = useState<Drafts>(EMPTY_DRAFTS);
   // Loading from the first render, not idle: the load is started by an effect,
   // so an idle first frame would say the empty draft is the project's script.
@@ -239,6 +241,14 @@ export default function ProjectPreparationSettings() {
             ) : null}
           </div>
 
+          {/* Above the boxes, because a variable is only useful while writing
+              the line that uses it — under them it is a footnote nobody scrolls
+              to. The example values are what the selected project would
+              actually produce, so the shape can be copied rather than guessed. */}
+          <PreparationVariables projectPath={selectedProject?.displayPath
+            ?? selectedProject?.decodedPath
+            ?? null} />
+
           {/* The blocking stage leads, because it is the one with a cost: every
               line in it is time an agent spends waiting to start. */}
           <PreparationScriptField
@@ -264,25 +274,60 @@ export default function ProjectPreparationSettings() {
             onBlur={flushPendingSave}
           />
 
-          <div className="space-y-1.5 border-t border-(--divider) pt-3">
-            <p className="text-[11px] text-(--text-tertiary)">
-              {t('settings.preparation.runsOnCreate')}
-            </p>
-            <dl className="space-y-1">
-              {([
-                ['TESSERA_PROJECT_DIR', 'settings.preparation.variables.projectDir'],
-                ['TESSERA_WORKTREE_DIR', 'settings.preparation.variables.worktreeDir'],
-                ['TESSERA_BRANCH_NAME', 'settings.preparation.variables.branchName'],
-              ] as const).map(([name, description]) => (
-                <div key={name} className="flex flex-wrap items-baseline gap-x-2">
-                  <dt className="font-mono text-[11px] text-(--text-secondary)">{name}</dt>
-                  <dd className="text-[11px] text-(--text-tertiary)">{t(description)}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** A branch Tessera would have generated, used to make the example paths real. */
+const EXAMPLE_BRANCH = '0801-ab';
+
+/**
+ * What a script can refer to, with what each one holds.
+ *
+ * The value beside each name is the point: `$TESSERA_WORKTREE_DIR` says nothing
+ * about what will be there at run time, and one look at the path it expands to
+ * says all of it. The project's is its real path; the other two are what this
+ * project's next worktree would look like.
+ */
+function PreparationVariables({ projectPath }: { projectPath: string | null }) {
+  const { t } = useI18n();
+  const separator = projectPath?.includes('\\') ? '\\' : '/';
+  const projectName = projectPath?.split(/[\\/]/).filter(Boolean).pop() ?? 'project';
+  const projectDir = projectPath ?? `${separator}path${separator}to${separator}${projectName}`;
+  const worktreeDir = [
+    `~${separator}.tessera${separator}worktrees`,
+    projectName,
+    EXAMPLE_BRANCH,
+  ].join(separator);
+
+  return (
+    <div className="space-y-1.5 rounded-md border border-(--divider) bg-(--bg-secondary) px-3 py-2.5">
+      <span className="text-[11px] font-medium text-(--text-secondary)">
+        {t('settings.preparation.variablesLabel')}
+      </span>
+      <dl className="space-y-1.5">
+        {([
+          ['TESSERA_PROJECT_DIR', 'settings.preparation.variables.projectDir', projectDir],
+          ['TESSERA_WORKTREE_DIR', 'settings.preparation.variables.worktreeDir', worktreeDir],
+          ['TESSERA_BRANCH_NAME', 'settings.preparation.variables.branchName', EXAMPLE_BRANCH],
+        ] as const).map(([name, description, example]) => (
+          <div key={name} className="flex flex-col gap-0.5">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <dt className="font-mono text-[11px] text-(--text-primary)">{name}</dt>
+              <dd className="text-[11px] text-(--text-tertiary)">{t(description)}</dd>
+            </div>
+            <span
+              className="truncate font-mono text-[10px] text-(--text-muted)"
+              title={example}
+              data-testid={`preparation-variable-example-${name}`}
+            >
+              {example}
+            </span>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
