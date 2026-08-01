@@ -62,9 +62,15 @@ _Avoid_: setup, bootstrap, initialization
 
 ### Preparation script
 
-The commands a project runs during worktree preparation. It belongs to the project, so every worktree created from that project inherits it.
+The commands a project runs during worktree preparation. It belongs to the project, so every worktree created from that project inherits it. There are two, one per preparation stage.
 
 _Avoid_: setup script, hook — in Tessera, _setup_ names the first-run onboarding flow instead
+
+### Preparation stage
+
+Which half of a worktree's preparation a script belongs to, and therefore whether an agent waits for it. The _before_ stage supplies what a CLI reads when it starts, such as CLAUDE.md or AGENTS.md, and no agent is spawned into the worktree until it ends. The _after_ stage holds everything else, and runs alongside the agent.
+
+_Avoid_: blocking script, phase one — the stage is named for when it runs relative to the agent, not for its position in a sequence
 
 ### Preparation status
 

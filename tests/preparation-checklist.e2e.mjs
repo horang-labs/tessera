@@ -163,7 +163,7 @@ async function openSettingsProjectSection() {
 
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click({ timeout: 30_000 });
   await page.getByTestId('settings-nav-project').click({ timeout: 30_000 });
-  await page.getByTestId('project-preparation-script').waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByTestId('project-preparation-script-before').waitFor({ state: 'visible', timeout: 30_000 });
 }
 
 /**
@@ -254,12 +254,12 @@ async function phaseAnEmptyScriptGetsTheDefaults() {
   assert.ok(stored.includes('cp -R "$TESSERA_PROJECT_DIR/.claude" .'), 'the directory copy is recursive');
   assert.ok(!stored.includes('node_modules'), 'nothing unticked was written');
 
-  const shown = await page.getByTestId('project-preparation-script').inputValue();
+  const shown = await page.getByTestId('project-preparation-script-before').inputValue();
   assert.equal(shown, stored, 'the editor shows what was stored');
 
   // The phases below read against a line of the user's own above the block,
   // which is what a script in use actually looks like.
-  const editor = page.getByTestId('project-preparation-script');
+  const editor = page.getByTestId('project-preparation-script-before');
   await editor.fill(`npm install\n\n${stored}`);
   await editor.blur();
   await waitForStoredScript(
@@ -426,7 +426,7 @@ async function phaseTheChecklistWaitsForTheEditorToLoad() {
   // The editor disables itself while a load is in flight; that is the moment
   // the checklist may not offer anything to tick.
   await page.waitForFunction(
-    () => document.querySelector('[data-testid="project-preparation-script"]')?.disabled === true,
+    () => document.querySelector('[data-testid="project-preparation-script-before"]')?.disabled === true,
     null,
     { timeout: 30_000 },
   );
@@ -460,7 +460,7 @@ async function phaseTheChecklistWaitsForTheEditorToLoad() {
   const stored = await readStoredScript();
   assert.equal(stored, 'npm run bootstrap', 'the loaded script was not lost');
 
-  const shown = await page.getByTestId('project-preparation-script').inputValue();
+  const shown = await page.getByTestId('project-preparation-script-before').inputValue();
   assert.equal(shown, stored, 'what is on screen is what is stored');
 }
 

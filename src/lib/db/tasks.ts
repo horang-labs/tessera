@@ -595,6 +595,23 @@ export function getTaskBySessionId(
 }
 
 /**
+ * The task that owns a worktree, found by the directory itself.
+ *
+ * Preparation status belongs to the task, but what an agent about to be spawned
+ * knows is where it will run. A worktree is only ever backed by one task, so
+ * the directory names it unambiguously.
+ */
+export function findTaskIdForWorktree(workDir: string): string | null {
+  const row = getDb().prepare(`
+    SELECT s.task_id AS task_id
+    FROM sessions s
+    WHERE s.work_dir = ? AND s.task_id IS NOT NULL AND s.deleted = 0
+    LIMIT 1
+  `).get(workDir) as { task_id: string } | undefined;
+  return row?.task_id ?? null;
+}
+
+/**
  * Add a session to a task by updating sessions.task_id.
  */
 export function addSessionToTask(taskId: string, sessionId: string): void {

@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 31;
+export const SCHEMA_VERSION = 32;
 
 export const CREATE_TABLES = `
 CREATE TABLE IF NOT EXISTS _meta (
@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS projects (
   visible       INTEGER NOT NULL DEFAULT 1,
   sort_order    INTEGER NOT NULL DEFAULT 0,
   preparation_script TEXT,
+  preparation_after_script TEXT,
   registered_at TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -112,6 +113,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   preparation_exit_code INTEGER,
   preparation_output TEXT,
   preparation_script TEXT,
+  preparation_phase TEXT,
+  preparation_after_script TEXT,
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL
 );

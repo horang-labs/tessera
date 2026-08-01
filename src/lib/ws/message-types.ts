@@ -320,6 +320,21 @@ export type AppServerMessage =
       }>;
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
+  /**
+   * The message landed, but the agent it is for cannot start yet: the
+   * worktree's blocking preparation is still running. Sent only when a message
+   * is actually held, so a session that never waits never hears about
+   * preparation at all.
+   */
+  | { type: 'session_awaiting_preparation'; sessionId: string }
+  /** The wait is over, either way; the agent is starting. */
+  | { type: 'session_preparation_settled'; sessionId: string }
+  /**
+   * The terminal was asked for, but the agent in it is waiting on the
+   * worktree's blocking preparation. No PTY exists yet, so the surface says so
+   * itself; `terminal_started` follows once the wait is over.
+   */
+  | { type: 'terminal_awaiting_preparation'; terminalId: string; surfaceId: string }
   | { type: 'terminal_prefill_written'; terminalId: string }
   | { type: 'terminal_prefill_cancelled'; terminalId: string; message: string }
   | {

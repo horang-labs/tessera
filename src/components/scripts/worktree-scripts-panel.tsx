@@ -34,6 +34,7 @@ import { getPreparationTerminalId } from '@/lib/projects/preparation-terminal-id
 import { toPlainLogText } from '@/lib/terminal/plain-log-text';
 import {
   canRerunPreparation,
+  type PreparationPhase,
   type PreparationStatus,
 } from '@/lib/projects/preparation-status-policy';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -49,6 +50,8 @@ interface StoredPreparation {
   output: string | null;
   /** What this run ran, with Tessera's variables already expanded. */
   script: string | null;
+  /** The same, for the stage that ran once the agent was already free to start. */
+  afterScript: string | null;
 }
 
 /**
@@ -188,9 +191,12 @@ function PreparationRow({
 
       {preparationConfirmDialog}
 
-      {/* Mounted only once there is a script, so the section decides whether to
-          open itself against the real thing rather than against nothing. */}
-      {stored?.script ? <ScriptSection script={stored.script} /> : null}
+      {/* Mounted only once there is a script, so each section decides whether
+          to open itself against the real thing rather than against nothing.
+          Both stages are shown: the log below runs them one after the other,
+          and a reader working back from it needs either half. */}
+      {stored?.script ? <ScriptSection phase="before" script={stored.script} /> : null}
+      {stored?.afterScript ? <ScriptSection phase="after" script={stored.afterScript} /> : null}
 
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="worktree-scripts-log">
         {isRunning ? (
@@ -236,22 +242,25 @@ function PreparationRow({
  * script unfolded over it costs the reader the thing they came to see — in a
  * column this narrow even a short script wraps into half the panel.
  */
-function ScriptSection({ script }: { script: string }) {
+function ScriptSection({ phase, script }: { phase: PreparationPhase; script: string }) {
   const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const lines = script.split('\n').length;
 
   return (
-    <div className="shrink-0 border-b border-(--divider)" data-testid="worktree-scripts-script">
+    <div
+      className="shrink-0 border-b border-(--divider)"
+      data-testid={`worktree-scripts-script-${phase}`}
+    >
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
         className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[11px] text-(--text-muted) transition-colors hover:text-(--text-primary)"
-        data-testid="worktree-scripts-script-toggle"
+        data-testid={`worktree-scripts-script-toggle-${phase}`}
       >
         <ChevronRight className={cn('h-3 w-3 shrink-0 transition-transform', isOpen && 'rotate-90')} />
-        <span className="font-medium">{t('scripts.script')}</span>
+        <span className="font-medium">{t(`scripts.stage.${phase}`)}</span>
         <span className="text-(--text-tertiary)">
           {t('scripts.scriptLines', { count: lines })}
         </span>
@@ -259,7 +268,7 @@ function ScriptSection({ script }: { script: string }) {
       {isOpen ? (
         <pre
           className="max-h-44 overflow-auto whitespace-pre-wrap break-words px-3 pb-2 font-mono text-[11px] leading-snug text-(--text-secondary)"
-          data-testid="worktree-scripts-script-body"
+          data-testid={`worktree-scripts-script-body-${phase}`}
         >
           {script}
         </pre>

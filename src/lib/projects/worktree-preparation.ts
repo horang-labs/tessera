@@ -1,5 +1,10 @@
 /**
- * Runs a project's preparation script in a worktree, and records how it went.
+ * Runs a project's preparation scripts in a worktree, and records how it went.
+ *
+ * Preparation is two stages run one after the other: `before`, which an agent
+ * waits for, and `after`, which it does not. Each is its own process, so the
+ * moment `before` ends is a real event the agent gate can be released on —
+ * rather than a point somewhere inside a script nobody outside it can see.
  *
  * Every decision lives in preparation-execution-spec and
  * preparation-status-policy; this module only reads the project, writes the
@@ -13,8 +18,9 @@ import {
   getFilesystemPathModule,
   resolvePathForHostFilesystem,
 } from '@/lib/filesystem/host-path';
-import { getProject } from '@/lib/db/projects';
+import { getProject, readProjectPreparationScript } from '@/lib/db/projects';
 import {
+  finishPreparationStage,
   finishTaskPreparation,
   getTaskPreparationContext,
   startTaskPreparation,
@@ -30,7 +36,9 @@ import {
   type PreparationExecutionSpec,
 } from './preparation-execution-spec';
 import { expandPreparationVariables } from './preparation-script-preview';
+import { normalizePreparationScript } from './preparation-script-policy';
 import { getPreparationTerminalId } from './preparation-terminal-id';
+import type { PreparationPhase } from './preparation-status-policy';
 
 /** Directory under the worktree's own git storage that holds Tessera's runners. */
 const RUNNER_DIR_GIT_PATH = 'tessera';
@@ -67,87 +75,49 @@ export async function startWorktreePreparation(
   request: WorktreePreparationRequest,
 ): Promise<WorktreePreparationOutcome> {
   const project = getProject(request.projectDir);
-  if (!project?.preparation_script) return { started: false, reason: 'no_script' };
+  const before = normalizePreparationScript(project?.preparation_script);
+  const after = normalizePreparationScript(project?.preparation_after_script);
+  if (!before && !after) return { started: false, reason: 'no_script' };
 
   const settings = await SettingsManager.load(request.userId);
   const runGit = createGitRunner(settings.agentEnvironment);
-  const spec = buildPreparationExecutionSpec({
-    script: project.preparation_script,
-    projectDir: request.projectDir,
-    worktreePath: request.worktreePath,
-    branchName: request.branchName,
-    agentEnvironment: settings.agentEnvironment,
-    runnerScriptDir: await resolveRunnerScriptDir(request.worktreePath, runGit),
-    env: process.env,
-  });
+  const runnerScriptDir = await resolveRunnerScriptDir(request.worktreePath, runGit);
+
+  const buildSpec = (phase: PreparationPhase): PreparationExecutionSpec | null =>
+    buildPreparationExecutionSpec({
+      script: readProjectPreparationScript(
+        { preparation_script: before, preparation_after_script: after },
+        phase,
+      ),
+      phase,
+      projectDir: request.projectDir,
+      worktreePath: request.worktreePath,
+      branchName: request.branchName,
+      agentEnvironment: settings.agentEnvironment,
+      runnerScriptDir,
+      env: process.env,
+    });
+
+  // A project with nothing blocking starts at the stage it does have, so the
+  // agent is never held for a run that was not going to hold it anyway.
+  const firstPhase: PreparationPhase = before ? 'before' : 'after';
+  const spec = buildSpec(firstPhase);
   // Everything above only reads, so deciding there is nothing to run costs the
   // status nothing.
   if (!spec) return { started: false, reason: 'no_script' };
 
   // Claimed before anything is spawned, so two callers racing to prepare the
-  // same worktree cannot both win. The script is written down with the claim,
-  // expanded the way the shell's own trace will show it, so the log and the
-  // script beside it describe the same run.
-  const ranScript = expandPreparationVariables(project.preparation_script, spec.env);
-  if (!startTaskPreparation(request.taskId, ranScript)) {
-    return { started: false, reason: 'already_running' };
-  }
+  // same worktree cannot both win. The scripts are written down with the claim,
+  // expanded the way the shell's own trace will show them, so the log and the
+  // scripts beside it describe the same run.
+  const started = startTaskPreparation(request.taskId, {
+    before: before ? expandPreparationVariables(before, spec.env) : null,
+    after: after ? expandPreparationVariables(after, spec.env) : null,
+  });
+  if (!started) return { started: false, reason: 'already_running' };
 
   try {
-    await writeRunnerScript(spec);
-
-    await terminalManager.startDetached({
-      terminalId: getPreparationTerminalId(request.taskId),
-      userId: request.userId,
-      // The bridge enters the worktree from inside the distro, so the host has to
-      // spawn wsl.exe from somewhere it can actually reach.
-      resolvedShell: {
-        command: spec.program,
-        args: spec.args,
-        cwd: spec.bridgedThroughWsl ? os.homedir() : spec.cwd,
-        displayCwd: spec.cwd,
-      },
-      launchEnv: spec.env,
-      onRuntimeExit: (event, output) => {
-        // Shutdown kills this PTY, and that death arrives here looking like a
-        // clean exit. Leaving the status alone keeps it at `running`, which is
-        // what the next startup reads as a run the app cut short.
-        if (isServerShuttingDown()) {
-          logger.info(
-            { taskId: request.taskId, worktreePath: request.worktreePath },
-            'Worktree preparation was cut short by shutdown; leaving it for the next startup',
-          );
-          return;
-        }
-
-        const recorded = finishTaskPreparation(request.taskId, event.exitCode, output);
-        // Nobody asked for this status, so nobody is polling for it either.
-        if (recorded) announcePreparationStatus(request);
-        logger.info(
-          {
-            exitCode: event.exitCode,
-            recorded,
-            taskId: request.taskId,
-            worktreePath: request.worktreePath,
-          },
-          recorded
-            ? 'Worktree preparation finished'
-            : 'Worktree preparation exited after its status had moved on',
-        );
-      },
-    });
-
-    announcePreparationStatus(request);
-    logger.info(
-      {
-        branchName: request.branchName,
-        projectDir: request.projectDir,
-        runnerScriptPath: spec.runnerScriptPath,
-        taskId: request.taskId,
-        worktreePath: request.worktreePath,
-      },
-      'Worktree preparation started',
-    );
+    await spawnPreparationStage(request, firstPhase, spec, buildSpec);
     return { started: true };
   } catch (error) {
     // The status was already claimed, so a failure here has to be released as
@@ -159,6 +129,118 @@ export async function startWorktreePreparation(
     );
     announcePreparationStatus(request);
     throw error;
+  }
+}
+
+/**
+ * Write one stage's runner, start its PTY, and hand over to the next stage when
+ * it ends.
+ *
+ * The handover happens inside the exit observer because that is the only place
+ * that knows the stage is over. The terminal id is shared between the stages:
+ * the manager removes an ended runtime before the observer runs, so the second
+ * stage claims the same id, and a surface watching the run keeps watching it.
+ */
+async function spawnPreparationStage(
+  request: WorktreePreparationRequest,
+  phase: PreparationPhase,
+  spec: PreparationExecutionSpec,
+  buildSpec: (phase: PreparationPhase) => PreparationExecutionSpec | null,
+): Promise<void> {
+  await writeRunnerScript(spec);
+
+  await terminalManager.startDetached({
+    terminalId: getPreparationTerminalId(request.taskId),
+    userId: request.userId,
+    // The bridge enters the worktree from inside the distro, so the host has to
+    // spawn wsl.exe from somewhere it can actually reach.
+    resolvedShell: {
+      command: spec.program,
+      args: spec.args,
+      cwd: spec.bridgedThroughWsl ? os.homedir() : spec.cwd,
+      displayCwd: spec.cwd,
+    },
+    launchEnv: spec.env,
+    onRuntimeExit: (event, output) => {
+      // Shutdown kills this PTY, and that death arrives here looking like a
+      // clean exit. Leaving the status alone keeps it at `running`, which is
+      // what the next startup reads as a run the app cut short.
+      if (isServerShuttingDown()) {
+        logger.info(
+          { phase, taskId: request.taskId, worktreePath: request.worktreePath },
+          'Worktree preparation was cut short by shutdown; leaving it for the next startup',
+        );
+        return;
+      }
+
+      const result = finishPreparationStage(request.taskId, event.exitCode, output);
+      // Nobody asked for this status, so nobody is polling for it either.
+      if (result) announcePreparationStatus(request);
+      logger.info(
+        {
+          exitCode: event.exitCode,
+          phase,
+          recorded: Boolean(result),
+          status: result?.status,
+          taskId: request.taskId,
+          worktreePath: request.worktreePath,
+        },
+        result
+          ? 'Worktree preparation stage finished'
+          : 'Worktree preparation exited after its status had moved on',
+      );
+
+      if (!result?.nextPhase) return;
+      void continuePreparation(request, result.nextPhase, buildSpec);
+    },
+  });
+
+  announcePreparationStatus(request);
+  logger.info(
+    {
+      branchName: request.branchName,
+      phase,
+      projectDir: request.projectDir,
+      runnerScriptPath: spec.runnerScriptPath,
+      taskId: request.taskId,
+      worktreePath: request.worktreePath,
+    },
+    'Worktree preparation stage started',
+  );
+}
+
+/**
+ * Start the stage the one that just ended handed over to.
+ *
+ * A failure here ends the run rather than leaving it `running` forever: the
+ * blocking stage has already succeeded by this point, so what is lost is the
+ * work an agent was never waiting for — but a status that never settles would
+ * keep the worktree looking busy for the rest of the session.
+ */
+async function continuePreparation(
+  request: WorktreePreparationRequest,
+  phase: PreparationPhase,
+  buildSpec: (phase: PreparationPhase) => PreparationExecutionSpec | null,
+): Promise<void> {
+  try {
+    const spec = buildSpec(phase);
+    if (!spec) {
+      finishTaskPreparation(request.taskId, 0, '');
+      announcePreparationStatus(request);
+      return;
+    }
+    await spawnPreparationStage(request, phase, spec, buildSpec);
+  } catch (error) {
+    logger.error(
+      { error, phase, taskId: request.taskId, worktreePath: request.worktreePath },
+      'Worktree preparation could not continue into its next stage',
+    );
+    finishTaskPreparation(
+      request.taskId,
+      PREPARATION_NOT_STARTED_EXIT_CODE,
+      error instanceof Error ? error.message : String(error),
+    );
+    announcePreparationStatus(request);
   }
 }
 

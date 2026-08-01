@@ -1,24 +1,34 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { resolvePreparationProject } from '@/lib/projects/preparation-project-selection';
+import type { PreparationPhase } from '@/lib/projects/preparation-status-policy';
 import IgnoredFileChecklist from './ignored-file-checklist';
 
 /** Typing pause after which the draft is written back to the project. */
 const SAVE_DELAY_MS = 600;
 
-/** What the editor is currently doing with the selected project's script. */
+/** What the editor is currently doing with the selected project's scripts. */
 type EditorStatus = 'idle' | 'loading' | 'saving' | 'saved' | 'saveFailed' | 'loadFailed';
 
-async function saveScript(projectId: string, script: string): Promise<void> {
+/** Both stages' drafts, keyed the way the run names them. */
+type Drafts = Record<PreparationPhase, string>;
+
+const EMPTY_DRAFTS: Drafts = { before: '', after: '' };
+
+async function saveScript(
+  projectId: string,
+  script: string,
+  phase: PreparationPhase,
+): Promise<void> {
   const response = await fetch('/api/projects/preparation-script', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId, preparationScript: script }),
+    body: JSON.stringify({ projectId, preparationScript: script, phase }),
   });
   if (!response.ok) throw new Error(`Save failed with ${response.status}`);
 }
@@ -45,39 +55,48 @@ export default function ProjectPreparationSettings() {
     projects,
   });
 
-  const [draft, setDraft] = useState('');
+  const [drafts, setDrafts] = useState<Drafts>(EMPTY_DRAFTS);
   // Loading from the first render, not idle: the load is started by an effect,
   // so an idle first frame would say the empty draft is the project's script.
   // The checklist believes that and would fill a script it has never seen.
   const [status, setStatus] = useState<EditorStatus>('loading');
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRef = useRef<{ projectId: string; script: string } | null>(null);
+  // Keyed by project and stage: the two boxes are edited independently, and a
+  // pending write for one must not be dropped by a keystroke in the other.
+  const pendingRef = useRef(
+    new Map<string, { projectId: string; phase: PreparationPhase; script: string }>(),
+  );
   // Which project the editor is showing, so a reply for a project we have left
   // updates that project's script without touching the status now on screen.
   const shownProjectIdRef = useRef<string | null>(null);
   shownProjectIdRef.current = projectId;
 
-  // The pending write carries its own project ID, so a save that lands after a
+  // Each pending write carries its own project ID, so a save that lands after a
   // project switch still updates the project it was typed into.
   const flushPendingSave = useCallback(() => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    const pending = pendingRef.current;
-    if (!pending) return;
-    pendingRef.current = null;
-    const reportIfStillShown = (next: EditorStatus) => {
-      if (shownProjectIdRef.current === pending.projectId) setStatus(next);
-    };
-    void saveScript(pending.projectId, pending.script)
-      .then(() => reportIfStillShown('saved'))
-      .catch(() => {
-        // Keep the write queued so blurring or typing again retries it.
-        pendingRef.current ??= pending;
-        reportIfStillShown('saveFailed');
-      });
+    const pending = [...pendingRef.current.values()];
+    if (pending.length === 0) return;
+    pendingRef.current.clear();
+
+    for (const write of pending) {
+      const reportIfStillShown = (next: EditorStatus) => {
+        if (shownProjectIdRef.current === write.projectId) setStatus(next);
+      };
+      void saveScript(write.projectId, write.script, write.phase)
+        .then(() => reportIfStillShown('saved'))
+        .catch(() => {
+          // Keep the write queued so blurring or typing again retries it — but
+          // never over a newer one for the same box.
+          const key = pendingKey(write.projectId, write.phase);
+          if (!pendingRef.current.has(key)) pendingRef.current.set(key, write);
+          reportIfStillShown('saveFailed');
+        });
+    }
   }, []);
 
   // Only the newest load may write into the editor; a slower reply for the
@@ -88,21 +107,27 @@ export default function ProjectPreparationSettings() {
   // project — putting the loaded script back would take it off the screen while
   // leaving it stored, and the next keystroke would then save it away.
   const editedSinceLoadRef = useRef(false);
-  const loadScript = useCallback(async (targetProjectId: string) => {
+  const loadScripts = useCallback(async (targetProjectId: string) => {
     const requestId = loadRequestRef.current + 1;
     loadRequestRef.current = requestId;
     editedSinceLoadRef.current = false;
-    setDraft('');
+    setDrafts(EMPTY_DRAFTS);
     setStatus('loading');
     try {
       const response = await fetch(
         `/api/projects/preparation-script?projectId=${encodeURIComponent(targetProjectId)}`,
       );
       if (!response.ok) throw new Error(`Load failed with ${response.status}`);
-      const data = await response.json() as { preparationScript: string | null };
+      const data = await response.json() as {
+        preparationScript: string | null;
+        preparationAfterScript: string | null;
+      };
       if (loadRequestRef.current !== requestId) return;
       if (editedSinceLoadRef.current) return;
-      setDraft(data.preparationScript ?? '');
+      setDrafts({
+        before: data.preparationScript ?? '',
+        after: data.preparationAfterScript ?? '',
+      });
       setStatus('idle');
     } catch {
       if (loadRequestRef.current !== requestId) return;
@@ -114,22 +139,32 @@ export default function ProjectPreparationSettings() {
     // With no project selected there is nothing to load, and the editor is not
     // rendered, so the stale draft never reaches the screen.
     if (!projectId) return;
-    void loadScript(projectId);
-  }, [loadScript, projectId]);
+    void loadScripts(projectId);
+  }, [loadScripts, projectId]);
 
   // Closing the panel or switching projects must not drop what was typed.
   useEffect(() => flushPendingSave, [flushPendingSave, projectId]);
 
-  const handleChange = (value: string) => {
+  const handleChange = useCallback((phase: PreparationPhase, value: string) => {
     editedSinceLoadRef.current = true;
-    setDraft(value);
-    if (!projectId) return;
+    setDrafts((current) => ({ ...current, [phase]: value }));
+    const target = shownProjectIdRef.current;
+    if (!target) return;
 
-    pendingRef.current = { projectId, script: value };
+    pendingRef.current.set(pendingKey(target, phase), { projectId: target, phase, script: value });
     setStatus('saving');
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(flushPendingSave, SAVE_DELAY_MS);
-  };
+  }, [flushPendingSave]);
+
+  const changeBefore = useCallback(
+    (value: string) => handleChange('before', value),
+    [handleChange],
+  );
+  const changeAfter = useCallback(
+    (value: string) => handleChange('after', value),
+    [handleChange],
+  );
 
   const statusLabel = (() => {
     switch (status) {
@@ -163,7 +198,7 @@ export default function ProjectPreparationSettings() {
           {t('settings.preparation.noProject')}
         </p>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-4">
           {/* Which project is being edited, and the way to edit another. Every
               project's script is reachable from here rather than only the one
               the user happens to be looking at. */}
@@ -191,17 +226,6 @@ export default function ProjectPreparationSettings() {
                 </option>
               ))}
             </select>
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <label htmlFor="projectPreparationScript" className="text-sm text-(--text-secondary)">
-                {t('settings.preparation.scriptLabel')}
-              </label>
-              <span className="text-[11px] text-(--text-tertiary)">
-                {t('settings.preparation.scriptDesc')}
-              </span>
-            </div>
             {statusLabel ? (
               <span
                 className={[
@@ -214,24 +238,32 @@ export default function ProjectPreparationSettings() {
               </span>
             ) : null}
           </div>
-          <textarea
-            id="projectPreparationScript"
-            value={draft}
-            onChange={(event) => handleChange(event.target.value)}
+
+          {/* The blocking stage leads, because it is the one with a cost: every
+              line in it is time an agent spends waiting to start. */}
+          <PreparationScriptField
+            phase="before"
+            value={drafts.before}
+            disabled={status === 'loading'}
+            onChange={changeBefore}
             onBlur={flushPendingSave}
-            placeholder={t('settings.preparation.scriptPlaceholder')}
-            rows={8}
-            spellCheck={false}
+          >
+            <IgnoredFileChecklist
+              projectId={projectId}
+              script={drafts.before}
+              disabled={status === 'loading'}
+              onScriptChange={changeBefore}
+            />
+          </PreparationScriptField>
+
+          <PreparationScriptField
+            phase="after"
+            value={drafts.after}
             disabled={status === 'loading'}
-            className="w-full resize-y rounded-md border border-(--input-border) bg-(--input-bg) px-3 py-2 font-mono text-sm text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent) disabled:opacity-60"
-            data-testid="project-preparation-script"
+            onChange={changeAfter}
+            onBlur={flushPendingSave}
           />
-          <IgnoredFileChecklist
-            projectId={projectId}
-            script={draft}
-            disabled={status === 'loading'}
-            onScriptChange={handleChange}
-          />
+
           <div className="space-y-1.5 border-t border-(--divider) pt-3">
             <p className="text-[11px] text-(--text-tertiary)">
               {t('settings.preparation.runsOnCreate')}
@@ -251,6 +283,63 @@ export default function ProjectPreparationSettings() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function pendingKey(projectId: string, phase: PreparationPhase): string {
+  return `${projectId}:${phase}`;
+}
+
+/**
+ * One stage's box.
+ *
+ * The two stages are the same field twice, and the label with the line under it
+ * is what says which is which. Saying it there rather than in a manual is what
+ * makes the split usable without one: the cost of a line — an agent waiting for
+ * it, or not — is written next to the box it goes in.
+ */
+function PreparationScriptField({
+  phase,
+  value,
+  disabled,
+  onChange,
+  onBlur,
+  children,
+}: {
+  phase: PreparationPhase;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  children?: ReactNode;
+}) {
+  const { t } = useI18n();
+  const fieldId = `projectPreparationScript-${phase}`;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor={fieldId} className="text-sm text-(--text-secondary)">
+          {t(`settings.preparation.stage.${phase}.label`)}
+        </label>
+        <span className="text-[11px] text-(--text-tertiary)">
+          {t(`settings.preparation.stage.${phase}.desc`)}
+        </span>
+      </div>
+      <textarea
+        id={fieldId}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
+        placeholder={t(`settings.preparation.stage.${phase}.placeholder`)}
+        rows={phase === 'before' ? 8 : 4}
+        spellCheck={false}
+        disabled={disabled}
+        className="w-full resize-y rounded-md border border-(--input-border) bg-(--input-bg) px-3 py-2 font-mono text-sm text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent) disabled:opacity-60"
+        data-testid={`project-preparation-script-${phase}`}
+      />
+      {children}
     </div>
   );
 }

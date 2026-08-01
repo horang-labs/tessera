@@ -269,9 +269,18 @@ export const en: I18nMessages = {
       title: 'Worktree preparation',
       description: 'Commands that belong to this project. Every worktree created from it inherits them.',
       projectLabel: 'Project',
-      scriptLabel: 'Preparation script',
-      scriptDesc: 'Leave it empty for no preparation script.',
-      scriptPlaceholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .\nnpm install',
+      stage: {
+        before: {
+          label: 'Before the agent starts',
+          desc: 'Runs first, and an agent waits for it. Put what a CLI reads at startup here — CLAUDE.md, AGENTS.md, .env files. Keep it short: every line is time spent waiting.',
+          placeholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .',
+        },
+        after: {
+          label: 'After the agent starts',
+          desc: 'Runs once the above is done, and nothing waits for it. Installing dependencies belongs here.',
+          placeholder: 'npm install',
+        },
+      },
       runsOnCreate: 'Runs in each new worktree of this project, from the worktree itself. A failing line stops the rest.',
       noProject: 'Select a project to edit its preparation script.',
       loading: 'Loading...',
@@ -513,6 +522,7 @@ export const en: I18nMessages = {
     notePrefix: 'Note:',
     submitHint: 'Submit',
     working: 'Working',
+    awaitingPreparation: 'Running the setup this worktree needs first',
     loadingMore: 'Loading previous messages...',
     loadMore: 'Load previous messages',
     scrollToBottom: 'Scroll to latest message',
@@ -1056,6 +1066,10 @@ export const en: I18nMessages = {
     noWorktree: 'This chat has no worktree, so there is nothing to run.',
     readingLog: 'Reading the log...',
     script: 'Script',
+    stage: {
+      before: 'Script — before the agent starts',
+      after: 'Script — after the agent starts',
+    },
     scriptLines: '{{count}} lines',
     editScript: 'Edit the preparation script',
     preparation: {

@@ -11,8 +11,11 @@ import { getDb } from './database';
 import logger from '../logger';
 import {
   applyPreparationEvent,
+  readPreparationPhase,
   readPreparationStatus,
+  resolveStageCompletion,
   type PreparationEvent,
+  type PreparationPhase,
   type PreparationStatus,
 } from '@/lib/projects/preparation-status-policy';
 
@@ -22,6 +25,8 @@ const MAX_STORED_OUTPUT_CHARS = 64 * 1024;
 export interface TaskPreparation {
   taskId: string;
   status: PreparationStatus;
+  /** Which stage the run is in, and which one it stopped in once it is over. */
+  phase: PreparationPhase;
   startedAt: string | null;
   finishedAt: string | null;
   exitCode: number | null;
@@ -33,16 +38,20 @@ export interface TaskPreparation {
    * script that never produced it.
    */
   script: string | null;
+  /** The `after` stage's script, stored the same way and for the same reason. */
+  afterScript: string | null;
 }
 
 interface TaskPreparationRow {
   id: string;
   preparation_status: string | null;
+  preparation_phase: string | null;
   preparation_started_at: string | null;
   preparation_finished_at: string | null;
   preparation_exit_code: number | null;
   preparation_output: string | null;
   preparation_script: string | null;
+  preparation_after_script: string | null;
 }
 
 export interface TaskPreparationContext {
@@ -89,8 +98,9 @@ export function getTaskPreparationContext(taskId: string): TaskPreparationContex
 export function getTaskPreparation(taskId: string): TaskPreparation | null {
   const db = getDb();
   const row = db.prepare(`
-    SELECT id, preparation_status, preparation_started_at, preparation_finished_at,
-           preparation_exit_code, preparation_output, preparation_script
+    SELECT id, preparation_status, preparation_phase, preparation_started_at,
+           preparation_finished_at, preparation_exit_code, preparation_output,
+           preparation_script, preparation_after_script
     FROM tasks
     WHERE id = ?
   `).get(taskId) as TaskPreparationRow | undefined;
@@ -99,11 +109,13 @@ export function getTaskPreparation(taskId: string): TaskPreparation | null {
   return {
     taskId: row.id,
     status: readPreparationStatus(row.preparation_status),
+    phase: readPreparationPhase(row.preparation_phase),
     startedAt: row.preparation_started_at,
     finishedAt: row.preparation_finished_at,
     exitCode: row.preparation_exit_code,
     output: row.preparation_output,
     script: row.preparation_script,
+    afterScript: row.preparation_after_script,
   };
 }
 
@@ -115,28 +127,89 @@ export function getTaskPreparation(taskId: string): TaskPreparation | null {
  * transaction between them: this runs to completion without yielding, and the
  * database is in-process, so no second claim can land in the middle.
  */
-export function startTaskPreparation(taskId: string, script: string): boolean {
+export function startTaskPreparation(
+  taskId: string,
+  scripts: { before: string | null; after: string | null },
+): boolean {
   const current = getTaskPreparation(taskId);
   if (!current) return false;
 
   const transition = applyPreparationEvent(current.status, { kind: 'start' });
   if (!transition.accepted) return false;
 
+  // With nothing to run before an agent starts, the run begins at the stage it
+  // does have — and an agent waiting on `before` has nothing to wait for.
+  const phase: PreparationPhase = scripts.before ? 'before' : 'after';
   const db = getDb();
   const now = new Date().toISOString();
   db.prepare(`
     UPDATE tasks
-    SET preparation_status = ?, preparation_started_at = ?, preparation_finished_at = NULL,
-        preparation_exit_code = NULL, preparation_output = NULL, preparation_script = ?,
-        updated_at = ?
+    SET preparation_status = ?, preparation_phase = ?, preparation_started_at = ?,
+        preparation_finished_at = NULL, preparation_exit_code = NULL, preparation_output = NULL,
+        preparation_script = ?, preparation_after_script = ?, updated_at = ?
     WHERE id = ?
-  `).run(transition.status, now, script, now, taskId);
+  `).run(transition.status, phase, now, scripts.before, scripts.after, now, taskId);
   return true;
 }
 
+export interface PreparationStageResult {
+  /** The stage that just ended. */
+  phase: PreparationPhase;
+  status: PreparationStatus;
+  /** The stage to spawn next, or null when the run is over. */
+  nextPhase: PreparationPhase | null;
+}
+
 /**
- * Record how a run ended. Returns false when it was ignored — the run is no
- * longer the current one, so its outcome is stale.
+ * Record how one stage ended, and say what happens next.
+ *
+ * Returns null when the completion was ignored — the run is no longer the
+ * current one, so its outcome is stale and nothing may be spawned from it.
+ *
+ * A stage that hands over keeps the run open: the status stays `running`, no
+ * finish time is written, and the output is kept so the second stage's log
+ * lands underneath the first rather than replacing it.
+ */
+export function finishPreparationStage(
+  taskId: string,
+  exitCode: number,
+  output: string,
+): PreparationStageResult | null {
+  const current = getTaskPreparation(taskId);
+  if (!current) return null;
+  if (current.status !== 'running') return null;
+
+  const outcome = resolveStageCompletion({
+    phase: current.phase,
+    exitCode,
+    hasAfterScript: Boolean(current.afterScript),
+  });
+
+  const db = getDb();
+  const now = new Date().toISOString();
+  const accumulated = joinStageOutput(current.output, output);
+
+  if (outcome.nextPhase) {
+    db.prepare(`
+      UPDATE tasks
+      SET preparation_phase = ?, preparation_output = ?, updated_at = ?
+      WHERE id = ?
+    `).run(outcome.nextPhase, truncateOutput(accumulated), now, taskId);
+  } else {
+    db.prepare(`
+      UPDATE tasks
+      SET preparation_status = ?, preparation_finished_at = ?, preparation_exit_code = ?,
+          preparation_output = ?, updated_at = ?
+      WHERE id = ?
+    `).run(outcome.status, now, exitCode, truncateOutput(accumulated), now, taskId);
+  }
+
+  return { phase: current.phase, status: outcome.status, nextPhase: outcome.nextPhase };
+}
+
+/**
+ * Record how a run ended, whatever stage it was in. Returns false when it was
+ * ignored — the run is no longer the current one, so its outcome is stale.
  */
 export function finishTaskPreparation(
   taskId: string,
@@ -192,6 +265,17 @@ function applyCompletion(
     WHERE id = ?
   `).run(transition.status, now, exitCode, truncateOutput(output), now, taskId);
   return true;
+}
+
+/**
+ * Put a stage's log under what the run has printed so far.
+ *
+ * The stages run as separate processes, so each one's PTY hands over only its
+ * own output; keeping the earlier stage means the log reads as one run.
+ */
+function joinStageOutput(existing: string | null, next: string): string {
+  if (!existing) return next;
+  return existing.endsWith('\n') ? `${existing}${next}` : `${existing}\n${next}`;
 }
 
 /** Keep the tail: a failure explains itself at the end of the output, not the start. */

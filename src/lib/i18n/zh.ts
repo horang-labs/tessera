@@ -269,9 +269,18 @@ export const zh: I18nMessages = {
       title: '工作树准备',
       description: '属于该项目的命令。从该项目创建的每个工作树都会继承它们。',
       projectLabel: '项目',
-      scriptLabel: '准备脚本',
-      scriptDesc: '留空表示没有准备脚本。',
-      scriptPlaceholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .\nnpm install',
+      stage: {
+        before: {
+          label: '代理启动前',
+          desc: '先运行，代理会等它完成。把 CLI 启动时读取的内容放在这里 — CLAUDE.md、AGENTS.md、.env 文件。每一行都是等待时间，请保持简短。',
+          placeholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .',
+        },
+        after: {
+          label: '代理启动后',
+          desc: '上面完成后运行，没有人等待它。安装依赖属于这里。',
+          placeholder: 'npm install',
+        },
+      },
       runsOnCreate: '在此项目创建的每个工作树中，于该工作树内运行。某一行失败后不再执行其余命令。',
       noProject: '请先选择项目，然后编辑其准备脚本。',
       loading: '加载中...',
@@ -513,6 +522,7 @@ export const zh: I18nMessages = {
     notePrefix: '备注:',
     submitHint: '提交',
     working: '处理中',
+    awaitingPreparation: '正在运行此工作树需要的准备',
     loadingMore: '加载更早的消息...',
     loadMore: '加载更早的消息',
     scrollToBottom: '滚动到最新消息',
@@ -1056,6 +1066,10 @@ export const zh: I18nMessages = {
     noWorktree: '此对话没有工作树，因此没有可运行的内容。',
     readingLog: '正在读取日志...',
     script: '脚本',
+    stage: {
+      before: '脚本 — 代理启动前',
+      after: '脚本 — 代理启动后',
+    },
     scriptLines: '{{count}} 行',
     editScript: '编辑准备脚本',
     preparation: {

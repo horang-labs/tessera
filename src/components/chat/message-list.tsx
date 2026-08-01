@@ -140,6 +140,9 @@ function MessageListSessionView({
   const providerId = session?.provider;
   const { sendMessage } = useWebSocket();
   const showWaitingIndicator = useShowWaitingIndicator(sessionId, messages);
+  const awaitingPreparation = useChatStore(
+    (state) => Boolean(state.awaitingPreparationBySession[sessionId]),
+  );
   const hasActivePrompt = useChatStore((state) => state.activeInteractivePrompt.has(sessionId));
   const activeProject = useMemo(() => {
     if (!session) return null;
@@ -358,7 +361,10 @@ function MessageListSessionView({
           {messages.length === 0 ? (
             showWaitingIndicator ? (
               <div className="pt-3">
-                <WaitingIndicator providerId={providerId} />
+                <WaitingIndicator
+                  providerId={providerId}
+                  awaitingPreparation={awaitingPreparation}
+                />
               </div>
             ) : (
               <MessageListEmptyState
@@ -422,7 +428,12 @@ function MessageListSessionView({
             </div>
           )}
 
-          {messages.length > 0 && showWaitingIndicator && <WaitingIndicator providerId={providerId} />}
+          {messages.length > 0 && showWaitingIndicator && (
+            <WaitingIndicator
+              providerId={providerId}
+              awaitingPreparation={awaitingPreparation}
+            />
+          )}
         </div>
       </MessageListScrollArea>
 

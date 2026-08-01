@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
+import {
+  PREPARATION_PHASES,
+  type PreparationPhase,
+} from '@/lib/projects/preparation-status-policy';
 import logger from '@/lib/logger';
 
 /**
  * GET /api/projects/preparation-script?projectId=...
- * Returns the project's preparation script, or null when it has none.
+ * Returns both of the project's preparation scripts, either of which may be
+ * null when that stage has nothing to run.
  */
 export async function GET(req: NextRequest) {
   const auth = await requireAuthenticatedUserId(req);
@@ -21,7 +26,10 @@ export async function GET(req: NextRequest) {
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
-    return NextResponse.json({ preparationScript: project.preparation_script ?? null });
+    return NextResponse.json({
+      preparationScript: project.preparation_script ?? null,
+      preparationAfterScript: project.preparation_after_script ?? null,
+    });
   } catch (error) {
     logger.error({ error, projectId }, 'Failed to read preparation script');
     return NextResponse.json({ error: 'Failed to read preparation script' }, { status: 500 });
@@ -30,8 +38,10 @@ export async function GET(req: NextRequest) {
 
 /**
  * PUT /api/projects/preparation-script
- * Body: { projectId: string, preparationScript: string | null }
- * A blank script clears it. Returns what was stored.
+ * Body: { projectId: string, preparationScript: string | null, phase?: 'before' | 'after' }
+ * A blank script clears it. Omitting the phase writes the blocking one, which
+ * is what every caller wrote before there was a second stage.
+ * Returns what was stored.
  */
 export async function PUT(req: NextRequest) {
   const auth = await requireAuthenticatedUserId(req);
@@ -44,9 +54,10 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { projectId, preparationScript } = body as {
+  const { projectId, preparationScript, phase } = body as {
     projectId?: unknown;
     preparationScript?: unknown;
+    phase?: unknown;
   };
 
   if (typeof projectId !== 'string' || projectId.trim().length === 0) {
@@ -59,6 +70,15 @@ export async function PUT(req: NextRequest) {
   ) {
     return NextResponse.json({ error: 'preparationScript must be a string or null' }, { status: 400 });
   }
+  if (
+    phase !== undefined
+    && !(PREPARATION_PHASES as readonly unknown[]).includes(phase)
+  ) {
+    return NextResponse.json(
+      { error: `phase must be one of ${PREPARATION_PHASES.join(', ')}` },
+      { status: 400 },
+    );
+  }
 
   const normalizedProjectId = projectId.trim();
 
@@ -69,6 +89,7 @@ export async function PUT(req: NextRequest) {
     const stored = dbProjects.setPreparationScript(
       normalizedProjectId,
       preparationScript ?? null,
+      (phase as PreparationPhase | undefined) ?? 'before',
     );
     return NextResponse.json({ preparationScript: stored });
   } catch (error) {

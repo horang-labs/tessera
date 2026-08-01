@@ -269,9 +269,18 @@ export const ja: I18nMessages = {
       title: 'ワークツリーの準備',
       description: 'このプロジェクトに属するコマンドです。ここから作るすべてのワークツリーが引き継ぎます。',
       projectLabel: 'プロジェクト',
-      scriptLabel: '準備スクリプト',
-      scriptDesc: '空欄にすると準備スクリプトなしとして扱います。',
-      scriptPlaceholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .\nnpm install',
+      stage: {
+        before: {
+          label: 'エージェント開始前',
+          desc: '最初に実行し、エージェントはこれの完了を待ちます。CLI が起動時に読むもの — CLAUDE.md、AGENTS.md、.env ファイル — をここに置きます。1 行ごとが待ち時間になるので短く保ってください。',
+          placeholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .',
+        },
+        after: {
+          label: 'エージェント開始後',
+          desc: '上が終わってから実行し、誰も待ちません。依存関係のインストールはこちらです。',
+          placeholder: 'npm install',
+        },
+      },
       runsOnCreate: 'このプロジェクトで作成するワークツリーごとに、そのワークツリー内で実行します。失敗した行があればそれ以降は実行しません。',
       noProject: '準備スクリプトを編集するにはプロジェクトを選択してください。',
       loading: '読み込み中...',
@@ -513,6 +522,7 @@ export const ja: I18nMessages = {
     notePrefix: 'メモ:',
     submitHint: '送信する',
     working: '作業中',
+    awaitingPreparation: 'このワークツリーに先に必要な準備を実行中',
     loadingMore: '以前のメッセージを読み込み中...',
     loadMore: '以前のメッセージを読み込む',
     scrollToBottom: '最新メッセージに移動',
@@ -1056,6 +1066,10 @@ export const ja: I18nMessages = {
     noWorktree: 'このチャットにはワークツリーがないため、実行するものがありません。',
     readingLog: 'ログを読み込み中...',
     script: 'スクリプト',
+    stage: {
+      before: 'スクリプト — エージェント開始前',
+      after: 'スクリプト — エージェント開始後',
+    },
     scriptLines: '{{count}}行',
     editScript: '準備スクリプトを編集',
     preparation: {

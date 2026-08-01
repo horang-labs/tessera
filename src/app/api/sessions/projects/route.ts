@@ -98,8 +98,10 @@ export async function GET(req: NextRequest) {
         decodedPath: project.decoded_path,
         displayPath: formatPathForAgentDisplay(project.decoded_path, agentEnvironment),
         isCurrent: shouldRegisterCurrentProject && project.id === currentProjectId,
-        // Without one there is nothing to prepare, and no surface should offer it.
-        hasPreparationScript: hasPreparationScript(project.preparation_script),
+        // Without one there is nothing to prepare, and no surface should offer
+        // it — either stage having something to run counts.
+        hasPreparationScript: hasPreparationScript(project.preparation_script)
+          || hasPreparationScript(project.preparation_after_script),
         sessions,
         totalSessions: result.totalCount,
         countByStatus: result.countByStatus,

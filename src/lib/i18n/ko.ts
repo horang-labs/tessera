@@ -269,9 +269,18 @@ export const ko: I18nMessages = {
       title: '워크트리 준비',
       description: '이 프로젝트에 속한 명령입니다. 여기서 만든 모든 워크트리가 이어받습니다.',
       projectLabel: '프로젝트',
-      scriptLabel: '준비 스크립트',
-      scriptDesc: '비워 두면 준비 스크립트가 없는 것으로 봅니다.',
-      scriptPlaceholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .\nnpm install',
+      stage: {
+        before: {
+          label: '에이전트 시작 전',
+          desc: '먼저 실행하고, 에이전트가 이게 끝나기를 기다립니다. CLI가 시작할 때 읽는 것들을 넣으세요 — CLAUDE.md, AGENTS.md, .env 파일. 한 줄 한 줄이 기다리는 시간이니 짧게 유지하세요.',
+          placeholder: 'cp "$TESSERA_PROJECT_DIR/.env.local" .',
+        },
+        after: {
+          label: '에이전트 시작 후',
+          desc: '위가 끝나면 실행하고, 아무도 기다리지 않습니다. 의존성 설치는 여기에 넣으세요.',
+          placeholder: 'npm install',
+        },
+      },
       runsOnCreate: '이 프로젝트에서 만드는 워크트리마다 그 워크트리 안에서 실행합니다. 한 줄이 실패하면 나머지는 실행하지 않습니다.',
       noProject: '준비 스크립트를 편집하려면 프로젝트를 선택하세요.',
       loading: '불러오는 중...',
@@ -515,6 +524,7 @@ export const ko: I18nMessages = {
     notePrefix: '메모:',
     submitHint: '제출하기',
     working: '작업 중',
+    awaitingPreparation: '이 워크트리에 먼저 필요한 준비를 실행하는 중',
     loadingMore: '이전 메시지 불러오는 중...',
     loadMore: '이전 메시지 불러오기',
     scrollToBottom: '최신 메시지로 이동',
@@ -1063,6 +1073,10 @@ export const ko: I18nMessages = {
     noWorktree: '이 대화에는 워크트리가 없어 실행할 것이 없습니다.',
     readingLog: '로그를 불러오는 중...',
     script: '스크립트',
+    stage: {
+      before: '스크립트 — 에이전트 시작 전',
+      after: '스크립트 — 에이전트 시작 후',
+    },
     scriptLines: '{{count}}줄',
     editScript: '준비 스크립트 편집',
     preparation: {
