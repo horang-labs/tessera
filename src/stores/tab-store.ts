@@ -79,6 +79,27 @@ function isWorkspaceFileTab(
   return isFileLikeSessionId(getTabActiveSessionId(tabId, panelStore));
 }
 
+/** 사용자 작업이 전혀 없는, New Tab으로 안전하게 재사용할 수 있는 탭인지 판별. */
+function isPristineEmptyTab(
+  tab: Tab,
+  panelStore: ReturnType<typeof usePanelStore.getState>,
+): boolean {
+  if (tab.title !== null) return false;
+
+  const tabData = panelStore.tabPanels[tab.id];
+  if (!tabData || tabData.layout.type !== 'leaf') return false;
+  if (Object.keys(tabData.panels).length !== 1) return false;
+
+  const panel = tabData.panels[tabData.layout.panelId];
+  return Boolean(
+    panel
+    && panel.sessionId === null
+    && !panel.terminalId
+    && !panel.terminalSessionId
+    && !panel.terminalCwd,
+  );
+}
+
 function insertTabAfter(tabs: Tab[], newTab: Tab, anchorTabId?: string | null): Tab[] {
   const anchorIndex = anchorTabId ? tabs.findIndex((tab) => tab.id === anchorTabId) : -1;
   if (anchorIndex === -1) return [...tabs, newTab];
@@ -392,6 +413,40 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     panelStore.setActiveTabId(newTabId);
 
     return newTabId;
+  },
+
+  openNewTab: (): string => {
+    const state = get();
+    const panelStore = usePanelStore.getState();
+    const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+    const emptyTabs = state.tabs.filter((tab) => isPristineEmptyTab(tab, panelStore));
+    const existingEmptyTab = activeTab && emptyTabs.some((tab) => tab.id === activeTab.id)
+      ? activeTab
+      : emptyTabs[0];
+
+    if (existingEmptyTab) {
+      const duplicateEmptyTabIds = new Set(
+        emptyTabs
+          .filter((tab) => tab.id !== existingEmptyTab.id)
+          .map((tab) => tab.id),
+      );
+      if (duplicateEmptyTabIds.size > 0) {
+        set({
+          tabs: state.tabs.filter((tab) => !duplicateEmptyTabIds.has(tab.id)),
+          lruTabIds: state.lruTabIds.filter((tabId) => !duplicateEmptyTabIds.has(tabId)),
+        });
+        for (const tabId of duplicateEmptyTabIds) {
+          panelStore.removeTab(tabId);
+        }
+        assertTabStoreInvariants(get());
+      }
+
+      get().setActiveTab(existingEmptyTab.id);
+      get().pinTab(existingEmptyTab.id);
+      return existingEmptyTab.id;
+    }
+
+    return get().createTab();
   },
 
   closeTab: (tabId: string): void => {
