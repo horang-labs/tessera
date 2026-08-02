@@ -8,8 +8,14 @@ import {
   buildWslCodexOverlayCleanupScript,
   buildWslCodexOverlayCreateScript,
   buildWslCodexOverlayFinalizeScript,
+  buildWslCodexTrustPromotionScript,
+  buildWslCodexTrustReportScript,
   readWslOverlayReport,
 } from '@/lib/terminal/codex-overlay-wsl';
+import {
+  mergeCodexOverlayTrust,
+  serializeCodexTrustBaseline,
+} from '@/lib/terminal/codex-trust-state';
 
 /**
  * 게스트 스크립트는 순수 POSIX sh다 — 서버가 win32에서 wsl.exe로 흘려보내는 것과
@@ -69,7 +75,12 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
     const finalConfig = 'model = "gpt-5.4"\n\n[hooks.state."x"]\nenabled = true\n';
     const marker = '{"kind":"tessera-codex-overlay","accountHome":"' + codexHome + '"}\n';
     runScript(
-      buildWslCodexOverlayFinalizeScript('terminal-wsl-test', b64(finalConfig), b64(marker)),
+      buildWslCodexOverlayFinalizeScript(
+        'terminal-wsl-test',
+        b64(finalConfig),
+        b64(marker),
+        b64(serializeCodexTrustBaseline('model = "gpt-5.4"\n')),
+      ),
       home,
     );
     assert.equal(fs.readFileSync(path.join(overlay!, 'config.toml'), 'utf8'), finalConfig);
@@ -120,7 +131,13 @@ test('WSL overlay paths are namespaced for parallel Electron test instances', ()
       path.join(home, '.tessera/test-instances/test-5/codex-overlay/same-terminal'),
     );
     runScript(
-      buildWslCodexOverlayFinalizeScript('same-terminal', b64(''), b64('{}'), env),
+      buildWslCodexOverlayFinalizeScript(
+        'same-terminal',
+        b64(''),
+        b64('{}'),
+        b64(serializeCodexTrustBaseline('')),
+        env,
+      ),
       home,
     );
     assert.equal(fs.existsSync(path.join(overlay!, 'config.toml')), true);
@@ -135,6 +152,111 @@ test('WSL overlay scripts reject unsafe terminal ids and payloads', () => {
   assert.throws(() => buildWslCodexOverlayCreateScript('../escape', b64('{}')));
   assert.throws(() => buildWslCodexOverlayCreateScript('a; rm -rf /', b64('{}')));
   assert.throws(() => buildWslCodexOverlayCreateScript('ok', "'; rm -rf /"));
-  assert.throws(() => buildWslCodexOverlayFinalizeScript('ok', 'not base64!', b64('{}')));
+  assert.throws(() => buildWslCodexOverlayFinalizeScript(
+    'ok',
+    'not base64!',
+    b64('{}'),
+    b64(serializeCodexTrustBaseline('')),
+  ));
   assert.throws(() => buildWslCodexOverlayCleanupScript('bad id'));
+});
+
+test('WSL trust scripts promote project and hook approvals without copying other settings', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-promotion-'));
+  const codexHome = path.join(home, '.codex');
+  const terminalId = 'terminal-wsl-promotion';
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "gpt-5.4"\n');
+
+  try {
+    const stdout = runScript(
+      buildWslCodexOverlayCreateScript(terminalId, b64('{"hooks":{}}\n')),
+      home,
+    );
+    const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
+    const hooksPath = readWslOverlayReport(stdout, 'TESSERA_HOOKS_REAL');
+    assert.ok(overlay);
+    assert.ok(hooksPath);
+
+    const finalConfig = [
+      'model = "gpt-5.9-should-not-promote"',
+      '',
+      '[projects."/tmp/wsl-project"]',
+      'trust_level = "trusted"',
+      '',
+      '[hooks.state."/tmp/wsl-project/.codex/hooks.json:pre_tool_use:0:0"]',
+      'enabled = true',
+      'trusted_hash = "sha256:wsl-project-hook"',
+      '',
+      `[hooks.state."${hooksPath}:pre_tool_use:0:0"]`,
+      'enabled = true',
+      'trusted_hash = "sha256:tessera-managed-hook"',
+      '',
+    ].join('\n');
+    runScript(
+      buildWslCodexOverlayFinalizeScript(
+        terminalId,
+        b64(finalConfig),
+        b64('{"kind":"tessera-codex-overlay"}\n'),
+        b64(serializeCodexTrustBaseline('model = "gpt-5.4"\n')),
+      ),
+      home,
+    );
+
+    const report = runScript(
+      buildWslCodexTrustReportScript(terminalId, b64(codexHome)),
+      home,
+    );
+    const baseline = readWslOverlayReport(report, 'TESSERA_TRUST_BASELINE_B64');
+    const final = readWslOverlayReport(report, 'TESSERA_FINAL_CONFIG_B64');
+    const current = readWslOverlayReport(report, 'TESSERA_ACCOUNT_CONFIG_B64');
+    assert.ok(baseline);
+    assert.ok(final);
+    assert.ok(current);
+
+    const merged = mergeCodexOverlayTrust({
+      baselineJson: Buffer.from(baseline!, 'base64').toString('utf8'),
+      finalOverlayConfig: Buffer.from(final!, 'base64').toString('utf8'),
+      currentAccountConfig: Buffer.from(current!, 'base64').toString('utf8'),
+      managedHooksPath: hooksPath!,
+    });
+    runScript(buildWslCodexTrustPromotionScript(b64(codexHome), b64(merged)), home);
+
+    const promoted = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
+    assert.match(promoted, /^model = "gpt-5\.4"$/m);
+    assert.doesNotMatch(promoted, /gpt-5\.9-should-not-promote/);
+    assert.match(promoted, /^\[projects\."\/tmp\/wsl-project"\]$/m);
+    assert.match(promoted, /wsl-project-hook/);
+    assert.doesNotMatch(promoted, /tessera-managed-hook/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('WSL trust promotion preserves a symlinked account config', (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX guest script test requires symlink support');
+    return;
+  }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-trust-symlink-'));
+  const codexHome = path.join(home, '.codex');
+  const sharedConfig = path.join(home, 'shared-config.toml');
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(sharedConfig, 'model = "gpt-5.4"\n');
+  fs.symlinkSync(sharedConfig, path.join(codexHome, 'config.toml'));
+
+  try {
+    runScript(
+      buildWslCodexTrustPromotionScript(
+        b64(codexHome),
+        b64('model = "gpt-5.4"\n\n[projects."/tmp/project"]\ntrust_level = "trusted"\n'),
+      ),
+      home,
+    );
+
+    assert.equal(fs.lstatSync(path.join(codexHome, 'config.toml')).isSymbolicLink(), true);
+    assert.match(fs.readFileSync(sharedConfig, 'utf8'), /\/tmp\/project/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

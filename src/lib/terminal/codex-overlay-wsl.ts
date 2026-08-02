@@ -3,7 +3,12 @@ import logger from '@/lib/logger';
 import { buildCodexOverlayMarkerJson, CODEX_OVERLAY_MARKER } from '@/lib/codex-home';
 import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
 import { buildCodexHookSettings } from './codex-hook-settings';
-import { appendTrustedHookState, stripHookStateSections } from './codex-overlay';
+import { appendTrustedHookState } from './codex-overlay';
+import {
+  CODEX_TRUST_BASELINE_FILE,
+  mergeCodexOverlayTrust,
+  serializeCodexTrustBaseline,
+} from './codex-trust-state';
 import type { HookCommandStyle } from './hook-command';
 
 /**
@@ -38,7 +43,13 @@ const CREATE_TIMEOUT_MS = 20_000;
 const FINALIZE_TIMEOUT_MS = 10_000;
 
 /** wsl.exe로 이 세션에서 게스트 오버레이를 만든 터미널 — cleanup 스폰 낭비 방지용. */
-const guestOverlayTerminals = new Set<string>();
+interface GuestCodexOverlay {
+  overlayPath: string;
+  accountHome: string;
+  canonicalHooksPath: string;
+}
+
+const guestOverlayTerminals = new Map<string, GuestCodexOverlay>();
 
 /**
  * terminalId별 게스트 스크립트 직렬화 체인. terminalId는 `session-<id>`로 결정적
@@ -48,6 +59,7 @@ const guestOverlayTerminals = new Set<string>();
  * 체인으로 막는다. 호스트 경로(rmSync)는 동기라 이 문제가 없다.
  */
 const guestOpsByTerminal = new Map<string, Promise<unknown>>();
+let guestTrustPromotionTail: Promise<void> = Promise.resolve();
 
 function chainGuestOp<T>(terminalId: string, op: () => Promise<T>): Promise<T> {
   const previous = guestOpsByTerminal.get(terminalId) ?? Promise.resolve();
@@ -58,6 +70,12 @@ function chainGuestOp<T>(terminalId: string, op: () => Promise<T>): Promise<T> {
     }
   });
   guestOpsByTerminal.set(terminalId, tail);
+  return next;
+}
+
+function chainGuestTrustPromotion<T>(op: () => Promise<T>): Promise<T> {
+  const next = guestTrustPromotionTail.catch(() => undefined).then(op);
+  guestTrustPromotionTail = next.then(() => undefined, () => undefined);
   return next;
 }
 
@@ -94,7 +112,7 @@ export function buildWslCodexOverlayCreateScript(
     '    name="${entry##*/}"',
     // hooks.json/config.toml은 우리 파일로 대체. `-e`는 dangling 심링크와
     // 매치 실패로 남은 리터럴 글롭을 함께 거른다(호스트 statSync 스킵과 동일).
-    `    case "$name" in .|..|hooks.json|config.toml|${CODEX_OVERLAY_MARKER}) continue ;; esac`,
+    `    case "$name" in .|..|hooks.json|config.toml|${CODEX_OVERLAY_MARKER}|${CODEX_TRUST_BASELINE_FILE}) continue ;; esac`,
     '    [ -e "$entry" ] || continue',
     '    ln -s "$src/$name" "$overlay/$name" 2>/dev/null || true',
     '  done',
@@ -117,11 +135,13 @@ export function buildWslCodexOverlayFinalizeScript(
   terminalId: string,
   configTomlB64: string,
   markerJsonB64: string,
+  trustBaselineB64: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   assertSafeTerminalId(terminalId);
   assertBase64(configTomlB64, 'config.toml');
   assertBase64(markerJsonB64, 'marker');
+  assertBase64(trustBaselineB64, 'trust baseline');
   const stateRoot = getWslGuestTesseraStateRoot(env);
   return [
     'set -eu',
@@ -130,6 +150,54 @@ export function buildWslCodexOverlayFinalizeScript(
     'chmod 600 "$overlay/config.toml"',
     `printf '%s' '${markerJsonB64}' | base64 -d > "$overlay/${CODEX_OVERLAY_MARKER}"`,
     `chmod 600 "$overlay/${CODEX_OVERLAY_MARKER}"`,
+    `printf '%s' '${trustBaselineB64}' | base64 -d > "$overlay/${CODEX_TRUST_BASELINE_FILE}"`,
+    `chmod 600 "$overlay/${CODEX_TRUST_BASELINE_FILE}"`,
+  ].join('\n');
+}
+
+export function buildWslCodexTrustReportScript(
+  terminalId: string,
+  accountHomeB64: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  assertSafeTerminalId(terminalId);
+  assertBase64(accountHomeB64, 'account home');
+  const stateRoot = getWslGuestTesseraStateRoot(env);
+  return [
+    'set -eu',
+    `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
+    `account="$(printf '%s' '${accountHomeB64}' | base64 -d)"`,
+    `if [ -f "$overlay/${CODEX_TRUST_BASELINE_FILE}" ]; then`,
+    `  printf 'TESSERA_TRUST_BASELINE_B64:%s\\n' "$(base64 < "$overlay/${CODEX_TRUST_BASELINE_FILE}" | tr -d '\\n')"`,
+    'fi',
+    'if [ -f "$overlay/config.toml" ]; then',
+    `  printf 'TESSERA_FINAL_CONFIG_B64:%s\\n' "$(base64 < "$overlay/config.toml" | tr -d '\\n')"`,
+    'fi',
+    'if [ -f "$account/config.toml" ]; then',
+    `  printf 'TESSERA_ACCOUNT_CONFIG_B64:%s\\n' "$(base64 < "$account/config.toml" | tr -d '\\n')"`,
+    'fi',
+  ].join('\n');
+}
+
+export function buildWslCodexTrustPromotionScript(
+  accountHomeB64: string,
+  configTomlB64: string,
+): string {
+  assertBase64(accountHomeB64, 'account home');
+  assertBase64(configTomlB64, 'promoted config.toml');
+  return [
+    'set -eu',
+    'umask 077',
+    `account="$(printf '%s' '${accountHomeB64}' | base64 -d)"`,
+    'config="$account/config.toml"',
+    'if [ -e "$config" ]; then config="$(readlink -f "$config")"; fi',
+    'config_dir="${config%/*}"',
+    'mkdir -p "$config_dir"',
+    'tmp="$config_dir/.config.toml.tessera.$$"',
+    'trap \'rm -f "$tmp"\' 0 1 2 15',
+    `printf '%s' '${configTomlB64}' | base64 -d > "$tmp"`,
+    'chmod 600 "$tmp"',
+    'mv -f "$tmp" "$config"',
   ].join('\n');
 }
 
@@ -224,22 +292,23 @@ async function createOverlayScripts(
 
   const configB64 = readWslOverlayReport(createdStdout, 'TESSERA_CONFIG_B64');
   const rawConfigToml = configB64 ? Buffer.from(configB64, 'base64').toString('utf8') : '';
-  const configToml = appendTrustedHookState(
-    stripHookStateSections(rawConfigToml),
-    canonicalHooksPath,
-    hookSettings,
-  );
+  const configToml = appendTrustedHookState(rawConfigToml, canonicalHooksPath, hookSettings);
 
   await runWslScript(
     buildWslCodexOverlayFinalizeScript(
       terminalId,
       toBase64(configToml),
       toBase64(buildCodexOverlayMarkerJson(accountHome)),
+      toBase64(serializeCodexTrustBaseline(rawConfigToml)),
     ),
     FINALIZE_TIMEOUT_MS,
   );
 
-  guestOverlayTerminals.add(terminalId);
+  guestOverlayTerminals.set(terminalId, {
+    overlayPath,
+    accountHome,
+    canonicalHooksPath,
+  });
   logger.debug({ terminalId, overlayPath, accountHome }, 'codex WSL overlay created');
   return overlayPath;
 }
@@ -249,10 +318,46 @@ async function createOverlayScripts(
  * 재시작으로 추적을 잃은 잔여물은 다음 동일 terminalId 생성의 rm -rf가 치운다.
  */
 export function cleanupCodexOverlayInWsl(terminalId: string): void {
-  if (!guestOverlayTerminals.delete(terminalId)) return;
+  const overlay = guestOverlayTerminals.get(terminalId);
+  if (!overlay) return;
+  guestOverlayTerminals.delete(terminalId);
   try {
-    chainGuestOp(terminalId, () =>
-      runWslScript(buildWslCodexOverlayCleanupScript(terminalId), FINALIZE_TIMEOUT_MS))
+    chainGuestOp(terminalId, async () => {
+      try {
+        await chainGuestTrustPromotion(async () => {
+          const accountHomeB64 = toBase64(overlay.accountHome);
+          const report = await runWslScript(
+            buildWslCodexTrustReportScript(terminalId, accountHomeB64),
+            FINALIZE_TIMEOUT_MS,
+          );
+          const baselineB64 = readWslOverlayReport(report, 'TESSERA_TRUST_BASELINE_B64');
+          const finalConfigB64 = readWslOverlayReport(report, 'TESSERA_FINAL_CONFIG_B64');
+          const accountConfigB64 = readWslOverlayReport(report, 'TESSERA_ACCOUNT_CONFIG_B64');
+          if (baselineB64 && finalConfigB64) {
+            const currentAccountConfig = accountConfigB64
+              ? Buffer.from(accountConfigB64, 'base64').toString('utf8')
+              : '';
+            const merged = mergeCodexOverlayTrust({
+              baselineJson: Buffer.from(baselineB64, 'base64').toString('utf8'),
+              finalOverlayConfig: Buffer.from(finalConfigB64, 'base64').toString('utf8'),
+              currentAccountConfig,
+              managedHooksPath: overlay.canonicalHooksPath,
+            });
+            if (merged !== currentAccountConfig) {
+              await runWslScript(
+                buildWslCodexTrustPromotionScript(accountHomeB64, toBase64(merged)),
+                FINALIZE_TIMEOUT_MS,
+              );
+              logger.info({ accountHome: overlay.accountHome }, 'codex WSL overlay trust decisions promoted');
+            }
+          }
+        });
+      } catch (err) {
+        logger.warn({ err, terminalId }, 'codex WSL overlay trust promotion skipped');
+      } finally {
+        await runWslScript(buildWslCodexOverlayCleanupScript(terminalId), FINALIZE_TIMEOUT_MS);
+      }
+    })
       .catch((err) => {
         logger.debug({ err, terminalId }, 'codex WSL overlay cleanup skipped');
       });

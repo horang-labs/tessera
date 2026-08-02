@@ -71,6 +71,140 @@ test('Codex overlay pre-trusts exactly the lifecycle hooks it installs', () => {
   }
 });
 
+test('Codex overlay preserves trust for project-local hooks', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-overlay-user-trust-'));
+  const systemHome = path.join(root, 'system-codex-home');
+  const dataDir = path.join(root, 'tessera-data');
+  const projectHookKey = '/tmp/example/.codex/hooks.json:pre_tool_use:0:0';
+  fs.mkdirSync(systemHome, { recursive: true });
+  fs.writeFileSync(
+    path.join(systemHome, 'config.toml'),
+    [
+      'model = "gpt-5.4"',
+      '',
+      '[projects."/tmp/example"]',
+      'trust_level = "trusted"',
+      '',
+      `[hooks.state."${projectHookKey}"]`,
+      'enabled = true',
+      'trusted_hash = "sha256:project-hook"',
+      '',
+    ].join('\n'),
+  );
+
+  const previousCodexHome = process.env.CODEX_HOME;
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  process.env.CODEX_HOME = systemHome;
+  process.env.TESSERA_DATA_DIR = dataDir;
+
+  try {
+    const overlayDir = createCodexOverlay('terminal-user-trust-test');
+    const config = fs.readFileSync(path.join(overlayDir, 'config.toml'), 'utf8');
+
+    assert.match(config, /^\[projects\."\/tmp\/example"\]$/m);
+    assert.match(config, /^trust_level = "trusted"$/m);
+    assert.match(config, new RegExp(escapeRegExp(`[hooks.state."${projectHookKey}"]`)));
+    assert.match(config, /trusted_hash = "sha256:project-hook"/);
+  } finally {
+    cleanupCodexOverlayForTerminal('terminal-user-trust-test');
+    restoreEnv('CODEX_HOME', previousCodexHome);
+    restoreEnv('TESSERA_DATA_DIR', previousDataDir);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex overlay cleanup promotes only user trust decisions to the account config', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-overlay-promotion-'));
+  const systemHome = path.join(root, 'system-codex-home');
+  const dataDir = path.join(root, 'tessera-data');
+  fs.mkdirSync(systemHome, { recursive: true });
+  fs.writeFileSync(path.join(systemHome, 'config.toml'), 'model = "gpt-5.4"\n');
+
+  const previousCodexHome = process.env.CODEX_HOME;
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  process.env.CODEX_HOME = systemHome;
+  process.env.TESSERA_DATA_DIR = dataDir;
+
+  try {
+    const overlayDir = createCodexOverlay('terminal-promotion-test');
+    const overlayConfigPath = path.join(overlayDir, 'config.toml');
+    const overlayHooksPath = fs.realpathSync.native(path.join(overlayDir, 'hooks.json'));
+    fs.writeFileSync(
+      overlayConfigPath,
+      fs.readFileSync(overlayConfigPath, 'utf8').replace(
+        'model = "gpt-5.4"',
+        'model = "gpt-5.9-should-not-promote"',
+      ),
+    );
+    fs.appendFileSync(
+      overlayConfigPath,
+      [
+        '',
+        '[projects."/tmp/new-project"]',
+        'trust_level = "trusted"',
+        '',
+        '[hooks.state."/tmp/new-project/.codex/hooks.json:pre_tool_use:0:0"]',
+        'enabled = true',
+        'trusted_hash = "sha256:approved-project-hook"',
+        '',
+      ].join('\n'),
+    );
+
+    cleanupCodexOverlayForTerminal('terminal-promotion-test');
+
+    const systemConfig = fs.readFileSync(path.join(systemHome, 'config.toml'), 'utf8');
+    assert.match(systemConfig, /^model = "gpt-5\.4"$/m);
+    assert.doesNotMatch(systemConfig, /gpt-5\.9-should-not-promote/);
+    assert.match(systemConfig, /^\[projects\."\/tmp\/new-project"\]$/m);
+    assert.match(systemConfig, /^trust_level = "trusted"$/m);
+    assert.match(systemConfig, /approved-project-hook/);
+    assert.doesNotMatch(systemConfig, new RegExp(escapeRegExp(overlayHooksPath)));
+  } finally {
+    cleanupCodexOverlayForTerminal('terminal-promotion-test');
+    restoreEnv('CODEX_HOME', previousCodexHome);
+    restoreEnv('TESSERA_DATA_DIR', previousDataDir);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex trust promotion preserves a symlinked account config', (t) => {
+  if (process.platform === 'win32') {
+    t.skip('file symlinks require optional Windows privileges');
+    return;
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-overlay-symlink-'));
+  const systemHome = path.join(root, 'system-codex-home');
+  const dataDir = path.join(root, 'tessera-data');
+  const sharedConfig = path.join(root, 'shared-config.toml');
+  fs.mkdirSync(systemHome, { recursive: true });
+  fs.writeFileSync(sharedConfig, 'model = "gpt-5.4"\n');
+  fs.symlinkSync(sharedConfig, path.join(systemHome, 'config.toml'));
+
+  const previousCodexHome = process.env.CODEX_HOME;
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  process.env.CODEX_HOME = systemHome;
+  process.env.TESSERA_DATA_DIR = dataDir;
+
+  try {
+    const overlayDir = createCodexOverlay('terminal-symlink-test');
+    fs.appendFileSync(
+      path.join(overlayDir, 'config.toml'),
+      '\n[projects."/tmp/symlink-project"]\ntrust_level = "trusted"\n',
+    );
+
+    cleanupCodexOverlayForTerminal('terminal-symlink-test');
+
+    assert.equal(fs.lstatSync(path.join(systemHome, 'config.toml')).isSymbolicLink(), true);
+    assert.match(fs.readFileSync(sharedConfig, 'utf8'), /\/tmp\/symlink-project/);
+  } finally {
+    cleanupCodexOverlayForTerminal('terminal-symlink-test');
+    restoreEnv('CODEX_HOME', previousCodexHome);
+    restoreEnv('TESSERA_DATA_DIR', previousDataDir);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

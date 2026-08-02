@@ -31,7 +31,7 @@ export function writeCodexOverlayMarker(overlayHome: string, accountHome: string
   );
 }
 
-function readMarkedAccountHome(overlayHome: string): string | undefined {
+export function readCodexOverlayAccountHome(overlayHome: string): string | undefined {
   try {
     const marker = JSON.parse(
       fs.readFileSync(path.join(overlayHome, CODEX_OVERLAY_MARKER), 'utf8'),
@@ -74,7 +74,7 @@ export function resolveCodexAccountHome(
     cwd: options.cwd,
     homeDir,
   });
-  const markedAccountHome = readMarkedAccountHome(resolvedHome);
+  const markedAccountHome = readCodexOverlayAccountHome(resolvedHome);
   if (markedAccountHome) return markedAccountHome;
   const overlayRoot = path.join(getTesseraDataDir({
     env,
@@ -127,7 +127,7 @@ export function resolveCodexAccountTranscriptPath(
 
   const candidateHomes = [
     // The overlay is still on disk (session running): its marker is exact.
-    readMarkedAccountHome(pathModule.join(dataDir, 'codex-overlay', overlayName)),
+    readCodexOverlayAccountHome(pathModule.join(dataDir, 'codex-overlay', overlayName)),
     // Default layout — the data dir sits next to `.codex` under the same home.
     pathModule.join(pathModule.dirname(dataDir), '.codex'),
     resolveCodexAccountHome(options),
