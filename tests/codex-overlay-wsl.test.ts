@@ -106,6 +106,31 @@ test('WSL overlay create script tolerates a missing codex home', () => {
   }
 });
 
+test('WSL overlay paths are namespaced for parallel Electron test instances', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-instance-'));
+  const env = { TESSERA_ELECTRON_TEST_INSTANCE: 'test-5' };
+  try {
+    const stdout = runScript(
+      buildWslCodexOverlayCreateScript('same-terminal', b64('{}'), env),
+      home,
+    );
+    const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
+    assert.equal(
+      overlay,
+      path.join(home, '.tessera/test-instances/test-5/codex-overlay/same-terminal'),
+    );
+    runScript(
+      buildWslCodexOverlayFinalizeScript('same-terminal', b64(''), b64('{}'), env),
+      home,
+    );
+    assert.equal(fs.existsSync(path.join(overlay!, 'config.toml')), true);
+    runScript(buildWslCodexOverlayCleanupScript('same-terminal', env), home);
+    assert.equal(fs.existsSync(overlay!), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('WSL overlay scripts reject unsafe terminal ids and payloads', () => {
   assert.throws(() => buildWslCodexOverlayCreateScript('../escape', b64('{}')));
   assert.throws(() => buildWslCodexOverlayCreateScript('a; rm -rf /', b64('{}')));

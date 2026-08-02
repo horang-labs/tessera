@@ -13,8 +13,11 @@ import type { Tab } from '@/types/tab';
 import type { Panel, TabPanelData } from '@/types/panel';
 import { SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
 import { getSpecialSessionTitle, getSpecialSessionTitleKey, isSpecialSession } from '@/lib/constants/special-sessions';
+import { requestSessionRename } from '@/lib/session/rename-session-request';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
-import { useAnySessionProcessing } from '@/hooks/use-session-processing';
+import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
+import { ItemStatusIndicator } from '@/components/chat/work-item-primitives';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 /** Delay before activating a tab when a session drag hovers over it. */
 const TAB_HOVER_ACTIVATE_DELAY = 500;
@@ -72,6 +75,40 @@ export function getTabDragSessionId(
     .map((panel) => panel.sessionId)
     .filter(Boolean) as string[];
   return sessionIds.length === 1 ? sessionIds[0] : null;
+}
+
+export type TabTitleCommit =
+  | { kind: 'session'; sessionId: string; title: string }
+  | { kind: 'tab'; title: string | null }
+  | { kind: 'noop' };
+
+/**
+ * 탭 제목 편집을 어디에 반영할지 결정한다.
+ *
+ * 탭에 보이는 제목은 활성 패널 세션의 제목이므로, rename 가능한 세션이 있으면
+ * 세션을 rename해야 사이드바·태스크·DB가 함께 따라온다. 탭 전용 제목은 rename할
+ * 세션이 없는 탭(빈 탭, 세션 없는 터미널 패널, 특수 세션)에서만 쓴다.
+ */
+export function resolveTabTitleCommit({
+  nextTitle,
+  displayTitle,
+  tabTitle,
+  renameTargetSessionId,
+}: {
+  nextTitle: string;
+  displayTitle: string;
+  tabTitle: string | null;
+  renameTargetSessionId: string | null;
+}): TabTitleCommit {
+  if (renameTargetSessionId) {
+    if (!nextTitle || nextTitle === displayTitle) return { kind: 'noop' };
+    return { kind: 'session', sessionId: renameTargetSessionId, title: nextTitle };
+  }
+  if (!nextTitle) {
+    return tabTitle !== null ? { kind: 'tab', title: null } : { kind: 'noop' };
+  }
+  if (nextTitle === displayTitle) return { kind: 'noop' };
+  return { kind: 'tab', title: nextTitle };
 }
 
 export function shouldDragTabPanelTree(tabData: TabPanelData | null | undefined): boolean {
@@ -220,6 +257,12 @@ export const TabItem = memo(function TabItem({
     displayTitle = session.title ?? session.id;
   }
 
+  // 특수 세션(Skills Dashboard 등)은 rename 대상이 아니다 — 탭 로컬 제목으로 남긴다.
+  const renameTargetSessionId =
+    activePanelSessionId && !isSpecialSession(activePanelSessionId) && session
+      ? activePanelSessionId
+      : null;
+
   const sessionCount = isActive ? liveSessionCount : deriveSessionCount(inactiveTabData?.panels ?? {});
   const label = formatTabLabel(displayTitle, sessionCount);
 
@@ -249,12 +292,25 @@ export const TabItem = memo(function TabItem({
         .sort()
         .join(',');
 
-  const isGenerating = useAnySessionProcessing(
-    panelSessionIds ? panelSessionIds.split(',') : [],
-  );
+  const { hasProcessingSession: isGenerating, hasTerminalProcessingSession } =
+    useSessionProcessingSummary(panelSessionIds ? panelSessionIds.split(',') : []);
 
   const isAwaitingUser = useAnySessionAwaitingUser(
     panelSessionIds ? panelSessionIds.split(',') : [],
+  );
+
+  // Runtime liveness — the green "session is up but idle" dot the sidebar shows.
+  const isRunning = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!panelSessionIds) return false;
+        return panelSessionIds.split(',').some((id) => {
+          const s = state.getSession(id);
+          return s ? resolveSessionRuntimePresentation(s).showRunning : false;
+        });
+      },
+      [panelSessionIds],
+    ),
   );
 
   // Unread indicator — any session in this tab has unreadCount > 0.
@@ -272,6 +328,29 @@ export const TabItem = memo(function TabItem({
       [panelSessionIds],
     ),
   );
+
+  // Mirror ItemStatusIndicator's own priority so the label/testid describe the
+  // dot that actually renders.
+  const statusKind = isAwaitingUser
+    ? 'awaiting'
+    : isGenerating && (hasTerminalProcessingSession || !hasUnread)
+      ? 'processing'
+      : hasUnread
+        ? 'unread'
+        : isRunning
+          ? 'running'
+          : null;
+
+  const statusLabel =
+    statusKind === 'awaiting'
+      ? t('status.inputRequired')
+      : statusKind === 'processing'
+        ? t('status.processing')
+        : statusKind === 'unread'
+          ? t('status.unreadNotification')
+          : statusKind === 'running'
+            ? t('status.sessionRunning')
+            : undefined;
 
   // Session drag hover state + timer
   const hoverActivateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -300,14 +379,25 @@ export const TabItem = memo(function TabItem({
   );
 
   const commitTitleEdit = useCallback(() => {
-    const nextTitle = titleInput.trim();
-    if (!nextTitle && tab.title !== null) {
-      useTabStore.getState().renameTab(tab.id, null);
-    } else if (nextTitle && nextTitle !== displayTitle) {
-      useTabStore.getState().renameTab(tab.id, nextTitle);
-    }
+    const commit = resolveTabTitleCommit({
+      nextTitle: titleInput.trim(),
+      displayTitle,
+      tabTitle: tab.title,
+      renameTargetSessionId,
+    });
     setIsEditingTitle(false);
-  }, [displayTitle, tab.id, tab.title, titleInput]);
+
+    if (commit.kind === 'session') {
+      // 예전에 붙여둔 탭 로컬 제목이 남아 있으면 새 세션 제목을 계속 가린다.
+      if (tab.title !== null) {
+        useTabStore.getState().renameTab(tab.id, null);
+      }
+      useTabStore.getState().pinTab(tab.id);
+      void requestSessionRename(commit.sessionId, commit.title, t);
+    } else if (commit.kind === 'tab') {
+      useTabStore.getState().renameTab(tab.id, commit.title);
+    }
+  }, [displayTitle, renameTargetSessionId, t, tab.id, tab.title, titleInput]);
 
   const cancelTitleEdit = useCallback(() => {
     setTitleInput(displayTitle);
@@ -491,22 +581,27 @@ export const TabItem = memo(function TabItem({
       data-dragging={String(isDragging)}
       aria-grabbed={isDragging || undefined}
     >
-      {/* Leading indicator — generating spinner takes precedence over user attention/unread dots */}
-      {isGenerating ? (
-        <div className="w-3 h-3 shrink-0 mr-1.5 rounded-full border-2 border-(--success)/30 border-t-(--success) animate-spin" />
-      ) : isAwaitingUser ? (
-        <div
-          className="h-[7px] w-[7px] shrink-0 mr-1.5 rounded-full bg-[#facc15] attention-dot-blink"
-          data-testid="tab-item-attention"
-          aria-label={t('status.inputRequired')}
-        />
-      ) : hasUnread ? (
-        <div
-          className="h-[6px] w-[6px] shrink-0 mr-1.5 rounded-full bg-[#facc15]"
-          data-testid="tab-item-unread"
-          aria-label="Unread messages"
-        />
-      ) : null}
+      {/* Leading indicator — same dots, colors and priority as the sidebar/board */}
+      {statusKind && (
+        <span
+          className="mr-1.5 flex shrink-0 items-center"
+          data-testid="tab-item-status"
+          data-status={statusKind}
+          aria-label={statusLabel}
+          title={statusLabel}
+        >
+          <ItemStatusIndicator
+            isProcessing={isGenerating}
+            isAwaitingUser={isAwaitingUser}
+            hasUnread={hasUnread}
+            isRunning={isRunning}
+            sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
+            placement="inline"
+            size="lg"
+            surface="sidebar"
+          />
+        </span>
+      )}
 
       {/* Title area — truncated with ellipsis (BR-UI-022) */}
       {isEditingTitle ? (

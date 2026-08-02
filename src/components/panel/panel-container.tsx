@@ -39,6 +39,9 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
   const terminalSessionId = usePanelStore(
     (state) => state.tabPanels[tabId]?.panels[panelId]?.terminalSessionId ?? null,
   );
+  const terminalCwd = usePanelStore(
+    (state) => state.tabPanels[tabId]?.panels[panelId]?.terminalCwd ?? null,
+  );
 
   const content = (() => {
     if (terminalId) {
@@ -47,6 +50,7 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
           panelId={panelId}
           terminalId={terminalId}
           terminalSessionId={terminalSessionId}
+          terminalCwd={terminalCwd}
         />
       );
     }

@@ -47,6 +47,9 @@ test('opening the skill picker can discover skills without starting a fresh GUI 
 });
 
 test('Codex skill discovery uses the app-server cwd-scoped request contract', () => {
-  assert.match(codexSkillSourceBlock, /params:\s*\{\s*cwds:\s*\[cwd\]\s*\}/);
+  assert.match(
+    codexSkillSourceBlock,
+    /params:\s*\{\s*cwds:\s*\[cwd\],\s*forceReload:\s*true,\s*\}/,
+  );
   assert.doesNotMatch(codexSkillSourceBlock, /params:\s*\{\s*threadId\s*\}/);
 });

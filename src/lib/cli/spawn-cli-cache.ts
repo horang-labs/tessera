@@ -9,10 +9,6 @@ export interface SpawnCliCache {
   didResolveLoginShell: boolean;
   loginShellEnvironment: Record<string, string> | null;
   didResolveLoginShellEnvironment: boolean;
-  loginShellPath: string | null;
-  didResolveLoginShellPath: boolean;
-  wslLoginShell: string | null;
-  didResolveWslLoginShell: boolean;
 }
 
 export function getSpawnCliCache(): SpawnCliCache {
@@ -25,9 +21,5 @@ export function getSpawnCliCache(): SpawnCliCache {
     didResolveLoginShell: false,
     loginShellEnvironment: null,
     didResolveLoginShellEnvironment: false,
-    loginShellPath: null,
-    didResolveLoginShellPath: false,
-    wslLoginShell: null,
-    didResolveWslLoginShell: false,
   };
 }

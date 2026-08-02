@@ -45,7 +45,12 @@ export const TabBar = memo(function TabBar() {
 
   // Scrollable container ref
   const containerRef = useRef<HTMLDivElement>(null);
-  const [scrollState, setScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+  const endZoneRef = useRef<HTMLDivElement>(null);
+  const [scrollState, setScrollState] = useState({
+    canScrollLeft: false,
+    canScrollRight: false,
+    hasOverflow: false,
+  });
 
   // DnD state (BR-UI-020)
   const dragTabIdRef = useRef<string | null>(null);
@@ -59,28 +64,38 @@ export const TabBar = memo(function TabBar() {
     position: { x: number; y: number };
   } | null>(null);
 
-  // Track previous tab count for scroll-to-new-tab effect
+  // Track previous tab count / active tab for the scroll-into-view effect.
+  // The null sentinel makes the first run treat the active tab as "changed",
+  // so a restored session opens with its active tab in view.
   const prevTabCountRef = useRef(tabs.length);
+  const prevActiveTabIdRef = useRef<string | null>(null);
 
   const updateScrollState = useCallback(function updateScrollState() {
     const container = containerRef.current;
     if (!container) {
       setScrollState((prev) =>
-        prev.canScrollLeft || prev.canScrollRight
-          ? { canScrollLeft: false, canScrollRight: false }
+        prev.canScrollLeft || prev.canScrollRight || prev.hasOverflow
+          ? { canScrollLeft: false, canScrollRight: false, hasOverflow: false }
           : prev,
       );
       return;
     }
 
     const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+    // The end zone lives inside the scroller, so its own width has to come out
+    // before judging overflow — otherwise the zone would keep the "overflowing"
+    // verdict latched on and could never collapse back to zero.
+    const tabsWidth = container.scrollWidth - (endZoneRef.current?.offsetWidth ?? 0);
     const next = {
       canScrollLeft: container.scrollLeft > TAB_SCROLL_EDGE_EPSILON,
       canScrollRight: container.scrollLeft < maxScrollLeft - TAB_SCROLL_EDGE_EPSILON,
+      hasOverflow: tabsWidth > container.clientWidth + TAB_SCROLL_EDGE_EPSILON,
     };
 
     setScrollState((prev) =>
-      prev.canScrollLeft === next.canScrollLeft && prev.canScrollRight === next.canScrollRight
+      prev.canScrollLeft === next.canScrollLeft &&
+      prev.canScrollRight === next.canScrollRight &&
+      prev.hasOverflow === next.hasOverflow
         ? prev
         : next,
     );
@@ -123,10 +138,17 @@ export const TabBar = memo(function TabBar() {
     [tabs, updateScrollState],
   );
 
-  // Scroll to newly added tab (BR-UI-019 / UX improvement)
+  // Keep the active tab (including its close button) in view — on creation
+  // (BR-UI-019) and on activation, which also covers keyboard tab switching.
   useEffect(
-    function scrollToNewTab() {
-      if (tabs.length > prevTabCountRef.current) {
+    function scrollActiveTabIntoView() {
+      const isInitialSync = prevActiveTabIdRef.current === null;
+      const tabAdded = tabs.length > prevTabCountRef.current;
+      const activeTabChanged = activeTabId !== prevActiveTabIdRef.current;
+      prevTabCountRef.current = tabs.length;
+      prevActiveTabIdRef.current = activeTabId;
+
+      if (tabAdded || activeTabChanged) {
         const container = containerRef.current;
         const tabElements = container
           ? Array.from(container.querySelectorAll<HTMLElement>('[data-tab-id]'))
@@ -136,10 +158,9 @@ export const TabBar = memo(function TabBar() {
         activeTabElement?.scrollIntoView({
           block: 'nearest',
           inline: 'nearest',
-          behavior: 'smooth',
+          behavior: isInitialSync ? 'instant' : 'smooth',
         });
       }
-      prevTabCountRef.current = tabs.length;
       const frameId = requestAnimationFrame(updateScrollState);
       return () => cancelAnimationFrame(frameId);
     },
@@ -151,7 +172,7 @@ export const TabBar = memo(function TabBar() {
   // ---------------------------------------------------------------------------
 
   const handleAddTab = useCallback(function handleAddTab() {
-    useTabStore.getState().createTab();
+    useTabStore.getState().openNewTab();
   }, []);
 
   const clearTabDragState = useCallback(function clearTabDragState() {
@@ -203,6 +224,8 @@ export const TabBar = memo(function TabBar() {
     const sourcePanel = sourceTabData?.panels[payload.panelId];
     const terminalId = sourcePanel?.terminalId ?? null;
     const terminalSessionId = sourcePanel?.terminalSessionId ?? null;
+    const terminalCwd = sourcePanel?.terminalCwd ?? null;
+    const sourceProjectDir = tabStore.tabs.find((tab) => tab.id === payload.tabId)?.projectDir ?? null;
     if (!sourceTabData || !terminalId || payload.tabId !== previousActiveTabId) return false;
 
     if (Object.keys(sourceTabData.panels).length > 1) {
@@ -215,7 +238,10 @@ export const TabBar = memo(function TabBar() {
     const newTabData = usePanelStore.getState().tabPanels[newTabId];
     const newPanelId = newTabData?.activePanelId;
     if (!newPanelId) return false;
-    usePanelStore.getState().assignTerminal(newPanelId, terminalId, terminalSessionId);
+    usePanelStore.getState().assignTerminal(newPanelId, terminalId, terminalSessionId, terminalCwd);
+    if (sourceProjectDir) {
+      useTabStore.getState().setTabProject(newTabId, sourceProjectDir);
+    }
 
     if (previousActiveTabId && previousActiveTabId !== newTabId) {
       useTabStore.getState().setActiveTab(previousActiveTabId);
@@ -424,9 +450,14 @@ export const TabBar = memo(function TabBar() {
 
       {/* Scrollable tab items container */}
       <div className="relative flex min-w-0 items-stretch">
+        {/*
+          scroll-px-8 keeps scrollIntoView from parking a tab flush against an edge:
+          the scroll arrows are absolutely positioned over the strip (left-1/right-1, w-6)
+          and would otherwise cover the tab's close button (BR-UI-024).
+        */}
         <div
           ref={containerRef}
-          className="flex min-w-0 items-stretch overflow-x-auto scrollbar-none"
+          className="flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"
           data-testid="tab-bar-items"
         >
           {tabs.map((tab) => (
@@ -448,10 +479,16 @@ export const TabBar = memo(function TabBar() {
               onContextMenu={handleContextMenu}
             />
           ))}
-          {/* End drop zone — allows moving a tab to the last position */}
+          {/* End drop zone — gives the last tab enough trailing scroll room to
+              satisfy scroll-px-8, and doubles as a "move to last position" target.
+              Only earns its width while the tabs overflow: otherwise it would push
+              the "+" button away from the last tab for no reason. When collapsed,
+              the trailing spacer past "+" takes over the drop target. */}
           <div
+            ref={endZoneRef}
             className={cn(
-              'electron-no-drag shrink-0 w-6 transition-colors',
+              'electron-no-drag shrink-0 transition-colors',
+              scrollState.hasOverflow ? 'w-8' : 'w-0',
               isWindowsElectron && 'h-[39px]',
               isLinuxElectron && 'h-[39px]',
               isEndZoneDragOver && 'border-l-2 border-l-(--accent)',
@@ -526,15 +563,17 @@ export const TabBar = memo(function TabBar() {
         </button>
       </ShortcutTooltip>
 
-      {/* Spacer — keep this area draggable for frameless Electron windows. */}
+      {/* Spacer — keep this area draggable for frameless Electron windows.
+          Shares the end zone's handlers so a tab dragged here still lands last,
+          which keeps that drop reachable once the end zone collapses to zero. */}
       <div
         className={cn(
           'electron-drag flex-1 transition-colors',
-          isCreateTabDragOver && 'bg-(--accent)/10',
+          (isCreateTabDragOver || isEndZoneDragOver) && 'bg-(--accent)/10',
         )}
-        onDragOver={handleCreateTabDragOver}
-        onDragLeave={handleCreateTabDragLeave}
-        onDrop={handleCreateTabDrop}
+        onDragOver={handleEndZoneDragOver}
+        onDragLeave={handleEndZoneDragLeave}
+        onDrop={handleEndZoneDrop}
         data-testid="tab-bar-new-tab-drop-zone"
       />
 

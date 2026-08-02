@@ -9,6 +9,10 @@ import {
   isAbsoluteFilesystemPath,
 } from "@/lib/filesystem/host-path";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
+import {
+  isInsideWorkspacePath,
+  resolveWorkspaceReadTarget,
+} from "@/lib/workspace-files/workspace-file-read-target";
 
 const MAX_TEXT_FILE_BYTES = 512 * 1024;
 const MAX_RAW_FILE_BYTES = 25 * 1024 * 1024;
@@ -50,13 +54,6 @@ function withFsDeadline<T>(operation: Promise<T>): Promise<T> {
   });
 }
 
-type PathModule = typeof path.win32 | typeof path.posix;
-
-function isInsidePath(root: string, candidate: string, pathModule: PathModule): boolean {
-  const relative = pathModule.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !pathModule.isAbsolute(relative));
-}
-
 async function resolveRequestedFile(root: string, rawPath: string): Promise<{
   absolutePath: string;
   relativePath: string;
@@ -83,7 +80,7 @@ async function resolveRequestedFile(root: string, rawPath: string): Promise<{
   }
 
   const candidatePath = pathModule.resolve(rootRealPath, requestedPath);
-  if (!isInsidePath(rootRealPath, candidatePath, pathModule)) {
+  if (!isInsideWorkspacePath(rootRealPath, candidatePath, pathModule)) {
     throw new WorkspaceFileError("invalid_file_path", "File path escapes the workspace", 400);
   }
 
@@ -95,13 +92,23 @@ async function resolveRequestedFile(root: string, rawPath: string): Promise<{
     throw new WorkspaceFileError("file_not_found", "File not found", 404);
   }
 
-  if (!isInsidePath(rootRealPath, absolutePath, pathModule)) {
+  const candidateIsSymlink = await withFsDeadline(fs.lstat(candidatePath))
+    .then((stats) => stats.isSymbolicLink())
+    .catch(() => false);
+  const target = resolveWorkspaceReadTarget({
+    candidatePath,
+    candidateIsSymlink,
+    pathModule,
+    rootRealPath,
+    targetRealPath: absolutePath,
+  });
+  if (!target.allowed) {
     throw new WorkspaceFileError("invalid_file_path", "File path escapes the workspace", 400);
   }
 
   return {
     absolutePath,
-    relativePath: pathModule.relative(rootRealPath, absolutePath).split(/[\\/]+/).join("/"),
+    relativePath: target.relativePath,
   };
 }
 

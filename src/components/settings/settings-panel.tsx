@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useCallback, useState, type ReactNode } from 'react';
-import { GitBranch, MessageSquarePlus, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
-import { useSettingsStore } from '@/stores/settings-store';
+import { Cpu, FolderGit2, GitBranch, MessageSquarePlus, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
+import {
+  useSettingsStore,
+  type SettingsSectionId as SettingsStoreSectionId,
+} from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import ProfileSettings from './profile-settings';
 import LanguageSwitcher from './language-switcher';
@@ -22,13 +25,17 @@ import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 import AgentExecutionModeSettings from './agent-execution-mode-settings';
 import TerminalViewDefaultSettings from './terminal-view-default-settings';
+import CustomModelSettings from './custom-model-settings';
+import ProjectPreparationSettings from './project-preparation-settings';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
-type SettingsSectionId = 'general' | 'appearance' | 'development' | 'git';
+// Defined with the store, because opening the panel is how a caller asks for a
+// section and the store is what carries the ask.
+type SettingsSectionId = SettingsStoreSectionId;
 
 function SettingsCard({
   children,
@@ -60,8 +67,20 @@ export default function SettingsPanel() {
   const isWindowsServer = useSettingsStore((state) => state.serverHostInfo?.isWindowsEcosystem ?? false);
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === 'win32';
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>('general');
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+
+  // Whoever opened the panel may have said where to land. Their ask holds until
+  // the user navigates, and a fresh ask clears whatever they navigated to —
+  // opening the panel at a section has to arrive there every time.
+  const requestedSection = useSettingsStore((state) => state.openRequest?.section);
+  const [chosenSection, setChosenSection] = useState<SettingsSectionId | null>(null);
+  const [answeredRequest, setAnsweredRequest] = useState(requestedSection);
+  if (requestedSection !== answeredRequest) {
+    setAnsweredRequest(requestedSection);
+    setChosenSection(null);
+  }
+  const activeSection: SettingsSectionId = chosenSection ?? requestedSection ?? 'general';
+  const setActiveSection = setChosenSection;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -88,10 +107,22 @@ export default function SettingsPanel() {
       description: t('settings.sections.generalDesc'),
     },
     {
+      id: 'project' as const,
+      icon: FolderGit2,
+      label: t('settings.sections.project'),
+      description: t('settings.sections.projectDesc'),
+    },
+    {
       id: 'appearance' as const,
       icon: Palette,
       label: t('settings.sections.appearance'),
       description: t('settings.sections.appearanceDesc'),
+    },
+    {
+      id: 'models' as const,
+      icon: Cpu,
+      label: t('settings.sections.models'),
+      description: t('settings.sections.modelsDesc'),
     },
     {
       id: 'development' as const,
@@ -120,10 +151,22 @@ export default function SettingsPanel() {
             <AppearanceSettings />
           </SettingsCard>
         );
+      case 'project':
+        return (
+          <SettingsCard testId="settings-section-project-preparation">
+            <ProjectPreparationSettings />
+          </SettingsCard>
+        );
       case 'git':
         return (
           <SettingsCard testId="settings-section-git">
             <GitSettings />
+          </SettingsCard>
+        );
+      case 'models':
+        return (
+          <SettingsCard testId="settings-section-models">
+            <CustomModelSettings />
           </SettingsCard>
         );
       case 'development':

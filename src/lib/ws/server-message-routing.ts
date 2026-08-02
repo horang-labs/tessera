@@ -7,6 +7,8 @@ import { sessionHistory } from '../session-history';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
 import { bindTerminalSender } from '../terminal/shared-terminal-manager';
+import { waitForPreparationBeforeAgent } from '../projects/preparation-gate';
+import { isPreparationTerminalId } from '../projects/preparation-terminal-id';
 import {
   resolveTerminalLaunchIntent,
   TerminalLaunchIntentError,
@@ -90,6 +92,20 @@ export function logReceivedClientTransportMessage(
   }, 'WebSocket message received');
 }
 
+// Messages whose sessionId is only a workspace-root lookup key, not a handle on
+// a live session. The workspace file feature already treats an unknown session
+// as an empty workspace — both the REST route and the watch manager resolve the
+// root through resolveSessionWorkspaceFilesystemRoot and answer with an empty
+// list / a `missing_work_dir` fallback. Rejecting them here turned a background
+// subscription into a user-facing error toast whenever a panel followed the
+// optimistic `temp-` session that exists while creation is in flight. Ownership
+// is still enforced; only the existence check is skipped.
+// Unrelated to the terminal-handoff exemptions in routeClientTransportMessage.
+const EXISTENCE_OPTIONAL_MESSAGE_TYPES: ReadonlySet<ClientMessage['type']> = new Set([
+  'subscribe_workspace_files',
+  'unsubscribe_workspace_files',
+]);
+
 export function verifyClientSessionAccess(
   userId: string,
   message: ClientMessage,
@@ -123,6 +139,9 @@ export function verifyClientSessionAccess(
   // ownership, so for unspawned sessions we trust the authenticated user.
   const session = dbSessions.getSession(message.sessionId);
   if (!session) {
+    if (EXISTENCE_OPTIONAL_MESSAGE_TYPES.has(message.type)) {
+      return true;
+    }
     logger.warn('Session not found', {
       sessionId: message.sessionId,
       messageType: message.type,
@@ -521,6 +540,33 @@ export async function routeClientTransportMessage({
         : message.terminalId;
       if (sessionId) pendingTerminalReservation = { manager, sessionId, terminalId };
       const terminalExists = manager.hasOrIsOpening(terminalId, userId, sessionId);
+      if (isPreparationTerminalId(terminalId) && !terminalExists) {
+        sendToConnection(connectionId, {
+          type: 'terminal_error',
+          terminalId: message.terminalId,
+          surfaceId: message.surfaceId,
+          message: 'Worktree preparation is no longer running.',
+        });
+        return;
+      }
+      // An agent about to be launched into a worktree waits for that worktree's
+      // blocking preparation, the same as one started from the chat composer —
+      // a PTY reads CLAUDE.md at startup just as a headless CLI does. Nothing
+      // else opening a terminal is held: a plain shell has nothing to read.
+      if (!terminalExists && structured) {
+        const workDir = dbSessions.getSession(structured.sessionId)?.work_dir ?? null;
+        await waitForPreparationBeforeAgent({
+          workDir,
+          onWaitStarted: () => {
+            sendToConnection(connectionId, {
+              type: 'terminal_awaiting_preparation',
+              terminalId,
+              surfaceId: message.surfaceId,
+            });
+          },
+        });
+      }
+
       let launchSpec: TerminalLaunchSpec | undefined;
       let providerId: string | undefined;
       let launchEnv: Record<string, string> | undefined;

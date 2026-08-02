@@ -91,6 +91,7 @@ function cloneTabPanelTree(tabData: TabPanelData): TabPanelData | null {
       sessionId: oldPanel.sessionId,
       terminalId: oldPanel.terminalId ?? null,
       terminalSessionId: oldPanel.terminalSessionId ?? null,
+      terminalCwd: oldPanel.terminalCwd ?? null,
     };
   }
 
@@ -305,12 +306,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
           sessionId: targetPanel.sessionId,
           terminalId: targetPanel.terminalId ?? null,
           terminalSessionId: targetPanel.terminalSessionId ?? null,
+          terminalCwd: targetPanel.terminalCwd ?? null,
         },
         [targetPanelId]: {
           ...targetPanel,
           sessionId: sourcePanel.sessionId,
           terminalId: sourcePanel.terminalId ?? null,
           terminalSessionId: sourcePanel.terminalSessionId ?? null,
+          terminalCwd: sourcePanel.terminalCwd ?? null,
         },
       };
       const nextTabData: TabPanelData = {
@@ -508,7 +511,13 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
 
     const nextPanels = {
       ...tabData.panels,
-      [panelId]: { ...tabData.panels[panelId], sessionId, terminalId: null, terminalSessionId: null },
+      [panelId]: {
+        ...tabData.panels[panelId],
+        sessionId,
+        terminalId: null,
+        terminalSessionId: null,
+        terminalCwd: null,
+      },
     };
     const fallbackActivePanelId =
       sessionId === null && panelId === tabData.activePanelId
@@ -554,7 +563,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     }
   },
 
-  assignTerminal: (panelId, terminalId, terminalSessionId = null) => {
+  assignTerminal: (panelId, terminalId, terminalSessionId = null, terminalCwd = null) => {
     const state = get();
     const tabData = state.tabPanels[state.activeTabId];
     if (!tabData) return;
@@ -563,7 +572,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
 
     const nextPanels = {
       ...tabData.panels,
-      [panelId]: { ...panel, sessionId: null, terminalId, terminalSessionId },
+      [panelId]: { ...panel, sessionId: null, terminalId, terminalSessionId, terminalCwd },
     };
     const nextTabData: TabPanelData = {
       ...tabData,

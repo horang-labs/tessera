@@ -8,6 +8,7 @@ import { useI18n } from '@/lib/i18n';
 import { getProjectColor } from '@/lib/constants/project-strip';
 import { getKanbanMultiSessionDragIds } from '@/lib/dnd/panel-session-drag';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { useBoardStore } from '@/stores/board-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -357,7 +358,7 @@ interface KanbanWorkflowColumnProps {
   onChatDragStart: (sessionId: string, e: React.DragEvent) => void;
   onChatDragEnd: (e: React.DragEvent) => void;
   onChatDragOver: (sessionId: string, status: string, e: React.DragEvent) => void;
-  onAddSession?: (task: TaskEntity, providerId?: string) => void;
+  onAddSession?: (task: TaskEntity, providerId?: string, executionMode?: AgentExecutionMode) => void;
   onTaskContextMenu?: (task: TaskEntity, anchorRect: DOMRect) => void;
   onTaskRename?: (taskId: string, newTitle: string) => void;
   onChatArchive?: (sessionId: string) => void;

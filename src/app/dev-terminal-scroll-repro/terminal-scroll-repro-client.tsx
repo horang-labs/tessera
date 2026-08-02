@@ -11,6 +11,7 @@ import {
 } from '@/lib/terminal/terminal-surface-registry';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { wsClient } from '@/lib/ws/client';
+import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
@@ -40,6 +41,7 @@ interface ReproWindow extends Window {
     isAtBottom(): boolean | null;
     metrics(): { baseY: number; viewportY: number; rows: number } | null;
     mouseReporting(): boolean | null;
+    replaySnapshot(data: string): boolean;
     selectText(text: string): string | null;
     takeCapturedPtyInput(): string[];
     visibleText(): string | null;
@@ -110,6 +112,32 @@ export function TerminalScrollReproClient() {
         (surface as unknown as { terminal: { element?: HTMLElement } | null })
           .terminal?.element?.classList.contains('enable-mouse-events') ?? null
       ),
+      replaySnapshot: (data) => {
+        // Exercise the production snapshot handler rather than manufacturing
+        // its private replay flags. This dev-only seam lets the browser test
+        // include xterm's real parser and onData auto-replies while the PTY
+        // itself stays live behind the surface.
+        const internals = surface as unknown as {
+          handleServerMessage(message: ServerTransportMessage): void;
+          lastSequence: number;
+          serverGeneration: number | null;
+          terminal: { cols: number; rows: number } | null;
+        };
+        const terminal = internals.terminal;
+        const generation = internals.serverGeneration;
+        if (!terminal || generation === null) return false;
+        internals.handleServerMessage({
+          type: 'terminal_snapshot',
+          terminalId: REPRO_TERMINAL_ID,
+          surfaceId: surface.surfaceId,
+          generation,
+          seq: internals.lastSequence,
+          data,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        });
+        return true;
+      },
       selectText: (text) => {
         const terminal = (surface as unknown as {
           terminal: {

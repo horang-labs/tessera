@@ -37,8 +37,18 @@ import { DeleteTaskDialog } from './delete-task-dialog';
 import { ItemStatusIndicator } from './work-item-primitives';
 import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  canPrepareTask,
+  useProjectHasPreparationScript,
+  useWorktreePreparation,
+} from '@/hooks/use-worktree-preparation';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
-async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) {
+async function addSessionToTask(
+  task: TaskEntity,
+  requestedProviderId?: string,
+  requestedExecutionMode?: AgentExecutionMode,
+) {
   try {
     const panelState = usePanelStore.getState();
     const tabData = selectActiveTab(panelState);
@@ -66,6 +76,7 @@ async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) 
         worktreeBranch: task.worktreeBranch || undefined,
         ...runtimeConfig,
         providerId,
+        ...(requestedExecutionMode && { executionMode: requestedExecutionMode }),
       }),
     });
     if (!sessionResponse.ok) throw new Error('Failed to create session');
@@ -312,6 +323,11 @@ export const CollectionGroup = memo(function CollectionGroup({
   const quickCreateTriggerRef = useRef<HTMLButtonElement>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const chatById = useMemo(() => new Map(chats.map((session) => [session.id, session])), [chats]);
+  const contextMenuTask = contextMenu?.type === 'task' && !contextMenu.isSubSession
+    ? taskById.get(contextMenu.targetId)
+    : undefined;
+  const projectHasPreparationScript = useProjectHasPreparationScript(contextMenuTask?.projectId);
+  const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
 
   const openItemContextMenu = useCallback(
     (
@@ -465,7 +481,7 @@ export const CollectionGroup = memo(function CollectionGroup({
       renamingSessionId={renamingItem?.type === 'chat' ? renamingItem.id : null}
       isRenameRequested={renamingItem?.type === 'task' && renamingItem.id === task.id}
       onRenameComplete={finishItemRename}
-      onAddSession={(providerId) => addSessionToTask(task, providerId)}
+      onAddSession={(providerId, executionMode) => addSessionToTask(task, providerId, executionMode)}
       onStopProcess={onSessionStopProcess}
       disableDnd={disableDnd}
       allowPanelSessionDnd={allowPanelSessionDnd}
@@ -693,6 +709,11 @@ export const CollectionGroup = memo(function CollectionGroup({
           onGenerateTitle={onSessionGenerateTitle ? handleContextMenuGenerateTitle : undefined}
           onMoveToProject={contextMenu.type === 'chat' && !contextMenu.isSubSession ? () => onSessionMoveToProject?.(contextMenu.targetId) : undefined}
           onStopProcess={contextMenu.isRunning ? handleContextMenuStopProcess : undefined}
+          onRunPreparation={
+            contextMenuTask && canPrepareTask(contextMenuTask, projectHasPreparationScript)
+              ? () => requestPreparation(contextMenuTask.id)
+              : undefined
+          }
           onStatusChange={
             contextMenu.type === 'task' && !contextMenu.isSubSession && onTaskStatusChange
               ? (status) => onTaskStatusChange(contextMenu.targetId, status)
@@ -702,6 +723,8 @@ export const CollectionGroup = memo(function CollectionGroup({
           }
         />
       )}
+
+      {preparationConfirmDialog}
 
       {taskIdToDelete && (
         <DeleteTaskDialog

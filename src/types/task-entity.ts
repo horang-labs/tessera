@@ -62,6 +62,8 @@ export interface TaskEntity {
   prStatus?: import('./task-pr-status').TaskPrStatus;
   /** True when PR sync is not applicable (not GitHub, gh missing, no branch). */
   prUnsupported?: boolean;
+  /** How far the worktree's preparation has progressed, and whether it succeeded. */
+  preparationStatus?: import('@/lib/projects/preparation-status-policy').PreparationStatus;
   /**
    * Whether the worktree's branch still exists on origin. `undefined` means we
    * haven't probed yet (first sync not complete) — UI should treat as unknown

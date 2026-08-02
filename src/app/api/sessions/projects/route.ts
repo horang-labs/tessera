@@ -7,6 +7,7 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
+import { hasPreparationScript } from '@/lib/projects/preparation-script-policy';
 import {
   isElectronAppRuntimeProjectPath,
   shouldAutoRegisterCurrentProject,
@@ -97,6 +98,10 @@ export async function GET(req: NextRequest) {
         decodedPath: project.decoded_path,
         displayPath: formatPathForAgentDisplay(project.decoded_path, agentEnvironment),
         isCurrent: shouldRegisterCurrentProject && project.id === currentProjectId,
+        // Without one there is nothing to prepare, and no surface should offer
+        // it — either stage having something to run counts.
+        hasPreparationScript: hasPreparationScript(project.preparation_script)
+          || hasPreparationScript(project.preparation_after_script),
         sessions,
         totalSessions: result.totalCount,
         countByStatus: result.countByStatus,

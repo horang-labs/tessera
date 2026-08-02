@@ -4,6 +4,8 @@ export interface Panel {
   sessionId: string | null;
   terminalId?: string | null;
   terminalSessionId?: string | null;
+  /** Explicit cwd for standalone terminals that are not owned by a session. */
+  terminalCwd?: string | null;
 }
 
 // 레이아웃 트리 노드 유니온
@@ -55,7 +57,12 @@ export interface PanelStoreActions {
   assignSession(panelId: string, sessionId: string | null): void;
   assignSessionInTab(tabId: string, panelId: string, sessionId: string | null): void;
   rebindSession(previousSessionId: string, sessionId: string): void;
-  assignTerminal(panelId: string, terminalId: string | null, terminalSessionId?: string | null): void;
+  assignTerminal(
+    panelId: string,
+    terminalId: string | null,
+    terminalSessionId?: string | null,
+    terminalCwd?: string | null,
+  ): void;
   setActivePanelId(panelId: string): void;
   resizeSplit(leftAnchor: string, rightAnchor: string, ratio: number): void;
   initializeWithSession(sessionId: string | null): void;

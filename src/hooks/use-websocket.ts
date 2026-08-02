@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { wsClient } from '@/lib/ws/client';
 import { useAuthStore } from '@/stores/auth-store';
+import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import type { ContentBlock, SessionSpawnConfig } from '@/lib/ws/message-types';
@@ -74,6 +75,12 @@ export function useWebSocket() {
     spawnConfig?: SessionSpawnConfig,
     displayContent?: string,
   ) => {
+    // This path is Codex-only, and Codex reports compaction just once it is
+    // already finished (`thread/compacted`). Open the docked bar optimistically
+    // so the user sees progress; the boundary event closes it. Claude Code
+    // instead opens and closes the bar from its own `status` frames, which also
+    // covers auto-compaction.
+    useChatStore.getState().setCompacting(sessionId, Date.now());
     wsClient.compactSession(sessionId, spawnConfig, displayContent);
   }, []);
 

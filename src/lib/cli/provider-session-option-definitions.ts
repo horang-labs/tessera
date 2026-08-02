@@ -124,8 +124,8 @@ export const OPENCODE_ACCESS_OPTIONS = [
   },
 ] as const;
 
-// The Claude model list is served entirely by the remote config Worker (via
-// getClaudeModelOptions()). No models, effort tiers, or defaults are hardcoded here.
+// The base Claude model list comes from the remote config Worker. The session-options
+// loader later merges aliases advertised by Claude Code's active settings file.
 
 export function buildSharedPermissionMapping(permissionMode: PermissionMode): ProviderPermissionMapping {
   return {

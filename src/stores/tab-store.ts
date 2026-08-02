@@ -79,6 +79,27 @@ function isWorkspaceFileTab(
   return isFileLikeSessionId(getTabActiveSessionId(tabId, panelStore));
 }
 
+/** 사용자 작업이 전혀 없는, New Tab으로 안전하게 재사용할 수 있는 탭인지 판별. */
+function isPristineEmptyTab(
+  tab: Tab,
+  panelStore: ReturnType<typeof usePanelStore.getState>,
+): boolean {
+  if (tab.title !== null) return false;
+
+  const tabData = panelStore.tabPanels[tab.id];
+  if (!tabData || tabData.layout.type !== 'leaf') return false;
+  if (Object.keys(tabData.panels).length !== 1) return false;
+
+  const panel = tabData.panels[tabData.layout.panelId];
+  return Boolean(
+    panel
+    && panel.sessionId === null
+    && !panel.terminalId
+    && !panel.terminalSessionId
+    && !panel.terminalCwd,
+  );
+}
+
 function insertTabAfter(tabs: Tab[], newTab: Tab, anchorTabId?: string | null): Tab[] {
   const anchorIndex = anchorTabId ? tabs.findIndex((tab) => tab.id === anchorTabId) : -1;
   if (anchorIndex === -1) return [...tabs, newTab];
@@ -394,6 +415,40 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     return newTabId;
   },
 
+  openNewTab: (): string => {
+    const state = get();
+    const panelStore = usePanelStore.getState();
+    const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+    const emptyTabs = state.tabs.filter((tab) => isPristineEmptyTab(tab, panelStore));
+    const existingEmptyTab = activeTab && emptyTabs.some((tab) => tab.id === activeTab.id)
+      ? activeTab
+      : emptyTabs[0];
+
+    if (existingEmptyTab) {
+      const duplicateEmptyTabIds = new Set(
+        emptyTabs
+          .filter((tab) => tab.id !== existingEmptyTab.id)
+          .map((tab) => tab.id),
+      );
+      if (duplicateEmptyTabIds.size > 0) {
+        set({
+          tabs: state.tabs.filter((tab) => !duplicateEmptyTabIds.has(tab.id)),
+          lruTabIds: state.lruTabIds.filter((tabId) => !duplicateEmptyTabIds.has(tabId)),
+        });
+        for (const tabId of duplicateEmptyTabIds) {
+          panelStore.removeTab(tabId);
+        }
+        assertTabStoreInvariants(get());
+      }
+
+      get().setActiveTab(existingEmptyTab.id);
+      get().pinTab(existingEmptyTab.id);
+      return existingEmptyTab.id;
+    }
+
+    return get().createTab();
+  },
+
   closeTab: (tabId: string): void => {
     const state = get();
 
@@ -607,7 +662,20 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   },
 
   createTabWithSession: (sessionId: string): void => {
-    // Ctrl+클릭 시나리오용 시맨틱 래퍼 (내부는 createTab)
+    const state = get();
+    const panelStore = usePanelStore.getState();
+    const tabData = panelStore.tabPanels[state.activeTabId];
+    const activePanel = tabData?.panels[tabData.activePanelId];
+
+    // 선택된 New Tab은 이미 세션을 담기 위한 빈 화면이다. 새 탭을 하나 더
+    // 만들지 않고 이 탭을 고정 세션 탭으로 채운다.
+    if (tabData?.layout.type === 'leaf' && activePanel?.sessionId === null) {
+      panelStore.assignSession(tabData.activePanelId, sessionId);
+      get().syncTabProjectFromSession(state.activeTabId, sessionId);
+      get().pinTab(state.activeTabId);
+      return;
+    }
+
     get().createTab(sessionId);
   },
 
@@ -754,6 +822,17 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
     const projectDir = inferTabProjectDir(sessionId, state.currentProjectDir);
     if (tab.projectDir === projectDir) return;
+
+    set({
+      tabs: state.tabs.map((item): Tab =>
+        item.id === tabId ? { ...item, projectDir } : item,
+      ),
+    });
+  },
+
+  setTabProject: (tabId: string, projectDir: string): void => {
+    const state = get();
+    if (!state.tabs.some((item) => item.id === tabId)) return;
 
     set({
       tabs: state.tabs.map((item): Tab =>

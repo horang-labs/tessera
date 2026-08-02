@@ -33,6 +33,11 @@ import { PortfolioFilterBar } from './portfolio-filter-bar';
 import { KanbanChatColumn, KanbanWorkflowColumn } from './kanban-column';
 import { KanbanScrollControls } from './kanban-scroll-controls';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
+import {
+  canPrepareTask,
+  useProjectHasPreparationScript,
+  useWorktreePreparation,
+} from '@/hooks/use-worktree-preparation';
 import { DeleteSessionDialog } from '@/components/chat/delete-session-dialog';
 import { DeleteTaskDialog } from '@/components/chat/delete-task-dialog';
 import { MoveProjectDialog } from '@/components/chat/move-project-dialog';
@@ -46,6 +51,7 @@ import {
 import type { Collection } from '@/types/collection';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -815,7 +821,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   // ── Add session to existing task (matching list view's addSessionToTask) ──
 
-  const handleAddSessionToTask = useCallback(async (task: TaskEntity, requestedProviderId?: string) => {
+  const handleAddSessionToTask = useCallback(async (
+    task: TaskEntity,
+    requestedProviderId?: string,
+    requestedExecutionMode?: AgentExecutionMode,
+  ) => {
     try {
       // If active panel already has a session, create a new tab
       const panelState = usePanelStore.getState();
@@ -843,6 +853,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
           worktreeBranch: task.worktreeBranch || undefined,
           ...runtimeConfig,
           providerId,
+          ...(requestedExecutionMode && { executionMode: requestedExecutionMode }),
         }),
       });
       if (!res.ok) throw new Error('Failed to create session');
@@ -906,7 +917,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   // ── Task context menu state ──
 
+  const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
   const [taskMenuAnchor, setTaskMenuAnchor] = useState<{ task: TaskEntity; rect: DOMRect } | null>(null);
+  const taskMenuProjectHasScript = useProjectHasPreparationScript(taskMenuAnchor?.task.projectId);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
 
   const handleTaskContextMenu = useCallback((task: TaskEntity, anchorRect: DOMRect) => {
@@ -916,6 +929,12 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const handleTaskMenuClose = useCallback(() => {
     setTaskMenuAnchor(null);
   }, []);
+
+  const handleTaskRunPreparation = useCallback(() => {
+    if (!taskMenuAnchor) return;
+    requestPreparation(taskMenuAnchor.task.id);
+    setTaskMenuAnchor(null);
+  }, [requestPreparation, taskMenuAnchor]);
 
   // Task context menu action handlers
   const handleTaskStatusChange = useCallback((status: string) => {
@@ -1129,9 +1148,16 @@ export const KanbanBoard = memo(function KanbanBoard() {
           onGenerateTitle={handleTaskGenerateTitle}
           isRunning={taskMenuIsRunning}
           onStopProcess={taskMenuIsRunning ? handleTaskStopProcess : undefined}
+          onRunPreparation={
+            canPrepareTask(taskMenuAnchor.task, taskMenuProjectHasScript)
+              ? handleTaskRunPreparation
+              : undefined
+          }
           onClose={handleTaskMenuClose}
         />
       )}
+
+      {preparationConfirmDialog}
 
       {/* Delete session confirmation dialog */}
       <DeleteSessionDialog

@@ -218,6 +218,9 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
+  addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
+  addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
+  addPreparationStatusColumns(db);
 }
 
 /**
@@ -990,6 +993,39 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     `);
     logger.info('Migration v29 applied: terminal provider session registry added');
   }
+
+  if (fromVersion < 30) {
+    addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
+    logger.info('Migration v30 applied: projects.preparation_script column added');
+  }
+
+  if (fromVersion < 31) {
+    addPreparationStatusColumns(db);
+    logger.info('Migration v31 applied: task preparation status columns added');
+  }
+
+  if (fromVersion < 32) {
+    // The stored script becomes the `before` stage, which is what it already
+    // behaved like — everything in it ran before an agent could be started.
+    addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
+    addPreparationStatusColumns(db);
+    logger.info('Migration v32 applied: preparation split into before and after stages');
+  }
+}
+
+/** Preparation status belongs to the worktree, and the task is what owns one. */
+function addPreparationStatusColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'preparation_status', `TEXT NOT NULL DEFAULT 'never_run'`);
+  addColumnIfMissing(db, 'tasks', 'preparation_started_at', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_finished_at', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_exit_code', 'INTEGER');
+  addColumnIfMissing(db, 'tasks', 'preparation_output', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_script', 'TEXT');
+  // Which stage is in flight, and what the second one ran. A run recorded
+  // before the split has neither, and reads as a `before` stage that ran
+  // everything — which is what it did.
+  addColumnIfMissing(db, 'tasks', 'preparation_phase', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_after_script', 'TEXT');
 }
 
 /**

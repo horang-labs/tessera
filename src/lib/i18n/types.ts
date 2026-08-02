@@ -4,8 +4,12 @@ export interface I18nMessages {
     sections: {
       general: string;
       generalDesc: string;
+      project: string;
+      projectDesc: string;
       appearance: string;
       appearanceDesc: string;
+      models: string;
+      modelsDesc: string;
       development: string;
       developmentDesc: string;
       git: string;
@@ -214,6 +218,8 @@ export interface I18nMessages {
       customPlaceholder: string;
       customApply: string;
       customHint: string;
+      customEmpty: string;
+      customRemove: string;
     };
     effort: {
       readOnlyTooltip: string;
@@ -255,6 +261,55 @@ export interface I18nMessages {
       retentionConfirmCancel: string;
       retentionConfirmAction: string;
       retentionConfirming: string;
+    };
+    preparation: {
+      title: string;
+      description: string;
+      projectLabel: string;
+      stage: {
+        before: {
+          label: string;
+          desc: string;
+          placeholder: string;
+        };
+        after: {
+          label: string;
+          desc: string;
+          placeholder: string;
+        };
+      };
+      noProject: string;
+      loading: string;
+      saving: string;
+      saved: string;
+      saveFailed: string;
+      loadFailed: string;
+      variablesLabel: string;
+      variables: {
+        projectDir: string;
+        worktreeDir: string;
+        branchName: string;
+      };
+      checklist: {
+        open: string;
+        close: string;
+        description: string;
+        scanning: string;
+        scanFailed: string;
+        empty: string;
+        truncated: string;
+        selected: string;
+        inScriptOnly: string;
+        kind: {
+          configuration: string;
+          instructions: string;
+          dependencies: string;
+          buildOutput: string;
+          logs: string;
+          images: string;
+          unrecognised: string;
+        };
+      };
     };
     category: {
       session: string;
@@ -443,6 +498,7 @@ export interface I18nMessages {
     codexFastEnabled: string;
     codexFastDisabled: string;
     codexCompactDuringTurn: string;
+    compactingConversation: string;
     cancelHint: string;
     cancelButton: string;
     attachFile: string;
@@ -455,6 +511,8 @@ export interface I18nMessages {
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
+    promptDensityDecrease: string;
+    promptDensityIncrease: string;
     otherInputPlaceholder: string;
     otherInputPlaceholderWithHint: string;
     submissionFailed: string;
@@ -466,6 +524,7 @@ export interface I18nMessages {
     notePrefix: string;
     submitHint: string;
     working: string;
+    awaitingPreparation: string;
     loadingMore: string;
     loadMore: string;
     scrollToBottom: string;
@@ -746,6 +805,7 @@ export interface I18nMessages {
     tooSmallToSplit: string;
     cannotCloseLastPanel: string;
     dropToInsertPath: string;
+    dropToInsertSessionReference: string;
   };
   sidebar: {
     noProjects: string;
@@ -774,6 +834,7 @@ export interface I18nMessages {
     stopped: string;
     stopProcess: string;
     processing: string;
+    inputRequired: string;
     unreadNotification: string;
     sessionRunning: string;
     runningProcesses: string;
@@ -896,6 +957,7 @@ export interface I18nMessages {
       git: string;
       diff: string;
       files: string;
+      scripts: string;
       context: string;
     };
     empty: {
@@ -1018,7 +1080,45 @@ export interface I18nMessages {
       loadTimedOut: string;
     };
   };
+  scripts: {
+    noWorktree: string;
+    readingLog: string;
+    script: string;
+    stage: {
+      before: string;
+      after: string;
+    };
+    scriptLines: string;
+    editScript: string;
+    preparation: {
+      name: string;
+      status: {
+        never_run: string;
+        running: string;
+        succeeded: string;
+        failed: string;
+      };
+    };
+  };
   task: {
+    preparation: {
+      preparing: string;
+      failed: string;
+      title: string;
+      runningDescription: string;
+      failedDescription: string;
+      succeededDescription: string;
+      exitCode: string;
+      noOutput: string;
+      interrupted: string;
+      rerun: string;
+      rerunning: string;
+      rerunFailed: string;
+      runNow: string;
+      confirmTitle: string;
+      confirmDescription: string;
+      confirmNote: string;
+    };
     selector: {
       addProject: string;
       noProjects: string;
@@ -1077,6 +1177,10 @@ export interface I18nMessages {
       taskCreationFailed: string;
       launcherTitle: string;
       launcherSubtitle: string;
+      projectLabel: string;
+      projectPlaceholder: string;
+      projectSelectionHint: string;
+      selectProjectHint: string;
       startAsLabel: string;
       agentUiLabel: string;
       shellLabel: string;

@@ -100,6 +100,68 @@ export function formatPathForAgentDisplay(
   return filesystemPath;
 }
 
+/**
+ * Rewrite a path the CLI reported — hook payloads, provider transcript
+ * locations — into the form this server can open. Inverse of
+ * `formatPathForAgentDisplay`: the CLI names files in its own environment's
+ * style, so across a bridge the server must translate before touching disk.
+ *
+ * Non-bridged setups already share one path style, so this is a no-op.
+ */
+export async function resolveAgentReportedPath(
+  agentPath: string,
+  environment: FilesystemBrowseEnvironment,
+): Promise<string> {
+  const trimmed = agentPath.trim();
+  if (!trimmed) return agentPath;
+  if (!isBridgedAgentEnvironment(environment)) return trimmed;
+
+  if (environment === 'wsl') {
+    const wslPathInfo = await getWslPathInfo();
+    return wslPathInfo
+      ? wslDisplayPathToWindowsFilesystemPath(trimmed, wslPathInfo)
+      : trimmed;
+  }
+
+  return windowsDrivePathToWslMountPath(trimmed) ?? trimmed;
+}
+
+/**
+ * Whether the agent's files live on a different filesystem than the server's.
+ *
+ * Only bridged setups need translation: Windows host with a WSL agent, and WSL
+ * host with a native (Windows) agent. Windows host + native agent and Linux
+ * host + WSL agent already share one filesystem and one path style.
+ */
+export function isBridgedAgentEnvironment(
+  environment: FilesystemBrowseEnvironment,
+): boolean {
+  return environment === 'wsl'
+    ? getRuntimePlatform() === 'win32'
+    : getRuntimePlatform() === 'linux' && isRunningInWsl();
+}
+
+/**
+ * The home directory the agent's CLI writes under, as a path this server can
+ * open. Across a bridge the server's own `homedir()` belongs to the wrong side:
+ * a Windows host resolving `~/.claude` for a WSL agent lands in `C:\Users\...`,
+ * which holds another account's transcripts or none at all.
+ *
+ * Callers pairing this with an env var (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+ * `XDG_DATA_HOME`) must drop the var when `isBridgedAgentEnvironment` is true:
+ * those describe the server's own environment, not the CLI's.
+ */
+export async function resolveAgentHomeFilesystemPath(
+  environment: FilesystemBrowseEnvironment,
+): Promise<string> {
+  if (!isBridgedAgentEnvironment(environment)) return homedir();
+  try {
+    return (await resolveBrowsePath(null, environment)).filesystemPath;
+  } catch {
+    return homedir();
+  }
+}
+
 function formatWslHostedNativeDisplayPath(filesystemPath: string): string {
   const windowsDrivePath = wslMountPathToWindowsDrivePath(filesystemPath);
   if (windowsDrivePath) return windowsDrivePath;
@@ -296,7 +358,7 @@ function normalizeWslDisplayPath(value: string): string {
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }
 
-function wslDisplayPathToWindowsFilesystemPath(
+export function wslDisplayPathToWindowsFilesystemPath(
   displayPath: string,
   wslPathInfo: WslPathInfo,
 ): string {
@@ -370,9 +432,15 @@ function isWindowsDriveMountPath(value: string): boolean {
 
 async function getWslPathInfo(): Promise<WslPathInfo | null> {
   if (!wslPathInfoPromise) {
-    wslPathInfoPromise = loadWslPathInfo();
+    wslPathInfoPromise = loadWslPathInfo().catch(() => null);
   }
-  return wslPathInfoPromise;
+
+  const wslPathInfo = await wslPathInfoPromise;
+  // Only a successful probe is cached. A failure is usually a race with a
+  // distro that was still starting, and caching it would strand every later
+  // WSL path lookup — file browsing, git, inline images — until restart.
+  if (!wslPathInfo) wslPathInfoPromise = null;
+  return wslPathInfo;
 }
 
 export async function getWslHostedWindowsHomeMountPath(): Promise<string> {

@@ -23,10 +23,5 @@ export function setGlobalShortcutKeys(keys: string[]): void {
 
 export function isGlobalShortcutKeydown(event: KeyboardEvent): boolean {
   if (event.type !== 'keydown') return false;
-  // A keydown delivered mid-composition reports the IME's placeholder key, not
-  // the physical one. Matching that against a shortcut would both swallow the
-  // keystroke and return false from the custom key handler, which stops xterm
-  // from ever advancing its composition state machine for that event.
-  if (event.isComposing) return false;
   return activePresses.some((press) => matchKeyBindingPress(event, press));
 }

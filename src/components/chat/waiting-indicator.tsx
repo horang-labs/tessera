@@ -6,12 +6,21 @@ import { MessageRowShell } from './message-row-shell';
 
 interface WaitingIndicatorProps {
   providerId?: string;
+  /**
+   * The message landed, but the agent has not been started: the worktree is
+   * still running the preparation it cannot start without. Saying so here is
+   * the only place it is said — a wait with no explanation reads as a hang.
+   */
+  awaitingPreparation?: boolean;
 }
 
 /** Waiting indicator — shown in gaps between blocks during an active turn.
  *  Rendered without provider chrome (icon + label) so consecutive
  *  thinking → waiting visuals don't repeat the "Claude"/"Codex" header. */
-export function WaitingIndicator({ providerId: _providerId }: WaitingIndicatorProps) {
+export function WaitingIndicator({
+  providerId: _providerId,
+  awaitingPreparation = false,
+}: WaitingIndicatorProps) {
   const { t } = useI18n();
   const [elapsed, setElapsed] = useState(0);
 
@@ -32,6 +41,7 @@ export function WaitingIndicator({ providerId: _providerId }: WaitingIndicatorPr
     <MessageRowShell
       className="flex gap-3 py-2 px-2 message-enter"
       data-testid="waiting-indicator"
+      data-awaiting-preparation={awaitingPreparation ? 'true' : undefined}
     >
       <div className="shrink-0 w-8" aria-hidden />
       <div className="flex-1 min-w-0">
@@ -42,7 +52,8 @@ export function WaitingIndicator({ providerId: _providerId }: WaitingIndicatorPr
             <span className="typing-dot w-1.5 h-1.5 bg-(--accent) rounded-full" />
           </div>
           <span className="text-xs">
-            {t('chat.working')}{elapsed > 0 && ` · ${formatTime(elapsed)}`}
+            {awaitingPreparation ? t('chat.awaitingPreparation') : t('chat.working')}
+            {elapsed > 0 && ` · ${formatTime(elapsed)}`}
           </span>
         </div>
       </div>

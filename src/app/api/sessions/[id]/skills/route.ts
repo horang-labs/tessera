@@ -12,7 +12,8 @@ import logger from '@/lib/logger';
  *
  * Returns the list of skills available for the given session's CLI provider.
  * Active processes remain authoritative. Fresh GUI sessions use provider-native
- * discovery that does not start or resume a conversation.
+ * discovery that does not start or resume a conversation. Temporary Codex
+ * discovery failures remain retryable instead of becoming a valid empty list.
  */
 export async function GET(
   request: NextRequest,
@@ -37,13 +38,24 @@ export async function GET(
     const providerId = session.provider?.trim();
 
     if (providerId === 'codex') {
-      const skills = processInfo?.skillSource
-        ? await processInfo.skillSource.listSkills()
-        : await listCodexSkills({
-            userId: auth.userId,
-            workDir: session.work_dir,
-          });
-      return NextResponse.json({ skills });
+      try {
+        const skills = processInfo?.skillSource
+          ? await processInfo.skillSource.listSkills()
+          : await listCodexSkills({
+              userId: auth.userId,
+              workDir: session.work_dir,
+            });
+        return NextResponse.json({ skills });
+      } catch (error) {
+        logger.warn({
+          sessionId: id,
+          error: error instanceof Error ? error.message : String(error),
+        }, 'Codex skill discovery temporarily failed');
+        return NextResponse.json(
+          { error: 'Skill discovery temporarily failed', retryable: true },
+          { status: 503 },
+        );
+      }
     }
 
     if (providerId === 'claude-code') {

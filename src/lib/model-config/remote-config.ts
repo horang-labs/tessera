@@ -11,10 +11,10 @@ import type {
   ProviderReasoningEffortOption,
 } from '@/lib/cli/provider-session-option-types';
 
-// Fetches the Claude model list from the remote Worker, caches it on disk, and exposes
-// it to buildClaudeSessionOptions(). The Worker config is the SINGLE source of truth —
-// there is no hardcoded model list; getClaudeModelOptions() returns the loaded list (or
-// [] until one arrives).
+// Fetches Tessera's curated Claude model list from the remote Worker, caches it on disk,
+// and exposes it to buildClaudeSessionOptions(). There is no hardcoded base list;
+// runtime-discovered aliases and user-added model IDs are merged later by the provider
+// session-options loader.
 //
 // There is no periodic poll. The config is fetched on exactly two triggers — app launch
 // and each Claude session creation — and every fetch doubles as a usage beacon (the

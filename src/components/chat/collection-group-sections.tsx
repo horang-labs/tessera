@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Pencil,
   Plus,
+  RefreshCw,
   Sparkles,
   Trash2,
   type LucideIcon,
@@ -30,7 +31,6 @@ import {
   useIsSessionAwaitingUser,
 } from '@/hooks/use-session-awaiting-user';
 import { useCollectionStore } from '@/stores/collection-store';
-import { useProvidersStore } from '@/stores/providers-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -51,6 +51,7 @@ import {
 } from './work-item-primitives';
 import { CollectionMoveSubmenu } from './collection-move-submenu';
 import { DiffStatsBadge } from './diff-stats-badge';
+import { TaskPreparationBadge } from '@/components/task/task-preparation-view';
 import { ProviderLogoMark } from './provider-brand';
 import { ProviderQuickMenu } from './provider-quick-menu';
 import { detectPrMismatch, prMismatchTooltip } from './task-pr-badge';
@@ -60,6 +61,7 @@ import {
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -236,6 +238,7 @@ export function CollectionContextMenu({
   onMoveToProject,
   onStopProcess,
   onStatusChange,
+  onRunPreparation,
 }: {
   menu: ContextMenuState;
   collections?: Collection[];
@@ -248,6 +251,8 @@ export function CollectionContextMenu({
   onMoveToProject?: () => void;
   onStopProcess?: () => void;
   onStatusChange?: (status: string) => void;
+  /** Runs the project's preparation script again on this task's worktree. */
+  onRunPreparation?: () => void;
 }) {
   const { t } = useI18n();
   const fallbackCollections = useCollectionStore((state) => state.collections);
@@ -396,6 +401,17 @@ export function CollectionContextMenu({
           <button className={menuItemClass} onClick={() => { onGenerateTitle(); onClose(); }}>
             <Sparkles className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>{t('task.contextMenu.generateTitle' as Parameters<typeof t>[0])}</span>
+          </button>
+        )}
+
+        {onRunPreparation && (
+          <button
+            className={menuItemClass}
+            onClick={() => { onRunPreparation(); onClose(); }}
+            data-testid="ctx-run-preparation"
+          >
+            <RefreshCw className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+            <span>{t('task.preparation.runNow')}</span>
           </button>
         )}
 
@@ -692,7 +708,7 @@ export function TaskItemRow({
   renamingSessionId?: string | null;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
-  onAddSession: (providerId?: string) => void;
+  onAddSession: (providerId?: string, executionMode?: AgentExecutionMode) => void;
   onStopProcess?: (sessionId: string) => void;
   disableDnd?: boolean;
   allowPanelSessionDnd?: boolean;
@@ -971,6 +987,13 @@ export function TaskItemRow({
           ) : null}
         </span>
 
+        {/* Left of the title, where the hover actions on the trailing edge can
+            never cover it — a preparation failure has to stay reachable. */}
+        <TaskPreparationBadge
+          status={task.preparationStatus}
+          presentation="icon"
+        />
+
         <div className="min-w-0 flex-1">
           {isRenaming ? (
             <InlineRenameInput
@@ -1056,12 +1079,8 @@ export function TaskItemRow({
               onClick={(event) => {
                 event.stopPropagation();
                 event.preventDefault();
-                const providers = useProvidersStore.getState().providers;
-                const selectable = (providers ?? []).filter((p) => p.status === 'connected');
-                if (selectable.length === 1) {
-                  onAddSession(selectable[0].id);
-                  return;
-                }
+                // Always open the menu — even with a single provider the session
+                // still needs its PTY/GUI choice.
                 const rect = addButtonRef.current?.getBoundingClientRect();
                 if (rect) setProviderMenuAnchor(rect);
               }}
@@ -1130,7 +1149,7 @@ export function TaskItemRow({
         <ProviderQuickMenu
           anchorRect={providerMenuAnchor}
           currentProviderId={task.sessions[0]?.provider}
-          onSelect={(providerId) => onAddSession(providerId)}
+          onSelect={(providerId, executionMode) => onAddSession(providerId, executionMode)}
           onClose={() => setProviderMenuAnchor(null)}
         />
       )}

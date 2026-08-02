@@ -5,6 +5,7 @@ import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 
 interface WorkspaceFilesResponse {
   files?: string[];
+  symlinks?: string[];
   truncated?: boolean;
   workDir?: string | null;
 }
@@ -13,6 +14,8 @@ interface WorkspaceFileListState {
   error: string | null;
   files: string[];
   loading: boolean;
+  /** Subset of `files` that are symbolic links, in the same order. */
+  symlinks: string[];
   truncated: boolean;
   workDir: string | null;
 }
@@ -30,6 +33,7 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
     error: null,
     files: [],
     loading: Boolean(sessionId),
+    symlinks: [],
     truncated: false,
     workDir: null,
   }));
@@ -45,6 +49,7 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
           error: null,
           files: [],
           loading: false,
+          symlinks: [],
           truncated: false,
           workDir: null,
         });
@@ -74,10 +79,12 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
 
         if (requestSeqRef.current !== requestSeq) return;
         const nextFiles = Array.isArray(payload?.files) ? payload.files : [];
+        const nextSymlinks = Array.isArray(payload?.symlinks) ? payload.symlinks : [];
         setState((current) => ({
           error: null,
           files: sameStringArray(current.files, nextFiles) ? current.files : nextFiles,
           loading: false,
+          symlinks: sameStringArray(current.symlinks, nextSymlinks) ? current.symlinks : nextSymlinks,
           truncated: Boolean(payload?.truncated),
           workDir: payload?.workDir ?? null,
         }));
@@ -95,6 +102,7 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
               error: message,
               files: [],
               loading: false,
+              symlinks: [],
               truncated: false,
               workDir: null,
             });

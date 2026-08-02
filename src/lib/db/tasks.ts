@@ -6,6 +6,7 @@ import { getDb } from './database';
 import logger from '../logger';
 import type { WorkflowStatus, TaskEntity, TaskSession } from '@/types/task-entity';
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
+import { readPreparationStatus } from '@/lib/projects/preparation-status-policy';
 import { extractSessionKind } from './sessions';
 
 export interface TaskRow {
@@ -28,6 +29,11 @@ export interface TaskRow {
   pr_unsupported: number;
   remote_branch_exists: number | null;
   pr_head_ref_oid: string | null;
+  preparation_status: string | null;
+  preparation_started_at: string | null;
+  preparation_finished_at: string | null;
+  preparation_exit_code: number | null;
+  preparation_output: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -125,6 +131,7 @@ function mapRowToEntity(
     sortOrder: row.sort_order ?? 0,
     prStatus: readPrStatusFromRow(row),
     prUnsupported: !!row.pr_unsupported,
+    preparationStatus: readPreparationStatus(row.preparation_status),
     remoteBranchExists:
       row.remote_branch_exists === null || row.remote_branch_exists === undefined
         ? undefined
@@ -585,6 +592,23 @@ export function getTaskBySessionId(
   `).get(sessionId) as TaskRow | undefined;
   if (!row) return undefined;
   return mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds));
+}
+
+/**
+ * The task that owns a worktree, found by the directory itself.
+ *
+ * Preparation status belongs to the task, but what an agent about to be spawned
+ * knows is where it will run. A worktree is only ever backed by one task, so
+ * the directory names it unambiguously.
+ */
+export function findTaskIdForWorktree(workDir: string): string | null {
+  const row = getDb().prepare(`
+    SELECT s.task_id AS task_id
+    FROM sessions s
+    WHERE s.work_dir = ? AND s.task_id IS NOT NULL AND s.deleted = 0
+    LIMIT 1
+  `).get(workDir) as { task_id: string } | undefined;
+  return row?.task_id ?? null;
 }
 
 /**

@@ -47,6 +47,17 @@ interface PendingTerminalRebound {
 
 const pendingTerminalRebounds = new Map<string, PendingTerminalRebound>();
 
+/**
+ * Server rejections of a manual /compact. Each one means no compaction started,
+ * so an optimistically opened compacting bar has to be closed.
+ * @see compactSessionFromWebSocket
+ */
+const COMPACT_REQUEST_ERROR_CODES = new Set([
+  'session_compact_in_progress',
+  'session_compact_unavailable',
+  'session_compact_failed',
+]);
+
 function getVisibleWorkspaceSessionId(activeSessionId: string | null): string | null {
   const boardState = useBoardStore.getState();
   const settingsState = useSettingsStore.getState();
@@ -94,7 +105,8 @@ export function handleIncomingServerMessage({
       useSessionPrStore.getState().clearSession(msg.sessionId);
       return { wasReconnect };
 
-    case 'session_stopped':
+    case 'session_stopped': {
+      const stoppedSession = sessionStore.getSession(msg.sessionId);
       sessionStore.markSessionStopped(msg.sessionId);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
       // The session was stopped, so any workflow still flagged running can no
@@ -102,9 +114,18 @@ export function handleIncomingServerMessage({
       // leaving the card spinning forever.
       chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
       chatStore.setTodoSnapshot(msg.sessionId, []);
+      // A stopped or dead CLI never closes a compaction it had opened.
+      chatStore.setCompacting(msg.sessionId, null);
       sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       useCommandStore.getState().clearSession(msg.sessionId);
+      // PTY surfaces retire on terminal_session_runtime so a provider session
+      // rebound can transfer the existing panel first. GUI sessions have no
+      // later runtime event, so stopping one must retire its surface here.
+      if (stoppedSession && stoppedSession.kind !== 'terminal') {
+        useTabStore.getState().retireSessionSurface(msg.sessionId);
+      }
       return { wasReconnect };
+    }
 
     case 'replay_events':
       sessionStore.touchSessionActivity(msg.sessionId, getLatestReplayEventTimestamp(msg.events));
@@ -227,6 +248,16 @@ export function handleIncomingServerMessage({
       );
       return { wasReconnect };
 
+    // The message was accepted, but its CLI is held until the worktree's
+    // blocking preparation finishes. Only sent when a message actually waits.
+    case 'session_awaiting_preparation':
+      chatStore.setAwaitingPreparation(msg.sessionId, true);
+      return { wasReconnect };
+
+    case 'session_preparation_settled':
+      chatStore.setAwaitingPreparation(msg.sessionId, false);
+      return { wasReconnect };
+
     case 'error': {
       const errRequestId = 'requestId' in msg ? (msg as { requestId?: string }).requestId : undefined;
       if (errRequestId && providersListCallbacks.has(errRequestId)) {
@@ -244,6 +275,13 @@ export function handleIncomingServerMessage({
       );
       if (msg.sessionId) {
         stopTurnInFlight(msg.sessionId);
+        // The compacting bar is opened optimistically for providers that only
+        // report a finished compaction (Codex). If the server refused the
+        // request there is no completion event coming, so close it here rather
+        // than leave the bar up until the staleness cutoff.
+        if (COMPACT_REQUEST_ERROR_CODES.has(msg.code)) {
+          chatStore.setCompacting(msg.sessionId, null);
+        }
       }
       return { wasReconnect };
     }
@@ -258,6 +296,8 @@ export function handleIncomingServerMessage({
       // card spinning past the session's death.
       chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
       chatStore.setTodoSnapshot(msg.sessionId, []);
+      // A stopped or dead CLI never closes a compaction it had opened.
+      chatStore.setCompacting(msg.sessionId, null);
       sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       sessionStore.updateSessionStatus(msg.sessionId, 'error');
       chatStore.addMessage(msg.sessionId, {
@@ -307,6 +347,10 @@ export function handleIncomingServerMessage({
     case 'commands_ready':
     case 'commands_list':
       useCommandStore.getState().setCommands(msg.sessionId, msg.commands);
+      return { wasReconnect };
+
+    case 'skills_changed':
+      useCommandStore.getState().invalidateSession(msg.sessionId);
       return { wasReconnect };
 
     case 'providers_list':

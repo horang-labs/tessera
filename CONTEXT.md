@@ -46,6 +46,12 @@ _Avoid_: terminal launched, TUI started
 
 An optional structured-chat execution mode available only to GUI-capable providers. Claude Code, Codex, and OpenCode are currently GUI-capable. When GUI mode is preferred for a provider without that capability, the session uses PTY mode.
 
+### Effective CLI model catalog
+
+The model IDs, display names, default selection, and declared capabilities exposed by the coding-agent CLI's currently active effective configuration for use in GUI mode. Tessera reads this catalog without changing the CLI or external provider configuration; inactive external-provider profiles are excluded and a configuration change replaces the catalog.
+
+_Avoid_: CC Switch model list, provider list
+
 ### Effective execution mode
 
 The mode actually used by a session after applying the user's preferred execution mode to the selected provider's capabilities.
@@ -53,3 +59,43 @@ The mode actually used by a session after applying the user's preferred executio
 ### Session execution mode
 
 The effective execution mode fixed when a session is created. A session cannot switch between GUI and PTY modes, and conversation state cannot resume across those modes.
+
+### Worktree diff stats
+
+The uncommitted work in a working directory, measured against its last commit and counted as added lines, removed lines, and changed files. Lines in new untracked files count as added. Every session sharing a working directory shows the same stats.
+
+_Avoid_: diff count, change count, line count
+
+### Diff stats safety sweep
+
+The periodic refresh that recomputes worktree diff stats for sessions with a live runtime, so displayed stats cannot stay wrong indefinitely when the signals that normally trigger a recompute all go quiet.
+
+_Avoid_: diff polling, stats refresh loop
+
+### Worktree preparation
+
+The one-time work that makes a newly created worktree usable: supplying what Git does not carry over, such as local configuration files a project needs but does not track.
+
+_Avoid_: setup, bootstrap, initialization
+
+### Preparation script
+
+The commands a project runs during worktree preparation. It belongs to the project, so every worktree created from that project inherits it. There are two, one per preparation stage.
+
+_Avoid_: setup script, hook — in Tessera, _setup_ names the first-run onboarding flow instead
+
+### Preparation stage
+
+Which half of a worktree's preparation a script belongs to, and therefore whether an agent waits for it. The _before_ stage supplies what a CLI reads when it starts, such as CLAUDE.md or AGENTS.md, and no agent is spawned into the worktree until it ends. The _after_ stage holds everything else, and runs alongside the agent.
+
+_Avoid_: blocking script, phase one — the stage is named for when it runs relative to the agent, not for its position in a sequence
+
+### Preparation status
+
+How far a worktree's preparation has progressed, and whether it succeeded. The outcome outlives the run, so a failed preparation stays visible until it is retried.
+
+### Copy block
+
+The marked region of a preparation script that Tessera owns and rewrites in full from the ignored-file checklist. Everything outside it is the user's, including a generated line moved out of it, which is what makes rewriting the block safe to do without asking.
+
+_Avoid_: managed block, generated section

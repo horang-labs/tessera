@@ -134,8 +134,9 @@ export class OpenCodeAdapter implements CliProvider {
    */
   async readTerminalTranscriptFingerprint(options: {
     providerSessionId: string;
+    userId?: string;
   }): Promise<string | null> {
-    return fingerprintOpenCodeStore(options.providerSessionId);
+    return fingerprintOpenCodeStore(options.providerSessionId, options.userId);
   }
 
   /**

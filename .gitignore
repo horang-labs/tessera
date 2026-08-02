@@ -46,16 +46,19 @@ next-env.d.ts
 !assets/*.png
 !docs/**/*.png
 
-# docs: README 홍보물만 추적, 나머지는 로컬 전용
+# docs: README 홍보물과 ADR만 추적, 나머지는 로컬 전용
 docs/*
 !docs/assets/
 docs/assets/*
 !docs/assets/readme/
+!docs/adr/
 
 # IDE / Tools
 .claude/
+.codex/
 agent/
 .playwright-cli/
+graphify-out/
 AGENTS.md
 CLAUDE.md
 skills-lock.json

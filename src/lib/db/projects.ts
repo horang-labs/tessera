@@ -2,6 +2,8 @@
  * Project CRUD operations backed by SQLite.
  */
 
+import { normalizePreparationScript } from '@/lib/projects/preparation-script-policy';
+import type { PreparationPhase } from '@/lib/projects/preparation-status-policy';
 import { getDb } from './database';
 
 export interface ProjectRow {
@@ -11,6 +13,10 @@ export interface ProjectRow {
   provider: string | null;
   visible: number; // 0 | 1
   sort_order: number;
+  /** The `before` stage: what an agent cannot start without. */
+  preparation_script: string | null;
+  /** The `after` stage: what a worktree needs but an agent need not wait for. */
+  preparation_after_script: string | null;
   registered_at: string;
   updated_at: string;
 }
@@ -100,4 +106,30 @@ export function isRegistered(id: string): boolean {
  */
 export function getProject(id: string): ProjectRow | undefined {
   return getDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
+}
+
+/**
+ * Write one of a project's preparation scripts and return what was stored.
+ * A blank script is stored as no script at all.
+ */
+export function setPreparationScript(
+  id: string,
+  script: string | null,
+  phase: PreparationPhase = 'before',
+): string | null {
+  const normalized = normalizePreparationScript(script);
+  // The column is chosen from a closed set, never from anything a caller sends.
+  const column = phase === 'after' ? 'preparation_after_script' : 'preparation_script';
+  getDb()
+    .prepare(`UPDATE projects SET ${column} = ?, updated_at = ? WHERE id = ?`)
+    .run(normalized, new Date().toISOString(), id);
+  return normalized;
+}
+
+/** The script a stage runs, or null when that stage has nothing to do. */
+export function readProjectPreparationScript(
+  project: Pick<ProjectRow, 'preparation_script' | 'preparation_after_script'>,
+  phase: PreparationPhase,
+): string | null {
+  return phase === 'after' ? project.preparation_after_script : project.preparation_script;
 }
