@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import logger from '@/lib/logger';
+import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
 import { buildOpenCodeHookPluginSource } from './opencode-hook-plugin';
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/=]*$/;
@@ -21,12 +22,16 @@ function assertBase64(value: string): void {
  * 세션별로 새로 만들면 매 실행마다 설치가 반복되므로, 플러그인 파일만 원자적으로
  * 갱신하고 OpenCode가 만든 package.json/bun.lock/node_modules는 그대로 보존한다.
  */
-export function buildWslOpenCodeOverlayCreateScript(pluginSourceB64: string): string {
+export function buildWslOpenCodeOverlayCreateScript(
+  pluginSourceB64: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   assertBase64(pluginSourceB64);
+  const stateRoot = getWslGuestTesseraStateRoot(env);
   return [
     'set -eu',
     'umask 077',
-    'overlay="$HOME/.tessera/opencode-overlay/shared"',
+    `overlay="${stateRoot}/opencode-overlay/shared"`,
     'plugins="$overlay/plugins"',
     'mkdir -p "$plugins"',
     'tmp="$plugins/.tessera-lifecycle.js.$$"',
