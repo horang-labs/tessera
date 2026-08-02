@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Star, X, Search, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useCommandStore } from '@/stores/command-store';
+import { useSessionStore } from '@/stores/session-store';
+import { isHiddenSlashCommandName } from '@/lib/chat/hidden-slash-commands';
 import type { SkillInfo } from '@/hooks/use-skill-picker';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { useI18n } from '@/lib/i18n';
@@ -43,7 +45,13 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
   const favoriteSkills = useSettingsStore((s) => s.settings.favoriteSkills ?? EMPTY_FAVORITE_SKILLS);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
 
-  const allSkills = useCommandStore((s) => sessionId ? s.commands[sessionId] : undefined) ?? EMPTY_COMMANDS;
+  const storeSkills = useCommandStore((s) => sessionId ? s.commands[sessionId] : undefined) ?? EMPTY_COMMANDS;
+  const providerId = useSessionStore((s) => sessionId ? (s.getSession(sessionId)?.provider?.trim() ?? null) : null);
+  // 피커에서 숨긴 명령은 즐겨찾기 추가 목록에서도 빼야 한다 — 여기로 들어오면 숨김이 무의미해진다.
+  const allSkills = useMemo(
+    () => storeSkills.filter((skill) => !isHiddenSlashCommandName(skill.name, providerId)),
+    [providerId, storeSkills],
+  );
 
   const [isOpen, setIsOpen] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);

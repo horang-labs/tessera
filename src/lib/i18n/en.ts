@@ -505,6 +505,7 @@ export const en: I18nMessages = {
     codexSlashPlatformUnavailable: '{{command}} is only available with native Codex on Windows.',
     codexSlashTerminalBusy: 'Wait for the current Codex interaction before opening {{command}} in a terminal.',
     codexTerminalHandoffActive: 'Close the Codex terminal before sending another message in this session.',
+    slashCommandUnsupportedInChat: 'This command is not available in a chat session. Create a new session instead.',
     codexSlashTerminalOpenFailed: 'Could not open the Codex terminal. Your input was kept.',
     codexSlashCopied: 'Copied the latest Codex response.',
     codexSlashCopyFailed: 'Failed to copy the latest Codex response.',

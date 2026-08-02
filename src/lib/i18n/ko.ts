@@ -507,6 +507,7 @@ export const ko: I18nMessages = {
     codexSlashPlatformUnavailable: '{{command}}은(는) Windows 네이티브 Codex에서만 사용할 수 있습니다.',
     codexSlashTerminalBusy: '현재 Codex 상호작용이 끝난 뒤 {{command}} 터미널을 여세요.',
     codexTerminalHandoffActive: '이 세션에서 메시지를 보내려면 Codex 터미널을 먼저 닫으세요.',
+    slashCommandUnsupportedInChat: '채팅 세션에서는 지원하지 않는 명령입니다. 새 세션을 만들어 주세요.',
     codexSlashTerminalOpenFailed: 'Codex 터미널을 열지 못했습니다. 입력은 그대로 보존했습니다.',
     codexSlashCopied: '최근 Codex 응답을 복사했습니다.',
     codexSlashCopyFailed: '최근 Codex 응답을 복사하지 못했습니다.',

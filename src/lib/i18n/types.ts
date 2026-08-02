@@ -487,6 +487,7 @@ export interface I18nMessages {
     codexSlashPlatformUnavailable: string;
     codexSlashTerminalBusy: string;
     codexTerminalHandoffActive: string;
+    slashCommandUnsupportedInChat: string;
     codexSlashTerminalOpenFailed: string;
     codexSlashCopied: string;
     codexSlashCopyFailed: string;
