@@ -8,7 +8,9 @@ import {
   isIgnoredWorkspacePath,
   MAX_WORKSPACE_FILES,
   normalizeWorkspaceRelativePath,
+  scanWorkspaceDirectory,
   walkWorkspaceFiles,
+  workspaceRelativeDirname,
 } from "../src/lib/workspace-files/workspace-file-scan";
 
 async function withTempWorkspace<T>(fn: (root: string) => Promise<T>): Promise<T> {
@@ -40,7 +42,12 @@ test("workspace file scan ignores heavy and hidden paths consistently", async ()
     const result = await walkWorkspaceFiles(root);
 
     assert.equal(result.truncated, false);
+    // Dotfiles are collected and filtered client-side by the show-hidden
+    // toggle, so the walk keeps them; only the always-ignored build/VCS
+    // directories are pruned here.
     assert.deepEqual(result.files, [
+      ".config/settings.json",
+      ".env",
       ".env.example",
       "src/a.ts",
       "src/b.ts",
@@ -88,7 +95,52 @@ test("workspace file scan does not traverse into a linked directory", async () =
   });
 });
 
+test("directory scan reads one level or the whole subtree", async () => {
+  await withTempWorkspace(async (root) => {
+    await mkdir(path.join(root, ".codex/skills/graphify"), { recursive: true });
+    await writeFile(path.join(root, ".codex/hooks.json"), "{}");
+    await writeFile(path.join(root, ".codex/skills/graphify/SKILL.md"), "skill");
+    await writeFile(path.join(root, "top.ts"), "");
+
+    const shallow = await scanWorkspaceDirectory(root, ".codex", { recursive: false });
+    assert.deepEqual(shallow.files, [".codex/hooks.json"]);
+    assert.equal(shallow.missing, false);
+
+    const deep = await scanWorkspaceDirectory(root, ".codex", { recursive: true });
+    assert.deepEqual(deep.files, [
+      ".codex/hooks.json",
+      ".codex/skills/graphify/SKILL.md",
+    ]);
+
+    // The root is addressed as the empty path, which is what an event on a
+    // top-level entry invalidates.
+    const rootShallow = await scanWorkspaceDirectory(root, "", { recursive: false });
+    assert.deepEqual(rootShallow.files, ["top.ts"]);
+  });
+});
+
+test("directory scan reports a vanished directory instead of an empty one", async () => {
+  await withTempWorkspace(async (root) => {
+    const present = await scanWorkspaceDirectory(root, "gone", { recursive: true });
+
+    // An empty listing and a deleted directory have to be distinguishable: the
+    // caller drops the subtree for one and merges nothing for the other.
+    assert.equal(present.missing, true);
+    assert.deepEqual(present.files, []);
+
+    await mkdir(path.join(root, "empty"), { recursive: true });
+    const empty = await scanWorkspaceDirectory(root, "empty", { recursive: true });
+    assert.equal(empty.missing, false);
+    assert.deepEqual(empty.files, []);
+  });
+});
+
 test("workspace path helpers normalize and classify ignored paths", () => {
+  assert.equal(workspaceRelativeDirname("top.ts"), "");
+  assert.equal(workspaceRelativeDirname(".codex/hooks.json"), ".codex");
+  assert.equal(workspaceRelativeDirname(".codex/skills/graphify/SKILL.md"), ".codex/skills/graphify");
+  assert.equal(workspaceRelativeDirname("src\\nested\\file.ts"), "src/nested");
+
   assert.equal(normalizeWorkspaceRelativePath("."), "");
   assert.equal(normalizeWorkspaceRelativePath("src\\nested//file.ts"), "src/nested/file.ts");
   assert.equal(isIgnoredWorkspacePath(".", { isDirectory: () => true }), false);

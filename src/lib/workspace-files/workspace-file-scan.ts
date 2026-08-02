@@ -27,6 +27,14 @@ export type WorkspaceFileWalkResult = {
   truncated: boolean;
 };
 
+export type WorkspaceDirectoryScanResult = WorkspaceFileWalkResult & {
+  /**
+   * The scanned directory itself could not be read. The caller has to drop
+   * whatever it held for that subtree rather than merge an empty listing.
+   */
+  missing: boolean;
+};
+
 type SymlinkTargetKind = "file" | "other";
 
 type PathModule = typeof path.win32 | typeof path.posix;
@@ -37,6 +45,17 @@ export function normalizeWorkspaceRelativePath(filePath: string): string {
     .split("/")
     .filter((part) => part && part !== ".")
     .join("/");
+}
+
+/**
+ * The directory a workspace-relative path sits in, `""` for the root itself.
+ * Watch events are turned into a rescan of this directory rather than being
+ * trusted as index contents.
+ */
+export function workspaceRelativeDirname(relativePath: string): string {
+  const normalized = normalizeWorkspaceRelativePath(relativePath);
+  const separator = normalized.lastIndexOf("/");
+  return separator <= 0 ? "" : normalized.slice(0, separator);
 }
 
 export function isIgnoredWorkspacePath(
@@ -80,18 +99,42 @@ export async function classifySymlinkTarget(absolutePath: string): Promise<Symli
   }
 }
 
-export async function walkWorkspaceFiles(root: string): Promise<WorkspaceFileWalkResult> {
+/**
+ * Read one directory of the workspace, or its whole subtree.
+ *
+ * A watch event names a path; it does not describe the state of the tree
+ * around it, and the events that never arrive are the ones that matter. A
+ * directory created and filled faster than a recursive watch can be registered
+ * delivers no creation event for its contents at all — verified against
+ * inotify-tools 3.22: `cp -R` into a watched root reports the top directory
+ * and its immediate files, but nothing for a nested one. So callers treat an
+ * event as an invalidation — "read this directory again" — and this does the
+ * reading. Whatever the events missed is found here.
+ */
+export async function scanWorkspaceDirectory(
+  root: string,
+  relativeDir: string,
+  options?: { limit?: number; recursive?: boolean },
+): Promise<WorkspaceDirectoryScanResult> {
+  const limit = options?.limit ?? MAX_WORKSPACE_FILES;
+  const recursive = options?.recursive ?? true;
   const out: string[] = [];
   const symlinks = new Set<string>();
   let truncated = false;
+  let missing = false;
   const pathModule: PathModule = getFilesystemPathModule(root);
+  const startRel = normalizeWorkspaceRelativePath(relativeDir);
 
-  async function recurse(absDir: string, relDir: string): Promise<void> {
+  async function recurse(absDir: string, relDir: string, isStart: boolean): Promise<void> {
     if (truncated) return;
     let entries: import("fs").Dirent[];
     try {
       entries = await fs.readdir(absDir, { withFileTypes: true });
     } catch {
+      // Only the requested directory going missing is meaningful: it tells the
+      // caller to drop that subtree. A descendant that races away mid-walk just
+      // contributes nothing.
+      if (isStart) missing = true;
       return;
     }
 
@@ -103,11 +146,11 @@ export async function walkWorkspaceFiles(root: string): Promise<WorkspaceFileWal
       if (isIgnoredWorkspacePath(childRel, ent, { includeHidden: true })) continue;
 
       if (ent.isDirectory()) {
-        await recurse(pathModule.join(absDir, ent.name), childRel);
+        if (recursive) await recurse(pathModule.join(absDir, ent.name), childRel, false);
       } else if (ent.isFile()) {
         out.push(childRel);
         symlinks.delete(childRel);
-        if (out.length >= MAX_WORKSPACE_FILES) {
+        if (out.length >= limit) {
           truncated = true;
           return;
         }
@@ -121,7 +164,7 @@ export async function walkWorkspaceFiles(root: string): Promise<WorkspaceFileWal
         if (await classifySymlinkTarget(pathModule.join(absDir, ent.name)) !== "file") continue;
         out.push(childRel);
         symlinks.add(childRel);
-        if (out.length >= MAX_WORKSPACE_FILES) {
+        if (out.length >= limit) {
           truncated = true;
           return;
         }
@@ -129,13 +172,23 @@ export async function walkWorkspaceFiles(root: string): Promise<WorkspaceFileWal
     }
   }
 
-  await recurse(root, "");
+  const absStart = startRel ? pathModule.join(root, ...startRel.split("/")) : root;
+  await recurse(absStart, startRel, true);
   out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
   return {
     files: out,
     symlinks: out.filter((filePath) => symlinks.has(filePath)),
+    missing,
     truncated,
   };
+}
+
+export async function walkWorkspaceFiles(root: string): Promise<WorkspaceFileWalkResult> {
+  const { files, symlinks, truncated } = await scanWorkspaceDirectory(root, "", {
+    limit: MAX_WORKSPACE_FILES,
+    recursive: true,
+  });
+  return { files, symlinks, truncated };
 }
 
 export function applyMaxFiles(
