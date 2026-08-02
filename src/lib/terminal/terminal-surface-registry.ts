@@ -53,9 +53,7 @@ import { forceRepaintThroughRenderPause } from './terminal-render-pause-release'
 import {
   writeForegroundTerminalChunk,
   discardForegroundRenderSettle,
-  refreshForegroundTerminalViewport,
 } from './terminal-foreground-render-settle';
-import { TerminalCompositionGuard } from './terminal-ime-composition-guard';
 import {
   attachTerminalMouseWheelMultiplier,
   isTerminalTuiOwnedWheelEvent,
@@ -213,6 +211,11 @@ let parkingLot: HTMLElement | null = null;
  */
 const COLD_PARK_DELAY_MS = 30_000;
 const TERMINAL_RESIZE_SETTLE_DELAY_MS = 150;
+const SNAPSHOT_REPLAY_STALL_TIMEOUT_MS = 4_000;
+
+type SnapshotReplayState =
+  | { epoch: number; phase: 'parsing'; watchdogTimerId: number | null }
+  | { epoch: number; phase: 'fitting' };
 
 function getParkingLot(): HTMLElement {
   if (parkingLot?.isConnected) return parkingLot;
@@ -287,8 +290,6 @@ export class TerminalSurface {
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
-  private compositionGuard: TerminalCompositionGuard | null = null;
-  private compositionDeferredRefresh = false;
   private suppressNextNativePaste = false;
   private pasteSuppressionTimerId: number | null = null;
   private clipboardPasteQueue: Promise<void> = Promise.resolve();
@@ -305,10 +306,12 @@ export class TerminalSurface {
   private pendingLaunch: PendingTerminalLaunch | null = null;
   private serverGeneration: number | null = null;
   private lastSequence = 0;
-  private replaying = false;
+  // xterm's write queue is the output-ordering boundary. This state only
+  // blocks onData while snapshot bytes are parsing and remembers the fit that
+  // must follow; live PTY output continues into xterm's FIFO immediately.
+  private snapshotReplay: SnapshotReplayState | null = null;
   private replayEpoch = 0;
-  private pendingReplayFitEpoch: number | null = null;
-  private pendingReplayOutput: Array<{ data: string; generation: number; seq: number }> = [];
+  private snapshotReplayRecoveryAttempted = false;
   private onInput: (() => void) | null = null;
   private terminalInputOriginArmed = false;
   private terminalInputOriginEpoch = 0;
@@ -376,6 +379,7 @@ export class TerminalSurface {
     this.setThemeRestartRequired(false);
     this.themeRestartPending = true;
     this.autoConnect = true;
+    this.snapshotReplayRecoveryAttempted = false;
     this.cancelSnapshotReplay();
     this.updateState('starting', 'Restarting terminal to apply theme...');
     wsClient.closeTerminal(this.actualTerminalId);
@@ -499,7 +503,11 @@ export class TerminalSurface {
   }
 
   sendInput(data: string): boolean {
-    if (this.disposed || this.replaying || this.state.status === 'exited') return false;
+    if (
+      this.disposed
+      || this.snapshotReplay?.phase === 'parsing'
+      || this.state.status === 'exited'
+    ) return false;
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
   }
 
@@ -511,7 +519,11 @@ export class TerminalSurface {
    * newline reads as a separate submit and one message goes out in fragments.
    */
   pasteInput(data: string): boolean {
-    if (this.disposed || this.replaying || this.state.status === 'exited') return false;
+    if (
+      this.disposed
+      || this.snapshotReplay?.phase === 'parsing'
+      || this.state.status === 'exited'
+    ) return false;
     if (!this.terminal) return false;
     this.terminal.paste(data);
     return true;
@@ -645,6 +657,7 @@ export class TerminalSurface {
   async restart(): Promise<boolean> {
     if (this.disposed) return false;
     this.autoConnect = true;
+    this.snapshotReplayRecoveryAttempted = false;
     this.serverGeneration = null;
     this.lastSequence = 0;
     this.cancelSnapshotReplay();
@@ -670,6 +683,11 @@ export class TerminalSurface {
     if (!this.terminal && this.mountedHost) void this.mount(this.mountedHost);
     requestAnimationFrame(() => {
       if (this.disposed || !this.isMountedHostVisible()) return;
+      // A snapshot can finish parsing while its retained tab is hidden. Its
+      // fit request deliberately cannot measure then, so reveal must retry it
+      // even when WebGL stayed attached (retryWebglAttachOnReveal otherwise
+      // returns early and never requests a fit).
+      this.requestStableFit(false);
       this.retryWebglAttachOnReveal();
       recoverAllTerminalRenderers();
     });
@@ -745,11 +763,6 @@ export class TerminalSurface {
       this.root.removeEventListener('compositionend', this.compositionEndListener, true);
     }
     this.compositionEndListener = null;
-    // Before terminal.dispose(): the guard has to hand xterm's composition
-    // helper back its own method while that helper still exists.
-    this.compositionGuard?.dispose();
-    this.compositionGuard = null;
-    this.compositionDeferredRefresh = false;
     this.suppressNextNativePaste = false;
     if (this.pasteSuppressionTimerId !== null) {
       window.clearTimeout(this.pasteSuppressionTimerId);
@@ -878,12 +891,6 @@ export class TerminalSurface {
         window as Window & { electronAPI?: Partial<ElectronTerminalClipboardApi> }
       ).electronAPI;
       terminal.attachCustomKeyEventHandler((event) => {
-        // CoreBrowserTerminal consults this handler before its own composition
-        // handling, making it the last point where xterm's deferred composition
-        // end can still be repaired — past here, a key that force-finalizes the
-        // composition commits against whatever offset the pending timer left.
-        if (event.type === 'keydown') this.compositionGuard?.syncCompositionEnd();
-
         // App-level shortcuts must bubble to the window listener instead of
         // being cancelled by xterm or encoded into PTY input.
         if (isGlobalShortcutKeydown(event)) return false;
@@ -993,11 +1000,6 @@ export class TerminalSurface {
         if (event.data) this.notifyTerminalInput();
       };
       root.addEventListener('compositionend', this.compositionEndListener, true);
-      this.compositionGuard = new TerminalCompositionGuard({
-        root,
-        terminal,
-        onCompositionSettled: () => this.flushCompositionDeferredRefresh(),
-      });
     } catch (error) {
       this.updateState(
         'error',
@@ -1166,9 +1168,8 @@ export class TerminalSurface {
       this.serverGeneration = message.generation;
       this.lastSequence = message.seq;
       const replayEpoch = ++this.replayEpoch;
-      this.replaying = true;
-      this.pendingReplayFitEpoch = null;
-      this.pendingReplayOutput = [];
+      this.clearSnapshotReplayWatchdog();
+      this.snapshotReplay = { epoch: replayEpoch, phase: 'parsing', watchdogTimerId: null };
       const restorePoint = this.scrollController?.captureRestorePoint();
       // Recovery after a replay is unconditional (see onParsed below), but the
       // detector still consumes the chunk to keep its cross-chunk scan state.
@@ -1190,49 +1191,60 @@ export class TerminalSurface {
         return;
       }
       const replayData = buildTerminalSnapshotReplay(message);
-      writeForegroundTerminalChunk(this.terminal, replayData, {
+      const replayTerminal = this.terminal;
+      const finishParsing = (): void => {
+        if (
+          this.replayEpoch !== replayEpoch
+          || this.serverGeneration !== message.generation
+          || this.snapshotReplay?.epoch !== replayEpoch
+          || this.snapshotReplay.phase !== 'parsing'
+        ) return;
+        this.clearSnapshotReplayWatchdog();
+        this.snapshotReplay = { epoch: replayEpoch, phase: 'fitting' };
+        this.snapshotReplayRecoveryAttempted = false;
+        if (restorePoint) this.scrollController?.restore(restorePoint);
+        this.scheduleScrollRebuildSettle();
+        this.scheduleSurfaceScrollStateSync();
+        // Unconditional, not SGR-gated: a replay rasterizes CJK glyphs into
+        // whatever renderer state preceded the reveal, and that state stays
+        // subtly wrong until an atlas recovery re-rasterizes it.
+        this.requestStableFit(false);
+        this.retryWebglAttachOnReveal();
+        this.recoverRendererPresentation();
+      };
+      const replayWriteAccepted = writeForegroundTerminalChunk(replayTerminal, replayData, {
         forceViewportRefresh: true,
         // A snapshot replay rewrites the whole grid; always follow up on the
         // settled frame in case the immediate repaint raced layout.
         followupViewportRefresh: true,
         shouldRefreshViewportSynchronously: () => !this.webglAddon,
-        onParsed: () => {
+        onParsed: finishParsing,
+        onWriteFailure: () => {
           if (
-            this.replayEpoch !== replayEpoch
-            || this.serverGeneration !== message.generation
-          ) return;
-          if (restorePoint) this.scrollController?.restore(restorePoint);
-          this.scheduleScrollRebuildSettle();
-          // Keep live output and user input behind the replay barrier until the
-          // destination grid is fitted and the PTY receives its repaint resize.
-          this.pendingReplayFitEpoch = replayEpoch;
-          this.scheduleSurfaceScrollStateSync();
-          // Unconditional, not SGR-gated: a replay rasterizes CJK glyphs into
-          // whatever renderer state preceded the reveal, and that state stays
-          // subtly wrong (whole-pane Korean layout visibly shifts once a later
-          // atlas recovery re-rasterizes it, which is also the moment IME
-          // composition stops garbling). An idle session never gets that
-          // accidental recovery — schedule it deterministically after every
-          // replay instead of waiting for the next output or focus cycle.
-          this.requestStableFit(false);
-          this.retryWebglAttachOnReveal();
-          this.recoverRendererPresentation();
+            this.replayEpoch === replayEpoch
+            && this.serverGeneration === message.generation
+          ) {
+            this.cancelSnapshotReplay();
+          }
         },
       });
+      if (replayWriteAccepted) {
+        // A zero-byte FIFO fence covers the narrow case where xterm accepts and
+        // parses the snapshot but loses that write's completion callback. If
+        // the whole WriteBuffer is wedged, the watchdog below cold-remounts the
+        // renderer while leaving the PTY alive.
+        writeForegroundTerminalChunk(replayTerminal, '', { onParsed: finishParsing });
+        this.armSnapshotReplayWatchdog(replayEpoch);
+      }
       return;
     }
 
     if (message.type === 'terminal_output') {
       if (message.generation !== this.serverGeneration || message.seq <= this.lastSequence) return;
       this.lastSequence = message.seq;
-      if (this.replaying) {
-        this.pendingReplayOutput.push({
-          data: message.data,
-          generation: message.generation,
-          seq: message.seq,
-        });
-        return;
-      }
+      // xterm serializes writes. A frame received during snapshot parsing is
+      // naturally queued after the snapshot, without a second buffer that can
+      // strand visible output behind a missed fit.
       this.applyTerminalOutput(message.data);
       return;
     }
@@ -1264,27 +1276,12 @@ export class TerminalSurface {
     }
   }
 
-  private flushCompositionDeferredRefresh(): void {
-    if (!this.compositionDeferredRefresh) return;
-    this.compositionDeferredRefresh = false;
-    if (!this.terminal) return;
-    refreshForegroundTerminalViewport(this.terminal, !this.webglAddon);
-  }
-
   private applyTerminalOutput(data: string): void {
     const restorePoint = this.scrollController?.captureRestorePoint();
     const shouldRecoverRenderer = this.backgroundSgrDetector.consume(data);
     if (!this.terminal) return;
-    // A forced full-grid refresh drives xterm's onRender, and every onRender
-    // re-places the IME helper textarea on the CLI cursor — which is what
-    // knocks Korean compositions apart mid-syllable while an agentic CLI
-    // repaints its prompt. Composition state is client-only, so output
-    // arriving now cannot describe what is being composed: skip the forced
-    // repaint and replay it once the composition commits.
-    const composing = this.compositionGuard?.isComposing() ?? false;
-    if (composing) this.compositionDeferredRefresh = true;
     writeForegroundTerminalChunk(this.terminal, data, {
-      forceViewportRefresh: !composing,
+      forceViewportRefresh: true,
       shouldRefreshViewportSynchronously: () => !this.webglAddon,
       onParsed: () => {
         if (restorePoint) this.scrollController?.restore(restorePoint);
@@ -1296,35 +1293,81 @@ export class TerminalSurface {
   }
 
   private cancelSnapshotReplay(): void {
+    this.clearSnapshotReplayWatchdog();
     this.replayEpoch += 1;
-    this.replaying = false;
-    this.pendingReplayFitEpoch = null;
-    this.pendingReplayOutput = [];
+    this.snapshotReplay = null;
   }
 
   private finishSnapshotReplay(replayEpoch: number): void {
-    if (this.replayEpoch !== replayEpoch || this.pendingReplayFitEpoch !== replayEpoch) return;
-
-    const pendingOutput = this.pendingReplayOutput;
-    this.pendingReplayOutput = [];
-    this.pendingReplayFitEpoch = null;
-    this.replaying = false;
-    for (const frame of pendingOutput) {
-      if (frame.generation === this.serverGeneration) this.applyTerminalOutput(frame.data);
-    }
+    if (
+      this.replayEpoch !== replayEpoch
+      || this.snapshotReplay?.epoch !== replayEpoch
+      || this.snapshotReplay.phase !== 'fitting'
+    ) return;
+    this.snapshotReplay = null;
 
     const terminal = this.terminal;
-    const activeElement = document.activeElement;
+    if (!terminal) return;
+    // Live output may already be queued behind the snapshot. Put focus
+    // reporting behind a FIFO fence so mode changes in those writes are parsed
+    // before modes.sendFocusMode is read.
+    writeForegroundTerminalChunk(terminal, '', {
+      onParsed: () => {
+        const activeElement = document.activeElement;
+        if (
+          this.terminal === terminal
+          && terminal.modes.sendFocusMode
+          && activeElement
+          && terminal.element?.contains(activeElement)
+        ) {
+          wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, '\x1b[I');
+        }
+      },
+    });
+  }
+
+  private clearSnapshotReplayWatchdog(): void {
+    const replay = this.snapshotReplay;
+    if (replay?.phase !== 'parsing' || replay.watchdogTimerId === null) return;
+    window.clearTimeout(replay.watchdogTimerId);
+    replay.watchdogTimerId = null;
+  }
+
+  private armSnapshotReplayWatchdog(replayEpoch: number): void {
+    const replay = this.snapshotReplay;
+    if (replay?.phase !== 'parsing' || replay.epoch !== replayEpoch) return;
+    this.clearSnapshotReplayWatchdog();
+    replay.watchdogTimerId = window.setTimeout(() => {
+      if (
+        this.snapshotReplay?.phase !== 'parsing'
+        || this.snapshotReplay.epoch !== replayEpoch
+      ) return;
+      this.recoverStalledSnapshotReplay(replayEpoch);
+    }, SNAPSHOT_REPLAY_STALL_TIMEOUT_MS);
+  }
+
+  private recoverStalledSnapshotReplay(replayEpoch: number): void {
     if (
-      terminal?.modes.sendFocusMode
-      && activeElement
-      && terminal.element?.contains(activeElement)
-    ) {
-      // Focus may have happened before replay restored ?1004h. Re-send the
-      // event once after the snapshot barrier so fullscreen TUIs always learn
-      // that this newly attached surface is active.
-      wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, '\x1b[I');
+      this.snapshotReplay?.phase !== 'parsing'
+      || this.snapshotReplay.epoch !== replayEpoch
+    ) return;
+    const host = this.mountedHost;
+    const wasVisible = this.isMountedHostVisible();
+    if (this.snapshotReplayRecoveryAttempted) {
+      this.autoConnect = false;
+      this.coldPark();
+      this.updateState('error', 'Terminal renderer stalled while restoring. Restart to retry.');
+      return;
     }
+    this.snapshotReplayRecoveryAttempted = true;
+    this.coldPark();
+    if (!host || !wasVisible || this.disposed) return;
+    void this.mount(host).then(() => {
+      if (this.disposed) return;
+      void this.ensureConnected().then((connected) => {
+        if (connected && this.isMountedHostVisible()) this.activate();
+      });
+    });
   }
 
   private recoverRendererPresentation(): void {
@@ -1475,10 +1518,12 @@ export class TerminalSurface {
 
   private fitAndResize(claim: boolean, shouldFit = true): void {
     if (!this.isMountedHostVisible() || !this.fitAddon || !this.terminal) return;
-    const replayFitEpoch = this.pendingReplayFitEpoch;
+    const replayFitEpoch = this.snapshotReplay?.phase === 'fitting'
+      ? this.snapshotReplay.epoch
+      : null;
     // A ResizeObserver/activation fit can race snapshot parsing. Preserve the
     // exact source grid until the replay write callback establishes a barrier.
-    if (this.replaying && replayFitEpoch === null) return;
+    if (this.snapshotReplay?.phase === 'parsing') return;
     let didFit = false;
     let fitCompleted = !shouldFit;
     let restorePoint: TerminalScrollRestorePoint | null = null;
