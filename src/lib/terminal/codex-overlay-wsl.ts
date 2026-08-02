@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import logger from '@/lib/logger';
 import { buildCodexOverlayMarkerJson, CODEX_OVERLAY_MARKER } from '@/lib/codex-home';
+import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
 import { buildCodexHookSettings } from './codex-hook-settings';
 import { appendTrustedHookState, stripHookStateSections } from './codex-overlay';
 import type { HookCommandStyle } from './hook-command';
@@ -73,12 +74,17 @@ function assertBase64(value: string, label: string): void {
 }
 
 /** 게스트에서 실행할 오버레이 생성 스크립트. 순수 문자열 — 로컬 sh로 테스트 가능. */
-export function buildWslCodexOverlayCreateScript(terminalId: string, hooksJsonB64: string): string {
+export function buildWslCodexOverlayCreateScript(
+  terminalId: string,
+  hooksJsonB64: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   assertSafeTerminalId(terminalId);
   assertBase64(hooksJsonB64, 'hooks.json');
+  const stateRoot = getWslGuestTesseraStateRoot(env);
   return [
     'set -eu',
-    `overlay="$HOME/.tessera/codex-overlay/${terminalId}"`,
+    `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
     'src="${CODEX_HOME:-$HOME/.codex}"',
     // stale 재생성: 이전 런치 잔여 제거(심링크는 unlink만 → 타깃 무손상).
     'rm -rf "$overlay"',
@@ -111,13 +117,15 @@ export function buildWslCodexOverlayFinalizeScript(
   terminalId: string,
   configTomlB64: string,
   markerJsonB64: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
   assertSafeTerminalId(terminalId);
   assertBase64(configTomlB64, 'config.toml');
   assertBase64(markerJsonB64, 'marker');
+  const stateRoot = getWslGuestTesseraStateRoot(env);
   return [
     'set -eu',
-    `overlay="$HOME/.tessera/codex-overlay/${terminalId}"`,
+    `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
     `printf '%s' '${configTomlB64}' | base64 -d > "$overlay/config.toml"`,
     'chmod 600 "$overlay/config.toml"',
     `printf '%s' '${markerJsonB64}' | base64 -d > "$overlay/${CODEX_OVERLAY_MARKER}"`,
@@ -125,9 +133,12 @@ export function buildWslCodexOverlayFinalizeScript(
   ].join('\n');
 }
 
-export function buildWslCodexOverlayCleanupScript(terminalId: string): string {
+export function buildWslCodexOverlayCleanupScript(
+  terminalId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   assertSafeTerminalId(terminalId);
-  return `rm -rf "$HOME/.tessera/codex-overlay/${terminalId}"`;
+  return `rm -rf "${getWslGuestTesseraStateRoot(env)}/codex-overlay/${terminalId}"`;
 }
 
 /** 스크립트 stdout에서 `LABEL:value` 보고 라인을 찾는다. */

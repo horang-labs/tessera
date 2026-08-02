@@ -65,3 +65,21 @@ test('WSL OpenCode overlay stays guest-native and preserves installed dependenci
 test('WSL OpenCode overlay script rejects malformed plugin payloads', () => {
   assert.throws(() => buildWslOpenCodeOverlayCreateScript("'; rm -rf /"));
 });
+
+test('WSL OpenCode overlay is namespaced for a parallel Electron test instance', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-opencode-instance-'));
+  try {
+    const stdout = runScript(
+      buildWslOpenCodeOverlayCreateScript(b64('export default {}\n'), {
+        TESSERA_ELECTRON_TEST_INSTANCE: 'test-3',
+      }),
+      home,
+    );
+    assert.equal(
+      readWslOpenCodeOverlayReport(stdout),
+      path.join(home, '.tessera/test-instances/test-3/opencode-overlay/shared'),
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

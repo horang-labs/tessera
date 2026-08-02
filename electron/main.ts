@@ -16,8 +16,16 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
+import {
+  acquireElectronInstanceLock,
+  configureElectronTestInstance,
+} from '../src/lib/electron-test-instance';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
+
+// Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
+// Normal builds do not set the test instance env and keep the production path.
+const electronTestInstance = configureElectronTestInstance(app);
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
 type TitlebarTheme = 'light' | 'dark';
@@ -394,7 +402,10 @@ function attachServerProcessLogging(child: ChildProcess) {
 }
 
 // ── Single instance lock ───────────────────────────────────────────────────
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = acquireElectronInstanceLock(
+  () => app.requestSingleInstanceLock(),
+  electronTestInstance,
+);
 if (!gotLock) {
   app.quit();
   process.exit(0);
