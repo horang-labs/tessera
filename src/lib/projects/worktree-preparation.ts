@@ -23,6 +23,7 @@ import {
   finishPreparationStage,
   finishTaskPreparation,
   getTaskPreparationContext,
+  recordPreparationScripts,
   startTaskPreparation,
 } from '@/lib/db/task-preparation';
 import logger from '@/lib/logger';
@@ -79,49 +80,63 @@ export async function startWorktreePreparation(
   const after = normalizePreparationScript(project?.preparation_after_script);
   if (!before && !after) return { started: false, reason: 'no_script' };
 
-  const settings = await SettingsManager.load(request.userId);
-  const runGit = createGitRunner(settings.agentEnvironment);
-  const runnerScriptDir = await resolveRunnerScriptDir(request.worktreePath, runGit);
-
-  const buildSpec = (phase: PreparationPhase): PreparationExecutionSpec | null =>
-    buildPreparationExecutionSpec({
-      script: readProjectPreparationScript(
-        { preparation_script: before, preparation_after_script: after },
-        phase,
-      ),
-      phase,
-      projectDir: request.projectDir,
-      worktreePath: request.worktreePath,
-      branchName: request.branchName,
-      agentEnvironment: settings.agentEnvironment,
-      runnerScriptDir,
-      env: process.env,
-    });
-
-  // A project with nothing blocking starts at the stage it does have, so the
-  // agent is never held for a run that was not going to hold it anyway.
-  const firstPhase: PreparationPhase = before ? 'before' : 'after';
-  const spec = buildSpec(firstPhase);
-  // Everything above only reads, so deciding there is nothing to run costs the
-  // status nothing.
-  if (!spec) return { started: false, reason: 'no_script' };
-
-  // Claimed before anything is spawned, so two callers racing to prepare the
-  // same worktree cannot both win. The scripts are written down with the claim,
-  // expanded the way the shell's own trace will show them, so the log and the
-  // scripts beside it describe the same run.
-  const started = startTaskPreparation(request.taskId, {
-    before: before ? expandPreparationVariables(before, spec.env) : null,
-    after: after ? expandPreparationVariables(after, spec.env) : null,
-  });
+  // Claimed in this function's synchronous run, ahead of its first await, so
+  // that two callers racing to prepare the same worktree cannot both win — and,
+  // just as importantly, so the claim is already stored by the time the caller
+  // gets control back. The worktree route starts preparation without waiting
+  // for it and answers immediately; the session that answer leads to can open
+  // its PTY within milliseconds, and the gate holding that PTY reads this very
+  // status. Awaiting anything ahead of the claim leaves that gate looking at a
+  // worktree which says nothing is being prepared, and an agent then starts
+  // into a worktree still missing the files it reads once, at startup.
+  //
+  // The scripts go down as the project wrote them and are rewritten below, once
+  // there is a spec to expand them against.
+  const started = startTaskPreparation(request.taskId, { before, after });
   if (!started) return { started: false, reason: 'already_running' };
 
   try {
+    const settings = await SettingsManager.load(request.userId);
+    const runGit = createGitRunner(settings.agentEnvironment);
+    const runnerScriptDir = await resolveRunnerScriptDir(request.worktreePath, runGit);
+
+    const buildSpec = (phase: PreparationPhase): PreparationExecutionSpec | null =>
+      buildPreparationExecutionSpec({
+        script: readProjectPreparationScript(
+          { preparation_script: before, preparation_after_script: after },
+          phase,
+        ),
+        phase,
+        projectDir: request.projectDir,
+        worktreePath: request.worktreePath,
+        branchName: request.branchName,
+        agentEnvironment: settings.agentEnvironment,
+        runnerScriptDir,
+        env: process.env,
+      });
+
+    // A project with nothing blocking starts at the stage it does have, so the
+    // agent is never held for a run that was not going to hold it anyway.
+    const firstPhase: PreparationPhase = before ? 'before' : 'after';
+    const spec = buildSpec(firstPhase);
+    // The claim above was made on a script that is there, so failing to build a
+    // spec from it is a fault rather than a project with nothing to run.
+    if (!spec) throw new Error(`Preparation has no runnable ${firstPhase} script`);
+
+    // Now that the environment is known, the stored scripts are replaced by the
+    // expanded forms — the way the shell's own trace will show them, so the log
+    // and the scripts beside it describe the same run.
+    recordPreparationScripts(request.taskId, {
+      before: before ? expandPreparationVariables(before, spec.env) : null,
+      after: after ? expandPreparationVariables(after, spec.env) : null,
+    });
+
     await spawnPreparationStage(request, firstPhase, spec, buildSpec);
     return { started: true };
   } catch (error) {
-    // The status was already claimed, so a failure here has to be released as
-    // one — otherwise the worktree stays "preparing" for the rest of the session.
+    // The status was already claimed, so a failure anywhere after it has to be
+    // released as one — otherwise the worktree stays "preparing" for the rest
+    // of the session, and the gate holds every agent that enters it.
     finishTaskPreparation(
       request.taskId,
       PREPARATION_NOT_STARTED_EXIT_CODE,
