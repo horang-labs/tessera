@@ -123,7 +123,9 @@ test('composer and server reserve official commands before skills, translation, 
 test('/skills keeps provider results separate from reserved Codex commands and renders empty state', () => {
   assert.match(
     skillPickerSource,
-    /skillsOnlyMode\s*\?\s*\(commands \?\? \[\]\)\.filter\(\(command\) => !isReservedCodexSlashCommandName\(command\.name\)\)/,
+    // 목록의 원천은 store 원본(commands)이 아니라 숨김 명령을 걷어낸 visibleCommands다
+    // (hidden-slash-commands.test.mjs 참고). 예약 Codex 명령 제외는 그 위에 그대로 얹힌다.
+    /skillsOnlyMode\s*\?\s*\(visibleCommands \?\? \[\]\)\.filter\(\(command\) => !isReservedCodexSlashCommandName\(command\.name\)\)/,
   );
   assert.match(skillPickerSource, /const isEmpty = isOpen && skillsOnlyMode && hasLoadedCommands/);
   assert.match(messageInputSource, /isEmpty=\{skillPicker\.isEmpty\}/);

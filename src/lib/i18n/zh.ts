@@ -505,6 +505,7 @@ export const zh: I18nMessages = {
     codexSlashPlatformUnavailable: '{{command}} 仅适用于 Windows 原生 Codex。',
     codexSlashTerminalBusy: '请等待当前 Codex 交互结束后再在终端中打开 {{command}}。',
     codexTerminalHandoffActive: '在此会话中发送新消息前，请先关闭 Codex 终端。',
+    slashCommandUnsupportedInChat: '聊天会话不支持该命令。请新建一个会话。',
     codexSlashTerminalOpenFailed: '无法打开 Codex 终端。输入内容已保留。',
     codexSlashCopied: '已复制最新的 Codex 回复。',
     codexSlashCopyFailed: '无法复制最新的 Codex 回复。',

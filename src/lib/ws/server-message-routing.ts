@@ -1,4 +1,5 @@
 import { getCliStatusSnapshot } from '@/lib/cli/connection-checker';
+import { isHiddenSlashCommandInput } from '@/lib/chat/hidden-slash-commands';
 import { cliProviderRegistry } from '../cli/providers/registry';
 import { getAgentEnvironment } from '../cli/spawn-cli';
 import { processManager } from '../cli/process-manager';
@@ -68,7 +69,7 @@ function isSafeTerminalIdentity(value: unknown): value is string {
   return typeof value === 'string' && SAFE_TERMINAL_ID.test(value);
 }
 
-function terminalInputText(content: Extract<ClientMessage, { type: 'send_message' }>['content']): string {
+function sendMessageInputText(content: Extract<ClientMessage, { type: 'send_message' }>['content']): string {
   if (typeof content === 'string') return content.trim();
   return content
     .filter((block) => block.type === 'text')
@@ -247,7 +248,7 @@ export async function routeClientTransportMessage({
           dbSessions.getSession(message.sessionId)?.provider_state ?? null,
         ) === 'terminal'
       ) {
-        const text = terminalInputText(message.content);
+        const text = sendMessageInputText(message.content);
         const submitted = text.length > 0
           && bindTerminalSender(sendToConnection).submitSessionInput(message.sessionId, userId, text);
         if (!submitted) {
@@ -261,6 +262,26 @@ export async function routeClientTransportMessage({
               : 'Terminal sessions only accept text input.',
           });
         }
+        return;
+      }
+      // 헤드리스 세션에서 의미가 깨지는 슬래시 명령(claude-code `/clear`)은 CLI에 닿기 전에
+      // 막는다. 위 터미널 분기 뒤에 두는 것이 중요하다 — PTY 세션은 진짜 TUI라 `/clear`가
+      // 정상 동작하므로 막으면 안 된다. 여기서 통과시키면 화면의 대화는 그대로인 채
+      // 컨텍스트만 비워지고, CLI가 새 세션 ID로 갈아타 이후 재개가 어긋난다.
+      if (
+        !message.skillName
+        && isHiddenSlashCommandInput(
+          sendMessageInputText(message.content),
+          dbSessions.getSession(message.sessionId)?.provider?.trim() ?? null,
+        )
+      ) {
+        sendToUser(userId, {
+          type: 'error',
+          requestId: message.requestId,
+          sessionId: message.sessionId,
+          code: 'slash_command_unsupported',
+          message: 'This command is not available in a Tessera chat session. Create a new session instead.',
+        });
         return;
       }
       await sendSessionMessageFromWebSocket({

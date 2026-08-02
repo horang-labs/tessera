@@ -505,6 +505,7 @@ export const ja: I18nMessages = {
     codexSlashPlatformUnavailable: '{{command}} は Windows ネイティブ Codex でのみ利用できます。',
     codexSlashTerminalBusy: '現在の Codex 操作が終わってから {{command}} をターミナルで開いてください。',
     codexTerminalHandoffActive: 'このセッションでメッセージを送る前に Codex ターミナルを閉じてください。',
+    slashCommandUnsupportedInChat: 'チャットセッションでは使用できないコマンドです。新しいセッションを作成してください。',
     codexSlashTerminalOpenFailed: 'Codex ターミナルを開けませんでした。入力は保持されています。',
     codexSlashCopied: '最新の Codex 応答をコピーしました。',
     codexSlashCopyFailed: '最新の Codex 応答をコピーできませんでした。',

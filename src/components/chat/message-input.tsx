@@ -29,6 +29,7 @@ import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useTaskStore } from '@/stores/task-store';
 import { shouldRouteToTerminalFallback } from '@/lib/terminal/tui-only-commands';
+import { isHiddenSlashCommandInput } from '@/lib/chat/hidden-slash-commands';
 import {
   setPendingTerminalLaunch,
   takePendingTerminalLaunch,
@@ -1112,6 +1113,13 @@ export function MessageInput({
 
     if (hasClientTerminalHandoff(sessionId)) {
       toast.info(t('chat.codexTerminalHandoffActive'));
+      return;
+    }
+
+    // 피커에서 감춘 명령(claude-code `/clear`)을 직접 타이핑한 경우. 서버도 같은 판정으로
+    // 막지만, 사용자에게 이유를 알려주는 건 여기서만 할 수 있다.
+    if (!hasSelectedSkill && isHiddenSlashCommandInput(trimmed, sessionProviderId)) {
+      toast.info(t('chat.slashCommandUnsupportedInChat'));
       return;
     }
     // Use chip-selected skill or fallback to manual /skillname parsing
