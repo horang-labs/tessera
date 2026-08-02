@@ -5,6 +5,7 @@ import { processManager } from '@/lib/cli/process-manager';
 import { listClaudeSkills } from '@/lib/cli/providers/claude-code/skill-discovery-client';
 import { listCodexSkills } from '@/lib/cli/providers/codex/skill-discovery-client';
 import { listOpenCodeCommands } from '@/lib/cli/providers/opencode/command-discovery-client';
+import { waitForPreparationBeforeSkillDiscovery } from '@/lib/projects/preparation-gate';
 import logger from '@/lib/logger';
 
 /**
@@ -36,6 +37,27 @@ export async function GET(
 
     const processInfo = processManager.getProcess(id);
     const providerId = session.provider?.trim();
+
+    if (!processInfo) {
+      const preparation = await waitForPreparationBeforeSkillDiscovery({
+        workDir: session.work_dir,
+      });
+      if (!preparation.ready) {
+        const code = preparation.reason === 'failed'
+          ? 'preparation_failed'
+          : 'preparation_timed_out';
+        return NextResponse.json(
+          {
+            error: preparation.reason === 'failed'
+              ? 'Worktree preparation failed before skill discovery.'
+              : 'Worktree preparation did not finish before skill discovery.',
+            code,
+            retryable: true,
+          },
+          { status: 503 },
+        );
+      }
+    }
 
     if (providerId === 'codex') {
       try {

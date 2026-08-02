@@ -4,7 +4,7 @@
  * A CLI reads its instruction files — CLAUDE.md, AGENTS.md — once, at startup.
  * A file copied in afterwards is a file that session never sees, and nothing
  * later puts it into the context. So the `before` stage has to finish before a
- * CLI is spawned, and this is the one place that waits for it.
+ * CLI is spawned or provider discovery reads the worktree.
  *
  * Waiting is polling rather than a subscription: preparation is recorded by
  * whichever process owns the PTY, the status lives in the database, and a poll
@@ -46,15 +46,22 @@ export interface PreparationWaitOptions {
   timeoutMs?: number;
 }
 
+export type SkillDiscoveryPreparationReadiness =
+  | { ready: true }
+  | { ready: false; reason: 'failed' | 'timedOut' };
+
+type PreparationWaitPurpose = 'agent' | 'skill discovery';
+
 /**
- * Wait, if there is anything to wait for, before an agent is spawned.
+ * Wait, if there is anything to wait for, before a worktree consumer starts.
  *
  * Returns immediately for a working directory that is not a prepared worktree,
  * for a run that has finished either way, and for one whose `before` stage is
  * already done — the `after` stage running is not something to wait for.
  */
-export async function waitForPreparationBeforeAgent(
+async function waitForBlockingPreparation(
   options: PreparationWaitOptions,
+  purpose: PreparationWaitPurpose,
 ): Promise<PreparationWaitOutcome> {
   const taskId = options.workDir ? findTaskIdForWorktree(options.workDir) : null;
   if (!taskId) return { waited: false };
@@ -66,8 +73,8 @@ export async function waitForPreparationBeforeAgent(
 
   options.onWaitStarted?.();
   logger.info(
-    { taskId, workDir: options.workDir },
-    'Holding the agent until the worktree finishes preparing',
+    { taskId, workDir: options.workDir, purpose },
+    'Holding a worktree consumer until blocking preparation finishes',
   );
 
   const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -81,8 +88,39 @@ export async function waitForPreparationBeforeAgent(
   }
 
   logger.warn(
-    { taskId, workDir: options.workDir },
-    'Preparation did not finish in time; starting the agent anyway',
+    { taskId, workDir: options.workDir, purpose },
+    'Blocking preparation did not finish in time',
   );
   return { waited: true, result: 'timedOut' };
+}
+
+export function waitForPreparationBeforeAgent(
+  options: PreparationWaitOptions,
+): Promise<PreparationWaitOutcome> {
+  return waitForBlockingPreparation(options, 'agent');
+}
+
+/**
+ * Hold provider discovery until the files it scans have finished copying.
+ *
+ * Agent startup is eventually released after a failed or timed-out preparation
+ * so a sent prompt is not lost forever. Discovery is stricter: reading a
+ * half-prepared worktree would produce a plausible but incomplete catalog that
+ * the client can cache, so those outcomes must not run the provider at all.
+ */
+export async function waitForPreparationBeforeSkillDiscovery(
+  options: PreparationWaitOptions,
+): Promise<SkillDiscoveryPreparationReadiness> {
+  const wait = await waitForBlockingPreparation(options, 'skill discovery');
+  if (wait.waited && wait.result === 'timedOut') {
+    return { ready: false, reason: 'timedOut' };
+  }
+
+  const taskId = options.workDir ? findTaskIdForWorktree(options.workDir) : null;
+  const current = taskId ? getTaskPreparation(taskId) : null;
+  if (current?.status === 'failed' && current.phase === 'before') {
+    return { ready: false, reason: 'failed' };
+  }
+
+  return { ready: true };
 }

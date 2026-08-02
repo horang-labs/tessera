@@ -243,9 +243,10 @@ export function useSkillPicker(
           setCommands(sessionId, skills);
         }
       } catch {
-        if (canApplyLoad()) {
-          setCommands(sessionId, []);
-        }
+        // A failed request is not proof that the provider has no skills. In
+        // particular, preparation may have failed before copying the files the
+        // provider scans. Keep the catalog unresolved so a later user action or
+        // provider invalidation can retry instead of caching a false empty list.
       }
     })();
 

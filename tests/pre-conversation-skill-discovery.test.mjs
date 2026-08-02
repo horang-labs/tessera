@@ -41,9 +41,15 @@ test('opening the skill picker can discover skills without starting a fresh GUI 
     'a stopped OpenCode session must not be cached as having no commands',
   );
   assert.doesNotMatch(messageInputSource, /prepareSessionForSkills/);
+  assert.doesNotMatch(
+    skillPickerSource,
+    /catch\s*\{[\s\S]{0,300}setCommands\(sessionId,\s*\[\]\)/,
+    'a failed or preparation-blocked discovery request must not become a cached empty catalog',
+  );
   assert.match(sessionSkillsRouteSource, /listCodexSkills/);
   assert.match(sessionSkillsRouteSource, /listClaudeSkills/);
   assert.match(sessionSkillsRouteSource, /listOpenCodeCommands/);
+  assert.match(sessionSkillsRouteSource, /waitForPreparationBeforeSkillDiscovery/);
 });
 
 test('Codex skill discovery uses the app-server cwd-scoped request contract', () => {
