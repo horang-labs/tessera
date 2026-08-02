@@ -152,6 +152,32 @@ export function startTaskPreparation(
   return true;
 }
 
+/**
+ * Replace the scripts stored against the run that is in flight.
+ *
+ * A run is claimed before its environment is known, so the scripts go down as
+ * the project wrote them; this puts the expanded forms in their place once the
+ * spec exists, keeping the log and the scripts beside it describing the same
+ * run. Refused unless a run is still in flight — a claim that has since ended
+ * is not this one's to rewrite.
+ */
+export function recordPreparationScripts(
+  taskId: string,
+  scripts: { before: string | null; after: string | null },
+): boolean {
+  const current = getTaskPreparation(taskId);
+  if (!current || current.status !== 'running') return false;
+
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE tasks
+    SET preparation_script = ?, preparation_after_script = ?, updated_at = ?
+    WHERE id = ?
+  `).run(scripts.before, scripts.after, now, taskId);
+  return true;
+}
+
 export interface PreparationStageResult {
   /** The stage that just ended. */
   phase: PreparationPhase;

@@ -236,6 +236,12 @@ export async function POST(req: NextRequest) {
     // without waiting on preparation — which may take as long as the user's
     // script does, and whose failure must not cost them the worktree. The
     // status the run writes to the task is what reports it instead.
+    //
+    // Not awaiting it is safe only because the run claims its status
+    // synchronously, before its own first await: this response is what the
+    // client races to open a session and a PTY against, and the agent gate can
+    // only hold that PTY if the claim is already stored when the response
+    // leaves. Keep the claim ahead of every await in `startWorktreePreparation`.
     void startWorktreePreparation({ userId, taskId, projectDir, worktreePath, branchName })
       .catch((error) => {
         logger.error({ error, branchName, projectDir, worktreePath }, 'Worktree preparation failed to start');
