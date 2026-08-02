@@ -697,6 +697,7 @@ export const en: I18nMessages = {
     closeTab: 'Close Tab',
     toggleSidebar: 'Toggle Sidebar',
     toggleView: 'Toggle List / Board View',
+    toggleTerminalView: 'Toggle PTY Chat / Terminal View',
     splitRight: 'Split Right',
     splitDown: 'Split Down',
     toggleTerminal: 'Open Terminal',

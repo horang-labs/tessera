@@ -697,6 +697,7 @@ export const ja: I18nMessages = {
     closeTab: 'タブを閉じる',
     toggleSidebar: 'サイドバー切替',
     toggleView: 'リスト/ボード表示切替',
+    toggleTerminalView: 'PTYチャット/ターミナル表示切替',
     splitRight: '右に分割',
     splitDown: '下に分割',
     toggleTerminal: 'ターミナルを開く',

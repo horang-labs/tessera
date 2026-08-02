@@ -20,8 +20,11 @@ import { getEffectiveShortcut } from '@/lib/keyboard/effective';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
+import { useSessionStore } from '@/stores/session-store';
+import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
+import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface UseKeyboardShortcutsOptions {
@@ -151,6 +154,24 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     setViewMode(viewMode === 'list' ? 'board' : 'list');
   }, []);
 
+  const handleToggleTerminalView = useCallback(() => {
+    const { peekSessionId, peekFileRef } = useBoardStore.getState();
+    // A file-only Peek is the topmost surface but has no visible session to toggle.
+    if (!peekSessionId && peekFileRef) return;
+
+    const sessionId = peekSessionId ?? panels[activePanelId]?.sessionId;
+    if (!sessionId) return;
+
+    const session = useSessionStore.getState().getSession(sessionId);
+    if (session?.kind !== 'terminal' || !supportsTerminalChatView(session.provider)) return;
+
+    const viewModeStore = useTerminalViewModeStore.getState();
+    const currentMode = viewModeStore.modeBySession[sessionId]
+      ?? useSettingsStore.getState().settings.terminalSessionDefaultView
+      ?? 'terminal';
+    viewModeStore.setMode(sessionId, currentMode === 'chat' ? 'terminal' : 'chat');
+  }, [activePanelId, panels]);
+
   const handleSplitRight = useCallback(() => {
     if (!panels[activePanelId]) return;
     const size = getActivePanelSize(activePanelId);
@@ -206,6 +227,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     'close-tab':      handleCloseTab,
     'toggle-sidebar': handleToggleSidebar,
     'toggle-view':    handleToggleView,
+    'toggle-terminal-view': handleToggleTerminalView,
     'split-right':    handleSplitRight,
     'split-down':     handleSplitDown,
     'toggle-terminal': handleToggleTerminal,
@@ -236,7 +258,8 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   }, [
     overrides,
     handleNewTab, handleCloseTab,
-    handleToggleSidebar, handleToggleView, handleSplitRight, handleSplitDown,
+    handleToggleSidebar, handleToggleView, handleToggleTerminalView,
+    handleSplitRight, handleSplitDown,
     handleToggleTerminal, handleFocusPanel,
   ]);
 }

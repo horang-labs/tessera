@@ -679,6 +679,7 @@ export interface I18nMessages {
     closeTab: string;
     toggleSidebar: string;
     toggleView: string;
+    toggleTerminalView: string;
     splitRight: string;
     splitDown: string;
     toggleTerminal: string;

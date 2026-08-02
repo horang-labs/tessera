@@ -34,6 +34,14 @@ const appHeaderSource = fs.readFileSync(
   new URL('../src/components/layout/app-header.tsx', import.meta.url),
   'utf8',
 );
+const keyboardShortcutSource = fs.readFileSync(
+  new URL('../src/hooks/use-keyboard-shortcuts.ts', import.meta.url),
+  'utf8',
+);
+const shortcutRegistrySource = fs.readFileSync(
+  new URL('../src/lib/keyboard/registry.ts', import.meta.url),
+  'utf8',
+);
 
 test('Peek mode gives the Kanban panel the workspace instead of mounting the tab area beside it', () => {
   assert.match(chatLayoutSource, /const isKanbanPeekLayout = isKanbanPeekMode && !sidebarCollapsed/);
@@ -60,9 +68,21 @@ test('Session Peek light-dismisses safely and hosts the shared GUI or PTY sessio
   assert.match(peekSource, /aria-modal="true"/);
   assert.match(peekSource, /backdropPointerStartedRef/);
   assert.match(peekSource, /presentation="peek"/);
-  assert.match(peekSource, /isTerminal \? 'PTY' : 'GUI'/);
+  assert.match(
+    peekSource,
+    /isTerminal \? \(isTerminalChatView \? 'CHAT' : 'PTY'\) : 'GUI'/,
+  );
   assert.match(peekSource, /value=\{PEEK_TAB_ID\}/);
   assert.match(peekSource, /panelId=\{PEEK_PANEL_ID\}/);
+});
+
+test('PTY Peek exposes the configurable chat and terminal view toggle', () => {
+  assert.match(peekSource, /id="toggle-terminal-view"/);
+  assert.match(peekSource, /data-testid="kanban-session-peek-terminal-view-toggle"/);
+  assert.match(peekSource, /isTerminalChatView \? 'terminal' : 'chat'/);
+  assert.match(shortcutRegistrySource, /'toggle-terminal-view': \{ default: '\$mod\+Alt\+g'/);
+  assert.match(keyboardShortcutSource, /const sessionId = peekSessionId \?\? panels\[activePanelId\]\?\.sessionId/);
+  assert.match(keyboardShortcutSource, /'toggle-terminal-view': handleToggleTerminalView/);
 });
 
 test('Session Peek uses a compact, accessible loading indicator instead of the full chat skeleton', () => {

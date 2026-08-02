@@ -65,6 +65,37 @@ test('a tool_use pairs with the tool_result that arrives in a later record', () 
   assert.equal(finished.output, 'a.txt\nb.txt');
 });
 
+test('ToolSearch results do not masquerade as WebSearch results', () => {
+  const events = decodeClaudeTranscript(
+    [
+      assistantLine([
+        { type: 'tool_use', id: 'toolu_search', name: 'ToolSearch', input: { query: 'select:Read' } },
+      ]),
+      userLine(
+        [{
+          type: 'tool_result',
+          tool_use_id: 'toolu_search',
+          content: [{ type: 'tool_reference', tool_name: 'Read' }],
+        }],
+        {
+          toolUseResult: {
+            query: 'select:Read',
+            matches: ['Read'],
+            total_deferred_tools: 1,
+          },
+        },
+      ),
+    ],
+    'session-1',
+  );
+
+  assert.equal(events.length, 2);
+  const finished = events[1] as any;
+  assert.equal(finished.type, 'tool_call');
+  assert.equal(finished.toolName, 'ToolSearch');
+  assert.equal(finished.status, 'completed');
+});
+
 test('an errored tool_result is reported as an error, not output', () => {
   const events = decodeClaudeTranscript(
     [

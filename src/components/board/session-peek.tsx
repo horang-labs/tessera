@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageSquare, Terminal, X } from 'lucide-react';
+import { MessageSquare, SquareTerminal, Terminal, X } from 'lucide-react';
 import { ChatArea } from '@/components/chat/chat-area';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
@@ -14,6 +14,9 @@ import {
   useBoardStore,
 } from '@/stores/board-store';
 import { useI18n } from '@/lib/i18n';
+import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
+import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
+import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 
 interface SessionPeekProps {
   sessionId: string;
@@ -56,6 +59,8 @@ export function SessionPeek({
   const openPeekFile = useBoardStore((state) => state.openPeekFile);
   const setPeekFileDirty = useBoardStore((state) => state.setPeekFileDirty);
   const setPersistedFileWidth = useBoardStore((state) => state.setPeekFileSidecarWidth);
+  const terminalViewMode = useTerminalViewMode(sessionId);
+  const setTerminalViewMode = useTerminalViewModeStore((state) => state.setMode);
   const dialogRef = useRef<HTMLDivElement>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -72,6 +77,8 @@ export function SessionPeek({
   const [fileSidecarWidth, setFileSidecarWidth] = useState(persistedFileWidth);
   const [splitContainerWidth, setSplitContainerWidth] = useState(0);
   const isTerminal = session?.kind === 'terminal';
+  const canToggleTerminalView = isTerminal && supportsTerminalChatView(session?.provider);
+  const isTerminalChatView = canToggleTerminalView && terminalViewMode === 'chat';
   const isFileOnly = !showSessionContent && Boolean(peekFileRef);
   const isSplit = showSessionContent && Boolean(peekFileRef);
   const titleId = `session-peek-title-${sessionId}`;
@@ -244,7 +251,7 @@ export function SessionPeek({
 
   const SessionIcon = isTerminal ? Terminal : MessageSquare;
   const effectiveFileWidth = clampFileWidth(fileSidecarWidth);
-  const surfaceBadge = isTerminal ? 'PTY' : 'GUI';
+  const surfaceBadge = isTerminal ? (isTerminalChatView ? 'CHAT' : 'PTY') : 'GUI';
   const peekFileLabel = peekFileRef?.type === 'workspace-file'
     ? peekFileRef.path
     : peekFileRef?.fileName;
@@ -286,6 +293,28 @@ export function SessionPeek({
               <span className="rounded-full border border-(--divider) px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-(--text-muted)">
                 {surfaceBadge}
               </span>
+              {canToggleTerminalView ? (
+                <ShortcutTooltip
+                  id="toggle-terminal-view"
+                  label={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setTerminalViewMode(
+                      sessionId,
+                      isTerminalChatView ? 'terminal' : 'chat',
+                    )}
+                    aria-label={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                    aria-pressed={isTerminalChatView}
+                    className="rounded-md p-1.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
+                    data-testid="kanban-session-peek-terminal-view-toggle"
+                  >
+                    {isTerminalChatView
+                      ? <SquareTerminal className="h-4 w-4" aria-hidden="true" />
+                      : <MessageSquare className="h-4 w-4" aria-hidden="true" />}
+                  </button>
+                </ShortcutTooltip>
+              ) : null}
               <ShortcutTooltip id="close-tab" label={t('common.close')}>
                 <button
                   ref={closeButtonRef}

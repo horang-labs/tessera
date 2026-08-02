@@ -699,6 +699,7 @@ export const ko: I18nMessages = {
     closeTab: '탭 닫기',
     toggleSidebar: '사이드바 토글',
     toggleView: '리스트/보드 뷰 전환',
+    toggleTerminalView: 'PTY 채팅/터미널 보기 전환',
     splitRight: '우측 분할',
     splitDown: '아래 분할',
     toggleTerminal: '터미널 열기',

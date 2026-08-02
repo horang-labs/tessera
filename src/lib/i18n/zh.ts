@@ -697,6 +697,7 @@ export const zh: I18nMessages = {
     closeTab: '关闭标签',
     toggleSidebar: '切换侧边栏',
     toggleView: '切换列表/看板视图',
+    toggleTerminalView: '切换 PTY 聊天/终端视图',
     splitRight: '向右分割',
     splitDown: '向下分割',
     toggleTerminal: '打开终端',
