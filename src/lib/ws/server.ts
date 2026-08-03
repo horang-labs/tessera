@@ -8,6 +8,7 @@ import { isElectronAuthBypassEnabled } from '../auth/electron-mode';
 import { getElectronAuthUserId } from '../electron-user';
 import {
   evaluateRequestAndLog,
+  isOriginDenial,
   observeRequestGate,
   parseRequestUrl,
   type CredentialKind,
@@ -495,7 +496,11 @@ export class WebSocketServer {
       const input = requestGateInputFromUpgrade(req);
 
       if (isElectronAuthBypassEnabled()) {
-        await observeRequestGate(input);
+        const shadowDecision = await observeRequestGate(input);
+        if (isOriginDenial(shadowDecision)) {
+          logger.warn({ origin: input.origin }, 'WebSocket Origin rejected');
+          return null;
+        }
         const userId = await getElectronAuthUserId();
         if (userId) {
           logger.debug({ userId }, 'WebSocket authenticated through Electron local mode');

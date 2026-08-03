@@ -4,6 +4,7 @@ import { verifyToken } from './jwt';
 import { findUserById } from '../users';
 import { isElectronRuntime } from '../electron-runtime';
 import logger from '../logger';
+import { isOriginAllowed } from './allowed-origins';
 
 export type RequestPurpose = 'http' | 'ws-upgrade';
 export type CredentialKind = 'app' | 'device' | 'jwt';
@@ -38,14 +39,42 @@ export type RequestGateDecision =
       wsCloseCode: number;
     };
 
-type RequestDenialReason = 'unauthorized' | 'malformed-request';
+export type RequestDenialReason =
+  | 'unauthorized'
+  | 'malformed-request'
+  | 'origin-not-allowed';
+
+export function isOriginDenial(decision: RequestGateDecision | null): boolean {
+  return Boolean(
+    decision
+    && !decision.allow
+    && decision.reason === 'origin-not-allowed',
+  );
+}
+
+export function requestGateLogContext(input: RequestGateInput) {
+  return {
+    purpose: input.purpose,
+    method: input.method,
+    host: input.host,
+    origin: input.origin,
+  };
+}
 
 function denyRequest(
   purpose: RequestPurpose,
   reason: RequestDenialReason,
 ): RequestGateDecision {
   return purpose === 'http'
-    ? { allow: false, reason, status: reason === 'malformed-request' ? 400 : 401 }
+    ? {
+        allow: false,
+        reason,
+        status: reason === 'malformed-request'
+          ? 400
+          : reason === 'origin-not-allowed'
+            ? 403
+            : 401,
+      }
     : { allow: false, reason, wsCloseCode: 1008 };
 }
 
@@ -72,6 +101,10 @@ export function hasPresentedCredential(
 export async function evaluateRequest(input: RequestGateInput): Promise<RequestGateDecision> {
   if (!input.method.trim() || !parseRequestUrl(input)) {
     return denyRequest(input.purpose, 'malformed-request');
+  }
+
+  if (!await isOriginAllowed(input)) {
+    return denyRequest(input.purpose, 'origin-not-allowed');
   }
 
   if (await matchesAppSecret(input.headers[APP_SECRET_HEADER])) {
@@ -104,27 +137,31 @@ export async function evaluateRequestAndLog(
 ): Promise<RequestGateDecision> {
   const decision = await evaluateRequest(input);
   logger.info({
-    purpose: input.purpose,
+    ...requestGateLogContext(input),
     kind: decision.allow ? decision.kind : null,
     reason: decision.allow ? null : decision.reason,
   }, 'Request gate decision');
   return decision;
 }
 
-export async function observeRequestGate(input: RequestGateInput): Promise<void> {
+export async function observeRequestGate(
+  input: RequestGateInput,
+): Promise<RequestGateDecision | null> {
   try {
     const decision = await evaluateRequest(input);
     logger.info({
-      purpose: input.purpose,
+      ...requestGateLogContext(input),
       shadowKind: decision.allow ? decision.kind : null,
       shadowReason: decision.allow ? null : decision.reason,
     }, 'Request gate shadow decision');
+    return decision;
   } catch (error) {
     logger.warn({
-      purpose: input.purpose,
+      ...requestGateLogContext(input),
       shadowKind: null,
       shadowReason: 'evaluation-error',
       error,
     }, 'Request gate shadow evaluation failed');
+    return null;
   }
 }

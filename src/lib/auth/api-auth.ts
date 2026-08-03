@@ -4,24 +4,30 @@ import { getElectronAuthUserId } from '@/lib/electron-user';
 import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
 import {
   evaluateRequestAndLog,
+  isOriginDenial,
   observeRequestGate,
   type CredentialKind,
 } from '@/lib/auth/request-gate';
 
 type AuthenticatedUser = { userId: string; kind: CredentialKind };
+type AuthenticationResult = AuthenticatedUser | { originDenied: true } | null;
 
-async function getAuthenticatedUser(request: NextRequest): Promise<AuthenticatedUser | null> {
+async function getAuthenticatedUser(request: NextRequest): Promise<AuthenticationResult> {
   const input = requestGateInputFromNextRequest(request);
 
   if (isElectronAuthBypassEnabled()) {
-    await observeRequestGate(input);
+    const shadowDecision = await observeRequestGate(input);
+    if (isOriginDenial(shadowDecision)) {
+      return { originDenied: true };
+    }
     return { userId: await getElectronAuthUserId(), kind: 'app' };
   }
 
   const decision = await evaluateRequestAndLog(input);
-  return decision.allow
-    ? { userId: decision.userId, kind: decision.kind }
-    : null;
+  if (decision.allow) {
+    return { userId: decision.userId, kind: decision.kind };
+  }
+  return isOriginDenial(decision) ? { originDenied: true } : null;
 }
 
 type UnauthorizedResponse = { response: NextResponse };
@@ -37,6 +43,14 @@ export async function requireAuthenticatedUserId(
   const authenticated = await getAuthenticatedUser(request);
   if (!authenticated) {
     return { response: NextResponse.json(unauthorizedBody, { status: 401 }) };
+  }
+  if ('originDenied' in authenticated) {
+    return {
+      response: NextResponse.json(
+        { error: 'Origin not allowed' },
+        { status: 403 },
+      ),
+    };
   }
 
   return authenticated;

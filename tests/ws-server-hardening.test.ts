@@ -23,7 +23,9 @@ async function listen(server: Server): Promise<number> {
 }
 
 async function openWebSocket(port: number): Promise<WebSocket> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    origin: 'http://localhost:3100',
+  });
   await once(socket, 'open');
   return socket;
 }
@@ -36,7 +38,12 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
   }
 }
 
-function startRawUpgrade(port: number, pathname = '/ws', includeHost = true): {
+function startRawUpgrade(
+  port: number,
+  pathname = '/ws',
+  includeHost = true,
+  origin = 'http://localhost:3100',
+): {
   socket: Socket;
   response: Promise<Buffer>;
   closed: Promise<void>;
@@ -56,6 +63,7 @@ function startRawUpgrade(port: number, pathname = '/ws', includeHost = true): {
     socket.write([
       `GET ${pathname} HTTP/1.1`,
       ...(includeHost ? [`Host: 127.0.0.1:${port}`] : []),
+      `Origin: ${origin}`,
       'Connection: Upgrade',
       'Upgrade: websocket',
       `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}`,
@@ -166,6 +174,31 @@ test('force-terminates an unauthenticated peer after sending policy close 1008',
     assert.equal(rejected.socket.destroyed, true);
   } finally {
     await closeServer(transport, httpServer);
+  }
+});
+
+test('rejects a disallowed WebSocket Origin even while Electron auth bypass is enabled', async () => {
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+  const httpServer = createServer();
+  const transport = new TesseraWebSocketServer({ heartbeatIntervalMs: 60_000 });
+  const port = await listen(httpServer);
+  transport.start(httpServer);
+  const client = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    origin: 'http://localhost:45678',
+  });
+
+  try {
+    await once(client, 'open');
+    const [code] = await Promise.race([
+      once(client, 'close'),
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('Timed out waiting for Origin rejection')), 250);
+      }),
+    ]);
+    assert.equal(code, 1008);
+  } finally {
+    await closeServer(transport, httpServer, [client]);
+    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
   }
 });
 

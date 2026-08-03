@@ -9,6 +9,7 @@ const previousDataDir = process.env.TESSERA_DATA_DIR;
 const previousElectronRuntime = process.env.TESSERA_ELECTRON_RUNTIME;
 const previousAuthKeysDir = process.env.AUTH_KEYS_DIR;
 const previousUsersFilePath = process.env.USERS_FILE_PATH;
+const previousPort = process.env.PORT;
 let appSecretModule: typeof import('../src/lib/auth/app-secret');
 
 before(async () => {
@@ -17,6 +18,7 @@ before(async () => {
   process.env.TESSERA_ELECTRON_RUNTIME = '1';
   process.env.AUTH_KEYS_DIR = path.join(tempDir, 'auth');
   process.env.USERS_FILE_PATH = path.join(tempDir, 'users.json');
+  process.env.PORT = '32123';
   await writeFile(process.env.USERS_FILE_PATH, JSON.stringify({
     users: [
       {
@@ -47,6 +49,8 @@ after(async () => {
   else process.env.AUTH_KEYS_DIR = previousAuthKeysDir;
   if (previousUsersFilePath === undefined) delete process.env.USERS_FILE_PATH;
   else process.env.USERS_FILE_PATH = previousUsersFilePath;
+  if (previousPort === undefined) delete process.env.PORT;
+  else process.env.PORT = previousPort;
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -56,23 +60,131 @@ function requestInput({
   purpose = 'http',
   rawUrl = '/api/projects',
   host = 'localhost:32123',
+  method = 'GET',
+  origin = 'http://localhost:32123',
 }: {
   headers?: Record<string, string>;
   cookies?: Record<string, string>;
   purpose?: 'http' | 'ws-upgrade';
   rawUrl?: string;
   host?: string;
+  method?: string;
+  origin?: string;
 } = {}) {
   return {
     purpose,
-    method: 'GET',
+    method,
     rawUrl,
     host,
-    origin: 'http://localhost:32123',
+    origin,
     cookies,
     headers,
   };
 }
+
+test('stores and reads the normalized advertised address through the settings API', async () => {
+  const { NextRequest } = await import('next/server');
+  const { GET, PUT } = await import('../src/app/api/settings/route');
+  const { MACHINE_SETTINGS_PATH } = await import('../src/lib/settings/machine-settings');
+  const secret = await appSecretModule.ensureAppSecret();
+  const headers = {
+    [appSecretModule.APP_SECRET_HEADER]: secret,
+    'content-type': 'application/json',
+    host: 'localhost:32123',
+    origin: 'http://localhost:32123',
+  };
+
+  const updateResponse = await PUT(new NextRequest('http://localhost:32123/api/settings', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({
+      machineSettings: {
+        advertisedAddress: 'https://example.ts.net:443/a/path?ignored=yes',
+      },
+    }),
+  }));
+  assert.equal(updateResponse.status, 200);
+  assert.deepEqual((await updateResponse.json()).machineSettings, {
+    advertisedAddress: 'https://example.ts.net',
+  });
+
+  const readResponse = await GET(new NextRequest('http://localhost:32123/api/settings', {
+    headers,
+  }));
+  assert.equal(readResponse.status, 200);
+  assert.deepEqual((await readResponse.json()).machineSettings, {
+    advertisedAddress: 'https://example.ts.net',
+  });
+  assert.equal(MACHINE_SETTINGS_PATH, path.join(tempDir, 'remote-access.json'));
+  assert.equal((await stat(MACHINE_SETTINGS_PATH)).mode & 0o777, 0o600);
+});
+
+test('rejects an invalid advertised address without replacing the stored value', async () => {
+  const { NextRequest } = await import('next/server');
+  const { PUT } = await import('../src/app/api/settings/route');
+  const { loadMachineSettings } = await import('../src/lib/settings/machine-settings');
+  const secret = await appSecretModule.ensureAppSecret();
+  const response = await PUT(new NextRequest('http://localhost:32123/api/settings', {
+    method: 'PUT',
+    headers: {
+      [appSecretModule.APP_SECRET_HEADER]: secret,
+      'content-type': 'application/json',
+      host: 'localhost:32123',
+      origin: 'http://localhost:32123',
+    },
+    body: JSON.stringify({
+      machineSettings: { advertisedAddress: 'ftp://example.ts.net' },
+    }),
+  }));
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await loadMachineSettings(), {
+    advertisedAddress: 'https://example.ts.net',
+  });
+});
+
+test('rejects a state-changing settings request from a disallowed Origin during auth bypass', async () => {
+  const { NextRequest } = await import('next/server');
+  const { PUT } = await import('../src/app/api/settings/route');
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+
+  try {
+    const response = await PUT(new NextRequest('http://localhost:32123/api/settings', {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:45678',
+      },
+      body: JSON.stringify({
+        machineSettings: { advertisedAddress: 'https://rejected.example.com' },
+      }),
+    }));
+
+    assert.equal(response.status, 403);
+  } finally {
+    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  }
+});
+
+test('rejects a state-changing auth API request from a disallowed Origin at the proxy', async () => {
+  const { NextRequest } = await import('next/server');
+  const { proxy } = await import('../src/proxy');
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+
+  try {
+    const response = await proxy(new NextRequest('http://localhost:32123/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        host: 'localhost:32123',
+        origin: 'http://localhost:45678',
+      },
+    }));
+    assert.equal(response.status, 403);
+  } finally {
+    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  }
+});
 
 test('creates the app secret as a private 32-byte base64url file', async () => {
   const generated = await appSecretModule.ensureAppSecret();
@@ -182,6 +294,81 @@ test('uses a WebSocket policy close code instead of an HTTP status', async () =>
   assert.deepEqual(
     await evaluateRequest(requestInput({ purpose: 'ws-upgrade' })),
     { allow: false, reason: 'unauthorized', wsCloseCode: 1008 },
+  );
+});
+
+test('rejects a credentialed WebSocket upgrade from outside the Origin allowlist', async () => {
+  const secret = await appSecretModule.ensureAppSecret();
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+
+  assert.deepEqual(
+    await evaluateRequest(requestInput({
+      purpose: 'ws-upgrade',
+      origin: 'http://localhost:45678',
+      headers: { [appSecretModule.APP_SECRET_HEADER]: secret },
+    })),
+    { allow: false, reason: 'origin-not-allowed', wsCloseCode: 1008 },
+  );
+});
+
+test('accepts the normalized advertised Origin for WebSocket upgrades', async () => {
+  const secret = await appSecretModule.ensureAppSecret();
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+  const { saveMachineSettings } = await import('../src/lib/settings/machine-settings');
+  await saveMachineSettings({
+    advertisedAddress: 'https://example.ts.net:443/a/path',
+  });
+
+  assert.deepEqual(
+    await evaluateRequest(requestInput({
+      purpose: 'ws-upgrade',
+      origin: 'https://example.ts.net',
+      headers: { [appSecretModule.APP_SECRET_HEADER]: secret },
+    })),
+    { allow: true, userId: 'electron-local-user', kind: 'app' },
+  );
+});
+
+test('always accepts both fixed-port application Origins', async () => {
+  const secret = await appSecretModule.ensureAppSecret();
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+
+  for (const origin of ['http://localhost:32123', 'http://127.0.0.1:32123']) {
+    assert.equal((await evaluateRequest(requestInput({
+      purpose: 'ws-upgrade',
+      origin,
+      headers: { [appSecretModule.APP_SECRET_HEADER]: secret },
+    }))).allow, true, origin);
+  }
+});
+
+test('requires an allowed Origin only for state-changing HTTP methods', async () => {
+  const secret = await appSecretModule.ensureAppSecret();
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+  const headers = { [appSecretModule.APP_SECRET_HEADER]: secret };
+  const origin = 'http://localhost:45678';
+
+  assert.deepEqual(
+    await evaluateRequest(requestInput({ method: 'PUT', origin, headers })),
+    { allow: false, reason: 'origin-not-allowed', status: 403 },
+  );
+  assert.deepEqual(
+    await evaluateRequest(requestInput({ method: 'GET', origin, headers })),
+    { allow: true, userId: 'electron-local-user', kind: 'app' },
+  );
+});
+
+test('rejects a WebSocket upgrade without an Origin', async () => {
+  const secret = await appSecretModule.ensureAppSecret();
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+
+  assert.deepEqual(
+    await evaluateRequest(requestInput({
+      purpose: 'ws-upgrade',
+      origin: '',
+      headers: { [appSecretModule.APP_SECRET_HEADER]: secret },
+    })),
+    { allow: false, reason: 'origin-not-allowed', wsCloseCode: 1008 },
   );
 });
 

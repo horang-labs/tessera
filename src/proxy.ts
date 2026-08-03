@@ -4,7 +4,10 @@ import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
 import {
   hasPresentedCredential,
   observeRequestGate,
+  requestGateLogContext,
 } from '@/lib/auth/request-gate';
+import { isOriginAllowed } from '@/lib/auth/allowed-origins';
+import logger from '@/lib/logger';
 
 /**
  * Proxy — runs on Node.js runtime (Next.js 16+).
@@ -14,6 +17,14 @@ import {
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const input = requestGateInputFromNextRequest(request);
+
+  if (!await isOriginAllowed(input)) {
+    logger.warn(requestGateLogContext(input), 'HTTP Origin rejected');
+    return NextResponse.json(
+      { error: 'Origin not allowed' },
+      { status: 403 },
+    );
+  }
 
   if (isElectronAuthBypassEnabled()) {
     await observeRequestGate(input);
