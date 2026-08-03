@@ -1,8 +1,12 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { homedir } from "os";
 import * as dbSessions from "@/lib/db/sessions";
 import { execCli, isRunningInWsl, type CliEnvironment } from "@/lib/cli/cli-exec";
+import {
+  isBridgedAgentEnvironment,
+  resolveAgentHomeFilesystemPath,
+} from "@/lib/filesystem/path-environment";
+import { buildWslFilesystemPathProbe } from "@/lib/filesystem/wsl-path-probe";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 import { getMemoryProviderKind } from "@/lib/memory/memory-provider";
 import { toMemoryDisplayPath } from "@/lib/memory/memory-display-path";
@@ -58,7 +62,12 @@ function windowsPathToWslPath(value: string): string | null {
 export async function resolveCodexHomeForEnvironment(
   environment: CliEnvironment,
 ): Promise<string> {
-  const configuredDir = process.env.CODEX_HOME?.trim();
+  // `CODEX_HOME` describes the environment *this server* runs in. Across a
+  // bridge the codex CLI lives on the other side and never saw this variable,
+  // so honouring it would point the panel at a directory the agent never reads.
+  const configuredDir = isBridgedAgentEnvironment(environment)
+    ? null
+    : process.env.CODEX_HOME?.trim();
   if (configuredDir) return path.resolve(configuredDir);
 
   if (environment === "wsl" && process.platform === "win32") {
@@ -73,7 +82,9 @@ export async function resolveCodexHomeForEnvironment(
       // `-c`, not `-lc`: the WSL bridge already ran this through the login shell,
       // so a second one only re-reads ~/.profile (where a broken line can kill
       // the probe). `$CODEX_HOME` is already exported into this shell's env.
-      ["-c", 'printf "%s" "${CODEX_HOME:-$HOME/.codex}"'],
+      // The answer goes to `fs.stat`, so it must come back host-openable —
+      // see buildWslFilesystemPathProbe.
+      ["-c", buildWslFilesystemPathProbe("${CODEX_HOME:-$HOME/.codex}")],
       "wsl",
       5000,
     );
@@ -101,7 +112,10 @@ export async function resolveCodexHomeForEnvironment(
     if (result.ok && wslCodexHome) return wslCodexHome;
   }
 
-  return path.join(homedir(), ".codex");
+  // The agent's home, never this server's: across a bridge they are different
+  // filesystems, so a failed probe would otherwise fall back to a directory the
+  // CLI never writes — and every AGENTS.md there would read as missing.
+  return path.join(await resolveAgentHomeFilesystemPath(environment), ".codex");
 }
 
 export function getCodexMemorySession(sessionId: string): dbSessions.SessionRow | null {
