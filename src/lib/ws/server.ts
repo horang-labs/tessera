@@ -10,6 +10,7 @@ import {
   evaluateRequestAndLog,
   observeRequestGate,
   parseRequestUrl,
+  type CredentialKind,
   type RequestGateInput,
 } from '../auth/request-gate';
 import { getCachedRateLimitData } from '../rate-limit/fetcher';
@@ -33,12 +34,34 @@ import {
   routeClientTransportMessage,
   verifyClientSessionAccess,
 } from './server-message-routing';
+import { WebSocketServerHeartbeat, WS_HEARTBEAT_INTERVAL_MS } from './server-heartbeat';
+
+// Supports five 5MiB image attachments after base64 expansion; lowering this
+// to a generic RPC-sized cap would break the existing composer contract.
+export const WS_MAX_PAYLOAD_BYTES = 50 * 1024 * 1024;
+export const MAX_WS_CONNECTIONS = 128;
+export const MAX_TCP_CONNECTIONS = MAX_WS_CONNECTIONS * 2;
+const WS_REJECTION_GRACE_MS = 1_000;
+
+interface WebSocketServerOptions {
+  maxConnections?: number;
+  heartbeatIntervalMs?: number;
+  rejectionGraceMs?: number;
+}
+
+export interface WebSocketIdentity {
+  userId: string;
+  kind: CredentialKind;
+  deviceId?: string;
+}
+
+export interface WebSocketConnectionInfo extends WebSocketIdentity {
+  connectionId: string;
+}
 
 interface AuthenticatedWebSocket extends WebSocket {
   connectionId?: string;
-  userId?: string;
-  username?: string;
-  isAlive?: boolean; // For ping/pong tracking
+  identity?: WebSocketIdentity;
 }
 
 function parseCookieHeader(header: string): Record<string, string> {
@@ -72,19 +95,39 @@ function requestGateInputFromUpgrade(req: IncomingMessage): RequestGateInput {
   };
 }
 
+function parseUpgradePath(rawUrl: string | undefined): string | null {
+  if (!rawUrl) return null;
+  try {
+    return new URL(rawUrl, 'http://localhost').pathname;
+  } catch {
+    return null;
+  }
+}
+
 export class WebSocketServer {
   private wss: WSServer | null = null;
   private connections = new Map<string, Set<AuthenticatedWebSocket>>();
   private rateLimitCache = new Map<string, Map<string, Extract<ServerTransportMessage, { type: 'rate_limit_update' }>>>();
-  private pingInterval: NodeJS.Timeout | null = null;
   private analysisUnsubscribe: (() => void) | null = null;
-  private readonly PING_INTERVAL = 30000; // 30 seconds
+  private readonly maxConnections: number;
+  private readonly rejectionGraceMs: number;
+  private readonly heartbeatIntervalMs: number;
+  private readonly heartbeat: WebSocketServerHeartbeat;
+
+  constructor(options: WebSocketServerOptions = {}) {
+    this.maxConnections = options.maxConnections ?? MAX_WS_CONNECTIONS;
+    this.rejectionGraceMs = options.rejectionGraceMs ?? WS_REJECTION_GRACE_MS;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? WS_HEARTBEAT_INTERVAL_MS;
+    this.heartbeat = new WebSocketServerHeartbeat(this.heartbeatIntervalMs);
+  }
 
   /**
    * Start WebSocket server
    */
   start(httpServer: import('http').Server): void {
-    const WS_MAX_PAYLOAD_BYTES = 50 * 1024 * 1024; // 50MB: supports 5 images × 5MB × base64 1.33x
+    // The TCP cap also covers clients that never complete an HTTP or WebSocket
+    // handshake, while the lower WebSocket cap bounds upgraded connections.
+    httpServer.maxConnections = MAX_TCP_CONNECTIONS;
     // Use noServer mode so ws doesn't intercept ALL upgrade requests on the
     // HTTP server.  Next.js 16 auto-attaches its own upgrade listener for HMR
     // (_next/webpack-hmr); if ws grabs every upgrade first, HMR gets a 400.
@@ -96,6 +139,10 @@ export class WebSocketServer {
 
     // Only handle upgrade requests destined for /ws
     httpServer.on('upgrade', (req, socket, head) => {
+      // Tessera must not validate or consume unrelated upgrades. In
+      // development, Next.js owns its HMR WebSocket on this same server.
+      if (parseUpgradePath(req.url) !== '/ws') return;
+
       const input = requestGateInputFromUpgrade(req);
       const parsedUrl = parseRequestUrl(input);
       if (!parsedUrl) {
@@ -105,13 +152,14 @@ export class WebSocketServer {
         return;
       }
 
-      const { pathname } = parsedUrl;
-      if (pathname === '/ws') {
-        this.wss!.handleUpgrade(req, socket, head, (ws) => {
-          this.wss!.emit('connection', ws, req);
-        });
-      }
-      // Non-/ws upgrades fall through to Next.js's auto-registered handler
+      this.wss!.handleUpgrade(req, socket, head, (ws) => {
+        if (this.wss!.clients.size > this.maxConnections) {
+          logger.warn({ maxConnections: this.maxConnections }, 'WebSocket connection rejected: capacity reached');
+          this.rejectConnection(ws, 1013, 'Maximum connections reached');
+          return;
+        }
+        this.wss!.emit('connection', ws, req);
+      });
     });
 
     // Setup protocol adapter callback
@@ -148,10 +196,28 @@ export class WebSocketServer {
       }
     });
 
-    // Start ping/pong heartbeat
-    this.startPingPong();
+    this.heartbeat.start(() => this.wss?.clients ?? []);
 
-    logger.info({ path: '/ws', pingInterval: this.PING_INTERVAL }, 'WebSocket server started');
+    logger.info({
+      path: '/ws',
+      pingInterval: this.heartbeatIntervalMs,
+      maxConnections: this.maxConnections,
+      maxPayload: WS_MAX_PAYLOAD_BYTES,
+    }, 'WebSocket server started');
+  }
+
+  listConnections(): WebSocketConnectionInfo[] {
+    const result: WebSocketConnectionInfo[] = [];
+    for (const sockets of this.connections.values()) {
+      for (const socket of sockets) {
+        if (!socket.connectionId || !socket.identity) continue;
+        result.push({
+          connectionId: socket.connectionId,
+          ...socket.identity,
+        });
+      }
+    }
+    return result;
   }
 
   /**
@@ -233,16 +299,17 @@ export class WebSocketServer {
    * Handle new WebSocket connection
    */
   private async handleConnection(ws: AuthenticatedWebSocket, req: IncomingMessage): Promise<void> {
-    const userId = await this.authenticate(req);
+    const identity = await this.authenticate(req);
 
-    if (!userId) {
+    if (!identity) {
       logger.warn('WebSocket connection rejected: authentication failed');
-      ws.close(1008, 'Unauthorized');
+      this.rejectConnection(ws, 1008, 'Unauthorized');
       return;
     }
 
-    ws.userId = userId;
+    const { userId } = identity;
     ws.connectionId = randomUUID();
+    ws.identity = identity;
     terminalManager.registerConnection(ws.connectionId);
 
     // Add to connection set for this user
@@ -253,17 +320,17 @@ export class WebSocketServer {
 
     logger.info({ userId, totalConnections: this.connections.get(userId)!.size }, 'WebSocket connected');
 
-    // Set initial alive state
-    ws.isAlive = true;
+    this.heartbeat.noteAlive(ws);
 
     // Setup pong handler
     ws.on('pong', () => {
-      ws.isAlive = true;
+      this.heartbeat.noteAlive(ws);
       logger.debug({ userId }, 'WebSocket pong received');
     });
 
     // Setup event handlers
     ws.on('message', (data: Buffer) => {
+      this.heartbeat.noteAlive(ws);
       this.handleMessage(ws, data);
     });
 
@@ -386,7 +453,7 @@ export class WebSocketServer {
    * Handle incoming WebSocket message
    */
   private async handleMessage(ws: AuthenticatedWebSocket, data: Buffer): Promise<void> {
-    const userId = ws.userId!;
+    const userId = ws.identity!.userId;
     let requestId: string | undefined;
 
     try {
@@ -423,7 +490,7 @@ export class WebSocketServer {
   /**
    * Authenticate WebSocket connection via cookie JWT
    */
-  private async authenticate(req: IncomingMessage): Promise<string | null> {
+  private async authenticate(req: IncomingMessage): Promise<WebSocketIdentity | null> {
     try {
       const input = requestGateInputFromUpgrade(req);
 
@@ -432,7 +499,7 @@ export class WebSocketServer {
         const userId = await getElectronAuthUserId();
         if (userId) {
           logger.debug({ userId }, 'WebSocket authenticated through Electron local mode');
-          return userId;
+          return { userId, kind: 'app' };
         }
       }
 
@@ -440,58 +507,34 @@ export class WebSocketServer {
       if (!decision.allow) return null;
 
       logger.debug({ userId: decision.userId, kind: decision.kind }, 'WebSocket authenticated');
-      return decision.userId;
+      return {
+        userId: decision.userId,
+        kind: decision.kind,
+        ...(decision.deviceId ? { deviceId: decision.deviceId } : {}),
+      };
     } catch (err) {
       logger.error({ error: err }, 'WebSocket auth error');
       return null;
     }
   }
 
-  /**
-   * Start ping/pong heartbeat to detect dead connections
-   */
-  private startPingPong(): void {
-    this.pingInterval = setInterval(() => {
-      if (!this.wss) return;
-
-      this.wss.clients.forEach((ws: WebSocket) => {
-        const authWs = ws as AuthenticatedWebSocket;
-
-        // Check if client responded to last ping
-        if (authWs.isAlive === false) {
-          logger.warn({
-            userId: authWs.userId,
-            }, 'WebSocket connection dead, terminating');
-          return ws.terminate();
-        }
-
-        // Mark as waiting for pong
-        authWs.isAlive = false;
-        ws.ping();
-
-        logger.debug({ userId: authWs.userId }, 'WebSocket ping sent');
-      });
-    }, this.PING_INTERVAL);
-
-    logger.info({ interval: this.PING_INTERVAL }, 'Ping/pong heartbeat started');
-  }
-
-  /**
-   * Stop ping/pong heartbeat (for graceful shutdown)
-   */
-  private stopPingPong(): void {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-      logger.info('Ping/pong heartbeat stopped');
-    }
+  private rejectConnection(ws: WebSocket, code: number, reason: string): void {
+    // A peer on a suspended or broken link may never acknowledge the close
+    // frame. Bound that wait so rejected sockets cannot consume the cap.
+    ws.on('error', () => {});
+    ws.close(code, reason);
+    const terminateTimer = setTimeout(() => {
+      if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
+    }, this.rejectionGraceMs);
+    terminateTimer.unref?.();
+    ws.once('close', () => clearTimeout(terminateTimer));
   }
 
   /**
    * Graceful shutdown (called by server.ts)
    */
   async shutdown(): Promise<void> {
-    this.stopPingPong();
+    this.heartbeat.stop();
     uninstallDiffStatsSafetySweep();
     this.analysisUnsubscribe?.();
     this.analysisUnsubscribe = null;
