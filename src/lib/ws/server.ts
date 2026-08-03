@@ -4,10 +4,14 @@ import { randomUUID } from 'crypto';
 import { ServerTransportMessage } from './message-types';
 import { processManager } from '../cli/process-manager';
 import { protocolAdapter } from '../cli/protocol-adapter';
-import { verifyToken } from '../auth/jwt';
 import { isElectronAuthBypassEnabled } from '../auth/electron-mode';
 import { getElectronAuthUserId } from '../electron-user';
-import { findUserById } from '../users';
+import {
+  evaluateRequestWithShadowLog,
+  observeRequestGate,
+  parseRequestUrl,
+  type RequestGateInput,
+} from '../auth/request-gate';
 import { getCachedRateLimitData } from '../rate-limit/fetcher';
 import { skillAnalysisService } from '../skill/skill-analysis-service';
 import { buildClaudeRateLimitSnapshot } from '../status-display/rate-limit-snapshots';
@@ -37,6 +41,37 @@ interface AuthenticatedWebSocket extends WebSocket {
   isAlive?: boolean; // For ping/pong tracking
 }
 
+function parseCookieHeader(header: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  for (const segment of header.split(';')) {
+    const separator = segment.indexOf('=');
+    if (separator <= 0) continue;
+    const name = segment.slice(0, separator).trim();
+    if (!name) continue;
+    cookies[name] = segment.slice(separator + 1).trim();
+  }
+  return cookies;
+}
+
+function requestGateInputFromUpgrade(req: IncomingMessage): RequestGateInput {
+  const headers = Object.fromEntries(
+    Object.entries(req.headers).flatMap(([name, value]) => {
+      if (value === undefined) return [];
+      return [[name.toLowerCase(), Array.isArray(value) ? value.join(', ') : value]];
+    }),
+  );
+
+  return {
+    purpose: 'ws-upgrade',
+    method: req.method ?? 'GET',
+    rawUrl: req.url ?? '',
+    host: headers.host ?? '',
+    origin: headers.origin ?? '',
+    cookies: parseCookieHeader(headers.cookie ?? ''),
+    headers,
+  };
+}
+
 export class WebSocketServer {
   private wss: WSServer | null = null;
   private connections = new Map<string, Set<AuthenticatedWebSocket>>();
@@ -61,7 +96,16 @@ export class WebSocketServer {
 
     // Only handle upgrade requests destined for /ws
     httpServer.on('upgrade', (req, socket, head) => {
-      const { pathname } = new URL(req.url || '', `http://${req.headers.host}`);
+      const input = requestGateInputFromUpgrade(req);
+      const parsedUrl = parseRequestUrl(input);
+      if (!parsedUrl) {
+        void evaluateRequestWithShadowLog(input)
+          .catch((error) => logger.error({ error }, 'Malformed WebSocket upgrade gate failed'))
+          .finally(() => socket.destroy());
+        return;
+      }
+
+      const { pathname } = parsedUrl;
       if (pathname === '/ws') {
         this.wss!.handleUpgrade(req, socket, head, (ws) => {
           this.wss!.emit('connection', ws, req);
@@ -381,7 +425,10 @@ export class WebSocketServer {
    */
   private async authenticate(req: IncomingMessage): Promise<string | null> {
     try {
+      const input = requestGateInputFromUpgrade(req);
+
       if (isElectronAuthBypassEnabled()) {
+        await observeRequestGate(input);
         const userId = await getElectronAuthUserId();
         if (userId) {
           logger.debug({ userId }, 'WebSocket authenticated through Electron local mode');
@@ -389,42 +436,11 @@ export class WebSocketServer {
         }
       }
 
-      // Parse cookies from request headers
-      const cookieHeader = req.headers.cookie || '';
-      const cookies = Object.fromEntries(
-        cookieHeader.split(';').map(c => {
-          const [key, ...rest] = c.trim().split('=');
-          return [key, rest.join('=')];
-        })
-      );
+      const decision = await evaluateRequestWithShadowLog(input);
+      if (!decision.allow) return null;
 
-      const token = cookies['jwt'];
-
-      if (!token) {
-        logger.warn('WebSocket connection without JWT cookie');
-        return null;
-      }
-
-      // Verify JWT using RSA public key (same as API routes)
-      const payload = await verifyToken(token);
-
-      if (!payload) {
-        logger.warn('WebSocket JWT verification failed');
-        return null;
-      }
-
-      const user = await findUserById(payload.sub);
-      if (!user) {
-        logger.warn({ userId: payload.sub }, 'WebSocket JWT user not found');
-        return null;
-      }
-
-      logger.debug({
-        userId: user.id,
-        username: user.username,
-        }, 'WebSocket authenticated');
-
-      return user.id;
+      logger.debug({ userId: decision.userId, kind: decision.kind }, 'WebSocket authenticated');
+      return decision.userId;
     } catch (err) {
       logger.error({ error: err }, 'WebSocket auth error');
       return null;

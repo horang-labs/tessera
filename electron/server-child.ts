@@ -9,6 +9,7 @@ import { createServer } from 'http';
 import { initDatabase } from '../src/lib/db/database';
 import '../src/lib/cli/providers/bootstrap';
 import { ensureRSAKeys } from '../src/lib/auth/keys';
+import { ensureAppSecret } from '../src/lib/auth/app-secret';
 import { wsServer } from '../src/lib/ws/server';
 import { processManager } from '../src/lib/cli/process-manager';
 import { getAgentEnvironment } from '../src/lib/cli/spawn-cli';
@@ -120,8 +121,11 @@ initDatabase().then(() => {
 }).then(() => {
   logStartup('debug', 'Model config cache loaded, calling ensureRSAKeys...');
   return ensureRSAKeys();
+}).then(() => {
+  logStartup('debug', 'RSA keys ensured, calling ensureAppSecret...');
+  return ensureAppSecret();
 }).then(async () => {
-  logStartup('debug', 'RSA keys ensured, creating server and calling app.prepare...');
+  logStartup('debug', 'App secret ensured, creating server and calling app.prepare...');
   prewarmCliStatusSnapshot('electron-server-child');
 
   // Create HTTP server first so Next.js can attach its HMR upgrade handler.

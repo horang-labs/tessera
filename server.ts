@@ -13,6 +13,7 @@ import { taskPrPoller } from './src/lib/github/task-pr-poller';
 import { installTaskPrStatusBroadcast, uninstallTaskPrStatusBroadcast } from './src/lib/github/task-pr-broadcast';
 import { installSessionPrStatusBroadcast, uninstallSessionPrStatusBroadcast } from './src/lib/github/session-pr-broadcast';
 import { ensureRSAKeys } from './src/lib/auth/keys';
+import { ensureAppSecret } from './src/lib/auth/app-secret';
 import { resolveServerDefaultUserId } from './src/lib/server-default-user';
 import { SettingsManager } from './src/lib/settings/manager';
 import { pruneExpiredArchivedWorktrees } from './src/lib/archive/archive-service';
@@ -43,6 +44,7 @@ async function startServer() {
   // serving provider options already reflects the last known remote list.
   await ensureRemoteModelConfigLoaded();
   await ensureRSAKeys();
+  await ensureAppSecret();
   prewarmCliStatusSnapshot('server');
   try {
     const userId = await resolveServerDefaultUserId();

@@ -1,25 +1,29 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { verifyToken } from '@/lib/auth/jwt';
 import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
 import { getElectronAuthUserId } from '@/lib/electron-user';
-import { findUserById } from '@/lib/users';
+import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
+import {
+  evaluateRequestWithShadowLog,
+  observeRequestGate,
+  type CredentialKind,
+} from '@/lib/auth/request-gate';
 
-async function getAuthenticatedUserId(request: NextRequest): Promise<string | null> {
+type AuthenticatedUser = { userId: string; kind: CredentialKind };
+
+async function getAuthenticatedUser(request: NextRequest): Promise<AuthenticatedUser | null> {
+  const input = requestGateInputFromNextRequest(request);
+
   if (isElectronAuthBypassEnabled()) {
-    return getElectronAuthUserId();
+    await observeRequestGate(input);
+    return { userId: await getElectronAuthUserId(), kind: 'app' };
   }
 
-  const token = request.cookies.get('jwt')?.value;
-  if (!token) return null;
-
-  const payload = await verifyToken(token);
-  if (!payload) return null;
-
-  const user = await findUserById(payload.sub);
-  return user?.id ?? null;
+  const decision = await evaluateRequestWithShadowLog(input);
+  return decision.allow
+    ? { userId: decision.userId, kind: decision.kind }
+    : null;
 }
 
-type AuthenticatedUser = { userId: string };
 type UnauthorizedResponse = { response: NextResponse };
 
 /**
@@ -30,10 +34,10 @@ export async function requireAuthenticatedUserId(
   request: NextRequest,
   unauthorizedBody: unknown = { error: 'Unauthorized' }
 ): Promise<AuthenticatedUser | UnauthorizedResponse> {
-  const userId = await getAuthenticatedUserId(request);
-  if (!userId) {
+  const authenticated = await getAuthenticatedUser(request);
+  if (!authenticated) {
     return { response: NextResponse.json(unauthorizedBody, { status: 401 }) };
   }
 
-  return { userId };
+  return authenticated;
 }
