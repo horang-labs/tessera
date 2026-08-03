@@ -26,6 +26,7 @@ import logger from '../src/lib/logger';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import { terminalManager } from '../src/lib/terminal/shared-terminal-manager';
 import { handleHookRequest } from '../src/lib/cli/hook-receiver';
+import { attachRemoteAddressHeader } from '../src/lib/http/remote-address-header';
 
 process.env.ELECTRON_CHILD = '1';
 process.env.TESSERA_ELECTRON_SERVER = '1';
@@ -138,6 +139,7 @@ initDatabase().then(() => {
 
   // Attach request handler after Next.js is prepared
   server.on('request', (req, res) => {
+    attachRemoteAddressHeader(req);
     if (req.method === 'POST' && req.url?.split('?')[0] === '/__tessera/hook') {
       void handleHookRequest(req, res);
       return;

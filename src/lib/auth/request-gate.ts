@@ -5,6 +5,7 @@ import { findUserById } from '../users';
 import { isElectronRuntime } from '../electron-runtime';
 import logger from '../logger';
 import { isOriginAllowed } from './allowed-origins';
+import { DEVICE_TOKEN_COOKIE, resolveDeviceToken } from './device-registry';
 
 export type RequestPurpose = 'http' | 'ws-upgrade';
 export type CredentialKind = 'app' | 'device' | 'jwt';
@@ -94,6 +95,7 @@ export function hasPresentedCredential(
 ): boolean {
   return Boolean(
     input.headers[APP_SECRET_HEADER]
+    || input.cookies[DEVICE_TOKEN_COOKIE]
     || input.cookies.jwt,
   );
 }
@@ -112,8 +114,16 @@ export async function evaluateRequest(input: RequestGateInput): Promise<RequestG
     if (userId) return { allow: true, userId, kind: 'app' };
   }
 
-  // Device credentials are deliberately unmatched until ticket 08 adds the
-  // revocable registry that is their source of truth.
+  const deviceToken = input.cookies[DEVICE_TOKEN_COOKIE];
+  const device = deviceToken
+    ? await resolveDeviceToken(deviceToken)
+    : null;
+  if (device) {
+    const userId = await resolveServerDefaultUserId();
+    if (userId) {
+      return { allow: true, userId, kind: 'device', deviceId: device.id };
+    }
+  }
 
   const jwt = input.cookies.jwt;
   if (jwt) {

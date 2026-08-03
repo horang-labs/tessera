@@ -36,6 +36,7 @@ import {
   verifyClientSessionAccess,
 } from './server-message-routing';
 import { WebSocketServerHeartbeat, WS_HEARTBEAT_INTERVAL_MS } from './server-heartbeat';
+import { isDeviceRegistered } from '../auth/device-registry';
 
 // Supports five 5MiB image attachments after base64 expansion; lowering this
 // to a generic RPC-sized cap would break the existing composer contract.
@@ -221,6 +222,18 @@ export class WebSocketServer {
     return result;
   }
 
+  disconnectDevice(deviceId: string): number {
+    let disconnected = 0;
+    for (const sockets of this.connections.values()) {
+      for (const socket of sockets) {
+        if (socket.identity?.deviceId !== deviceId) continue;
+        socket.terminate();
+        disconnected += 1;
+      }
+    }
+    return disconnected;
+  }
+
   /**
    * Send message to a specific user (broadcasts to all their connections)
    */
@@ -305,6 +318,18 @@ export class WebSocketServer {
     if (!identity) {
       logger.warn('WebSocket connection rejected: authentication failed');
       this.rejectConnection(ws, 1008, 'Unauthorized');
+      return;
+    }
+
+    // Authentication and connection registration are separated by an await.
+    // If revocation won that race, never add a socket that the revoker could
+    // not yet see; otherwise registration stays synchronous until it is listed.
+    if (
+      identity.kind === 'device'
+      && (!identity.deviceId || !isDeviceRegistered(identity.deviceId))
+    ) {
+      logger.warn({ deviceId: identity.deviceId }, 'Revoked device WebSocket rejected');
+      ws.terminate();
       return;
     }
 

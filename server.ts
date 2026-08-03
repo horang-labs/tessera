@@ -25,6 +25,7 @@ import logger from './src/lib/logger';
 import { getServerPort } from './src/lib/server-port';
 import { handleHookRequest } from './src/lib/cli/hook-receiver';
 import { warmWindowsConptyOnce } from './src/lib/terminal/windows-conpty-warmup';
+import { attachRemoteAddressHeader } from './src/lib/http/remote-address-header';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -70,6 +71,7 @@ async function startServer() {
 
   // Attach request handler after Next.js is prepared
   server.on('request', (req, res) => {
+    attachRemoteAddressHeader(req);
     // 상태 사이드채널: PTY claude 훅만 여기서 처리하고 Next로 넘기지 않는다.
     if (req.method === 'POST' && req.url) {
       const pathname = req.url.split('?')[0];

@@ -34,6 +34,7 @@ export async function proxy(request: NextRequest) {
   // Skip auth routes and static assets
   if (
     pathname.startsWith('/api/auth') ||
+    pathname === '/api/pairing/redeem' ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')

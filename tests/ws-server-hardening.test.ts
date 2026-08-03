@@ -30,6 +30,15 @@ async function openWebSocket(port: number): Promise<WebSocket> {
   return socket;
 }
 
+async function openDeviceWebSocket(port: number, deviceToken: string): Promise<WebSocket> {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    origin: 'http://localhost:3100',
+    headers: { cookie: `device=${deviceToken}` },
+  });
+  await once(socket, 'open');
+  return socket;
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -174,6 +183,48 @@ test('force-terminates an unauthenticated peer after sending policy close 1008',
     assert.equal(rejected.socket.destroyed, true);
   } finally {
     await closeServer(transport, httpServer);
+  }
+});
+
+test('force-terminates every open connection authenticated by a revoked device', async () => {
+  delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  const previousElectronRuntime = process.env.TESSERA_ELECTRON_RUNTIME;
+  const previousPort = process.env.PORT;
+  const dataDir = await mkdtemp(path.join(process.cwd(), '.tessera-ws-device-revoke-'));
+  process.env.TESSERA_DATA_DIR = dataDir;
+  process.env.TESSERA_ELECTRON_RUNTIME = '1';
+  process.env.PORT = '3100';
+  const registry = await import('../src/lib/auth/device-registry');
+  await registry.clearDeviceRegistry();
+  const pairing = await registry.issuePairingToken();
+  const device = await registry.redeemPairingToken(pairing.token, 'Revoked phone');
+  const httpServer = createServer();
+  const transport = new TesseraWebSocketServer({ heartbeatIntervalMs: 60_000 });
+  const port = await listen(httpServer);
+  transport.start(httpServer);
+  const client = await openDeviceWebSocket(port, device.token);
+
+  try {
+    await waitFor(() => transport.listConnections().length === 1);
+    assert.deepEqual(transport.listConnections().map(({ kind, deviceId }) => ({
+      kind,
+      deviceId,
+    })), [{ kind: 'device', deviceId: device.id }]);
+    const closed = once(client, 'close');
+    assert.equal(transport.disconnectDevice(device.id), 1);
+    const [closeCode] = await closed;
+    assert.equal(closeCode, 1006);
+    await waitFor(() => transport.listConnections().length === 0);
+  } finally {
+    await closeServer(transport, httpServer, [client]);
+    if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
+    else process.env.TESSERA_DATA_DIR = previousDataDir;
+    if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
+    else process.env.TESSERA_ELECTRON_RUNTIME = previousElectronRuntime;
+    if (previousPort === undefined) delete process.env.PORT;
+    else process.env.PORT = previousPort;
+    await rm(dataDir, { recursive: true, force: true });
   }
 });
 

@@ -9,7 +9,7 @@ import {
   type CredentialKind,
 } from '@/lib/auth/request-gate';
 
-type AuthenticatedUser = { userId: string; kind: CredentialKind };
+type AuthenticatedUser = { userId: string; kind: CredentialKind; deviceId?: string };
 type AuthenticationResult = AuthenticatedUser | { originDenied: true } | null;
 
 async function getAuthenticatedUser(request: NextRequest): Promise<AuthenticationResult> {
@@ -25,7 +25,11 @@ async function getAuthenticatedUser(request: NextRequest): Promise<Authenticatio
 
   const decision = await evaluateRequestAndLog(input);
   if (decision.allow) {
-    return { userId: decision.userId, kind: decision.kind };
+    return {
+      userId: decision.userId,
+      kind: decision.kind,
+      ...(decision.deviceId ? { deviceId: decision.deviceId } : {}),
+    };
   }
   return isOriginDenial(decision) ? { originDenied: true } : null;
 }
