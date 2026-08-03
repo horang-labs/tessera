@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { controlUsage, isControlInvocation, runControlCli } from './control-cli.mjs';
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 32123;
@@ -18,6 +19,8 @@ Options:
   --host HOST      Host interface to bind. Defaults to ${DEFAULT_HOST}.
   -h, --help       Show this help message.
   -v, --version    Show Tessera version.
+
+${controlUsage()}
 `);
 }
 
@@ -114,20 +117,30 @@ async function findPort(preferredPort, host) {
   fail(`no available port found from ${preferredPort} to ${preferredPort + PORT_SCAN_LIMIT - 1}`);
 }
 
-const root = packageRoot();
-const options = parseArgs(process.argv.slice(2));
-const port = await findPort(options.port, options.host);
-const serverEntry = path.join(root, 'dist-server', 'server.js');
+async function main() {
+  const root = packageRoot();
+  const argv = process.argv.slice(2);
+  if (isControlInvocation(argv)) {
+    process.exitCode = await runControlCli({ argv, packageRoot: root });
+    return;
+  }
 
-if (!fs.existsSync(serverEntry)) {
-  fail('production server build is missing. Reinstall @horang-labs/tessera or publish with npm run npm:prepack first.');
+  const options = parseArgs(argv);
+  const port = await findPort(options.port, options.host);
+  const serverEntry = path.join(root, 'dist-server', 'server.js');
+
+  if (!fs.existsSync(serverEntry)) {
+    fail('production server build is missing. Reinstall @horang-labs/tessera or publish with npm run npm:prepack first.');
+  }
+
+  process.env.NODE_ENV = 'production';
+  process.env.PORT = String(port);
+  process.env.TESSERA_HOST = options.host;
+  process.env.TESSERA_CLI = '1';
+  process.env.TESSERA_APP_ROOT = root;
+  process.env.TESSERA_CHANNEL = process.env.TESSERA_CHANNEL || 'npm';
+
+  await import(pathToFileURL(serverEntry).href);
 }
 
-process.env.NODE_ENV = 'production';
-process.env.PORT = String(port);
-process.env.TESSERA_HOST = options.host;
-process.env.TESSERA_CLI = '1';
-process.env.TESSERA_APP_ROOT = root;
-process.env.TESSERA_CHANNEL = process.env.TESSERA_CHANNEL || 'npm';
-
-await import(pathToFileURL(serverEntry).href);
+await main();
