@@ -38,6 +38,8 @@ import {
   type RuntimeDescriptorHandle,
 } from './src/lib/control/runtime-descriptor';
 import { createControlService } from './src/lib/control/service';
+import { createDatabaseControlWorktreeCreator } from './src/lib/control/worktree-creator';
+import { resolveControlUserId } from './src/lib/control/user-context';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -147,6 +149,9 @@ async function startServer() {
           runtimeId: controlRuntime.descriptor.runtimeId,
           projects: createDatabaseControlProjectSource(),
           worktrees: createDatabaseControlWorktreeSource(),
+          worktreeCreator: createDatabaseControlWorktreeCreator({
+            resolveUserId: resolveControlUserId,
+          }),
         }),
       });
 

@@ -8,6 +8,10 @@ const CONTROL_DESCRIPTOR_OPTION = '--control-descriptor';
 const MAX_DESCRIPTOR_BYTES = 16 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5_000;
+// The server owns the ten-minute preparation deadline. Leave additional room
+// for the preceding Git worktree creation, which intentionally has no short
+// timeout because large repositories can take materially longer to checkout.
+const MUTATION_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function isControlInvocation(argv) {
   if (argv.some((arg) => (
@@ -21,8 +25,8 @@ export function isControlInvocation(argv) {
 
 export async function runControlCli(options) {
   const { argv, packageRoot, env = process.env } = options;
-  const json = argv.includes('--json');
-  if (argv.includes('--help') || argv.includes('-h')) {
+  const json = hasGlobalOption(argv, '--json');
+  if (hasGlobalOption(argv, '--help') || hasGlobalOption(argv, '-h')) {
     if (json) {
       return writeEnvelope(true, {
         ok: true,
@@ -71,7 +75,7 @@ export async function runControlCli(options) {
 
   let response;
   try {
-    response = await requestControl(descriptor, invocation.requestPath, env, cliAppVersion);
+    response = await requestControl(descriptor, invocation, env, cliAppVersion);
   } catch {
     return writeFailure(json, 1, 'INSTANCE_UNAVAILABLE', 'The selected Tessera runtime is unavailable.');
   }
@@ -81,7 +85,12 @@ export async function runControlCli(options) {
   }
 
   if (!response.ok) {
-    return writeEnvelope(json, response, 1, invocation.kind);
+    return writeEnvelope(
+      json,
+      response,
+      response.error.code === 'PREPARATION_TIMEOUT' ? 124 : 1,
+      invocation.kind,
+    );
   }
 
   if (
@@ -105,6 +114,7 @@ export function controlUsage() {
   tessera project show <project-id> [--json]
   tessera worktree list (--current | --project <project-id>) [--json]
   tessera worktree show <worktree-id> [--json]
+  tessera worktree create (--current | --project <project-id>) -b <new-branch> <start-point> [--title <title>] [--json]
 
 Runtime selection:
   --control-descriptor PATH  Select one exact local Tessera runtime.
@@ -116,9 +126,10 @@ function parseControlInvocation(argv, env) {
   let descriptorSeen = false;
   let jsonSeen = false;
   const commandArgs = [];
+  const partitioned = partitionAtOptionTerminator(argv);
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
+  for (let index = 0; index < partitioned.before.length; index += 1) {
+    const arg = partitioned.before[index];
     if (arg === '--json') {
       if (jsonSeen) throw new Error('--json may be supplied only once.');
       jsonSeen = true;
@@ -126,7 +137,7 @@ function parseControlInvocation(argv, env) {
     }
     if (arg === CONTROL_DESCRIPTOR_OPTION) {
       if (descriptorSeen) throw new Error(`${CONTROL_DESCRIPTOR_OPTION} may be supplied only once.`);
-      const value = argv[index + 1];
+      const value = partitioned.before[index + 1];
       if (!value || value.startsWith('-')) {
         throw new Error(`${CONTROL_DESCRIPTOR_OPTION} requires a path.`);
       }
@@ -144,6 +155,7 @@ function parseControlInvocation(argv, env) {
     }
     commandArgs.push(arg);
   }
+  if (partitioned.terminated) commandArgs.push('--', ...partitioned.after);
 
   if (!descriptorPath) {
     throw new Error('No Tessera Control runtime was selected.');
@@ -185,6 +197,26 @@ function parseControlInvocation(argv, env) {
   if (
     commandArgs.length >= 3
     && commandArgs[0] === 'worktree'
+    && commandArgs[1] === 'create'
+  ) {
+    const creation = parseWorktreeCreation(commandArgs.slice(2));
+    return {
+      descriptorPath,
+      kind: 'worktree-create',
+      requestPath: creation.selector.kind === 'current'
+        ? '/__tessera/control/v1/worktrees?current=1'
+        : `/__tessera/control/v1/worktrees?projectId=${encodeURIComponent(creation.selector.projectId)}`,
+      requestBody: {
+        branch: creation.branch,
+        startPoint: creation.startPoint,
+        ...(creation.title === undefined ? {} : { title: creation.title }),
+      },
+    };
+  }
+
+  if (
+    commandArgs.length >= 3
+    && commandArgs[0] === 'worktree'
     && commandArgs[1] === 'list'
   ) {
     const selector = parseWorktreeProjectSelector(commandArgs.slice(2));
@@ -211,6 +243,78 @@ function parseControlInvocation(argv, env) {
   }
 
   throw new Error('Usage: tessera status | project list | project show <project-id> | worktree list | worktree show <worktree-id> [--json]');
+}
+
+function parseWorktreeCreation(args) {
+  let current = false;
+  let currentSeen = false;
+  let projectId = '';
+  let projectSeen = false;
+  let branch = '';
+  let branchSeen = false;
+  let title;
+  let titleSeen = false;
+  let positionalOnly = false;
+  const positionals = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!positionalOnly && arg === '--') {
+      positionalOnly = true;
+      continue;
+    }
+    if (!positionalOnly && arg === '--current') {
+      if (currentSeen) throw new Error('--current may be supplied only once.');
+      current = true;
+      currentSeen = true;
+      continue;
+    }
+    if (!positionalOnly && arg === '--project') {
+      if (projectSeen) throw new Error('--project may be supplied only once.');
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--project requires a Project ID.');
+      projectId = value;
+      projectSeen = true;
+      index += 1;
+      continue;
+    }
+    if (!positionalOnly && (arg === '-b' || arg === '--branch')) {
+      if (branchSeen) throw new Error('-b/--branch may be supplied only once.');
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('-b/--branch requires a new branch.');
+      branch = value;
+      branchSeen = true;
+      index += 1;
+      continue;
+    }
+    if (!positionalOnly && arg === '--title') {
+      if (titleSeen) throw new Error('--title may be supplied only once.');
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--title requires a title.');
+      title = value;
+      titleSeen = true;
+      index += 1;
+      continue;
+    }
+    if (!positionalOnly && arg.startsWith('-')) {
+      throw new Error(`Unknown Worktree creation option: ${arg}`);
+    }
+    positionals.push(arg);
+  }
+
+  if (current === projectSeen) {
+    throw new Error('Exactly one of --current and --project <project-id> is required.');
+  }
+  if (!branchSeen) throw new Error('-b/--branch is required.');
+  if (positionals.length !== 1 || !positionals[0]) {
+    throw new Error('Exactly one Worktree start point is required.');
+  }
+  return {
+    selector: current ? { kind: 'current' } : { kind: 'project', projectId },
+    branch,
+    startPoint: positionals[0],
+    ...(title === undefined ? {} : { title }),
+  };
 }
 
 function parseWorktreeProjectSelector(args) {
@@ -241,16 +345,35 @@ function parseWorktreeProjectSelector(args) {
 
 function withoutDescriptorSelector(argv) {
   const result = [];
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
+  const partitioned = partitionAtOptionTerminator(argv);
+  for (let index = 0; index < partitioned.before.length; index += 1) {
+    const arg = partitioned.before[index];
     if (arg === CONTROL_DESCRIPTOR_OPTION) {
       index += 1;
       continue;
     }
-    if (arg.startsWith(`${CONTROL_DESCRIPTOR_OPTION}=`) || arg === '--json') continue;
+    if (
+      arg.startsWith(`${CONTROL_DESCRIPTOR_OPTION}=`) || arg === '--json'
+    ) continue;
     result.push(arg);
   }
+  if (partitioned.terminated) result.push('--', ...partitioned.after);
   return result;
+}
+
+function hasGlobalOption(argv, option) {
+  return partitionAtOptionTerminator(argv).before.includes(option);
+}
+
+function partitionAtOptionTerminator(argv) {
+  const separatorIndex = argv.indexOf('--');
+  return separatorIndex === -1
+    ? { before: argv, after: [], terminated: false }
+    : {
+        before: argv.slice(0, separatorIndex),
+        after: argv.slice(separatorIndex + 1),
+        terminated: true,
+      };
 }
 
 async function readLiveDescriptor(descriptorPath) {
@@ -333,9 +456,12 @@ function isProcessAlive(pid) {
   }
 }
 
-function requestControl(descriptor, requestPath, env, appVersion) {
+function requestControl(descriptor, invocation, env, appVersion) {
   return new Promise((resolve, reject) => {
-    const url = new URL(requestPath, descriptor.origin);
+    const url = new URL(invocation.requestPath, descriptor.origin);
+    const requestBody = invocation.requestBody === undefined
+      ? null
+      : JSON.stringify(invocation.requestBody);
     const headers = {
       authorization: `Bearer ${descriptor.token}`,
       'x-tessera-runtime-id': descriptor.runtimeId,
@@ -343,11 +469,18 @@ function requestControl(descriptor, requestPath, env, appVersion) {
       'x-tessera-app-version': appVersion,
       'x-tessera-agent-environment': callerAgentEnvironment(env),
     };
+    if (requestBody !== null) {
+      headers['content-type'] = 'application/json';
+      headers['content-length'] = String(Buffer.byteLength(requestBody));
+    }
     copyCallerHeader(headers, 'x-tessera-caller-project-id', env.TESSERA_PROJECT_ID);
     copyCallerHeader(headers, 'x-tessera-caller-session-id', env.TESSERA_SESSION_ID);
     copyCallerHeader(headers, 'x-tessera-caller-worktree-id', env.TESSERA_WORKTREE_ID);
 
-    const request = http.get(url, { headers }, (response) => {
+    const request = http.request(url, {
+      headers,
+      method: requestBody === null ? 'GET' : 'POST',
+    }, (response) => {
       let body = '';
       let bytes = 0;
       response.setEncoding('utf8');
@@ -367,8 +500,13 @@ function requestControl(descriptor, requestPath, env, appVersion) {
         }
       });
     });
-    request.setTimeout(REQUEST_TIMEOUT_MS, () => request.destroy(new Error('timeout')));
+    request.setTimeout(
+      requestBody === null ? REQUEST_TIMEOUT_MS : MUTATION_REQUEST_TIMEOUT_MS,
+      () => request.destroy(new Error('timeout')),
+    );
     request.on('error', reject);
+    if (requestBody !== null) request.write(requestBody);
+    request.end();
   });
 }
 
@@ -439,5 +577,9 @@ function writeHumanSuccess(kind, data) {
   }
   if (kind === 'worktree-show') {
     process.stdout.write(`${data.title}\n${data.worktreeId}\n${data.branch ?? ''}\n${data.path ?? ''}\n`);
+    return;
+  }
+  if (kind === 'worktree-create') {
+    process.stdout.write(`${data.worktreeId}\n${data.title}\n${data.branch}\n${data.path}\n`);
   }
 }

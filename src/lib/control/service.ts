@@ -11,12 +11,21 @@ import type {
 import { CONTROL_API_VERSION } from './runtime-descriptor';
 
 export type ControlErrorCode =
+  | 'BRANCH_REQUIRED'
+  | 'BRANCH_ALREADY_EXISTS'
   | 'CALLER_CONTEXT_UNAVAILABLE'
   | 'CONTROL_VERSION_MISMATCH'
   | 'INSTANCE_UNAVAILABLE'
   | 'INVALID_USAGE'
+  | 'INVALID_START_POINT'
+  | 'PROJECT_ENVIRONMENT_MISMATCH'
   | 'PROJECT_NOT_FOUND'
+  | 'START_POINT_REQUIRED'
+  | 'PREPARATION_FAILED'
+  | 'PREPARATION_TIMEOUT'
+  | 'WORKTREE_CREATE_FAILED'
   | 'WORKTREE_NOT_FOUND'
+  | 'WORKTREE_PERSIST_FAILED'
   | 'UNAUTHORIZED';
 
 export interface ControlCallerContext {
@@ -73,6 +82,42 @@ export interface ControlWorktreeSource {
   get(worktreeId: string): ControlWorktreeRecord | undefined;
 }
 
+export interface ControlWorktreeCreationRequest {
+  project: ControlProjectRecord;
+  branch: string;
+  startPoint: string;
+  title?: string;
+}
+
+export interface ControlCreatedWorktreeRecord {
+  worktree: ControlWorktreeRecord;
+  startPoint: string;
+}
+
+export interface ControlWorktreeCreator {
+  create(request: ControlWorktreeCreationRequest): Promise<ControlCreatedWorktreeRecord>;
+}
+
+export class ControlWorktreeCreationError extends Error {
+  constructor(
+    readonly code: Extract<ControlErrorCode,
+      | 'BRANCH_ALREADY_EXISTS'
+      | 'INVALID_START_POINT'
+      | 'PREPARATION_FAILED'
+      | 'PREPARATION_TIMEOUT'
+      | 'WORKTREE_CREATE_FAILED'
+      | 'WORKTREE_PERSIST_FAILED'>,
+    message: string,
+    readonly httpStatus: number,
+    readonly details: Record<string, unknown> = {},
+    readonly worktree?: ControlWorktreeRecord,
+    readonly startPoint?: string,
+  ) {
+    super(message);
+    this.name = 'ControlWorktreeCreationError';
+  }
+}
+
 export type ControlProjectSelector =
   | { kind: 'current' }
   | { kind: 'project'; projectId: string };
@@ -89,6 +134,10 @@ export interface PublicWorktreeDto {
     afterRunning: boolean;
   };
   sessions: ControlWorktreeSessionRecord[];
+}
+
+export interface PublicCreatedWorktreeDto extends PublicWorktreeDto {
+  startPoint: string;
 }
 
 export interface ControlStatusDto {
@@ -108,6 +157,15 @@ export interface ControlService {
     context: ControlCallerContext,
   ): Promise<{ worktrees: PublicWorktreeDto[] }>;
   showWorktree(worktreeId: string, context: ControlCallerContext): Promise<PublicWorktreeDto>;
+  createWorktree(
+    request: {
+      selector: ControlProjectSelector;
+      branch: string;
+      startPoint: string;
+      title?: string;
+    },
+    context: ControlCallerContext,
+  ): Promise<PublicCreatedWorktreeDto>;
 }
 
 export class ControlOperationError extends Error {
@@ -127,8 +185,9 @@ export function createControlService(options: {
   runtimeId: string;
   projects: ControlProjectSource;
   worktrees: ControlWorktreeSource;
+  worktreeCreator?: ControlWorktreeCreator;
 }): ControlService {
-  const { appVersion, runtimeId, projects, worktrees } = options;
+  const { appVersion, runtimeId, projects, worktrees, worktreeCreator } = options;
 
   return {
     async status(context) {
@@ -188,6 +247,90 @@ export function createControlService(options: {
         );
       }
       return toPublicWorktree(worktree, context);
+    },
+
+    async createWorktree(request, context) {
+      if (!request.branch || !request.branch.trim()) {
+        throw new ControlOperationError(
+          'BRANCH_REQUIRED',
+          'A new Worktree branch is required.',
+          400,
+        );
+      }
+      if (!request.startPoint || !request.startPoint.trim()) {
+        throw new ControlOperationError(
+          'START_POINT_REQUIRED',
+          'A Worktree start point is required.',
+          400,
+        );
+      }
+      if (request.title !== undefined && !request.title.trim()) {
+        throw new ControlOperationError(
+          'INVALID_USAGE',
+          'A Worktree title must not be empty.',
+          400,
+        );
+      }
+
+      const projectId = resolveSelectedProjectId(request.selector, context);
+      const project = projects.get(projectId);
+      if (!project) {
+        throw new ControlOperationError(
+          'PROJECT_NOT_FOUND',
+          'The requested Project does not exist.',
+          404,
+          { projectId },
+        );
+      }
+      const compatibility = validateProjectEnvironment(
+        project.decodedPath,
+        context.agentEnvironment,
+      );
+      if (!compatibility.ok) {
+        throw new ControlOperationError(
+          'PROJECT_ENVIRONMENT_MISMATCH',
+          compatibility.error ?? 'The Project is not compatible with the caller environment.',
+          400,
+          {
+            projectId,
+            agentEnvironment: context.agentEnvironment,
+            filesystemKind: compatibility.filesystemKind,
+          },
+        );
+      }
+      if (!worktreeCreator) {
+        throw new ControlOperationError(
+          'INSTANCE_UNAVAILABLE',
+          'This Tessera runtime cannot create Worktrees.',
+          503,
+        );
+      }
+
+      let created: ControlCreatedWorktreeRecord;
+      try {
+        created = await worktreeCreator.create({
+          project,
+          branch: request.branch,
+          startPoint: request.startPoint,
+          ...(request.title === undefined ? {} : { title: request.title }),
+        });
+      } catch (error) {
+        if (!(error instanceof ControlWorktreeCreationError)) throw error;
+        const details = error.worktree && error.startPoint
+          ? {
+              ...error.details,
+              worktree: {
+                ...toPublicWorktree(error.worktree, context),
+                startPoint: error.startPoint,
+              },
+            }
+          : error.details;
+        throw new ControlOperationError(error.code, error.message, error.httpStatus, details);
+      }
+      return {
+        ...toPublicWorktree(created.worktree, context),
+        startPoint: created.startPoint,
+      };
     },
   };
 }

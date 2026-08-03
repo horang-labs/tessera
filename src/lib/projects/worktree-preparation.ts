@@ -56,6 +56,8 @@ export interface WorktreePreparationRequest {
   taskId: string;
   /** The original checkout, which is also the project's id. */
   projectDir: string;
+  /** Public Project identity when its host filesystem path differs from its ID. */
+  projectId?: string;
   worktreePath: string;
   branchName: string;
 }
@@ -75,7 +77,7 @@ export type WorktreePreparationOutcome =
 export async function startWorktreePreparation(
   request: WorktreePreparationRequest,
 ): Promise<WorktreePreparationOutcome> {
-  const project = getProject(request.projectDir);
+  const project = getProject(request.projectId ?? request.projectDir);
   const before = normalizePreparationScript(project?.preparation_script);
   const after = normalizePreparationScript(project?.preparation_after_script);
   if (!before && !after) return { started: false, reason: 'no_script' };
@@ -263,7 +265,7 @@ async function continuePreparation(
 function announcePreparationStatus(request: WorktreePreparationRequest): void {
   broadcastTaskMutation(request.userId, {
     kind: 'updated',
-    projectId: request.projectDir,
+    projectId: request.projectId ?? request.projectDir,
   });
 }
 

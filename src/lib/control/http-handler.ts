@@ -13,6 +13,7 @@ export const CONTROL_RUNTIME_ID_HEADER = 'x-tessera-runtime-id';
 export const CONTROL_API_VERSION_HEADER = 'x-tessera-control-version';
 export const CONTROL_APP_VERSION_HEADER = 'x-tessera-app-version';
 const MAX_CALLER_ID_LENGTH = 2_048;
+const MAX_REQUEST_BODY_BYTES = 64 * 1024;
 
 interface ControlFailureEnvelope {
   ok: false;
@@ -80,19 +81,16 @@ export function createControlHttpHandler(options: {
       return true;
     }
 
-    if (request.method !== 'GET') {
-      writeFailure(response, 400, failure('INVALID_USAGE', 'The Control request is invalid.'));
-      return true;
-    }
-
     const context = callerContext(request);
     try {
       if (pathname === `${CONTROL_ROUTE_PREFIX}/status`) {
+        requireMethod(request, 'GET');
         writeSuccess(response, await service.status(context));
         return true;
       }
 
       if (pathname === `${CONTROL_ROUTE_PREFIX}/projects`) {
+        requireMethod(request, 'GET');
         writeSuccess(response, await service.listProjects(context));
         return true;
       }
@@ -107,20 +105,22 @@ export function createControlHttpHandler(options: {
             400,
           );
         }
-        writeSuccess(
-          response,
-          await service.listWorktrees(
-            current === '1'
-              ? { kind: 'current' }
-              : { kind: 'project', projectId: projectId as string },
-            context,
-          ),
-        );
+        const selector = current === '1'
+          ? { kind: 'current' as const }
+          : { kind: 'project' as const, projectId: projectId as string };
+        if (request.method === 'GET') {
+          writeSuccess(response, await service.listWorktrees(selector, context));
+          return true;
+        }
+        requireMethod(request, 'POST');
+        const body = await readWorktreeCreationBody(request);
+        writeSuccess(response, await service.createWorktree({ selector, ...body }, context));
         return true;
       }
 
       const worktreePrefix = `${CONTROL_ROUTE_PREFIX}/worktrees/`;
       if (pathname.startsWith(worktreePrefix)) {
+        requireMethod(request, 'GET');
         const encodedWorktreeId = pathname.slice(worktreePrefix.length);
         if (!encodedWorktreeId || encodedWorktreeId.includes('/')) {
           throw new ControlOperationError('INVALID_USAGE', 'A Worktree ID is required.', 400);
@@ -137,6 +137,7 @@ export function createControlHttpHandler(options: {
 
       const projectPrefix = `${CONTROL_ROUTE_PREFIX}/projects/`;
       if (pathname.startsWith(projectPrefix)) {
+        requireMethod(request, 'GET');
         const encodedProjectId = pathname.slice(projectPrefix.length);
         if (!encodedProjectId || encodedProjectId.includes('/')) {
           throw new ControlOperationError('INVALID_USAGE', 'A Project ID is required.', 400);
@@ -164,6 +165,57 @@ export function createControlHttpHandler(options: {
       }
       return true;
     }
+  };
+}
+
+function requireMethod(request: IncomingMessage, expected: 'GET' | 'POST'): void {
+  if (request.method !== expected) {
+    throw new ControlOperationError('INVALID_USAGE', 'The Control request is invalid.', 400);
+  }
+}
+
+async function readWorktreeCreationBody(request: IncomingMessage): Promise<{
+  branch: string;
+  startPoint: string;
+  title?: string;
+}> {
+  let raw = '';
+  let bytes = 0;
+  for await (const chunk of request) {
+    bytes += Buffer.byteLength(chunk);
+    if (bytes > MAX_REQUEST_BODY_BYTES) {
+      throw new ControlOperationError('INVALID_USAGE', 'The Control request is too large.', 400);
+    }
+    raw += chunk;
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new ControlOperationError('INVALID_USAGE', 'The Control request body is invalid.', 400);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ControlOperationError('INVALID_USAGE', 'The Control request body is invalid.', 400);
+  }
+  const body = value as Record<string, unknown>;
+  const unknownKey = Object.keys(body).find((key) => !['branch', 'startPoint', 'title'].includes(key));
+  if (unknownKey) {
+    throw new ControlOperationError('INVALID_USAGE', `Unsupported Worktree field: ${unknownKey}`, 400);
+  }
+  if (typeof body.branch !== 'string' || !body.branch.trim()) {
+    throw new ControlOperationError('BRANCH_REQUIRED', 'A new Worktree branch is required.', 400);
+  }
+  if (typeof body.startPoint !== 'string' || !body.startPoint.trim()) {
+    throw new ControlOperationError('START_POINT_REQUIRED', 'A Worktree start point is required.', 400);
+  }
+  if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
+    throw new ControlOperationError('INVALID_USAGE', 'A Worktree title must not be empty.', 400);
+  }
+  return {
+    branch: body.branch,
+    startPoint: body.startPoint,
+    ...(body.title === undefined ? {} : { title: body.title as string }),
   };
 }
 

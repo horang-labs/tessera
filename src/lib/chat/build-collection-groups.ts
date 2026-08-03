@@ -122,7 +122,10 @@ export function buildCollectionGroups(
   );
 
   for (const task of liveTasks) {
-    if (!visibleTaskIds.has(task.id)) continue;
+    // A managed worktree exists independently of its child sessions. Keep a
+    // newly created zero-session worktree visible, while still hiding legacy
+    // task groups whose only children are archived or otherwise out of scope.
+    if (task.sessions.length > 0 && !visibleTaskIds.has(task.id)) continue;
 
     const collectionId = task.collectionId ?? null;
     if (!groupMap.has(collectionId)) {

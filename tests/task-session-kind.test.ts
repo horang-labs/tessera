@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getCollectionSessionSnapshots } from '@/lib/chat/collection-status-indicator';
 import {
+  buildCollectionGroups,
   countRunningCollectionGroupItems,
   filterCollectionGroupsByRunning,
   getRunningCollectionGroupSessionIds,
@@ -77,4 +78,40 @@ test('running menus and stop-all targets include live PTY runtimes', () => {
     tasks: [terminalTask],
     chats: [guiSession, terminalChat],
   }]);
+});
+
+test('sidebar groups keep zero-session worktrees while excluding tasks with only hidden children', () => {
+  const visibleTask = mergeTasksWithLiveSessions([{
+    ...task,
+    id: 'visible-task',
+    sessions: [{
+      id: terminalSession.id,
+      title: terminalSession.title,
+      lastModified: terminalSession.lastModified,
+      isRunning: terminalSession.isRunning,
+      kind: terminalSession.kind,
+    }],
+  }], [{ ...terminalSession, taskId: 'visible-task' }])[0];
+  const hiddenTask = {
+    ...task,
+    id: 'hidden-task',
+    sessions: [{
+      id: 'archived-child',
+      title: 'Archived child',
+      lastModified: terminalSession.lastModified,
+      isRunning: false,
+      kind: 'terminal' as const,
+    }],
+  };
+
+  const groups = buildCollectionGroups(
+    [],
+    [{ ...task, id: 'zero-session-task' }, visibleTask, hiddenTask],
+    [{ ...terminalSession, taskId: 'visible-task' }],
+  );
+
+  assert.deepEqual(groups[0]?.tasks.map((item) => item.id), [
+    'zero-session-task',
+    'visible-task',
+  ]);
 });

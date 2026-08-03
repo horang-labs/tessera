@@ -193,6 +193,49 @@ test('Worktree current selection fails without injected caller context', async (
   );
 });
 
+test('Worktree creation rejects an incompatible Project before the mutation boundary', async () => {
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
+  let mutationCalls = 0;
+  try {
+    const service = createControlService({
+      appVersion: '1.2.3',
+      runtimeId: 'runtime-one',
+      projects: {
+        list: () => [],
+        get: (projectId) => projectId === 'windows-project'
+          ? {
+              id: projectId,
+              decodedPath: 'C:\\src\\windows-project',
+              displayName: 'Windows Project',
+              visible: true,
+            }
+          : undefined,
+      },
+      worktrees: { list: () => [], get: () => undefined },
+      worktreeCreator: {
+        create: async () => {
+          mutationCalls += 1;
+          throw new Error('must not be called');
+        },
+      },
+    });
+
+    await assert.rejects(
+      service.createWorktree({
+        selector: { kind: 'project', projectId: 'windows-project' },
+        branch: 'feature/environment-check',
+        startPoint: 'main',
+      }, { agentEnvironment: 'wsl' }),
+      (error: unknown) => error instanceof ControlOperationError
+        && error.code === 'PROJECT_ENVIRONMENT_MISMATCH',
+    );
+    assert.equal(mutationCalls, 0);
+  } finally {
+    Object.defineProperty(process, 'platform', platformDescriptor);
+  }
+});
+
 function collectKeys(value: unknown): string[] {
   if (!value || typeof value !== 'object') return [];
   if (Array.isArray(value)) return value.flatMap(collectKeys);

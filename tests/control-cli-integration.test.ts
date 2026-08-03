@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -13,10 +12,13 @@ import {
   type RuntimeDescriptorHandle,
 } from '../src/lib/control/runtime-descriptor';
 import { createControlService } from '../src/lib/control/service';
-import type { ControlWorktreeRecord } from '../src/lib/control/service';
+import {
+  ControlWorktreeCreationError,
+  type ControlWorktreeRecord,
+} from '../src/lib/control/service';
+import { runControlCli } from './helpers/control-cli-runner';
 
 const REPO_ROOT = process.cwd();
-const CLI_PATH = path.join(REPO_ROOT, 'bin', 'tessera.mjs');
 const PACKAGE_VERSION = JSON.parse(
   fsSync.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'),
 ).version as string;
@@ -251,6 +253,80 @@ test('the CLI lists and shows zero-session Worktrees through exact selectors', a
   }
 });
 
+test('the CLI creates a zero-session Worktree from exact explicit Git inputs', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-worktree-create-'));
+  const project = {
+    id: 'project-create',
+    decodedPath: '/repo/project-create',
+    displayName: 'Project Create',
+    visible: true,
+  };
+  const worktrees: ControlWorktreeRecord[] = [];
+  const runtime = await startRuntime(testRoot, 'create', project, worktrees);
+
+  try {
+    const created = await runCli([
+      'worktree', 'create', '--current', '-b', 'feature/exact-branch',
+      'origin/main', '--json', '--control-descriptor', runtime.descriptor.path,
+    ], { TESSERA_PROJECT_ID: project.id });
+
+    assert.equal(created.code, 0);
+    assert.equal(created.stderr, '');
+    assert.deepEqual(JSON.parse(created.stdout).data, {
+      worktreeId: 'wt_created_1',
+      projectId: project.id,
+      title: 'feature/exact-branch',
+      branch: 'feature/exact-branch',
+      startPoint: 'origin/main',
+      path: '/worktrees/feature/exact-branch',
+      preparation: {
+        status: 'succeeded',
+        phase: 'before',
+        afterRunning: false,
+      },
+      sessions: [],
+    });
+
+    const invalidInvocations = [
+      ['worktree', 'create', '--project', project.id, 'main'],
+      ['worktree', 'create', '--project', project.id, '-b', 'feature/missing-start'],
+      ['worktree', 'create', '--current', '--project', project.id, '-b', 'feature/two-selectors', 'main'],
+      ['worktree', 'create', '--project', project.id, '-b', 'feature/one', '--branch', 'feature/two', 'main'],
+      ['worktree', 'create', '--project', project.id, '-b', 'feature/two-starts', 'main', 'origin/main'],
+      ['worktree', 'create', '--project', project.id, '-b', 'feature/path', 'main', '--path', '/tmp/caller'],
+    ];
+    for (const args of invalidInvocations) {
+      const invalid = await runCli([
+        ...args, '--json', '--control-descriptor', runtime.descriptor.path,
+      ], { TESSERA_PROJECT_ID: project.id });
+      assert.equal(invalid.code, 2, args.join(' '));
+      assert.equal(JSON.parse(invalid.stdout).error.code, 'INVALID_USAGE');
+    }
+
+    const createdCount = worktrees.length;
+    const currentWithoutContext = await runCli([
+      'worktree', 'create', '--current', '-b', 'feature/no-context', 'main',
+      '--json', '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(currentWithoutContext.code, 1);
+    assert.equal(JSON.parse(currentWithoutContext.stdout).error.code, 'CALLER_CONTEXT_UNAVAILABLE');
+    assert.equal(worktrees.length, createdCount);
+
+    const timedOut = await runCli([
+      'worktree', 'create', '--project', project.id, '-b', 'feature/prep-timeout', 'main',
+      '--json', '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(timedOut.code, 124);
+    const timeoutEnvelope = JSON.parse(timedOut.stdout);
+    assert.equal(timeoutEnvelope.error.code, 'PREPARATION_TIMEOUT');
+    assert.equal(timeoutEnvelope.error.details.worktree.branch, 'feature/prep-timeout');
+    assert.deepEqual(timeoutEnvelope.error.details.worktree.sessions, []);
+  } finally {
+    await runtime.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
 test('server startup help and version behavior remain available without a Control command', async () => {
   const help = await runCli(['--help']);
   assert.equal(help.code, 0);
@@ -298,7 +374,7 @@ async function startRuntime(
     origin,
     runtimeDirectory: path.join(testRoot, label),
   });
-  const service = createControlService({
+  const serviceOptions = {
     appVersion: PACKAGE_VERSION,
     runtimeId: descriptor.descriptor.runtimeId,
     projects: {
@@ -309,7 +385,40 @@ async function startRuntime(
       list: (projectId) => worktrees.filter((worktree) => worktree.projectId === projectId),
       get: (worktreeId) => worktrees.find((worktree) => worktree.worktreeId === worktreeId),
     },
-  });
+    worktreeCreator: {
+      create: async (request: {
+        project: typeof project;
+        branch: string;
+        startPoint: string;
+        title?: string;
+      }) => {
+        const worktree: ControlWorktreeRecord = {
+          worktreeId: `wt_created_${worktrees.length + 1}`,
+          projectId: request.project.id,
+          title: request.title ?? request.branch,
+          branch: request.branch,
+          filesystemPath: `/worktrees/${request.branch}`,
+          preparationStatus: 'succeeded',
+          preparationPhase: 'before',
+          sessions: [],
+        };
+        worktrees.push(worktree);
+        if (request.branch === 'feature/prep-timeout') {
+          worktree.preparationStatus = 'running';
+          throw new ControlWorktreeCreationError(
+            'PREPARATION_TIMEOUT',
+            'Worktree preparation did not finish before the timeout.',
+            504,
+            {},
+            worktree,
+            request.startPoint,
+          );
+        }
+        return { worktree, startPoint: request.startPoint };
+      },
+    },
+  };
+  const service = createControlService(serviceOptions as Parameters<typeof createControlService>[0]);
   requestHandler = createControlHttpHandler({ descriptor: descriptor.descriptor, service });
 
   return {
@@ -336,25 +445,5 @@ function runCli(
   args: string[],
   envOverrides: Record<string, string> = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI_PATH, ...args], {
-      cwd: REPO_ROOT,
-      env: {
-        ...process.env,
-        TESSERA_AGENT_ENVIRONMENT: 'wsl',
-        TESSERA_CONTROL_DESCRIPTOR: '',
-        TESSERA_PROJECT_ID: '',
-        ...envOverrides,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
-  });
+  return runControlCli(args, { repoRoot: REPO_ROOT, envOverrides });
 }

@@ -289,16 +289,17 @@ export function createTask(params: {
   collectionId?: string;
   workflowStatus?: WorkflowStatus;
   worktreeBranch?: string;
-}): void {
+  worktreePath?: string;
+}): string {
   const db = getDb();
   const now = new Date().toISOString();
   const publicWorktreeId = generatePublicWorktreeId();
   db.prepare(`
     INSERT INTO tasks (
       id, public_worktree_id, project_id, title, collection_id, workflow_status,
-      worktree_branch, created_at, updated_at
+      worktree_branch, worktree_path, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.id,
     publicWorktreeId,
@@ -307,10 +308,12 @@ export function createTask(params: {
     params.collectionId ?? null,
     params.workflowStatus ?? 'todo',
     params.worktreeBranch ?? null,
+    params.worktreePath ?? null,
     now,
     now,
   );
   logger.info({ taskId: params.id, projectId: params.projectId }, 'Task created');
+  return publicWorktreeId;
 }
 
 export function setTaskWorktreeCheckout(

@@ -1,5 +1,7 @@
 import { getDb } from '@/lib/db/database';
+import { createTask } from '@/lib/db/tasks';
 import { PARENT_FIRST_WORKTREE_PATH_SQL } from '@/lib/db/worktree-identity';
+import { randomUUID } from 'node:crypto';
 import {
   readPreparationPhase,
   readPreparationStatus,
@@ -47,6 +49,27 @@ export function createDatabaseControlWorktreeSource(): ControlWorktreeSource {
       return row ? toControlWorktreeRecord(row) : undefined;
     },
   };
+}
+
+export function persistDatabaseControlWorktree(input: {
+  projectId: string;
+  title: string;
+  branch: string;
+  filesystemPath: string;
+}): { taskId: string; worktree: ControlWorktreeRecord } {
+  const taskId = `task_${randomUUID()}`;
+  const worktreeId = createTask({
+    id: taskId,
+    projectId: input.projectId,
+    title: input.title,
+    worktreeBranch: input.branch,
+    worktreePath: input.filesystemPath,
+  });
+  const worktree = createDatabaseControlWorktreeSource().get(worktreeId);
+  if (!worktree) {
+    throw new Error('The persisted Worktree could not be read back.');
+  }
+  return { taskId, worktree };
 }
 
 function toControlWorktreeRecord(row: WorktreeRow): ControlWorktreeRecord {
