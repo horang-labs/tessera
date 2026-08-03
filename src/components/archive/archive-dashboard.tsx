@@ -266,7 +266,9 @@ export function ArchiveDashboard() {
       loadArchive(),
       useSessionStore.getState().loadProjects(),
     ]);
-    if (item.kind === 'task') {
+    // A restored chat that belongs to a task rejoins its task's session list, so
+    // the task cache has to be refreshed for those too.
+    if (item.kind === 'task' || item.sharedWorktree) {
       await useTaskStore.getState().loadTasks(item.projectId, { setCurrent: false });
     }
   }, [loadArchive, t]);
@@ -871,7 +873,7 @@ function TaskArchiveTable({
                         {t('archive.actions.restore')}
                       </ActionButton>
                     )}
-                    {item.worktreeStatus === 'present' && item.worktreeManaged && (
+                    {item.worktreeStatus === 'present' && item.worktreeManaged && !item.sharedWorktree && (
                       <ActionButton tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')}>
                         <FolderX className="h-3 w-3" />
                         {t('archive.actions.deleteWorktree')}

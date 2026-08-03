@@ -18,6 +18,13 @@ interface TaskPrStatusCacheEntry {
   remoteBranchExists: boolean | undefined;
 }
 
+/** A child session lifted out of its task, kept so the removal can be undone. */
+export interface RemovedTaskSession {
+  taskId: string;
+  index: number;
+  session: TaskEntity['sessions'][number];
+}
+
 interface TaskState {
   /** Tasks for the currently focused project (kept for existing consumers) */
   tasks: TaskEntity[];
@@ -74,6 +81,13 @@ interface TaskState {
    * Single-session tasks also mirror the parent task title.
    */
   syncLinkedTaskTitle: (sessionId: string, title: string) => void;
+  /**
+   * Drop a child session from its task after that session alone was archived.
+   * Returns what was removed so a failed archive can put it back in place.
+   */
+  removeTaskSession: (sessionId: string) => RemovedTaskSession | null;
+  /** Re-insert a session removed by `removeTaskSession` at its original position. */
+  restoreTaskSession: (removed: RemovedTaskSession) => void;
   /** Replace a collection reference across cached tasks */
   replaceCollectionId: (fromCollectionId: string, toCollectionId: string | null) => void;
   /** Clear cached worktree metadata for tasks whose managed worktree was removed */
@@ -144,6 +158,36 @@ function syncLinkedTaskTitleInList(tasks: TaskEntity[], sessionId: string, title
       ...(shouldSyncTaskTitle && { title }),
       sessions: nextSessions,
     };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function removeTaskSessionInList(tasks: TaskEntity[], sessionId: string): TaskEntity[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    if (!task.sessions.some((session) => session.id === sessionId)) {
+      return task;
+    }
+
+    changed = true;
+    return { ...task, sessions: task.sessions.filter((session) => session.id !== sessionId) };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function restoreTaskSessionInList(tasks: TaskEntity[], removed: RemovedTaskSession): TaskEntity[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    if (task.id !== removed.taskId || task.sessions.some((session) => session.id === removed.session.id)) {
+      return task;
+    }
+
+    changed = true;
+    const sessions = [...task.sessions];
+    sessions.splice(Math.min(removed.index, sessions.length), 0, removed.session);
+    return { ...task, sessions };
   });
 
   return changed ? nextTasks : tasks;
@@ -604,6 +648,45 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
           projectId,
           syncLinkedTaskTitleInList(tasks, sessionId, title),
+        ])
+      ),
+    })),
+
+  removeTaskSession: (sessionId) => {
+    const state = get();
+    const owner = state.tasks.find((task) => task.sessions.some((session) => session.id === sessionId))
+      ?? Object.values(state.tasksByProject)
+        .flat()
+        .find((task) => task.sessions.some((session) => session.id === sessionId));
+    if (!owner) return null;
+
+    const index = owner.sessions.findIndex((session) => session.id === sessionId);
+    const removed: RemovedTaskSession = {
+      taskId: owner.id,
+      index,
+      session: owner.sessions[index],
+    };
+
+    set((current) => ({
+      tasks: removeTaskSessionInList(current.tasks, sessionId),
+      tasksByProject: Object.fromEntries(
+        Object.entries(current.tasksByProject).map(([projectId, tasks]) => [
+          projectId,
+          removeTaskSessionInList(tasks, sessionId),
+        ])
+      ),
+    }));
+
+    return removed;
+  },
+
+  restoreTaskSession: (removed) =>
+    set((state) => ({
+      tasks: restoreTaskSessionInList(state.tasks, removed),
+      tasksByProject: Object.fromEntries(
+        Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
+          projectId,
+          restoreTaskSessionInList(tasks, removed),
         ])
       ),
     })),

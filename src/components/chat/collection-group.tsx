@@ -418,9 +418,10 @@ export const CollectionGroup = memo(function CollectionGroup({
   }, [contextMenu, onSessionDelete]);
 
   const handleContextMenuArchive = useCallback(() => {
-    if (!contextMenu || contextMenu.isSubSession) return;
+    if (!contextMenu) return;
 
-    if (contextMenu.type === 'task') {
+    // A sub-session row targets the session itself, never its task.
+    if (contextMenu.type === 'task' && !contextMenu.isSubSession) {
       void useTaskStore.getState().toggleTaskArchive(contextMenu.targetId, true);
       return;
     }
@@ -478,6 +479,7 @@ export const CollectionGroup = memo(function CollectionGroup({
       onDragOverItem={(event) => onItemDragOverItem(task.id, collectionScopeId, 'task', projectId, event)}
       onRename={onTaskRename}
       onSessionRename={onSessionRename}
+      onSessionArchive={onSessionArchive}
       renamingSessionId={renamingItem?.type === 'chat' ? renamingItem.id : null}
       isRenameRequested={renamingItem?.type === 'task' && renamingItem.id === task.id}
       onRenameComplete={finishItemRename}
@@ -704,7 +706,7 @@ export const CollectionGroup = memo(function CollectionGroup({
           onClose={closeContextMenu}
           onRename={handleContextMenuRename}
           onDelete={handleContextMenuDelete}
-          onArchive={!contextMenu.isSubSession ? handleContextMenuArchive : undefined}
+          onArchive={handleContextMenuArchive}
           onOpenInNewTab={contextMenu.type === 'chat' ? () => onSessionOpenInNewTab?.(contextMenu.targetId) : undefined}
           onGenerateTitle={onSessionGenerateTitle ? handleContextMenuGenerateTitle : undefined}
           onMoveToProject={contextMenu.type === 'chat' && !contextMenu.isSubSession ? () => onSessionMoveToProject?.(contextMenu.targetId) : undefined}

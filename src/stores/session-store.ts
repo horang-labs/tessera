@@ -1191,6 +1191,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const prevArchived = session?.archived;
     const prevArchivedAt = session?.archivedAt;
 
+    // A task-owned session archived on its own leaves its task's session list.
+    // Held for rollback so a failed request puts the row back where it was.
+    const removedTaskSession = archived
+      ? useTaskStore.getState().removeTaskSession(sessionId)
+      : null;
+
     // Optimistic update
     set((state) => ({
       projects: state.projects.map((project) => ({
@@ -1236,6 +1242,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       })
       .catch(() => {
         // Rollback on any network or server error
+        if (removedTaskSession) {
+          useTaskStore.getState().restoreTaskSession(removedTaskSession);
+        }
         if (prevArchived !== undefined) {
           set((state) => ({
             projects: state.projects.map((project) => ({

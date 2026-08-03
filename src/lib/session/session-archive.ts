@@ -1,4 +1,5 @@
 import * as dbSessions from '../db/sessions';
+import * as dbTasks from '../db/tasks';
 import logger from '../logger';
 import { withExclusiveTesseraSessionOperation } from '../terminal/terminal-handoff-lock';
 import { closeSessionRuntimes } from './active-session-runtime';
@@ -21,8 +22,12 @@ export async function archiveSession(
     if (!session) {
       throw new Error('Session not found');
     }
-    if (session.task_id) {
-      throw new Error('Task sessions must be archived through their task');
+    // A task-owned session can be archived on its own — it leaves the task's
+    // session list and gets its own archive entry. Only the reverse is blocked:
+    // once the task itself is archived, the task owns the archive state and the
+    // session must be restored through it.
+    if (session.task_id && dbTasks.getTask(session.task_id)?.archived) {
+      throw new Error('Sessions of an archived task must be handled through their task');
     }
 
     await syncCodexThreadsArchived([session], archived, userId);
