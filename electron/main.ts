@@ -11,7 +11,6 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron';
 import { fork, ChildProcess, spawnSync } from 'child_process';
-import * as net from 'net';
 import * as path from 'path';
 import * as fs from 'fs';
 import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
@@ -56,7 +55,6 @@ const WINDOWS_TITLEBAR_DIMMED_THEME = {
 const TESSERA_HOMEPAGE = 'https://github.com/horang-labs/tessera';
 const MAX_SHELL_PATH_LENGTH = 32768;
 const ELECTRON_DEFAULT_PORT = 32123;
-const ELECTRON_PORT_SCAN_LIMIT = 100;
 const UI_STORAGE_PATH = getTesseraDataPath('ui-state.json');
 
 function readUiStorage(): Record<string, string> {
@@ -676,33 +674,6 @@ function forceKillProcessTree(proc: ChildProcess): void {
   }
 }
 
-// ── Port allocation ────────────────────────────────────────────────────────
-async function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE' || error.code === 'EACCES') {
-        resolve(false);
-        return;
-      }
-      reject(error);
-    });
-    srv.listen(port, '127.0.0.1', () => {
-      srv.close(() => resolve(true));
-    });
-  });
-}
-
-async function findStablePort(): Promise<number> {
-  for (let offset = 0; offset < ELECTRON_PORT_SCAN_LIMIT; offset += 1) {
-    const candidate = ELECTRON_DEFAULT_PORT + offset;
-    if (await isPortAvailable(candidate)) return candidate;
-  }
-  throw new Error(
-    `No available port found from ${ELECTRON_DEFAULT_PORT} to ${ELECTRON_DEFAULT_PORT + ELECTRON_PORT_SCAN_LIMIT - 1}`
-  );
-}
-
 // ── Server lifecycle ───────────────────────────────────────────────────────
 async function startServer(): Promise<number> {
   const devPort = process.env.TESSERA_DEV_PORT;
@@ -711,8 +682,8 @@ async function startServer(): Promise<number> {
     return serverPort;
   }
 
-  const port = await findStablePort();
-  log('debug', `Electron server port selected: ${port}`);
+  const port = ELECTRON_DEFAULT_PORT;
+  log('debug', `Electron server port: ${port}`);
 
   return new Promise((resolve, reject) => {
     const isPackaged = app.isPackaged;

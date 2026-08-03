@@ -23,13 +23,18 @@ const tabStoreSource = fs.readFileSync(
   'utf8',
 );
 
-test('packaged Electron prefers a stable local server port', () => {
+test('packaged Electron always uses the fixed local server port', () => {
   assert.match(electronMainSource, /const ELECTRON_DEFAULT_PORT = 32123;/);
-  assert.match(electronMainSource, /const ELECTRON_PORT_SCAN_LIMIT = 100;/);
-  assert.match(electronMainSource, /async function findStablePort\(\): Promise<number>/);
-  assert.match(electronMainSource, /const candidate = ELECTRON_DEFAULT_PORT \+ offset;/);
-  assert.match(electronMainSource, /const port = await findStablePort\(\);/);
-  assert.doesNotMatch(electronMainSource, /srv\.listen\(0, '127\.0\.0\.1'/);
+  assert.match(electronMainSource, /const port = ELECTRON_DEFAULT_PORT;/);
+  assert.doesNotMatch(electronMainSource, /PORT_SCAN_LIMIT/);
+  assert.doesNotMatch(electronMainSource, /findStablePort/);
+  assert.doesNotMatch(electronMainSource, /isPortAvailable/);
+});
+
+test('Electron development keeps an explicitly configured server port', () => {
+  assert.match(electronMainSource, /const devPort = process\.env\.TESSERA_DEV_PORT;/);
+  assert.match(electronMainSource, /serverPort = parseInt\(devPort, 10\);/);
+  assert.match(electronMainSource, /return serverPort;/);
 });
 
 test('Electron UI storage is persisted by main process outside the page origin', () => {
