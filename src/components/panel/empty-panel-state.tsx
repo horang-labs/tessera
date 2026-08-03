@@ -91,6 +91,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
+  const defaultNewSessionKind = useSettingsStore((state) => state.settings.defaultNewSessionKind);
   const providers = useProvidersStore((state) => state.providers);
   const { createSession, isCreating } = useSessionCrud();
   const { createWorktreeSession } = useWorktreeSession();
@@ -136,7 +137,8 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const [selectedProvider, setSelectedProvider] = useState('');
   const [executionMode, setExecutionModeState] = useState(defaultExecutionMode);
   const executionModeTouchedRef = useRef(false);
-  const [mode, setMode] = useState<'chat' | 'task' | 'shell'>('chat');
+  const [mode, setMode] = useState<'chat' | 'task' | 'shell'>(defaultNewSessionKind);
+  const modeTouchedRef = useRef(false);
   const [rawSelectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState('');
   const [branchSlug, setBranchSlug] = useState(() => buildManagedWorktreeSlug());
@@ -158,6 +160,15 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   useEffect(() => {
     if (!executionModeTouchedRef.current) setExecutionModeState(defaultExecutionMode);
   }, [defaultExecutionMode]);
+
+  useEffect(() => {
+    if (!modeTouchedRef.current) setMode(defaultNewSessionKind);
+  }, [defaultNewSessionKind]);
+
+  const selectMode = useCallback((nextMode: 'chat' | 'task' | 'shell') => {
+    modeTouchedRef.current = true;
+    setMode(nextMode);
+  }, []);
 
   const setExecutionMode = useCallback((nextMode: typeof executionMode) => {
     executionModeTouchedRef.current = true;
@@ -191,10 +202,10 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   } = useWorktreeBaseRefs(mode === 'task' ? activeProject?.decodedPath : null);
 
   const handleSetModeTask = useCallback((_e: MouseEvent) => {
-    setMode('task');
+    selectMode('task');
     // Focus the title input after React commits the DOM update
     requestAnimationFrame(() => titleInputRef.current?.focus());
-  }, []);
+  }, [selectMode]);
 
   const handleClose = useCallback(() => {
     closePanel(panelId);
@@ -494,7 +505,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             <div className="mt-2 grid max-w-xl grid-cols-3 gap-1 rounded-xl border border-(--divider) bg-(--sidebar-bg) p-1">
               <button
                 type="button"
-                onClick={() => setMode('chat')}
+                onClick={() => selectMode('chat')}
                 className={cn(
                   'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'chat'
@@ -536,7 +547,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
 
               <button
                 type="button"
-                onClick={() => setMode('shell')}
+                onClick={() => selectMode('shell')}
                 className={cn(
                   'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'shell'

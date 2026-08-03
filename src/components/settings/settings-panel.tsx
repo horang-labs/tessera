@@ -25,6 +25,7 @@ import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 import AgentExecutionModeSettings from './agent-execution-mode-settings';
 import TerminalViewDefaultSettings from './terminal-view-default-settings';
+import NewSessionKindSettings from './new-session-kind-settings';
 import CustomModelSettings from './custom-model-settings';
 import ProjectPreparationSettings from './project-preparation-settings';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
@@ -208,6 +209,9 @@ export default function SettingsPanel() {
           <>
             <SettingsCard testId="settings-section-general-execution-mode">
               <AgentExecutionModeSettings />
+            </SettingsCard>
+            <SettingsCard testId="settings-section-general-new-session-kind">
+              <NewSessionKindSettings />
             </SettingsCard>
             <SettingsCard testId="settings-section-general-terminal-view">
               <TerminalViewDefaultSettings />

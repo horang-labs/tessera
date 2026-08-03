@@ -31,6 +31,19 @@ export const ko: I18nMessages = {
         description: '에이전트 기록에서 되살린 대화로 엽니다.',
       },
     },
+    newSessionKind: {
+      title: '새 세션 기본값',
+      description: '새 세션 화면과 빠른 생성 메뉴에서 처음 선택될 항목입니다.',
+      note: '칸반 보드는 생성하는 컬럼에 맞는 종류를 그대로 사용합니다.',
+      chat: {
+        label: '새 세션',
+        description: '프로젝트에서 바로 에이전트 세션을 시작합니다.',
+      },
+      task: {
+        label: '새 워크트리',
+        description: '전용 브랜치와 워크트리를 만들고 세션을 시작합니다.',
+      },
+    },
     executionMode: {
       title: '에이전트 실행 모드',
       description: '새 채팅과 워크트리 세션을 여는 방식을 선택합니다.',

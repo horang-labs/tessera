@@ -23,6 +23,13 @@ export interface I18nMessages {
       terminal: { label: string; description: string };
       chat: { label: string; description: string };
     };
+    newSessionKind: {
+      title: string;
+      description: string;
+      note: string;
+      chat: { label: string; description: string };
+      task: { label: string; description: string };
+    };
     executionMode: {
       title: string;
       description: string;
