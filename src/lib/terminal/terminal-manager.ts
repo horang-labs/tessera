@@ -393,14 +393,7 @@ export class TerminalManager {
       ? this.getSessionKey(options.userId, options.sessionId)
       : null;
     if (this.shuttingDown || (blockedSessionKey && this.blockedSessions.has(blockedSessionKey))) {
-      if (options.sessionId) this.clearTerminalReservation(options.userId, options.sessionId);
-      if (options.launchSpec?.handoffSessionId) {
-        releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
-      }
-      options.launchObserverDisposer?.();
-      revokePaneTokensForTerminal(options.terminalId);
-      cleanupCodexOverlayForTerminal(options.terminalId);
-      cleanupCodexOverlayInWsl(options.terminalId);
+      this.disposeUnspawnedLaunch(options);
       this.sendToConnection(options.connectionId, {
         type: 'terminal_error',
         terminalId: options.terminalId,
@@ -514,10 +507,16 @@ export class TerminalManager {
   async startDetached(
     options: Omit<TerminalCreateOptions, 'connectionId' | 'surfaceId'>,
   ): Promise<void> {
-    if (this.shuttingDown) return;
+    if (this.shuttingDown) {
+      this.disposeUnspawnedLaunch(options);
+      throw new Error('Terminal host is shutting down.');
+    }
 
     const key = this.getKey(options.userId, options.terminalId);
-    if (this.terminals.has(key) || this.openingByTerminalKey.has(key)) return;
+    if (this.terminals.has(key) || this.openingByTerminalKey.has(key)) {
+      this.disposeUnspawnedLaunch(options);
+      throw new Error('The Session already has a live PTY runtime.');
+    }
 
     const resolvedOptions: TerminalCreateOptions = {
       ...options,
@@ -903,12 +902,6 @@ export class TerminalManager {
 
       return runtime;
     } catch (error) {
-      if (options.sessionId) {
-        this.clearTerminalReservation(options.userId, options.sessionId, options.terminalId);
-      }
-      if (options.launchSpec?.handoffSessionId) {
-        releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
-      }
       try {
         terminalProcess?.kill();
       } catch {
@@ -918,12 +911,24 @@ export class TerminalManager {
       if (this.terminals.get(key)?.process === terminalProcess) {
         this.terminals.delete(key);
       }
-      revokePaneTokensForTerminal(options.terminalId);
-      cleanupCodexOverlayForTerminal(options.terminalId);
-      cleanupCodexOverlayInWsl(options.terminalId);
-      options.launchObserverDisposer?.();
+      this.disposeUnspawnedLaunch(options);
       throw error;
     }
+  }
+
+  private disposeUnspawnedLaunch(
+    options: Omit<TerminalCreateOptions, 'connectionId' | 'surfaceId'>,
+  ): void {
+    if (options.sessionId) {
+      this.clearTerminalReservation(options.userId, options.sessionId, options.terminalId);
+    }
+    if (options.launchSpec?.handoffSessionId) {
+      releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
+    }
+    options.launchObserverDisposer?.();
+    revokePaneTokensForTerminal(options.terminalId);
+    cleanupCodexOverlayForTerminal(options.terminalId);
+    cleanupCodexOverlayInWsl(options.terminalId);
   }
 
   private async attachRuntime(
@@ -1835,6 +1840,10 @@ export class TerminalManager {
   ): Promise<TerminalShellKind | undefined> {
     if (options.shellKind && options.shellKind !== 'default') {
       return options.shellKind;
+    }
+
+    if (options.agentEnvironment) {
+      return options.agentEnvironment === 'wsl' ? 'wsl' : options.shellKind;
     }
 
     const agentEnvironment = await getAgentEnvironment(options.userId);

@@ -43,6 +43,8 @@ export interface TerminalCreateOptions {
   cwd?: string | null;
   sessionId?: string | null;
   shellKind?: TerminalShellKind;
+  /** Already resolved by a server-owned launch module; avoids re-reading user settings. */
+  agentEnvironment?: 'native' | 'wsl';
   cols?: number;
   rows?: number;
   launchSpec?: TerminalLaunchSpec;
