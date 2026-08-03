@@ -37,10 +37,11 @@ export async function GET(
 
     const processInfo = processManager.getProcess(id);
     const providerId = session.provider?.trim();
+    const workDir = dbSessions.getSessionWorktreeContext(id)?.workDir;
 
     if (!processInfo) {
       const preparation = await waitForPreparationBeforeSkillDiscovery({
-        workDir: session.work_dir,
+        workDir,
       });
       if (!preparation.ready) {
         const code = preparation.reason === 'failed'
@@ -65,7 +66,7 @@ export async function GET(
           ? await processInfo.skillSource.listSkills()
           : await listCodexSkills({
               userId: auth.userId,
-              workDir: session.work_dir,
+              workDir,
             });
         return NextResponse.json({ skills });
       } catch (error) {
@@ -89,7 +90,7 @@ export async function GET(
       return NextResponse.json({
         skills: await listClaudeSkills({
           userId: auth.userId,
-          workDir: session.work_dir,
+          workDir,
         }),
       });
     }
@@ -99,7 +100,7 @@ export async function GET(
         ? processManager.getCommands(id)
         : await listOpenCodeCommands({
             userId: auth.userId,
-            workDir: session.work_dir,
+            workDir,
           });
       return NextResponse.json({ skills: commands });
     }

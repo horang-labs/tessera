@@ -394,19 +394,19 @@ interface GitSessionContext {
 }
 
 async function resolveSessionContext(sessionId: string): Promise<GitSessionContext> {
-  const session = dbSessions.getSession(sessionId);
+  const session = dbSessions.getSessionWorktreeContext(sessionId);
   if (!session)
     throw new GitPanelError("session_not_found", "Session not found", 404);
-  if (!session.work_dir)
+  if (!session.workDir)
     throw new GitPanelError(
       "missing_work_dir",
       "Session has no working directory",
       422,
     );
   return {
-    workDir: session.work_dir,
-    taskId: session.task_id,
-    worktreeBranch: session.worktree_branch,
+    workDir: session.workDir,
+    taskId: session.taskId,
+    worktreeBranch: session.worktreeBranch,
   };
 }
 

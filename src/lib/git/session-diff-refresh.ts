@@ -7,26 +7,26 @@ import { flushGitPanelRecompute } from './git-panel-cache';
 import { flushRecompute } from './worktree-diff-stats-cache';
 
 export function getManagedSessionWorkDir(sessionId: string): string | null {
-  const session = dbSessions.getSession(sessionId);
+  const session = dbSessions.getSessionWorktreeContext(sessionId);
   // Any session with a work_dir gets live diff recompute (file-watch +
   // per-tool + turn-end), not just worktree-branch-bound ones. Standalone
   // chats working inside a git worktree keep their diff badge up to date the
   // same way. computeWorktreeDiffStats returns null for non-git dirs, so this
   // is safe for plain work_dirs.
-  if (!session?.work_dir) return null;
-  return session.work_dir;
+  if (!session?.workDir) return null;
+  return session.workDir;
 }
 
 export function getSessionTaskId(sessionId: string): string | null {
-  const session = dbSessions.getSession(sessionId);
-  return session?.task_id ?? null;
+  const session = dbSessions.getSessionWorktreeContext(sessionId);
+  return session?.taskId ?? null;
 }
 
 export async function refreshSessionDiffState(
   sessionId: string,
   userId: string,
 ): Promise<void> {
-  const session = dbSessions.getSession(sessionId);
+  const session = dbSessions.getSessionWorktreeContext(sessionId);
   if (!session) return;
 
   async function runOperation(
@@ -43,10 +43,10 @@ export async function refreshSessionDiffState(
     }
   }
 
-  if (session.work_dir) {
+  if (session.workDir) {
     await runOperation(
       'worktree_diff_stats',
-      flushRecompute(session.work_dir, userId),
+      flushRecompute(session.workDir, userId),
     );
   }
 
@@ -54,10 +54,10 @@ export async function refreshSessionDiffState(
   // the freshly-probed PR state in the same broadcast. Otherwise the panel
   // is built from stale prContext/sessionPr cache and the PR-derived
   // github.available / github.reasonCode lag until the next reload.
-  if (session.task_id) {
+  if (session.taskId) {
     const agentEnvironment = await getAgentEnvironment(userId);
-    await runOperation('task_pr_status', syncTaskPr(session.task_id, { agentEnvironment }));
-  } else if (session.work_dir) {
+    await runOperation('task_pr_status', syncTaskPr(session.taskId, { agentEnvironment }));
+  } else if (session.workDir) {
     const agentEnvironment = await getAgentEnvironment(userId);
     await runOperation('session_pr_status', syncSessionPr(sessionId, { agentEnvironment }));
   }

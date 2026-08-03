@@ -623,14 +623,15 @@ async function ensureSessionProcess({
     });
     return false;
   }
-  const workDir = session.work_dir || process.cwd();
+  const effectiveWorkDir = dbSessions.getSessionWorktreeContext(sessionId)?.workDir;
+  const workDir = effectiveWorkDir || process.cwd();
 
   // A CLI reads its instruction files once, at startup. Starting it before the
   // worktree has them means this session never sees them, so the spawn waits —
   // and the user is told, because a message that sits there unanswered with no
   // explanation is the one thing worse than waiting.
   const waited = await waitForPreparationBeforeAgent({
-    workDir: session.work_dir,
+    workDir: effectiveWorkDir,
     onWaitStarted: () => {
       sendToUser(userId, { type: 'session_awaiting_preparation', sessionId });
     },
@@ -726,9 +727,9 @@ export async function resumeSessionFromWebSocket({
     return;
   }
   try {
-    const sessionRecord = dbSessions.getSession(sessionId);
+    const sessionRecord = dbSessions.getSessionWorktreeContext(sessionId);
     const result = await sessionOrchestrator.resumeSession(userId, sessionId, {
-      workDir: sessionRecord?.work_dir || undefined,
+      workDir: sessionRecord?.workDir || undefined,
       permissionMode,
       sessionMode,
       accessMode,

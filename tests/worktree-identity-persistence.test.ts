@@ -65,14 +65,14 @@ test('UI reads prefer the parent checkout path and retain the legacy child fallb
   const staleChildPath = path.join(dataDir, 'stale-child');
 
   tasks.createTask({ id: 'parent-owned', projectId: 'project-one', title: 'Parent owned' });
-  tasks.setTaskWorktreeCheckout('parent-owned', {
-    branch: 'feature/parent-owned',
-    path: parentPath,
-  });
   sessions.createSession('stale-child', 'project-one', 'Stale child', 'codex', {
     taskId: 'parent-owned',
     workDir: staleChildPath,
     worktreeManaged: true,
+  });
+  tasks.setTaskWorktreeCheckout('parent-owned', {
+    branch: 'feature/parent-owned',
+    path: parentPath,
   });
 
   assert.equal(tasks.getTask('parent-owned')?.workDir, parentPath);
@@ -99,6 +99,7 @@ test('the persistence adapter lists zero-session Worktrees and resolves only pub
   database.getDb().prepare(`
     UPDATE tasks
     SET worktree_branch = 'feature/adapter',
+        worktree_path = '   ',
         preparation_status = 'running',
         preparation_phase = 'after'
     WHERE id = 'adapter-populated'

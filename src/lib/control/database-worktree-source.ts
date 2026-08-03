@@ -1,5 +1,5 @@
 import { getDb } from '@/lib/db/database';
-import { LEGACY_WORKTREE_PATH_FROM_CHILD_SQL } from '@/lib/db/worktree-identity';
+import { PARENT_FIRST_WORKTREE_PATH_SQL } from '@/lib/db/worktree-identity';
 import {
   readPreparationPhase,
   readPreparationStatus,
@@ -22,7 +22,7 @@ interface WorktreeRow {
 
 const WORKTREE_PROJECTION_SQL = `
   SELECT public_worktree_id, project_id, title, worktree_branch,
-         COALESCE(worktree_path, ${LEGACY_WORKTREE_PATH_FROM_CHILD_SQL}) AS worktree_path,
+         ${PARENT_FIRST_WORKTREE_PATH_SQL} AS worktree_path,
          preparation_status, preparation_phase
   FROM tasks
 `;

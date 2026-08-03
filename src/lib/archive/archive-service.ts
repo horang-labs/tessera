@@ -164,9 +164,14 @@ function isRecordedManagedWorktree(
 }
 
 async function mapChat(row: SessionRow): Promise<ArchiveItem> {
-  const worktreeStatus = await getWorktreeStatus(row.work_dir, row.worktree_deleted_at);
-  const hasWorktreeDependency = Boolean(row.work_dir);
-  const worktreeManaged = isRecordedManagedWorktree(row.work_dir, row.worktree_managed);
+  const checkout = dbSessions.getSessionWorktreeContext(row.id);
+  const workDir = checkout?.workDir ?? row.work_dir;
+  const worktreeBranch = checkout?.worktreeBranch ?? row.worktree_branch;
+  const worktreeStatus = await getWorktreeStatus(workDir, row.worktree_deleted_at);
+  const hasWorktreeDependency = Boolean(workDir);
+  const worktreeManaged = checkout
+    ? checkout.worktreeManaged
+    : isRecordedManagedWorktree(workDir, row.worktree_managed);
   return {
     id: row.id,
     kind: 'chat',
@@ -178,8 +183,8 @@ async function mapChat(row: SessionRow): Promise<ArchiveItem> {
     archivedAt: row.archived_at ?? row.updated_at,
     updatedAt: row.updated_at,
     createdAt: row.created_at,
-    workDir: row.work_dir ?? undefined,
-    worktreeBranch: row.worktree_branch ?? undefined,
+    workDir: workDir ?? undefined,
+    worktreeBranch: worktreeBranch ?? undefined,
     worktreeManaged,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
     worktreeStatus,
@@ -291,8 +296,9 @@ export async function restoreArchivedChat(sessionId: string, userId?: string): P
       throw new Error('Sessions of an archived task must be restored through their task');
     }
 
-    const worktreeStatus = await getWorktreeStatus(session.work_dir, session.worktree_deleted_at);
-    if (session.work_dir && worktreeStatus !== 'present') {
+    const workDir = dbSessions.getSessionWorktreeContext(sessionId)?.workDir ?? session.work_dir;
+    const worktreeStatus = await getWorktreeStatus(workDir, session.worktree_deleted_at);
+    if (workDir && worktreeStatus !== 'present') {
       throw new Error('Cannot restore because the worktree is unavailable');
     }
 

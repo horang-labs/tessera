@@ -87,7 +87,8 @@ export async function forkCodexSession(
     sessionHistory.flushSession(sourceSessionId);
 
     const project = dbProjects.getProject(source.project_id);
-    const resolvedWorkDir = source.work_dir
+    const effectiveCheckout = dbSessions.getSessionWorktreeContext(sourceSessionId);
+    const resolvedWorkDir = effectiveCheckout?.workDir
       ?? project?.decoded_path
       ?? (path.isAbsolute(source.project_id) ? source.project_id : process.cwd());
     let remoteFork: CodexThreadForkResult | null = null;
@@ -110,8 +111,8 @@ export async function forkCodexSession(
         hasCustomTitle: true,
         parentProjectId: source.project_id,
         resolvedWorkDir,
-        worktreeBranch: source.worktree_branch ?? undefined,
-        worktreeManaged: source.worktree_managed === 1,
+        worktreeBranch: effectiveCheckout?.worktreeBranch ?? undefined,
+        worktreeManaged: effectiveCheckout?.worktreeManaged ?? false,
         taskId: source.task_id ?? undefined,
         collectionId: source.collection_id ?? undefined,
         model: remoteFork.model ?? source.model ?? undefined,

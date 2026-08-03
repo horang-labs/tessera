@@ -576,7 +576,7 @@ export async function routeClientTransportMessage({
       // a PTY reads CLAUDE.md at startup just as a headless CLI does. Nothing
       // else opening a terminal is held: a plain shell has nothing to read.
       if (!terminalExists && structured) {
-        const workDir = dbSessions.getSession(structured.sessionId)?.work_dir ?? null;
+        const workDir = dbSessions.getSessionWorktreeContext(structured.sessionId)?.workDir ?? null;
         await waitForPreparationBeforeAgent({
           workDir,
           onWaitStarted: () => {

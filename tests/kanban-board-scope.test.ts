@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   collectKanbanScopeData,
+  filterKanbanTasks,
   resolveKanbanScope,
 } from '@/lib/kanban/board-scope';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
@@ -88,4 +89,34 @@ test('single-project scope keeps sessions, tasks, and collections project-local'
   assert.deepEqual(data.sessions.map((item) => item.id), ['chat-beta']);
   assert.deepEqual(data.tasks.map((item) => item.id), ['task-beta']);
   assert.deepEqual(Object.keys(data.collectionsByProject), ['beta']);
+});
+
+test('kanban keeps a zero-session worktree task while excluding tasks whose children are not visible', () => {
+  const visibleChild = session('visible-child', 'alpha');
+  visibleChild.taskId = 'visible-task';
+
+  const visibleTask = task('visible-task', 'alpha');
+  visibleTask.sessions = [{
+    id: visibleChild.id,
+    title: visibleChild.title,
+    lastModified: visibleChild.lastModified,
+    isRunning: false,
+  }];
+
+  const hiddenTask = task('hidden-task', 'alpha');
+  hiddenTask.sessions = [{
+    id: 'archived-child',
+    title: 'archived-child',
+    lastModified: '2026-07-14T00:00:00.000Z',
+    isRunning: false,
+  }];
+
+  assert.deepEqual(
+    filterKanbanTasks(
+      [task('zero-session-task', 'alpha'), visibleTask, hiddenTask],
+      [visibleChild],
+      null,
+    ).map((item) => item.id),
+    ['zero-session-task', 'visible-task'],
+  );
 });

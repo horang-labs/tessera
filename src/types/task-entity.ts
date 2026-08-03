@@ -43,7 +43,7 @@ export interface TaskEntity {
   collectionId?: string;   // FK -> collections.id
   workflowStatus: WorkflowStatus;
   worktreeBranch?: string;
-  workDir?: string;        // Working directory (from first session's work_dir)
+  workDir?: string;        // Parent-owned checkout path (legacy child fallback during migration)
   /** True when Tessera recorded this worktree as app-managed. */
   worktreeManaged?: boolean;
   archived?: boolean;
