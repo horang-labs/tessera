@@ -13,7 +13,7 @@ import { taskPrPoller } from './src/lib/github/task-pr-poller';
 import { installTaskPrStatusBroadcast, uninstallTaskPrStatusBroadcast } from './src/lib/github/task-pr-broadcast';
 import { installSessionPrStatusBroadcast, uninstallSessionPrStatusBroadcast } from './src/lib/github/session-pr-broadcast';
 import { ensureRSAKeys } from './src/lib/auth/keys';
-import { readUsersFile } from './src/lib/users';
+import { resolveServerDefaultUserId } from './src/lib/server-default-user';
 import { SettingsManager } from './src/lib/settings/manager';
 import { pruneExpiredArchivedWorktrees } from './src/lib/archive/archive-service';
 import { prewarmCliStatusSnapshot } from './src/lib/cli/provider-status-prewarm';
@@ -45,8 +45,7 @@ async function startServer() {
   await ensureRSAKeys();
   prewarmCliStatusSnapshot('server');
   try {
-    const users = await readUsersFile();
-    const userId = users.users[0]?.id;
+    const userId = await resolveServerDefaultUserId();
     if (userId) {
       const settings = await SettingsManager.load(userId);
       if (settings.autoDeleteArchivedWorktrees) {

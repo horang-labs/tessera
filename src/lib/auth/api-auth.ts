@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { verifyToken } from '@/lib/auth/jwt';
 import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
-import { getElectronAuthUserId } from '@/lib/auth/electron-user';
+import { getElectronAuthUserId } from '@/lib/electron-user';
 import { findUserById } from '@/lib/users';
 
 async function getAuthenticatedUserId(request: NextRequest): Promise<string | null> {

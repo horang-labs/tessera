@@ -12,7 +12,7 @@ import { ensureRSAKeys } from '../src/lib/auth/keys';
 import { wsServer } from '../src/lib/ws/server';
 import { processManager } from '../src/lib/cli/process-manager';
 import { getAgentEnvironment } from '../src/lib/cli/spawn-cli';
-import { getElectronAuthUserId } from '../src/lib/auth/electron-user';
+import { resolveServerDefaultUserId } from '../src/lib/server-default-user';
 import { rateLimitPoller } from '../src/lib/rate-limit/poller';
 import { taskPrPoller } from '../src/lib/github/task-pr-poller';
 import { installTaskPrStatusBroadcast, uninstallTaskPrStatusBroadcast } from '../src/lib/github/task-pr-broadcast';
@@ -145,7 +145,10 @@ initDatabase().then(() => {
     wsServer.start(server);
     rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
     rateLimitPoller.setEnvironmentResolver(async () => {
-      const userId = await getElectronAuthUserId();
+      const userId = await resolveServerDefaultUserId();
+      if (!userId) {
+        throw new Error('Electron server default user is unavailable');
+      }
       return getAgentEnvironment(userId);
     });
     rateLimitPoller.start();

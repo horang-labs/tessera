@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { verifyToken } from '@/lib/auth/jwt';
 import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
-import { getElectronAuthUserId } from '@/lib/auth/electron-user';
+import { getElectronAuthUserId } from '@/lib/electron-user';
 import { SettingsManager } from '@/lib/settings/manager';
 import { getSetupEntryRoute } from '@/lib/setup/setup-routing';
 import { findUserById, hasAnyUsers } from '@/lib/users';

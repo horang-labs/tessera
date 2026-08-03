@@ -6,7 +6,7 @@ import { processManager } from '../cli/process-manager';
 import { protocolAdapter } from '../cli/protocol-adapter';
 import { verifyToken } from '../auth/jwt';
 import { isElectronAuthBypassEnabled } from '../auth/electron-mode';
-import { getElectronAuthUserId } from '../auth/electron-user';
+import { getElectronAuthUserId } from '../electron-user';
 import { findUserById } from '../users';
 import { getCachedRateLimitData } from '../rate-limit/fetcher';
 import { skillAnalysisService } from '../skill/skill-analysis-service';

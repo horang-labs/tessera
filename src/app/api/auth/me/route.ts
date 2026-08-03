@@ -3,7 +3,7 @@ import { verifyToken } from '@/lib/auth/jwt';
 import { findUserById } from '@/lib/users';
 import { createAuthError } from '@/lib/error';
 import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
-import { getElectronAuthUser } from '@/lib/auth/electron-user';
+import { getElectronAuthUser } from '@/lib/electron-user';
 import type { MeResponse } from '@/types/auth';
 
 export async function GET(request: NextRequest) {
