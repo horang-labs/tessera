@@ -38,6 +38,7 @@ test('every Control request authenticates and negotiates the exact runtime and v
     appVersion: DESCRIPTOR.appVersion,
     runtimeId: DESCRIPTOR.runtimeId,
     projects: { list: () => [], get: () => undefined },
+    worktrees: { list: () => [], get: () => undefined },
   });
   const handler = createControlHttpHandler({ descriptor: DESCRIPTOR, service });
   const server = http.createServer((req, res) => {

@@ -28,6 +28,7 @@ import { getServerPort } from './src/lib/server-port';
 import { handleHookRequest } from './src/lib/cli/hook-receiver';
 import { warmWindowsConptyOnce } from './src/lib/terminal/windows-conpty-warmup';
 import { createDatabaseControlProjectSource } from './src/lib/control/database-project-source';
+import { createDatabaseControlWorktreeSource } from './src/lib/control/database-worktree-source';
 import {
   CONTROL_ROUTE_PREFIX,
   createControlHttpHandler,
@@ -145,6 +146,7 @@ async function startServer() {
           appVersion,
           runtimeId: controlRuntime.descriptor.runtimeId,
           projects: createDatabaseControlProjectSource(),
+          worktrees: createDatabaseControlWorktreeSource(),
         }),
       });
 

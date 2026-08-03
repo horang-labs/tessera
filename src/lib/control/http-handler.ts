@@ -31,7 +31,8 @@ export function createControlHttpHandler(options: {
   const { descriptor, service } = options;
 
   return async (request, response) => {
-    const pathname = request.url ? new URL(request.url, 'http://localhost').pathname : '';
+    const requestUrl = request.url ? new URL(request.url, 'http://localhost') : null;
+    const pathname = requestUrl?.pathname ?? '';
     if (pathname !== CONTROL_ROUTE_PREFIX && !pathname.startsWith(`${CONTROL_ROUTE_PREFIX}/`)) {
       return false;
     }
@@ -93,6 +94,44 @@ export function createControlHttpHandler(options: {
 
       if (pathname === `${CONTROL_ROUTE_PREFIX}/projects`) {
         writeSuccess(response, await service.listProjects(context));
+        return true;
+      }
+
+      if (pathname === `${CONTROL_ROUTE_PREFIX}/worktrees`) {
+        const current = requestUrl?.searchParams.get('current');
+        const projectId = requestUrl?.searchParams.get('projectId');
+        if ((current === '1') === Boolean(projectId)) {
+          throw new ControlOperationError(
+            'INVALID_USAGE',
+            'Exactly one Worktree Project selector is required.',
+            400,
+          );
+        }
+        writeSuccess(
+          response,
+          await service.listWorktrees(
+            current === '1'
+              ? { kind: 'current' }
+              : { kind: 'project', projectId: projectId as string },
+            context,
+          ),
+        );
+        return true;
+      }
+
+      const worktreePrefix = `${CONTROL_ROUTE_PREFIX}/worktrees/`;
+      if (pathname.startsWith(worktreePrefix)) {
+        const encodedWorktreeId = pathname.slice(worktreePrefix.length);
+        if (!encodedWorktreeId || encodedWorktreeId.includes('/')) {
+          throw new ControlOperationError('INVALID_USAGE', 'A Worktree ID is required.', 400);
+        }
+        let worktreeId: string;
+        try {
+          worktreeId = decodeURIComponent(encodedWorktreeId);
+        } catch {
+          throw new ControlOperationError('INVALID_USAGE', 'The Worktree ID is invalid.', 400);
+        }
+        writeSuccess(response, await service.showWorktree(worktreeId, context));
         return true;
       }
 

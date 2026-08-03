@@ -31,6 +31,10 @@ interface SqlJsStatement {
 import fs from 'fs';
 import { CREATE_INDEXES, CREATE_TABLES, SCHEMA_VERSION } from './schema';
 import { resolveDatabaseLocation } from './location';
+import {
+  generatePublicWorktreeId,
+  LEGACY_WORKTREE_PATH_FROM_CHILD_SQL,
+} from './worktree-identity';
 import logger from '../logger';
 
 // ── better-sqlite3 compatible wrapper ───────────────────────────────────────
@@ -221,6 +225,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
   addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
   addPreparationStatusColumns(db);
+  ensureWorktreeIdentityColumns(db);
 }
 
 /**
@@ -458,6 +463,9 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     if (!taskCols.some(c => c.name === 'sort_order')) {
       db.exec(`ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
     }
+    if (!taskCols.some(c => c.name === 'public_worktree_id')) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN public_worktree_id TEXT`);
+    }
 
     // Add task_id and collection_id to sessions
     const cols = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
@@ -525,7 +533,7 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
 
     if (wtSessions.length > 0) {
       const insertTask = db.prepare(
-        'INSERT INTO tasks (id, project_id, title, collection_id, workflow_status, worktree_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO tasks (id, public_worktree_id, project_id, title, collection_id, workflow_status, worktree_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       );
       const linkSession = db.prepare('UPDATE sessions SET task_id = ? WHERE id = ?');
 
@@ -537,7 +545,17 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
         else if (s.task_status === 'in_review') wfStatus = 'in_review';
         else if (s.task_status === 'done' || s.task_status === 'cancelled' || s.task_status === 'stopped') wfStatus = 'done';
 
-        insertTask.run(taskId, s.project_id, s.title, s.collection_id, wfStatus, s.worktree_branch, s.created_at, s.updated_at);
+        insertTask.run(
+          taskId,
+          generatePublicWorktreeId(),
+          s.project_id,
+          s.title,
+          s.collection_id,
+          wfStatus,
+          s.worktree_branch,
+          s.created_at,
+          s.updated_at,
+        );
         linkSession.run(taskId, s.id);
       }
       logger.info({ count: wtSessions.length }, 'Migrated worktree sessions to tasks');
@@ -1011,6 +1029,62 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     addPreparationStatusColumns(db);
     logger.info('Migration v32 applied: preparation split into before and after stages');
   }
+
+  if (fromVersion < 33) {
+    ensureWorktreeIdentityColumns(db);
+    logger.info('Migration v33 applied: persisted public Worktree identity and checkout path');
+  }
+}
+
+function ensureWorktreeIdentityColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'public_worktree_id', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'worktree_path', 'TEXT');
+
+  const missingIds = db.prepare(`
+    SELECT id
+    FROM tasks
+    WHERE public_worktree_id IS NULL OR public_worktree_id = ''
+    ORDER BY id
+  `).all() as Array<{ id: string }>;
+  const assignId = db.prepare(`
+    UPDATE tasks
+    SET public_worktree_id = ?
+    WHERE id = ? AND (public_worktree_id IS NULL OR public_worktree_id = '')
+  `);
+  for (const row of missingIds) {
+    assignId.run(generatePublicWorktreeId(), row.id);
+  }
+
+  db.exec(`
+    UPDATE tasks
+    SET worktree_path = ${LEGACY_WORKTREE_PATH_FROM_CHILD_SQL}
+    WHERE worktree_path IS NULL
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_public_worktree_id
+    ON tasks(public_worktree_id)
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_tasks_public_worktree_id_insert
+    BEFORE INSERT ON tasks
+    FOR EACH ROW
+    WHEN NEW.public_worktree_id IS NULL
+      OR LENGTH(NEW.public_worktree_id) <= 3
+      OR SUBSTR(NEW.public_worktree_id, 1, 3) <> 'wt_'
+    BEGIN
+      SELECT RAISE(ABORT, 'A persisted wt_-prefixed public Worktree ID is required');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tasks_public_worktree_id_update
+    BEFORE UPDATE OF public_worktree_id ON tasks
+    FOR EACH ROW
+    WHEN NEW.public_worktree_id IS NULL
+      OR LENGTH(NEW.public_worktree_id) <= 3
+      OR SUBSTR(NEW.public_worktree_id, 1, 3) <> 'wt_'
+    BEGIN
+      SELECT RAISE(ABORT, 'A persisted wt_-prefixed public Worktree ID is required');
+    END;
+  `);
 }
 
 /** Preparation status belongs to the worktree, and the task is what owns one. */

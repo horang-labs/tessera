@@ -4,6 +4,10 @@ import {
   type ProjectFilesystemKind,
 } from '@/lib/projects/environment-policy';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import type {
+  PreparationPhase,
+  PreparationStatus,
+} from '@/lib/projects/preparation-status-policy';
 import { CONTROL_API_VERSION } from './runtime-descriptor';
 
 export type ControlErrorCode =
@@ -12,6 +16,7 @@ export type ControlErrorCode =
   | 'INSTANCE_UNAVAILABLE'
   | 'INVALID_USAGE'
   | 'PROJECT_NOT_FOUND'
+  | 'WORKTREE_NOT_FOUND'
   | 'UNAUTHORIZED';
 
 export interface ControlCallerContext {
@@ -45,6 +50,47 @@ export interface ControlProjectSource {
   get(projectId: string): ControlProjectRecord | undefined;
 }
 
+export interface ControlWorktreeSessionRecord {
+  sessionId: string;
+  title: string;
+  provider: string;
+  updatedAt: string;
+}
+
+export interface ControlWorktreeRecord {
+  worktreeId: string;
+  projectId: string;
+  title: string;
+  branch: string | null;
+  filesystemPath: string | null;
+  preparationStatus: PreparationStatus;
+  preparationPhase: PreparationPhase;
+  sessions: ControlWorktreeSessionRecord[];
+}
+
+export interface ControlWorktreeSource {
+  list(projectId: string): ControlWorktreeRecord[];
+  get(worktreeId: string): ControlWorktreeRecord | undefined;
+}
+
+export type ControlProjectSelector =
+  | { kind: 'current' }
+  | { kind: 'project'; projectId: string };
+
+export interface PublicWorktreeDto {
+  worktreeId: string;
+  projectId: string;
+  title: string;
+  branch: string | null;
+  path: string | null;
+  preparation: {
+    status: PreparationStatus;
+    phase: PreparationPhase;
+    afterRunning: boolean;
+  };
+  sessions: ControlWorktreeSessionRecord[];
+}
+
 export interface ControlStatusDto {
   appVersion: string;
   controlVersion: typeof CONTROL_API_VERSION;
@@ -57,6 +103,11 @@ export interface ControlService {
   status(context: ControlCallerContext): Promise<ControlStatusDto>;
   listProjects(context: ControlCallerContext): Promise<{ projects: PublicProjectDto[] }>;
   showProject(projectId: string, context: ControlCallerContext): Promise<PublicProjectDto>;
+  listWorktrees(
+    selector: ControlProjectSelector,
+    context: ControlCallerContext,
+  ): Promise<{ worktrees: PublicWorktreeDto[] }>;
+  showWorktree(worktreeId: string, context: ControlCallerContext): Promise<PublicWorktreeDto>;
 }
 
 export class ControlOperationError extends Error {
@@ -75,8 +126,9 @@ export function createControlService(options: {
   appVersion: string;
   runtimeId: string;
   projects: ControlProjectSource;
+  worktrees: ControlWorktreeSource;
 }): ControlService {
-  const { appVersion, runtimeId, projects } = options;
+  const { appVersion, runtimeId, projects, worktrees } = options;
 
   return {
     async status(context) {
@@ -107,7 +159,50 @@ export function createControlService(options: {
       }
       return toPublicProject(project, context);
     },
+
+    async listWorktrees(selector, context) {
+      const projectId = resolveSelectedProjectId(selector, context);
+      if (!projects.get(projectId)) {
+        throw new ControlOperationError(
+          'PROJECT_NOT_FOUND',
+          'The requested Project does not exist.',
+          404,
+          { projectId },
+        );
+      }
+      return {
+        worktrees: worktrees.list(projectId).map((worktree) => (
+          toPublicWorktree(worktree, context)
+        )),
+      };
+    },
+
+    async showWorktree(worktreeId, context) {
+      const worktree = worktrees.get(worktreeId);
+      if (!worktree) {
+        throw new ControlOperationError(
+          'WORKTREE_NOT_FOUND',
+          'The requested Worktree does not exist.',
+          404,
+          { worktreeId },
+        );
+      }
+      return toPublicWorktree(worktree, context);
+    },
   };
+}
+
+function resolveSelectedProjectId(
+  selector: ControlProjectSelector,
+  context: ControlCallerContext,
+): string {
+  if (selector.kind === 'project') return selector.projectId;
+  if (context.projectId) return context.projectId;
+  throw new ControlOperationError(
+    'CALLER_CONTEXT_UNAVAILABLE',
+    'The current Project is unavailable outside a managed caller context.',
+    400,
+  );
 }
 
 function publicCallerContext(
@@ -138,5 +233,27 @@ function toPublicProject(
       filesystemKind: compatibility.filesystemKind,
       compatible: compatibility.ok,
     },
+  };
+}
+
+function toPublicWorktree(
+  worktree: ControlWorktreeRecord,
+  context: ControlCallerContext,
+): PublicWorktreeDto {
+  return {
+    worktreeId: worktree.worktreeId,
+    projectId: worktree.projectId,
+    title: worktree.title,
+    branch: worktree.branch,
+    path: worktree.filesystemPath === null
+      ? null
+      : formatPathForAgentDisplay(worktree.filesystemPath, context.agentEnvironment),
+    preparation: {
+      status: worktree.preparationStatus,
+      phase: worktree.preparationPhase,
+      afterRunning: worktree.preparationStatus === 'running'
+        && worktree.preparationPhase === 'after',
+    },
+    sessions: worktree.sessions.map((session) => ({ ...session })),
   };
 }

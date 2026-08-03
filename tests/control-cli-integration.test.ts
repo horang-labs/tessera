@@ -13,6 +13,7 @@ import {
   type RuntimeDescriptorHandle,
 } from '../src/lib/control/runtime-descriptor';
 import { createControlService } from '../src/lib/control/service';
+import type { ControlWorktreeRecord } from '../src/lib/control/service';
 
 const REPO_ROOT = process.cwd();
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'tessera.mjs');
@@ -175,6 +176,81 @@ test('the CLI uses stable JSON failures and process exits', async () => {
   }
 });
 
+test('the CLI lists and shows zero-session Worktrees through exact selectors', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-worktrees-'));
+  const project = {
+    id: 'project-worktrees',
+    decodedPath: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\project-worktrees',
+    displayName: 'Project Worktrees',
+    visible: true,
+  };
+  const worktrees: ControlWorktreeRecord[] = [{
+    worktreeId: 'wt_zero_session',
+    projectId: project.id,
+    title: 'Zero session',
+    branch: 'feature/zero-session',
+    filesystemPath: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\zero-session',
+    preparationStatus: 'never_run',
+    preparationPhase: 'before',
+    sessions: [],
+  }];
+  const runtime = await startRuntime(testRoot, 'worktrees', project, worktrees);
+
+  try {
+    const byCurrent = await runCli([
+      'worktree', 'list', '--current', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ], { TESSERA_PROJECT_ID: project.id });
+    assert.equal(byCurrent.code, 0);
+    assert.equal(JSON.parse(byCurrent.stdout).data.worktrees[0].path, '/home/work/zero-session');
+    assert.deepEqual(JSON.parse(byCurrent.stdout).data.worktrees[0].sessions, []);
+
+    const byProject = await runCli([
+      'worktree', 'list', '--project', project.id, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(byProject.code, 0);
+    assert.equal(JSON.parse(byProject.stdout).data.worktrees[0].worktreeId, 'wt_zero_session');
+
+    const nativeShow = await runCli([
+      'worktree', 'show', 'wt_zero_session', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ], { TESSERA_AGENT_ENVIRONMENT: 'native' });
+    assert.equal(nativeShow.code, 0);
+    assert.equal(
+      JSON.parse(nativeShow.stdout).data.path,
+      '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\zero-session',
+    );
+
+    const missingSelector = await runCli([
+      'worktree', 'list', '--json', '--control-descriptor', runtime.descriptor.path,
+    ]);
+    const duplicateSelector = await runCli([
+      'worktree', 'list', '--current', '--project', project.id, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ], { TESSERA_PROJECT_ID: project.id });
+    assert.equal(missingSelector.code, 2);
+    assert.equal(duplicateSelector.code, 2);
+
+    const currentWithoutContext = await runCli([
+      'worktree', 'list', '--current', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(currentWithoutContext.code, 1);
+    assert.equal(JSON.parse(currentWithoutContext.stdout).error.code, 'CALLER_CONTEXT_UNAVAILABLE');
+
+    const legacyId = await runCli([
+      'worktree', 'show', 'legacy-internal-id', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(legacyId.code, 1);
+    assert.equal(JSON.parse(legacyId.stdout).error.code, 'WORKTREE_NOT_FOUND');
+  } finally {
+    await runtime.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
 test('server startup help and version behavior remain available without a Control command', async () => {
   const help = await runCli(['--help']);
   assert.equal(help.code, 0);
@@ -203,6 +279,7 @@ async function startRuntime(
   testRoot: string,
   label: string,
   project: { id: string; decodedPath: string; displayName: string; visible: boolean },
+  worktrees: ControlWorktreeRecord[] = [],
 ): Promise<TestRuntime> {
   let requestHandler: ReturnType<typeof createControlHttpHandler> | undefined;
   const server = http.createServer((request, response) => {
@@ -228,6 +305,10 @@ async function startRuntime(
       list: () => [project],
       get: (projectId) => projectId === project.id ? project : undefined,
     },
+    worktrees: {
+      list: (projectId) => worktrees.filter((worktree) => worktree.projectId === projectId),
+      get: (worktreeId) => worktrees.find((worktree) => worktree.worktreeId === worktreeId),
+    },
   });
   requestHandler = createControlHttpHandler({ descriptor: descriptor.descriptor, service });
 
@@ -251,7 +332,10 @@ async function writeDescriptorVariant(
   await fs.chmod(destination, 0o600);
 }
 
-function runCli(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function runCli(
+  args: string[],
+  envOverrides: Record<string, string> = {},
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI_PATH, ...args], {
       cwd: REPO_ROOT,
@@ -259,6 +343,8 @@ function runCli(args: string[]): Promise<{ code: number | null; stdout: string; 
         ...process.env,
         TESSERA_AGENT_ENVIRONMENT: 'wsl',
         TESSERA_CONTROL_DESCRIPTOR: '',
+        TESSERA_PROJECT_ID: '',
+        ...envOverrides,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

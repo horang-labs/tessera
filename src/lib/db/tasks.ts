@@ -8,14 +8,17 @@ import type { WorkflowStatus, TaskEntity, TaskSession } from '@/types/task-entit
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
 import { readPreparationStatus } from '@/lib/projects/preparation-status-policy';
 import { extractSessionKind } from './sessions';
+import { generatePublicWorktreeId } from './worktree-identity';
 
 export interface TaskRow {
   id: string;
+  public_worktree_id: string;
   project_id: string;
   title: string;
   collection_id: string | null;
   workflow_status: string;
   worktree_branch: string | null;
+  worktree_path: string | null;
   archived: number;
   archived_at: string | null;
   worktree_deleted_at: string | null;
@@ -122,8 +125,8 @@ function mapRowToEntity(
     collectionId: row.collection_id ?? undefined,
     workflowStatus: row.workflow_status as WorkflowStatus,
     worktreeBranch: row.worktree_branch ?? undefined,
-    workDir: sessionData.workDir,
-    worktreeManaged: sessionData.worktreeManaged,
+    workDir: row.worktree_path ?? sessionData.workDir,
+    worktreeManaged: row.worktree_path ? true : sessionData.worktreeManaged,
     archived: !!row.archived,
     archivedAt: row.archived_at ?? undefined,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
@@ -281,11 +284,16 @@ export function createTask(params: {
 }): void {
   const db = getDb();
   const now = new Date().toISOString();
+  const publicWorktreeId = generatePublicWorktreeId();
   db.prepare(`
-    INSERT INTO tasks (id, project_id, title, collection_id, workflow_status, worktree_branch, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (
+      id, public_worktree_id, project_id, title, collection_id, workflow_status,
+      worktree_branch, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.id,
+    publicWorktreeId,
     params.projectId,
     params.title,
     params.collectionId ?? null,
@@ -295,6 +303,18 @@ export function createTask(params: {
     now,
   );
   logger.info({ taskId: params.id, projectId: params.projectId }, 'Task created');
+}
+
+export function setTaskWorktreeCheckout(
+  id: string,
+  checkout: { branch: string; path: string },
+): void {
+  const now = new Date().toISOString();
+  getDb().prepare(`
+    UPDATE tasks
+    SET worktree_branch = ?, worktree_path = ?, updated_at = ?
+    WHERE id = ?
+  `).run(checkout.branch, checkout.path, now, id);
 }
 
 /**

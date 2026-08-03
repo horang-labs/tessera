@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 export const CREATE_TABLES = `
 CREATE TABLE IF NOT EXISTS _meta (
@@ -89,11 +89,13 @@ CREATE TABLE IF NOT EXISTS collections (
 
 CREATE TABLE IF NOT EXISTS tasks (
   id               TEXT PRIMARY KEY,
+  public_worktree_id TEXT NOT NULL UNIQUE,
   project_id       TEXT NOT NULL,
   title            TEXT NOT NULL,
   collection_id    TEXT,
   workflow_status   TEXT NOT NULL DEFAULT 'todo',
   worktree_branch  TEXT,
+  worktree_path    TEXT,
   archived         INTEGER NOT NULL DEFAULT 0,
   archived_at      TEXT,
   worktree_deleted_at TEXT,
@@ -165,6 +167,9 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project
 
 CREATE INDEX IF NOT EXISTS idx_tasks_collection
   ON tasks(collection_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_public_worktree_id
+  ON tasks(public_worktree_id);
 
 CREATE INDEX IF NOT EXISTS idx_conv_messages_session
   ON conversation_messages(session_id, id ASC);

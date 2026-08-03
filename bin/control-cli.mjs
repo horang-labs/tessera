@@ -16,7 +16,7 @@ export function isControlInvocation(argv) {
     return true;
   }
   const args = withoutDescriptorSelector(argv);
-  return args[0] === 'status' || args[0] === 'project';
+  return args[0] === 'status' || args[0] === 'project' || args[0] === 'worktree';
 }
 
 export async function runControlCli(options) {
@@ -103,6 +103,8 @@ export function controlUsage() {
   tessera status [--json]
   tessera project list [--json]
   tessera project show <project-id> [--json]
+  tessera worktree list (--current | --project <project-id>) [--json]
+  tessera worktree show <worktree-id> [--json]
 
 Runtime selection:
   --control-descriptor PATH  Select one exact local Tessera runtime.
@@ -180,7 +182,61 @@ function parseControlInvocation(argv, env) {
     };
   }
 
-  throw new Error('Usage: tessera status | project list | project show <project-id> [--json]');
+  if (
+    commandArgs.length >= 3
+    && commandArgs[0] === 'worktree'
+    && commandArgs[1] === 'list'
+  ) {
+    const selector = parseWorktreeProjectSelector(commandArgs.slice(2));
+    return {
+      descriptorPath,
+      kind: 'worktree-list',
+      requestPath: selector.kind === 'current'
+        ? '/__tessera/control/v1/worktrees?current=1'
+        : `/__tessera/control/v1/worktrees?projectId=${encodeURIComponent(selector.projectId)}`,
+    };
+  }
+
+  if (
+    commandArgs.length === 3
+    && commandArgs[0] === 'worktree'
+    && commandArgs[1] === 'show'
+    && commandArgs[2]
+  ) {
+    return {
+      descriptorPath,
+      kind: 'worktree-show',
+      requestPath: `/__tessera/control/v1/worktrees/${encodeURIComponent(commandArgs[2])}`,
+    };
+  }
+
+  throw new Error('Usage: tessera status | project list | project show <project-id> | worktree list | worktree show <worktree-id> [--json]');
+}
+
+function parseWorktreeProjectSelector(args) {
+  let current = false;
+  let projectId = '';
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--current') {
+      if (current) throw new Error('--current may be supplied only once.');
+      current = true;
+      continue;
+    }
+    if (arg === '--project') {
+      if (projectId) throw new Error('--project may be supplied only once.');
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--project requires a Project ID.');
+      projectId = value;
+      index += 1;
+      continue;
+    }
+    throw new Error(`Unknown Worktree selector: ${arg}`);
+  }
+  if (current === Boolean(projectId)) {
+    throw new Error('Exactly one of --current and --project <project-id> is required.');
+  }
+  return current ? { kind: 'current' } : { kind: 'project', projectId };
 }
 
 function withoutDescriptorSelector(argv) {
@@ -373,5 +429,15 @@ function writeHumanSuccess(kind, data) {
   }
   if (kind === 'project-show') {
     process.stdout.write(`${data.displayName}\n${data.id}\n${data.path}\n${data.visible ? 'visible' : 'hidden'}\n`);
+    return;
+  }
+  if (kind === 'worktree-list') {
+    for (const worktree of data.worktrees) {
+      process.stdout.write(`${worktree.worktreeId}\t${worktree.title}\t${worktree.branch ?? ''}\t${worktree.path ?? ''}\n`);
+    }
+    return;
+  }
+  if (kind === 'worktree-show') {
+    process.stdout.write(`${data.title}\n${data.worktreeId}\n${data.branch ?? ''}\n${data.path ?? ''}\n`);
   }
 }
