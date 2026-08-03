@@ -480,6 +480,7 @@ function SubSessionRow({
   onSessionDoubleClick,
   onContextMenu,
   onStopProcess,
+  onArchive,
   onRename,
   isRenameRequested,
   onRenameComplete,
@@ -491,6 +492,7 @@ function SubSessionRow({
   onSessionDoubleClick?: (session: UnifiedSession) => void;
   onContextMenu?: ItemContextMenuHandler;
   onStopProcess?: (sessionId: string) => void;
+  onArchive?: (sessionId: string) => void;
   onRename?: (sessionId: string, newTitle: string) => void;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
@@ -538,6 +540,11 @@ function SubSessionRow({
     onStopProcess?.(sess.id);
   }, [onStopProcess, sess.id]);
   const {
+    isConfirmingArchive,
+    handleArchiveClick,
+    resetArchiveConfirm,
+  } = useArchiveConfirm(() => onArchive?.(sess.id));
+  const {
     inputRef: renameInputRef,
     isRenaming,
     renameValue,
@@ -575,7 +582,10 @@ function SubSessionRow({
       onDragStart={handleDragStart}
       onDragEnd={(event) => event.stopPropagation()}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseLeave={() => {
+        setIsHovered(false);
+        resetArchiveConfirm();
+      }}
       onClick={(event) => {
         if (isRenaming) return;
         event.stopPropagation();
@@ -653,6 +663,25 @@ function SubSessionRow({
               testId={`collection-subsession-quick-stop-${sess.id}`}
             />
           )}
+          {onArchive && (
+            <ArchiveConfirmButton
+              isConfirming={isConfirmingArchive}
+              onClick={(event) => {
+                event.stopPropagation();
+                event.preventDefault();
+                handleArchiveClick();
+              }}
+              className={cn(
+                'rounded p-0.5 transition-all duration-150',
+                isConfirmingArchive
+                  ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
+                  : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
+              )}
+              testId={`collection-subsession-quick-archive-${sess.id}`}
+              confirmTitle="Click again to archive"
+              idleTitle="Archive"
+            />
+          )}
           <OverflowMenuButton
             buttonRef={moreRef}
             onClick={(event) => {
@@ -683,6 +712,7 @@ export function TaskItemRow({
   onDragOverItem,
   onRename,
   onSessionRename,
+  onSessionArchive,
   renamingSessionId,
   isRenameRequested,
   onRenameComplete,
@@ -705,6 +735,8 @@ export function TaskItemRow({
   onDragOverItem: (e: React.DragEvent) => void;
   onRename?: (taskId: string, newTitle: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
+  /** Archives a single child session, leaving the task and its worktree alone. */
+  onSessionArchive?: (sessionId: string) => void;
   renamingSessionId?: string | null;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
@@ -1134,6 +1166,7 @@ export function TaskItemRow({
               onSessionDoubleClick={onSessionDoubleClick}
               onContextMenu={onContextMenu}
               onStopProcess={onStopProcess}
+              onArchive={onSessionArchive}
               onRename={onSessionRename}
               isRenameRequested={renamingSessionId === session.id}
               onRenameComplete={onRenameComplete}

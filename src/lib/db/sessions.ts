@@ -62,12 +62,12 @@ const SESSION_SELECT_WITH_TASK = `
   LEFT JOIN projects p ON p.id = s.project_id
 `;
 
+// A session leaves the active scope when it is archived on its own, and a
+// task-owned session additionally leaves it when the whole task is archived.
 const ACTIVE_SESSION_SCOPE_SQL = `
   s.deleted = 0
-  AND (
-    (s.task_id IS NULL AND s.archived = 0)
-    OR (s.task_id IS NOT NULL AND COALESCE(t.archived, 0) = 0)
-  )
+  AND s.archived = 0
+  AND (s.task_id IS NULL OR COALESCE(t.archived, 0) = 0)
 `;
 
 export interface ArchivedSessionQueryOptions {
@@ -84,10 +84,13 @@ function archivedChatWhere(
   projectId?: string,
   query?: string,
 ): { sql: string; params: unknown[] } {
+  // A session archived on its own is listed as a chat entry. Once its task is
+  // archived too, the task entry owns it and lists it as a child session, so it
+  // must not appear twice.
   const conditions = [
     's.archived = 1',
     's.deleted = 0',
-    's.task_id IS NULL',
+    '(s.task_id IS NULL OR COALESCE(t.archived, 0) = 0)',
   ];
   const params: unknown[] = [];
 
@@ -330,6 +333,7 @@ export function countArchivedChatSessions(projectId?: string, query?: string): n
   const row = getDb().prepare(`
     SELECT COUNT(*) as cnt
     FROM sessions s
+    LEFT JOIN tasks t ON t.id = s.task_id
     LEFT JOIN projects p ON p.id = s.project_id
     WHERE ${where.sql}
   `).get(...where.params) as { cnt: number } | undefined;

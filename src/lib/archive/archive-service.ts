@@ -47,6 +47,13 @@ export interface ArchiveItem {
   worktreeDeletedAt?: string;
   worktreeStatus: WorktreeArchiveStatus;
   canRestore: boolean;
+  /**
+   * True when this entry's worktree belongs to a task that is still live — an
+   * individually archived task session. Deleting the worktree would pull it out
+   * from under the task and its remaining sessions, so worktree removal (manual
+   * or by retention) must skip these entries.
+   */
+  sharedWorktree: boolean;
   sessions: Array<{
     id: string;
     title: string;
@@ -177,6 +184,7 @@ async function mapChat(row: SessionRow): Promise<ArchiveItem> {
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
     worktreeStatus,
     canRestore: hasWorktreeDependency ? worktreeStatus === 'present' : true,
+    sharedWorktree: Boolean(row.task_id),
     sessions: [{
       id: row.id,
       title: row.title,
@@ -207,6 +215,7 @@ async function mapTask(task: TaskEntity): Promise<ArchiveItem> {
     worktreeDeletedAt: task.worktreeDeletedAt,
     worktreeStatus,
     canRestore: Boolean(task.workDir) && worktreeStatus === 'present',
+    sharedWorktree: false,
     sessions: task.sessions,
   };
 }
@@ -275,8 +284,11 @@ export async function restoreArchivedChat(sessionId: string, userId?: string): P
     if (!session || session.deleted) {
       throw new Error('Session not found');
     }
-    if (session.task_id) {
-      throw new Error('Task sessions must be restored through their task');
+    // A session archived on its own restores back into its task. Only a session
+    // whose task is archived too has to go through the task, which restores the
+    // worktree and every sibling as one unit.
+    if (session.task_id && dbTasks.getTask(session.task_id)?.archived) {
+      throw new Error('Sessions of an archived task must be restored through their task');
     }
 
     const worktreeStatus = await getWorktreeStatus(session.work_dir, session.worktree_deleted_at);
@@ -337,7 +349,9 @@ export async function setTaskArchived(taskId: string, archived: boolean, userId?
 }
 
 export async function permanentlyDeleteArchivedTask(userId: string, taskId: string): Promise<void> {
-  const task = dbTasks.getTask(taskId, getActiveSessionIds());
+  // Includes children archived on their own — deleting the task must not leave
+  // their rows or histories behind.
+  const task = dbTasks.getTask(taskId, getActiveSessionIds(), { includeArchivedSessions: true });
   if (!task) {
     throw new Error('Task not found');
   }
@@ -401,6 +415,7 @@ export async function removeArchivedWorktrees(
       !item.workDir
       || item.worktreeStatus !== 'present'
       || !item.worktreeManaged
+      || item.sharedWorktree
       || item.sessions.some((session) => activeIds.has(session.id))
     ) {
       result.skipped += 1;
@@ -431,6 +446,7 @@ async function removeArchivedWorktree(
 ): Promise<boolean> {
   if (!item.workDir || !item.archivedAt || item.worktreeDeletedAt) return false;
   if (!item.worktreeManaged) return false;
+  if (item.sharedWorktree) return false;
   if (item.worktreeStatus === 'deleted') return false;
 
   const acquired = beginTesseraSessionOperations(item.sessions.map((session) => session.id));
@@ -494,7 +510,7 @@ export async function pruneExpiredArchivedWorktrees(
   const runGit = await createArchiveGitRunner(userId);
 
   for (const item of items) {
-    if (!item.workDir || !isExpired(item.archivedAt, retentionDays)) {
+    if (!item.workDir || item.sharedWorktree || !isExpired(item.archivedAt, retentionDays)) {
       result.skipped += 1;
       continue;
     }

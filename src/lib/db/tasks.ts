@@ -144,29 +144,43 @@ function mapRowToEntity(
 
 /**
  * Load child sessions for a given task ID.
+ *
+ * Individually archived sessions are left out by default: they no longer belong
+ * to the task's active surfaces (sidebar, board) and are listed as their own
+ * archive entries instead. Callers that need the full set — the archive view of
+ * an archived task, permanent deletion — pass `includeArchived`.
  */
 function loadTaskSessions(
   taskId: string,
-  activeSessionIds: Set<string>
+  activeSessionIds: Set<string>,
+  options: { includeArchived?: boolean } = {}
 ): { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean } {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT id, title, provider, provider_state, updated_at, work_dir, worktree_managed
+    SELECT id, title, provider, provider_state, updated_at, work_dir, worktree_managed, archived
     FROM sessions
     WHERE task_id = ? AND deleted = 0
     ORDER BY updated_at DESC
-  `).all(taskId) as (SessionForTask & { work_dir?: string | null; worktree_managed?: number | null })[];
+  `).all(taskId) as (SessionForTask & {
+    work_dir?: string | null;
+    worktree_managed?: number | null;
+    archived?: number | null;
+  })[];
 
-  const sessions = rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    provider: r.provider,
-    lastModified: r.updated_at,
-    isRunning: activeSessionIds.has(r.id),
-    kind: extractSessionKind(r.provider_state),
-  }));
+  const sessions = rows
+    .filter((r) => options.includeArchived || !r.archived)
+    .map((r) => ({
+      id: r.id,
+      title: r.title,
+      provider: r.provider,
+      lastModified: r.updated_at,
+      isRunning: activeSessionIds.has(r.id),
+      kind: extractSessionKind(r.provider_state),
+    }));
 
-  // Derive workDir from the first session that has one
+  // Derive workDir from the first session that has one. Archived children still
+  // count: the worktree belongs to the task, not to any single session, and it
+  // must stay resolvable even when the session that recorded it is archived.
   const worktreeRow = rows.find(r => r.work_dir);
   const workDir = worktreeRow?.work_dir ?? undefined;
   const worktreeManaged = workDir
@@ -201,12 +215,16 @@ export function getTasks(
  */
 export function getTask(
   id: string,
-  activeSessionIds: Set<string> = new Set()
+  activeSessionIds: Set<string> = new Set(),
+  options: { includeArchivedSessions?: boolean } = {}
 ): TaskEntity | undefined {
   const db = getDb();
   const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow | undefined;
   if (!row) return undefined;
-  return mapRowToEntity(row, loadTaskSessions(id, activeSessionIds));
+  return mapRowToEntity(
+    row,
+    loadTaskSessions(id, activeSessionIds, { includeArchived: options.includeArchivedSessions })
+  );
 }
 
 export function getArchivedTasks(
@@ -231,8 +249,11 @@ export function getArchivedTasks(
     ${limitSql}
   `).all(...params) as TaskRow[];
 
+  // An archived task owns every child session, including ones that were
+  // archived individually before the task itself was — they are no longer
+  // listed as standalone chat entries, so the task entry has to show them.
   return rows.map((row) =>
-    mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds))
+    mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds, { includeArchived: true }))
   );
 }
 
@@ -370,23 +391,15 @@ export function setTaskArchived(id: string, archived: boolean): void {
   const db = getDb();
   const now = new Date().toISOString();
   const archivedAt = archived ? now : null;
-  db.transaction(() => {
-    db.prepare(`
-      UPDATE tasks
-      SET archived = ?, archived_at = ?, updated_at = ?
-      WHERE id = ?
-    `).run(archived ? 1 : 0, archivedAt, now, id);
-
-    // Task archive state lives on tasks. Child session archive flags are legacy
-    // standalone-chat state and must not carry meaning for task-owned sessions.
-    db.prepare(`
-      UPDATE sessions
-      SET archived = 0, archived_at = NULL, updated_at = ?
-      WHERE task_id = ?
-        AND deleted = 0
-        AND (archived != 0 OR archived_at IS NOT NULL)
-    `).run(now, id);
-  })();
+  // Archiving a task hides every child session through the task's own flag, so
+  // the per-session flags stay untouched in both directions. A session archived
+  // on its own keeps that state across a task archive/restore round trip —
+  // restoring the task must not resurrect sessions the user put away by hand.
+  db.prepare(`
+    UPDATE tasks
+    SET archived = ?, archived_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(archived ? 1 : 0, archivedAt, now, id);
 }
 
 /**
@@ -620,8 +633,13 @@ export function addSessionToTask(taskId: string, sessionId: string): void {
   const task = db.prepare('SELECT collection_id FROM tasks WHERE id = ?')
     .get(taskId) as { collection_id: string | null } | undefined;
 
-  db.prepare('UPDATE sessions SET task_id = ?, collection_id = ?, updated_at = ? WHERE id = ?')
-    .run(taskId, task?.collection_id ?? null, now, sessionId);
+  // Clear any standalone archive state: a session joining a task comes back to
+  // the task's active session list.
+  db.prepare(`
+    UPDATE sessions
+    SET task_id = ?, collection_id = ?, updated_at = ?, archived = 0, archived_at = NULL
+    WHERE id = ?
+  `).run(taskId, task?.collection_id ?? null, now, sessionId);
   // Also touch the task's updated_at
   db.prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
     .run(now, taskId);
