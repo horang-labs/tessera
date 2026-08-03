@@ -7,7 +7,7 @@ import { protocolAdapter } from '../cli/protocol-adapter';
 import { isElectronAuthBypassEnabled } from '../auth/electron-mode';
 import { getElectronAuthUserId } from '../electron-user';
 import {
-  evaluateRequestWithShadowLog,
+  evaluateRequestAndLog,
   observeRequestGate,
   parseRequestUrl,
   type RequestGateInput,
@@ -99,7 +99,7 @@ export class WebSocketServer {
       const input = requestGateInputFromUpgrade(req);
       const parsedUrl = parseRequestUrl(input);
       if (!parsedUrl) {
-        void evaluateRequestWithShadowLog(input)
+        void evaluateRequestAndLog(input)
           .catch((error) => logger.error({ error }, 'Malformed WebSocket upgrade gate failed'))
           .finally(() => socket.destroy());
         return;
@@ -436,7 +436,7 @@ export class WebSocketServer {
         }
       }
 
-      const decision = await evaluateRequestWithShadowLog(input);
+      const decision = await evaluateRequestAndLog(input);
       if (!decision.allow) return null;
 
       logger.debug({ userId: decision.userId, kind: decision.kind }, 'WebSocket authenticated');

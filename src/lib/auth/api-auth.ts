@@ -3,7 +3,7 @@ import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
 import { getElectronAuthUserId } from '@/lib/electron-user';
 import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
 import {
-  evaluateRequestWithShadowLog,
+  evaluateRequestAndLog,
   observeRequestGate,
   type CredentialKind,
 } from '@/lib/auth/request-gate';
@@ -18,7 +18,7 @@ async function getAuthenticatedUser(request: NextRequest): Promise<Authenticated
     return { userId: await getElectronAuthUserId(), kind: 'app' };
   }
 
-  const decision = await evaluateRequestWithShadowLog(input);
+  const decision = await evaluateRequestAndLog(input);
   return decision.allow
     ? { userId: decision.userId, kind: decision.kind }
     : null;

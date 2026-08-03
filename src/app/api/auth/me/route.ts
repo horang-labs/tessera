@@ -5,7 +5,7 @@ import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
 import { getElectronAuthUser } from '@/lib/electron-user';
 import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
 import {
-  evaluateRequestWithShadowLog,
+  evaluateRequestAndLog,
   observeRequestGate,
 } from '@/lib/auth/request-gate';
 import type { MeResponse } from '@/types/auth';
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const decision = await evaluateRequestWithShadowLog(input);
+    const decision = await evaluateRequestAndLog(input);
     if (!decision.allow) {
       const error = createAuthError(
         'unauthorized',

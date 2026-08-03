@@ -2,6 +2,7 @@ import { matchesAppSecret, APP_SECRET_HEADER } from './app-secret';
 import { resolveServerDefaultUserId } from '../server-default-user';
 import { verifyToken } from './jwt';
 import { findUserById } from '../users';
+import { isElectronRuntime } from '../electron-runtime';
 import logger from '../logger';
 
 export type RequestPurpose = 'http' | 'ws-upgrade';
@@ -26,21 +27,26 @@ export type RequestGateDecision =
     }
   | {
       allow: false;
-      reason: string;
-      status?: number;
-      wsCloseCode?: number;
+      reason: RequestDenialReason;
+      status: number;
+      wsCloseCode?: never;
+    }
+  | {
+      allow: false;
+      reason: RequestDenialReason;
+      status?: never;
+      wsCloseCode: number;
     };
 
-function unauthorizedDecision(purpose: RequestPurpose): RequestGateDecision {
-  return purpose === 'http'
-    ? { allow: false, reason: 'unauthorized', status: 401 }
-    : { allow: false, reason: 'unauthorized', wsCloseCode: 1008 };
-}
+type RequestDenialReason = 'unauthorized' | 'malformed-request';
 
-function malformedDecision(purpose: RequestPurpose): RequestGateDecision {
+function denyRequest(
+  purpose: RequestPurpose,
+  reason: RequestDenialReason,
+): RequestGateDecision {
   return purpose === 'http'
-    ? { allow: false, reason: 'malformed-request', status: 400 }
-    : { allow: false, reason: 'malformed-request', wsCloseCode: 1008 };
+    ? { allow: false, reason, status: reason === 'malformed-request' ? 400 : 401 }
+    : { allow: false, reason, wsCloseCode: 1008 };
 }
 
 export function parseRequestUrl(input: Pick<RequestGateInput, 'host' | 'rawUrl'>): URL | null {
@@ -59,14 +65,13 @@ export function hasPresentedCredential(
 ): boolean {
   return Boolean(
     input.headers[APP_SECRET_HEADER]
-    || input.cookies.device
     || input.cookies.jwt,
   );
 }
 
 export async function evaluateRequest(input: RequestGateInput): Promise<RequestGateDecision> {
   if (!input.method.trim() || !parseRequestUrl(input)) {
-    return malformedDecision(input.purpose);
+    return denyRequest(input.purpose, 'malformed-request');
   }
 
   if (await matchesAppSecret(input.headers[APP_SECRET_HEADER])) {
@@ -82,28 +87,38 @@ export async function evaluateRequest(input: RequestGateInput): Promise<RequestG
     const payload = await verifyToken(jwt);
     if (payload) {
       const user = await findUserById(payload.sub);
-      if (user) return { allow: true, userId: user.id, kind: 'jwt' };
+      if (user) {
+        const userId = isElectronRuntime()
+          ? await resolveServerDefaultUserId()
+          : user.id;
+        if (userId) return { allow: true, userId, kind: 'jwt' };
+      }
     }
   }
 
-  return unauthorizedDecision(input.purpose);
+  return denyRequest(input.purpose, 'unauthorized');
 }
 
-export async function evaluateRequestWithShadowLog(
+export async function evaluateRequestAndLog(
   input: RequestGateInput,
 ): Promise<RequestGateDecision> {
   const decision = await evaluateRequest(input);
   logger.info({
     purpose: input.purpose,
-    shadowKind: decision.allow ? decision.kind : null,
-    shadowReason: decision.allow ? null : decision.reason,
-  }, 'Request gate shadow decision');
+    kind: decision.allow ? decision.kind : null,
+    reason: decision.allow ? null : decision.reason,
+  }, 'Request gate decision');
   return decision;
 }
 
 export async function observeRequestGate(input: RequestGateInput): Promise<void> {
   try {
-    await evaluateRequestWithShadowLog(input);
+    const decision = await evaluateRequest(input);
+    logger.info({
+      purpose: input.purpose,
+      shadowKind: decision.allow ? decision.kind : null,
+      shadowReason: decision.allow ? null : decision.reason,
+    }, 'Request gate shadow decision');
   } catch (error) {
     logger.warn({
       purpose: input.purpose,

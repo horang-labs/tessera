@@ -127,6 +127,19 @@ test('preserves the JWT subject in web mode after cheaper credentials miss', asy
   }
 });
 
+test('maps a valid JWT to the Electron server user in Electron mode', async () => {
+  const { ensureRSAKeys } = await import('../src/lib/auth/keys');
+  const { generateToken } = await import('../src/lib/auth/jwt');
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+  await ensureRSAKeys();
+  const jwt = await generateToken('persisted-user', 'persisted');
+
+  assert.deepEqual(
+    await evaluateRequest(requestInput({ cookies: { jwt } })),
+    { allow: true, userId: 'electron-local-user', kind: 'jwt' },
+  );
+});
+
 test('prefers the app secret when app and JWT credentials are both valid', async () => {
   const { ensureRSAKeys } = await import('../src/lib/auth/keys');
   const { generateToken } = await import('../src/lib/auth/jwt');
@@ -212,7 +225,7 @@ test('lets the shallow proxy check recognize any presented credential', async ()
 
   assert.equal(hasPresentedCredential(requestInput()), false);
   assert.equal(hasPresentedCredential(requestInput({ cookies: { jwt: 'token' } })), true);
-  assert.equal(hasPresentedCredential(requestInput({ cookies: { device: 'token' } })), true);
+  assert.equal(hasPresentedCredential(requestInput({ cookies: { device: 'token' } })), false);
   assert.equal(hasPresentedCredential(requestInput({
     headers: { [appSecretModule.APP_SECRET_HEADER]: 'not-yet-validated' },
   })), true);
