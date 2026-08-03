@@ -52,6 +52,7 @@ import type { Collection } from '@/types/collection';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { buildTaskChildSession } from '@/lib/session/task-child-session';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -858,30 +859,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
       });
       if (!res.ok) throw new Error('Failed to create session');
       const data = await res.json();
-      const newSessionId = data.sessionId || data.id;
-      if (!newSessionId) throw new Error('No session ID returned');
-
       // Add session to store and open in panel
-      const newSession: UnifiedSession = {
-        id: newSessionId,
-        title: data.title || 'New Session',
-        projectDir: task.projectId || '',
-        isRunning: false,
-        hasStarted: false,
-        status: data.status || 'starting',
-        createdAt: new Date().toISOString(),
-        lastModified: new Date().toISOString(),
-        archived: false,
-        sortOrder: 0,
-        worktreeBranch: task.worktreeBranch,
-        taskId: task.id,
-        collectionId: task.collectionId,
-        provider: data.provider,
-        kind: data.kind,
-        model: data.model,
-        reasoningEffort: data.reasoningEffort,
-        serviceTier: data.serviceTier,
-      };
+      const newSession = buildTaskChildSession(task, data);
+      const newSessionId = newSession.id;
 
       useSessionStore.getState().addSession(newSession);
       useChatStore.getState().loadHistory(newSessionId, []);

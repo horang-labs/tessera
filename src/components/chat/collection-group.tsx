@@ -43,6 +43,7 @@ import {
   useWorktreePreparation,
 } from '@/hooks/use-worktree-preparation';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { buildTaskChildSession } from '@/lib/session/task-child-session';
 
 async function addSessionToTask(
   task: TaskEntity,
@@ -82,29 +83,8 @@ async function addSessionToTask(
     if (!sessionResponse.ok) throw new Error('Failed to create session');
 
     const sessionData = await sessionResponse.json();
-    const newSessionId = sessionData.sessionId || sessionData.id;
-    if (!newSessionId) throw new Error('No session ID returned');
-
-    const newSession: UnifiedSession = {
-      id: newSessionId,
-      title: sessionData.title || 'New Session',
-      projectDir: task.projectId || '',
-      isRunning: false,
-      hasStarted: false,
-      status: sessionData.status || 'starting',
-      createdAt: new Date().toISOString(),
-      lastModified: new Date().toISOString(),
-      archived: false,
-      sortOrder: 0,
-      worktreeBranch: task.worktreeBranch,
-      taskId: task.id,
-      collectionId: task.collectionId,
-      provider: sessionData.provider,
-      kind: sessionData.kind,
-      model: sessionData.model,
-      reasoningEffort: sessionData.reasoningEffort,
-      serviceTier: sessionData.serviceTier,
-    };
+    const newSession = buildTaskChildSession(task, sessionData);
+    const newSessionId = newSession.id;
 
     useSessionStore.getState().addSession(newSession);
     useChatStore.getState().loadHistory(newSessionId, []);

@@ -388,16 +388,25 @@ test('terminal cwd is server validated before spawning a PTY', () => {
   assert.match(terminalResolverSource, /getSession/);
   assert.match(terminalResolverSource, /Terminal cwd must be inside a registered project or active worktree/);
   assert.match(terminalLaunchIntentSource, /readSessionLaunchCwd/);
-  assert.match(terminalManagerSource, /cwd: options\.launchSpec\?\.cwd \?\? options\.cwd/);
+  assert.doesNotMatch(terminalManagerSource, /allowFallback/);
   assert.match(routingSource, /shellKind: launchSpec \? undefined : message\.shellKind/);
 });
 
-test('raw terminals may fall back, but command launches fail closed on a deleted session cwd', () => {
+test('structured provider terminals launch from the persisted session workspace', () => {
+  assert.match(routingSource, /resolveSessionWorkspaceRoot\(sessionId\)/);
+  assert.match(
+    routingSource,
+    /launchSpec = \{ \.\.\.launchSpec, cwd: persistedSessionCwd \}/,
+  );
+});
+
+test('all terminal launches fail closed instead of borrowing another project cwd', () => {
   assert.match(terminalResolverSource, /getProject/);
-  assert.match(terminalResolverSource, /resolveFirstExistingAllowedRoot/);
-  assert.match(terminalResolverSource, /if \(!allowFallback\) \{\n\s+return \{ ok: false, message: 'The session workspace no longer exists/);
-  assert.match(terminalResolverSource, /const fallbackCwd = resolveFirstExistingAllowedRoot\(allowedRoots\)/);
-  assert.match(terminalManagerSource, /allowFallback: !options\.launchSpec/);
+  assert.doesNotMatch(terminalResolverSource, /resolveFirstExistingAllowedRoot/);
+  assert.doesNotMatch(terminalResolverSource, /const fallbackCwd/);
+  assert.doesNotMatch(terminalResolverSource, /return os\.homedir\(\)/);
+  assert.doesNotMatch(clientTerminalCwdSource, /projects\[0\]/);
+  assert.match(routingSource, /cwd: persistedSessionCwd \?\? message\.cwd/);
 });
 
 test('terminal cwd validation resolves WSL POSIX paths for Windows Electron', () => {

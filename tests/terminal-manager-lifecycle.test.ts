@@ -14,15 +14,29 @@ let TerminalManager: typeof import('@/lib/terminal/terminal-manager').TerminalMa
 let workspace = '';
 
 before(async () => {
-  const [{ initDatabase }, { registerProject }, terminalModule] = await Promise.all([
+  const [{ initDatabase }, { registerProject }, { createSession }, terminalModule] = await Promise.all([
     import('@/lib/db/database'),
     import('@/lib/db/projects'),
+    import('@/lib/db/sessions'),
     import('@/lib/terminal/terminal-manager'),
   ]);
   TerminalManager = terminalModule.TerminalManager;
   await initDatabase();
   workspace = mkdtempSync(path.join(tmpdir(), 'tessera-terminal-workspace-'));
   registerProject('terminal-test-project', workspace, 'Terminal test project');
+  for (const sessionId of [
+    'session-a',
+    'session-child',
+    'session-cursor',
+    'session-one',
+    'session-query',
+    'session-reset',
+    'session-two',
+  ]) {
+    createSession(sessionId, 'terminal-test-project', sessionId, 'codex', {
+      workDir: workspace,
+    });
+  }
 });
 
 class FakePty {

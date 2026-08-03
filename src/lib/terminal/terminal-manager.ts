@@ -586,7 +586,6 @@ export class TerminalManager {
         const cwdResolution = resolveAllowedTerminalCwd({
           cwd: options.launchSpec?.cwd ?? options.cwd,
           sessionId: options.sessionId,
-          allowFallback: !options.launchSpec,
         });
         traceTerminalStage('resolve-cwd:after', { terminalId: options.terminalId, cwdResolution });
         logger.debug({ terminalId: options.terminalId, cwdResolution }, 'Terminal cwd resolved');

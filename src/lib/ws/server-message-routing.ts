@@ -38,6 +38,7 @@ import type { TerminalCreateOptions, TerminalLaunchSpec } from '../terminal/type
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { CliProvider, ProviderMeta } from '../cli/providers/types';
+import { resolveSessionWorkspaceRoot } from '../session/session-workspace-root';
 import {
   clearUnreadFromWebSocket,
   closeSessionFromWebSocket,
@@ -754,6 +755,24 @@ export async function routeClientTransportMessage({
         }
       }
 
+      const persistedSessionCwd = !terminalExists && sessionId
+        ? resolveSessionWorkspaceRoot(sessionId)
+        : null;
+      if (!terminalExists && sessionId && !persistedSessionCwd) {
+        if (acquiredHandoff) releaseTerminalHandoffByTerminal(userId, terminalId);
+        sendToConnection(connectionId, {
+          type: 'terminal_error',
+          terminalId,
+          surfaceId: message.surfaceId,
+          message: 'The session workspace is unavailable.',
+        });
+        return;
+      }
+
+      if (!terminalExists && structured && launchSpec && persistedSessionCwd) {
+        launchSpec = { ...launchSpec, cwd: persistedSessionCwd };
+      }
+
       if (!terminalExists && providerId) {
         const provider = cliProviderRegistry.getProvider(providerId);
         terminalProvider = provider;
@@ -816,7 +835,7 @@ export async function routeClientTransportMessage({
           surfaceId: message.surfaceId,
           previewOwnerToken: message.previewOwnerToken,
           terminalId,
-          cwd: message.cwd,
+          cwd: persistedSessionCwd ?? message.cwd,
           sessionId,
           shellKind: launchSpec ? undefined : message.shellKind,
           cols: message.cols,

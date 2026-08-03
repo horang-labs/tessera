@@ -13,18 +13,20 @@ import type {
 } from './types';
 
 export function resolveTerminalCwd(candidate?: string | null): string {
-  if (candidate) {
-    try {
-      const stat = fs.statSync(candidate);
-      if (stat.isDirectory()) {
-        return candidate;
-      }
-    } catch {
-      // Fall through to home directory.
-    }
+  const requestedCwd = candidate?.trim();
+  if (!requestedCwd) {
+    throw new Error('Terminal cwd is required.');
   }
 
-  return os.homedir();
+  try {
+    if (fs.statSync(requestedCwd).isDirectory()) {
+      return requestedCwd;
+    }
+  } catch {
+    // Fail closed below. A terminal must never silently start somewhere else.
+  }
+
+  throw new Error('Terminal cwd does not exist or is not a directory.');
 }
 
 let cachedWindowsHostedWslRoot: string | null | undefined;
@@ -76,15 +78,6 @@ function addAllowedRoot(allowedRoots: string[], seenRoots: Set<string>, root?: s
   if (!normalizedRoot || seenRoots.has(normalizedRoot)) return;
   seenRoots.add(normalizedRoot);
   allowedRoots.push(normalizedRoot);
-}
-
-function resolveFirstExistingAllowedRoot(allowedRoots: string[]): string | null {
-  for (const root of allowedRoots) {
-    const existingRoot = resolveExistingDirectory(root, allowedRoots);
-    if (existingRoot) return existingRoot;
-  }
-
-  return null;
 }
 
 function isWindowsDrivePath(value: string): boolean {
@@ -315,50 +308,35 @@ function buildWslTerminalScript(cwd: string, launchSpec?: TerminalLaunchSpec): s
 export function resolveAllowedTerminalCwd(options: {
   cwd?: string | null;
   sessionId?: string | null;
-  allowFallback?: boolean;
 }): TerminalCwdResolution {
   const requestedCwd = options.cwd?.trim();
-  const allowFallback = options.allowFallback !== false;
+  if (!requestedCwd) {
+    return { ok: false, message: 'Terminal cwd is required.' };
+  }
+
   const allowedRoots: string[] = [];
   const seenRoots = new Set<string>();
 
   const session = options.sessionId ? getSession(options.sessionId) : null;
-  if (session?.project_id) {
+  if (options.sessionId && !session) {
+    return { ok: false, message: 'The session workspace is unavailable.' };
+  }
+
+  if (session) {
+    addAllowedRoot(allowedRoots, seenRoots, session.work_dir);
     addAllowedRoot(allowedRoots, seenRoots, getProject(session.project_id)?.decoded_path);
+  } else {
+    for (const project of getVisibleProjects()) {
+      addAllowedRoot(allowedRoots, seenRoots, project.decoded_path);
+    }
   }
-
-  for (const project of getVisibleProjects()) {
-    addAllowedRoot(allowedRoots, seenRoots, project.decoded_path);
-  }
-
-  addAllowedRoot(allowedRoots, seenRoots, session?.work_dir);
 
   if (allowedRoots.length === 0) {
     return { ok: false, message: 'No project is available for terminal startup.' };
   }
 
-  if (!requestedCwd) {
-    if (!allowFallback) {
-      return { ok: false, message: 'This command requires the session workspace to be available.' };
-    }
-    const fallbackCwd = resolveFirstExistingAllowedRoot(allowedRoots);
-    if (fallbackCwd) {
-      return { ok: true, cwd: fallbackCwd };
-    }
-
-    return { ok: false, message: 'No registered project directory exists on this server.' };
-  }
-
   const resolvedCandidate = resolveExistingDirectory(requestedCwd, allowedRoots);
   if (!resolvedCandidate) {
-    if (!allowFallback) {
-      return { ok: false, message: 'The session workspace no longer exists. The command was not opened.' };
-    }
-    const fallbackCwd = resolveFirstExistingAllowedRoot(allowedRoots);
-    if (fallbackCwd) {
-      return { ok: true, cwd: fallbackCwd };
-    }
-
     return { ok: false, message: 'Terminal cwd does not exist or is not a directory.' };
   }
 
