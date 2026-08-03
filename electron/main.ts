@@ -22,6 +22,7 @@ import {
 } from '../src/lib/electron-test-instance';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
+import { registerAppSecretHeader } from './app-secret-header';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -1219,6 +1220,7 @@ ipcMain.on('set-titlebar-theme', (event, theme: TitlebarTheme, options?: Titleba
 app.whenReady().then(async () => {
   try {
     const port = await startServer();
+    await registerAppSecretHeader(port);
     mainWindow = createWindow(port);
     createTray(mainWindow, requestAppQuit, {
       closeBehavior: windowsCloseBehavior,
