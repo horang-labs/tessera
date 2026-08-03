@@ -17,9 +17,13 @@ import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { focusPanelControl } from '@/lib/session/focus-session-panel';
+import {
+  TAB_SCROLL_EDGE_EPSILON,
+  TAB_SCROLL_GUTTER,
+  resolveTabScrollReveal,
+} from '@/lib/tab/tab-scroll-reveal';
 
 const TAB_SCROLL_MIN_STEP = 180;
-const TAB_SCROLL_EDGE_EPSILON = 1;
 
 // ---------------------------------------------------------------------------
 // Component
@@ -70,6 +74,11 @@ export const TabBar = memo(function TabBar() {
   const prevTabCountRef = useRef(tabs.length);
   const prevActiveTabIdRef = useRef<string | null>(null);
 
+  // A reveal that could not finish because the end zone had not widened yet —
+  // retried once the overflow state (and with it the end zone) has been applied.
+  const pendingRevealRef = useRef<{ tabId: string; behavior: ScrollBehavior } | null>(null);
+  const prevHasOverflowRef = useRef(false);
+
   const updateScrollState = useCallback(function updateScrollState() {
     const container = containerRef.current;
     if (!container) {
@@ -99,6 +108,43 @@ export const TabBar = memo(function TabBar() {
         ? prev
         : next,
     );
+  }, []);
+
+  /**
+   * Scrolls the given tab clear of the overlaid scroll arrows.
+   *
+   * Returns false when the scroller ran out of room before the tab was clear —
+   * the caller retries after the end zone has widened.
+   */
+  const revealTab = useCallback(function revealTab(
+    tabId: string,
+    behavior: ScrollBehavior,
+  ): boolean {
+    const container = containerRef.current;
+    if (!container) return false;
+
+    const tabElement = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-tab-id]'),
+    ).find((element) => element.dataset.tabId === tabId);
+    if (!tabElement) return true;
+
+    const containerRect = container.getBoundingClientRect();
+    const tabRect = tabElement.getBoundingClientRect();
+    const tabStart = tabRect.left - containerRect.left + container.scrollLeft;
+
+    const { scrollLeft, settled } = resolveTabScrollReveal({
+      tabStart,
+      tabEnd: tabStart + tabRect.width,
+      scrollLeft: container.scrollLeft,
+      viewportWidth: container.clientWidth,
+      maxScrollLeft: Math.max(0, container.scrollWidth - container.clientWidth),
+      gutter: TAB_SCROLL_GUTTER,
+    });
+
+    if (Math.abs(scrollLeft - container.scrollLeft) > TAB_SCROLL_EDGE_EPSILON) {
+      container.scrollTo({ left: scrollLeft, behavior });
+    }
+    return settled;
   }, []);
 
   useEffect(
@@ -149,22 +195,33 @@ export const TabBar = memo(function TabBar() {
       prevActiveTabIdRef.current = activeTabId;
 
       if (tabAdded || activeTabChanged) {
-        const container = containerRef.current;
-        const tabElements = container
-          ? Array.from(container.querySelectorAll<HTMLElement>('[data-tab-id]'))
-          : [];
-        const activeTabElement = tabElements.find((element) => element.dataset.tabId === activeTabId);
-
-        activeTabElement?.scrollIntoView({
-          block: 'nearest',
-          inline: 'nearest',
-          behavior: isInitialSync ? 'instant' : 'smooth',
-        });
+        const behavior: ScrollBehavior = isInitialSync ? 'instant' : 'smooth';
+        // On the commit that first overflows the strip the end zone is still
+        // collapsed, so there is no room to push the last tab out from under
+        // the arrow. That case is finished off by retryPendingReveal.
+        pendingRevealRef.current = revealTab(activeTabId, behavior)
+          ? null
+          : { tabId: activeTabId, behavior };
       }
       const frameId = requestAnimationFrame(updateScrollState);
       return () => cancelAnimationFrame(frameId);
     },
-    [activeTabId, tabs.length, updateScrollState],
+    [activeTabId, revealTab, tabs.length, updateScrollState],
+  );
+
+  // The end zone's width follows scrollState.hasOverflow, so a reveal that ran
+  // out of room gets its scroll room exactly one commit later.
+  useEffect(
+    function retryPendingReveal() {
+      const overflowChanged = prevHasOverflowRef.current !== scrollState.hasOverflow;
+      prevHasOverflowRef.current = scrollState.hasOverflow;
+
+      const pending = pendingRevealRef.current;
+      if (!overflowChanged || !pending) return;
+      pendingRevealRef.current = null;
+      revealTab(pending.tabId, pending.behavior);
+    },
+    [revealTab, scrollState.hasOverflow],
   );
 
   // ---------------------------------------------------------------------------
@@ -451,9 +508,11 @@ export const TabBar = memo(function TabBar() {
       {/* Scrollable tab items container */}
       <div className="relative flex min-w-0 items-stretch">
         {/*
-          scroll-px-8 keeps scrollIntoView from parking a tab flush against an edge:
-          the scroll arrows are absolutely positioned over the strip (left-1/right-1, w-6)
-          and would otherwise cover the tab's close button (BR-UI-024).
+          The scroll arrows are absolutely positioned over the strip (left-1/right-1,
+          w-6), so a tab parked flush against an edge has its close button covered
+          (BR-UI-024). revealTab keeps the active tab clear of both gutters;
+          scroll-px-8 makes browser-initiated scrolls (focusing the rename input,
+          say) respect the same margin.
         */}
         <div
           ref={containerRef}
