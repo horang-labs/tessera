@@ -13,6 +13,10 @@ import {
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { sendTerminalChatMessage } from '@/lib/terminal/terminal-chat-send';
 import { registerPendingTerminalChatMessage } from '@/lib/chat/terminal-chat-live-refresh';
+import {
+  resolveComposerArrowScroll,
+  scrollSessionMessages,
+} from '@/lib/chat/composer-arrow-scroll';
 import { MessageRowShell } from './message-row-shell';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 
@@ -68,13 +72,22 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // GUI 컴포저와 같은 규칙: 캐럿이 첫/마지막 줄이면 위/아래 키를 메시지 목록 스크롤에 넘긴다.
+      const arrowScroll = resolveComposerArrowScroll(event, value, event.currentTarget.selectionStart);
+      if (arrowScroll !== 'ignore') {
+        if (scrollSessionMessages(sessionId, arrowScroll)) {
+          event.preventDefault();
+        }
+        return;
+      }
+
       if (event.key !== 'Enter' || event.shiftKey) return;
       // 한글 등 IME 조합 중의 Enter는 확정이지 전송이 아니다.
       if (event.nativeEvent.isComposing) return;
       event.preventDefault();
       submit();
     },
-    [submit],
+    [sessionId, submit, value],
   );
 
   const status = isProcessing

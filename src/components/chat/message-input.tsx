@@ -65,6 +65,10 @@ import {
   getProviderSessionRuntimeConfig,
 } from '@/lib/settings/provider-defaults';
 import { hasConversationHistory, shouldResumeBeforeSend } from '@/lib/chat/session-send-routing';
+import {
+  resolveComposerArrowScroll,
+  scrollSessionMessages,
+} from '@/lib/chat/composer-arrow-scroll';
 import { toast } from '@/stores/notification-store';
 import { useVoiceInput } from '@/hooks/use-voice-input';
 import { useMessageInputAttachments } from '@/hooks/use-message-input-attachments';
@@ -1434,22 +1438,16 @@ export function MessageInput({
     }
 
     // ArrowUp/Down: scroll message list when cursor is at edge line, else let default handle
-    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      const ta = textareaRef.current;
-      const selStart = ta?.selectionStart ?? 0;
-      const firstNewline = inputValue.indexOf('\n');
-      const lastNewline = inputValue.lastIndexOf('\n');
-      const onEdgeLine =
-        firstNewline === -1 ||
-        (e.key === 'ArrowUp' ? selStart <= firstNewline : selStart > lastNewline);
-      if (onEdgeLine) {
-        const container = document.querySelector(`[data-session-messages="${sessionId}"]`);
-        if (container) {
-          e.preventDefault();
-          container.scrollBy({ top: e.key === 'ArrowUp' ? -100 : 100 });
-        }
-        return;
+    const arrowScroll = resolveComposerArrowScroll(
+      e,
+      inputValue,
+      textareaRef.current?.selectionStart ?? 0,
+    );
+    if (arrowScroll !== 'ignore') {
+      if (scrollSessionMessages(sessionId, arrowScroll)) {
+        e.preventDefault();
       }
+      return;
     }
 
     // Backspace on empty textarea with a selected skill → remove skill
