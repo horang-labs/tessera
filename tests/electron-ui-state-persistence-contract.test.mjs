@@ -25,7 +25,10 @@ const tabStoreSource = fs.readFileSync(
 
 test('packaged Electron always uses the fixed local server port', () => {
   assert.match(electronMainSource, /const ELECTRON_DEFAULT_PORT = 32123;/);
-  assert.match(electronMainSource, /const port = ELECTRON_DEFAULT_PORT;/);
+  assert.match(
+    electronMainSource,
+    /const port = resolveElectronServerPort\(ELECTRON_DEFAULT_PORT, electronTestInstance\);/,
+  );
   assert.doesNotMatch(electronMainSource, /PORT_SCAN_LIMIT/);
   assert.doesNotMatch(electronMainSource, /findStablePort/);
   assert.doesNotMatch(electronMainSource, /isPortAvailable/);
