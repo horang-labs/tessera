@@ -160,6 +160,19 @@ function validateInitialPrompt(initialPrompt: string | undefined): void {
   }
 }
 
+function requireFreshConversationForPrompt(
+  resume: boolean,
+  initialPrompt: string | undefined,
+  terminalId?: string,
+): void {
+  if (!resume || initialPrompt === undefined) return;
+  throw providerLaunchError(
+    'SESSION_NOT_FRESH',
+    'An initial prompt is allowed only for a fresh provider conversation.',
+    terminalId,
+  );
+}
+
 function resolveRequestedTerminalId(request: ProviderLaunchRequest): string {
   const terminalId = request.mode === 'surface'
     ? request.surface.terminalId
@@ -232,12 +245,7 @@ async function buildLaunchDecision(
     );
     const resume = providerSession.nativeFork
       || await sessionHistory.historyExists(request.sessionId);
-    if (resume && request.initialPrompt !== undefined) {
-      throw providerLaunchError(
-        'SESSION_NOT_FRESH',
-        'An initial prompt is allowed only for a fresh provider conversation.',
-      );
-    }
+    requireFreshConversationForPrompt(resume, request.initialPrompt);
     const built = buildProviderTerminalLaunch({
       providerId,
       sessionId: providerSession.providerSessionId,
@@ -263,12 +271,7 @@ async function buildLaunchDecision(
 
   if (providerId === 'codex') {
     const codexResumeId = dbSessions.extractCodexTerminalSessionId(providerState);
-    if (codexResumeId && request.initialPrompt !== undefined) {
-      throw providerLaunchError(
-        'SESSION_NOT_FRESH',
-        'An initial prompt is allowed only for a fresh provider conversation.',
-      );
-    }
+    requireFreshConversationForPrompt(Boolean(codexResumeId), request.initialPrompt);
     const built = buildProviderTerminalLaunch({
       providerId,
       sessionId: request.sessionId,
@@ -291,12 +294,7 @@ async function buildLaunchDecision(
   }
 
   const opencodeResumeId = dbSessions.extractOpenCodeTerminalSessionId(providerState);
-  if (opencodeResumeId && request.initialPrompt !== undefined) {
-    throw providerLaunchError(
-      'SESSION_NOT_FRESH',
-      'An initial prompt is allowed only for a fresh provider conversation.',
-    );
-  }
+  requireFreshConversationForPrompt(Boolean(opencodeResumeId), request.initialPrompt);
   const built = buildProviderTerminalLaunch({
     providerId,
     sessionId: request.sessionId,
@@ -347,20 +345,13 @@ export function createProviderLaunchModule(
   options: ProviderLaunchModuleOptions,
 ): ProviderLaunchModule {
   const manager = options.terminalManager;
+  const detachedLaunches = new Set<string>();
 
-  return {
-    async launch(request): Promise<ProviderLaunchResult> {
-      validateInitialPrompt(request.initialPrompt);
-      const persisted = getPersistedProvider(request);
-      const workDir = resolveSessionWorkspaceRoot(request.sessionId);
-      if (!workDir) {
-        throw providerLaunchError(
-          'SESSION_WORKSPACE_UNAVAILABLE',
-          'The session workspace is unavailable.',
-        );
-      }
-
-      const requestedTerminalId = resolveRequestedTerminalId(request);
+  const launchOnce = async (
+    request: ProviderLaunchRequest,
+    persisted: ReturnType<typeof getPersistedProvider>,
+    requestedTerminalId: string,
+  ): Promise<ProviderLaunchResult> => {
       const terminalId = manager.reserveTerminalId(
         request.userId,
         requestedTerminalId,
@@ -391,6 +382,7 @@ export function createProviderLaunchModule(
         }
 
         if (terminalExists && request.mode === 'surface') {
+          requireFreshConversationForPrompt(true, request.initialPrompt, terminalId);
           transferredToTerminalManager = true;
           await manager.create({
             userId: request.userId,
@@ -398,13 +390,22 @@ export function createProviderLaunchModule(
             surfaceId: request.surface.surfaceId,
             previewOwnerToken: request.surface.previewOwnerToken,
             terminalId,
-            cwd: workDir,
+            cwd: null,
             sessionId: request.sessionId,
             cols: request.surface.cols,
             rows: request.surface.rows,
             appearance: request.surface.appearance,
           });
           return { terminalId, attachedToExistingRuntime: true };
+        }
+
+        const workDir = resolveSessionWorkspaceRoot(request.sessionId);
+        if (!workDir) {
+          throw providerLaunchError(
+            'SESSION_WORKSPACE_UNAVAILABLE',
+            'The session workspace is unavailable.',
+            terminalId,
+          );
         }
 
         const preparation = await waitForPreparationBeforeAgent({
@@ -597,6 +598,31 @@ export function createProviderLaunchModule(
           terminalId,
           error,
         );
+      }
+  };
+
+  return {
+    async launch(request): Promise<ProviderLaunchResult> {
+      validateInitialPrompt(request.initialPrompt);
+      const persisted = getPersistedProvider(request);
+      const requestedTerminalId = resolveRequestedTerminalId(request);
+      if (request.mode === 'surface') {
+        return launchOnce(request, persisted, requestedTerminalId);
+      }
+
+      const launchKey = JSON.stringify([request.userId, request.sessionId]);
+      if (detachedLaunches.has(launchKey)) {
+        throw providerLaunchError(
+          'SESSION_RUNTIME_ALREADY_RUNNING',
+          'The Session already has a live PTY runtime.',
+          requestedTerminalId,
+        );
+      }
+      detachedLaunches.add(launchKey);
+      try {
+        return await launchOnce(request, persisted, requestedTerminalId);
+      } finally {
+        detachedLaunches.delete(launchKey);
       }
     },
   };

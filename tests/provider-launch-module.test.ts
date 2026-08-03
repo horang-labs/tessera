@@ -254,6 +254,92 @@ test('surface and detached launches make the same fresh OpenCode argv decision',
   await manager.closeSession('detached-opencode', 'provider-launch-user');
 });
 
+test('an existing surface rejects an initial prompt and reattaches without workspace metadata', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager });
+  createTerminalSession('surface-reattach-without-workspace', 'opencode');
+
+  await launcher.launch({
+    sessionId: 'surface-reattach-without-workspace',
+    userId: 'provider-launch-user',
+    mode: 'surface',
+    surface: {
+      connectionId: 'initial-connection',
+      surfaceId: 'initial-surface',
+      terminalId: 'session-surface-reattach-without-workspace',
+    },
+  });
+  modules.sessions.updateSession('surface-reattach-without-workspace', {
+    project_id: null,
+    work_dir: null,
+  });
+
+  await assert.rejects(
+    launcher.launch({
+      sessionId: 'surface-reattach-without-workspace',
+      userId: 'provider-launch-user',
+      initialPrompt: 'must not be ignored',
+      mode: 'surface',
+      surface: {
+        connectionId: 'rejected-connection',
+        surfaceId: 'rejected-surface',
+        terminalId: 'different-client-proposal',
+      },
+    }),
+    (error: unknown) => error instanceof modules.ProviderLaunchError
+      && error.code === 'SESSION_NOT_FRESH',
+  );
+  const attached = await launcher.launch({
+    sessionId: 'surface-reattach-without-workspace',
+    userId: 'provider-launch-user',
+    mode: 'surface',
+    surface: {
+      connectionId: 'reattach-connection',
+      surfaceId: 'reattach-surface',
+      terminalId: 'another-client-proposal',
+    },
+  });
+
+  assert.deepEqual(attached, {
+    terminalId: 'session-surface-reattach-without-workspace',
+    attachedToExistingRuntime: true,
+  });
+  assert.equal(captured.length, 1);
+});
+
+test('concurrent detached launches reject the loser without revoking the winning pane token', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager });
+  createTerminalSession('concurrent-detached-opencode', 'opencode');
+  const request = {
+    sessionId: 'concurrent-detached-opencode',
+    userId: 'provider-launch-user',
+    mode: 'detached' as const,
+  };
+
+  const results = await Promise.allSettled([
+    launcher.launch(request),
+    launcher.launch(request),
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  const rejected = results.find((result) => result.status === 'rejected');
+  assert.ok(rejected && rejected.status === 'rejected');
+  assert.ok(rejected.reason instanceof modules.ProviderLaunchError);
+  assert.equal(rejected.reason.code, 'SESSION_RUNTIME_ALREADY_RUNNING');
+  assert.equal(captured.length, 1);
+  const paneToken = captured[0]?.env?.TESSERA_PANE_TOKEN;
+  assert.ok(paneToken);
+  assert.deepEqual(modules.resolvePaneToken(paneToken), {
+    terminalId: 'session-concurrent-detached-opencode',
+    userId: 'provider-launch-user',
+    sessionId: 'concurrent-detached-opencode',
+    providerId: 'opencode',
+  });
+});
+
 test('fresh and resumed launches preserve each provider wrapper contract', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);

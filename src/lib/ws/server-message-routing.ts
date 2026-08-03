@@ -511,13 +511,10 @@ export async function routeClientTransportMessage({
       const structured = message.launch;
       if (structured) {
         const session = dbSessions.getSession(structured.sessionId);
-        const supportedProvider = structured.providerId === 'claude-code'
-          || structured.providerId === 'codex'
-          || structured.providerId === 'opencode';
         const matchesPersistedSession = session
           && session.provider === structured.providerId
           && dbSessions.extractSessionKind(session.provider_state) === 'terminal';
-        if (!supportedProvider || !matchesPersistedSession) {
+        if (!matchesPersistedSession) {
           sendToConnection(connectionId, {
             type: 'terminal_error',
             terminalId: message.terminalId,
