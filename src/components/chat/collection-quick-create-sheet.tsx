@@ -18,6 +18,7 @@ import {
 } from '@/lib/worktrees/naming';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { Collection } from '@/types/collection';
+import type { NewSessionDefaultKind } from '@/lib/settings/types';
 import type { WorkflowStatus } from '@/types/task-entity';
 import {
   CliProviderChipSelector,
@@ -35,6 +36,7 @@ interface CollectionQuickCreateSheetProps {
   collections?: Collection[];
   projectDir: string;
   projectId: string;
+  /** Omit to follow the user's `defaultNewSessionKind` setting. */
   initialMode?: QuickCreateMode;
   availableModes?: QuickCreateMode[];
   workflowStatus?: WorkflowStatus;
@@ -80,12 +82,34 @@ export function shouldSubmitCollectionQuickCreateFromModeShortcut({
   );
 }
 
+/**
+ * Which entry the sheet opens on. Callers that derive the kind from their own
+ * context (a Kanban column) pass `initialMode` and keep winning; everyone else
+ * follows the user's `defaultNewSessionKind` setting. A task default still
+ * degrades to chat in a sheet that cannot create tasks.
+ */
+export function resolveQuickCreateInitialMode({
+  initialMode,
+  defaultNewSessionKind,
+  availableModes,
+  allowedModes,
+}: {
+  initialMode: QuickCreateMode | undefined;
+  defaultNewSessionKind: NewSessionDefaultKind;
+  availableModes: QuickCreateMode[];
+  allowedModes: Array<'chat' | 'task'>;
+}): QuickCreateMode {
+  const requested = initialMode ?? defaultNewSessionKind;
+  if (requested !== 'task') return 'chat';
+  return availableModes.includes('task') && allowedModes.includes('task') ? 'task' : 'chat';
+}
+
 export function CollectionQuickCreateSheet({
   collection,
   collections = [],
   projectDir,
   projectId,
-  initialMode = 'chat',
+  initialMode,
   availableModes = ['chat', 'task'],
   workflowStatus,
   allowCollectionSelection = false,
@@ -105,10 +129,17 @@ export function CollectionQuickCreateSheet({
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
+  const defaultNewSessionKind = useSettingsStore((state) => state.settings.defaultNewSessionKind);
+  const resolvedInitialMode = resolveQuickCreateInitialMode({
+    initialMode,
+    defaultNewSessionKind,
+    availableModes,
+    allowedModes,
+  });
   const [selectedProvider, setSelectedProvider] = useState('');
   const [executionMode, setExecutionModeState] = useState(defaultExecutionMode);
   const executionModeTouchedRef = useRef(false);
-  const [isTaskExpanded, setIsTaskExpanded] = useState(initialMode === 'task');
+  const [isTaskExpanded, setIsTaskExpanded] = useState(resolvedInitialMode === 'task');
   const [taskTitle, setTaskTitle] = useState('');
   const [branchSlug, setBranchSlug] = useState(() => buildManagedWorktreeSlug());
   const [branchSlugEdited, setBranchSlugEdited] = useState(false);
@@ -154,9 +185,9 @@ export function CollectionQuickCreateSheet({
   }, [canSelectCollection, collection?.id]);
 
   useEffect(() => {
-    if (!canCreateTask || initialMode !== 'task') return;
+    if (!canCreateTask || resolvedInitialMode !== 'task') return;
     requestAnimationFrame(() => titleInputRef.current?.focus());
-  }, [canCreateTask, initialMode]);
+  }, [canCreateTask, resolvedInitialMode]);
 
   useEffect(() => {
     const handleMouseDown = (event: MouseEvent) => {

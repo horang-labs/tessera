@@ -549,6 +549,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     language: 'en',
     agentExecutionMode: 'pty',
     terminalSessionDefaultView: 'terminal',
+    defaultNewSessionKind: 'task',
     profile: {
       displayName: DEFAULT_PROFILE_DISPLAY_NAME,
       avatarDataUrl: DEFAULT_PROFILE_AVATAR_DATA_URL,
@@ -671,6 +672,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     ...raw,
     agentExecutionMode: raw?.agentExecutionMode === 'gui' ? 'gui' : 'pty',
     terminalSessionDefaultView: raw?.terminalSessionDefaultView === 'chat' ? 'chat' : 'terminal',
+    defaultNewSessionKind: raw?.defaultNewSessionKind === 'chat' ? 'chat' : 'task',
     defaultModel: normalizedClaudeModel,
     terminalThemeLightPreset: normalizeTerminalThemePresetId(
       'light',

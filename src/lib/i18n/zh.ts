@@ -31,6 +31,19 @@ export const zh: I18nMessages = {
         description: '打开由智能体记录还原的对话。',
       },
     },
+    newSessionKind: {
+      title: '新建会话默认项',
+      description: '新建会话页面和快速创建菜单默认选中的选项。',
+      note: '看板仍会按创建所在的列选择对应的类型。',
+      chat: {
+        label: '新建会话',
+        description: '直接在项目中启动智能体会话。',
+      },
+      task: {
+        label: '新建工作树',
+        description: '创建专属分支和工作树后启动会话。',
+      },
+    },
     executionMode: {
       title: '智能体运行模式',
       description: '选择新聊天和工作树会话的打开方式。',

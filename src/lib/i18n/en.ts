@@ -31,6 +31,19 @@ export const en: I18nMessages = {
         description: 'Open on the conversation replayed from the agent transcript.',
       },
     },
+    newSessionKind: {
+      title: 'New session default',
+      description: 'Which option the new session screen and quick-create menu start on.',
+      note: 'The Kanban board still picks the kind that matches the column you create from.',
+      chat: {
+        label: 'New Session',
+        description: 'Start an agent session in the project itself.',
+      },
+      task: {
+        label: 'New Worktree',
+        description: 'Start a session with its own managed branch and worktree.',
+      },
+    },
     executionMode: {
       title: 'Agent execution mode',
       description: 'Choose how new chats and worktree sessions open.',

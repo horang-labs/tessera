@@ -31,6 +31,19 @@ export const ja: I18nMessages = {
         description: 'エージェントの記録から再現した会話で開きます。',
       },
     },
+    newSessionKind: {
+      title: '新規セッションの既定',
+      description: '新規セッション画面とクイック作成メニューで最初に選ばれる項目です。',
+      note: 'かんばんボードでは作成した列に合わせた種類がそのまま使われます。',
+      chat: {
+        label: '新規セッション',
+        description: 'プロジェクト内でそのままエージェントセッションを開始します。',
+      },
+      task: {
+        label: '新規ワークツリー',
+        description: '専用ブランチとワークツリーを作ってセッションを開始します。',
+      },
+    },
     executionMode: {
       title: 'エージェント実行モード',
       description: '新しいチャットとワークツリーセッションの開き方を選択します。',

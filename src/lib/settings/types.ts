@@ -6,6 +6,9 @@ import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
 /** Surface a PTY session opens on: its terminal, or the read-only chat view. */
 export type TerminalSessionDefaultView = 'terminal' | 'chat';
+
+/** Which kind of session the creation UIs preselect: a plain chat, or a worktree task. */
+export type NewSessionDefaultKind = 'chat' | 'task';
 import type {
   TerminalDarkThemePresetId,
   TerminalLightThemePresetId,
@@ -65,6 +68,13 @@ export interface UserSettings {
    * for, and the chat view is a read-only lens over the same conversation.
    */
   terminalSessionDefaultView: TerminalSessionDefaultView;
+  /**
+   * Which entry the session creation UIs (empty panel, quick-create sheet) start
+   * on. Orthogonal to `agentExecutionMode`: this picks chat vs. worktree task,
+   * not PTY vs. GUI. Places that derive the kind from their own context — the
+   * Kanban board's per-column create button — keep overriding it.
+   */
+  defaultNewSessionKind: NewSessionDefaultKind;
   profile: UserProfileSettings;
   notifications: {
     soundEnabled: boolean;
