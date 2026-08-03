@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
     if (error instanceof DeviceRegistryError) {
       const status = error.code === 'pairing-expired'
         ? 410
-        : error.code === 'capacity-reached'
+        : error.code === 'capacity-reached' || error.code === 'pairing-used'
           ? 409
           : 401;
       return failedResponse(request, status, error.code, error.message);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import {
@@ -19,6 +20,13 @@ const IDLE_TIMEOUT_MS = 300_000;
 type TelemetryBootstrapResponse = TelemetryBootstrapInfo;
 
 export function TelemetryProvider() {
+  const pathname = usePathname();
+  if (pathname === '/pair' || pathname.startsWith('/pair/')) return null;
+
+  return <ActiveTelemetryProvider />;
+}
+
+function ActiveTelemetryProvider() {
   const telemetrySettingEnabled = useSettingsStore(
     (state) => state.settings.telemetry.enabled,
   );

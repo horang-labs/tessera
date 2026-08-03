@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import logger from '../logger';
@@ -7,6 +7,8 @@ import { getTesseraDataPath } from '../tessera-data-dir';
 const DEVICE_TOKEN_BYTES = 32;
 const TOKEN_LENGTH = 43;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MAX_CONSUMED_PAIRING_TOKENS = 16;
+const CONSUMED_PAIRING_TOKEN_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const PAIRING_TOKEN_TTL_MS = 2 * 60 * 1000;
 export const MAX_PAIRED_DEVICES = 8;
 export const DEVICE_TOKEN_COOKIE = 'device';
@@ -29,10 +31,16 @@ interface StoredPairingToken {
   expiresAt: string;
 }
 
+interface ConsumedPairingToken {
+  tokenHash: string;
+  expiresAt: string;
+}
+
 interface RegistryState {
   version: 1;
   devices: StoredDevice[];
   pairingToken: StoredPairingToken | null;
+  consumedPairingTokens: ConsumedPairingToken[];
 }
 
 interface RegistryStore {
@@ -62,6 +70,7 @@ export type DeviceRegistryErrorCode =
   | 'capacity-reached'
   | 'pairing-active'
   | 'pairing-expired'
+  | 'pairing-used'
   | 'pairing-invalid';
 
 export class DeviceRegistryError extends Error {
@@ -75,6 +84,7 @@ const EMPTY_STATE: RegistryState = {
   version: 1,
   devices: [],
   pairingToken: null,
+  consumedPairingTokens: [],
 };
 const STORE_KEY = Symbol.for('tessera.deviceRegistry');
 const registryGlobal = globalThis as typeof globalThis & {
@@ -91,6 +101,7 @@ function cloneState(state: RegistryState): RegistryState {
     version: 1,
     devices: state.devices.map((device) => ({ ...device })),
     pairingToken: state.pairingToken ? { ...state.pairingToken } : null,
+    consumedPairingTokens: state.consumedPairingTokens.map((token) => ({ ...token })),
   };
 }
 
@@ -140,10 +151,23 @@ function parseRegistryState(value: unknown): RegistryState | null {
       || Date.parse(pairing.expiresAt) <= Date.parse(pairing.createdAt)
     ) return null;
   }
+  const consumedPairingTokens = candidate.consumedPairingTokens ?? [];
+  if (
+    !Array.isArray(consumedPairingTokens)
+    || consumedPairingTokens.length > MAX_CONSUMED_PAIRING_TOKENS
+    || !consumedPairingTokens.every((value) => {
+      if (!value || typeof value !== 'object') return false;
+      const token = value as Partial<ConsumedPairingToken>;
+      return TOKEN_PATTERN.test(token.tokenHash ?? '')
+        && typeof token.expiresAt === 'string'
+        && Number.isFinite(Date.parse(token.expiresAt));
+    })
+  ) return null;
   return {
     version: 1,
     devices: candidate.devices,
     pairingToken: candidate.pairingToken ?? null,
+    consumedPairingTokens,
   };
 }
 
@@ -232,6 +256,29 @@ function constantTimeTokenMatch(candidate: CandidateToken, storedToken: string):
   return candidate.hasExpectedLength && equal;
 }
 
+function hashPairingToken(token: string): string {
+  return createHash('sha256').update(token).digest('base64url');
+}
+
+function pruneConsumedPairingTokens(state: RegistryState, now: Date): void {
+  state.consumedPairingTokens = state.consumedPairingTokens.filter(
+    (token) => Date.parse(token.expiresAt) > now.getTime(),
+  );
+}
+
+function wasPairingTokenConsumed(state: RegistryState, candidate: string): boolean {
+  if (!TOKEN_PATTERN.test(candidate)) return false;
+
+  const candidateHash = normalizeCandidateToken(hashPairingToken(candidate));
+  let matched = false;
+  for (const token of state.consumedPairingTokens) {
+    if (constantTimeTokenMatch(candidateHash, token.tokenHash)) {
+      matched = true;
+    }
+  }
+  return matched;
+}
+
 function publicDevice(device: StoredDevice): PairedDevice {
   return {
     id: device.id,
@@ -257,6 +304,7 @@ function assertCapacity(state: RegistryState): void {
 
 export async function issuePairingToken(now = new Date()): Promise<IssuedPairingToken> {
   return mutate((state) => {
+    pruneConsumedPairingTokens(state, now);
     assertCapacity(state);
     if (
       state.pairingToken
@@ -271,6 +319,7 @@ export async function issuePairingToken(now = new Date()): Promise<IssuedPairing
 
 export async function rotatePairingToken(now = new Date()): Promise<IssuedPairingToken> {
   return mutate((state) => {
+    pruneConsumedPairingTokens(state, now);
     assertCapacity(state);
     state.pairingToken = newPairingToken(now);
     return { ...state.pairingToken };
@@ -299,12 +348,16 @@ export async function redeemPairingToken(
   const outcome = await mutate((state):
     | { device: RedeemedDevice; error?: never }
     | { device?: never; error: DeviceRegistryError } => {
+    pruneConsumedPairingTokens(state, now);
     const pairingToken = state.pairingToken;
     const candidateToken = normalizeCandidateToken(candidate);
     if (
       !pairingToken
       || !constantTimeTokenMatch(candidateToken, pairingToken.token)
     ) {
+      if (wasPairingTokenConsumed(state, candidate)) {
+        throw new DeviceRegistryError('pairing-used', 'Pairing token has already been used');
+      }
       throw new DeviceRegistryError('pairing-invalid', 'Pairing token is invalid');
     }
     state.pairingToken = null;
@@ -314,6 +367,15 @@ export async function redeemPairingToken(
       };
     }
     assertCapacity(state);
+    state.consumedPairingTokens.push({
+      tokenHash: hashPairingToken(pairingToken.token),
+      expiresAt: new Date(
+        now.getTime() + CONSUMED_PAIRING_TOKEN_RETENTION_MS,
+      ).toISOString(),
+    });
+    state.consumedPairingTokens = state.consumedPairingTokens.slice(
+      -MAX_CONSUMED_PAIRING_TOKENS,
+    );
 
     const registeredAt = now.toISOString();
     const device: StoredDevice = {
@@ -376,6 +438,7 @@ export async function clearDeviceRegistry(): Promise<string[]> {
     const revokedDeviceIds = state.devices.map((device) => device.id);
     state.devices = [];
     state.pairingToken = null;
+    state.consumedPairingTokens = [];
     return revokedDeviceIds;
   });
 }

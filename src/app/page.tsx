@@ -6,16 +6,20 @@ import { getElectronAuthUserId } from '@/lib/electron-user';
 import { SettingsManager } from '@/lib/settings/manager';
 import { getSetupEntryRoute } from '@/lib/setup/setup-routing';
 import { findUserById, hasAnyUsers } from '@/lib/users';
+import {
+  DEVICE_TOKEN_COOKIE,
+  resolveDeviceToken,
+} from '@/lib/auth/device-registry';
+import { resolveServerDefaultUserId } from '@/lib/server-default-user';
 
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
-  if (!isElectronAuthBypassEnabled() && !(await hasAnyUsers())) {
-    redirect('/setup');
-  }
-
   const userId = await resolveEntryUserId();
   if (!userId) {
+    if (!(await hasAnyUsers())) {
+      redirect('/setup');
+    }
     redirect('/login');
   }
 
@@ -29,6 +33,11 @@ async function resolveEntryUserId(): Promise<string | null> {
   }
 
   const cookieStore = await cookies();
+  const deviceToken = cookieStore.get(DEVICE_TOKEN_COOKIE)?.value;
+  if (deviceToken && await resolveDeviceToken(deviceToken)) {
+    return (await resolveServerDefaultUserId()) ?? null;
+  }
+
   const token = cookieStore.get('jwt')?.value;
   if (!token) return null;
 

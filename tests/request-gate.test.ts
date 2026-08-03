@@ -272,17 +272,23 @@ test('prefers the app secret when app and JWT credentials are both valid', async
 test('accepts a redeemed device token and rejects it immediately after revocation', async () => {
   const {
     DeviceRegistryError,
+    PAIRING_TOKEN_TTL_MS,
     issuePairingToken,
     redeemPairingToken,
     revokeDevice,
   } = await import('../src/lib/auth/device-registry');
   const { evaluateRequest } = await import('../src/lib/auth/request-gate');
-  const pairing = await issuePairingToken();
-  const device = await redeemPairingToken(pairing.token, 'Test phone');
+  const issuedAt = new Date('2026-08-03T00:00:00.000Z');
+  const pairing = await issuePairingToken(issuedAt);
+  const device = await redeemPairingToken(pairing.token, 'Test phone', issuedAt);
   await assert.rejects(
-    () => redeemPairingToken(pairing.token, 'Second phone'),
+    () => redeemPairingToken(
+      pairing.token,
+      'Second phone',
+      new Date(issuedAt.getTime() + PAIRING_TOKEN_TTL_MS + 1),
+    ),
     (error: unknown) => error instanceof DeviceRegistryError
-      && error.code === 'pairing-invalid',
+      && error.code === 'pairing-used',
   );
 
   assert.deepEqual(
@@ -390,6 +396,20 @@ test('completes the pairing API flow and revokes the issued cookie immediately',
   assert.match(setCookie, /HttpOnly/i);
   const deviceToken = /(?:^|;\s*)device=([^;]+)/.exec(setCookie)?.[1];
   assert.ok(deviceToken);
+
+  const reusedTokenResponse = await redeemRoute.POST(new NextRequest(
+    'http://localhost:32123/api/pairing/redeem',
+    {
+      method: 'POST',
+      headers: appHeaders,
+      body: JSON.stringify({ token: rotated.pairingToken, name: 'Reused phone' }),
+    },
+  ));
+  assert.equal(reusedTokenResponse.status, 409);
+  assert.deepEqual(await reusedTokenResponse.json(), {
+    error: 'Pairing token has already been used',
+    code: 'pairing-used',
+  });
 
   const deviceHeaders = {
     cookie: `device=${deviceToken}`,

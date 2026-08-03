@@ -35,6 +35,8 @@ export async function proxy(request: NextRequest) {
   if (
     pathname.startsWith('/api/auth') ||
     pathname === '/api/pairing/redeem' ||
+    pathname === '/pair' ||
+    pathname.startsWith('/pair/') ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')
@@ -57,6 +59,7 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    '/pair/:path*',
     '/chat/:path*',
     '/api/:path*',
   ],
