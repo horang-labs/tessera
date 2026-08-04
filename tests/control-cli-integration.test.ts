@@ -30,6 +30,7 @@ const PACKAGE_VERSION = JSON.parse(
 interface TestRuntime {
   descriptor: RuntimeDescriptorHandle;
   sessionStarts: Array<{ sessionId: string; initialPrompt?: string; allowPreparationFailure?: boolean }>;
+  sessionWaits: Array<{ sessionId: string; condition: string; timeoutMs: number }>;
   close(): Promise<void>;
 }
 
@@ -442,6 +443,58 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
     assert.equal(shown.code, 0);
     assert.equal(JSON.parse(shown.stdout).data.sessionId, createdSession.sessionId);
 
+    const read = await runCli([
+      'session', 'read', createdSession.sessionId, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(read.code, 0, read.stderr || read.stdout);
+    assert.deepEqual(JSON.parse(read.stdout).data, {
+      screen: 'unique detached output',
+      cols: 100,
+      rows: 30,
+      alternateScreen: false,
+      outputSequence: 9,
+      terminalId: 'terminal-observed',
+      runtimeState: 'turn-complete',
+      stateAt: 4000,
+      lifecyclePreview: 'provider response boundary',
+    });
+
+    const waited = await runCli([
+      'session', 'wait', createdSession.sessionId,
+      '--for', 'turn-complete', '--timeout', '12', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(waited.code, 0, waited.stderr || waited.stdout);
+    assert.equal(JSON.parse(waited.stdout).data.runtimeState, 'turn-complete');
+
+    const defaultWait = await runCli([
+      'session', 'wait', createdSession.sessionId,
+      '--for', 'turn-complete', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(defaultWait.code, 0, defaultWait.stderr || defaultWait.stdout);
+    assert.deepEqual(runtime.sessionWaits, [
+      {
+        sessionId: createdSession.sessionId,
+        condition: 'turn-complete',
+        timeoutMs: 12_000,
+      },
+      {
+        sessionId: createdSession.sessionId,
+        condition: 'turn-complete',
+        timeoutMs: 600_000,
+      },
+    ]);
+
+    const timedOut = await runCli([
+      'session', 'wait', createdSession.sessionId,
+      '--for', 'input-required', '--timeout', '1', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(timedOut.code, 124);
+    assert.equal(JSON.parse(timedOut.stdout).error.code, 'SESSION_WAIT_TIMEOUT');
+
     const oversized = await runCli([
       'session', 'launch', '--worktree', worktree.worktreeId,
       '--provider', 'codex', '--prompt-file', oversizedPromptFile, '--json',
@@ -455,6 +508,9 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
       ['session', 'start', createdSession.sessionId, '--prompt', 'one', '--no-prompt'],
       ['session', 'launch', '--worktree', worktree.worktreeId, '--provider', 'codex'],
       ['session', 'create', '--worktree', worktree.worktreeId],
+      ['session', 'read', createdSession.sessionId, '--timeout', '1'],
+      ['session', 'wait', createdSession.sessionId, '--for', 'done'],
+      ['session', 'wait', createdSession.sessionId, '--for', 'running', '--timeout', '3601'],
     ]) {
       const invalid = await runCli([
         ...args, '--json', '--control-descriptor', runtime.descriptor.path,
@@ -523,6 +579,8 @@ test('Session commands reject malformed success DTOs before JSON or human render
       ['session', 'show', 'session-valid-shape'],
       ['session', 'create', '--worktree', 'wt_valid_shape', '--provider', 'codex'],
       ['session', 'start', 'session-valid-shape', '--no-prompt'],
+      ['session', 'read', 'session-valid-shape'],
+      ['session', 'wait', 'session-valid-shape', '--for', 'turn-complete'],
       [
         'session', 'launch', '--worktree', 'wt_valid_shape', '--provider', 'codex',
         '--no-prompt',
@@ -662,6 +720,7 @@ async function startRuntime(
 ): Promise<TestRuntime> {
   const sessionRecords: ControlSessionRecord[] = [];
   const sessionStarts: TestRuntime['sessionStarts'] = [];
+  const sessionWaits: TestRuntime['sessionWaits'] = [];
   const liveSessions = new Set<string>();
   let requestHandler: ReturnType<typeof createControlHttpHandler> | undefined;
   const server = http.createServer((request, response) => {
@@ -764,6 +823,40 @@ async function startRuntime(
         if (index >= 0) sessionRecords.splice(index, 1);
       },
     },
+    sessionObserver: {
+      read: async () => ({
+        screen: 'unique detached output',
+        cols: 100,
+        rows: 30,
+        alternateScreen: false,
+        outputSequence: 9,
+        terminalId: 'terminal-observed',
+        runtimeState: 'turn-complete' as const,
+        stateAt: 4000,
+        lifecyclePreview: 'provider response boundary',
+      }),
+      wait: async (sessionId: string, condition: string, timeoutMs: number) => {
+        sessionWaits.push({ sessionId, condition, timeoutMs });
+        if (condition === 'input-required') {
+          throw new ControlOperationError(
+            'SESSION_WAIT_TIMEOUT',
+            'The Session did not reach input-required before the timeout.',
+            408,
+          );
+        }
+        return {
+          screen: 'unique detached output',
+          cols: 100,
+          rows: 30,
+          alternateScreen: false,
+          outputSequence: 9,
+          terminalId: 'terminal-observed',
+          runtimeState: 'turn-complete' as const,
+          stateAt: 4000,
+          lifecyclePreview: 'provider response boundary',
+        };
+      },
+    },
   };
   const service = createControlService(serviceOptions as Parameters<typeof createControlService>[0]);
   requestHandler = createControlHttpHandler({ descriptor: descriptor.descriptor, service });
@@ -771,6 +864,7 @@ async function startRuntime(
   return {
     descriptor,
     sessionStarts,
+    sessionWaits,
     close: async () => {
       await descriptor.cleanup();
       await new Promise<void>((resolve) => server.close(() => resolve()));

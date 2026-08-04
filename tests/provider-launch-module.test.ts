@@ -305,7 +305,7 @@ test('an immediate provider exit after detached spawn keeps the durable Session'
   assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 0, sessionCount: 0 });
 });
 
-test('a surface attaches to the detached runtime and restores its existing screen', async () => {
+test('a headless Session reaches turn-complete, reads output, then attaches the same runtime and screen', async () => {
   const captured: CapturedSpawn[] = [];
   const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
   const manager = createManager(captured, {}, delivered);
@@ -318,7 +318,29 @@ test('a surface attaches to the detached runtime and restores its existing scree
     initialPrompt: 'Keep running',
     mode: 'detached',
   });
+  const completed = manager.waitForSessionState(
+    'detached-then-surface',
+    'provider-launch-user',
+    'turn-complete',
+    1_000,
+  );
   captured[0]?.pty.emitData('screen-before-attach');
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'detached-then-surface',
+    terminalId: detached.terminalId,
+    status: 'completed',
+    hookEvent: 'Stop',
+    stateAt: 1234,
+  }, 'provider-launch-user');
+  const observed = await completed;
+  assert.equal(observed.runtimeState, 'turn-complete');
+  assert.equal(observed.terminalId, detached.terminalId);
+  assert.match(observed.screen, /screen-before-attach/);
+  assert.deepEqual(
+    await manager.readSessionSnapshot('detached-then-surface', 'provider-launch-user'),
+    observed,
+  );
   const attached = await launcher.launch({
     sessionId: 'detached-then-surface',
     userId: 'provider-launch-user',
@@ -339,6 +361,7 @@ test('a surface attaches to the detached runtime and restores its existing scree
   assert.ok(snapshot && snapshot.type === 'terminal_snapshot');
   if (snapshot?.type === 'terminal_snapshot') {
     assert.match(snapshot.data, /screen-before-attach/);
+    assert.equal(snapshot.terminalId, observed.terminalId);
   }
 });
 

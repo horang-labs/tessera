@@ -4,7 +4,11 @@ import {
   type ProjectFilesystemKind,
 } from '@/lib/projects/environment-policy';
 import type { AgentEnvironment } from '@/lib/settings/types';
-import type { TerminalLaunchRuntimeState } from '@/lib/terminal/terminal-manager';
+import type {
+  TerminalLaunchRuntimeState,
+  TerminalSessionSnapshot,
+  TerminalSessionWaitCondition,
+} from '@/lib/terminal/terminal-manager';
 import type {
   PreparationPhase,
   PreparationStatus,
@@ -29,6 +33,7 @@ export type ControlErrorCode =
   | 'SESSION_NOT_FOUND'
   | 'SESSION_NOT_FRESH'
   | 'SESSION_RUNTIME_ALREADY_RUNNING'
+  | 'SESSION_WAIT_TIMEOUT'
   | 'WORKTREE_CREATE_FAILED'
   | 'WORKTREE_NOT_FOUND'
   | 'WORKTREE_PERSIST_FAILED'
@@ -126,6 +131,21 @@ export interface ControlSessionMutator {
   create(request: ControlSessionCreationRequest): Promise<ControlSessionRecord>;
   start(request: ControlSessionStartRequest): Promise<{ terminalId: string }>;
   removeCreated(sessionId: string): Promise<void>;
+}
+
+export interface ControlSessionObserver {
+  read(sessionId: string): Promise<TerminalSessionSnapshot>;
+  wait(
+    sessionId: string,
+    condition: TerminalSessionWaitCondition,
+    timeoutMs: number,
+  ): Promise<TerminalSessionSnapshot>;
+}
+
+export interface ControlSessionWaitRequest {
+  sessionId: string;
+  condition: TerminalSessionWaitCondition;
+  timeoutSeconds?: number;
 }
 
 export interface ControlWorktreeCreationRequest {
@@ -229,6 +249,14 @@ export interface ControlService {
     request: ControlSessionLaunchRequest,
     context: ControlCallerContext,
   ): Promise<{ session: PublicSessionDto; terminalId: string }>;
+  readSession(
+    sessionId: string,
+    context: ControlCallerContext,
+  ): Promise<TerminalSessionSnapshot>;
+  waitForSession(
+    request: ControlSessionWaitRequest,
+    context: ControlCallerContext,
+  ): Promise<TerminalSessionSnapshot>;
 }
 
 export class ControlOperationError extends Error {
@@ -272,6 +300,7 @@ export function createControlService(options: {
   worktreeCreator?: ControlWorktreeCreator;
   sessions?: ControlSessionSource;
   sessionMutator?: ControlSessionMutator;
+  sessionObserver?: ControlSessionObserver;
 }): ControlService {
   const {
     appVersion,
@@ -281,6 +310,7 @@ export function createControlService(options: {
     worktreeCreator,
     sessions,
     sessionMutator,
+    sessionObserver,
   } = options;
 
   return {
@@ -473,6 +503,37 @@ export function createControlService(options: {
         throw error;
       }
     },
+
+    async readSession(sessionId) {
+      const observer = requireSessionObserver(sessions, sessionObserver);
+      requireSession(observer.sessions, sessionId);
+      return observer.observer.read(sessionId);
+    },
+
+    async waitForSession(request) {
+      const observer = requireSessionObserver(sessions, sessionObserver);
+      requireSession(observer.sessions, request.sessionId);
+      const timeoutSeconds = request.timeoutSeconds ?? 600;
+      if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 3_600) {
+        throw new ControlOperationError(
+          'INVALID_USAGE',
+          'The Session wait timeout must be an integer from 1 to 3600 seconds.',
+          400,
+        );
+      }
+      if (!isSessionWaitCondition(request.condition)) {
+        throw new ControlOperationError(
+          'INVALID_USAGE',
+          'The Session wait condition is not supported.',
+          400,
+        );
+      }
+      return observer.observer.wait(
+        request.sessionId,
+        request.condition,
+        timeoutSeconds * 1_000,
+      );
+    },
   };
 }
 
@@ -500,6 +561,25 @@ function requireSessionSupport(
     'This Tessera runtime cannot operate Sessions.',
     503,
   );
+}
+
+function requireSessionObserver(
+  sessions: ControlSessionSource | undefined,
+  sessionObserver: ControlSessionObserver | undefined,
+): { sessions: ControlSessionSource; observer: ControlSessionObserver } {
+  if (sessions && sessionObserver) return { sessions, observer: sessionObserver };
+  throw new ControlOperationError(
+    'INSTANCE_UNAVAILABLE',
+    'This Tessera runtime cannot observe Sessions.',
+    503,
+  );
+}
+
+function isSessionWaitCondition(value: unknown): value is TerminalSessionWaitCondition {
+  return value === 'running'
+    || value === 'turn-complete'
+    || value === 'input-required'
+    || value === 'runtime-exit';
 }
 
 function requireSession(

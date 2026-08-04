@@ -42,6 +42,7 @@ import { createDatabaseControlWorktreeCreator } from './src/lib/control/worktree
 import { createDatabaseControlSessionSource } from './src/lib/control/database-session-source';
 import { createDatabaseControlSessionMutator } from './src/lib/control/session-mutator';
 import { resolveControlUserId } from './src/lib/control/user-context';
+import { createTerminalControlSessionObserver } from './src/lib/control/session-observer';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -156,6 +157,9 @@ async function startServer() {
           }),
           sessions: createDatabaseControlSessionSource(),
           sessionMutator: createDatabaseControlSessionMutator({
+            resolveUserId: resolveControlUserId,
+          }),
+          sessionObserver: createTerminalControlSessionObserver({
             resolveUserId: resolveControlUserId,
           }),
         }),

@@ -202,6 +202,10 @@ export class TerminalHeadlessModel {
     return { row: buffer.cursorY + 1, column: buffer.cursorX + 1 };
   }
 
+  isAlternateScreen(): boolean {
+    return !this.disposed && this.terminal.buffer.active.type === 'alternate';
+  }
+
   resize(cols: number, rows: number): void {
     if (this.disposed) return;
     this.terminal.resize(normalizeDimension(cols), normalizeDimension(rows));

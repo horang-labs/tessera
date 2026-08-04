@@ -159,6 +159,29 @@ export function createControlHttpHandler(options: {
         return true;
       }
 
+      const sessionReadMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/read$`),
+      );
+      if (sessionReadMatch) {
+        requireMethod(request, 'GET');
+        const sessionId = decodeControlId(sessionReadMatch[1], 'Session');
+        writeSuccess(response, await service.readSession(sessionId, context));
+        return true;
+      }
+
+      const sessionWaitMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/wait$`),
+      );
+      if (sessionWaitMatch) {
+        requireMethod(request, 'POST');
+        const sessionId = decodeControlId(sessionWaitMatch[1], 'Session');
+        writeSuccess(response, await service.waitForSession({
+          sessionId,
+          ...await readSessionWaitBody(request),
+        }, context));
+        return true;
+      }
+
       const sessionShowMatch = pathname.match(
         new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)$`),
       );
@@ -285,6 +308,42 @@ async function readSessionLaunchBody(request: IncomingMessage): Promise<{
   );
   const creation = readSessionCreationFields(body);
   return { ...creation, ...readPromptChoice(body) };
+}
+
+async function readSessionWaitBody(request: IncomingMessage): Promise<{
+  condition: 'running' | 'turn-complete' | 'input-required' | 'runtime-exit';
+  timeoutSeconds?: number;
+}> {
+  const body = await readJsonObject(request);
+  rejectUnknownFields(body, ['condition', 'timeoutSeconds'], 'Session wait');
+  if (
+    body.condition !== 'running'
+    && body.condition !== 'turn-complete'
+    && body.condition !== 'input-required'
+    && body.condition !== 'runtime-exit'
+  ) {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      'The Session wait condition is not supported.',
+      400,
+    );
+  }
+  if (
+    body.timeoutSeconds !== undefined
+    && (!Number.isInteger(body.timeoutSeconds) || Number(body.timeoutSeconds) < 1)
+  ) {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      'The Session wait timeout must be a positive integer.',
+      400,
+    );
+  }
+  return {
+    condition: body.condition,
+    ...(body.timeoutSeconds === undefined
+      ? {}
+      : { timeoutSeconds: Number(body.timeoutSeconds) }),
+  };
 }
 
 function readSessionCreationFields(body: Record<string, unknown>): {

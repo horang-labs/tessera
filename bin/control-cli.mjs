@@ -108,7 +108,7 @@ export async function runControlCli(options) {
     return writeEnvelope(
       json,
       response,
-      response.error.code === 'PREPARATION_TIMEOUT' ? 124 : 1,
+      ['PREPARATION_TIMEOUT', 'SESSION_WAIT_TIMEOUT'].includes(response.error.code) ? 124 : 1,
       invocation.kind,
     );
   }
@@ -150,6 +150,8 @@ export function controlUsage() {
   tessera session create --worktree <worktree-id> --provider <provider-id> [--title <title>] [--json]
   tessera session start <session-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--allow-preparation-failure] [--json]
   tessera session launch --worktree <worktree-id> --provider <provider-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--title <title>] [--allow-preparation-failure] [--json]
+  tessera session read <session-id> [--json]
+  tessera session wait <session-id> --for <running|turn-complete|input-required|runtime-exit> [--timeout <seconds>] [--json]
 
 Runtime selection:
   --control-descriptor PATH  Select one exact local Tessera runtime.
@@ -221,6 +223,38 @@ function parseControlInvocation(argv, env) {
       descriptorPath,
       kind: 'project-list',
       requestPath: '/__tessera/control/v1/projects',
+    };
+  }
+
+  if (
+    commandArgs.length === 3
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'read'
+    && commandArgs[2]
+  ) {
+    return {
+      descriptorPath,
+      kind: 'session-read',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(commandArgs[2])}/read`,
+    };
+  }
+
+  if (
+    commandArgs.length >= 5
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'wait'
+    && commandArgs[2]
+  ) {
+    const wait = parseSessionWait(commandArgs.slice(3));
+    return {
+      descriptorPath,
+      kind: 'session-wait',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(commandArgs[2])}/wait`,
+      requestBody: {
+        condition: wait.condition,
+        ...(wait.timeoutSeconds === undefined ? {} : { timeoutSeconds: wait.timeoutSeconds }),
+      },
+      waitTimeoutSeconds: wait.timeoutSeconds ?? 600,
     };
   }
 
@@ -365,7 +399,7 @@ function parseControlInvocation(argv, env) {
     };
   }
 
-  throw new Error('Usage: tessera status | project list | project show <project-id> | worktree list | worktree show <worktree-id> [--json]');
+  throw new Error('Invalid Control command. Run tessera --help for usage.');
 }
 
 function parseRequiredNamedValue(args, option, label) {
@@ -373,6 +407,37 @@ function parseRequiredNamedValue(args, option, label) {
     throw new Error(`${option} requires exactly one ${label}.`);
   }
   return args[1];
+}
+
+function parseSessionWait(args) {
+  let condition;
+  let timeoutSeconds;
+  const seen = new Set();
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option !== '--for' && option !== '--timeout') {
+      throw new Error(`Unknown Session wait option: ${option}`);
+    }
+    if (seen.has(option)) throw new Error(`${option} may be supplied only once.`);
+    seen.add(option);
+    const value = args[index + 1];
+    if (!value || value.startsWith('-')) throw new Error(`${option} requires a value.`);
+    index += 1;
+    if (option === '--for') {
+      if (!['running', 'turn-complete', 'input-required', 'runtime-exit'].includes(value)) {
+        throw new Error('--for requires a supported Session condition.');
+      }
+      condition = value;
+    } else {
+      if (!/^\d+$/.test(value)) throw new Error('--timeout requires an integer number of seconds.');
+      timeoutSeconds = Number(value);
+      if (timeoutSeconds < 1 || timeoutSeconds > 3600) {
+        throw new Error('--timeout must be from 1 to 3600 seconds.');
+      }
+    }
+  }
+  if (!condition) throw new Error('--for requires a supported Session condition.');
+  return { condition, timeoutSeconds };
 }
 
 function parseSessionCreation(args) {
@@ -782,7 +847,9 @@ function requestControl(descriptor, invocation, env, appVersion) {
       });
     });
     request.setTimeout(
-      requestBody === null ? REQUEST_TIMEOUT_MS : MUTATION_REQUEST_TIMEOUT_MS,
+      invocation.kind === 'session-wait'
+        ? (invocation.waitTimeoutSeconds + 5) * 1_000
+        : requestBody === null ? REQUEST_TIMEOUT_MS : MUTATION_REQUEST_TIMEOUT_MS,
       () => request.destroy(new Error('timeout')),
     );
     request.on('error', reject);
@@ -834,6 +901,9 @@ function validateSuccessData(kind, data) {
       ? { session, terminalId: data.terminalId }
       : INVALID_SUCCESS_DATA;
   }
+  if (kind === 'session-read' || kind === 'session-wait') {
+    return parseSessionSnapshot(data) ?? INVALID_SUCCESS_DATA;
+  }
   return data;
 }
 
@@ -842,6 +912,42 @@ function parsePublicSessionDto(value) {
   const fields = ['sessionId', 'worktreeId', 'projectId', 'title', 'provider', 'updatedAt'];
   if (!fields.every((field) => isNonEmptyString(value[field]))) return null;
   return Object.fromEntries(fields.map((field) => [field, value[field]]));
+}
+
+function parseSessionSnapshot(value) {
+  if (!isRecord(value)) return null;
+  const validNullableDimension = (dimension) => dimension === null
+    || (Number.isInteger(dimension) && dimension > 0);
+  const validRuntimeState = [
+    'starting', 'idle', 'running', 'input-required', 'turn-complete', 'exited',
+  ].includes(value.runtimeState);
+  const dimensionsAreConsistent = (value.cols === null && value.rows === null)
+    || (Number.isInteger(value.cols) && value.cols > 0
+      && Number.isInteger(value.rows) && value.rows > 0);
+  if (
+    typeof value.screen !== 'string'
+    || !validNullableDimension(value.cols)
+    || !validNullableDimension(value.rows)
+    || !dimensionsAreConsistent
+    || typeof value.alternateScreen !== 'boolean'
+    || !Number.isInteger(value.outputSequence)
+    || value.outputSequence < 0
+    || !(value.terminalId === null || isNonEmptyString(value.terminalId))
+    || !validRuntimeState
+    || !(value.stateAt === null || (Number.isFinite(value.stateAt) && value.stateAt >= 0))
+    || !(value.lifecyclePreview === undefined || typeof value.lifecyclePreview === 'string')
+  ) return null;
+  return {
+    screen: value.screen,
+    cols: value.cols,
+    rows: value.rows,
+    alternateScreen: value.alternateScreen,
+    outputSequence: value.outputSequence,
+    terminalId: value.terminalId,
+    runtimeState: value.runtimeState,
+    stateAt: value.stateAt,
+    ...(value.lifecyclePreview === undefined ? {} : { lifecyclePreview: value.lifecyclePreview }),
+  };
 }
 
 function isRecord(value) {
@@ -914,5 +1020,11 @@ function writeHumanSuccess(kind, data) {
   }
   if (kind === 'session-start' || kind === 'session-launch') {
     process.stdout.write(`${data.session.sessionId}\n${data.terminalId}\n`);
+    return;
+  }
+  if (kind === 'session-read' || kind === 'session-wait') {
+    process.stdout.write(
+      `${data.runtimeState}\t${data.terminalId ?? ''}\t${data.cols ?? ''}x${data.rows ?? ''}\tseq ${data.outputSequence}\n${data.screen}${data.screen ? '\n' : ''}`,
+    );
   }
 }

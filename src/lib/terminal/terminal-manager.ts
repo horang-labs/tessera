@@ -55,6 +55,8 @@ export type ObserveTerminalSessionRuntime = (
   info: TerminalSessionRuntimeInfo,
 ) => void | (() => void) | Promise<void | (() => void)>;
 const MAX_REPLAY_BUFFER_CHARS = 200_000;
+const MAX_SESSION_SCREEN_CHARS = 64_000;
+const MAX_SESSION_LIFECYCLE_PREVIEW_CHARS = 2_000;
 const MAX_TERMINAL_COLS = 1_000;
 const MAX_TERMINAL_ROWS = 500;
 // 슬래시 fallback 프리필 타이밍 휴리스틱 (PTY 실측 기반)
@@ -168,6 +170,7 @@ interface TerminalRuntime {
   interruptInputPolicy: NonNullable<TerminalCreateOptions['interruptInputPolicy']>;
   generation: number;
   sequence: number;
+  runtimeStateAt: number;
   ended: boolean;
   exitEvent?: { exitCode: number; signal?: number };
   cwd: string;
@@ -214,13 +217,49 @@ interface TerminalRuntime {
   reboundFromSessionIds: Set<string>;
   previewOwnerToken?: string;
   onRuntimeExit?: TerminalCreateOptions['onRuntimeExit'];
+  pendingSessionSnapshots: Set<Promise<void>>;
+}
+
+export type TerminalSessionRuntimeState =
+  | 'starting'
+  | 'idle'
+  | 'running'
+  | 'input-required'
+  | 'turn-complete'
+  | 'exited';
+
+export interface TerminalSessionSnapshot {
+  screen: string;
+  cols: number | null;
+  rows: number | null;
+  alternateScreen: boolean;
+  outputSequence: number;
+  terminalId: string | null;
+  runtimeState: TerminalSessionRuntimeState;
+  stateAt: number | null;
+  lifecyclePreview?: string;
+}
+
+export type TerminalSessionWaitCondition =
+  | 'running'
+  | 'turn-complete'
+  | 'input-required'
+  | 'runtime-exit';
+
+interface TerminalSessionWaiter {
+  condition: TerminalSessionWaitCondition;
+  resolve: (snapshot: TerminalSessionSnapshot) => void;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 /** The runtime only needs these members; tests can inject a stub model. */
 export type TerminalHeadlessModelLike = Pick<
   TerminalHeadlessModel,
   'write' | 'resize' | 'snapshot' | 'readVisibleText' | 'dispose'
-> & Partial<Pick<TerminalHeadlessModel, 'whenSettled' | 'cursorPosition'>>;
+> & Partial<Pick<
+  TerminalHeadlessModel,
+  'whenSettled' | 'cursorPosition' | 'isAlternateScreen'
+>>;
 
 export interface TerminalManagerOptions {
   closeExitGraceMs?: number;
@@ -381,6 +420,11 @@ export class TerminalManager {
   private readonly disconnectedConnections = new Set<string>();
   private readonly blockedSessions = new Set<string>();
   private readonly cancelledOpeningKeys = new Set<string>();
+  private readonly sessionWaiters = new Map<string, Set<TerminalSessionWaiter>>();
+  private readonly openingSessionObservations = new Map<string, {
+    terminalId: string;
+    stateAt: number;
+  }>();
   private shuttingDown = false;
 
   constructor(
@@ -447,6 +491,7 @@ export class TerminalManager {
       if (!opening) {
         createdByRequest = true;
         this.cancelledOpeningKeys.delete(key);
+        this.recordOpeningSession(resolvedOptions);
         opening = this.spawnRuntime(resolvedOptions, key);
         this.openingTerminals.set(openingKey, opening);
         this.openingByTerminalKey.set(key, opening);
@@ -463,6 +508,7 @@ export class TerminalManager {
             this.openingSessionByTerminalKey.delete(key);
             this.openingPreviewOwnerByTerminalKey.delete(key);
           }
+          this.clearOpeningSession(resolvedOptions);
           this.cancelledOpeningKeys.delete(key);
         }).catch(() => {});
       }
@@ -470,6 +516,13 @@ export class TerminalManager {
       try {
         runtime = await opening;
       } catch (error) {
+        if (resolvedOptions.sessionId) {
+          this.notifySessionWithoutRuntime(
+            resolvedOptions.sessionId,
+            resolvedOptions.userId,
+            resolvedOptions.terminalId,
+          );
+        }
         if (!createdByRequest) {
           options.launchObserverDisposer?.();
         }
@@ -544,6 +597,7 @@ export class TerminalManager {
     // attaches while this is still starting awaits this PTY instead of
     // spawning a second one for the same terminal.
     this.cancelledOpeningKeys.delete(key);
+    this.recordOpeningSession(resolvedOptions);
     const opening = this.spawnRuntime(resolvedOptions, key);
     this.openingTerminals.set(openingKey, opening);
     this.openingByTerminalKey.set(key, opening);
@@ -556,10 +610,22 @@ export class TerminalManager {
         this.openingByTerminalKey.delete(key);
         this.openingSessionByTerminalKey.delete(key);
       }
+      this.clearOpeningSession(resolvedOptions);
       this.cancelledOpeningKeys.delete(key);
     }).catch(() => {});
 
-    await opening;
+    try {
+      await opening;
+    } catch (error) {
+      if (resolvedOptions.sessionId) {
+        this.notifySessionWithoutRuntime(
+          resolvedOptions.sessionId,
+          resolvedOptions.userId,
+          resolvedOptions.terminalId,
+        );
+      }
+      throw error;
+    }
   }
 
   private async spawnRuntime(
@@ -732,6 +798,7 @@ export class TerminalManager {
         interruptInputPolicy: options.interruptInputPolicy ?? 'none',
         generation,
         sequence: 0,
+        runtimeStateAt: Date.now(),
         ended: false,
         cwd: shell.displayCwd ?? shell.cwd,
         shell: shell.command,
@@ -763,6 +830,7 @@ export class TerminalManager {
         reboundFromSessionIds: new Set(),
         previewOwnerToken: options.previewOwnerToken,
         onRuntimeExit: options.onRuntimeExit,
+        pendingSessionSnapshots: new Set(),
       };
       if (options.appearance) {
         runtime.appearanceController = createTerminalAppearanceController(
@@ -1271,6 +1339,8 @@ export class TerminalManager {
     }
     runtime.interruptInferredAt = undefined;
     runtime.lastSessionState = message;
+    runtime.runtimeStateAt = message.stateAt ?? Date.now();
+    this.notifySessionWaiters(runtime, message);
     return true;
   }
 
@@ -1292,6 +1362,55 @@ export class TerminalManager {
       }
     }
     return null;
+  }
+
+  /** Read a Session runtime without creating or attaching a terminal surface. */
+  async readSessionSnapshot(sessionId: string, userId: string): Promise<TerminalSessionSnapshot> {
+    const terminalId = this.sessionBindings.get(this.getSessionKey(userId, sessionId));
+    const runtime = terminalId ? this.getOwnedTerminal(terminalId, userId) : null;
+    if (!runtime || runtime.ended || runtime.sessionId !== sessionId) {
+      const opening = this.openingSessionObservations.get(this.getSessionKey(userId, sessionId));
+      if (opening) {
+        return {
+          ...exitedSessionSnapshot(),
+          terminalId: opening.terminalId,
+          runtimeState: 'starting',
+          stateAt: opening.stateAt,
+        };
+      }
+      return exitedSessionSnapshot();
+    }
+    return this.trackSessionSnapshot(runtime);
+  }
+
+  /** Wait for one provider/runtime condition without creating or consuming a surface. */
+  waitForSessionState(
+    sessionId: string,
+    userId: string,
+    condition: TerminalSessionWaitCondition,
+    timeoutMs: number,
+  ): Promise<TerminalSessionSnapshot> {
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    return new Promise<TerminalSessionSnapshot>((resolve, reject) => {
+      const waiter: TerminalSessionWaiter = { condition, resolve };
+      waiter.timer = setTimeout(() => {
+        this.removeSessionWaiter(sessionKey, waiter);
+        reject(new TerminalSessionWaitTimeoutError(condition, timeoutMs));
+      }, Math.max(0, timeoutMs));
+      const waiters = this.sessionWaiters.get(sessionKey) ?? new Set<TerminalSessionWaiter>();
+      waiters.add(waiter);
+      this.sessionWaiters.set(sessionKey, waiters);
+
+      // Subscribe first, then read. A transition in between is delivered by
+      // notifySessionWaiters, while an earlier transition is seen by this read.
+      void this.readSessionSnapshot(sessionId, userId).then((snapshot) => {
+        this.settleSessionWaiter(sessionKey, waiter, snapshot);
+      }).catch((error: unknown) => {
+        if (!this.removeSessionWaiter(sessionKey, waiter)) return;
+        if (waiter.timer) clearTimeout(waiter.timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      });
+    });
   }
 
   resize(
@@ -1498,6 +1617,11 @@ export class TerminalManager {
     this.disposeSessionObserver(runtime);
     runtime.resizeOutputTransaction?.dispose();
     this.flushPendingOutput(runtime);
+    const exitStateAt = Date.now();
+    const hasExitWaiters = runtime.sessionId
+      ? [...(this.sessionWaiters.get(this.getSessionKey(runtime.userId, runtime.sessionId)) ?? [])]
+        .some((waiter) => waiter.condition === 'runtime-exit')
+      : false;
     if (isCurrent) {
       this.terminals.delete(key);
       this.clearSessionBinding(runtime);
@@ -1520,7 +1644,25 @@ export class TerminalManager {
     )) {
       releaseTerminalHandoffByTerminal(runtime.userId, runtime.terminalId);
     }
-    runtime.model?.dispose();
+    if (hasExitWaiters || runtime.pendingSessionSnapshots.size > 0) {
+      void Promise.allSettled([...runtime.pendingSessionSnapshots]).then(async () => {
+        if (hasExitWaiters) {
+          await resolveSnapshotWithTimeout(
+            runtime.model,
+            this.managerOptions.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS,
+          ).catch((error) => {
+            logger.warn(
+              { error, terminalId: runtime.terminalId },
+              'Runtime-exit waiter used the last parsed screen',
+            );
+          });
+          this.notifySessionExitWaiters(runtime, exitStateAt);
+        }
+        runtime.model.dispose();
+      });
+    } else {
+      runtime.model.dispose();
+    }
     this.sendExit(runtime, event);
     if (runtime.onRuntimeExit) {
       // The buffer is what a surface attaching now would have been replayed, so
@@ -1827,6 +1969,29 @@ export class TerminalManager {
     return `${userId}:${sessionId}`;
   }
 
+  private recordOpeningSession(
+    options: Pick<TerminalCreateOptions, 'sessionId' | 'userId' | 'terminalId'>,
+  ): void {
+    if (!options.sessionId) return;
+    const sessionKey = this.getSessionKey(options.userId, options.sessionId);
+    if (!this.openingSessionObservations.has(sessionKey)) {
+      this.openingSessionObservations.set(sessionKey, {
+        terminalId: options.terminalId,
+        stateAt: Date.now(),
+      });
+    }
+  }
+
+  private clearOpeningSession(
+    options: Pick<TerminalCreateOptions, 'sessionId' | 'userId' | 'terminalId'>,
+  ): void {
+    if (!options.sessionId) return;
+    const sessionKey = this.getSessionKey(options.userId, options.sessionId);
+    if (this.openingSessionObservations.get(sessionKey)?.terminalId === options.terminalId) {
+      this.openingSessionObservations.delete(sessionKey);
+    }
+  }
+
   private clearTerminalReservation(
     userId: string,
     sessionId: string,
@@ -2001,6 +2166,8 @@ export class TerminalManager {
     };
     runtime.interruptInferredAt = stateAt;
     runtime.lastSessionState = message;
+    runtime.runtimeStateAt = stateAt;
+    this.notifySessionWaiters(runtime, message);
     this.managerOptions.onSessionStateChange?.({
       message,
       userId: runtime.userId,
@@ -2054,6 +2221,202 @@ export class TerminalManager {
       const first = runtime.outputBuffer.shift();
       if (first) runtime.outputBufferSize -= first.length;
     }
+  }
+
+  private async captureSessionSnapshot(
+    runtime: TerminalRuntime,
+    observedState: TerminalSessionStateMessage | undefined = runtime.lastSessionState,
+  ): Promise<TerminalSessionSnapshot> {
+    this.flushPendingOutput(runtime);
+    const outputSequence = runtime.sequence;
+    let cols = runtime.cols;
+    let rows = runtime.rows;
+    let alternateScreen = false;
+    try {
+      const modelSnapshot = await resolveSnapshotWithTimeout(
+        runtime.model,
+        this.managerOptions.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS,
+      );
+      cols = modelSnapshot.cols;
+      rows = modelSnapshot.rows;
+      alternateScreen = modelSnapshot.alternateScreen;
+    } catch (error) {
+      logger.warn(
+        { error, terminalId: runtime.terminalId },
+        'Server-side Session snapshot used the last parsed screen',
+      );
+    }
+
+    const lifecyclePreview = sanitizeBoundedPlainText(
+      observedState?.preview ?? '',
+      MAX_SESSION_LIFECYCLE_PREVIEW_CHARS,
+    );
+    return {
+      screen: sanitizeBoundedPlainText(
+        runtime.model.readVisibleText(),
+        MAX_SESSION_SCREEN_CHARS,
+      ).trimEnd(),
+      cols,
+      rows,
+      alternateScreen,
+      outputSequence,
+      terminalId: runtime.terminalId,
+      runtimeState: normalizeSessionRuntimeState(observedState),
+      stateAt: observedState?.stateAt ?? runtime.runtimeStateAt,
+      ...(lifecyclePreview ? { lifecyclePreview } : {}),
+    };
+  }
+
+  private trackSessionSnapshot(
+    runtime: TerminalRuntime,
+    observedState?: TerminalSessionStateMessage,
+  ): Promise<TerminalSessionSnapshot> {
+    const snapshot = this.captureSessionSnapshot(runtime, observedState);
+    const completion = snapshot.then(() => undefined, () => undefined);
+    runtime.pendingSessionSnapshots.add(completion);
+    void completion.finally(() => runtime.pendingSessionSnapshots.delete(completion));
+    return snapshot;
+  }
+
+  private notifySessionWaiters(
+    runtime: TerminalRuntime,
+    observedState: TerminalSessionStateMessage,
+  ): void {
+    if (!runtime.sessionId) return;
+    const sessionKey = this.getSessionKey(runtime.userId, runtime.sessionId);
+    const waiters = this.sessionWaiters.get(sessionKey);
+    const runtimeState = normalizeSessionRuntimeState(observedState);
+    if (!waiters || ![...waiters].some((waiter) => waitConditionMatches(
+      waiter.condition,
+      runtimeState,
+    ))) return;
+
+    void this.trackSessionSnapshot(runtime, observedState).then((snapshot) => {
+      for (const waiter of [...(this.sessionWaiters.get(sessionKey) ?? [])]) {
+        this.settleSessionWaiter(sessionKey, waiter, snapshot);
+      }
+    }).catch((error) => {
+      logger.warn({ error, sessionId: runtime.sessionId }, 'Session waiter snapshot failed');
+    });
+  }
+
+  private notifySessionExitWaiters(runtime: TerminalRuntime, stateAt: number): void {
+    if (!runtime.sessionId) return;
+    const sessionKey = this.getSessionKey(runtime.userId, runtime.sessionId);
+    const waiters = this.sessionWaiters.get(sessionKey);
+    if (!waiters || ![...waiters].some((waiter) => waiter.condition === 'runtime-exit')) return;
+    const snapshot: TerminalSessionSnapshot = {
+      screen: sanitizeBoundedPlainText(
+        runtime.model.readVisibleText(),
+        MAX_SESSION_SCREEN_CHARS,
+      ).trimEnd(),
+      cols: runtime.cols,
+      rows: runtime.rows,
+      alternateScreen: runtime.model.isAlternateScreen?.() ?? false,
+      outputSequence: runtime.sequence,
+      terminalId: runtime.terminalId,
+      runtimeState: 'exited',
+      stateAt,
+      ...(runtime.lastSessionState?.preview
+        ? {
+            lifecyclePreview: sanitizeBoundedPlainText(
+              runtime.lastSessionState.preview,
+              MAX_SESSION_LIFECYCLE_PREVIEW_CHARS,
+            ),
+          }
+        : {}),
+    };
+    for (const waiter of [...waiters]) {
+      this.settleSessionWaiter(sessionKey, waiter, snapshot);
+    }
+  }
+
+  private notifySessionWithoutRuntime(
+    sessionId: string,
+    userId: string,
+    terminalId: string,
+  ): void {
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    const waiters = this.sessionWaiters.get(sessionKey);
+    if (!waiters) return;
+    const snapshot: TerminalSessionSnapshot = {
+      ...exitedSessionSnapshot(),
+      terminalId,
+      stateAt: Date.now(),
+    };
+    for (const waiter of [...waiters]) {
+      this.settleSessionWaiter(sessionKey, waiter, snapshot);
+    }
+  }
+
+  private settleSessionWaiter(
+    sessionKey: string,
+    waiter: TerminalSessionWaiter,
+    snapshot: TerminalSessionSnapshot,
+  ): void {
+    if (!waitConditionMatches(waiter.condition, snapshot.runtimeState)) return;
+    if (!this.removeSessionWaiter(sessionKey, waiter)) return;
+    if (waiter.timer) clearTimeout(waiter.timer);
+    waiter.resolve(snapshot);
+  }
+
+  private removeSessionWaiter(sessionKey: string, waiter: TerminalSessionWaiter): boolean {
+    const waiters = this.sessionWaiters.get(sessionKey);
+    if (!waiters?.delete(waiter)) return false;
+    if (waiters.size === 0) this.sessionWaiters.delete(sessionKey);
+    return true;
+  }
+}
+
+function normalizeSessionRuntimeState(
+  state: TerminalSessionStateMessage | undefined,
+): TerminalSessionRuntimeState {
+  switch (state?.status) {
+    case 'idle': return 'idle';
+    case 'running': return 'running';
+    case 'input_required': return 'input-required';
+    case 'completed': return 'turn-complete';
+    default: return 'starting';
+  }
+}
+
+function exitedSessionSnapshot(): TerminalSessionSnapshot {
+  return {
+    screen: '',
+    cols: null,
+    rows: null,
+    alternateScreen: false,
+    outputSequence: 0,
+    terminalId: null,
+    runtimeState: 'exited',
+    stateAt: null,
+  };
+}
+
+function waitConditionMatches(
+  condition: TerminalSessionWaitCondition,
+  state: TerminalSessionRuntimeState,
+): boolean {
+  return condition === 'runtime-exit' ? state === 'exited' : condition === state;
+}
+
+function sanitizeBoundedPlainText(value: string, maxChars: number): string {
+  const sanitized = value
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '');
+  const characters = [...sanitized];
+  return characters.length <= maxChars
+    ? sanitized
+    : characters.slice(characters.length - maxChars).join('');
+}
+
+export class TerminalSessionWaitTimeoutError extends Error {
+  constructor(
+    readonly condition: TerminalSessionWaitCondition,
+    readonly timeoutMs: number,
+  ) {
+    super(`Session did not reach ${condition} within the requested timeout.`);
+    this.name = 'TerminalSessionWaitTimeoutError';
   }
 }
 

@@ -38,6 +38,7 @@ function createFixture() {
     allowPreparationFailure?: boolean;
   }> = [];
   const removed: string[] = [];
+  const observations: Array<{ condition?: string; timeoutMs?: number }> = [];
   let failNextStart: ControlOperationError | null = null;
 
   const mutator: ControlSessionMutator = {
@@ -82,11 +83,42 @@ function createFixture() {
       get: (sessionId) => records.find((record) => record.sessionId === sessionId),
     },
     sessionMutator: mutator,
+    sessionObserver: {
+      read: async () => {
+        observations.push({});
+        return {
+          screen: 'current screen',
+          cols: 100,
+          rows: 30,
+          alternateScreen: false,
+          outputSequence: 7,
+          terminalId: 'terminal-observed',
+          runtimeState: 'turn-complete' as const,
+          stateAt: 3000,
+          lifecyclePreview: 'response boundary',
+        };
+      },
+      wait: async (_sessionId: string, condition: string, timeoutMs: number) => {
+        observations.push({ condition, timeoutMs });
+        return {
+          screen: 'current screen',
+          cols: 100,
+          rows: 30,
+          alternateScreen: false,
+          outputSequence: 7,
+          terminalId: 'terminal-observed',
+          runtimeState: 'turn-complete' as const,
+          stateAt: 3000,
+          lifecyclePreview: 'response boundary',
+        };
+      },
+    },
   });
 
   return {
     records,
     removed,
+    observations,
     service,
     starts,
     failStartWith(error: ControlOperationError) { failNextStart = error; },
@@ -121,6 +153,55 @@ test('Control creates a durable PTY Session and lists it only through its public
     (error: unknown) => error instanceof ControlOperationError
       && error.code === 'WORKTREE_NOT_FOUND',
   );
+});
+
+test('Control reads and waits on a durable Session through the observation seam', async () => {
+  const fixture = createFixture();
+  const created = await fixture.service.createSession({
+    worktreeId: WORKTREE.worktreeId,
+    provider: 'codex',
+  }, CONTEXT);
+
+  const read = await fixture.service.readSession(created.sessionId, CONTEXT);
+  assert.equal(read.runtimeState, 'turn-complete');
+  assert.equal(read.screen, 'current screen');
+
+  const waited = await fixture.service.waitForSession({
+    sessionId: created.sessionId,
+    condition: 'turn-complete',
+  }, CONTEXT);
+  assert.equal(waited.outputSequence, 7);
+  assert.deepEqual(fixture.observations, [
+    {},
+    { condition: 'turn-complete', timeoutMs: 600_000 },
+  ]);
+});
+
+test('Control rejects unsupported Session wait conditions and timeouts over one hour', async () => {
+  const fixture = createFixture();
+  const created = await fixture.service.createSession({
+    worktreeId: WORKTREE.worktreeId,
+    provider: 'codex',
+  }, CONTEXT);
+
+  await assert.rejects(
+    fixture.service.waitForSession({
+      sessionId: created.sessionId,
+      condition: 'running',
+      timeoutSeconds: 3_601,
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlOperationError
+      && error.code === 'INVALID_USAGE',
+  );
+  await assert.rejects(
+    fixture.service.waitForSession({
+      sessionId: created.sessionId,
+      condition: 'done' as 'running',
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlOperationError
+      && error.code === 'INVALID_USAGE',
+  );
+  assert.deepEqual(fixture.observations, []);
 });
 
 test('Control starts a pre-existing Session without deleting it when detached launch fails', async () => {
