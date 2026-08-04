@@ -20,7 +20,15 @@ async function getAuthenticatedUser(request: NextRequest): Promise<Authenticatio
     if (isOriginDenial(shadowDecision)) {
       return { originDenied: true };
     }
-    return { userId: await getElectronAuthUserId(), kind: 'app' };
+    const userId = await getElectronAuthUserId();
+    if (shadowDecision?.allow && shadowDecision.kind === 'device') {
+      return {
+        userId,
+        kind: 'device',
+        ...(shadowDecision.deviceId ? { deviceId: shadowDecision.deviceId } : {}),
+      };
+    }
+    return { userId, kind: 'app' };
   }
 
   const decision = await evaluateRequestAndLog(input);

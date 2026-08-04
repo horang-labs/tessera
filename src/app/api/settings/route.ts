@@ -62,9 +62,14 @@ export async function PUT(request: NextRequest) {
     };
     const {
       confirmArchivedWorktreePrune,
-      machineSettings: machineSettingsUpdate,
+      machineSettings: requestedMachineSettingsUpdate,
       ...settingsBody
     } = body;
+    // A paired device keeps full access to ordinary settings, but it must not
+    // be able to remove the address it depends on to get back into Tessera.
+    const machineSettingsUpdate = auth.kind === 'device'
+      ? undefined
+      : requestedMachineSettingsUpdate;
 
     if (
       machineSettingsUpdate !== undefined

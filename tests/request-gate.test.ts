@@ -143,6 +143,52 @@ test('rejects an invalid advertised address without replacing the stored value',
   });
 });
 
+test('ignores remote-access settings from a device while saving its other settings', async () => {
+  const { NextRequest } = await import('next/server');
+  const { PUT } = await import('../src/app/api/settings/route');
+  const {
+    clearDeviceRegistry,
+    issuePairingToken,
+    redeemPairingToken,
+  } = await import('../src/lib/auth/device-registry');
+  const { loadMachineSettings, saveMachineSettings } = await import(
+    '../src/lib/settings/machine-settings'
+  );
+  await clearDeviceRegistry();
+  await saveMachineSettings({ advertisedAddress: 'https://local-only.example' });
+  const pairing = await issuePairingToken();
+  const device = await redeemPairingToken(pairing.token, 'Remote phone');
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+  let response: Response;
+  try {
+    response = await PUT(new NextRequest('http://localhost:32123/api/settings', {
+      method: 'PUT',
+      headers: {
+        cookie: `device=${device.token}`,
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({
+        fontSize: 1.1875,
+        machineSettings: { advertisedAddress: 'ftp://would-fail-for-the-app.example' },
+      }),
+    }));
+  } finally {
+    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  }
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.settings.fontSize, 1.1875);
+  assert.deepEqual(body.machineSettings, {
+    advertisedAddress: 'https://local-only.example',
+  });
+  assert.deepEqual(await loadMachineSettings(), {
+    advertisedAddress: 'https://local-only.example',
+  });
+});
+
 test('rejects a state-changing settings request from a disallowed Origin during auth bypass', async () => {
   const { NextRequest } = await import('next/server');
   const { PUT } = await import('../src/app/api/settings/route');
