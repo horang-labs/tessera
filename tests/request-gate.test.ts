@@ -406,22 +406,28 @@ test('completes the pairing API flow and revokes the issued cookie immediately',
     { method: 'POST', headers: appHeaders },
   ));
   assert.equal(issueResponse.status, 201);
-  const issued = await issueResponse.json() as { pairingToken: string };
+  const issued = await issueResponse.json() as { pairingLink: string; pairingToken?: string };
+  assert.equal(issued.pairingToken, undefined);
+  const issuedToken = new URLSearchParams(new URL(issued.pairingLink).hash.slice(1)).get('t');
+  assert.ok(issuedToken);
 
   const rotateResponse = await pairingRoute.PUT(new NextRequest(
     'http://localhost:32123/api/pairing',
     { method: 'PUT', headers: appHeaders },
   ));
   assert.equal(rotateResponse.status, 200);
-  const rotated = await rotateResponse.json() as { pairingToken: string };
-  assert.notEqual(rotated.pairingToken, issued.pairingToken);
+  const rotated = await rotateResponse.json() as { pairingLink: string; pairingToken?: string };
+  assert.equal(rotated.pairingToken, undefined);
+  const rotatedToken = new URLSearchParams(new URL(rotated.pairingLink).hash.slice(1)).get('t');
+  assert.ok(rotatedToken);
+  assert.notEqual(rotatedToken, issuedToken);
 
   const oldTokenResponse = await redeemRoute.POST(new NextRequest(
     'http://localhost:32123/api/pairing/redeem',
     {
       method: 'POST',
       headers: appHeaders,
-      body: JSON.stringify({ token: issued.pairingToken, name: 'Old phone' }),
+      body: JSON.stringify({ token: issuedToken, name: 'Old phone' }),
     },
   ));
   assert.equal(oldTokenResponse.status, 401);
@@ -431,7 +437,7 @@ test('completes the pairing API flow and revokes the issued cookie immediately',
     {
       method: 'POST',
       headers: appHeaders,
-      body: JSON.stringify({ token: rotated.pairingToken, name: 'Test phone' }),
+      body: JSON.stringify({ token: rotatedToken, name: 'Test phone' }),
     },
   ));
   assert.equal(redeemResponse.status, 201);
@@ -448,7 +454,7 @@ test('completes the pairing API flow and revokes the issued cookie immediately',
     {
       method: 'POST',
       headers: appHeaders,
-      body: JSON.stringify({ token: rotated.pairingToken, name: 'Reused phone' }),
+      body: JSON.stringify({ token: rotatedToken, name: 'Reused phone' }),
     },
   ));
   assert.equal(reusedTokenResponse.status, 409);
@@ -519,6 +525,54 @@ test('does not treat the Electron auth bypass as an app credential for pairing i
     assert.equal(response.status, 401);
   } finally {
     delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  }
+});
+
+test('shows a link-only pairing response to an authenticated loopback web browser', async () => {
+  const { NextRequest } = await import('next/server');
+  const pairingRoute = await import('../src/app/api/pairing/route');
+  const { clearDeviceRegistry } = await import('../src/lib/auth/device-registry');
+  const { ensureRSAKeys } = await import('../src/lib/auth/keys');
+  const { generateToken } = await import('../src/lib/auth/jwt');
+  const { saveMachineSettings } = await import('../src/lib/settings/machine-settings');
+  await clearDeviceRegistry();
+  await ensureRSAKeys();
+  await saveMachineSettings({ advertisedAddress: 'https://web-mode.example' });
+  const jwt = await generateToken('persisted-user', 'persisted');
+  delete process.env.TESSERA_ELECTRON_RUNTIME;
+
+  try {
+    const response = await pairingRoute.POST(new NextRequest(
+      'http://localhost:32123/api/pairing',
+      {
+        method: 'POST',
+        headers: {
+          cookie: `jwt=${jwt}`,
+          host: 'localhost:32123',
+          origin: 'http://localhost:32123',
+        },
+      },
+    ));
+    assert.equal(response.status, 201);
+    const body = await response.json() as Record<string, unknown>;
+    assert.match(String(body.pairingLink), /^https:\/\/web-mode\.example\/pair#t=/);
+    assert.equal(body.pairingToken, undefined);
+    assert.equal(body.qrDataUrl, undefined);
+
+    const remoteResponse = await pairingRoute.PUT(new NextRequest(
+      'https://web-mode.example/api/pairing',
+      {
+        method: 'PUT',
+        headers: {
+          cookie: `jwt=${jwt}`,
+          host: 'web-mode.example',
+          origin: 'https://web-mode.example',
+        },
+      },
+    ));
+    assert.equal(remoteResponse.status, 403);
+  } finally {
+    process.env.TESSERA_ELECTRON_RUNTIME = '1';
   }
 });
 

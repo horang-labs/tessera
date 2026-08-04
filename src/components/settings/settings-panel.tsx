@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useCallback, useState, type ReactNode } from 'react';
-import { Cpu, FolderGit2, GitBranch, MessageSquarePlus, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
+import { Cpu, FolderGit2, GitBranch, MessageSquarePlus, Palette, RadioTower, SlidersHorizontal, Terminal, X } from 'lucide-react';
 import {
   useSettingsStore,
   type SettingsSectionId as SettingsStoreSectionId,
@@ -28,6 +28,7 @@ import TerminalViewDefaultSettings from './terminal-view-default-settings';
 import NewSessionKindSettings from './new-session-kind-settings';
 import CustomModelSettings from './custom-model-settings';
 import ProjectPreparationSettings from './project-preparation-settings';
+import RemoteAccessSection from './remote-access-section';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -126,6 +127,12 @@ export default function SettingsPanel() {
       description: t('settings.sections.modelsDesc'),
     },
     {
+      id: 'remote-access' as const,
+      icon: RadioTower,
+      label: t('settings.sections.remoteAccess'),
+      description: t('settings.sections.remoteAccessDesc'),
+    },
+    {
       id: 'development' as const,
       icon: Terminal,
       label: t('settings.sections.development'),
@@ -168,6 +175,12 @@ export default function SettingsPanel() {
         return (
           <SettingsCard testId="settings-section-models">
             <CustomModelSettings />
+          </SettingsCard>
+        );
+      case 'remote-access':
+        return (
+          <SettingsCard testId="settings-section-remote-access">
+            <RemoteAccessSection />
           </SettingsCard>
         );
       case 'development':

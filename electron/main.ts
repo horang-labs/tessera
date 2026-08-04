@@ -13,6 +13,7 @@ import {
 import { fork, ChildProcess, spawnSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import QRCode from 'qrcode';
 import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import {
@@ -447,6 +448,7 @@ let closeRequestSequence = 0;
 let activeCloseRequest: Promise<void> | null = null;
 let activeQuitConfirmation: Promise<void> | null = null;
 let terminalSummarySequence = 0;
+let pairingPresentationSequence = 0;
 
 type WindowCloseAction = 'quit' | 'tray' | 'cancel';
 type WindowsCloseBehavior = 'ask' | 'tray' | 'quit';
@@ -458,6 +460,7 @@ type PendingCloseRequest = {
 const WINDOW_CLOSE_RESPONSE_TIMEOUT_MS = 15_000;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 8_000;
 const TERMINAL_SUMMARY_TIMEOUT_MS = 1_500;
+const PAIRING_PRESENTATION_TIMEOUT_MS = 5_000;
 const pendingCloseRequests = new Map<string, PendingCloseRequest>();
 type TerminalRuntimeSummary = { activeCount: number; sessionCount: number };
 type PendingTerminalSummary = {
@@ -465,6 +468,19 @@ type PendingTerminalSummary = {
   timeout: NodeJS.Timeout;
 };
 const pendingTerminalSummaries = new Map<string, PendingTerminalSummary>();
+type PairingPresentation = {
+  pairingLink: string;
+  createdAt: string;
+  expiresAt: string;
+};
+type PairingPresentationResult =
+  | ({ ok: true } & PairingPresentation)
+  | { ok: false; code: string; error: string };
+type PendingPairingPresentation = {
+  resolve: (result: PairingPresentationResult) => void;
+  timeout: NodeJS.Timeout;
+};
+const pendingPairingPresentations = new Map<string, PendingPairingPresentation>();
 let windowsCloseBehavior: WindowsCloseBehavior = 'ask';
 
 function resolveTerminalSummary(
@@ -482,6 +498,139 @@ function resolveAllTerminalSummaries(): void {
   for (const requestId of [...pendingTerminalSummaries.keys()]) {
     resolveTerminalSummary(requestId, { activeCount: -1, sessionCount: -1 });
   }
+}
+
+function resolvePairingPresentation(
+  requestId: string,
+  result: PairingPresentationResult,
+): void {
+  const pending = pendingPairingPresentations.get(requestId);
+  if (!pending) return;
+  clearTimeout(pending.timeout);
+  pendingPairingPresentations.delete(requestId);
+  pending.resolve(result);
+}
+
+function resolveAllPairingPresentations(): void {
+  for (const requestId of [...pendingPairingPresentations.keys()]) {
+    resolvePairingPresentation(requestId, {
+      ok: false,
+      code: 'server-unavailable',
+      error: 'The Tessera server is unavailable',
+    });
+  }
+}
+
+async function requestPairingPresentationOverHttp(
+  action: 'issue' | 'rotate',
+): Promise<PairingPresentationResult> {
+  try {
+    const { APP_SECRET_HEADER, APP_SECRET_PATH } = await import('../src/lib/auth/app-secret');
+    const secret = (await fs.promises.readFile(APP_SECRET_PATH, 'utf8')).trim();
+    const response = await fetch(`http://127.0.0.1:${serverPort}/api/pairing`, {
+      method: action === 'rotate' ? 'PUT' : 'POST',
+      headers: {
+        [APP_SECRET_HEADER]: secret,
+        origin: `http://127.0.0.1:${serverPort}`,
+      },
+    });
+    const body = await response.json().catch(() => null) as {
+      pairingLink?: unknown;
+      createdAt?: unknown;
+      expiresAt?: unknown;
+      code?: unknown;
+      error?: unknown;
+    } | null;
+    if (
+      response.ok
+      && typeof body?.pairingLink === 'string'
+      && typeof body.createdAt === 'string'
+      && typeof body.expiresAt === 'string'
+    ) {
+      return {
+        ok: true,
+        pairingLink: body.pairingLink,
+        createdAt: body.createdAt,
+        expiresAt: body.expiresAt,
+      };
+    }
+    return {
+      ok: false,
+      code: typeof body?.code === 'string' ? body.code : 'pairing-failed',
+      error: typeof body?.error === 'string' ? body.error : 'Pairing failed',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'server-unavailable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function requestPairingPresentation(
+  action: 'issue' | 'rotate',
+): Promise<PairingPresentationResult> {
+  const child = serverProcess;
+  if (!child?.connected) {
+    if (app.isPackaged) {
+      return Promise.resolve({
+        ok: false,
+        code: 'server-unavailable',
+        error: 'The Tessera server is not connected',
+      });
+    }
+    // electron:dev owns the server in the npm process, so child IPC is not
+    // available there. Keep QR generation in main while using its loopback API.
+    return requestPairingPresentationOverHttp(action);
+  }
+
+  const requestId = `pairing-presentation-${Date.now()}-${++pairingPresentationSequence}`;
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingPairingPresentations.delete(requestId);
+      resolve({
+        ok: false,
+        code: 'server-timeout',
+        error: 'Timed out while creating the pairing link',
+      });
+    }, PAIRING_PRESENTATION_TIMEOUT_MS);
+    timeout.unref?.();
+    pendingPairingPresentations.set(requestId, { resolve, timeout });
+
+    try {
+      child.send({ type: 'pairing_presentation_request', requestId, action }, (error) => {
+        if (!error) return;
+        resolvePairingPresentation(requestId, {
+          ok: false,
+          code: 'server-unavailable',
+          error: error.message,
+        });
+      });
+    } catch (error) {
+      resolvePairingPresentation(requestId, {
+        ok: false,
+        code: 'server-unavailable',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+}
+
+async function createPairingCode(action: 'issue' | 'rotate'): Promise<
+  | (PairingPresentation & { ok: true; qrDataUrl: string })
+  | { ok: false; code: string; error: string }
+> {
+  const presentation = await requestPairingPresentation(action);
+  if (!presentation.ok) return presentation;
+
+  const qrDataUrl = await QRCode.toDataURL(presentation.pairingLink, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 256,
+    color: { dark: '#17191cff', light: '#ffffffff' },
+  });
+  return { ...presentation, qrDataUrl };
 }
 
 function requestTerminalSummary(): Promise<TerminalRuntimeSummary> {
@@ -734,8 +883,17 @@ async function startServer(): Promise<number> {
       requestId?: string;
       activeCount?: number;
       sessionCount?: number;
+      pairingLink?: string;
+      createdAt?: string;
+      expiresAt?: string;
+      code?: string;
     }) => {
-      log('debug', `Server message: ${JSON.stringify(msg)}`);
+      log(
+        'debug',
+        msg?.type?.startsWith('pairing_presentation')
+          ? `Server message: ${msg.type}`
+          : `Server message: ${JSON.stringify(msg)}`,
+      );
       if (
         msg?.type === 'terminal_summary'
         && typeof msg.requestId === 'string'
@@ -745,6 +903,28 @@ async function startServer(): Promise<number> {
         resolveTerminalSummary(msg.requestId, {
           activeCount: msg.activeCount,
           sessionCount: msg.sessionCount,
+        });
+      } else if (
+        msg?.type === 'pairing_presentation'
+        && typeof msg.requestId === 'string'
+        && typeof msg.pairingLink === 'string'
+        && typeof msg.createdAt === 'string'
+        && typeof msg.expiresAt === 'string'
+      ) {
+        resolvePairingPresentation(msg.requestId, {
+          ok: true,
+          pairingLink: msg.pairingLink,
+          createdAt: msg.createdAt,
+          expiresAt: msg.expiresAt,
+        });
+      } else if (
+        msg?.type === 'pairing_presentation_error'
+        && typeof msg.requestId === 'string'
+      ) {
+        resolvePairingPresentation(msg.requestId, {
+          ok: false,
+          code: typeof msg.code === 'string' ? msg.code : 'pairing-failed',
+          error: typeof msg.message === 'string' ? msg.message : 'Pairing failed',
         });
       } else if (msg?.type === 'ready') {
         clearTimeout(timeout);
@@ -759,6 +939,7 @@ async function startServer(): Promise<number> {
 
     serverProcess.on('exit', (code) => {
       resolveAllTerminalSummaries();
+      resolveAllPairingPresentations();
       log(isQuitting ? 'debug' : 'error', `Server child exited with code ${code}`);
       serverProcess = null;
       if (!isQuitting) {
@@ -1007,6 +1188,12 @@ function broadcastPopoutState(): void {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
+ipcMain.handle('create-pairing-code', (_event, action: unknown) => {
+  if (action !== 'issue' && action !== 'rotate') {
+    return { ok: false, code: 'invalid-action', error: 'Invalid pairing action' };
+  }
+  return createPairingCode(action);
+});
 ipcMain.handle('read-terminal-clipboard', () => readTerminalClipboard(clipboard));
 ipcMain.handle('write-terminal-clipboard-text', (_event, text: unknown) => (
   writeTerminalClipboardText(clipboard, text)

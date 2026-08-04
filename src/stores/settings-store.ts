@@ -140,7 +140,14 @@ export function isSettingsSyncMessage(message: unknown): message is SettingsSync
 }
 
 /** The sections the settings panel is divided into. */
-export type SettingsSectionId = 'general' | 'project' | 'appearance' | 'models' | 'development' | 'git';
+export type SettingsSectionId =
+  | 'general'
+  | 'project'
+  | 'appearance'
+  | 'models'
+  | 'remote-access'
+  | 'development'
+  | 'git';
 
 /**
  * What a caller can say about where settings should land.

@@ -4,16 +4,25 @@ import { evaluateRequestAndLog } from '@/lib/auth/request-gate';
 import {
   DeviceRegistryError,
   getPairingStatus,
-  issuePairingToken,
   listDevices,
   MAX_PAIRED_DEVICES,
-  rotatePairingToken,
 } from '@/lib/auth/device-registry';
 import logger from '@/lib/logger';
+import {
+  createPairingPresentation,
+  PairingAction,
+  PairingPresentationError,
+} from '@/lib/auth/pairing-presentation';
 
-async function requireAppCredential(request: NextRequest) {
+function isLoopbackBrowserRequest(request: NextRequest): boolean {
+  const hostname = request.nextUrl.hostname.toLowerCase();
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+}
+
+async function requirePairingManager(request: NextRequest) {
   // Pairing is the one endpoint that must never inherit the migration bypass:
-  // only Electron's injected App secret may mint another credential.
+  // Electron's App secret or an authenticated loopback browser may mint a
+  // credential. Paired devices and remote JWT sessions remain unable to do so.
   const decision = await evaluateRequestAndLog(requestGateInputFromNextRequest(request));
   if (!decision.allow) {
     return NextResponse.json(
@@ -21,7 +30,10 @@ async function requireAppCredential(request: NextRequest) {
       { status: 'status' in decision ? decision.status : 401 },
     );
   }
-  if (decision.kind !== 'app') {
+  if (
+    decision.kind !== 'app'
+    && !(decision.kind === 'jwt' && isLoopbackBrowserRequest(request))
+  ) {
     return NextResponse.json(
       { error: 'Pairing can only be managed from the Tessera app', code: 'app_required' },
       { status: 403 },
@@ -30,7 +42,14 @@ async function requireAppCredential(request: NextRequest) {
   return null;
 }
 
-function registryErrorResponse(error: DeviceRegistryError): NextResponse {
+async function pairingResponse(
+  action: PairingAction,
+  status = 200,
+): Promise<NextResponse> {
+  return NextResponse.json(await createPairingPresentation(action), { status });
+}
+
+function pairingErrorResponse(error: { message: string; code: string }): NextResponse {
   return NextResponse.json(
     { error: error.message, code: error.code },
     { status: 409 },
@@ -38,7 +57,7 @@ function registryErrorResponse(error: DeviceRegistryError): NextResponse {
 }
 
 export async function GET(request: NextRequest) {
-  const denial = await requireAppCredential(request);
+  const denial = await requirePairingManager(request);
   if (denial) return denial;
   const [pairing, devices] = await Promise.all([
     getPairingStatus(),
@@ -48,33 +67,25 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const denial = await requireAppCredential(request);
+  const denial = await requirePairingManager(request);
   if (denial) return denial;
   try {
-    const pairing = await issuePairingToken();
-    return NextResponse.json({
-      pairingToken: pairing.token,
-      createdAt: pairing.createdAt,
-      expiresAt: pairing.expiresAt,
-    }, { status: 201 });
+    return await pairingResponse('issue', 201);
   } catch (error) {
-    if (error instanceof DeviceRegistryError) return registryErrorResponse(error);
+    if (error instanceof PairingPresentationError) return pairingErrorResponse(error);
+    if (error instanceof DeviceRegistryError) return pairingErrorResponse(error);
     logger.error({ error }, 'Pairing token issuance failed');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 export async function PUT(request: NextRequest) {
-  const denial = await requireAppCredential(request);
+  const denial = await requirePairingManager(request);
   if (denial) return denial;
   try {
-    const pairing = await rotatePairingToken();
-    return NextResponse.json({
-      pairingToken: pairing.token,
-      createdAt: pairing.createdAt,
-      expiresAt: pairing.expiresAt,
-    });
+    return await pairingResponse('rotate');
   } catch (error) {
-    if (error instanceof DeviceRegistryError) return registryErrorResponse(error);
+    if (error instanceof PairingPresentationError) return pairingErrorResponse(error);
+    if (error instanceof DeviceRegistryError) return pairingErrorResponse(error);
     logger.error({ error }, 'Pairing token rotation failed');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

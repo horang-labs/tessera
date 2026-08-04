@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  createPairingCode: (action: 'issue' | 'rotate') =>
+    ipcRenderer.invoke('create-pairing-code', action),
   readTerminalClipboard: () =>
     ipcRenderer.invoke('read-terminal-clipboard') as Promise<TerminalClipboardPayload>,
   writeTerminalClipboardText: (text: string) =>

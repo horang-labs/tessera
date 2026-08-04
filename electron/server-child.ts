@@ -27,6 +27,7 @@ import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import { terminalManager } from '../src/lib/terminal/shared-terminal-manager';
 import { handleHookRequest } from '../src/lib/cli/hook-receiver';
 import { attachRemoteAddressHeader } from '../src/lib/http/remote-address-header';
+import { createPairingPresentation } from '../src/lib/auth/pairing-presentation';
 
 process.env.ELECTRON_CHILD = '1';
 process.env.TESSERA_ELECTRON_SERVER = '1';
@@ -237,7 +238,7 @@ initDatabase().then(() => {
   shutdownHandler = shutdown;
 
   // IPC shutdown from Electron main process
-  process.on('message', (msg: { type: string; requestId?: string }) => {
+  process.on('message', (msg: { type: string; requestId?: string; action?: string }) => {
     if (msg?.type === 'shutdown') {
       void shutdown('ipc-shutdown');
     } else if (msg?.type === 'terminal_summary_request' && typeof msg.requestId === 'string') {
@@ -245,6 +246,25 @@ initDatabase().then(() => {
         type: 'terminal_summary',
         requestId: msg.requestId,
         ...terminalManager.getRuntimeSummary(),
+      });
+    } else if (
+      msg?.type === 'pairing_presentation_request'
+      && typeof msg.requestId === 'string'
+      && (msg.action === 'issue' || msg.action === 'rotate')
+    ) {
+      void createPairingPresentation(msg.action).then((presentation) => {
+        process.send?.({
+          type: 'pairing_presentation',
+          requestId: msg.requestId,
+          ...presentation,
+        });
+      }).catch((error: unknown) => {
+        process.send?.({
+          type: 'pairing_presentation_error',
+          requestId: msg.requestId,
+          code: error instanceof Error && 'code' in error ? String(error.code) : 'pairing-failed',
+          message: error instanceof Error ? error.message : String(error),
+        });
       });
     }
   });

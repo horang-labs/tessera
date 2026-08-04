@@ -93,7 +93,10 @@ async function issuePairingToken() {
   const response = await appRequest('/api/pairing', { method: 'POST' });
   const body = await response.text();
   assert.equal(response.status, 201, body);
-  return JSON.parse(body).pairingToken;
+  const pairingLink = JSON.parse(body).pairingLink;
+  const pairingToken = new URLSearchParams(new URL(pairingLink).hash.slice(1)).get('t');
+  assert.ok(pairingToken, 'pairing response did not contain a tokenized link');
+  return pairingToken;
 }
 
 async function prepareCompletedApp() {
@@ -101,6 +104,7 @@ async function prepareCompletedApp() {
     method: 'PUT',
     body: JSON.stringify({
       setup: { completedAt: '2026-08-04T00:00:00.000Z', dismissedAt: null },
+      machineSettings: { advertisedAddress: origin },
     }),
   });
   const body = await response.text();
