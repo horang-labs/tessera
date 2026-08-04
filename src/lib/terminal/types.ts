@@ -3,6 +3,7 @@ import type {
   TerminalInterruptInputPolicy,
   TerminalResizeScrollbackPolicy,
 } from '@/lib/cli/providers/types';
+import type { AgentEnvironment } from '@/lib/settings/types';
 
 export type TerminalShellKind = 'default' | 'cmd' | 'powershell' | 'wsl';
 
@@ -44,7 +45,7 @@ export interface TerminalCreateOptions {
   sessionId?: string | null;
   shellKind?: TerminalShellKind;
   /** Already resolved by a server-owned launch module; avoids re-reading user settings. */
-  agentEnvironment?: 'native' | 'wsl';
+  agentEnvironment?: AgentEnvironment;
   cols?: number;
   rows?: number;
   launchSpec?: TerminalLaunchSpec;

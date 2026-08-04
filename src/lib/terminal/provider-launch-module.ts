@@ -372,7 +372,7 @@ export function createProviderLaunchModule(
   options: ProviderLaunchModuleOptions,
 ): ProviderLaunchModule {
   const manager = options.terminalManager;
-  const detachedLaunches = new Set<string>();
+  const activeLaunches = new Map<string, Promise<ProviderLaunchResult>>();
 
   const launchOnce = async (
     request: ProviderLaunchRequest,
@@ -669,23 +669,29 @@ export function createProviderLaunchModule(
       validateInitialPrompt(request.initialPrompt);
       const persisted = getPersistedProvider(request);
       const requestedTerminalId = resolveRequestedTerminalId(request);
-      if (request.mode === 'surface') {
-        return launchOnce(request, persisted, requestedTerminalId);
+      const launchKey = JSON.stringify([request.userId, request.sessionId]);
+      const activeLaunch = activeLaunches.get(launchKey);
+      if (activeLaunch) {
+        if (request.mode === 'detached') {
+          throw providerLaunchError(
+            'SESSION_RUNTIME_ALREADY_RUNNING',
+            'The Session already has a live PTY runtime.',
+            requestedTerminalId,
+          );
+        }
+        requireFreshConversationForPrompt(true, request.initialPrompt, requestedTerminalId);
+        await activeLaunch;
+        return launchOnce(request, getPersistedProvider(request), requestedTerminalId);
       }
 
-      const launchKey = JSON.stringify([request.userId, request.sessionId]);
-      if (detachedLaunches.has(launchKey)) {
-        throw providerLaunchError(
-          'SESSION_RUNTIME_ALREADY_RUNNING',
-          'The Session already has a live PTY runtime.',
-          requestedTerminalId,
-        );
-      }
-      detachedLaunches.add(launchKey);
+      const launch = launchOnce(request, persisted, requestedTerminalId);
+      activeLaunches.set(launchKey, launch);
       try {
-        return await launchOnce(request, persisted, requestedTerminalId);
+        return await launch;
       } finally {
-        detachedLaunches.delete(launchKey);
+        if (activeLaunches.get(launchKey) === launch) {
+          activeLaunches.delete(launchKey);
+        }
       }
     },
   };

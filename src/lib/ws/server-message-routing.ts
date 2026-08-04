@@ -102,6 +102,7 @@ export function verifyClientSessionAccess(
   userId: string,
   message: ClientMessage,
   sendToUser: WsSendToUser,
+  options: { allowMissingSession?: boolean } = {},
 ): boolean {
   if (!('sessionId' in message) || !message.sessionId) {
     return true;
@@ -131,7 +132,7 @@ export function verifyClientSessionAccess(
   // ownership, so for unspawned sessions we trust the authenticated user.
   const session = dbSessions.getSession(message.sessionId);
   if (!session) {
-    if (EXISTENCE_OPTIONAL_MESSAGE_TYPES.has(message.type)) {
+    if (options.allowMissingSession || EXISTENCE_OPTIONAL_MESSAGE_TYPES.has(message.type)) {
       return true;
     }
     logger.warn('Session not found', {
@@ -510,23 +511,11 @@ export async function routeClientTransportMessage({
     case 'terminal_create': {
       const structured = message.launch;
       if (structured) {
-        const session = dbSessions.getSession(structured.sessionId);
-        const matchesPersistedSession = session
-          && session.provider === structured.providerId
-          && dbSessions.extractSessionKind(session.provider_state) === 'terminal';
-        if (!matchesPersistedSession) {
-          sendToConnection(connectionId, {
-            type: 'terminal_error',
-            terminalId: message.terminalId,
-            surfaceId: message.surfaceId,
-            message: 'Terminal launch does not match the persisted session provider.',
-          });
-          return;
-        }
         if (!verifyClientSessionAccess(
           userId,
           { ...message, sessionId: structured.sessionId },
           sendToUser,
+          { allowMissingSession: true },
         )) {
           return;
         }

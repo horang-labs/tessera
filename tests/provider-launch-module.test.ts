@@ -403,6 +403,11 @@ test('detached launch joins a surface that reaches terminal opening after reserv
       terminalId: 'surface-proposal',
     },
   });
+  let surfaceSettled = false;
+  void surface.finally(() => { surfaceSettled = true; }).catch(() => {});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(surfaceSettled, false);
+  releaseDetachedStart();
   await ptyLoaderReached;
   assert.equal(
     manager.getLaunchRuntimeState(
@@ -412,8 +417,6 @@ test('detached launch joins a surface that reaches terminal opening after reserv
     ),
     'opening',
   );
-  releaseDetachedStart();
-  await new Promise((resolve) => setImmediate(resolve));
   releasePtyLoader();
 
   const [detachedResult, surfaceResult] = await Promise.all([detached, surface]);
@@ -427,6 +430,10 @@ test('detached launch joins a surface that reaches terminal opening after reserv
     'spawned',
   );
   assert.equal(captured.length, 1);
+  assert.match(
+    captured[0]?.args.join('\n') ?? '',
+    /--prompt' 'Keep this durable Session'/,
+  );
   assert.ok(modules.sessions.getSession('detached-surface-race'));
   const starts = delivered.filter(({ message }) => message.type === 'terminal_started');
   assert.equal(starts.length, 1);
@@ -434,6 +441,76 @@ test('detached launch joins a surface that reaches terminal opening after reserv
     starts[0]?.message.type === 'terminal_started' ? starts[0].message.terminalId : undefined,
     detachedResult.terminalId,
   );
+});
+
+test('concurrent surface launches preserve the first initial prompt and create one runtime', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  createTerminalSession('concurrent-surface-opencode', 'opencode');
+
+  let releaseFirstCreate!: () => void;
+  let reportFirstCreateReached!: () => void;
+  const firstCreateGate = new Promise<void>((resolve) => { releaseFirstCreate = resolve; });
+  const firstCreateReached = new Promise<void>((resolve) => { reportFirstCreateReached = resolve; });
+  const create = manager.create.bind(manager);
+  let createCalls = 0;
+  manager.create = async (options) => {
+    createCalls += 1;
+    if (createCalls === 1) {
+      reportFirstCreateReached();
+      await firstCreateGate;
+    }
+    return create(options);
+  };
+
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager });
+  const first = launcher.launch({
+    sessionId: 'concurrent-surface-opencode',
+    userId: 'provider-launch-user',
+    initialPrompt: 'first instruction wins',
+    mode: 'surface',
+    surface: {
+      connectionId: 'first-connection',
+      surfaceId: 'first-surface',
+      terminalId: 'session-concurrent-surface-opencode',
+    },
+  });
+  await firstCreateReached;
+
+  await assert.rejects(
+    launcher.launch({
+      sessionId: 'concurrent-surface-opencode',
+      userId: 'provider-launch-user',
+      initialPrompt: 'must not replace the first instruction',
+      mode: 'surface',
+      surface: {
+        connectionId: 'rejected-connection',
+        surfaceId: 'rejected-surface',
+        terminalId: 'another-client-proposal',
+      },
+    }),
+    (error: unknown) => error instanceof modules.ProviderLaunchError
+      && error.code === 'SESSION_NOT_FRESH',
+  );
+
+  const second = launcher.launch({
+    sessionId: 'concurrent-surface-opencode',
+    userId: 'provider-launch-user',
+    mode: 'surface',
+    surface: {
+      connectionId: 'second-connection',
+      surfaceId: 'second-surface',
+      terminalId: 'different-client-proposal',
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirstCreate();
+
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.equal(firstResult.terminalId, secondResult.terminalId);
+  assert.equal(createCalls, 2);
+  assert.equal(captured.length, 1);
+  assert.match(captured[0]?.args.join('\n') ?? '', /--prompt' 'first instruction wins'/);
 });
 
 test('an existing surface rejects an initial prompt and reattaches without workspace metadata', async () => {

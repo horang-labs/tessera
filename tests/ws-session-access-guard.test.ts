@@ -70,3 +70,27 @@ test('other session messages still fail for an unknown session', async () => {
   assert.equal(sent.length, 1);
   assert.equal((sent[0] as { code?: string }).code, 'session_not_found');
 });
+
+test('structured terminal launch can defer a missing Session to its launch module', async () => {
+  const verifyClientSessionAccess = await loadGuard();
+  const { sendToUser, sent } = collectSent();
+
+  const allowed = verifyClientSessionAccess(
+    USER_ID,
+    {
+      type: 'terminal_create',
+      requestId: 'req-3',
+      terminalId: 'terminal-missing-session',
+      surfaceId: 'surface-missing-session',
+      launch: {
+        sessionId: MISSING_SESSION_ID,
+        providerId: 'codex',
+      },
+    },
+    sendToUser,
+    { allowMissingSession: true },
+  );
+
+  assert.equal(allowed, true);
+  assert.deepEqual(sent, []);
+});
