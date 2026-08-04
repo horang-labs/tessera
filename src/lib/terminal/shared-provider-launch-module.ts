@@ -1,11 +1,23 @@
-import { createProviderLaunchModule } from './provider-launch-module';
+import {
+  createProviderLaunchModule,
+  type ProviderLaunchModule,
+} from './provider-launch-module';
 import { observeTerminalProviderSession } from './provider-session-observation';
 import { terminalManager } from './shared-terminal-manager';
 
-/** Production adapter for the process-wide TerminalManager. */
-export const providerLaunchModule = createProviderLaunchModule({
-  terminalManager,
-  observeProviderSession: (options) => {
-    observeTerminalProviderSession(options);
-  },
-});
+let sharedProviderLaunchModule: ProviderLaunchModule | null = null;
+
+function getSharedProviderLaunchModule(): ProviderLaunchModule {
+  sharedProviderLaunchModule ??= createProviderLaunchModule({
+    terminalManager,
+    observeProviderSession: (options) => {
+      observeTerminalProviderSession(options);
+    },
+  });
+  return sharedProviderLaunchModule;
+}
+
+/** Production adapter that defers singleton wiring until the first launch. */
+export const providerLaunchModule: ProviderLaunchModule = {
+  launch: (request) => getSharedProviderLaunchModule().launch(request),
+};

@@ -288,6 +288,19 @@ test('terminal messages route through the connection-scoped server terminal mana
   assert.doesNotMatch(routingSource, /buildProviderTerminalLaunch/);
 });
 
+test('the shared provider launcher resolves the terminal manager lazily', () => {
+  assert.match(sharedProviderLaunchModuleSource, /let sharedProviderLaunchModule/);
+  assert.match(sharedProviderLaunchModuleSource, /function getSharedProviderLaunchModule\(\)/);
+  assert.match(
+    sharedProviderLaunchModuleSource,
+    /launch: \(request\) => getSharedProviderLaunchModule\(\)\.launch\(request\)/,
+  );
+  assert.doesNotMatch(
+    sharedProviderLaunchModuleSource,
+    /export const providerLaunchModule = createProviderLaunchModule\(/,
+  );
+});
+
 test('provider terminals keep their native alternate-screen behavior', () => {
   assert.doesNotMatch(providerTerminalLaunchSource, /CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN/);
   assert.doesNotMatch(routingSource, /buildProviderTerminalEnv/);
