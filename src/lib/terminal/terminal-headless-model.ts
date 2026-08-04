@@ -29,6 +29,8 @@ export interface TerminalHeadlessSnapshot {
   cols: number;
   rows: number;
   alternateScreen: boolean;
+  /** Plain text captured at the same completed parser boundary as `data`. */
+  visibleText?: string;
   /** Normal-buffer scrollback captured separately while an alt frame is active. */
   scrollbackAnsi?: string;
   /** Parser state that SerializeAddon cannot represent. Must replay last. */
@@ -235,6 +237,7 @@ export class TerminalHeadlessModel {
       cols: this.terminal.cols,
       rows: this.terminal.rows,
       alternateScreen,
+      visibleText: this.collectVisibleText(VISIBLE_TEXT_ROWS),
       ...(split.scrollbackAnsi !== undefined && { scrollbackAnsi: split.scrollbackAnsi }),
       ...(this.pendingEscapeTail && { pendingEscapeTailAnsi: this.pendingEscapeTail }),
     };
@@ -248,6 +251,10 @@ export class TerminalHeadlessModel {
    */
   readVisibleText(maxRows = VISIBLE_TEXT_ROWS): string {
     if (this.disposed) return '';
+    return this.collectVisibleText(maxRows);
+  }
+
+  private collectVisibleText(maxRows: number): string {
     const buffer = this.terminal.buffer.active;
     const end = buffer.baseY + this.terminal.rows;
     const start = Math.max(0, end - Math.max(1, maxRows));

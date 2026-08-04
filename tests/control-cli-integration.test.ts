@@ -493,7 +493,7 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
       '--control-descriptor', runtime.descriptor.path,
     ]);
     assert.equal(timedOut.code, 124);
-    assert.equal(JSON.parse(timedOut.stdout).error.code, 'SESSION_WAIT_TIMEOUT');
+    assert.equal(JSON.parse(timedOut.stdout).error.code, 'WAIT_TIMEOUT');
 
     const oversized = await runCli([
       'session', 'launch', '--worktree', worktree.worktreeId,
@@ -839,7 +839,7 @@ async function startRuntime(
         sessionWaits.push({ sessionId, condition, timeoutMs });
         if (condition === 'input-required') {
           throw new ControlOperationError(
-            'SESSION_WAIT_TIMEOUT',
+            'WAIT_TIMEOUT',
             'The Session did not reach input-required before the timeout.',
             408,
           );

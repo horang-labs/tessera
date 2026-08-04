@@ -108,7 +108,7 @@ export async function runControlCli(options) {
     return writeEnvelope(
       json,
       response,
-      ['PREPARATION_TIMEOUT', 'SESSION_WAIT_TIMEOUT'].includes(response.error.code) ? 124 : 1,
+      ['PREPARATION_TIMEOUT', 'WAIT_TIMEOUT'].includes(response.error.code) ? 124 : 1,
       invocation.kind,
     );
   }

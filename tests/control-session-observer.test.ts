@@ -15,7 +15,7 @@ test('Control Session observation maps terminal wait timeouts to the stable Cont
   await assert.rejects(
     observer.wait('durable-session', 'running', 10),
     (error: unknown) => error instanceof ControlOperationError
-      && error.code === 'SESSION_WAIT_TIMEOUT'
+      && error.code === 'WAIT_TIMEOUT'
       && error.httpStatus === 408
       && error.details.sessionId === 'durable-session'
       && error.details.condition === 'running'

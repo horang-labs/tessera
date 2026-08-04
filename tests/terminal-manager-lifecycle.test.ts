@@ -332,6 +332,54 @@ test('server-side Session snapshots expose the bounded live screen and normalize
   assert.deepEqual(delivered, [], 'reading must not attach a terminal surface');
 });
 
+test('Session snapshots keep visible text and output sequence on one parser boundary', async () => {
+  const spawned: FakePty[] = [];
+  let visibleText = '';
+  let releaseSnapshot!: () => void;
+  let markSnapshotStarted!: () => void;
+  const snapshotGate = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+  const snapshotStarted = new Promise<void>((resolve) => { markSnapshotStarted = resolve; });
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      createHeadlessModel: (cols, rows) => ({
+        write: (data) => { visibleText += data; },
+        resize: () => {},
+        snapshot: async () => {
+          const boundaryText = visibleText;
+          markSnapshotStarted();
+          await snapshotGate;
+          return {
+            data: '',
+            cols,
+            rows,
+            alternateScreen: false,
+            visibleText: boundaryText,
+          };
+        },
+        readVisibleText: () => visibleText,
+        dispose: () => {},
+      }),
+    },
+  );
+
+  await manager.startDetached(createOptions());
+  spawned[0].emitData('first boundary');
+  await nextImmediate();
+
+  const reading = manager.readSessionSnapshot('session-a', 'user-a');
+  await snapshotStarted;
+  spawned[0].emitData(' later output');
+  await nextImmediate();
+  releaseSnapshot();
+
+  const snapshot = await reading;
+  assert.equal(snapshot.screen, 'first boundary');
+  assert.equal(snapshot.outputSequence, 1);
+});
+
 test('Session waiters observe early and late lifecycle transitions without attaching or spawning', async () => {
   const delivered: ServerTransportMessage[] = [];
   const spawned: FakePty[] = [];

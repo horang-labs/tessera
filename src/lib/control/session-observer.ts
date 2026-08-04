@@ -7,6 +7,7 @@ import {
   ControlOperationError,
   type ControlSessionObserver,
 } from './service';
+import { createRequiredControlUserIdResolver } from './required-user-context';
 
 /** Adapt the shared terminal module to the single-user local Control interface. */
 export function createTerminalControlSessionObserver(options: {
@@ -15,24 +16,7 @@ export function createTerminalControlSessionObserver(options: {
   manager?: Pick<TerminalManager, 'readSessionSnapshot' | 'waitForSessionState'>;
 }): ControlSessionObserver {
   const manager = options.manager ?? terminalManager;
-  let resolvedUserId = options.userId;
-  let resolvingUserId: Promise<string | undefined> | undefined;
-
-  const requireUserId = async (): Promise<string> => {
-    if (resolvedUserId) return resolvedUserId;
-    resolvingUserId ??= Promise.resolve(options.resolveUserId?.());
-    const userId = await resolvingUserId;
-    if (userId) {
-      resolvedUserId = userId;
-      return userId;
-    }
-    resolvingUserId = undefined;
-    throw new ControlOperationError(
-      'INSTANCE_UNAVAILABLE',
-      'The Tessera user context is unavailable.',
-      503,
-    );
-  };
+  const requireUserId = createRequiredControlUserIdResolver(options);
 
   return {
     async read(sessionId) {
@@ -50,7 +34,7 @@ export function createTerminalControlSessionObserver(options: {
       } catch (error) {
         if (!(error instanceof TerminalSessionWaitTimeoutError)) throw error;
         throw new ControlOperationError(
-          'SESSION_WAIT_TIMEOUT',
+          'WAIT_TIMEOUT',
           `The Session did not reach ${condition} before the timeout.`,
           408,
           { sessionId, condition, timeoutSeconds: timeoutMs / 1_000 },

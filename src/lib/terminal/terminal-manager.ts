@@ -2232,6 +2232,7 @@ export class TerminalManager {
     let cols = runtime.cols;
     let rows = runtime.rows;
     let alternateScreen = false;
+    let visibleText: string | undefined;
     try {
       const modelSnapshot = await resolveSnapshotWithTimeout(
         runtime.model,
@@ -2240,6 +2241,7 @@ export class TerminalManager {
       cols = modelSnapshot.cols;
       rows = modelSnapshot.rows;
       alternateScreen = modelSnapshot.alternateScreen;
+      visibleText = modelSnapshot.visibleText;
     } catch (error) {
       logger.warn(
         { error, terminalId: runtime.terminalId },
@@ -2247,24 +2249,16 @@ export class TerminalManager {
       );
     }
 
-    const lifecyclePreview = sanitizeBoundedPlainText(
-      observedState?.preview ?? '',
-      MAX_SESSION_LIFECYCLE_PREVIEW_CHARS,
-    );
-    return {
-      screen: sanitizeBoundedPlainText(
-        runtime.model.readVisibleText(),
-        MAX_SESSION_SCREEN_CHARS,
-      ).trimEnd(),
+    return this.buildSessionSnapshot(runtime, {
+      visibleText: visibleText ?? runtime.model.readVisibleText(),
       cols,
       rows,
       alternateScreen,
       outputSequence,
-      terminalId: runtime.terminalId,
       runtimeState: normalizeSessionRuntimeState(observedState),
       stateAt: observedState?.stateAt ?? runtime.runtimeStateAt,
-      ...(lifecyclePreview ? { lifecyclePreview } : {}),
-    };
+      lifecyclePreview: observedState?.preview,
+    });
   }
 
   private trackSessionSnapshot(
@@ -2305,27 +2299,16 @@ export class TerminalManager {
     const sessionKey = this.getSessionKey(runtime.userId, runtime.sessionId);
     const waiters = this.sessionWaiters.get(sessionKey);
     if (!waiters || ![...waiters].some((waiter) => waiter.condition === 'runtime-exit')) return;
-    const snapshot: TerminalSessionSnapshot = {
-      screen: sanitizeBoundedPlainText(
-        runtime.model.readVisibleText(),
-        MAX_SESSION_SCREEN_CHARS,
-      ).trimEnd(),
+    const snapshot = this.buildSessionSnapshot(runtime, {
+      visibleText: runtime.model.readVisibleText(),
       cols: runtime.cols,
       rows: runtime.rows,
       alternateScreen: runtime.model.isAlternateScreen?.() ?? false,
       outputSequence: runtime.sequence,
-      terminalId: runtime.terminalId,
       runtimeState: 'exited',
       stateAt,
-      ...(runtime.lastSessionState?.preview
-        ? {
-            lifecyclePreview: sanitizeBoundedPlainText(
-              runtime.lastSessionState.preview,
-              MAX_SESSION_LIFECYCLE_PREVIEW_CHARS,
-            ),
-          }
-        : {}),
-    };
+      lifecyclePreview: runtime.lastSessionState?.preview,
+    });
     for (const waiter of [...waiters]) {
       this.settleSessionWaiter(sessionKey, waiter, snapshot);
     }
@@ -2365,6 +2348,39 @@ export class TerminalManager {
     if (!waiters?.delete(waiter)) return false;
     if (waiters.size === 0) this.sessionWaiters.delete(sessionKey);
     return true;
+  }
+
+  private buildSessionSnapshot(
+    runtime: TerminalRuntime,
+    values: {
+      visibleText: string;
+      cols: number;
+      rows: number;
+      alternateScreen: boolean;
+      outputSequence: number;
+      runtimeState: TerminalSessionRuntimeState;
+      stateAt: number;
+      lifecyclePreview?: string;
+    },
+  ): TerminalSessionSnapshot {
+    const lifecyclePreview = sanitizeBoundedPlainText(
+      values.lifecyclePreview ?? '',
+      MAX_SESSION_LIFECYCLE_PREVIEW_CHARS,
+    );
+    return {
+      screen: sanitizeBoundedPlainText(
+        values.visibleText,
+        MAX_SESSION_SCREEN_CHARS,
+      ).trimEnd(),
+      cols: values.cols,
+      rows: values.rows,
+      alternateScreen: values.alternateScreen,
+      outputSequence: values.outputSequence,
+      terminalId: runtime.terminalId,
+      runtimeState: values.runtimeState,
+      stateAt: values.stateAt,
+      ...(lifecyclePreview ? { lifecyclePreview } : {}),
+    };
   }
 }
 

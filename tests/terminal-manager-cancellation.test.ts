@@ -26,6 +26,7 @@ function installPendingPrefillRuntime(
     sessionId: null,
     generation: 1,
     sequence: 0,
+    runtimeStateAt: 0,
     ended: false,
     cwd: '.',
     shell: '/bin/zsh',
@@ -43,6 +44,7 @@ function installPendingPrefillRuntime(
     pendingSend: [],
     pendingSendTimer: null,
     disposeSessionObservers: [],
+    pendingSessionSnapshots: new Set<Promise<void>>(),
     prefillPending: true,
     cancelPrefill() {
       cancelCount += 1;
@@ -162,6 +164,7 @@ test('closing a running handoff keeps its lease until PTY exit confirmation', ()
     sessionId: null,
     generation: 1,
     sequence: 0,
+    runtimeStateAt: 0,
     ended: false,
     cwd: '.',
     shell: '/bin/zsh',
@@ -178,6 +181,7 @@ test('closing a running handoff keeps its lease until PTY exit confirmation', ()
     pendingSend: [],
     pendingSendTimer: null,
     disposeSessionObservers: [],
+    pendingSessionSnapshots: new Set<Promise<void>>(),
     handoffSessionId: sessionId,
   };
   const manager = new TerminalManager(() => undefined);
@@ -207,6 +211,7 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
     sessionId: null,
     generation: 1,
     sequence: 0,
+    runtimeStateAt: 0,
     ended: false,
     cwd: '.',
     shell: '/bin/zsh',
@@ -227,6 +232,7 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
     pendingSend: [],
     pendingSendTimer: null,
     disposeSessionObservers: [],
+    pendingSessionSnapshots: new Set<Promise<void>>(),
     handoffSessionId: sessionId,
   };
   const manager = new TerminalManager(
@@ -264,6 +270,7 @@ test('a throwing kill retains a live TUI handoff lease', async () => {
     sessionId: null,
     generation: 1,
     sequence: 0,
+    runtimeStateAt: 0,
     ended: false,
     cwd: '.',
     shell: '/bin/zsh',
@@ -281,6 +288,7 @@ test('a throwing kill retains a live TUI handoff lease', async () => {
     pendingSend: [],
     pendingSendTimer: null,
     disposeSessionObservers: [],
+    pendingSessionSnapshots: new Set<Promise<void>>(),
     handoffSessionId: sessionId,
   };
   const manager = new TerminalManager(

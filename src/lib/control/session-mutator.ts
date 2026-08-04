@@ -12,6 +12,7 @@ import {
   type ControlSessionMutator,
 } from './service';
 import { createDatabaseControlSessionSource } from './database-session-source';
+import { createRequiredControlUserIdResolver } from './required-user-context';
 import { toControlLaunchError } from './session-launch-errors';
 
 interface WorktreeIdentityRow {
@@ -26,24 +27,7 @@ export function createDatabaseControlSessionMutator(options: {
 }): ControlSessionMutator {
   const source = createDatabaseControlSessionSource();
   const launchModule = options.launchModule ?? providerLaunchModule;
-  let resolvedUserId = options.userId;
-  let resolvingUserId: Promise<string | undefined> | undefined;
-
-  const requireUserId = async (): Promise<string> => {
-    if (resolvedUserId) return resolvedUserId;
-    resolvingUserId ??= Promise.resolve(options.resolveUserId?.());
-    const userId = await resolvingUserId;
-    if (userId) {
-      resolvedUserId = userId;
-      return userId;
-    }
-    resolvingUserId = undefined;
-    throw new ControlOperationError(
-      'INSTANCE_UNAVAILABLE',
-      'The Tessera user context is unavailable.',
-      503,
-    );
-  };
+  const requireUserId = createRequiredControlUserIdResolver(options);
 
   return {
     async create(request) {
