@@ -7,6 +7,7 @@ import { normalizeAdvertisedAddress } from '@/lib/auth/advertised-address';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
+import PairedDeviceManagement from './paired-device-management';
 
 interface PairingPresentation {
   pairingLink: string;
@@ -385,6 +386,8 @@ export default function RemoteAccessSection() {
           <p className="mt-3 text-xs text-(--status-error-text)">{pairingError}</p>
         ) : null}
       </div>
+
+      <PairedDeviceManagement />
     </div>
   );
 }
