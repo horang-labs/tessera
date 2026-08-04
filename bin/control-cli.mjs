@@ -6,6 +6,7 @@ const CONTROL_API_VERSION = 1;
 const CONTROL_DESCRIPTOR_ENV = 'TESSERA_CONTROL_DESCRIPTOR';
 const CONTROL_DESCRIPTOR_OPTION = '--control-descriptor';
 const MAX_DESCRIPTOR_BYTES = 16 * 1024;
+const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5_000;
 // The server owns the ten-minute preparation deadline. Leave additional room
@@ -20,7 +21,10 @@ export function isControlInvocation(argv) {
     return true;
   }
   const args = withoutDescriptorSelector(argv);
-  return args[0] === 'status' || args[0] === 'project' || args[0] === 'worktree';
+  return args[0] === 'status'
+    || args[0] === 'project'
+    || args[0] === 'worktree'
+    || args[0] === 'session';
 }
 
 export async function runControlCli(options) {
@@ -40,8 +44,14 @@ export async function runControlCli(options) {
   let invocation;
   try {
     invocation = parseControlInvocation(argv, env);
+    await materializePromptChoice(invocation);
   } catch (error) {
-    return writeFailure(json, 2, 'INVALID_USAGE', error.message || 'Invalid Control CLI usage.');
+    return writeFailure(
+      json,
+      error instanceof ControlCliInputError ? 1 : 2,
+      error instanceof ControlCliInputError ? error.code : 'INVALID_USAGE',
+      error.message || 'Invalid Control CLI usage.',
+    );
   }
 
   let descriptor;
@@ -115,6 +125,11 @@ export function controlUsage() {
   tessera worktree list (--current | --project <project-id>) [--json]
   tessera worktree show <worktree-id> [--json]
   tessera worktree create (--current | --project <project-id>) -b <new-branch> <start-point> [--title <title>] [--json]
+  tessera session list --worktree <worktree-id> [--json]
+  tessera session show <session-id> [--json]
+  tessera session create --worktree <worktree-id> --provider <provider-id> [--title <title>] [--json]
+  tessera session start <session-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--allow-preparation-failure] [--json]
+  tessera session launch --worktree <worktree-id> --provider <provider-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--title <title>] [--allow-preparation-failure] [--json]
 
 Runtime selection:
   --control-descriptor PATH  Select one exact local Tessera runtime.
@@ -130,6 +145,14 @@ function parseControlInvocation(argv, env) {
 
   for (let index = 0; index < partitioned.before.length; index += 1) {
     const arg = partitioned.before[index];
+    if (arg === '--prompt' || arg === '--prompt-file') {
+      commandArgs.push(arg);
+      if (index + 1 < partitioned.before.length) {
+        commandArgs.push(partitioned.before[index + 1]);
+        index += 1;
+      }
+      continue;
+    }
     if (arg === '--json') {
       if (jsonSeen) throw new Error('--json may be supplied only once.');
       jsonSeen = true;
@@ -178,6 +201,86 @@ function parseControlInvocation(argv, env) {
       descriptorPath,
       kind: 'project-list',
       requestPath: '/__tessera/control/v1/projects',
+    };
+  }
+
+  if (
+    commandArgs.length === 3
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'show'
+    && commandArgs[2]
+  ) {
+    return {
+      descriptorPath,
+      kind: 'session-show',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(commandArgs[2])}`,
+    };
+  }
+
+  if (
+    commandArgs.length >= 3
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'list'
+  ) {
+    const worktreeId = parseRequiredNamedValue(commandArgs.slice(2), '--worktree', 'Worktree ID');
+    return {
+      descriptorPath,
+      kind: 'session-list',
+      requestPath: `/__tessera/control/v1/worktrees/${encodeURIComponent(worktreeId)}/sessions`,
+    };
+  }
+
+  if (
+    commandArgs.length >= 3
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'create'
+  ) {
+    const creation = parseSessionCreation(commandArgs.slice(2));
+    return {
+      descriptorPath,
+      kind: 'session-create',
+      requestPath: '/__tessera/control/v1/sessions',
+      requestBody: creation,
+    };
+  }
+
+  if (
+    commandArgs.length >= 4
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'start'
+    && commandArgs[2]
+  ) {
+    const start = parseSessionStart(commandArgs.slice(3));
+    return {
+      descriptorPath,
+      kind: 'session-start',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(commandArgs[2])}/start`,
+      requestBody: {
+        initialPrompt: null,
+        ...(start.allowPreparationFailure ? { allowPreparationFailure: true } : {}),
+      },
+      promptChoice: start.promptChoice,
+    };
+  }
+
+  if (
+    commandArgs.length >= 3
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'launch'
+  ) {
+    const launch = parseSessionLaunch(commandArgs.slice(2));
+    return {
+      descriptorPath,
+      kind: 'session-launch',
+      requestPath: '/__tessera/control/v1/sessions/launch',
+      requestBody: {
+        worktreeId: launch.worktreeId,
+        provider: launch.provider,
+        ...(launch.title === undefined ? {} : { title: launch.title }),
+        initialPrompt: null,
+        ...(launch.allowPreparationFailure ? { allowPreparationFailure: true } : {}),
+      },
+      promptChoice: launch.promptChoice,
     };
   }
 
@@ -243,6 +346,114 @@ function parseControlInvocation(argv, env) {
   }
 
   throw new Error('Usage: tessera status | project list | project show <project-id> | worktree list | worktree show <worktree-id> [--json]');
+}
+
+function parseRequiredNamedValue(args, option, label) {
+  if (args.length !== 2 || args[0] !== option || !args[1] || args[1].startsWith('-')) {
+    throw new Error(`${option} requires exactly one ${label}.`);
+  }
+  return args[1];
+}
+
+function parseSessionCreation(args) {
+  const parsed = parseSessionOptions(args, { promptRequired: false });
+  if (!parsed.worktreeId) throw new Error('--worktree requires a Worktree ID.');
+  if (!parsed.provider) throw new Error('--provider requires a provider ID.');
+  return {
+    worktreeId: parsed.worktreeId,
+    provider: parsed.provider,
+    ...(parsed.title === undefined ? {} : { title: parsed.title }),
+  };
+}
+
+function parseSessionStart(args) {
+  const parsed = parseSessionOptions(args, {
+    promptRequired: true,
+    allowed: new Set(['--prompt', '--prompt-file', '--no-prompt', '--allow-preparation-failure']),
+  });
+  return {
+    promptChoice: parsed.promptChoice,
+    allowPreparationFailure: parsed.allowPreparationFailure,
+  };
+}
+
+function parseSessionLaunch(args) {
+  const parsed = parseSessionOptions(args, { promptRequired: true });
+  if (!parsed.worktreeId) throw new Error('--worktree requires a Worktree ID.');
+  if (!parsed.provider) throw new Error('--provider requires a provider ID.');
+  return parsed;
+}
+
+function parseSessionOptions(args, options) {
+  const allowed = options.allowed ?? new Set([
+    '--worktree', '--provider', '--title', '--prompt', '--prompt-file', '--no-prompt',
+    '--allow-preparation-failure',
+  ]);
+  const parsed = {
+    worktreeId: '',
+    provider: '',
+    title: undefined,
+    promptChoice: undefined,
+    allowPreparationFailure: false,
+  };
+  const seen = new Set();
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!allowed.has(arg)) throw new Error(`Unknown Session option: ${arg}`);
+    if (seen.has(arg)) throw new Error(`${arg} may be supplied only once.`);
+    seen.add(arg);
+    if (arg === '--no-prompt') {
+      if (parsed.promptChoice) throw new Error('Exactly one initial prompt choice is required.');
+      parsed.promptChoice = { kind: 'none' };
+      continue;
+    }
+    if (arg === '--allow-preparation-failure') {
+      parsed.allowPreparationFailure = true;
+      continue;
+    }
+    const value = args[index + 1];
+    if (!value || (arg !== '--prompt' && arg !== '--prompt-file' && value.startsWith('-'))) {
+      throw new Error(`${arg} requires a value.`);
+    }
+    index += 1;
+    if (arg === '--prompt' || arg === '--prompt-file') {
+      if (parsed.promptChoice) throw new Error('Exactly one initial prompt choice is required.');
+      parsed.promptChoice = { kind: arg === '--prompt' ? 'text' : 'file', value };
+    } else if (arg === '--worktree') {
+      parsed.worktreeId = value;
+    } else if (arg === '--provider') {
+      parsed.provider = value;
+    } else if (arg === '--title') {
+      parsed.title = value;
+    }
+  }
+  if (options.promptRequired && !parsed.promptChoice) {
+    throw new Error('Exactly one of --prompt, --prompt-file, and --no-prompt is required.');
+  }
+  return parsed;
+}
+
+async function materializePromptChoice(invocation) {
+  if (!invocation.promptChoice) return;
+  if (invocation.promptChoice.kind === 'none') return;
+  const initialPrompt = invocation.promptChoice.kind === 'text'
+    ? invocation.promptChoice.value
+    : await fs.readFile(invocation.promptChoice.value === '-' ? 0 : invocation.promptChoice.value, 'utf8');
+  if (Buffer.byteLength(initialPrompt, 'utf8') > MAX_INITIAL_PROMPT_BYTES) {
+    throw new ControlCliInputError(
+      'INITIAL_PROMPT_TOO_LARGE',
+      `The initial prompt exceeds ${MAX_INITIAL_PROMPT_BYTES.toLocaleString('en-US')} UTF-8 bytes.`,
+    );
+  }
+  invocation.requestBody.initialPrompt = initialPrompt;
+  delete invocation.promptChoice;
+}
+
+class ControlCliInputError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
 }
 
 function parseWorktreeCreation(args) {
@@ -362,7 +573,15 @@ function withoutDescriptorSelector(argv) {
 }
 
 function hasGlobalOption(argv, option) {
-  return partitionAtOptionTerminator(argv).before.includes(option);
+  const args = partitionAtOptionTerminator(argv).before;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === '--prompt' || args[index] === '--prompt-file') {
+      index += 1;
+      continue;
+    }
+    if (args[index] === option) return true;
+  }
+  return false;
 }
 
 function partitionAtOptionTerminator(argv) {
@@ -581,5 +800,19 @@ function writeHumanSuccess(kind, data) {
   }
   if (kind === 'worktree-create') {
     process.stdout.write(`${data.worktreeId}\n${data.title}\n${data.branch}\n${data.path}\n`);
+    return;
+  }
+  if (kind === 'session-list') {
+    for (const session of data.sessions) {
+      process.stdout.write(`${session.sessionId}\t${session.title}\t${session.provider}\n`);
+    }
+    return;
+  }
+  if (kind === 'session-show' || kind === 'session-create') {
+    process.stdout.write(`${data.sessionId}\n${data.title}\n${data.provider}\n`);
+    return;
+  }
+  if (kind === 'session-start' || kind === 'session-launch') {
+    process.stdout.write(`${data.session.sessionId}\n${data.terminalId}\n`);
   }
 }

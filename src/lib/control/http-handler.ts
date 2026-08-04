@@ -118,6 +118,57 @@ export function createControlHttpHandler(options: {
         return true;
       }
 
+      const worktreeSessionsMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/worktrees/([^/]+)/sessions$`),
+      );
+      if (worktreeSessionsMatch) {
+        requireMethod(request, 'GET');
+        const worktreeId = decodeControlId(worktreeSessionsMatch[1], 'Worktree');
+        writeSuccess(response, await service.listSessions(worktreeId, context));
+        return true;
+      }
+
+      if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions`) {
+        requireMethod(request, 'POST');
+        writeSuccess(response, await service.createSession(
+          await readSessionCreationBody(request),
+          context,
+        ));
+        return true;
+      }
+
+      if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions/launch`) {
+        requireMethod(request, 'POST');
+        writeSuccess(response, await service.launchSession(
+          await readSessionLaunchBody(request),
+          context,
+        ));
+        return true;
+      }
+
+      const sessionStartMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/start$`),
+      );
+      if (sessionStartMatch) {
+        requireMethod(request, 'POST');
+        const sessionId = decodeControlId(sessionStartMatch[1], 'Session');
+        writeSuccess(response, await service.startSession({
+          sessionId,
+          ...await readSessionStartBody(request),
+        }, context));
+        return true;
+      }
+
+      const sessionShowMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)$`),
+      );
+      if (sessionShowMatch) {
+        requireMethod(request, 'GET');
+        const sessionId = decodeControlId(sessionShowMatch[1], 'Session');
+        writeSuccess(response, await service.showSession(sessionId, context));
+        return true;
+      }
+
       const worktreePrefix = `${CONTROL_ROUTE_PREFIX}/worktrees/`;
       if (pathname.startsWith(worktreePrefix)) {
         requireMethod(request, 'GET');
@@ -179,26 +230,7 @@ async function readWorktreeCreationBody(request: IncomingMessage): Promise<{
   startPoint: string;
   title?: string;
 }> {
-  let raw = '';
-  let bytes = 0;
-  for await (const chunk of request) {
-    bytes += Buffer.byteLength(chunk);
-    if (bytes > MAX_REQUEST_BODY_BYTES) {
-      throw new ControlOperationError('INVALID_USAGE', 'The Control request is too large.', 400);
-    }
-    raw += chunk;
-  }
-
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    throw new ControlOperationError('INVALID_USAGE', 'The Control request body is invalid.', 400);
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new ControlOperationError('INVALID_USAGE', 'The Control request body is invalid.', 400);
-  }
-  const body = value as Record<string, unknown>;
+  const body = await readJsonObject(request);
   const unknownKey = Object.keys(body).find((key) => !['branch', 'startPoint', 'title'].includes(key));
   if (unknownKey) {
     throw new ControlOperationError('INVALID_USAGE', `Unsupported Worktree field: ${unknownKey}`, 400);
@@ -217,6 +249,146 @@ async function readWorktreeCreationBody(request: IncomingMessage): Promise<{
     startPoint: body.startPoint,
     ...(body.title === undefined ? {} : { title: body.title as string }),
   };
+}
+
+async function readSessionCreationBody(request: IncomingMessage): Promise<{
+  worktreeId: string;
+  provider: string;
+  title?: string;
+}> {
+  const body = await readJsonObject(request);
+  rejectUnknownFields(body, ['worktreeId', 'provider', 'title'], 'Session');
+  const worktreeId = requireBodyString(body, 'worktreeId', 'A Worktree ID is required.');
+  const provider = requireBodyString(body, 'provider', 'An explicit supported provider is required.');
+  if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
+    throw new ControlOperationError('INVALID_USAGE', 'A Session title must not be empty.', 400);
+  }
+  return {
+    worktreeId,
+    provider,
+    ...(body.title === undefined ? {} : { title: body.title as string }),
+  };
+}
+
+async function readSessionStartBody(request: IncomingMessage): Promise<{
+  initialPrompt?: string;
+  allowPreparationFailure?: boolean;
+}> {
+  const body = await readJsonObject(request);
+  rejectUnknownFields(body, ['initialPrompt', 'allowPreparationFailure'], 'Session start');
+  return readPromptChoice(body);
+}
+
+async function readSessionLaunchBody(request: IncomingMessage): Promise<{
+  worktreeId: string;
+  provider: string;
+  title?: string;
+  initialPrompt?: string;
+  allowPreparationFailure?: boolean;
+}> {
+  const body = await readJsonObject(request);
+  rejectUnknownFields(
+    body,
+    ['worktreeId', 'provider', 'title', 'initialPrompt', 'allowPreparationFailure'],
+    'Session launch',
+  );
+  const creation = {
+    worktreeId: requireBodyString(body, 'worktreeId', 'A Worktree ID is required.'),
+    provider: requireBodyString(body, 'provider', 'An explicit supported provider is required.'),
+    ...(body.title === undefined ? {} : { title: body.title as string }),
+  };
+  if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
+    throw new ControlOperationError('INVALID_USAGE', 'A Session title must not be empty.', 400);
+  }
+  return { ...creation, ...readPromptChoice(body) };
+}
+
+function readPromptChoice(body: Record<string, unknown>): {
+  initialPrompt?: string;
+  allowPreparationFailure?: boolean;
+} {
+  if (!Object.hasOwn(body, 'initialPrompt')) {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      'Exactly one initial prompt choice is required.',
+      400,
+    );
+  }
+  if (body.initialPrompt !== null && typeof body.initialPrompt !== 'string') {
+    throw new ControlOperationError('INVALID_USAGE', 'The initial prompt is invalid.', 400);
+  }
+  if (
+    body.allowPreparationFailure !== undefined
+    && typeof body.allowPreparationFailure !== 'boolean'
+  ) {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      'The preparation failure override is invalid.',
+      400,
+    );
+  }
+  return {
+    ...(typeof body.initialPrompt === 'string' ? { initialPrompt: body.initialPrompt } : {}),
+    ...(body.allowPreparationFailure === true ? { allowPreparationFailure: true } : {}),
+  };
+}
+
+async function readJsonObject(request: IncomingMessage): Promise<Record<string, unknown>> {
+  let raw = '';
+  let bytes = 0;
+  for await (const chunk of request) {
+    bytes += Buffer.byteLength(chunk);
+    if (bytes > MAX_REQUEST_BODY_BYTES) {
+      throw new ControlOperationError('INVALID_USAGE', 'The Control request is too large.', 400);
+    }
+    raw += chunk;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new ControlOperationError('INVALID_USAGE', 'The Control request body is invalid.', 400);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ControlOperationError('INVALID_USAGE', 'The Control request body is invalid.', 400);
+  }
+  return value as Record<string, unknown>;
+}
+
+function rejectUnknownFields(
+  body: Record<string, unknown>,
+  supported: string[],
+  label: string,
+): void {
+  const unknownKey = Object.keys(body).find((key) => !supported.includes(key));
+  if (unknownKey) {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      `Unsupported ${label} field: ${unknownKey}`,
+      400,
+    );
+  }
+}
+
+function requireBodyString(
+  body: Record<string, unknown>,
+  key: string,
+  message: string,
+): string {
+  const value = body[key];
+  if (typeof value === 'string' && value.trim()) return value;
+  throw new ControlOperationError('INVALID_USAGE', message, 400);
+}
+
+function decodeControlId(encoded: string | undefined, label: string): string {
+  if (!encoded) {
+    throw new ControlOperationError('INVALID_USAGE', `A ${label} ID is required.`, 400);
+  }
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    throw new ControlOperationError('INVALID_USAGE', `The ${label} ID is invalid.`, 400);
+  }
 }
 
 export function isValidBearerToken(

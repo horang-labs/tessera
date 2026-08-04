@@ -13,7 +13,9 @@ import {
 } from '../src/lib/control/runtime-descriptor';
 import { createControlService } from '../src/lib/control/service';
 import {
+  ControlOperationError,
   ControlWorktreeCreationError,
+  type ControlSessionRecord,
   type ControlWorktreeRecord,
 } from '../src/lib/control/service';
 import { runControlCli } from './helpers/control-cli-runner';
@@ -25,6 +27,7 @@ const PACKAGE_VERSION = JSON.parse(
 
 interface TestRuntime {
   descriptor: RuntimeDescriptorHandle;
+  sessionStarts: Array<{ sessionId: string; initialPrompt?: string; allowPreparationFailure?: boolean }>;
   close(): Promise<void>;
 }
 
@@ -327,6 +330,117 @@ test('the CLI creates a zero-session Worktree from exact explicit Git inputs', a
   }
 });
 
+test('the CLI creates, starts, launches, lists, and shows detached Sessions with exact prompt choices', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-session-cli-'));
+  const project = {
+    id: 'project-sessions',
+    decodedPath: '/repo/project-sessions',
+    displayName: 'Project Sessions',
+    visible: true,
+  };
+  const worktree: ControlWorktreeRecord = {
+    worktreeId: 'wt_sessions',
+    projectId: project.id,
+    title: 'Session Worktree',
+    branch: 'feature/sessions',
+    filesystemPath: '/worktrees/sessions',
+    preparationStatus: 'succeeded',
+    preparationPhase: 'before',
+    sessions: [],
+  };
+  const promptFile = path.join(testRoot, 'prompt.txt');
+  const oversizedPromptFile = path.join(testRoot, 'oversized-prompt.txt');
+  await fs.writeFile(promptFile, '-inspect\nthis checkout');
+  await fs.writeFile(oversizedPromptFile, 'x'.repeat(16_385));
+  const runtime = await startRuntime(testRoot, 'sessions', project, [worktree]);
+
+  try {
+    const created = await runCli([
+      'session', 'create', '--worktree', worktree.worktreeId,
+      '--provider', 'codex', '--title', 'Created only', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(created.code, 0, created.stderr || created.stdout);
+    const createdSession = JSON.parse(created.stdout).data;
+    assert.equal(createdSession.worktreeId, worktree.worktreeId);
+    assert.equal(createdSession.provider, 'codex');
+    assert.equal(Object.hasOwn(createdSession, 'providerState'), false);
+
+    const started = await runCli([
+      'session', 'start', createdSession.sessionId,
+      '--prompt-file', promptFile, '--allow-preparation-failure', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(started.code, 0, started.stderr || started.stdout);
+    assert.deepEqual(runtime.sessionStarts[0], {
+      sessionId: createdSession.sessionId,
+      initialPrompt: '-inspect\nthis checkout',
+      allowPreparationFailure: true,
+    });
+
+    const launched = await runCli([
+      'session', 'launch', '--worktree', worktree.worktreeId,
+      '--provider', 'opencode', '--no-prompt', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(launched.code, 0, launched.stderr || launched.stdout);
+    assert.equal(runtime.sessionStarts[1]?.initialPrompt, undefined);
+
+    const optionLikePrompt = await runCli([
+      'session', 'launch', '--worktree', worktree.worktreeId,
+      '--provider', 'claude-code', '--prompt', '--json',
+      '--json', '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(optionLikePrompt.code, 0, optionLikePrompt.stderr || optionLikePrompt.stdout);
+    assert.equal(runtime.sessionStarts[2]?.initialPrompt, '--json');
+
+    const listed = await runCli([
+      'session', 'list', '--worktree', worktree.worktreeId, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(listed.code, 0);
+    assert.deepEqual(
+      JSON.parse(listed.stdout).data.sessions.map((session: { sessionId: string }) => session.sessionId),
+      [
+        createdSession.sessionId,
+        JSON.parse(launched.stdout).data.session.sessionId,
+        JSON.parse(optionLikePrompt.stdout).data.session.sessionId,
+      ],
+    );
+
+    const shown = await runCli([
+      'session', 'show', createdSession.sessionId, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(shown.code, 0);
+    assert.equal(JSON.parse(shown.stdout).data.sessionId, createdSession.sessionId);
+
+    const oversized = await runCli([
+      'session', 'launch', '--worktree', worktree.worktreeId,
+      '--provider', 'codex', '--prompt-file', oversizedPromptFile, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(oversized.code, 1);
+    assert.equal(JSON.parse(oversized.stdout).error.code, 'INITIAL_PROMPT_TOO_LARGE');
+
+    for (const args of [
+      ['session', 'start', createdSession.sessionId],
+      ['session', 'start', createdSession.sessionId, '--prompt', 'one', '--no-prompt'],
+      ['session', 'launch', '--worktree', worktree.worktreeId, '--provider', 'codex'],
+      ['session', 'create', '--worktree', worktree.worktreeId],
+    ]) {
+      const invalid = await runCli([
+        ...args, '--json', '--control-descriptor', runtime.descriptor.path,
+      ]);
+      assert.equal(invalid.code, 2, args.join(' '));
+      assert.equal(JSON.parse(invalid.stdout).error.code, 'INVALID_USAGE');
+    }
+  } finally {
+    await runtime.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
 test('server startup help and version behavior remain available without a Control command', async () => {
   const help = await runCli(['--help']);
   assert.equal(help.code, 0);
@@ -357,6 +471,9 @@ async function startRuntime(
   project: { id: string; decodedPath: string; displayName: string; visible: boolean },
   worktrees: ControlWorktreeRecord[] = [],
 ): Promise<TestRuntime> {
+  const sessionRecords: ControlSessionRecord[] = [];
+  const sessionStarts: TestRuntime['sessionStarts'] = [];
+  const liveSessions = new Set<string>();
   let requestHandler: ReturnType<typeof createControlHttpHandler> | undefined;
   const server = http.createServer((request, response) => {
     if (!requestHandler) {
@@ -417,12 +534,54 @@ async function startRuntime(
         return { worktree, startPoint: request.startPoint };
       },
     },
+    sessions: {
+      list: (worktreeId: string) => sessionRecords.filter(
+        (session) => session.worktreeId === worktreeId,
+      ),
+      get: (sessionId: string) => sessionRecords.find(
+        (session) => session.sessionId === sessionId,
+      ),
+    },
+    sessionMutator: {
+      create: async (request: { worktreeId: string; provider: string; title?: string }) => {
+        const owner = worktrees.find((worktree) => worktree.worktreeId === request.worktreeId);
+        if (!owner) throw new Error('missing test Worktree');
+        const session: ControlSessionRecord = {
+          sessionId: `session_created_${sessionRecords.length + 1}`,
+          worktreeId: request.worktreeId,
+          projectId: owner.projectId,
+          title: request.title ?? 'New Session',
+          provider: request.provider,
+          providerState: JSON.stringify({ kind: 'terminal' }),
+          updatedAt: new Date().toISOString(),
+        };
+        sessionRecords.push(session);
+        return session;
+      },
+      start: async (request: TestRuntime['sessionStarts'][number]) => {
+        if (liveSessions.has(request.sessionId)) {
+          throw new ControlOperationError(
+            'SESSION_RUNTIME_ALREADY_RUNNING',
+            'The Session already has a live PTY runtime.',
+            409,
+          );
+        }
+        sessionStarts.push(request);
+        liveSessions.add(request.sessionId);
+        return { terminalId: `session-${request.sessionId}` };
+      },
+      removeCreated: async (sessionId: string) => {
+        const index = sessionRecords.findIndex((session) => session.sessionId === sessionId);
+        if (index >= 0) sessionRecords.splice(index, 1);
+      },
+    },
   };
   const service = createControlService(serviceOptions as Parameters<typeof createControlService>[0]);
   requestHandler = createControlHttpHandler({ descriptor: descriptor.descriptor, service });
 
   return {
     descriptor,
+    sessionStarts,
     close: async () => {
       await descriptor.cleanup();
       await new Promise<void>((resolve) => server.close(() => resolve()));

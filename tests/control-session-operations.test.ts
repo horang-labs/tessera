@@ -1,0 +1,212 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  ControlOperationError,
+  ControlSessionStartError,
+  createControlService,
+  type ControlProjectRecord,
+  type ControlSessionMutator,
+  type ControlSessionRecord,
+  type ControlWorktreeRecord,
+} from '../src/lib/control/service';
+
+const PROJECT: ControlProjectRecord = {
+  id: 'project-one',
+  decodedPath: '/projects/one',
+  displayName: 'Project one',
+  visible: true,
+};
+
+const WORKTREE: ControlWorktreeRecord = {
+  worktreeId: 'wt_public_one',
+  projectId: PROJECT.id,
+  title: 'Feature one',
+  branch: 'feature/one',
+  filesystemPath: '/worktrees/one',
+  preparationStatus: 'succeeded',
+  preparationPhase: 'before',
+  sessions: [],
+};
+
+const CONTEXT = { agentEnvironment: 'native' as const };
+
+function createFixture() {
+  const records: ControlSessionRecord[] = [];
+  const starts: Array<{
+    sessionId: string;
+    initialPrompt?: string;
+    allowPreparationFailure?: boolean;
+  }> = [];
+  const removed: string[] = [];
+  let failNextStart: ControlOperationError | null = null;
+
+  const mutator: ControlSessionMutator = {
+    create: async ({ worktreeId, provider, title }) => {
+      const record: ControlSessionRecord = {
+        sessionId: `session-${records.length + 1}`,
+        worktreeId,
+        projectId: PROJECT.id,
+        title: title ?? 'New Session',
+        provider,
+        providerState: JSON.stringify({ kind: 'terminal' }),
+        updatedAt: '2026-08-04T00:00:00.000Z',
+      };
+      records.push(record);
+      return record;
+    },
+    start: async (request) => {
+      starts.push(request);
+      if (failNextStart) {
+        const error = failNextStart;
+        failNextStart = null;
+        throw error;
+      }
+      return { terminalId: `session-${request.sessionId}` };
+    },
+    removeCreated: async (sessionId) => {
+      removed.push(sessionId);
+      const index = records.findIndex((record) => record.sessionId === sessionId);
+      if (index >= 0) records.splice(index, 1);
+    },
+  };
+  const service = createControlService({
+    appVersion: '1.0.0',
+    runtimeId: 'runtime-one',
+    projects: { list: () => [PROJECT], get: (id) => id === PROJECT.id ? PROJECT : undefined },
+    worktrees: {
+      list: () => [WORKTREE],
+      get: (id) => id === WORKTREE.worktreeId ? WORKTREE : undefined,
+    },
+    sessions: {
+      list: (worktreeId) => records.filter((record) => record.worktreeId === worktreeId),
+      get: (sessionId) => records.find((record) => record.sessionId === sessionId),
+    },
+    sessionMutator: mutator,
+  });
+
+  return {
+    records,
+    removed,
+    service,
+    starts,
+    failStartWith(error: ControlOperationError) { failNextStart = error; },
+  };
+}
+
+test('Control creates a durable PTY Session and lists it only through its public Worktree', async () => {
+  const fixture = createFixture();
+
+  const created = await fixture.service.createSession({
+    worktreeId: WORKTREE.worktreeId,
+    provider: 'codex',
+    title: 'Inspect checkout',
+  }, CONTEXT);
+
+  assert.deepEqual(created, {
+    sessionId: 'session-1',
+    worktreeId: WORKTREE.worktreeId,
+    projectId: PROJECT.id,
+    title: 'Inspect checkout',
+    provider: 'codex',
+    updatedAt: '2026-08-04T00:00:00.000Z',
+  });
+  assert.deepEqual(await fixture.service.listSessions(WORKTREE.worktreeId, CONTEXT), {
+    sessions: [created],
+  });
+  assert.deepEqual(await fixture.service.showSession(created.sessionId, CONTEXT), created);
+  assert.equal(JSON.stringify(created).includes('task'), false);
+
+  await assert.rejects(
+    fixture.service.listSessions('task-legacy-one', CONTEXT),
+    (error: unknown) => error instanceof ControlOperationError
+      && error.code === 'WORKTREE_NOT_FOUND',
+  );
+});
+
+test('Control starts a pre-existing Session without deleting it when detached launch fails', async () => {
+  const fixture = createFixture();
+  const created = await fixture.service.createSession({
+    worktreeId: WORKTREE.worktreeId,
+    provider: 'claude-code',
+  }, CONTEXT);
+  fixture.failStartWith(new ControlOperationError(
+    'SESSION_RUNTIME_ALREADY_RUNNING',
+    'The Session already has a live PTY runtime.',
+    409,
+  ));
+
+  await assert.rejects(
+    fixture.service.startSession({
+      sessionId: created.sessionId,
+      initialPrompt: 'Begin work',
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlOperationError
+      && error.code === 'SESSION_RUNTIME_ALREADY_RUNNING',
+  );
+
+  assert.equal(fixture.records.length, 1);
+  assert.deepEqual(fixture.removed, []);
+  assert.deepEqual(fixture.starts, [{ sessionId: created.sessionId, initialPrompt: 'Begin work' }]);
+});
+
+test('Control launch rolls back only its newly created record on a pre-spawn failure', async () => {
+  const fixture = createFixture();
+  fixture.failStartWith(new ControlOperationError(
+    'PREPARATION_FAILED',
+    'Worktree preparation failed before an agent could start.',
+    409,
+  ));
+
+  await assert.rejects(
+    fixture.service.launchSession({
+      worktreeId: WORKTREE.worktreeId,
+      provider: 'opencode',
+      initialPrompt: 'Inspect the failure',
+      allowPreparationFailure: false,
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlOperationError
+      && error.code === 'PREPARATION_FAILED',
+  );
+
+  assert.deepEqual(fixture.removed, ['session-1']);
+  assert.deepEqual(fixture.records, []);
+
+  const launched = await fixture.service.launchSession({
+    worktreeId: WORKTREE.worktreeId,
+    provider: 'opencode',
+    initialPrompt: undefined,
+    allowPreparationFailure: true,
+  }, CONTEXT);
+  assert.equal(launched.terminalId, 'session-session-1');
+  assert.equal(launched.session.sessionId, 'session-1');
+  assert.deepEqual(fixture.starts.at(-1), {
+    sessionId: 'session-1',
+    initialPrompt: undefined,
+    allowPreparationFailure: true,
+  });
+});
+
+test('Control launch preserves its durable record when startup fails after PTY spawn', async () => {
+  const fixture = createFixture();
+  fixture.failStartWith(new ControlSessionStartError(
+    'INSTANCE_UNAVAILABLE',
+    'Provider initialization failed after spawn.',
+    500,
+    {},
+    true,
+  ));
+
+  await assert.rejects(
+    fixture.service.launchSession({
+      worktreeId: WORKTREE.worktreeId,
+      provider: 'codex',
+      initialPrompt: 'Begin work',
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlSessionStartError
+      && error.runtimeSpawned,
+  );
+
+  assert.deepEqual(fixture.removed, []);
+  assert.equal(fixture.records.length, 1);
+  assert.equal(fixture.records[0]?.worktreeId, WORKTREE.worktreeId);
+});

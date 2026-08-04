@@ -28,7 +28,7 @@ import {
 } from './provider-session-identity';
 import { createTerminalProviderSessionObserver } from './provider-session-observer';
 import { resolveSessionWorkspaceRoot } from '@/lib/session/session-workspace-root';
-import type { TerminalManager } from './terminal-manager';
+import { TerminalRuntimeStartError, type TerminalManager } from './terminal-manager';
 import type { TerminalAppearance, TerminalCreateOptions, TerminalLaunchSpec } from './types';
 
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
@@ -54,6 +54,7 @@ export class ProviderLaunchError extends Error {
     readonly code: ProviderLaunchErrorCode,
     message: string,
     readonly terminalId?: string,
+    readonly runtimeSpawned = false,
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -100,6 +101,7 @@ export interface ProviderLaunchResult {
 }
 
 export interface ProviderLaunchModule {
+  supportsProvider(providerId: string): boolean;
   launch(request: ProviderLaunchRequest): Promise<ProviderLaunchResult>;
 }
 
@@ -140,8 +142,15 @@ function providerLaunchError(
   message: string,
   terminalId?: string,
   cause?: unknown,
+  runtimeSpawned = false,
 ): ProviderLaunchError {
-  return new ProviderLaunchError(code, message, terminalId, cause === undefined ? undefined : { cause });
+  return new ProviderLaunchError(
+    code,
+    message,
+    terminalId,
+    runtimeSpawned,
+    cause === undefined ? undefined : { cause },
+  );
 }
 
 function validateInitialPrompt(initialPrompt: string | undefined): void {
@@ -378,6 +387,8 @@ export function createProviderLaunchModule(
             'SESSION_RUNTIME_ALREADY_RUNNING',
             'The Session already has a live PTY runtime.',
             terminalId,
+            undefined,
+            true,
           );
         }
 
@@ -597,11 +608,16 @@ export function createProviderLaunchModule(
           error instanceof Error ? error.message : 'Failed to launch the provider terminal.',
           terminalId,
           error,
+          error instanceof TerminalRuntimeStartError && error.runtimeSpawned,
         );
       }
   };
 
   return {
+    supportsProvider(providerId): boolean {
+      return Object.hasOwn(TERMINAL_PROVIDER_COMMANDS, providerId)
+        && cliProviderRegistry.hasProvider(providerId);
+    },
     async launch(request): Promise<ProviderLaunchResult> {
       validateInitialPrompt(request.initialPrompt);
       const persisted = getPersistedProvider(request);

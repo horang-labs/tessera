@@ -39,6 +39,10 @@ import {
 } from './src/lib/control/runtime-descriptor';
 import { createControlService } from './src/lib/control/service';
 import { createDatabaseControlWorktreeCreator } from './src/lib/control/worktree-creator';
+import {
+  createDatabaseControlSessionMutator,
+  createDatabaseControlSessionSource,
+} from './src/lib/control/database-session-source';
 import { resolveControlUserId } from './src/lib/control/user-context';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -150,6 +154,10 @@ async function startServer() {
           projects: createDatabaseControlProjectSource(),
           worktrees: createDatabaseControlWorktreeSource(),
           worktreeCreator: createDatabaseControlWorktreeCreator({
+            resolveUserId: resolveControlUserId,
+          }),
+          sessions: createDatabaseControlSessionSource(),
+          sessionMutator: createDatabaseControlSessionMutator({
             resolveUserId: resolveControlUserId,
           }),
         }),

@@ -229,6 +229,29 @@ test('terminal reservations isolate concurrent sessions before either PTY starts
   await manager.shutdownAll();
 });
 
+test('detached startup reports whether failure happened after PTY spawn', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      createHeadlessModel: () => {
+        throw new Error('forced model initialization failure');
+      },
+    },
+  );
+
+  await assert.rejects(
+    manager.startDetached(createOptions()),
+    (error: unknown) => error instanceof Error
+      && 'runtimeSpawned' in error
+      && error.runtimeSpawned === true,
+  );
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0]?.killCount, 1);
+});
+
 test('session PTY lifecycle reports running until the process exits', async () => {
   const spawned: FakePty[] = [];
   const runtimeStates: Array<{

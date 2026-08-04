@@ -23,6 +23,11 @@ export type ControlErrorCode =
   | 'START_POINT_REQUIRED'
   | 'PREPARATION_FAILED'
   | 'PREPARATION_TIMEOUT'
+  | 'PROVIDER_NOT_SUPPORTED'
+  | 'INITIAL_PROMPT_TOO_LARGE'
+  | 'SESSION_NOT_FOUND'
+  | 'SESSION_NOT_FRESH'
+  | 'SESSION_RUNTIME_ALREADY_RUNNING'
   | 'WORKTREE_CREATE_FAILED'
   | 'WORKTREE_NOT_FOUND'
   | 'WORKTREE_PERSIST_FAILED'
@@ -80,6 +85,46 @@ export interface ControlWorktreeRecord {
 export interface ControlWorktreeSource {
   list(projectId: string): ControlWorktreeRecord[];
   get(worktreeId: string): ControlWorktreeRecord | undefined;
+}
+
+export interface ControlSessionRecord {
+  sessionId: string;
+  worktreeId: string;
+  projectId: string;
+  title: string;
+  provider: string;
+  providerState: string | null;
+  updatedAt: string;
+}
+
+export type PublicSessionDto = Omit<ControlSessionRecord, 'providerState'>;
+
+export interface ControlSessionSource {
+  list(worktreeId: string): ControlSessionRecord[];
+  get(sessionId: string): ControlSessionRecord | undefined;
+}
+
+export interface ControlSessionCreationRequest {
+  worktreeId: string;
+  provider: string;
+  title?: string;
+}
+
+export interface ControlSessionStartRequest {
+  sessionId: string;
+  initialPrompt?: string;
+  allowPreparationFailure?: boolean;
+}
+
+export interface ControlSessionLaunchRequest extends ControlSessionCreationRequest {
+  initialPrompt?: string;
+  allowPreparationFailure?: boolean;
+}
+
+export interface ControlSessionMutator {
+  create(request: ControlSessionCreationRequest): Promise<ControlSessionRecord>;
+  start(request: ControlSessionStartRequest): Promise<{ terminalId: string }>;
+  removeCreated(sessionId: string): Promise<void>;
 }
 
 export interface ControlWorktreeCreationRequest {
@@ -166,6 +211,23 @@ export interface ControlService {
     },
     context: ControlCallerContext,
   ): Promise<PublicCreatedWorktreeDto>;
+  listSessions(
+    worktreeId: string,
+    context: ControlCallerContext,
+  ): Promise<{ sessions: PublicSessionDto[] }>;
+  showSession(sessionId: string, context: ControlCallerContext): Promise<PublicSessionDto>;
+  createSession(
+    request: ControlSessionCreationRequest,
+    context: ControlCallerContext,
+  ): Promise<PublicSessionDto>;
+  startSession(
+    request: ControlSessionStartRequest,
+    context: ControlCallerContext,
+  ): Promise<{ session: PublicSessionDto; terminalId: string }>;
+  launchSession(
+    request: ControlSessionLaunchRequest,
+    context: ControlCallerContext,
+  ): Promise<{ session: PublicSessionDto; terminalId: string }>;
 }
 
 export class ControlOperationError extends Error {
@@ -180,14 +242,37 @@ export class ControlOperationError extends Error {
   }
 }
 
+export class ControlSessionStartError extends ControlOperationError {
+  constructor(
+    code: ControlErrorCode,
+    message: string,
+    httpStatus: number,
+    details: Record<string, unknown>,
+    readonly runtimeSpawned: boolean,
+  ) {
+    super(code, message, httpStatus, details);
+    this.name = 'ControlSessionStartError';
+  }
+}
+
 export function createControlService(options: {
   appVersion: string;
   runtimeId: string;
   projects: ControlProjectSource;
   worktrees: ControlWorktreeSource;
   worktreeCreator?: ControlWorktreeCreator;
+  sessions?: ControlSessionSource;
+  sessionMutator?: ControlSessionMutator;
 }): ControlService {
-  const { appVersion, runtimeId, projects, worktrees, worktreeCreator } = options;
+  const {
+    appVersion,
+    runtimeId,
+    projects,
+    worktrees,
+    worktreeCreator,
+    sessions,
+    sessionMutator,
+  } = options;
 
   return {
     async status(context) {
@@ -332,6 +417,119 @@ export function createControlService(options: {
         startPoint: created.startPoint,
       };
     },
+
+    async listSessions(worktreeId) {
+      requireWorktree(worktrees, worktreeId);
+      const support = requireSessionSupport(sessions, sessionMutator);
+      return {
+        sessions: support.sessions.list(worktreeId).map(toPublicSession),
+      };
+    },
+
+    async showSession(sessionId) {
+      const support = requireSessionSupport(sessions, sessionMutator);
+      return toPublicSession(requireSession(support.sessions, sessionId));
+    },
+
+    async createSession(request) {
+      requireWorktree(worktrees, request.worktreeId);
+      const support = requireSessionSupport(sessions, sessionMutator);
+      validateSessionCreationRequest(request);
+      return toPublicSession(await support.mutator.create(request));
+    },
+
+    async startSession(request) {
+      const support = requireSessionSupport(sessions, sessionMutator);
+      const session = requireSession(support.sessions, request.sessionId);
+      const launched = await support.mutator.start(request);
+      return { session: toPublicSession(session), terminalId: launched.terminalId };
+    },
+
+    async launchSession(request) {
+      requireWorktree(worktrees, request.worktreeId);
+      const support = requireSessionSupport(sessions, sessionMutator);
+      validateSessionCreationRequest(request);
+      const created = await support.mutator.create(request);
+      try {
+        const launched = await support.mutator.start({
+          sessionId: created.sessionId,
+          initialPrompt: request.initialPrompt,
+          allowPreparationFailure: request.allowPreparationFailure,
+        });
+        return { session: toPublicSession(created), terminalId: launched.terminalId };
+      } catch (error) {
+        if (!(error instanceof ControlSessionStartError) || !error.runtimeSpawned) {
+          await support.mutator.removeCreated(created.sessionId);
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+function requireWorktree(
+  worktrees: ControlWorktreeSource,
+  worktreeId: string,
+): ControlWorktreeRecord {
+  const worktree = worktrees.get(worktreeId);
+  if (worktree) return worktree;
+  throw new ControlOperationError(
+    'WORKTREE_NOT_FOUND',
+    'The requested Worktree does not exist.',
+    404,
+    { worktreeId },
+  );
+}
+
+function requireSessionSupport(
+  sessions: ControlSessionSource | undefined,
+  sessionMutator: ControlSessionMutator | undefined,
+): { sessions: ControlSessionSource; mutator: ControlSessionMutator } {
+  if (sessions && sessionMutator) return { sessions, mutator: sessionMutator };
+  throw new ControlOperationError(
+    'INSTANCE_UNAVAILABLE',
+    'This Tessera runtime cannot operate Sessions.',
+    503,
+  );
+}
+
+function requireSession(
+  sessions: ControlSessionSource,
+  sessionId: string,
+): ControlSessionRecord {
+  const session = sessions.get(sessionId);
+  if (session) return session;
+  throw new ControlOperationError(
+    'SESSION_NOT_FOUND',
+    'The requested Session does not exist.',
+    404,
+    { sessionId },
+  );
+}
+
+function validateSessionCreationRequest(
+  request: Pick<ControlSessionCreationRequest, 'provider' | 'title'>,
+): void {
+  if (!request.provider.trim()) {
+    throw new ControlOperationError(
+      'PROVIDER_NOT_SUPPORTED',
+      'An explicit supported provider is required.',
+      400,
+    );
+  }
+  if (request.title !== undefined && !request.title.trim()) {
+    throw new ControlOperationError('INVALID_USAGE', 'A Session title must not be empty.', 400);
+  }
+}
+
+function toPublicSession(session: ControlSessionRecord): PublicSessionDto {
+  return {
+    sessionId: session.sessionId,
+    worktreeId: session.worktreeId,
+    projectId: session.projectId,
+    title: session.title,
+    provider: session.provider,
+    updatedAt: session.updatedAt,
   };
 }
 

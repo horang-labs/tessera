@@ -19,5 +19,6 @@ function getSharedProviderLaunchModule(): ProviderLaunchModule {
 
 /** Production adapter that defers singleton wiring until the first launch. */
 export const providerLaunchModule: ProviderLaunchModule = {
+  supportsProvider: (providerId) => getSharedProviderLaunchModule().supportsProvider(providerId),
   launch: (request) => getSharedProviderLaunchModule().launch(request),
 };

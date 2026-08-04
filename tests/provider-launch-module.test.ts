@@ -5,6 +5,7 @@ import path from 'node:path';
 import test, { afterEach, before } from 'node:test';
 import type { CliProvider } from '@/lib/cli/providers/types';
 import type { TerminalProcessHandle, TerminalPtyFactory } from '@/lib/terminal/types';
+import type { ServerTransportMessage } from '@/lib/ws/message-types';
 
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-launch-'));
 process.env.TESSERA_DATA_DIR = path.join(testRoot, 'data');
@@ -115,9 +116,12 @@ afterEach(async () => {
 });
 
 class FakePty implements TerminalProcessHandle {
+  private dataListeners: Array<(data: string) => void> = [];
   private exitListeners: Array<(event: { exitCode: number; signal?: number }) => void> = [];
 
-  onData(_callback: (data: string) => void): void {}
+  onData(callback: (data: string) => void): void {
+    this.dataListeners.push(callback);
+  }
 
   onExit(callback: (event: { exitCode: number; signal?: number }) => void): void {
     this.exitListeners.push(callback);
@@ -128,7 +132,15 @@ class FakePty implements TerminalProcessHandle {
   resize(_cols: number, _rows: number): void {}
 
   kill(): void {
-    for (const listener of this.exitListeners) listener({ exitCode: 0 });
+    this.emitExit();
+  }
+
+  emitExit(exitCode = 0): void {
+    for (const listener of this.exitListeners) listener({ exitCode });
+  }
+
+  emitData(data: string): void {
+    for (const listener of this.dataListeners) listener(data);
   }
 }
 
@@ -137,30 +149,49 @@ interface CapturedSpawn {
   args: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  pty: FakePty;
 }
 
-function createPtyFactory(captured: CapturedSpawn[]): TerminalPtyFactory {
+function createPtyFactory(
+  captured: CapturedSpawn[],
+  factoryOptions: { exitImmediately?: boolean } = {},
+): TerminalPtyFactory {
   return {
-    spawn(command, args, options) {
-      captured.push({ command, args, cwd: options.cwd, env: options.env });
-      return new FakePty();
+    spawn(command, args, spawnOptions) {
+      const pty = new FakePty();
+      captured.push({
+        command,
+        args,
+        cwd: spawnOptions.cwd,
+        env: spawnOptions.env,
+        pty,
+      });
+      if (factoryOptions.exitImmediately) queueMicrotask(() => pty.emitExit(17));
+      return pty;
     },
   };
 }
 
-function createManager(captured: CapturedSpawn[]) {
+function createManager(
+  captured: CapturedSpawn[],
+  options: { exitImmediately?: boolean } = {},
+  delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [],
+) {
   const manager = new modules.TerminalManager(
-    () => {},
-    async () => createPtyFactory(captured),
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createPtyFactory(captured, options),
     undefined,
     {
-      createHeadlessModel: (cols, rows) => ({
-        write: () => {},
-        resize: () => {},
-        snapshot: async () => ({ data: '', cols, rows, alternateScreen: false }),
-        readVisibleText: () => '',
-        dispose: () => {},
-      }),
+      createHeadlessModel: (cols, rows) => {
+        let data = '';
+        return {
+          write: (chunk) => { data += chunk; },
+          resize: () => {},
+          snapshot: async () => ({ data, cols, rows, alternateScreen: false }),
+          readVisibleText: () => data,
+          dispose: () => {},
+        };
+      },
     },
   );
   managers.push(manager);
@@ -252,6 +283,63 @@ test('surface and detached launches make the same fresh OpenCode argv decision',
   );
 
   await manager.closeSession('detached-opencode', 'provider-launch-user');
+});
+
+test('an immediate provider exit after detached spawn keeps the durable Session', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured, { exitImmediately: true });
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager });
+  createTerminalSession('immediate-exit-opencode', 'opencode');
+
+  const launched = await launcher.launch({
+    sessionId: 'immediate-exit-opencode',
+    userId: 'provider-launch-user',
+    initialPrompt: 'Exit after this instruction',
+    mode: 'detached',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(launched.terminalId, 'session-immediate-exit-opencode');
+  assert.equal(captured.length, 1);
+  assert.ok(modules.sessions.getSession('immediate-exit-opencode'));
+  assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 0, sessionCount: 0 });
+});
+
+test('a surface attaches to the detached runtime and restores its existing screen', async () => {
+  const captured: CapturedSpawn[] = [];
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const manager = createManager(captured, {}, delivered);
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager });
+  createTerminalSession('detached-then-surface', 'opencode');
+
+  const detached = await launcher.launch({
+    sessionId: 'detached-then-surface',
+    userId: 'provider-launch-user',
+    initialPrompt: 'Keep running',
+    mode: 'detached',
+  });
+  captured[0]?.pty.emitData('screen-before-attach');
+  const attached = await launcher.launch({
+    sessionId: 'detached-then-surface',
+    userId: 'provider-launch-user',
+    mode: 'surface',
+    surface: {
+      connectionId: 'later-connection',
+      surfaceId: 'later-surface',
+      terminalId: 'different-client-proposal',
+    },
+  });
+
+  assert.deepEqual(attached, {
+    terminalId: detached.terminalId,
+    attachedToExistingRuntime: true,
+  });
+  assert.equal(captured.length, 1);
+  const snapshot = delivered.find(({ message }) => message.type === 'terminal_snapshot')?.message;
+  assert.ok(snapshot && snapshot.type === 'terminal_snapshot');
+  if (snapshot?.type === 'terminal_snapshot') {
+    assert.match(snapshot.data, /screen-before-attach/);
+  }
 });
 
 test('an existing surface rejects an initial prompt and reattaches without workspace metadata', async () => {

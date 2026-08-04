@@ -902,6 +902,7 @@ export class TerminalManager {
 
       return runtime;
     } catch (error) {
+      const runtimeSpawned = terminalProcess !== null;
       try {
         terminalProcess?.kill();
       } catch {
@@ -912,7 +913,11 @@ export class TerminalManager {
         this.terminals.delete(key);
       }
       this.disposeUnspawnedLaunch(options);
-      throw error;
+      throw new TerminalRuntimeStartError(
+        error instanceof Error ? error.message : 'Failed to start terminal runtime.',
+        runtimeSpawned,
+        { cause: error },
+      );
     }
   }
 
@@ -2021,5 +2026,16 @@ export class TerminalManager {
       const first = runtime.outputBuffer.shift();
       if (first) runtime.outputBufferSize -= first.length;
     }
+  }
+}
+
+export class TerminalRuntimeStartError extends Error {
+  constructor(
+    message: string,
+    readonly runtimeSpawned: boolean,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'TerminalRuntimeStartError';
   }
 }
