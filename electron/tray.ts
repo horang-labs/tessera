@@ -1,5 +1,10 @@
 import { Tray, Menu, BrowserWindow, nativeImage, app } from 'electron';
 import * as path from 'path';
+import {
+  formatRemoteAccessTrayLabel,
+  type ElectronLanguage,
+  type RemoteAccessStatus,
+} from './remote-access-status';
 
 let tray: Tray | null = null;
 
@@ -10,6 +15,8 @@ interface TrayState {
   onQuit: () => void;
   closeBehavior: WindowsCloseBehavior;
   onCloseBehaviorChange: (behavior: WindowsCloseBehavior) => void;
+  language: ElectronLanguage;
+  remoteAccessStatus: RemoteAccessStatus | null;
 }
 
 let trayState: TrayState | null = null;
@@ -20,7 +27,14 @@ function getTrayIconPath(): string {
 }
 
 function buildContextMenu(state: TrayState): Menu {
-  const { win, onQuit, closeBehavior, onCloseBehaviorChange } = state;
+  const {
+    win,
+    onQuit,
+    closeBehavior,
+    onCloseBehaviorChange,
+    language,
+    remoteAccessStatus,
+  } = state;
   const closeBehaviorSubmenu = process.platform === 'win32'
     ? [
         { type: 'separator' as const },
@@ -59,6 +73,10 @@ function buildContextMenu(state: TrayState): Menu {
         win.focus();
       },
     },
+    {
+      label: formatRemoteAccessTrayLabel(language, remoteAccessStatus),
+      enabled: false,
+    },
     ...closeBehaviorSubmenu,
     { type: 'separator' },
     {
@@ -74,6 +92,8 @@ export function createTray(
   options: {
     closeBehavior?: WindowsCloseBehavior;
     onCloseBehaviorChange?: (behavior: WindowsCloseBehavior) => void;
+    language?: ElectronLanguage;
+    remoteAccessStatus?: RemoteAccessStatus | null;
   } = {},
 ): void {
   const iconPath = getTrayIconPath();
@@ -91,6 +111,8 @@ export function createTray(
     onQuit,
     closeBehavior: options.closeBehavior ?? 'ask',
     onCloseBehaviorChange: options.onCloseBehaviorChange ?? (() => {}),
+    language: options.language ?? 'en',
+    remoteAccessStatus: options.remoteAccessStatus ?? null,
   };
 
   tray.setContextMenu(buildContextMenu(trayState));
@@ -117,6 +139,19 @@ export function updateTrayCloseBehavior(behavior: WindowsCloseBehavior): void {
     closeBehavior: behavior,
   };
 
+  tray.setContextMenu(buildContextMenu(trayState));
+}
+
+export function updateTrayRemoteAccessStatus(status: RemoteAccessStatus | null): void {
+  if (!tray || !trayState) return;
+
+  trayState = {
+    ...trayState,
+    remoteAccessStatus: status,
+  };
+
+  const label = formatRemoteAccessTrayLabel(trayState.language, status);
+  tray.setToolTip(`Tessera — ${label}`);
   tray.setContextMenu(buildContextMenu(trayState));
 }
 

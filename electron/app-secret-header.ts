@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import { session } from 'electron';
 
-export async function registerAppSecretHeader(port: number): Promise<void> {
+export async function registerAppSecretHeader(port: number): Promise<string> {
   const { APP_SECRET_HEADER, APP_SECRET_PATH } = await import('../src/lib/auth/app-secret');
   const secret = (await fs.readFile(APP_SECRET_PATH, 'utf8')).trim();
   const urls = [
@@ -22,4 +22,6 @@ export async function registerAppSecretHeader(port: number): Promise<void> {
       });
     },
   );
+
+  return secret;
 }

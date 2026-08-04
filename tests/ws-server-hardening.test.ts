@@ -165,6 +165,42 @@ test('bounds TCP and WebSocket connections and force-terminates an over-capacity
   }
 });
 
+test('preserves a valid device identity while Electron migration bypass remains enabled', async () => {
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  const previousElectronBypass = process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  const previousPort = process.env.PORT;
+  const dataDir = await mkdtemp(path.join(process.cwd(), '.tessera-ws-device-bypass-'));
+  process.env.TESSERA_DATA_DIR = dataDir;
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+  process.env.PORT = '3100';
+  const registry = await import('../src/lib/auth/device-registry');
+  await registry.clearDeviceRegistry();
+  const pairing = await registry.issuePairingToken();
+  const device = await registry.redeemPairingToken(pairing.token, 'Remote phone');
+  const httpServer = createServer();
+  const transport = new TesseraWebSocketServer({ heartbeatIntervalMs: 60_000 });
+  const port = await listen(httpServer);
+  transport.start(httpServer);
+  const client = await openDeviceWebSocket(port, device.token);
+
+  try {
+    await waitFor(() => transport.listConnections().length === 1);
+    assert.deepEqual(transport.listConnections().map(({ kind, deviceId }) => ({
+      kind,
+      deviceId,
+    })), [{ kind: 'device', deviceId: device.id }]);
+  } finally {
+    await closeServer(transport, httpServer, [client]);
+    if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
+    else process.env.TESSERA_DATA_DIR = previousDataDir;
+    if (previousElectronBypass === undefined) delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+    else process.env.TESSERA_ELECTRON_AUTH_BYPASS = previousElectronBypass;
+    if (previousPort === undefined) delete process.env.PORT;
+    else process.env.PORT = previousPort;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('force-terminates an unauthenticated peer after sending policy close 1008', async () => {
   delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
   const httpServer = createServer();

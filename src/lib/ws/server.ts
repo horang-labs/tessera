@@ -528,6 +528,14 @@ export class WebSocketServer {
         }
         const userId = await getElectronAuthUserId();
         if (userId) {
+          if (shadowDecision?.allow && shadowDecision.kind === 'device') {
+            logger.debug({ userId, deviceId: shadowDecision.deviceId }, 'WebSocket device identity preserved during Electron migration mode');
+            return {
+              userId,
+              kind: 'device',
+              ...(shadowDecision.deviceId ? { deviceId: shadowDecision.deviceId } : {}),
+            };
+          }
           logger.debug({ userId }, 'WebSocket authenticated through Electron local mode');
           return { userId, kind: 'app' };
         }

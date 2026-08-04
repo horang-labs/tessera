@@ -14,7 +14,19 @@ import { fork, ChildProcess, spawnSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import QRCode from 'qrcode';
-import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
+import {
+  createTray,
+  destroyTray,
+  updateTrayCloseBehavior,
+  updateTrayRemoteAccessStatus,
+} from './tray';
+import {
+  buildQuitConfirmation,
+  parseRemoteAccessStatus,
+  retainLastRemoteAccessStatus,
+  resolveElectronLanguage,
+  type RemoteAccessStatus,
+} from './remote-access-status';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import {
   acquireElectronInstanceLock,
@@ -449,6 +461,9 @@ let activeCloseRequest: Promise<void> | null = null;
 let activeQuitConfirmation: Promise<void> | null = null;
 let terminalSummarySequence = 0;
 let pairingPresentationSequence = 0;
+let electronAppSecret = '';
+let remoteAccessStatus: RemoteAccessStatus | null = null;
+let remoteAccessStatusTimer: NodeJS.Timeout | null = null;
 
 type WindowCloseAction = 'quit' | 'tray' | 'cancel';
 type WindowsCloseBehavior = 'ask' | 'tray' | 'quit';
@@ -461,6 +476,8 @@ const WINDOW_CLOSE_RESPONSE_TIMEOUT_MS = 15_000;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 8_000;
 const TERMINAL_SUMMARY_TIMEOUT_MS = 1_500;
 const PAIRING_PRESENTATION_TIMEOUT_MS = 5_000;
+const REMOTE_ACCESS_STATUS_TIMEOUT_MS = 1_500;
+const REMOTE_ACCESS_STATUS_POLL_INTERVAL_MS = 2_000;
 const pendingCloseRequests = new Map<string, PendingCloseRequest>();
 type TerminalRuntimeSummary = { activeCount: number; sessionCount: number };
 type PendingTerminalSummary = {
@@ -633,6 +650,50 @@ async function createPairingCode(action: 'issue' | 'rotate'): Promise<
   return { ...presentation, qrDataUrl };
 }
 
+async function requestRemoteAccessStatus(): Promise<RemoteAccessStatus | null> {
+  if (!serverPort || !electronAppSecret) return null;
+
+  try {
+    const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+    const response = await fetch(`http://127.0.0.1:${serverPort}/api/devices`, {
+      headers: {
+        [APP_SECRET_HEADER]: electronAppSecret,
+        origin: `http://127.0.0.1:${serverPort}`,
+      },
+      signal: AbortSignal.timeout(REMOTE_ACCESS_STATUS_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    return parseRemoteAccessStatus(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+async function refreshRemoteAccessStatus(): Promise<void> {
+  const status = await requestRemoteAccessStatus();
+  // Keep the last verified snapshot through transient polling failures. This
+  // avoids both tray flicker and an unnecessary quit warning after we already
+  // established that no remote device is connected.
+  remoteAccessStatus = retainLastRemoteAccessStatus(remoteAccessStatus, status);
+  if (!status) return;
+  updateTrayRemoteAccessStatus(remoteAccessStatus);
+}
+
+function startRemoteAccessStatusMonitor(): void {
+  stopRemoteAccessStatusMonitor();
+  void refreshRemoteAccessStatus();
+  remoteAccessStatusTimer = setInterval(() => {
+    void refreshRemoteAccessStatus();
+  }, REMOTE_ACCESS_STATUS_POLL_INTERVAL_MS);
+  remoteAccessStatusTimer.unref?.();
+}
+
+function stopRemoteAccessStatusMonitor(): void {
+  if (!remoteAccessStatusTimer) return;
+  clearInterval(remoteAccessStatusTimer);
+  remoteAccessStatusTimer = null;
+}
+
 function requestTerminalSummary(): Promise<TerminalRuntimeSummary> {
   const child = serverProcess;
   if (!child?.connected) {
@@ -662,29 +723,20 @@ function requestTerminalSummary(): Promise<TerminalRuntimeSummary> {
   });
 }
 
-async function confirmTerminalQuit(activeCount: number): Promise<boolean> {
-  if (activeCount === 0) return true;
+async function confirmAppQuit(activeCount: number): Promise<boolean> {
+  const copy = buildQuitConfirmation(
+    resolveElectronLanguage(app.getLocale()),
+    activeCount,
+    remoteAccessStatus,
+  );
+  if (!copy) return true;
 
-  const isKorean = app.getLocale().toLowerCase().startsWith('ko');
-  const summaryUnavailable = activeCount < 0;
   const options = {
     type: 'warning' as const,
     title: 'Tessera',
-    message: isKorean
-      ? (summaryUnavailable
-          ? '터미널 상태를 확인하지 못했습니다. Tessera를 종료할까요?'
-          : `실행 중인 터미널 ${activeCount}개를 종료할까요?`)
-      : (summaryUnavailable
-          ? 'Terminal status is unavailable. Quit Tessera?'
-          : `Quit ${activeCount} active terminal${activeCount === 1 ? '' : 's'}?`),
-    detail: isKorean
-      ? (summaryUnavailable
-          ? '종료하면 실행 중인 터미널 작업이 함께 중단될 수 있습니다.'
-          : 'Tessera를 종료하면 터미널에서 실행 중인 Claude Code/Codex 작업도 함께 종료됩니다.')
-      : (summaryUnavailable
-          ? 'Quitting may stop active terminal work.'
-          : 'Quitting Tessera will also stop the Claude Code/Codex work running in these terminals.'),
-    buttons: isKorean ? ['취소', 'Tessera 종료'] : ['Cancel', 'Quit Tessera'],
+    message: copy.message,
+    detail: copy.detail,
+    buttons: copy.buttons,
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -698,8 +750,11 @@ async function confirmTerminalQuit(activeCount: number): Promise<boolean> {
 async function beginAppQuit(): Promise<void> {
   if (isQuitRequested) return;
 
-  const summary = await requestTerminalSummary();
-  if (!(await confirmTerminalQuit(summary.activeCount))) return;
+  const [summary] = await Promise.all([
+    requestTerminalSummary(),
+    refreshRemoteAccessStatus(),
+  ]);
+  if (!(await confirmAppQuit(summary.activeCount))) return;
 
   isQuitRequested = true;
   isQuitting = true;
@@ -708,6 +763,7 @@ async function beginAppQuit(): Promise<void> {
     pending.resolve('cancel');
     pendingCloseRequests.delete(requestId);
   }
+  stopRemoteAccessStatusMonitor();
   destroyTray();
   app.quit();
 }
@@ -1407,14 +1463,18 @@ ipcMain.on('set-titlebar-theme', (event, theme: TitlebarTheme, options?: Titleba
 app.whenReady().then(async () => {
   try {
     const port = await startServer();
-    await registerAppSecretHeader(port);
+    electronAppSecret = await registerAppSecretHeader(port);
     mainWindow = createWindow(port);
     createTray(mainWindow, requestAppQuit, {
       closeBehavior: windowsCloseBehavior,
       onCloseBehaviorChange: handleTrayCloseBehaviorChange,
+      language: resolveElectronLanguage(app.getLocale()),
+      remoteAccessStatus,
     });
+    startRemoteAccessStatusMonitor();
   } catch (err) {
     dialog.showErrorBox('Tessera', `Failed to start server: ${err}`);
+    remoteAccessStatus = { registeredDeviceCount: 0, connectedDeviceCount: 0 };
     requestAppQuit();
   }
 });
