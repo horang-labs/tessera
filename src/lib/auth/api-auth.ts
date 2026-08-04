@@ -1,11 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
-import { getElectronAuthUserId } from '@/lib/electron-user';
 import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
 import {
   evaluateRequestAndLog,
   isOriginDenial,
-  observeRequestGate,
   type CredentialKind,
 } from '@/lib/auth/request-gate';
 
@@ -14,23 +11,6 @@ type AuthenticationResult = AuthenticatedUser | { originDenied: true } | null;
 
 async function getAuthenticatedUser(request: NextRequest): Promise<AuthenticationResult> {
   const input = requestGateInputFromNextRequest(request);
-
-  if (isElectronAuthBypassEnabled()) {
-    const shadowDecision = await observeRequestGate(input);
-    if (isOriginDenial(shadowDecision)) {
-      return { originDenied: true };
-    }
-    const userId = await getElectronAuthUserId();
-    if (shadowDecision?.allow && shadowDecision.kind === 'device') {
-      return {
-        userId,
-        kind: 'device',
-        ...(shadowDecision.deviceId ? { deviceId: shadowDecision.deviceId } : {}),
-      };
-    }
-    return { userId, kind: 'app' };
-  }
-
   const decision = await evaluateRequestAndLog(input);
   if (decision.allow) {
     return {

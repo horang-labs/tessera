@@ -908,7 +908,6 @@ async function startServer(): Promise<number> {
       ELECTRON_CHILD: '1',
       TESSERA_ELECTRON_SERVER: '1',
       TESSERA_PRODUCTION_DB: '1',
-      TESSERA_ELECTRON_AUTH_BYPASS: '1',
       TESSERA_APP_ROOT: appRoot,
       TESSERA_CHANNEL: process.env.TESSERA_CHANNEL || (isPackaged ? 'github-release' : 'dev'),
       // Makes the Electron exe behave as plain Node.js for fork()

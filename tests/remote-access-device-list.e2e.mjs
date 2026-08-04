@@ -38,7 +38,7 @@ async function startServer() {
       NODE_ENV: 'development',
       PORT: String(port),
       TESSERA_DATA_DIR: dataDir,
-      TESSERA_ELECTRON_AUTH_BYPASS: '1',
+      TESSERA_ELECTRON_RUNTIME: '1',
       LOG_LEVEL: 'error',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -79,8 +79,11 @@ async function stopServer() {
 
 try {
   await startServer();
+  const appSecret = (await fs.readFile(path.join(dataDir, 'auth', 'app-secret'), 'utf8')).trim();
   browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  const context = await browser.newContext({
+    extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
+  });
   const page = await context.newPage();
   let devices = [
     {

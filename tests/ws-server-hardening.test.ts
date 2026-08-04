@@ -22,14 +22,6 @@ async function listen(server: Server): Promise<number> {
   return address.port;
 }
 
-async function openWebSocket(port: number): Promise<WebSocket> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
-    origin: 'http://localhost:3100',
-  });
-  await once(socket, 'open');
-  return socket;
-}
-
 async function openDeviceWebSocket(port: number, deviceToken: string): Promise<WebSocket> {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
     origin: 'http://localhost:3100',
@@ -135,7 +127,15 @@ async function closeServer(
 }
 
 test('bounds TCP and WebSocket connections and force-terminates an over-capacity peer', async () => {
-  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  const previousElectronRuntime = process.env.TESSERA_ELECTRON_RUNTIME;
+  const dataDir = await mkdtemp(path.join(process.cwd(), '.tessera-ws-capacity-'));
+  process.env.TESSERA_DATA_DIR = dataDir;
+  process.env.TESSERA_ELECTRON_RUNTIME = '1';
+  const registry = await import('../src/lib/auth/device-registry');
+  await registry.clearDeviceRegistry();
+  const pairing = await registry.issuePairingToken();
+  const device = await registry.redeemPairingToken(pairing.token, 'Capacity test');
   const httpServer = createServer();
   const transport = new TesseraWebSocketServer({
     maxConnections: 2,
@@ -144,14 +144,17 @@ test('bounds TCP and WebSocket connections and force-terminates an over-capacity
   });
   const port = await listen(httpServer);
   transport.start(httpServer);
-  const clients = [await openWebSocket(port), await openWebSocket(port)];
+  const clients = [
+    await openDeviceWebSocket(port, device.token),
+    await openDeviceWebSocket(port, device.token),
+  ];
 
   try {
     await waitFor(() => transport.listConnections().length === 2);
     assert.equal(httpServer.maxConnections, MAX_TCP_CONNECTIONS);
     assert.deepEqual(
       transport.listConnections().map(({ kind }) => kind),
-      ['app', 'app'],
+      ['device', 'device'],
     );
 
     const rejected = startRawUpgrade(port);
@@ -161,11 +164,15 @@ test('bounds TCP and WebSocket connections and force-terminates an over-capacity
     assert.equal(rejected.socket.destroyed, true);
   } finally {
     await closeServer(transport, httpServer, clients);
-    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+    if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
+    else process.env.TESSERA_DATA_DIR = previousDataDir;
+    if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
+    else process.env.TESSERA_ELECTRON_RUNTIME = previousElectronRuntime;
+    await rm(dataDir, { recursive: true, force: true });
   }
 });
 
-test('preserves a valid device identity while Electron migration bypass remains enabled', async () => {
+test('preserves a valid device identity when the legacy Electron bypass flag is present', async () => {
   const previousDataDir = process.env.TESSERA_DATA_DIR;
   const previousElectronBypass = process.env.TESSERA_ELECTRON_AUTH_BYPASS;
   const previousPort = process.env.PORT;
@@ -201,8 +208,8 @@ test('preserves a valid device identity while Electron migration bypass remains 
   }
 });
 
-test('force-terminates an unauthenticated peer after sending policy close 1008', async () => {
-  delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+test('force-terminates an unauthenticated peer even when the legacy Electron bypass flag is set', async () => {
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
   const httpServer = createServer();
   const transport = new TesseraWebSocketServer({
     rejectionGraceMs: 25,
@@ -210,15 +217,20 @@ test('force-terminates an unauthenticated peer after sending policy close 1008',
   });
   const port = await listen(httpServer);
   transport.start(httpServer);
+  const rejected = startRawUpgrade(port);
 
   try {
-    const rejected = startRawUpgrade(port);
-    const response = await rejected.response;
+    const response = await Promise.race([
+      rejected.response,
+      new Promise<Buffer>((resolve) => setTimeout(() => resolve(Buffer.alloc(0)), 250)),
+    ]);
     assert.equal(readCloseCode(response), 1008);
     await rejected.closed;
     assert.equal(rejected.socket.destroyed, true);
   } finally {
+    rejected.socket.destroy();
     await closeServer(transport, httpServer);
+    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
   }
 });
 
@@ -264,7 +276,7 @@ test('force-terminates every open connection authenticated by a revoked device',
   }
 });
 
-test('rejects a disallowed WebSocket Origin even while Electron auth bypass is enabled', async () => {
+test('rejects a disallowed WebSocket Origin when the legacy Electron bypass flag is present', async () => {
   process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
   const httpServer = createServer();
   const transport = new TesseraWebSocketServer({ heartbeatIntervalMs: 60_000 });
@@ -319,12 +331,17 @@ test('destroys a malformed upgrade without taking down the HTTP server', async (
 });
 
 test('keeps image-sized frames and non-/ws upgrades available', async () => {
-  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
   const previousDataDir = process.env.TESSERA_DATA_DIR;
+  const previousElectronRuntime = process.env.TESSERA_ELECTRON_RUNTIME;
   const databaseDir = await mkdtemp(path.join(process.cwd(), '.tessera-ws-hardening-'));
   process.env.TESSERA_DATA_DIR = databaseDir;
+  process.env.TESSERA_ELECTRON_RUNTIME = '1';
   const { initDatabase } = await import('../src/lib/db/database');
+  const registry = await import('../src/lib/auth/device-registry');
   await initDatabase();
+  await registry.clearDeviceRegistry();
+  const pairing = await registry.issuePairingToken();
+  const device = await registry.redeemPairingToken(pairing.token, 'Payload test');
   const httpServer = createServer();
   httpServer.on('upgrade', (request, socket) => {
     if (request.url === '/_next/webpack-hmr') {
@@ -334,7 +351,7 @@ test('keeps image-sized frames and non-/ws upgrades available', async () => {
   const transport = new TesseraWebSocketServer({ heartbeatIntervalMs: 60_000 });
   const port = await listen(httpServer);
   transport.start(httpServer);
-  const client = await openWebSocket(port);
+  const client = await openDeviceWebSocket(port, device.token);
 
   try {
     await waitFor(() => transport.listConnections().length === 1);
@@ -383,9 +400,10 @@ test('keeps image-sized frames and non-/ws upgrades available', async () => {
     malformedHmr.socket.destroy();
   } finally {
     await closeServer(transport, httpServer, [client]);
-    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
     if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
     else process.env.TESSERA_DATA_DIR = previousDataDir;
+    if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
+    else process.env.TESSERA_ELECTRON_RUNTIME = previousElectronRuntime;
     await rm(databaseDir, { recursive: true, force: true });
   }
 });

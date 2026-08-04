@@ -153,25 +153,3 @@ export async function evaluateRequestAndLog(
   }, 'Request gate decision');
   return decision;
 }
-
-export async function observeRequestGate(
-  input: RequestGateInput,
-): Promise<RequestGateDecision | null> {
-  try {
-    const decision = await evaluateRequest(input);
-    logger.info({
-      ...requestGateLogContext(input),
-      shadowKind: decision.allow ? decision.kind : null,
-      shadowReason: decision.allow ? null : decision.reason,
-    }, 'Request gate shadow decision');
-    return decision;
-  } catch (error) {
-    logger.warn({
-      ...requestGateLogContext(input),
-      shadowKind: null,
-      shadowReason: 'evaluation-error',
-      error,
-    }, 'Request gate shadow evaluation failed');
-    return null;
-  }
-}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
@@ -187,6 +187,54 @@ test('ignores remote-access settings from a device while saving its other settin
   assert.deepEqual(await loadMachineSettings(), {
     advertisedAddress: 'https://local-only.example',
   });
+});
+
+test('rejects an unauthenticated HTTP route even when the legacy Electron bypass flag is set', async () => {
+  const { NextRequest } = await import('next/server');
+  const { GET } = await import('../src/app/api/settings/route');
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+
+  try {
+    const response = await GET(new NextRequest('http://localhost:32123/api/settings', {
+      headers: { host: 'localhost:32123' },
+    }));
+
+    assert.equal(response.status, 401);
+  } finally {
+    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  }
+});
+
+test('rejects an unauthenticated API request at the proxy when the legacy Electron bypass flag is set', async () => {
+  const { NextRequest } = await import('next/server');
+  const { proxy } = await import('../src/proxy');
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+
+  try {
+    const response = await proxy(new NextRequest('http://localhost:32123/api/settings', {
+      headers: { host: 'localhost:32123' },
+    }));
+
+    assert.equal(response.status, 401);
+  } finally {
+    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  }
+});
+
+test('rejects an unauthenticated auth check when the legacy Electron bypass flag is set', async () => {
+  const { NextRequest } = await import('next/server');
+  const { GET } = await import('../src/app/api/auth/me/route');
+  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+
+  try {
+    const response = await GET(new NextRequest('http://localhost:32123/api/auth/me', {
+      headers: { host: 'localhost:32123' },
+    }));
+
+    assert.equal(response.status, 401);
+  } finally {
+    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  }
 });
 
 test('rejects a state-changing settings request from a disallowed Origin during auth bypass', async () => {
@@ -696,22 +744,6 @@ test('rejects malformed HTTP and WebSocket request targets without throwing', as
     })),
     { allow: false, reason: 'malformed-request', wsCloseCode: 1008 },
   );
-});
-
-test('keeps shadow evaluation failures from changing bypass behavior', async () => {
-  const backupPath = `${appSecretModule.APP_SECRET_PATH}.backup`;
-  const { observeRequestGate } = await import('../src/lib/auth/request-gate');
-  await rename(appSecretModule.APP_SECRET_PATH, backupPath);
-  await mkdir(appSecretModule.APP_SECRET_PATH);
-
-  try {
-    await assert.doesNotReject(() => observeRequestGate(requestInput({
-      headers: { [appSecretModule.APP_SECRET_HEADER]: 'z'.repeat(43) },
-    })));
-  } finally {
-    await rm(appSecretModule.APP_SECRET_PATH, { recursive: true, force: true });
-    await rename(backupPath, appSecretModule.APP_SECRET_PATH);
-  }
 });
 
 test('lets the shallow proxy check recognize any presented credential', async () => {

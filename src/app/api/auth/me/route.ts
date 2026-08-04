@@ -1,29 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findUserById } from '@/lib/users';
 import { createAuthError } from '@/lib/error';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
 import { getElectronAuthUser } from '@/lib/electron-user';
 import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
-import {
-  evaluateRequestAndLog,
-  observeRequestGate,
-} from '@/lib/auth/request-gate';
+import { evaluateRequestAndLog } from '@/lib/auth/request-gate';
 import type { MeResponse } from '@/types/auth';
 
 export async function GET(request: NextRequest) {
   try {
     const input = requestGateInputFromNextRequest(request);
-
-    if (isElectronAuthBypassEnabled()) {
-      await observeRequestGate(input);
-      const user = await getElectronAuthUser();
-      if (user) {
-        return NextResponse.json({
-          user,
-        } satisfies MeResponse);
-      }
-    }
-
     const decision = await evaluateRequestAndLog(input);
     if (!decision.allow) {
       const error = createAuthError(

@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
 import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
 import {
   hasPresentedCredential,
-  observeRequestGate,
   requestGateLogContext,
 } from '@/lib/auth/request-gate';
 import { isOriginAllowed } from '@/lib/auth/allowed-origins';
@@ -24,11 +22,6 @@ export async function proxy(request: NextRequest) {
       { error: 'Origin not allowed' },
       { status: 403 },
     );
-  }
-
-  if (isElectronAuthBypassEnabled()) {
-    await observeRequestGate(input);
-    return NextResponse.next();
   }
 
   // Skip auth routes and static assets

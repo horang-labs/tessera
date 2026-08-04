@@ -20,7 +20,6 @@ function isLoopbackBrowserRequest(request: NextRequest): boolean {
 }
 
 async function requirePairingManager(request: NextRequest) {
-  // Pairing is the one endpoint that must never inherit the migration bypass:
   // Electron's App secret or an authenticated loopback browser may mint a
   // credential. Paired devices and remote JWT sessions remain unable to do so.
   const decision = await evaluateRequestAndLog(requestGateInputFromNextRequest(request));

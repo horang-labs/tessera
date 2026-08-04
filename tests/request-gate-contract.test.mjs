@@ -4,12 +4,13 @@ import test from 'node:test';
 
 const entrypointPaths = {
   api: 'src/lib/auth/api-auth.ts',
+  home: 'src/app/page.tsx',
   me: 'src/app/api/auth/me/route.ts',
   proxy: 'src/proxy.ts',
   websocket: 'src/lib/ws/server.ts',
 };
 
-test('all four authentication entrypoints delegate credential decisions to request-gate', async () => {
+test('all authentication entrypoints delegate credential decisions to request-gate', async () => {
   const entries = await Promise.all(
     Object.entries(entrypointPaths).map(async ([name, filePath]) => [
       name,
@@ -24,20 +25,15 @@ test('all four authentication entrypoints delegate credential decisions to reque
   }
 
   assert.match(sources.api, /evaluateRequestAndLog\(input\)/);
+  assert.match(sources.home, /evaluateRequestAndLog/);
   assert.match(sources.me, /evaluateRequestAndLog\(input\)/);
   assert.match(sources.websocket, /evaluateRequestAndLog\(input\)/);
   assert.match(sources.proxy, /hasPresentedCredential\(input\)/);
 });
 
-test('Electron bypass branches remain above enforcing gate decisions', async () => {
-  const paths = [entrypointPaths.api, entrypointPaths.me, entrypointPaths.websocket];
-
-  for (const filePath of paths) {
+test('authentication entrypoints do not retain legacy Electron bypass or shadow branches', async () => {
+  for (const filePath of Object.values(entrypointPaths)) {
     const source = await readFile(filePath, 'utf8');
-    const bypassIndex = source.indexOf('if (isElectronAuthBypassEnabled())');
-    const enforcementIndex = source.indexOf('evaluateRequestAndLog(input)', bypassIndex);
-
-    assert.notEqual(bypassIndex, -1, filePath);
-    assert.ok(enforcementIndex > bypassIndex, filePath);
+    assert.doesNotMatch(source, /isElectronAuthBypassEnabled|observeRequestGate/, filePath);
   }
 });

@@ -4,12 +4,8 @@ import { randomUUID } from 'crypto';
 import { ServerTransportMessage } from './message-types';
 import { processManager } from '../cli/process-manager';
 import { protocolAdapter } from '../cli/protocol-adapter';
-import { isElectronAuthBypassEnabled } from '../auth/electron-mode';
-import { getElectronAuthUserId } from '../electron-user';
 import {
   evaluateRequestAndLog,
-  isOriginDenial,
-  observeRequestGate,
   parseRequestUrl,
   type CredentialKind,
   type RequestGateInput,
@@ -519,28 +515,6 @@ export class WebSocketServer {
   private async authenticate(req: IncomingMessage): Promise<WebSocketIdentity | null> {
     try {
       const input = requestGateInputFromUpgrade(req);
-
-      if (isElectronAuthBypassEnabled()) {
-        const shadowDecision = await observeRequestGate(input);
-        if (isOriginDenial(shadowDecision)) {
-          logger.warn({ origin: input.origin }, 'WebSocket Origin rejected');
-          return null;
-        }
-        const userId = await getElectronAuthUserId();
-        if (userId) {
-          if (shadowDecision?.allow && shadowDecision.kind === 'device') {
-            logger.debug({ userId, deviceId: shadowDecision.deviceId }, 'WebSocket device identity preserved during Electron migration mode');
-            return {
-              userId,
-              kind: 'device',
-              ...(shadowDecision.deviceId ? { deviceId: shadowDecision.deviceId } : {}),
-            };
-          }
-          logger.debug({ userId }, 'WebSocket authenticated through Electron local mode');
-          return { userId, kind: 'app' };
-        }
-      }
-
       const decision = await evaluateRequestAndLog(input);
       if (!decision.allow) return null;
 
