@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import {
+  ControlOperationError,
+  createControlService,
+  type ControlWorktreeRecord,
+} from '../src/lib/control/service';
 
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-control-sessions-'));
 process.env.TESSERA_DATA_DIR = path.join(testRoot, 'data');
@@ -19,12 +24,22 @@ test.after(async () => {
 });
 
 test('the database adapter persists Worktree-owned PTY Sessions and broadcasts rollback', async () => {
-  const [database, projects, tasks, sessions, controlSessions, webSocket, launcher] = await Promise.all([
+  const [
+    database,
+    projects,
+    tasks,
+    sessions,
+    controlSessions,
+    sessionMutator,
+    webSocket,
+    launcher,
+  ] = await Promise.all([
     import('@/lib/db/database'),
     import('@/lib/db/projects'),
     import('@/lib/db/tasks'),
     import('@/lib/db/sessions'),
     import('@/lib/control/database-session-source'),
+    import('@/lib/control/session-mutator'),
     import('@/lib/ws/server'),
     import('@/lib/terminal/provider-launch-module'),
   ]);
@@ -43,9 +58,13 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
 
   const launchRequests: Array<Record<string, unknown>> = [];
   let launchError: Error | null = null;
+  let userIdResolutionCount = 0;
   const source = controlSessions.createDatabaseControlSessionSource();
-  const mutator = controlSessions.createDatabaseControlSessionMutator({
-    userId: 'control-session-user',
+  const mutator = sessionMutator.createDatabaseControlSessionMutator({
+    resolveUserId: async () => {
+      userIdResolutionCount += 1;
+      return userIdResolutionCount === 1 ? 'control-session-user' : undefined;
+    },
     launchModule: {
       supportsProvider: (providerId) => ['claude-code', 'codex', 'opencode'].includes(providerId),
       launch: async (request) => {
@@ -79,7 +98,58 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
     assert.equal(row?.work_dir, worktreePath);
     assert.equal(row?.worktree_branch, 'feature/session-control');
     assert.equal(sessions.extractSessionKind(row?.provider_state ?? null), 'terminal');
+
+    sessions.createSession(
+      'chat-child',
+      projectId,
+      'Chat child',
+      'codex',
+      {
+        taskId: 'internal-task-id',
+        providerState: JSON.stringify({ kind: 'chat', threadId: 'chat-thread' }),
+      },
+    );
+    sessions.createSession(
+      'invalid-kind-child',
+      projectId,
+      'Invalid child',
+      'codex',
+      {
+        taskId: 'internal-task-id',
+        providerState: '{not-json',
+      },
+    );
     assert.deepEqual(source.list(worktreeId).map((item) => item.sessionId), [created.sessionId]);
+    assert.equal(source.get('chat-child'), undefined);
+    assert.equal(source.get('invalid-kind-child'), undefined);
+
+    const worktree: ControlWorktreeRecord = {
+      worktreeId,
+      projectId,
+      title: 'Public Worktree',
+      branch: 'feature/session-control',
+      filesystemPath: worktreePath,
+      preparationStatus: 'succeeded',
+      preparationPhase: 'before',
+      sessions: [],
+    };
+    const service = createControlService({
+      appVersion: '1.0.0',
+      runtimeId: 'runtime-one',
+      projects: { list: () => [], get: () => undefined },
+      worktrees: { list: () => [worktree], get: (id) => id === worktreeId ? worktree : undefined },
+      sessions: source,
+      sessionMutator: mutator,
+    });
+    const launchCountBeforeRejectedStarts = launchRequests.length;
+    for (const sessionId of ['chat-child', 'invalid-kind-child']) {
+      await assert.rejects(
+        service.startSession({ sessionId }, { agentEnvironment: 'native' }),
+        (error: unknown) => error instanceof ControlOperationError
+          && error.code === 'SESSION_NOT_FOUND',
+      );
+    }
+    assert.equal(launchRequests.length, launchCountBeforeRejectedStarts);
     assert.ok(mutations.some((mutation) => (
       mutation.type === 'session_mutated' && mutation.kind === 'created'
     )));
@@ -117,6 +187,7 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
     );
     await mutator.removeCreated(rollbackCandidate.sessionId);
     assert.equal(sessions.getSession(rollbackCandidate.sessionId), undefined);
+    assert.equal(userIdResolutionCount, 1);
     assert.ok(mutations.some((mutation) => (
       mutation.type === 'session_mutated' && mutation.kind === 'deleted'
     )));

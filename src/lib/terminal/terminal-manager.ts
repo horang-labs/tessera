@@ -12,7 +12,7 @@ import {
   resolveTerminalShell,
 } from './terminal-resolver';
 import { getServerPort } from '@/lib/server-port';
-import { revokePaneTokensForTerminal } from './pane-token-registry';
+import { revokePaneToken, revokePaneTokensForTerminal } from './pane-token-registry';
 import { cleanupCodexOverlayForTerminal } from './codex-overlay';
 import { cleanupCodexOverlayInWsl } from './codex-overlay-wsl';
 import {
@@ -366,6 +366,8 @@ function traceTerminalStage(stage: string, metadata: Record<string, unknown> = {
   }
 }
 
+export type TerminalLaunchRuntimeState = 'unowned' | 'opening' | 'spawned';
+
 export class TerminalManager {
   private readonly terminals = new Map<string, TerminalRuntime>();
   private readonly openingTerminals = new Map<string, Promise<TerminalRuntime>>();
@@ -513,6 +515,21 @@ export class TerminalManager {
     }
 
     const key = this.getKey(options.userId, options.terminalId);
+    const openingKey = this.getOpeningKey(
+      options.userId,
+      options.terminalId,
+      options.sessionId,
+    );
+    const ownedRuntime = this.terminals.get(key);
+    const ownedOpening = this.openingTerminals.get(openingKey);
+    if (
+      (ownedRuntime && (!options.sessionId || ownedRuntime.sessionId === options.sessionId))
+      || ownedOpening
+    ) {
+      this.disposeSupersededLaunch(options);
+      if (ownedOpening) await ownedOpening;
+      return;
+    }
     if (this.terminals.has(key) || this.openingByTerminalKey.has(key)) {
       this.disposeUnspawnedLaunch(options);
       throw new Error('The Session already has a live PTY runtime.');
@@ -523,12 +540,6 @@ export class TerminalManager {
       connectionId: DETACHED_CONNECTION_ID,
       surfaceId: DETACHED_SURFACE_ID,
     };
-    const openingKey = this.getOpeningKey(
-      resolvedOptions.userId,
-      resolvedOptions.terminalId,
-      resolvedOptions.sessionId,
-    );
-
     // Registered the same way create() registers its own, so a surface that
     // attaches while this is still starting awaits this PTY instead of
     // spawning a second one for the same terminal.
@@ -931,9 +942,16 @@ export class TerminalManager {
       releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
     }
     options.launchObserverDisposer?.();
-    revokePaneTokensForTerminal(options.terminalId);
+    if (options.paneToken) revokePaneToken(options.paneToken);
     cleanupCodexOverlayForTerminal(options.terminalId);
     cleanupCodexOverlayInWsl(options.terminalId);
+  }
+
+  private disposeSupersededLaunch(
+    options: Omit<TerminalCreateOptions, 'connectionId' | 'surfaceId'>,
+  ): void {
+    options.launchObserverDisposer?.();
+    if (options.paneToken) revokePaneToken(options.paneToken);
   }
 
   private async attachRuntime(
@@ -1775,10 +1793,20 @@ export class TerminalManager {
     userId: string,
     sessionId?: string | null,
   ): boolean {
+    return this.getLaunchRuntimeState(terminalId, userId, sessionId) !== 'unowned';
+  }
+
+  getLaunchRuntimeState(
+    terminalId: string,
+    userId: string,
+    sessionId?: string | null,
+  ): TerminalLaunchRuntimeState {
     const key = this.getKey(userId, terminalId);
     const runtime = this.terminals.get(key);
-    return Boolean(runtime && (!sessionId || runtime.sessionId === sessionId))
-      || this.openingTerminals.has(this.getOpeningKey(userId, terminalId, sessionId));
+    if (runtime && (!sessionId || runtime.sessionId === sessionId)) return 'spawned';
+    return this.openingTerminals.has(this.getOpeningKey(userId, terminalId, sessionId))
+      ? 'opening'
+      : 'unowned';
   }
 
   private getOwnedTerminal(terminalId: string, userId: string): TerminalRuntime | null {

@@ -342,6 +342,100 @@ test('a surface attaches to the detached runtime and restores its existing scree
   }
 });
 
+test('detached launch joins a surface that reaches terminal opening after reservation', async () => {
+  const captured: CapturedSpawn[] = [];
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  let releasePtyLoader!: () => void;
+  let reportPtyLoaderReached!: () => void;
+  const ptyLoaderGate = new Promise<void>((resolve) => { releasePtyLoader = resolve; });
+  const ptyLoaderReached = new Promise<void>((resolve) => { reportPtyLoaderReached = resolve; });
+  const manager = new modules.TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => {
+      reportPtyLoaderReached();
+      await ptyLoaderGate;
+      return createPtyFactory(captured);
+    },
+    undefined,
+    {
+      createHeadlessModel: (cols, rows) => {
+        let data = '';
+        return {
+          write: (chunk) => { data += chunk; },
+          resize: () => {},
+          snapshot: async () => ({ data, cols, rows, alternateScreen: false }),
+          readVisibleText: () => data,
+          dispose: () => {},
+        };
+      },
+    },
+  );
+  managers.push(manager);
+  createTerminalSession('detached-surface-race', 'opencode');
+
+  let releaseDetachedStart!: () => void;
+  let reportDetachedStartReached!: () => void;
+  const detachedStartGate = new Promise<void>((resolve) => { releaseDetachedStart = resolve; });
+  const detachedStartReached = new Promise<void>((resolve) => { reportDetachedStartReached = resolve; });
+  const startDetached = manager.startDetached.bind(manager);
+  manager.startDetached = async (options) => {
+    reportDetachedStartReached();
+    await detachedStartGate;
+    return startDetached(options);
+  };
+
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager });
+  const detached = launcher.launch({
+    sessionId: 'detached-surface-race',
+    userId: 'provider-launch-user',
+    initialPrompt: 'Keep this durable Session',
+    mode: 'detached',
+  });
+  await detachedStartReached;
+
+  const surface = launcher.launch({
+    sessionId: 'detached-surface-race',
+    userId: 'provider-launch-user',
+    mode: 'surface',
+    surface: {
+      connectionId: 'race-connection',
+      surfaceId: 'race-surface',
+      terminalId: 'surface-proposal',
+    },
+  });
+  await ptyLoaderReached;
+  assert.equal(
+    manager.getLaunchRuntimeState(
+      'session-detached-surface-race',
+      'provider-launch-user',
+      'detached-surface-race',
+    ),
+    'opening',
+  );
+  releaseDetachedStart();
+  await new Promise((resolve) => setImmediate(resolve));
+  releasePtyLoader();
+
+  const [detachedResult, surfaceResult] = await Promise.all([detached, surface]);
+  assert.equal(detachedResult.terminalId, surfaceResult.terminalId);
+  assert.equal(
+    manager.getLaunchRuntimeState(
+      detachedResult.terminalId,
+      'provider-launch-user',
+      'detached-surface-race',
+    ),
+    'spawned',
+  );
+  assert.equal(captured.length, 1);
+  assert.ok(modules.sessions.getSession('detached-surface-race'));
+  const starts = delivered.filter(({ message }) => message.type === 'terminal_started');
+  assert.equal(starts.length, 1);
+  assert.equal(
+    starts[0]?.message.type === 'terminal_started' ? starts[0].message.terminalId : undefined,
+    detachedResult.terminalId,
+  );
+});
+
 test('an existing surface rejects an initial prompt and reattaches without workspace metadata', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);

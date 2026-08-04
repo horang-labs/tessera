@@ -193,7 +193,7 @@ test('Control launch preserves its durable record when startup fails after PTY s
     'Provider initialization failed after spawn.',
     500,
     {},
-    true,
+    'spawned',
   ));
 
   await assert.rejects(
@@ -209,4 +209,28 @@ test('Control launch preserves its durable record when startup fails after PTY s
   assert.deepEqual(fixture.removed, []);
   assert.equal(fixture.records.length, 1);
   assert.equal(fixture.records[0]?.worktreeId, WORKTREE.worktreeId);
+});
+
+test('Control launch preserves its durable record while the Session runtime is opening', async () => {
+  const fixture = createFixture();
+  fixture.failStartWith(new ControlSessionStartError(
+    'INSTANCE_UNAVAILABLE',
+    'The Session runtime could not be started.',
+    500,
+    {},
+    'opening',
+  ));
+
+  await assert.rejects(
+    fixture.service.launchSession({
+      worktreeId: WORKTREE.worktreeId,
+      provider: 'opencode',
+      initialPrompt: 'Keep the opening runtime',
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlSessionStartError
+      && error.runtimeOwned,
+  );
+
+  assert.deepEqual(fixture.removed, []);
+  assert.equal(fixture.records.length, 1);
 });

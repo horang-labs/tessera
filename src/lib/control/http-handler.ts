@@ -258,16 +258,7 @@ async function readSessionCreationBody(request: IncomingMessage): Promise<{
 }> {
   const body = await readJsonObject(request);
   rejectUnknownFields(body, ['worktreeId', 'provider', 'title'], 'Session');
-  const worktreeId = requireBodyString(body, 'worktreeId', 'A Worktree ID is required.');
-  const provider = requireBodyString(body, 'provider', 'An explicit supported provider is required.');
-  if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
-    throw new ControlOperationError('INVALID_USAGE', 'A Session title must not be empty.', 400);
-  }
-  return {
-    worktreeId,
-    provider,
-    ...(body.title === undefined ? {} : { title: body.title as string }),
-  };
+  return readSessionCreationFields(body);
 }
 
 async function readSessionStartBody(request: IncomingMessage): Promise<{
@@ -292,15 +283,25 @@ async function readSessionLaunchBody(request: IncomingMessage): Promise<{
     ['worktreeId', 'provider', 'title', 'initialPrompt', 'allowPreparationFailure'],
     'Session launch',
   );
-  const creation = {
-    worktreeId: requireBodyString(body, 'worktreeId', 'A Worktree ID is required.'),
-    provider: requireBodyString(body, 'provider', 'An explicit supported provider is required.'),
-    ...(body.title === undefined ? {} : { title: body.title as string }),
-  };
+  const creation = readSessionCreationFields(body);
+  return { ...creation, ...readPromptChoice(body) };
+}
+
+function readSessionCreationFields(body: Record<string, unknown>): {
+  worktreeId: string;
+  provider: string;
+  title?: string;
+} {
+  const worktreeId = requireBodyString(body, 'worktreeId', 'A Worktree ID is required.');
+  const provider = requireBodyString(body, 'provider', 'An explicit supported provider is required.');
   if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
     throw new ControlOperationError('INVALID_USAGE', 'A Session title must not be empty.', 400);
   }
-  return { ...creation, ...readPromptChoice(body) };
+  return {
+    worktreeId,
+    provider,
+    ...(body.title === undefined ? {} : { title: body.title }),
+  };
 }
 
 function readPromptChoice(body: Record<string, unknown>): {

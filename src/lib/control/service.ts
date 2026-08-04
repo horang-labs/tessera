@@ -4,6 +4,7 @@ import {
   type ProjectFilesystemKind,
 } from '@/lib/projects/environment-policy';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import type { TerminalLaunchRuntimeState } from '@/lib/terminal/terminal-manager';
 import type {
   PreparationPhase,
   PreparationStatus,
@@ -248,10 +249,18 @@ export class ControlSessionStartError extends ControlOperationError {
     message: string,
     httpStatus: number,
     details: Record<string, unknown>,
-    readonly runtimeSpawned: boolean,
+    readonly runtimeState: TerminalLaunchRuntimeState = 'unowned',
   ) {
     super(code, message, httpStatus, details);
     this.name = 'ControlSessionStartError';
+  }
+
+  get runtimeSpawned(): boolean {
+    return this.runtimeState === 'spawned';
+  }
+
+  get runtimeOwned(): boolean {
+    return this.runtimeState !== 'unowned';
   }
 }
 
@@ -458,7 +467,7 @@ export function createControlService(options: {
         });
         return { session: toPublicSession(created), terminalId: launched.terminalId };
       } catch (error) {
-        if (!(error instanceof ControlSessionStartError) || !error.runtimeSpawned) {
+        if (!(error instanceof ControlSessionStartError) || !error.runtimeOwned) {
           await support.mutator.removeCreated(created.sessionId);
         }
         throw error;

@@ -10,14 +10,13 @@ import { sessionHistory } from '@/lib/session-history';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { HookCommandStyle } from './hook-command';
 import { buildClaudeHookSettingsJson } from './claude-hook-settings';
-import { cleanupCodexOverlayForTerminal, createCodexOverlay } from './codex-overlay';
+import { createCodexOverlay } from './codex-overlay';
 import {
-  cleanupCodexOverlayInWsl,
   createCodexOverlayInWsl,
 } from './codex-overlay-wsl';
 import { createOpenCodeOverlay } from './opencode-overlay';
 import { createOpenCodeOverlayInWsl } from './opencode-overlay-wsl';
-import { mintPaneToken, revokePaneTokensForTerminal } from './pane-token-registry';
+import { mintPaneToken, revokePaneToken } from './pane-token-registry';
 import {
   buildProviderTerminalLaunch,
   TERMINAL_PROVIDER_COMMANDS,
@@ -28,7 +27,11 @@ import {
 } from './provider-session-identity';
 import { createTerminalProviderSessionObserver } from './provider-session-observer';
 import { resolveSessionWorkspaceRoot } from '@/lib/session/session-workspace-root';
-import { TerminalRuntimeStartError, type TerminalManager } from './terminal-manager';
+import {
+  TerminalRuntimeStartError,
+  type TerminalLaunchRuntimeState,
+  type TerminalManager,
+} from './terminal-manager';
 import type { TerminalAppearance, TerminalCreateOptions, TerminalLaunchSpec } from './types';
 
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
@@ -49,16 +52,26 @@ export type ProviderLaunchErrorCode =
   | 'PREPARATION_TIMEOUT'
   | 'LAUNCH_FAILED';
 
+export type ProviderLaunchRuntimeState = TerminalLaunchRuntimeState;
+
 export class ProviderLaunchError extends Error {
   constructor(
     readonly code: ProviderLaunchErrorCode,
     message: string,
     readonly terminalId?: string,
-    readonly runtimeSpawned = false,
     options?: ErrorOptions,
+    readonly runtimeState: ProviderLaunchRuntimeState = 'unowned',
   ) {
     super(message, options);
     this.name = 'ProviderLaunchError';
+  }
+
+  get runtimeSpawned(): boolean {
+    return this.runtimeState === 'spawned';
+  }
+
+  get runtimeOwned(): boolean {
+    return this.runtimeState !== 'unowned';
   }
 }
 
@@ -111,7 +124,7 @@ type ProviderLaunchTerminalAdapter = Pick<
   | 'startDetached'
   | 'reserveTerminalId'
   | 'releaseTerminalReservation'
-  | 'hasOrIsOpening'
+  | 'getLaunchRuntimeState'
   | 'getSessionIdForTerminal'
 >;
 
@@ -142,15 +155,20 @@ function providerLaunchError(
   message: string,
   terminalId?: string,
   cause?: unknown,
-  runtimeSpawned = false,
+  runtimeState: ProviderLaunchRuntimeState = 'unowned',
 ): ProviderLaunchError {
   return new ProviderLaunchError(
     code,
     message,
     terminalId,
-    runtimeSpawned,
     cause === undefined ? undefined : { cause },
+    runtimeState,
   );
+}
+
+export function isSupportedTerminalProvider(providerId: string): boolean {
+  return Object.hasOwn(TERMINAL_PROVIDER_COMMANDS, providerId)
+    && cliProviderRegistry.hasProvider(providerId);
 }
 
 function validateInitialPrompt(initialPrompt: string | undefined): void {
@@ -217,7 +235,7 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
       'Terminal launch does not match the persisted session provider.',
     );
   }
-  if (!Object.hasOwn(TERMINAL_PROVIDER_COMMANDS, session.provider)) {
+  if (!isSupportedTerminalProvider(session.provider)) {
     throw providerLaunchError(
       'PROVIDER_NOT_SUPPORTED',
       `Terminal launch is not supported for provider '${session.provider}'.`,
@@ -368,31 +386,33 @@ export function createProviderLaunchModule(
       );
       const resourceDisposers = createDisposerStack();
       let transferredToTerminalManager = false;
+      let paneToken: string | undefined;
+      const cleanupLaunchOwnedResources = () => {
+        resourceDisposers.dispose();
+        if (paneToken) revokePaneToken(paneToken);
+      };
       const cleanupBeforeTransfer = () => {
         manager.releaseTerminalReservation(request.userId, request.sessionId, terminalId);
-        resourceDisposers.dispose();
-        revokePaneTokensForTerminal(terminalId);
-        cleanupCodexOverlayForTerminal(terminalId);
-        cleanupCodexOverlayInWsl(terminalId);
+        cleanupLaunchOwnedResources();
       };
 
       try {
-        const terminalExists = manager.hasOrIsOpening(
+        const existingRuntimeState = manager.getLaunchRuntimeState(
           terminalId,
           request.userId,
           request.sessionId,
         );
-        if (terminalExists && request.mode === 'detached') {
+        if (existingRuntimeState !== 'unowned' && request.mode === 'detached') {
           throw providerLaunchError(
             'SESSION_RUNTIME_ALREADY_RUNNING',
             'The Session already has a live PTY runtime.',
             terminalId,
             undefined,
-            true,
+            existingRuntimeState,
           );
         }
 
-        if (terminalExists && request.mode === 'surface') {
+        if (existingRuntimeState !== 'unowned' && request.mode === 'surface') {
           requireFreshConversationForPrompt(true, request.initialPrompt, terminalId);
           transferredToTerminalManager = true;
           await manager.create({
@@ -513,7 +533,7 @@ export function createProviderLaunchModule(
           }
         }
 
-        const paneToken = mintPaneToken({
+        paneToken = mintPaneToken({
           terminalId,
           userId: request.userId,
           sessionId: request.sessionId,
@@ -601,22 +621,49 @@ export function createProviderLaunchModule(
 
         return { terminalId, attachedToExistingRuntime: false };
       } catch (error) {
-        if (!transferredToTerminalManager) cleanupBeforeTransfer();
-        if (error instanceof ProviderLaunchError) throw error;
+        const managerRuntimeState = manager.getLaunchRuntimeState(
+          terminalId,
+          request.userId,
+          request.sessionId,
+        );
+        const runtimeState: ProviderLaunchRuntimeState = (
+          error instanceof TerminalRuntimeStartError && error.runtimeSpawned
+        ) || (
+          error instanceof ProviderLaunchError && error.runtimeState === 'spawned'
+        )
+          ? 'spawned'
+          : managerRuntimeState !== 'unowned'
+            ? managerRuntimeState
+            : error instanceof ProviderLaunchError
+              ? error.runtimeState
+              : 'unowned';
+        if (!transferredToTerminalManager) {
+          if (runtimeState !== 'unowned') cleanupLaunchOwnedResources();
+          else cleanupBeforeTransfer();
+        }
+        if (error instanceof ProviderLaunchError) {
+          if (error.runtimeState === runtimeState) throw error;
+          throw providerLaunchError(
+            error.code,
+            error.message,
+            error.terminalId,
+            error.cause,
+            runtimeState,
+          );
+        }
         throw providerLaunchError(
           'LAUNCH_FAILED',
           error instanceof Error ? error.message : 'Failed to launch the provider terminal.',
           terminalId,
           error,
-          error instanceof TerminalRuntimeStartError && error.runtimeSpawned,
+          runtimeState,
         );
       }
   };
 
   return {
     supportsProvider(providerId): boolean {
-      return Object.hasOwn(TERMINAL_PROVIDER_COMMANDS, providerId)
-        && cliProviderRegistry.hasProvider(providerId);
+      return isSupportedTerminalProvider(providerId);
     },
     async launch(request): Promise<ProviderLaunchResult> {
       validateInitialPrompt(request.initialPrompt);

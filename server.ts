@@ -39,10 +39,8 @@ import {
 } from './src/lib/control/runtime-descriptor';
 import { createControlService } from './src/lib/control/service';
 import { createDatabaseControlWorktreeCreator } from './src/lib/control/worktree-creator';
-import {
-  createDatabaseControlSessionMutator,
-  createDatabaseControlSessionSource,
-} from './src/lib/control/database-session-source';
+import { createDatabaseControlSessionSource } from './src/lib/control/database-session-source';
+import { createDatabaseControlSessionMutator } from './src/lib/control/session-mutator';
 import { resolveControlUserId } from './src/lib/control/user-context';
 
 const dev = process.env.NODE_ENV !== 'production';

@@ -18,6 +18,8 @@ import {
   type ControlSessionRecord,
   type ControlWorktreeRecord,
 } from '../src/lib/control/service';
+import { toControlLaunchError } from '../src/lib/control/session-launch-errors';
+import { ProviderLaunchError } from '../src/lib/terminal/provider-launch-module';
 import { runControlCli } from './helpers/control-cli-runner';
 
 const REPO_ROOT = process.cwd();
@@ -394,6 +396,29 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
     assert.equal(optionLikePrompt.code, 0, optionLikePrompt.stderr || optionLikePrompt.stdout);
     assert.equal(runtime.sessionStarts[2]?.initialPrompt, '--json');
 
+    const literalTerminatorPrompt = await runCli([
+      'session', 'launch', '--worktree', worktree.worktreeId,
+      '--provider', 'codex', '--prompt', '--', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    const reorderedLiteralTerminatorPrompt = await runCli([
+      '--json', '--control-descriptor', runtime.descriptor.path,
+      'session', 'launch', '--worktree', worktree.worktreeId,
+      '--provider', 'codex', '--prompt', '--',
+    ]);
+    assert.equal(
+      literalTerminatorPrompt.code,
+      0,
+      literalTerminatorPrompt.stderr || literalTerminatorPrompt.stdout,
+    );
+    assert.equal(
+      reorderedLiteralTerminatorPrompt.code,
+      0,
+      reorderedLiteralTerminatorPrompt.stderr || reorderedLiteralTerminatorPrompt.stdout,
+    );
+    assert.equal(runtime.sessionStarts[3]?.initialPrompt, '--');
+    assert.equal(runtime.sessionStarts[4]?.initialPrompt, '--');
+
     const listed = await runCli([
       'session', 'list', '--worktree', worktree.worktreeId, '--json',
       '--control-descriptor', runtime.descriptor.path,
@@ -405,6 +430,8 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
         createdSession.sessionId,
         JSON.parse(launched.stdout).data.session.sessionId,
         JSON.parse(optionLikePrompt.stdout).data.session.sessionId,
+        JSON.parse(literalTerminatorPrompt.stdout).data.session.sessionId,
+        JSON.parse(reorderedLiteralTerminatorPrompt.stdout).data.session.sessionId,
       ],
     );
 
@@ -435,6 +462,141 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
       assert.equal(invalid.code, 2, args.join(' '));
       assert.equal(JSON.parse(invalid.stdout).error.code, 'INVALID_USAGE');
     }
+
+    for (const launchOnlyOption of [
+      ['--prompt', 'must-not-be-read'],
+      ['--prompt-file', path.join(testRoot, 'missing-prompt.txt')],
+      ['--no-prompt'],
+      ['--allow-preparation-failure'],
+    ]) {
+      const invalid = await runCli([
+        'session', 'create', '--worktree', worktree.worktreeId,
+        '--provider', 'codex', ...launchOnlyOption,
+        '--json', '--control-descriptor', runtime.descriptor.path,
+      ]);
+      assert.equal(invalid.code, 2, launchOnlyOption[0]);
+      assert.equal(JSON.parse(invalid.stdout).error.code, 'INVALID_USAGE');
+
+      const invalidHelp = await runCli([
+        'session', 'create', '--worktree', worktree.worktreeId,
+        '--provider', 'codex', ...launchOnlyOption,
+        '--help', '--json', '--control-descriptor', runtime.descriptor.path,
+      ]);
+      assert.equal(invalidHelp.code, 2, `${launchOnlyOption[0]} with --help`);
+      assert.equal(JSON.parse(invalidHelp.stdout).error.code, 'INVALID_USAGE');
+    }
+  } finally {
+    await runtime.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
+test('Session commands reject malformed success DTOs before JSON or human rendering', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-session-dto-'));
+  const session = {
+    sessionId: 'session-valid-shape',
+    worktreeId: 'wt_valid_shape',
+    projectId: 'project-valid-shape',
+    title: 'Valid shape',
+    provider: 'codex',
+    updatedAt: '2026-08-04T00:00:00.000Z',
+  };
+  const runtime = await startResponseRuntime(testRoot, 'malformed-session-dto', (pathname) => {
+    let data: unknown;
+    if (pathname.endsWith('/sessions/launch')) {
+      data = { session, terminalId: '' };
+    } else if (pathname.endsWith('/start')) {
+      data = { session, terminalId: 7 };
+    } else if (/\/worktrees\/[^/]+\/sessions$/.test(pathname)) {
+      data = { sessions: [{ ...session, updatedAt: null }] };
+    } else if (pathname.endsWith('/sessions')) {
+      data = { ...session, provider: null };
+    } else {
+      data = { sessionId: 'missing-public-fields' };
+    }
+    return { ok: true, apiVersion: 1, data };
+  });
+
+  try {
+    const commands = [
+      ['session', 'list', '--worktree', 'wt_valid_shape'],
+      ['session', 'show', 'session-valid-shape'],
+      ['session', 'create', '--worktree', 'wt_valid_shape', '--provider', 'codex'],
+      ['session', 'start', 'session-valid-shape', '--no-prompt'],
+      [
+        'session', 'launch', '--worktree', 'wt_valid_shape', '--provider', 'codex',
+        '--no-prompt',
+      ],
+    ];
+    for (const command of commands) {
+      const result = await runCli([
+        ...command, '--json', '--control-descriptor', runtime.descriptor.path,
+      ]);
+      assert.equal(result.code, 1, command.join(' '));
+      assert.equal(JSON.parse(result.stdout).error.code, 'INSTANCE_UNAVAILABLE');
+      assert.equal(result.stdout.trim().split('\n').length, 1);
+      assert.equal(result.stderr, '');
+    }
+
+    const human = await runCli([
+      'session', 'show', 'session-valid-shape',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(human.code, 1);
+    assert.equal(human.stdout, '');
+    assert.equal(
+      human.stderr,
+      'error: The selected Tessera runtime returned an invalid response.\n',
+    );
+  } finally {
+    await runtime.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
+test('Session launch failures never disclose internal provider diagnostics', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-session-errors-'));
+  const sensitive = [
+    '/home/private/worktree/secret',
+    'guest stderr: permission denied',
+    'credential=super-secret-token',
+  ].join(' | ');
+  const translated = toControlLaunchError(
+    new ProviderLaunchError('LAUNCH_FAILED', sensitive),
+    'session-sensitive',
+  );
+  const runtime = await startResponseRuntime(testRoot, 'sanitized-session-error', () => ({
+    ok: false,
+    apiVersion: 1,
+    error: {
+      code: translated.code,
+      message: translated.message,
+      details: translated.details,
+    },
+  }));
+
+  try {
+    const json = await runCli([
+      'session', 'start', 'session-sensitive', '--no-prompt', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    const human = await runCli([
+      'session', 'start', 'session-sensitive', '--no-prompt',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+
+    assert.equal(json.code, 1);
+    assert.equal(JSON.parse(json.stdout).error.code, 'INSTANCE_UNAVAILABLE');
+    assert.equal(human.code, 1);
+    assert.equal(
+      human.stderr,
+      'error: The Session runtime could not be started.\n',
+    );
+    for (const output of [json.stdout, json.stderr, human.stdout, human.stderr]) {
+      assert.equal(output.includes(sensitive), false);
+      assert.equal(output.includes('super-secret-token'), false);
+      assert.equal(output.includes('/home/private'), false);
+    }
   } finally {
     await runtime.close();
     await fs.rm(testRoot, { recursive: true, force: true });
@@ -464,6 +626,33 @@ test('server startup help and version behavior remain available without a Contro
   assert.equal(jsonControlHelp.stdout.trim().split('\n').length, 1);
   assert.equal(jsonControlHelp.stderr, '');
 });
+
+async function startResponseRuntime(
+  testRoot: string,
+  label: string,
+  responseFor: (pathname: string) => Record<string, unknown>,
+): Promise<Pick<TestRuntime, 'descriptor' | 'close'>> {
+  const server = http.createServer((request, response) => {
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+    const envelope = responseFor(pathname);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(envelope));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const descriptor = await publishRuntimeDescriptor({
+    appVersion: PACKAGE_VERSION,
+    origin,
+    runtimeDirectory: path.join(testRoot, label),
+  });
+  return {
+    descriptor,
+    close: async () => {
+      await descriptor.cleanup();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
 
 async function startRuntime(
   testRoot: string,

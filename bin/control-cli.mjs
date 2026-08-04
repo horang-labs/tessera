@@ -31,6 +31,16 @@ export async function runControlCli(options) {
   const { argv, packageRoot, env = process.env } = options;
   const json = hasGlobalOption(argv, '--json');
   if (hasGlobalOption(argv, '--help') || hasGlobalOption(argv, '-h')) {
+    try {
+      validateHelpInvocation(argv);
+    } catch (error) {
+      return writeFailure(
+        json,
+        2,
+        'INVALID_USAGE',
+        error.message || 'Invalid Control CLI usage.',
+      );
+    }
     if (json) {
       return writeEnvelope(true, {
         ok: true,
@@ -114,7 +124,17 @@ export async function runControlCli(options) {
     return writeFailure(json, 1, 'INSTANCE_UNAVAILABLE', 'The selected Tessera runtime did not match its descriptor.');
   }
 
-  return writeEnvelope(json, response, 0, invocation.kind);
+  const validatedData = validateSuccessData(invocation.kind, response.data);
+  if (validatedData === INVALID_SUCCESS_DATA) {
+    return writeFailure(
+      json,
+      1,
+      'INSTANCE_UNAVAILABLE',
+      'The selected Tessera runtime returned an invalid response.',
+    );
+  }
+
+  return writeEnvelope(json, { ...response, data: validatedData }, 0, invocation.kind);
 }
 
 export function controlUsage() {
@@ -356,7 +376,10 @@ function parseRequiredNamedValue(args, option, label) {
 }
 
 function parseSessionCreation(args) {
-  const parsed = parseSessionOptions(args, { promptRequired: false });
+  const parsed = parseSessionOptions(args, {
+    promptRequired: false,
+    allowed: new Set(['--worktree', '--provider', '--title']),
+  });
   if (!parsed.worktreeId) throw new Error('--worktree requires a Worktree ID.');
   if (!parsed.provider) throw new Error('--provider requires a provider ID.');
   return {
@@ -584,8 +607,47 @@ function hasGlobalOption(argv, option) {
   return false;
 }
 
+function validateHelpInvocation(argv) {
+  const args = withoutDescriptorSelector(withoutHelpOptions(argv));
+  if (args[0] !== 'session' || args[1] !== 'create') return;
+  parseSessionOptions(args.slice(2), {
+    promptRequired: false,
+    allowed: new Set(['--worktree', '--provider', '--title']),
+  });
+}
+
+function withoutHelpOptions(argv) {
+  const result = [];
+  const partitioned = partitionAtOptionTerminator(argv);
+  for (let index = 0; index < partitioned.before.length; index += 1) {
+    const arg = partitioned.before[index];
+    if (arg === '--prompt' || arg === '--prompt-file') {
+      result.push(arg);
+      if (index + 1 < partitioned.before.length) {
+        result.push(partitioned.before[index + 1]);
+        index += 1;
+      }
+      continue;
+    }
+    if (arg === '--help' || arg === '-h') continue;
+    result.push(arg);
+  }
+  if (partitioned.terminated) result.push('--', ...partitioned.after);
+  return result;
+}
+
 function partitionAtOptionTerminator(argv) {
-  const separatorIndex = argv.indexOf('--');
+  let separatorIndex = -1;
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === '--prompt' || argv[index] === '--prompt-file') {
+      index += 1;
+      continue;
+    }
+    if (argv[index] === '--') {
+      separatorIndex = index;
+      break;
+    }
+  }
   return separatorIndex === -1
     ? { before: argv, after: [], terminated: false }
     : {
@@ -750,6 +812,44 @@ function isControlEnvelope(value) {
     && typeof value.error.message === 'string'
     && value.error.details
     && typeof value.error.details === 'object';
+}
+
+const INVALID_SUCCESS_DATA = Symbol('invalid-success-data');
+
+function validateSuccessData(kind, data) {
+  if (kind === 'session-list') {
+    if (!isRecord(data) || !Array.isArray(data.sessions)) return INVALID_SUCCESS_DATA;
+    const sessions = data.sessions.map(parsePublicSessionDto);
+    return sessions.some((session) => session === null)
+      ? INVALID_SUCCESS_DATA
+      : { sessions };
+  }
+  if (kind === 'session-show' || kind === 'session-create') {
+    return parsePublicSessionDto(data) ?? INVALID_SUCCESS_DATA;
+  }
+  if (kind === 'session-start' || kind === 'session-launch') {
+    if (!isRecord(data) || !isNonEmptyString(data.terminalId)) return INVALID_SUCCESS_DATA;
+    const session = parsePublicSessionDto(data.session);
+    return session
+      ? { session, terminalId: data.terminalId }
+      : INVALID_SUCCESS_DATA;
+  }
+  return data;
+}
+
+function parsePublicSessionDto(value) {
+  if (!isRecord(value)) return null;
+  const fields = ['sessionId', 'worktreeId', 'projectId', 'title', 'provider', 'updatedAt'];
+  if (!fields.every((field) => isNonEmptyString(value[field]))) return null;
+  return Object.fromEntries(fields.map((field) => [field, value[field]]));
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function writeFailure(json, exitCode, code, message, details = {}) {
