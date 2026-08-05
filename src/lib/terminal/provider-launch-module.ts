@@ -13,9 +13,11 @@ import { buildClaudeHookSettingsJson } from './claude-hook-settings';
 import { createClaudeSkillOverlay } from './claude-skill-overlay';
 import {
   createClaudeSkillOverlayInWsl,
+  type WslClaudeSkillOverlay,
 } from './claude-skill-overlay-wsl';
 import { createCodexOverlay } from './codex-overlay';
 import {
+  cleanupCodexOverlayInWsl,
   createCodexOverlayInWsl,
 } from './codex-overlay-wsl';
 import { createOpenCodeOverlay } from './opencode-overlay';
@@ -46,6 +48,13 @@ import type { AgentEnvironment } from '@/lib/settings/types';
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
 const SAFE_TERMINAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+/**
+ * Stands in for the guest plugin directory in a bridged Claude launch, which is
+ * only known once the overlay has been created inside the distro. Whatever
+ * consumes it later must find this exact value still in place — argv it no
+ * longer recognises is argv it must not edit.
+ */
+const CLAUDE_PLUGIN_DIR_PLACEHOLDER = '__tessera_claude_plugin_pending__';
 
 export type ProviderLaunchErrorCode =
   | 'SESSION_NOT_FOUND'
@@ -277,6 +286,64 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
   }
 }
 
+/**
+ * Whether an overlay failure is the kind a second attempt can actually clear.
+ *
+ * Only the ways a loaded host refuses to run a process qualify: the guest not
+ * answering inside the timeout, and Windows declining to start `wsl.exe` at all
+ * — which surfaces as a raw NTSTATUS exit code (`STATUS_DLL_INIT_FAILED`,
+ * `0xC0000142`) when memory and handles are scarce. A script that ran and
+ * exited non-zero, or one whose report could not be parsed, will fail exactly
+ * the same way the second time, and Codex's guest script opens with `rm -rf`,
+ * so re-running a deterministic failure is destructive rather than merely
+ * wasteful.
+ *
+ * The classification reads messages because the three overlay modules raise
+ * plain Errors; the strings it matches are theirs. A deterministic non-zero
+ * exit is covered by the tests beside this module — the timeout and spawn
+ * paths are not, so treat this as classification by convention that moves with
+ * those modules rather than a contract they enforce.
+ */
+function isRetryableOverlayFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/timed out after \d+ms/.test(message)) return true;
+  if (/Unable to launch wsl\.exe/.test(message)) return true;
+  const exited = /script exited (-?\d+)/.exec(message);
+  return exited ? Number(exited[1]) >= 0xC000_0000 : false;
+}
+
+/**
+ * A WSL overlay is a `wsl.exe` spawn racing whatever else the guest distro is
+ * doing at that instant — most notably a project's preparation `after` script,
+ * which starts the moment `before` ends and can saturate every core (a
+ * `graphify update` reindex runs one worker per CPU). That load is what one
+ * retry is for; anything it cannot fix is left to fail on the first attempt.
+ *
+ * A final failure resolves to null rather than throwing, so each caller decides
+ * for itself whether its provider can launch without the overlay.
+ */
+async function createOverlayWithRetry<T>(
+  label: string,
+  terminalId: string,
+  create: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await create();
+  } catch (firstError) {
+    if (!isRetryableOverlayFailure(firstError)) {
+      logger.error({ error: firstError, terminalId }, `${label} overlay failed; not retryable`);
+      return null;
+    }
+    logger.warn({ error: firstError, terminalId }, `${label} overlay failed, retrying once`);
+  }
+  try {
+    return await create();
+  } catch (error) {
+    logger.error({ error, terminalId }, `${label} overlay failed after a retry`);
+    return null;
+  }
+}
+
 async function buildLaunchDecision(
   request: ProviderLaunchRequest,
   persisted: ReturnType<typeof getPersistedProvider>,
@@ -465,6 +532,109 @@ export function createProviderLaunchModule(
           );
         }
 
+        // Everything the overlay decision needs — the agent environment, the
+        // provider, its argv — is resolved ahead of the preparation wait, so
+        // that the overlay itself can run alongside that wait. See the kick-off
+        // below for why its timing is what matters.
+        //
+        // The caller context is deliberately NOT read here. Its lookup doubles
+        // as the check that the Session still exists, and a wait long enough to
+        // matter is long enough for the Session to be deleted inside it — so it
+        // is read after the gate, where the answer is still true.
+        const agentEnvironment = await (
+          options.resolveAgentEnvironment?.(request.userId)
+          ?? getAgentEnvironment(request.userId)
+        );
+        const wslTerminalRuntime = getRuntimePlatform() === 'win32'
+          && agentEnvironment === 'wsl';
+        const hookCommandStyle: HookCommandStyle = getRuntimePlatform() === 'win32'
+          && !wslTerminalRuntime
+          ? 'windows-cmd'
+          : 'posix';
+        let claudePluginDir: string | undefined;
+        if (persisted.providerId === 'claude-code') {
+          if (wslTerminalRuntime) {
+            claudePluginDir = CLAUDE_PLUGIN_DIR_PLACEHOLDER;
+          } else {
+            const overlay = createClaudeSkillOverlay(terminalId);
+            resourceDisposers.add(overlay.dispose);
+            claudePluginDir = overlay.pluginDir;
+          }
+        }
+        const decision = await buildLaunchDecision(
+          request,
+          persisted,
+          hookCommandStyle,
+          claudePluginDir,
+        );
+        decision.launchSpec.cwd = workDir;
+
+        let launchEnv: Record<string, string | undefined> | undefined;
+        let prepareLaunch: (() => Promise<void>) | undefined;
+        let launchEnvFactory:
+          (() => Promise<Record<string, string | undefined> | undefined>) | undefined;
+        const claudePluginFlagIndex = decision.launchSpec.args?.indexOf('--plugin-dir') ?? -1;
+
+        // Started now, ahead of the preparation wait, so the spawn is already in
+        // flight — usually already finished — by the time the launch needs its
+        // result below, rather than beginning at the one instant the `after`
+        // script is starting.
+        //
+        // Cleanup is registered in the same breath, because every path out of
+        // this function between here and the consumer below — a preparation
+        // timeout, a stored `before` failure — abandons a spawn that is still
+        // running, and an overlay that lands in the guest after that point has
+        // nobody left to remove it.
+        let claudeOverlayPromise: Promise<WslClaudeSkillOverlay | null> | undefined;
+        let codexOverlayPromise: Promise<string | null> | undefined;
+        let opencodeOverlayPromise: Promise<string | null> | undefined;
+        if (
+          decision.providerId === 'claude-code'
+          && wslTerminalRuntime
+          && claudePluginFlagIndex >= 0
+        ) {
+          const pending = createOverlayWithRetry(
+            'Claude WSL skill',
+            terminalId,
+            () => createClaudeSkillOverlayInWsl(terminalId),
+          );
+          claudeOverlayPromise = pending;
+          resourceDisposers.add(() => {
+            void pending
+              .then((overlay) => overlay?.dispose())
+              .catch((error) => {
+                logger.debug({ error }, 'Claude WSL skill overlay cleanup skipped');
+              });
+          });
+        } else if (decision.providerId === 'codex' && wslTerminalRuntime) {
+          const pending = createOverlayWithRetry(
+            'Codex WSL',
+            terminalId,
+            () => createCodexOverlayInWsl(terminalId, hookCommandStyle),
+          );
+          codexOverlayPromise = pending;
+          // Waits for the creation to settle first. The cleanup is keyed by
+          // terminal id and skips a terminal it has no overlay recorded for,
+          // and that record is only written once both guest round-trips are
+          // done — so running it while creation is still in flight would find
+          // nothing, and the overlay would land in the guest immediately after
+          // with nobody left to remove it. Running it a second time (the
+          // terminal manager does, on its own teardown) costs nothing.
+          resourceDisposers.add(() => {
+            void pending
+              .catch(() => undefined)
+              .then(() => cleanupCodexOverlayInWsl(terminalId));
+          });
+        } else if (decision.providerId === 'opencode' && wslTerminalRuntime) {
+          // Deliberately no disposer: this overlay is one shared directory for
+          // the whole app process, not something this launch owns.
+          opencodeOverlayPromise = createOverlayWithRetry(
+            'OpenCode WSL',
+            terminalId,
+            () => createOpenCodeOverlayInWsl(),
+          );
+        }
+
         const preparation = await waitForPreparationBeforeAgent({
           workDir,
           timeoutMs: options.preparationTimeoutMs ?? DEFAULT_PREPARATION_TIMEOUT_MS,
@@ -500,10 +670,8 @@ export function createProviderLaunchModule(
           );
         }
 
-        const agentEnvironment = await (
-          options.resolveAgentEnvironment?.(request.userId)
-          ?? getAgentEnvironment(request.userId)
-        );
+        // Read only now: the wait above can outlast the Session, and this
+        // lookup is also what proves the Session is still there to launch.
         const callerContext = dbSessions.getManagedSessionCallerContext(request.sessionId);
         if (!callerContext) {
           throw providerLaunchError(
@@ -512,64 +680,51 @@ export function createProviderLaunchModule(
             terminalId,
           );
         }
-        const wslTerminalRuntime = getRuntimePlatform() === 'win32'
-          && agentEnvironment === 'wsl';
-        const hookCommandStyle: HookCommandStyle = getRuntimePlatform() === 'win32'
-          && !wslTerminalRuntime
-          ? 'windows-cmd'
-          : 'posix';
-        let claudePluginDir: string | undefined;
-        if (persisted.providerId === 'claude-code') {
-          if (wslTerminalRuntime) {
-            claudePluginDir = '__tessera_claude_plugin_pending__';
-          } else {
-            const overlay = createClaudeSkillOverlay(terminalId);
-            resourceDisposers.add(overlay.dispose);
-            claudePluginDir = overlay.pluginDir;
-          }
-        }
-        const decision = await buildLaunchDecision(
-          request,
-          persisted,
-          hookCommandStyle,
-          claudePluginDir,
-        );
-        decision.launchSpec.cwd = workDir;
 
-        let launchEnv: Record<string, string | undefined> | undefined;
-        let prepareLaunch: (() => Promise<void>) | undefined;
-        let launchEnvFactory:
-          (() => Promise<Record<string, string | undefined> | undefined>) | undefined;
-        const claudePluginFlagIndex = decision.launchSpec.args?.indexOf('--plugin-dir') ?? -1;
-        if (
-          decision.providerId === 'claude-code'
-          && wslTerminalRuntime
-          && claudePluginFlagIndex >= 0
-          && decision.launchSpec.args
-        ) {
+        if (claudeOverlayPromise && decision.launchSpec.args) {
           const claudeArgs = decision.launchSpec.args;
+          const overlayPromise = claudeOverlayPromise;
           prepareLaunch = async () => {
-            try {
-              const overlay = await createClaudeSkillOverlayInWsl(terminalId);
+            const overlay = await overlayPromise;
+            if (overlay) {
               claudeArgs[claudePluginFlagIndex + 1] = overlay.pluginDir;
-              resourceDisposers.add(() => {
-                void overlay.dispose().catch((error) => {
-                  logger.debug({ error }, 'Claude WSL skill overlay cleanup skipped');
-                });
-              });
-            } catch (error) {
-              logger.error({ error, terminalId }, 'Failed to prepare the Claude WSL skill overlay');
-              throw new Error(
-                `Failed to prepare the Claude WSL skill overlay: ${error instanceof Error ? error.message : String(error)}`,
-              );
+              return;
             }
+            // Drop the flag along with the placeholder there is now no path to
+            // fill. What the overlay carries is the tessera-cli skill, a
+            // convenience for agent-initiated Worktree and Session control — a
+            // session without it still edits, runs, and reports normally, so
+            // this launch goes ahead rather than leaving the user a pane that
+            // never opens.
+            //
+            // The placeholder is re-checked rather than trusted: the index was
+            // taken before the preparation wait, and removing a pair that is no
+            // longer the one it pointed at would corrupt the command line. If
+            // the argv ever stops looking the way it did, leaving it alone is
+            // the recoverable half of that choice.
+            if (claudeArgs[claudePluginFlagIndex + 1] !== CLAUDE_PLUGIN_DIR_PLACEHOLDER) {
+              logger.error(
+                { terminalId, claudePluginFlagIndex },
+                'Claude plugin argv no longer holds its placeholder; leaving it untouched',
+              );
+              return;
+            }
+            claudeArgs.splice(claudePluginFlagIndex, 2);
           };
         } else if (decision.providerId === 'codex') {
+          // Unlike Claude's overlay, this one also carries hooks.json — how
+          // Tessera observes turn-complete and every other session state.
+          // Launching without it would produce a session that runs but never
+          // reports, which reads as a hang rather than a missing convenience,
+          // so a failed overlay still fails the launch here.
           launchEnvFactory = async () => {
             try {
-              const overlayHome = wslTerminalRuntime
-                ? await createCodexOverlayInWsl(terminalId, hookCommandStyle)
+              const overlayHome = codexOverlayPromise
+                ? await codexOverlayPromise
                 : createCodexOverlay(terminalId, hookCommandStyle);
+              if (!overlayHome) {
+                throw new Error('the guest script failed twice');
+              }
               return { CODEX_HOME: overlayHome, TESSERA_CODEX_HOME: overlayHome };
             } catch (error) {
               logger.error({ error, terminalId }, 'Failed to prepare the Codex overlay');
@@ -582,22 +737,24 @@ export function createProviderLaunchModule(
           const opencodeResumeId = dbSessions.extractOpenCodeTerminalSessionId(
             decision.providerState,
           );
-          if (wslTerminalRuntime) {
+          if (opencodeOverlayPromise) {
+            const overlayPromise = opencodeOverlayPromise;
+            // Same reasoning as Codex: this overlay carries the lifecycle
+            // plugin Tessera reads session state from, so a launch without it
+            // would look hung rather than merely diminished.
             launchEnvFactory = async () => {
-              try {
-                const overlayDir = await createOpenCodeOverlayInWsl();
-                return {
-                  OPENCODE_CONFIG_DIR: overlayDir,
-                  ...(opencodeResumeId
-                    ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId }
-                    : {}),
-                };
-              } catch (error) {
-                logger.error({ error, terminalId }, 'Failed to prepare the OpenCode WSL overlay');
+              const overlayDir = await overlayPromise;
+              if (!overlayDir) {
                 throw new Error(
-                  `Failed to prepare the OpenCode WSL overlay: ${error instanceof Error ? error.message : String(error)}`,
+                  'Failed to prepare the OpenCode WSL overlay: the guest script failed twice',
                 );
               }
+              return {
+                OPENCODE_CONFIG_DIR: overlayDir,
+                ...(opencodeResumeId
+                  ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId }
+                  : {}),
+              };
             };
           } else {
             const overlay = createOpenCodeOverlay(terminalId);
