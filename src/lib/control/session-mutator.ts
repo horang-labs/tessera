@@ -59,6 +59,8 @@ export function createDatabaseControlSessionMutator(options: {
         {
           taskId: worktree.task_id,
           providerState: JSON.stringify({ kind: 'terminal' }),
+          model: request.model?.trim(),
+          reasoningEffort: request.reasoningEffort?.trim(),
         },
       );
       const created = source.get(sessionId);

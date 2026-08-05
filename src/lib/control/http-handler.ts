@@ -320,9 +320,15 @@ async function readSessionCreationBody(request: IncomingMessage): Promise<{
   worktreeId: string;
   provider: string;
   title?: string;
+  model?: string;
+  reasoningEffort?: string;
 }> {
   const body = await readJsonObject(request);
-  rejectUnknownFields(body, ['worktreeId', 'provider', 'title'], 'Session');
+  rejectUnknownFields(
+    body,
+    ['worktreeId', 'provider', 'title', 'model', 'reasoningEffort'],
+    'Session',
+  );
   return readSessionCreationFields(body);
 }
 
@@ -339,13 +345,23 @@ async function readSessionLaunchBody(request: IncomingMessage): Promise<{
   worktreeId: string;
   provider: string;
   title?: string;
+  model?: string;
+  reasoningEffort?: string;
   initialPrompt?: string;
   allowPreparationFailure?: boolean;
 }> {
   const body = await readJsonObject(request);
   rejectUnknownFields(
     body,
-    ['worktreeId', 'provider', 'title', 'initialPrompt', 'allowPreparationFailure'],
+    [
+      'worktreeId',
+      'provider',
+      'title',
+      'model',
+      'reasoningEffort',
+      'initialPrompt',
+      'allowPreparationFailure',
+    ],
     'Session launch',
   );
   const creation = readSessionCreationFields(body);
@@ -420,16 +436,28 @@ function readSessionCreationFields(body: Record<string, unknown>): {
   worktreeId: string;
   provider: string;
   title?: string;
+  model?: string;
+  reasoningEffort?: string;
 } {
   const worktreeId = requireBodyString(body, 'worktreeId', 'A Worktree ID is required.');
   const provider = requireBodyString(body, 'provider', 'An explicit supported provider is required.');
   if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
     throw new ControlOperationError('INVALID_USAGE', 'A Session title must not be empty.', 400);
   }
+  if (body.model !== undefined && typeof body.model !== 'string') {
+    throw new ControlOperationError('INVALID_USAGE', 'The Session model is invalid.', 400);
+  }
+  if (body.reasoningEffort !== undefined && typeof body.reasoningEffort !== 'string') {
+    throw new ControlOperationError('INVALID_USAGE', 'The Session effort is invalid.', 400);
+  }
   return {
     worktreeId,
     provider,
     ...(body.title === undefined ? {} : { title: body.title }),
+    ...(body.model === undefined ? {} : { model: body.model }),
+    ...(body.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: body.reasoningEffort }),
   };
 }
 

@@ -106,6 +106,8 @@ export interface ControlSessionRecord {
   title: string;
   provider: string;
   providerState: string | null;
+  model?: string;
+  reasoningEffort?: string;
   updatedAt: string;
 }
 
@@ -120,6 +122,8 @@ export interface ControlSessionCreationRequest {
   worktreeId: string;
   provider: string;
   title?: string;
+  model?: string;
+  reasoningEffort?: string;
 }
 
 export interface ControlSessionStartRequest {
@@ -678,7 +682,10 @@ function requireSession(
 }
 
 function validateSessionCreationRequest(
-  request: Pick<ControlSessionCreationRequest, 'provider' | 'title'>,
+  request: Pick<
+    ControlSessionCreationRequest,
+    'provider' | 'title' | 'model' | 'reasoningEffort'
+  >,
 ): void {
   if (!request.provider.trim()) {
     throw new ControlOperationError(
@@ -690,6 +697,35 @@ function validateSessionCreationRequest(
   if (request.title !== undefined && !request.title.trim()) {
     throw new ControlOperationError('INVALID_USAGE', 'A Session title must not be empty.', 400);
   }
+  const provider = request.provider.trim();
+  if (
+    (request.model !== undefined || request.reasoningEffort !== undefined)
+    && provider !== 'claude-code'
+    && provider !== 'codex'
+  ) {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      'Session model and effort selection is supported only for Claude Code and Codex.',
+      400,
+    );
+  }
+  validateSessionSelectionValue(request.model, 'model', 512);
+  validateSessionSelectionValue(request.reasoningEffort, 'effort', 64);
+}
+
+function validateSessionSelectionValue(
+  value: string | undefined,
+  label: 'model' | 'effort',
+  maxLength: number,
+): void {
+  if (value === undefined) return;
+  if (!value.trim() || value.length > maxLength || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      `The Session ${label} is invalid.`,
+      400,
+    );
+  }
 }
 
 function toPublicSession(session: ControlSessionRecord): PublicSessionDto {
@@ -699,6 +735,10 @@ function toPublicSession(session: ControlSessionRecord): PublicSessionDto {
     projectId: session.projectId,
     title: session.title,
     provider: session.provider,
+    ...(session.model === undefined ? {} : { model: session.model }),
+    ...(session.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: session.reasoningEffort }),
     updatedAt: session.updatedAt,
   };
 }

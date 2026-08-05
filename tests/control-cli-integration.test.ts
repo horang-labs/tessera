@@ -361,13 +361,16 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
   try {
     const created = await runCli([
       'session', 'create', '--worktree', worktree.worktreeId,
-      '--provider', 'codex', '--title', 'Created only', '--json',
+      '--provider', 'codex', '--title', 'Created only',
+      '--model', 'gpt-5.6-sol', '--effort', 'high', '--json',
       '--control-descriptor', runtime.descriptor.path,
     ]);
     assert.equal(created.code, 0, created.stderr || created.stdout);
     const createdSession = JSON.parse(created.stdout).data;
     assert.equal(createdSession.worktreeId, worktree.worktreeId);
     assert.equal(createdSession.provider, 'codex');
+    assert.equal(createdSession.model, 'gpt-5.6-sol');
+    assert.equal(createdSession.reasoningEffort, 'high');
     assert.equal(Object.hasOwn(createdSession, 'providerState'), false);
 
     const started = await runCli([
@@ -392,10 +395,13 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
 
     const optionLikePrompt = await runCli([
       'session', 'launch', '--worktree', worktree.worktreeId,
-      '--provider', 'claude-code', '--prompt', '--json',
+      '--provider', 'claude-code', '--model', 'claude-opus-4-8', '--effort', 'max',
+      '--prompt', '--json',
       '--json', '--control-descriptor', runtime.descriptor.path,
     ]);
     assert.equal(optionLikePrompt.code, 0, optionLikePrompt.stderr || optionLikePrompt.stdout);
+    assert.equal(JSON.parse(optionLikePrompt.stdout).data.session.model, 'claude-opus-4-8');
+    assert.equal(JSON.parse(optionLikePrompt.stdout).data.session.reasoningEffort, 'max');
     assert.equal(runtime.sessionStarts[2]?.initialPrompt, '--json');
 
     const literalTerminatorPrompt = await runCli([
@@ -861,7 +867,13 @@ async function startRuntime(
       ),
     },
     sessionMutator: {
-      create: async (request: { worktreeId: string; provider: string; title?: string }) => {
+      create: async (request: {
+        worktreeId: string;
+        provider: string;
+        title?: string;
+        model?: string;
+        reasoningEffort?: string;
+      }) => {
         const owner = worktrees.find((worktree) => worktree.worktreeId === request.worktreeId);
         if (!owner) throw new Error('missing test Worktree');
         const session: ControlSessionRecord = {
@@ -871,6 +883,8 @@ async function startRuntime(
           title: request.title ?? 'New Session',
           provider: request.provider,
           providerState: JSON.stringify({ kind: 'terminal' }),
+          model: request.model,
+          reasoningEffort: request.reasoningEffort,
           updatedAt: new Date().toISOString(),
         };
         sessionRecords.push(session);
