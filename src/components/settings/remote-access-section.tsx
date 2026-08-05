@@ -1,7 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, Copy, Link2, QrCode, RefreshCw, ShieldCheck } from 'lucide-react';
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  Link2,
+  QrCode,
+  RadioTower,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { normalizeAdvertisedAddress } from '@/lib/auth/advertised-address';
 import { useI18n } from '@/lib/i18n';
@@ -29,10 +38,18 @@ type ElectronFirewallResult =
   | { ok: true }
   | { ok: false; code: string; error: string };
 
+interface RemoteAccessAddressCandidate {
+  interfaceName: string;
+  address: string;
+  isTailscale: boolean;
+  url: string;
+}
+
 type ElectronPairingApi = {
   isElectron?: boolean;
   platform?: string;
   supportsTailscaleFirewallConfiguration?: boolean;
+  getRemoteAccessAddressCandidates?: () => Promise<RemoteAccessAddressCandidate[]>;
   createPairingCode?: (action: 'issue' | 'rotate') => Promise<ElectronPairingResult>;
   configureTailscaleFirewall?: () => Promise<ElectronFirewallResult>;
 };
@@ -44,6 +61,19 @@ function getElectronPairingApi(): ElectronPairingApi | undefined {
 
 function normalizeAddressCandidate(value: string): string | null {
   return normalizeAdvertisedAddress(value)?.origin ?? null;
+}
+
+function isRemoteAccessAddressCandidate(
+  value: unknown,
+): value is RemoteAccessAddressCandidate {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<RemoteAccessAddressCandidate>;
+  return (
+    typeof candidate.interfaceName === 'string'
+    && typeof candidate.address === 'string'
+    && typeof candidate.isTailscale === 'boolean'
+    && typeof candidate.url === 'string'
+  );
 }
 
 async function pairingRequest(action: 'issue' | 'rotate'): Promise<PairingPresentation> {
@@ -90,6 +120,7 @@ export default function RemoteAccessSection() {
   const { t } = useI18n();
   const showToast = useNotificationStore((state) => state.showToast);
   const [address, setAddress] = useState('');
+  const [addressCandidates, setAddressCandidates] = useState<RemoteAccessAddressCandidate[]>([]);
   const [savedAddress, setSavedAddress] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -103,17 +134,31 @@ export default function RemoteAccessSection() {
 
   useEffect(function loadRemoteAccessSettings() {
     let cancelled = false;
-    void fetch('/api/settings')
-      .then(async (response) => {
+    const electronApi = getElectronPairingApi();
+    const addressCandidatesPromise = electronApi?.isElectron
+      && electronApi.getRemoteAccessAddressCandidates
+      ? electronApi.getRemoteAccessAddressCandidates().catch(() => [])
+      : Promise.resolve([]);
+
+    void Promise.all([
+      fetch('/api/settings').then(async (response) => {
         if (!response.ok) throw new Error('load-failed');
-        const body = await response.json() as {
+        return response.json() as Promise<{
           machineSettings?: { advertisedAddress?: unknown };
-        };
+        }>;
+      }),
+      addressCandidatesPromise,
+    ])
+      .then(([body, rawAddressCandidates]) => {
+        const addressCandidates = Array.isArray(rawAddressCandidates)
+          ? rawAddressCandidates.filter(isRemoteAccessAddressCandidate)
+          : [];
         const advertisedAddress = typeof body.machineSettings?.advertisedAddress === 'string'
           ? body.machineSettings.advertisedAddress
           : null;
         if (!cancelled) {
-          setAddress(advertisedAddress ?? '');
+          setAddressCandidates(addressCandidates);
+          setAddress(advertisedAddress ?? addressCandidates[0]?.url ?? '');
           setSavedAddress(advertisedAddress);
           setIsLoading(false);
         }
@@ -155,6 +200,10 @@ export default function RemoteAccessSection() {
     && electronApi.platform === 'win32'
     && electronApi.supportsTailscaleFirewallConfiguration
     && electronApi.configureTailscaleFirewall,
+  );
+  const showsSystemFirewallGuidance = Boolean(
+    electronApi?.isElectron
+    && (electronApi.platform === 'darwin' || electronApi.platform === 'linux'),
   );
 
   const handleConfigureFirewall = async () => {
@@ -325,10 +374,70 @@ export default function RemoteAccessSection() {
         </div>
       ) : null}
 
+      {showsSystemFirewallGuidance ? (
+        <div className="flex items-start gap-3 rounded-lg border border-(--divider) bg-(--input-bg) p-3">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-(--accent)" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-(--text-primary)">
+              {t('settings.remoteAccess.systemFirewallTitle')}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-(--text-muted)">
+              {t('settings.remoteAccess.systemFirewallDescription')}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       <div className="space-y-2">
         <label htmlFor="advertised-address" className="text-sm font-medium text-(--text-secondary)">
           {t('settings.remoteAccess.addressLabel')}
         </label>
+        {addressCandidates.length > 0 ? (
+          <div className="rounded-lg border border-(--divider) bg-(--input-bg) p-3">
+            <p className="flex items-center gap-2 text-xs font-medium text-(--text-primary)">
+              <RadioTower className="h-3.5 w-3.5 text-(--accent)" />
+              {t('settings.remoteAccess.detectedAddressTitle')}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-(--text-muted)">
+              {t('settings.remoteAccess.detectedAddressDescription')}
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {addressCandidates.map((candidate) => {
+                const isSelected = normalizedDraft === candidate.url;
+                return (
+                  <button
+                    key={`${candidate.interfaceName}:${candidate.address}`}
+                    type="button"
+                    onClick={() => {
+                      setAddress(candidate.url);
+                      setAddressError(null);
+                    }}
+                    disabled={isLoading || isSaving}
+                    aria-pressed={isSelected}
+                    className={cn(
+                      'min-w-0 rounded-md border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent) disabled:opacity-50',
+                      isSelected
+                        ? 'border-(--accent) bg-(--sidebar-active)'
+                        : 'border-(--input-border) bg-(--chat-bg) hover:bg-(--sidebar-hover)',
+                    )}
+                  >
+                    <span className="flex items-center justify-between gap-2 text-xs font-medium text-(--text-primary)">
+                      <span className="truncate">{candidate.interfaceName}</span>
+                      {candidate.isTailscale ? (
+                        <span className="shrink-0 rounded-full border border-(--accent) px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-(--accent)">
+                          {t('settings.remoteAccess.tailscaleAddress')}
+                        </span>
+                      ) : null}
+                    </span>
+                    <code className="mt-1 block truncate text-xs text-(--text-muted)">
+                      {candidate.url}
+                    </code>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
             id="advertised-address"

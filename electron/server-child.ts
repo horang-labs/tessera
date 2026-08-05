@@ -36,7 +36,10 @@ process.env.TESSERA_PRODUCTION_DB = '1';
 snapshotTelemetryStartupDataState();
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = resolveElectronServerHost();
+const hostname = resolveElectronServerHost(
+  process.platform,
+  process.env.TESSERA_ELECTRON_PACKAGED === '1',
+);
 const port = parseInt(process.env.PORT || '3000', 10);
 const isElectronChild = process.env.ELECTRON_CHILD === '1';
 const originalParentPid = process.ppid;

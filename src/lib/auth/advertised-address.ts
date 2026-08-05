@@ -39,6 +39,12 @@ export function normalizeAdvertisedAddress(value: unknown): AdvertisedAddress | 
     throw new InvalidAdvertisedAddressError();
   }
 
+  if (url.hostname === '0.0.0.0') {
+    throw new InvalidAdvertisedAddressError(
+      'Wildcard listener addresses cannot be advertised',
+    );
+  }
+
   return {
     origin: url.origin,
     pairingBaseUrl: url.origin,

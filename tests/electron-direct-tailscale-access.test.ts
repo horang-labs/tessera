@@ -1,25 +1,116 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import type { NetworkInterfaceInfo } from 'node:os';
 
 import {
   LOOPBACK_SERVER_HOST,
-  WINDOWS_REMOTE_SERVER_HOST,
+  REMOTE_SERVER_HOST,
   resolveElectronServerHost,
 } from '../electron/server-listener';
+import {
+  buildRemoteAccessAddressCandidates,
+  collectExternalIpv4Addresses,
+  isTailscaleIpv4,
+} from '../electron/network-addresses';
 import { supportsTailscaleFirewallConfiguration } from '../electron/tailscale-firewall-capability';
 import {
   TAILSCALE_ADAPTER_NOT_FOUND_EXIT_CODE,
   buildTailscaleFirewallScript,
   configureTailscaleFirewall,
 } from '../electron/windows-firewall';
+import { normalizeAdvertisedAddress } from '../src/lib/auth/advertised-address';
 
-test('the packaged Windows server listens on external IPv4 interfaces only on Windows', () => {
-  assert.equal(resolveElectronServerHost('win32'), WINDOWS_REMOTE_SERVER_HOST);
-  assert.equal(WINDOWS_REMOTE_SERVER_HOST, '0.0.0.0');
-  assert.equal(resolveElectronServerHost('darwin'), LOOPBACK_SERVER_HOST);
-  assert.equal(resolveElectronServerHost('linux'), LOOPBACK_SERVER_HOST);
+test('packaged desktop servers listen on external IPv4 interfaces on every supported platform', () => {
+  assert.equal(REMOTE_SERVER_HOST, '0.0.0.0');
+  for (const platform of ['win32', 'darwin', 'linux'] satisfies NodeJS.Platform[]) {
+    assert.equal(resolveElectronServerHost(platform, true), REMOTE_SERVER_HOST, platform);
+  }
+  assert.equal(resolveElectronServerHost('freebsd', true), LOOPBACK_SERVER_HOST);
   assert.equal(LOOPBACK_SERVER_HOST, '127.0.0.1');
+});
+
+test('unpackaged Electron server children keep their listener on loopback', () => {
+  for (const platform of ['win32', 'darwin', 'linux'] satisfies NodeJS.Platform[]) {
+    assert.equal(resolveElectronServerHost(platform, false), LOOPBACK_SERVER_HOST, platform);
+  }
+});
+
+test('the normal web server keeps its explicit loopback default', () => {
+  const source = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /process\.env\.TESSERA_HOST \|\| process\.env\.HOST \|\| '127\.0\.0\.1'/);
+  assert.doesNotMatch(source, /resolveElectronServerHost/);
+});
+
+test('Tailscale IPv4 detection covers exactly the 100.64.0.0/10 range', () => {
+  for (const address of ['100.64.0.0', '100.83.42.9', '100.127.255.255']) {
+    assert.equal(isTailscaleIpv4(address), true, address);
+  }
+  for (const address of ['100.63.255.255', '100.128.0.0', '10.64.0.1', '100.64.0.0.1']) {
+    assert.equal(isTailscaleIpv4(address), false, address);
+  }
+});
+
+function ipv4(
+  address: string,
+  { internal = false, family = 'IPv4' }: { internal?: boolean; family?: string } = {},
+): NetworkInterfaceInfo {
+  return {
+    address,
+    netmask: '255.255.255.0',
+    family,
+    mac: '00:00:00:00:00:00',
+    internal,
+    cidr: `${address}/24`,
+  } as NetworkInterfaceInfo;
+}
+
+test('external IPv4 discovery keeps interface names, filters unsafe addresses, and prefers Tailscale', () => {
+  const addresses = collectExternalIpv4Addresses({
+    Ethernet: [ipv4('192.168.1.20')],
+    Loopback: [ipv4('127.0.0.1', { internal: true })],
+    MisreportedLoopback: [ipv4('127.0.0.2')],
+    Wildcard: [ipv4('0.0.0.0')],
+    Tailscale: [ipv4('100.70.80.90')],
+    IPv6: [ipv4('fd7a:115c:a1e0::1', { family: 'IPv6' })],
+    Duplicate: [ipv4('192.168.1.20')],
+  });
+
+  assert.deepEqual(addresses, [
+    { interfaceName: 'Tailscale', address: '100.70.80.90', isTailscale: true },
+    { interfaceName: 'Ethernet', address: '192.168.1.20', isTailscale: false },
+  ]);
+});
+
+test('advertised address candidates use the actual Tessera port', () => {
+  assert.deepEqual(
+    buildRemoteAccessAddressCandidates({
+      Ethernet: [ipv4('10.10.0.8')],
+      Tailscale: [ipv4('100.91.2.3')],
+    }, 43_210),
+    [
+      {
+        interfaceName: 'Tailscale',
+        address: '100.91.2.3',
+        isTailscale: true,
+        url: 'http://100.91.2.3:43210',
+      },
+      {
+        interfaceName: 'Ethernet',
+        address: '10.10.0.8',
+        isTailscale: false,
+        url: 'http://10.10.0.8:43210',
+      },
+    ],
+  );
+});
+
+test('the wildcard listener address can never become an advertised address', () => {
+  assert.throws(
+    () => normalizeAdvertisedAddress('http://0.0.0.0:32123'),
+    /wildcard/i,
+  );
 });
 
 test('firewall configuration is limited to packaged Windows product instances', () => {
@@ -41,6 +132,11 @@ test('firewall configuration is limited to packaged Windows product instances', 
     devServerPort: '',
     testInstance: '',
   }), false);
+  assert.equal(supportsTailscaleFirewallConfiguration({
+    platform: 'darwin',
+    devServerPort: '',
+    testInstance: '',
+  }), false);
 });
 
 test('the Electron child resolves its listener host instead of hard-coding loopback', () => {
@@ -48,10 +144,23 @@ test('the Electron child resolves its listener host instead of hard-coding loopb
     new URL('../electron/server-child.ts', import.meta.url),
     'utf8',
   );
+  const mainSource = fs.readFileSync(new URL('../electron/main.ts', import.meta.url), 'utf8');
 
-  assert.match(source, /const hostname = resolveElectronServerHost\(\);/);
+  assert.match(
+    source,
+    /resolveElectronServerHost\(\s*process\.platform,\s*process\.env\.TESSERA_ELECTRON_PACKAGED === '1',?\s*\)/,
+  );
+  assert.match(mainSource, /TESSERA_ELECTRON_PACKAGED: isPackaged \? '1' : '0'/);
   assert.doesNotMatch(source, /const hostname = ['"]127\.0\.0\.1['"]/);
   assert.match(source, /server\.listen\(port, hostname,/);
+});
+
+test('Electron windows keep localhost origins while the packaged listener is external', () => {
+  const source = fs.readFileSync(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const localhostWindowUrls = source.match(/const url = `http:\/\/localhost:\$\{port\}/g) ?? [];
+
+  assert.equal(localhostWindowUrls.length, 2, 'main and popout windows');
+  assert.doesNotMatch(source, /loadURL\(`http:\/\/0\.0\.0\.0/);
 });
 
 test('the Windows Firewall rule is limited to the actual TCP port and Tailscale adapters', () => {
@@ -120,6 +229,39 @@ test('the firewall action is exposed only through Electron main and preload IPC'
   assert.match(mainSource, /ipcMain\.handle\('configure-tailscale-firewall'/);
   assert.match(mainSource, /if \(!supportsTailscaleFirewallConfiguration\(\)\)/);
   assert.match(mainSource, /configureTailscaleFirewall\(\{ port: serverPort \}\)/);
-  assert.match(preloadSource, /supportsTailscaleFirewallConfiguration: supportsTailscaleFirewallConfiguration\(\)/);
+  assert.match(mainSource, /ipcMain\.on\('supports-tailscale-firewall-configuration'/);
+  assert.match(
+    preloadSource,
+    /supportsTailscaleFirewallConfiguration:\s*ipcRenderer\.sendSync\('supports-tailscale-firewall-configuration'\)/,
+  );
+  assert.doesNotMatch(preloadSource, /from '\.\/tailscale-firewall-capability'/);
   assert.match(preloadSource, /configureTailscaleFirewall: \(\) => ipcRenderer\.invoke\('configure-tailscale-firewall'\)/);
+});
+
+test('Electron exposes detected advertised addresses using the actual server port', () => {
+  const mainSource = fs.readFileSync(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const preloadSource = fs.readFileSync(new URL('../electron/preload.ts', import.meta.url), 'utf8');
+
+  assert.match(mainSource, /networkInterfaces\(\)/);
+  assert.match(mainSource, /buildRemoteAccessAddressCandidates\(networkInterfaces\(\), serverPort\)/);
+  assert.match(mainSource, /ipcMain\.handle\('get-remote-access-address-candidates'/);
+  assert.match(
+    preloadSource,
+    /getRemoteAccessAddressCandidates: \(\) =>\s*ipcRenderer\.invoke\('get-remote-access-address-candidates'\)/,
+  );
+});
+
+test('remote access settings suggest detected addresses while preserving manual entry', () => {
+  const source = fs.readFileSync(
+    new URL('../src/components/settings/remote-access-section.tsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(source, /getRemoteAccessAddressCandidates/);
+  assert.match(source, /advertisedAddress \?\? addressCandidates\[0\]\?\.url \?\? ''/);
+  assert.match(source, /addressCandidates\.map/);
+  assert.match(source, /setAddress\(candidate\.url\)/);
+  assert.match(source, /type="url"/);
+  assert.match(source, /platform === 'darwin' \|\| electronApi\.platform === 'linux'/);
+  assert.match(source, /systemFirewallDescription/);
 });

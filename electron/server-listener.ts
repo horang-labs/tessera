@@ -1,15 +1,21 @@
 export const LOOPBACK_SERVER_HOST = '127.0.0.1';
-export const WINDOWS_REMOTE_SERVER_HOST = '0.0.0.0';
+export const REMOTE_SERVER_HOST = '0.0.0.0';
+
+const REMOTE_CAPABLE_DESKTOP_PLATFORMS = new Set<NodeJS.Platform>([
+  'win32',
+  'darwin',
+  'linux',
+]);
 
 /**
- * The packaged Windows server accepts direct Tailscale connections. Other
- * desktop platforms keep the existing loopback-only behavior until their
- * firewall and packaging paths are explicitly supported.
+ * Only packaged desktop servers accept direct Tailscale connections. The
+ * ordinary web/dev server and unpackaged Electron children stay on loopback.
  */
 export function resolveElectronServerHost(
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
+  isPackaged: boolean,
 ): string {
-  return platform === 'win32'
-    ? WINDOWS_REMOTE_SERVER_HOST
+  return isPackaged && REMOTE_CAPABLE_DESKTOP_PLATFORMS.has(platform)
+    ? REMOTE_SERVER_HOST
     : LOOPBACK_SERVER_HOST;
 }

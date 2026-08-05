@@ -1,12 +1,14 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
-import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
-  supportsTailscaleFirewallConfiguration: supportsTailscaleFirewallConfiguration(),
+  supportsTailscaleFirewallConfiguration:
+    ipcRenderer.sendSync('supports-tailscale-firewall-configuration'),
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  getRemoteAccessAddressCandidates: () =>
+    ipcRenderer.invoke('get-remote-access-address-candidates'),
   configureTailscaleFirewall: () => ipcRenderer.invoke('configure-tailscale-firewall'),
   createPairingCode: (action: 'issue' | 'rotate') =>
     ipcRenderer.invoke('create-pairing-code', action),

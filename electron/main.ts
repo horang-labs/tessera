@@ -13,6 +13,7 @@ import {
 import { fork, ChildProcess, spawnSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import { networkInterfaces } from 'node:os';
 import QRCode from 'qrcode';
 import {
   createTray,
@@ -38,6 +39,7 @@ import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-cl
 import { registerAppSecretHeader } from './app-secret-header';
 import { configureTailscaleFirewall } from './windows-firewall';
 import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
+import { buildRemoteAccessAddressCandidates } from './network-addresses';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -910,6 +912,7 @@ async function startServer(): Promise<number> {
       NODE_ENV: isPackaged ? 'production' : 'development',
       ELECTRON_CHILD: '1',
       TESSERA_ELECTRON_SERVER: '1',
+      TESSERA_ELECTRON_PACKAGED: isPackaged ? '1' : '0',
       TESSERA_PRODUCTION_DB: '1',
       TESSERA_APP_ROOT: appRoot,
       TESSERA_CHANNEL: process.env.TESSERA_CHANNEL || (isPackaged ? 'github-release' : 'dev'),
@@ -1246,6 +1249,12 @@ function broadcastPopoutState(): void {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
+ipcMain.handle('get-remote-access-address-candidates', () => (
+  buildRemoteAccessAddressCandidates(networkInterfaces(), serverPort)
+));
+ipcMain.on('supports-tailscale-firewall-configuration', (event) => {
+  event.returnValue = supportsTailscaleFirewallConfiguration();
+});
 ipcMain.handle('configure-tailscale-firewall', () => {
   if (!supportsTailscaleFirewallConfiguration()) {
     return {

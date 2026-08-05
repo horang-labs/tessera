@@ -60,6 +60,8 @@ export interface I18nMessages {
       description: string;
       warningTitle: string;
       warningDescription: string;
+      systemFirewallTitle: string;
+      systemFirewallDescription: string;
       firewallTitle: string;
       firewallDescription: string;
       firewallConfigure: string;
@@ -71,6 +73,9 @@ export interface I18nMessages {
       addressLabel: string;
       addressPlaceholder: string;
       addressHelp: string;
+      detectedAddressTitle: string;
+      detectedAddressDescription: string;
+      tailscaleAddress: string;
       invalidAddress: string;
       loadFailed: string;
       saveFailed: string;
