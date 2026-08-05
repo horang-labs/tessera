@@ -4,7 +4,12 @@ import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clip
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
+  supportsDirectTailscaleAccess:
+    process.platform === 'win32'
+    && !process.env.TESSERA_DEV_PORT
+    && !process.env.TESSERA_ELECTRON_TEST_INSTANCE,
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  configureTailscaleFirewall: () => ipcRenderer.invoke('configure-tailscale-firewall'),
   createPairingCode: (action: 'issue' | 'rotate') =>
     ipcRenderer.invoke('create-pairing-code', action),
   readTerminalClipboard: () =>

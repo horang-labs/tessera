@@ -11,8 +11,8 @@ export class InvalidAdvertisedAddressError extends Error {
 }
 
 /**
- * Convert the user-entered tunnel URL into the single browser origin that is
- * safe to compare and use as the base of a pairing link.
+ * Convert the user-entered direct or tunneled URL into the single browser
+ * origin that is safe to compare and use as the base of a pairing link.
  */
 export function normalizeAdvertisedAddress(value: unknown): AdvertisedAddress | null {
   if (value === null) return null;

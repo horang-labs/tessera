@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, Copy, Link2, QrCode, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Link2, QrCode, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { normalizeAdvertisedAddress } from '@/lib/auth/advertised-address';
 import { useI18n } from '@/lib/i18n';
@@ -25,9 +25,16 @@ type ElectronPairingResult =
   | ({ ok: true } & PairingPresentation & { qrDataUrl: string })
   | { ok: false; code: string; error: string };
 
+type ElectronFirewallResult =
+  | { ok: true }
+  | { ok: false; code: string; error: string };
+
 type ElectronPairingApi = {
   isElectron?: boolean;
+  platform?: string;
+  supportsDirectTailscaleAccess?: boolean;
   createPairingCode?: (action: 'issue' | 'rotate') => Promise<ElectronPairingResult>;
+  configureTailscaleFirewall?: () => Promise<ElectronFirewallResult>;
 };
 
 function getElectronPairingApi(): ElectronPairingApi | undefined {
@@ -87,8 +94,10 @@ export default function RemoteAccessSection() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPairing, setIsPairing] = useState(false);
+  const [isConfiguringFirewall, setIsConfiguringFirewall] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
   const [pairingError, setPairingError] = useState<string | null>(null);
+  const [firewallError, setFirewallError] = useState<string | null>(null);
   const [presentation, setPresentation] = useState<PairingPresentation | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -140,6 +149,37 @@ export default function RemoteAccessSection() {
   const canAddDevice = Boolean(savedAddress && isSavedAddressCurrent && !isSaving && !isLoading);
   const remainingMs = presentation ? Date.parse(presentation.expiresAt) - now : 0;
   const isExpired = Boolean(presentation && remainingMs <= 0);
+  const electronApi = getElectronPairingApi();
+  const canConfigureWindowsFirewall = Boolean(
+    electronApi?.isElectron
+    && electronApi.platform === 'win32'
+    && electronApi.supportsDirectTailscaleAccess
+    && electronApi.configureTailscaleFirewall,
+  );
+
+  const handleConfigureFirewall = async () => {
+    if (!electronApi?.configureTailscaleFirewall) return;
+    setIsConfiguringFirewall(true);
+    setFirewallError(null);
+    try {
+      const result = await electronApi.configureTailscaleFirewall();
+      if (result.ok) {
+        showToast(t('settings.remoteAccess.firewallConfigured'), 'success');
+        return;
+      }
+      if (result.code === 'cancelled') {
+        setFirewallError(t('settings.remoteAccess.firewallCancelled'));
+      } else if (result.code === 'tailscale-not-found') {
+        setFirewallError(t('settings.remoteAccess.firewallTailscaleNotFound'));
+      } else {
+        setFirewallError(t('settings.remoteAccess.firewallFailed'));
+      }
+    } catch {
+      setFirewallError(t('settings.remoteAccess.firewallFailed'));
+    } finally {
+      setIsConfiguringFirewall(false);
+    }
+  };
 
   const handleSaveAddress = async () => {
     let normalizedAddress: string | null;
@@ -253,6 +293,37 @@ export default function RemoteAccessSection() {
           </p>
         </div>
       </div>
+
+      {canConfigureWindowsFirewall ? (
+        <div className="flex flex-col gap-3 rounded-lg border border-(--divider) bg-(--input-bg) p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 text-sm font-medium text-(--text-primary)">
+              <ShieldCheck className="h-4 w-4 text-(--accent)" />
+              {t('settings.remoteAccess.firewallTitle')}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-(--text-muted)">
+              {t('settings.remoteAccess.firewallDescription')}
+            </p>
+            {firewallError ? (
+              <p className="mt-2 text-xs text-(--status-error-text)">{firewallError}</p>
+            ) : null}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleConfigureFirewall()}
+            disabled={isConfiguringFirewall}
+            className="shrink-0"
+          >
+            {isConfiguringFirewall
+              ? <RefreshCw className="h-4 w-4 animate-spin" />
+              : <ShieldCheck className="h-4 w-4" />}
+            {isConfiguringFirewall
+              ? t('settings.remoteAccess.firewallConfiguring')
+              : t('settings.remoteAccess.firewallConfigure')}
+          </Button>
+        </div>
+      ) : null}
 
       <div className="space-y-2">
         <label htmlFor="advertised-address" className="text-sm font-medium text-(--text-secondary)">

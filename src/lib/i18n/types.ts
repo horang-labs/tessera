@@ -60,6 +60,14 @@ export interface I18nMessages {
       description: string;
       warningTitle: string;
       warningDescription: string;
+      firewallTitle: string;
+      firewallDescription: string;
+      firewallConfigure: string;
+      firewallConfiguring: string;
+      firewallConfigured: string;
+      firewallFailed: string;
+      firewallTailscaleNotFound: string;
+      firewallCancelled: string;
       addressLabel: string;
       addressPlaceholder: string;
       addressHelp: string;

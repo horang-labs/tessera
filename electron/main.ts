@@ -36,6 +36,7 @@ import {
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
 import { registerAppSecretHeader } from './app-secret-header';
+import { configureTailscaleFirewall } from './windows-firewall';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -442,7 +443,8 @@ if (process.env.TESSERA_DISABLE_GPU === '1') {
   app.commandLine.appendSwitch('max-active-webgl-contexts', '128');
 }
 
-// The embedded server listens on 127.0.0.1 only, but windows load http://localhost.
+// App windows keep a stable localhost origin even though the packaged Windows
+// server also listens on external IPv4 interfaces for direct Tailscale access.
 // On hosts where connecting to ::1 stalls (observed ~210ms per connect with WSL /
 // VPN network stacks), every fresh renderer connection pays that penalty. Pin
 // localhost to IPv4 in Chromium's resolver; keeping the literal "localhost" URL
@@ -1243,6 +1245,16 @@ function broadcastPopoutState(): void {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
+ipcMain.handle('configure-tailscale-firewall', () => {
+  if (electronTestInstance || process.env.TESSERA_DEV_PORT) {
+    return {
+      ok: false,
+      code: 'unsupported',
+      error: 'Firewall configuration is disabled outside the packaged product server',
+    };
+  }
+  return configureTailscaleFirewall({ port: serverPort });
+});
 ipcMain.handle('create-pairing-code', (_event, action: unknown) => {
   if (action !== 'issue' && action !== 'rotate') {
     return { ok: false, code: 'invalid-action', error: 'Invalid pairing action' };

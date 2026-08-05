@@ -28,6 +28,7 @@ import { terminalManager } from '../src/lib/terminal/shared-terminal-manager';
 import { handleHookRequest } from '../src/lib/cli/hook-receiver';
 import { attachRemoteAddressHeader } from '../src/lib/http/remote-address-header';
 import { createPairingPresentation } from '../src/lib/auth/pairing-presentation';
+import { resolveElectronServerHost } from './server-listener';
 
 process.env.ELECTRON_CHILD = '1';
 process.env.TESSERA_ELECTRON_SERVER = '1';
@@ -35,7 +36,7 @@ process.env.TESSERA_PRODUCTION_DB = '1';
 snapshotTelemetryStartupDataState();
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = '127.0.0.1';
+const hostname = resolveElectronServerHost();
 const port = parseInt(process.env.PORT || '3000', 10);
 const isElectronChild = process.env.ELECTRON_CHILD === '1';
 const originalParentPid = process.ppid;

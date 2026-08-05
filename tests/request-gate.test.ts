@@ -684,6 +684,58 @@ test('accepts the normalized advertised Origin for WebSocket upgrades', async ()
   );
 });
 
+test('direct Tailscale and LAN paths remain behind the HTTP and WebSocket gates', async () => {
+  const {
+    clearDeviceRegistry,
+    issuePairingToken,
+    redeemPairingToken,
+  } = await import('../src/lib/auth/device-registry');
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+  const { saveMachineSettings } = await import('../src/lib/settings/machine-settings');
+  const tailscaleOrigin = 'http://100.103.66.17:32123';
+  await clearDeviceRegistry();
+  await saveMachineSettings({ advertisedAddress: tailscaleOrigin });
+  const pairing = await issuePairingToken();
+  const device = await redeemPairingToken(pairing.token, 'Tailscale phone');
+
+  assert.deepEqual(
+    await evaluateRequest(requestInput({
+      host: '100.103.66.17:32123',
+      origin: tailscaleOrigin,
+    })),
+    { allow: false, reason: 'unauthorized', status: 401 },
+  );
+  assert.deepEqual(
+    await evaluateRequest(requestInput({
+      purpose: 'ws-upgrade',
+      host: '100.103.66.17:32123',
+      origin: tailscaleOrigin,
+    })),
+    { allow: false, reason: 'unauthorized', wsCloseCode: 1008 },
+  );
+  assert.deepEqual(
+    await evaluateRequest(requestInput({
+      purpose: 'ws-upgrade',
+      host: '192.168.1.50:32123',
+      origin: 'http://192.168.1.50:32123',
+    })),
+    { allow: false, reason: 'origin-not-allowed', wsCloseCode: 1008 },
+  );
+
+  const deviceCookies = { device: device.token };
+  assert.equal((await evaluateRequest(requestInput({
+    host: '100.103.66.17:32123',
+    origin: tailscaleOrigin,
+    cookies: deviceCookies,
+  }))).allow, true);
+  assert.equal((await evaluateRequest(requestInput({
+    purpose: 'ws-upgrade',
+    host: '100.103.66.17:32123',
+    origin: tailscaleOrigin,
+    cookies: deviceCookies,
+  }))).allow, true);
+});
+
 test('always accepts both fixed-port application Origins', async () => {
   const secret = await appSecretModule.ensureAppSecret();
   const { evaluateRequest } = await import('../src/lib/auth/request-gate');
