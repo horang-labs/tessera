@@ -29,7 +29,7 @@ export function resolveTerminalCwd(candidate?: string | null): string {
   throw new Error('Terminal cwd does not exist or is not a directory.');
 }
 
-let cachedWindowsHostedWslRoot: string | null | undefined;
+let cachedWindowsHostedWslRoot: string | undefined;
 
 function resolveExistingDirectory(candidate: string, allowedRoots: string[] = []): string | null {
   for (const candidatePath of buildDirectoryResolutionCandidates(candidate, allowedRoots)) {
@@ -153,9 +153,10 @@ function getWindowsHostedWslDefaultRoot(): string | null {
       ['-e', 'sh', '-c', 'printf "%s" "${WSL_DISTRO_NAME:-}"'],
       { encoding: 'utf8', timeout: 2000, windowsHide: true },
     ).trim();
-    cachedWindowsHostedWslRoot = distro ? `\\\\wsl.localhost\\${distro}` : null;
+    if (!distro) return null;
+    cachedWindowsHostedWslRoot = `\\\\wsl.localhost\\${distro}`;
   } catch {
-    cachedWindowsHostedWslRoot = null;
+    return null;
   }
 
   return cachedWindowsHostedWslRoot;
