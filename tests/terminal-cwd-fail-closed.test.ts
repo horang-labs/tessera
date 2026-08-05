@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import childProcess from 'child_process';
+import fs, { mkdtempSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { before } from 'node:test';
@@ -71,4 +73,49 @@ test('a session may still launch inside its own persisted workspace', () => {
     resolveAllowedTerminalCwd({ cwd: projectB, sessionId: 'session-b' }),
     { ok: true, cwd: projectB },
   );
+});
+
+test('a transient WSL distro lookup failure is retried', () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  const originalExecFileSync = childProcess.execFileSync;
+  const originalStatSync = fs.statSync;
+  const originalWslDistroName = process.env.WSL_DISTRO_NAME;
+  let lookupAttempts = 0;
+
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  delete process.env.WSL_DISTRO_NAME;
+  childProcess.execFileSync = (() => {
+    lookupAttempts += 1;
+    if (lookupAttempts === 1) throw new Error('WSL is still starting');
+    return 'Ubuntu-24.04';
+  }) as typeof childProcess.execFileSync;
+  fs.statSync = ((candidate: fs.PathLike) => {
+    if (String(candidate).startsWith('\\\\wsl.localhost\\Ubuntu-24.04\\')) {
+      return { isDirectory: () => true } as fs.Stats;
+    }
+    throw new Error('Not visible to the Windows host');
+  }) as typeof fs.statSync;
+  syncBuiltinESMExports();
+
+  try {
+    assert.deepEqual(
+      resolveAllowedTerminalCwd({ cwd: projectB, sessionId: 'session-b' }),
+      { ok: false, message: 'Terminal cwd does not exist or is not a directory.' },
+    );
+    assert.deepEqual(
+      resolveAllowedTerminalCwd({ cwd: projectB, sessionId: 'session-b' }),
+      {
+        ok: true,
+        cwd: `\\\\wsl.localhost\\Ubuntu-24.04${projectB.replaceAll('/', '\\')}`,
+      },
+    );
+    assert.equal(lookupAttempts, 2);
+  } finally {
+    childProcess.execFileSync = originalExecFileSync;
+    fs.statSync = originalStatSync;
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform);
+    if (originalWslDistroName === undefined) delete process.env.WSL_DISTRO_NAME;
+    else process.env.WSL_DISTRO_NAME = originalWslDistroName;
+    syncBuiltinESMExports();
+  }
 });
