@@ -1031,6 +1031,294 @@ test('a WSL Claude background attach does not prepare a new plugin overlay', asy
   }
 });
 
+test('a preparation timeout removes a Codex overlay that only lands after the gate gave up', async () => {
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const previousHome = process.env.HOME;
+  const previousPath = process.env.PATH;
+  const previousCodexHome = process.env.CODEX_HOME;
+  const guestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-late-codex-overlay-'));
+  const fakeBin = path.join(guestHome, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  // Deliberately slow, so creation is still in flight when the gate below gives
+  // up — the exact window in which a cleanup keyed on an already-recorded
+  // overlay finds nothing and the overlay lands unowned right after it.
+  fs.writeFileSync(
+    path.join(fakeBin, 'wsl.exe'),
+    '#!/bin/sh\n[ "$1" = "--exec" ] || exit 64\nshift\nsleep 1\nexec "$@"\n',
+    { mode: 0o755 },
+  );
+
+  const worktreePath = path.join(testRoot, 'late-codex-overlay-worktree');
+  fs.mkdirSync(worktreePath, { recursive: true });
+  modules.tasks.createTask({
+    id: 'late-codex-overlay-task',
+    projectId: 'provider-launch-project',
+    title: 'Late codex overlay',
+  });
+  modules.tasks.setTaskWorktreeCheckout('late-codex-overlay-task', {
+    branch: 'feature/late-codex-overlay',
+    path: worktreePath,
+  });
+  modules.sessions.createSession(
+    'late-codex-overlay-session',
+    'provider-launch-project',
+    'Late codex overlay Session',
+    'codex',
+    {
+      taskId: 'late-codex-overlay-task',
+      providerState: JSON.stringify({ kind: 'terminal' }),
+    },
+  );
+  assert.equal(modules.taskPreparation.startTaskPreparation(
+    'late-codex-overlay-task',
+    { before: 'prepare-before', after: null },
+  ), true);
+
+  Object.defineProperty(process, 'platform', {
+    configurable: true,
+    enumerable: true,
+    value: 'win32',
+  });
+  process.env.HOME = guestHome;
+  process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+  const overlayDir = path.join(
+    guestHome,
+    '.tessera/codex-overlay/session-late-codex-overlay-session',
+  );
+
+  try {
+    const captured: CapturedSpawn[] = [];
+    const manager = createManager(captured);
+    const launcher = modules.createProviderLaunchModule({
+      terminalManager: manager,
+      resolveAgentEnvironment: async () => 'wsl',
+      // Shorter than the sleeping guest script, so the gate always loses the race.
+      preparationTimeoutMs: 200,
+    });
+
+    await assert.rejects(
+      launcher.launch({
+        sessionId: 'late-codex-overlay-session',
+        userId: 'provider-launch-user',
+        mode: 'detached',
+      }),
+      (error: unknown) => error instanceof modules.ProviderLaunchError
+        && error.code === 'PREPARATION_TIMEOUT',
+    );
+
+    // The creation is still running here, so the directory does not exist yet.
+    // Waiting for it to appear first is what makes the assertion below mean
+    // anything: checking too early would pass against a leak simply because the
+    // overlay had not landed yet.
+    let appeared = false;
+    for (let retry = 0; retry < 250 && !appeared; retry += 1) {
+      appeared = fs.existsSync(overlayDir);
+      if (!appeared) await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    assert.equal(
+      appeared,
+      true,
+      'the abandoned creation should still land in the guest',
+    );
+
+    for (let retry = 0; retry < 250 && fs.existsSync(overlayDir); retry += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    assert.equal(
+      fs.existsSync(overlayDir),
+      false,
+      'a Codex overlay that lands after the gate gave up must not be left behind',
+    );
+    assert.equal(captured.length, 0);
+  } finally {
+    if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    fs.rmSync(guestHome, { recursive: true, force: true });
+  }
+});
+
+test('a preparation timeout still removes the WSL overlay whose spawn it abandoned', async () => {
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const previousHome = process.env.HOME;
+  const previousPath = process.env.PATH;
+  const guestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-abandoned-overlay-'));
+  const fakeBin = path.join(guestHome, 'bin');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(
+    path.join(fakeBin, 'wsl.exe'),
+    '#!/bin/sh\n[ "$1" = "--exec" ] || exit 64\nshift\nexec "$@"\n',
+    { mode: 0o755 },
+  );
+
+  const worktreePath = path.join(testRoot, 'abandoned-overlay-worktree');
+  fs.mkdirSync(worktreePath, { recursive: true });
+  modules.tasks.createTask({
+    id: 'abandoned-overlay-task',
+    projectId: 'provider-launch-project',
+    title: 'Abandoned overlay',
+  });
+  modules.tasks.setTaskWorktreeCheckout('abandoned-overlay-task', {
+    branch: 'feature/abandoned-overlay',
+    path: worktreePath,
+  });
+  modules.sessions.createSession(
+    'abandoned-overlay-session',
+    'provider-launch-project',
+    'Abandoned overlay Session',
+    'claude-code',
+    {
+      taskId: 'abandoned-overlay-task',
+      providerState: JSON.stringify({ kind: 'terminal' }),
+    },
+  );
+  // Left running for the whole test, so the gate below has to give up on it.
+  assert.equal(modules.taskPreparation.startTaskPreparation(
+    'abandoned-overlay-task',
+    { before: 'prepare-before', after: null },
+  ), true);
+
+  Object.defineProperty(process, 'platform', {
+    configurable: true,
+    enumerable: true,
+    value: 'win32',
+  });
+  process.env.HOME = guestHome;
+  process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+  const overlayDir = path.join(
+    guestHome,
+    '.tessera/claude-overlay/session-abandoned-overlay-session',
+  );
+
+  try {
+    const captured: CapturedSpawn[] = [];
+    const manager = createManager(captured);
+    const launcher = modules.createProviderLaunchModule({
+      terminalManager: manager,
+      resolveAgentEnvironment: async () => 'wsl',
+      preparationTimeoutMs: 1_000,
+    });
+
+    const launch = launcher.launch({
+      sessionId: 'abandoned-overlay-session',
+      userId: 'provider-launch-user',
+      mode: 'detached',
+    });
+    // The overlay is started alongside the gate, so it lands in the guest
+    // while the gate is still waiting — and is then abandoned when the gate
+    // gives up before any consumer of it is ever reached.
+    let created = false;
+    for (let retry = 0; retry < 100 && !created; retry += 1) {
+      created = fs.existsSync(overlayDir);
+      if (!created) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    await assert.rejects(
+      launch,
+      (error: unknown) => error instanceof modules.ProviderLaunchError
+        && error.code === 'PREPARATION_TIMEOUT',
+    );
+    assert.equal(created, true, 'the overlay should have landed before the gate gave up');
+    for (let retry = 0; retry < 100 && fs.existsSync(overlayDir); retry += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(
+      fs.existsSync(overlayDir),
+      false,
+      'an abandoned overlay must not be left behind in the guest',
+    );
+    assert.equal(captured.length, 0);
+  } finally {
+    if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    fs.rmSync(guestHome, { recursive: true, force: true });
+  }
+});
+
+test('a deterministically failing WSL overlay is not retried: Claude launches anyway, Codex does not', async () => {
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const previousHome = process.env.HOME;
+  const previousPath = process.env.PATH;
+  const guestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-failing-'));
+  const fakeBin = path.join(guestHome, 'bin');
+  const fakeWsl = path.join(fakeBin, 'wsl.exe');
+  const callLog = path.join(guestHome, 'wsl-calls');
+  fs.mkdirSync(fakeBin, { recursive: true });
+  // Exits 1 whatever is piped to it: a script that ran and failed, which is the
+  // deterministic class a second attempt cannot change. Every invocation is
+  // recorded so the absence of a retry is observable rather than assumed.
+  fs.writeFileSync(
+    fakeWsl,
+    `#!/bin/sh\necho call >> ${JSON.stringify(callLog)}\nexit 1\n`,
+    { mode: 0o755 },
+  );
+  const wslCallCount = () => (fs.existsSync(callLog)
+    ? fs.readFileSync(callLog, 'utf8').split('\n').filter(Boolean).length
+    : 0);
+
+  Object.defineProperty(process, 'platform', {
+    configurable: true,
+    enumerable: true,
+    value: 'win32',
+  });
+  process.env.HOME = guestHome;
+  process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+
+  try {
+    const captured: CapturedSpawn[] = [];
+    const manager = createManager(captured);
+    createTerminalSession('failing-overlay-claude', 'claude-code');
+    const launcher = modules.createProviderLaunchModule({
+      terminalManager: manager,
+      resolveAgentEnvironment: async () => 'wsl',
+    });
+
+    await launcher.launch({
+      sessionId: 'failing-overlay-claude',
+      userId: 'provider-launch-user',
+      mode: 'detached',
+    });
+    assert.doesNotMatch(captured[0]?.args.join(' ') ?? '', /--plugin-dir/);
+    assert.equal(
+      wslCallCount(),
+      1,
+      'a script that ran and exited non-zero must not be attempted a second time',
+    );
+    await manager.closeSession('failing-overlay-claude', 'provider-launch-user');
+
+    // OpenCode's overlay isn't checked here: it's a single promise shared and
+    // cached for the whole app process (opencode-overlay-wsl.ts), so a
+    // successful run from another test in this file leaves a resolved promise
+    // behind that this fake-wsl failure would never see. Codex exercises the
+    // exact same launchEnvFactory failure path, so it alone is enough to cover it.
+    createTerminalSession('failing-overlay-codex', 'codex');
+    await assert.rejects(
+      launcher.launch({
+        sessionId: 'failing-overlay-codex',
+        userId: 'provider-launch-user',
+        mode: 'detached',
+      }),
+      (error: unknown) => error instanceof modules.ProviderLaunchError
+        && error.code === 'LAUNCH_FAILED',
+      'codex should fail its launch rather than continue without its overlay',
+    );
+  } finally {
+    if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    fs.rmSync(guestHome, { recursive: true, force: true });
+  }
+});
+
 test('initial prompt validation uses the exact UTF-8 byte boundary for every provider', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);
