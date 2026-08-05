@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import http from 'node:http';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 const CONTROL_API_VERSION = 1;
 const CONTROL_DESCRIPTOR_ENV = 'TESSERA_CONTROL_DESCRIPTOR';
@@ -13,6 +15,7 @@ const REQUEST_TIMEOUT_MS = 5_000;
 // for the preceding Git worktree creation, which intentionally has no short
 // timeout because large repositories can take materially longer to checkout.
 const MUTATION_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+const execFileAsync = promisify(execFile);
 
 export function isControlInvocation(argv) {
   if (argv.some((arg) => (
@@ -54,7 +57,7 @@ export async function runControlCli(options) {
   let invocation;
   try {
     invocation = parseControlInvocation(argv, env);
-    await materializePromptChoice(invocation);
+    await materializePromptChoice(invocation, env);
   } catch (error) {
     return writeFailure(
       json,
@@ -580,7 +583,7 @@ function parseSessionOptions(args, options) {
   return parsed;
 }
 
-async function materializePromptChoice(invocation) {
+async function materializePromptChoice(invocation, env) {
   if (invocation.sessionPromptChoice) {
     let text;
     try {
@@ -588,7 +591,10 @@ async function materializePromptChoice(invocation) {
         ? invocation.sessionPromptChoice.value
         : invocation.sessionPromptChoice.value === '-'
           ? await readStandardInput()
-          : await fs.readFile(invocation.sessionPromptChoice.value, 'utf8');
+          : await fs.readFile(
+              await resolveCallerFilePath(invocation.sessionPromptChoice.value, env),
+              'utf8',
+            );
     } catch {
       throw new ControlCliInputError(
         'INPUT_NOT_ACCEPTED',
@@ -608,7 +614,10 @@ async function materializePromptChoice(invocation) {
     ? invocation.promptChoice.value
     : invocation.promptChoice.value === '-'
       ? await readStandardInput()
-      : await fs.readFile(invocation.promptChoice.value, 'utf8');
+      : await fs.readFile(
+          await resolveCallerFilePath(invocation.promptChoice.value, env),
+          'utf8',
+        );
   if (Buffer.byteLength(initialPrompt, 'utf8') > MAX_INITIAL_PROMPT_BYTES) {
     throw new ControlCliInputError(
       'INITIAL_PROMPT_TOO_LARGE',
@@ -617,6 +626,53 @@ async function materializePromptChoice(invocation) {
   }
   invocation.requestBody.initialPrompt = initialPrompt;
   delete invocation.promptChoice;
+}
+
+export async function resolveCallerFilePath(filePath, env = process.env, options = {}) {
+  const platform = options.platform ?? process.platform;
+  if (
+    platform !== 'win32'
+    || env.TESSERA_AGENT_ENVIRONMENT?.trim().toLowerCase() !== 'wsl'
+  ) {
+    return filePath;
+  }
+
+  if (path.posix.isAbsolute(filePath)) {
+    const translateWslPath = options.translateWslPath ?? translateWslPathForHost;
+    const translated = await translateWslPath(
+      filePath,
+      env.TESSERA_CLI_WSL_DISTRO?.trim() || undefined,
+    );
+    if (!translated || !path.win32.isAbsolute(translated)) {
+      throw new ControlCliInputError(
+        'INPUT_NOT_ACCEPTED',
+        'The caller file path is unavailable.',
+      );
+    }
+    return translated;
+  }
+
+  if (path.win32.isAbsolute(filePath)) return filePath;
+  const callerCwd = env.TESSERA_CLI_CWD?.trim();
+  if (!callerCwd || !path.win32.isAbsolute(callerCwd)) {
+    throw new ControlCliInputError(
+      'INPUT_NOT_ACCEPTED',
+      'The caller working directory is unavailable.',
+    );
+  }
+  return path.win32.resolve(callerCwd, filePath);
+}
+
+async function translateWslPathForHost(filePath, distroName) {
+  const args = [];
+  if (distroName) args.push('-d', distroName);
+  args.push('-e', 'wslpath', '-w', '--', filePath);
+  const { stdout } = await execFileAsync('wsl.exe', args, {
+    encoding: 'utf8',
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  return stdout.trim();
 }
 
 async function readStandardInput() {

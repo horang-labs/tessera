@@ -92,7 +92,7 @@ export interface TerminalCreateOptions {
     output: string,
   ) => void;
   /** Server-owned environment overrides for the provider process. */
-  launchEnv?: Record<string, string>;
+  launchEnv?: Record<string, string | undefined>;
   /**
    * Async variant of launchEnv, resolved inside the opening window right before
    * PTY spawn. Slow preparation (e.g. the WSL guest Codex overlay, up to tens of
@@ -100,7 +100,7 @@ export interface TerminalCreateOptions {
    * outside the opening window a concurrent close_session cannot cancel it and
    * a duplicate terminal_create cannot deduplicate against it.
    */
-  launchEnvFactory?: () => Promise<Record<string, string> | undefined>;
+  launchEnvFactory?: () => Promise<Record<string, string | undefined> | undefined>;
 }
 
 export interface TerminalResolvedShell {

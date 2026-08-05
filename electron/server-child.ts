@@ -25,6 +25,12 @@ import logger from '../src/lib/logger';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import { terminalManager } from '../src/lib/terminal/shared-terminal-manager';
 import { handleHookRequest } from '../src/lib/cli/hook-receiver';
+import { CONTROL_ROUTE_PREFIX } from '../src/lib/control/http-handler';
+import { readAppVersion } from '../src/lib/app-version';
+import {
+  startControlRuntimeHost,
+  type ControlRuntimeHost,
+} from '../src/lib/control/runtime-host';
 
 process.env.ELECTRON_CHILD = '1';
 process.env.TESSERA_ELECTRON_SERVER = '1';
@@ -75,6 +81,7 @@ function logStartup(level: StartupLogLevel, msg: string) {
 let shutdownHandler: ((reason: string) => Promise<void>) | null = null;
 let parentWatchdog: NodeJS.Timeout | null = null;
 let parentShutdownRequested = false;
+let controlRuntime: ControlRuntimeHost | null = null;
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -134,6 +141,11 @@ initDatabase().then(() => {
 
   // Attach request handler after Next.js is prepared
   server.on('request', (req, res) => {
+    const pathname = req.url?.split('?')[0] ?? '';
+    if (pathname === CONTROL_ROUTE_PREFIX || pathname.startsWith(`${CONTROL_ROUTE_PREFIX}/`)) {
+      res.writeHead(404).end();
+      return;
+    }
     if (req.method === 'POST' && req.url?.split('?')[0] === '/__tessera/hook') {
       void handleHookRequest(req, res);
       return;
@@ -142,34 +154,53 @@ initDatabase().then(() => {
   });
 
   server.listen(port, hostname, () => {
-    wsServer.start(server);
-    rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
-    rateLimitPoller.setEnvironmentResolver(async () => {
-      const userId = await getElectronAuthUserId();
-      return getAgentEnvironment(userId);
+    void (async () => {
+      controlRuntime = await startControlRuntimeHost({
+        appVersion: readAppVersion(dir),
+        appRoot: dir,
+        runtimeDirectory: process.env.TESSERA_CONTROL_RUNTIME_DIR,
+        descriptorPath: process.env.TESSERA_CONTROL_DESCRIPTOR_PATH,
+        resolveUserId: getElectronAuthUserId,
+      });
+
+      wsServer.start(server);
+      rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
+      rateLimitPoller.setEnvironmentResolver(async () => {
+        const userId = await getElectronAuthUserId();
+        return getAgentEnvironment(userId);
+      });
+      rateLimitPoller.start();
+
+      // Model config: packaged Electron uses this child process instead of server.ts,
+      // so it must run the same startup refresh path.
+      setModelConfigBroadcast((msg) => wsServer.broadcast(msg));
+      void triggerModelConfigRefresh('launch');
+
+      // Wire PR sync broadcasts and start the background PR poller. Without
+      // these the in-process subscribe callbacks on syncTaskPr/syncSessionPr
+      // have no listeners, so live updates never reach Electron clients.
+      installTaskPrStatusBroadcast((msg) => wsServer.broadcast(msg));
+      installSessionPrStatusBroadcast((msg) => wsServer.broadcast(msg));
+      void taskPrPoller.start();
+
+      logger.info({ port, hostname, env: process.env.NODE_ENV }, 'Electron server started');
+      console.log(`> Ready on http://${hostname}:${port}`);
+      console.log(`> WebSocket on ws://${hostname}:${port}/ws`);
+
+      // Signal readiness to Electron main process only after the exact-instance
+      // Control transport and provider bridge are ready.
+      if (process.send) {
+        process.send({ type: 'ready', port });
+      }
+    })().catch((error) => {
+      // The descriptor path is private; keep startup reporting opaque.
+      void error;
+      logStartup('fatal', 'Failed to initialize the Control runtime');
+      process.send?.({ type: 'error', message: 'Failed to initialize the Control runtime' });
+      void Promise.resolve(controlRuntime?.close())
+        .catch(() => undefined)
+        .finally(() => server.close(() => process.exit(1)));
     });
-    rateLimitPoller.start();
-
-    // Model config: packaged Electron uses this child process instead of server.ts,
-    // so it must run the same startup refresh path.
-    setModelConfigBroadcast((msg) => wsServer.broadcast(msg));
-    void triggerModelConfigRefresh('launch');
-
-    // Wire PR sync broadcasts and start the background PR poller. Without
-    // these the in-process subscribe callbacks on syncTaskPr/syncSessionPr
-    // have no listeners, so live updates never reach Electron clients.
-    installTaskPrStatusBroadcast((msg) => wsServer.broadcast(msg));
-    installSessionPrStatusBroadcast((msg) => wsServer.broadcast(msg));
-    void taskPrPoller.start();
-
-    logger.info({ port, hostname, env: process.env.NODE_ENV }, 'Electron server started');
-    console.log(`> Ready on http://${hostname}:${port}`);
-    console.log(`> WebSocket on ws://${hostname}:${port}/ws`);
-
-    // Signal readiness to Electron main process
-    if (process.send) {
-      process.send({ type: 'ready', port });
-    }
   });
 
   // ── Graceful shutdown ─────────────────────────────────────────────────
@@ -203,6 +234,9 @@ initDatabase().then(() => {
 
       logger.info('Cleaning up CLI processes...');
       await processManager.cleanup();
+
+      logger.info('Closing Control runtime...');
+      await controlRuntime?.close();
     } catch (error) {
       clearTimeout(forceShutdownTimer);
       logger.error({ error }, 'Server shutdown cleanup failed');

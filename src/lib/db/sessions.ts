@@ -50,6 +50,11 @@ export interface SessionWorktreeContext {
   worktreeManaged: boolean;
 }
 
+export interface ManagedSessionCallerContext {
+  projectId: string;
+  worktreeId?: string;
+}
+
 function isUuidLikeSearchQuery(query: string): boolean {
   return /^[0-9a-f]{6,}(?:-[0-9a-f]*)*$/i.test(query);
 }
@@ -372,6 +377,24 @@ export function getSessionWorktreeContext(id: string): SessionWorktreeContext | 
     workDir: row.work_dir,
     worktreeBranch: row.worktree_branch,
     worktreeManaged: row.worktree_managed === 1,
+  };
+}
+
+/** Public caller identity injected into a managed provider launched for this Session. */
+export function getManagedSessionCallerContext(id: string): ManagedSessionCallerContext | null {
+  const row = getDb().prepare(`
+    SELECT s.project_id, tasks.public_worktree_id
+    FROM sessions s
+    LEFT JOIN tasks ON tasks.id = s.task_id
+    WHERE s.id = ? AND s.deleted = 0
+  `).get(id) as {
+    project_id: string;
+    public_worktree_id: string | null;
+  } | undefined;
+  if (!row) return null;
+  return {
+    projectId: row.project_id,
+    ...(row.public_worktree_id ? { worktreeId: row.public_worktree_id } : {}),
   };
 }
 

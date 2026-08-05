@@ -1,10 +1,8 @@
 import './runtime/register-runtime-aliases';
 import next from 'next';
 import { loadEnvConfig } from '@next/env';
-import fs from 'fs';
-import { createServer, type Server } from 'http';
+import { createServer } from 'http';
 import type { AddressInfo } from 'net';
-import path from 'path';
 import { initDatabase } from './src/lib/db/database';
 import { interruptRunningPreparations } from './src/lib/db/task-preparation';
 import { markServerShuttingDown } from './src/lib/server-lifecycle';
@@ -27,23 +25,14 @@ import logger from './src/lib/logger';
 import { getServerPort } from './src/lib/server-port';
 import { handleHookRequest } from './src/lib/cli/hook-receiver';
 import { warmWindowsConptyOnce } from './src/lib/terminal/windows-conpty-warmup';
-import { createDatabaseControlProjectSource } from './src/lib/control/database-project-source';
-import { createDatabaseControlWorktreeSource } from './src/lib/control/database-worktree-source';
+import { readAppVersion } from './src/lib/app-version';
 import {
   CONTROL_ROUTE_PREFIX,
-  createControlHttpHandler,
 } from './src/lib/control/http-handler';
 import {
-  publishRuntimeDescriptor,
-  type RuntimeDescriptorHandle,
-} from './src/lib/control/runtime-descriptor';
-import { createControlService } from './src/lib/control/service';
-import { createDatabaseControlWorktreeCreator } from './src/lib/control/worktree-creator';
-import { createDatabaseControlSessionSource } from './src/lib/control/database-session-source';
-import { createDatabaseControlSessionMutator } from './src/lib/control/session-mutator';
-import { resolveControlUserId } from './src/lib/control/user-context';
-import { createTerminalControlSessionObserver } from './src/lib/control/session-observer';
-import { createTerminalControlSessionController } from './src/lib/control/session-controller';
+  startControlRuntimeHost,
+  type ControlRuntimeHost,
+} from './src/lib/control/runtime-host';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -81,9 +70,7 @@ async function startServer() {
   // In Next.js 16, setupWebSocketHandler() auto-registers on options.httpServer
   // to handle _next/webpack-hmr WebSocket upgrades for HMR.
   const server = createServer();
-  const controlServer = createServer();
-  let controlRuntime: RuntimeDescriptorHandle | null = null;
-  let controlRequestHandler: ReturnType<typeof createControlHttpHandler> | null = null;
+  let controlRuntime: ControlRuntimeHost | null = null;
 
   const app = next({ dev, hostname, port, dir, httpServer: server } as Parameters<typeof next>[0]);
   const handle = app.getRequestHandler();
@@ -108,19 +95,6 @@ async function startServer() {
     handle(req, res);
   });
 
-  // Control has its own ephemeral loopback listener. The ordinary web server
-  // may intentionally bind to a LAN interface, but the authenticated Control
-  // transport must never bind beyond this process's loopback interface.
-  controlServer.on('request', (req, res) => {
-    if (!controlRequestHandler) {
-      res.writeHead(503).end();
-      return;
-    }
-    void controlRequestHandler(req, res).then((handled) => {
-      if (!handled && !res.headersSent) res.writeHead(404).end();
-    });
-  });
-
   // WebSocket upgrade handling:
   // - /ws: handled by wsServer (ws library with path: '/ws' auto-handles upgrade)
   // - HMR: Next.js 16 auto-attaches via setupWebSocketHandler(httpServer)
@@ -128,9 +102,7 @@ async function startServer() {
   // Start HTTP server, then attach WebSocket
   server.on('error', (error) => {
     logger.error({ error }, 'Server failed to listen');
-    void closeHttpServer(controlServer)
-      .catch(() => undefined)
-      .then(() => controlRuntime?.cleanup())
+    void Promise.resolve(controlRuntime?.close())
       .catch(() => undefined)
       .finally(() => process.exit(1));
   });
@@ -138,35 +110,12 @@ async function startServer() {
   server.listen(port, hostname, () => {
     void (async () => {
       const listeningPort = (server.address() as AddressInfo).port;
-      const controlPort = await listenOnLoopback(controlServer);
       const appVersion = readAppVersion(dir);
-      controlRuntime = await publishRuntimeDescriptor({
+      controlRuntime = await startControlRuntimeHost({
         appVersion,
-        origin: `http://127.0.0.1:${controlPort}`,
+        appRoot: dir,
         runtimeDirectory: process.env.TESSERA_CONTROL_RUNTIME_DIR,
         descriptorPath: process.env.TESSERA_CONTROL_DESCRIPTOR_PATH,
-      });
-      controlRequestHandler = createControlHttpHandler({
-        descriptor: controlRuntime.descriptor,
-        service: createControlService({
-          appVersion,
-          runtimeId: controlRuntime.descriptor.runtimeId,
-          projects: createDatabaseControlProjectSource(),
-          worktrees: createDatabaseControlWorktreeSource(),
-          worktreeCreator: createDatabaseControlWorktreeCreator({
-            resolveUserId: resolveControlUserId,
-          }),
-          sessions: createDatabaseControlSessionSource(),
-          sessionMutator: createDatabaseControlSessionMutator({
-            resolveUserId: resolveControlUserId,
-          }),
-          sessionObserver: createTerminalControlSessionObserver({
-            resolveUserId: resolveControlUserId,
-          }),
-          sessionController: createTerminalControlSessionController({
-            resolveUserId: resolveControlUserId,
-          }),
-        }),
       });
 
       // Start WebSocket server on the same HTTP server
@@ -207,9 +156,7 @@ async function startServer() {
       // intentionally opaque while still failing closed.
       void error;
       logger.error('Failed to initialize the Control runtime');
-      void closeHttpServer(controlServer)
-        .catch(() => undefined)
-        .then(() => controlRuntime?.cleanup())
+      void Promise.resolve(controlRuntime?.close())
         .catch(() => undefined)
         .finally(() => server.close(() => process.exit(1)));
     });
@@ -262,11 +209,8 @@ async function startServer() {
     }
 
     try {
-      logger.info('Closing Control listener...');
-      await closeHttpServer(controlServer);
-
-      logger.info('Removing Control runtime descriptor...');
-      await controlRuntime?.cleanup();
+      logger.info('Closing Control runtime...');
+      await controlRuntime?.close();
     } catch {
       // Filesystem failures often include the descriptor path. Do not attach
       // the raw error to logs for this credential-bearing lifecycle.
@@ -306,37 +250,6 @@ async function startServer() {
 
     logger.error({ error: msg, stack: error.stack }, 'Uncaught Exception');
     void shutdown('uncaughtException');
-  });
-}
-
-function readAppVersion(appRoot: string): string {
-  const parsed = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8')) as {
-    version?: unknown;
-  };
-  if (typeof parsed.version !== 'string' || !parsed.version.trim()) {
-    throw new Error('Tessera package version is unavailable');
-  }
-  return parsed.version.trim();
-}
-
-function listenOnLoopback(server: Server): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const onError = (error: Error) => reject(error);
-    server.once('error', onError);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', onError);
-      resolve((server.address() as AddressInfo).port);
-    });
-  });
-}
-
-function closeHttpServer(server: Server): Promise<void> {
-  if (!server.listening) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    server.close((error) => {
-      if (error) reject(error);
-      else resolve();
-    });
   });
 }
 

@@ -622,6 +622,127 @@ test('concurrent detached launches reject the loser without revoking the winning
   });
 });
 
+test('shared provider launches inject the complete control bridge environment for every provider', async () => {
+  const providers = ['claude-code', 'codex', 'opencode'];
+  const agentEnvironments = ['native', 'wsl'] as const;
+  for (const agentEnvironment of agentEnvironments) {
+    for (const provider of providers) {
+    const captured: CapturedSpawn[] = [];
+    const manager = createManager(captured);
+    const taskId = `control-context-${agentEnvironment}-${provider}`;
+    const publicWorktreeId = modules.tasks.createTask({
+      id: taskId,
+      projectId: 'provider-launch-project',
+      title: `Control context ${provider}`,
+      worktreePath: workspace,
+    });
+    const sessionId = `control-context-session-${agentEnvironment}-${provider}`;
+    modules.sessions.createSession(
+      sessionId,
+      'provider-launch-project',
+      sessionId,
+      provider,
+      {
+        taskId,
+        providerState: JSON.stringify({ kind: 'terminal' }),
+      },
+    );
+    const disposed: string[] = [];
+    const launcher = modules.createProviderLaunchModule({
+      terminalManager: manager,
+      resolveAgentEnvironment: async () => agentEnvironment,
+      prepareControlCliBridge: async (context) => {
+        assert.deepEqual(context, {
+          agentEnvironment,
+          projectId: 'provider-launch-project',
+          sessionId,
+          worktreeId: publicWorktreeId,
+        });
+        return {
+          commandPath: `/home/test/.cache/tessera/${sessionId}/tessera`,
+          environment: {
+            TESSERA_ENV: '1',
+            TESSERA_CLI_COMMAND: `/home/test/.cache/tessera/${sessionId}/tessera`,
+            TESSERA_PROJECT_ID: 'provider-launch-project',
+            TESSERA_SESSION_ID: sessionId,
+            TESSERA_WORKTREE_ID: publicWorktreeId,
+          },
+          dispose: async () => { disposed.push(sessionId); },
+        };
+      },
+    });
+
+    await launcher.launch({
+      sessionId,
+      userId: 'provider-launch-user',
+      mode: 'detached',
+    });
+
+    const childEnv = captured[0]?.env;
+    assert.equal(childEnv?.TESSERA_ENV, '1');
+    assert.equal(
+      childEnv?.TESSERA_CLI_COMMAND,
+      `/home/test/.cache/tessera/${sessionId}/tessera`,
+    );
+    assert.equal(childEnv?.TESSERA_PROJECT_ID, 'provider-launch-project');
+    assert.equal(childEnv?.TESSERA_SESSION_ID, sessionId);
+    assert.equal(childEnv?.TESSERA_WORKTREE_ID, publicWorktreeId);
+    if (agentEnvironment === 'wsl') {
+      for (const key of [
+        'TESSERA_ENV',
+        'TESSERA_CLI_COMMAND',
+        'TESSERA_PROJECT_ID',
+        'TESSERA_SESSION_ID',
+        'TESSERA_WORKTREE_ID',
+      ]) {
+        assert.equal(
+          childEnv?.WSLENV?.split(':').some((entry) => entry.split('/')[0] === key),
+          true,
+          `${provider} WSLENV should contain ${key}`,
+        );
+      }
+    }
+    assert.equal(childEnv?.TESSERA_CONTROL_DESCRIPTOR, undefined);
+    assert.equal(childEnv?.TESSERA_CONTROL_DESCRIPTOR_PATH, undefined);
+
+    await manager.closeSession(sessionId, 'provider-launch-user');
+    assert.deepEqual(disposed, [sessionId]);
+    }
+  }
+});
+
+test('a managed top-level session omits Worktree caller context', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  createTerminalSession('control-context-top-level', 'opencode');
+  process.env.TESSERA_WORKTREE_ID = 'inherited-wrong-worktree';
+  try {
+    const launcher = modules.createProviderLaunchModule({
+      terminalManager: manager,
+      prepareControlCliBridge: async (context) => ({
+        commandPath: '/tmp/tessera-top-level',
+        environment: {
+          TESSERA_ENV: '1',
+          TESSERA_CLI_COMMAND: '/tmp/tessera-top-level',
+          TESSERA_PROJECT_ID: context.projectId,
+          TESSERA_SESSION_ID: context.sessionId,
+          TESSERA_WORKTREE_ID: context.worktreeId,
+        },
+        dispose: async () => {},
+      }),
+    });
+    await launcher.launch({
+      sessionId: 'control-context-top-level',
+      userId: 'provider-launch-user',
+      mode: 'detached',
+    });
+    assert.equal(captured[0]?.env?.TESSERA_WORKTREE_ID, undefined);
+  } finally {
+    delete process.env.TESSERA_WORKTREE_ID;
+    await manager.closeSession('control-context-top-level', 'provider-launch-user');
+  }
+});
+
 test('fresh and resumed launches preserve each provider wrapper contract', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);

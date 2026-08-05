@@ -152,7 +152,8 @@ function buildTerminalEnv(
   // Provider-specific launch metadata inherited by the PTY child process.
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
-      if (v !== undefined) nextEnv[k] = v;
+      if (v === undefined) delete nextEnv[k];
+      else nextEnv[k] = v;
     }
   }
 
@@ -354,13 +355,16 @@ function appendWslenv(
   env: NodeJS.ProcessEnv,
   entries: Array<{ name: string; path?: boolean }>,
 ): void {
-  const existing = (env.WSLENV ?? '').split(':').filter(Boolean);
+  const existing = (env.WSLENV ?? '').split(':').filter((entry) => (
+    Boolean(entry) && env[entry.split('/')[0]] !== undefined
+  ));
   const byName = new Map(existing.map((entry) => [entry.split('/')[0], entry]));
   for (const entry of entries) {
     if (env[entry.name] === undefined) continue;
     byName.set(entry.name, `${entry.name}${entry.path ? '/p' : ''}`);
   }
   if (byName.size > 0) env.WSLENV = [...byName.values()].join(':');
+  else delete env.WSLENV;
 }
 
 async function loadNodePty(): Promise<TerminalPtyFactory> {
@@ -730,6 +734,10 @@ export class TerminalManager {
       );
       if (shellKind === 'wsl') {
         appendWslenv(terminalEnv, [
+          { name: 'TESSERA_ENV' },
+          { name: 'TESSERA_CLI_COMMAND' },
+          { name: 'TESSERA_PROJECT_ID' },
+          { name: 'TESSERA_WORKTREE_ID' },
           { name: 'TESSERA_PANE_TOKEN' },
           { name: 'TESSERA_SESSION_ID' },
           { name: 'TESSERA_HOOK_PORT' },

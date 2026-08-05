@@ -33,6 +33,11 @@ import {
   type TerminalManager,
 } from './terminal-manager';
 import type { TerminalAppearance, TerminalCreateOptions, TerminalLaunchSpec } from './types';
+import type {
+  ControlCliBridgeContext,
+  PreparedControlCliBridge,
+} from '@/lib/control/cli-bridge';
+import type { AgentEnvironment } from '@/lib/settings/types';
 
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -131,6 +136,7 @@ type ProviderLaunchTerminalAdapter = Pick<
 interface ProviderLaunchModuleOptions {
   terminalManager: ProviderLaunchTerminalAdapter;
   preparationTimeoutMs?: number;
+  resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
   observeProviderSession?: (options: {
     pane: {
       terminalId: string;
@@ -141,6 +147,9 @@ interface ProviderLaunchModuleOptions {
     identity: TerminalProviderSessionIdentity;
     activation: 'active' | 'background';
   }) => void;
+  prepareControlCliBridge?: (
+    context: ControlCliBridgeContext,
+  ) => Promise<PreparedControlCliBridge>;
 }
 
 interface ProviderLaunchDecision {
@@ -474,7 +483,18 @@ export function createProviderLaunchModule(
           );
         }
 
-        const agentEnvironment = await getAgentEnvironment(request.userId);
+        const agentEnvironment = await (
+          options.resolveAgentEnvironment?.(request.userId)
+          ?? getAgentEnvironment(request.userId)
+        );
+        const callerContext = dbSessions.getManagedSessionCallerContext(request.sessionId);
+        if (!callerContext) {
+          throw providerLaunchError(
+            'SESSION_NOT_FOUND',
+            'Session does not exist.',
+            terminalId,
+          );
+        }
         const wslTerminalRuntime = getRuntimePlatform() === 'win32'
           && agentEnvironment === 'wsl';
         const hookCommandStyle: HookCommandStyle = getRuntimePlatform() === 'win32'
@@ -484,8 +504,9 @@ export function createProviderLaunchModule(
         const decision = await buildLaunchDecision(request, persisted, hookCommandStyle);
         decision.launchSpec.cwd = workDir;
 
-        let launchEnv: Record<string, string> | undefined;
-        let launchEnvFactory: (() => Promise<Record<string, string> | undefined>) | undefined;
+        let launchEnv: Record<string, string | undefined> | undefined;
+        let launchEnvFactory:
+          (() => Promise<Record<string, string | undefined> | undefined>) | undefined;
         if (decision.providerId === 'codex') {
           launchEnvFactory = async () => {
             try {
@@ -532,6 +553,41 @@ export function createProviderLaunchModule(
             };
           }
         }
+
+        const completeLaunchEnvFactory = options.prepareControlCliBridge || launchEnvFactory
+          ? async (): Promise<Record<string, string | undefined>> => {
+              const resolvedEnv: Record<string, string | undefined> = {
+                ...(launchEnv ?? {}),
+                TESSERA_CONTROL_DESCRIPTOR: undefined,
+                TESSERA_CONTROL_DESCRIPTOR_PATH: undefined,
+                TESSERA_CLI_CWD: undefined,
+                TESSERA_AGENT_ENVIRONMENT: undefined,
+              };
+              if (launchEnvFactory) {
+                Object.assign(resolvedEnv, await launchEnvFactory());
+              }
+              if (options.prepareControlCliBridge) {
+                const bridge = await options.prepareControlCliBridge({
+                  agentEnvironment,
+                  projectId: callerContext.projectId,
+                  sessionId: request.sessionId,
+                  ...(callerContext.worktreeId
+                    ? { worktreeId: callerContext.worktreeId }
+                    : {}),
+                });
+                resourceDisposers.add(() => {
+                  void bridge.dispose().catch((error) => {
+                    logger.debug({ error }, 'Control CLI bridge cleanup skipped');
+                  });
+                });
+                Object.assign(resolvedEnv, bridge.environment);
+                if (!callerContext.worktreeId) {
+                  resolvedEnv.TESSERA_WORKTREE_ID = undefined;
+                }
+              }
+              return resolvedEnv;
+            }
+          : undefined;
 
         paneToken = mintPaneToken({
           terminalId,
@@ -603,8 +659,8 @@ export function createProviderLaunchModule(
                   dbSessions.getSession(request.sessionId)?.provider_state ?? null,
                 ) ?? false
               : undefined,
-          launchEnv,
-          launchEnvFactory,
+          launchEnv: completeLaunchEnvFactory ? undefined : launchEnv,
+          launchEnvFactory: completeLaunchEnvFactory,
           launchObserverDisposer: resourceDisposers.asDisposer(),
         };
 

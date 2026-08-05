@@ -89,13 +89,21 @@ export async function publishRuntimeDescriptor(
   }
 
   let cleaned = false;
+  let cleanupInFlight: Promise<void> | null = null;
   return {
     descriptor,
     path: descriptorPath,
     cleanup: async () => {
       if (cleaned) return;
-      cleaned = true;
-      await removeOwnedDescriptor(descriptorPath, runtimeId);
+      if (cleanupInFlight) return cleanupInFlight;
+      const cleanup = removeOwnedDescriptor(descriptorPath, runtimeId)
+        .then(() => { cleaned = true; });
+      cleanupInFlight = cleanup;
+      try {
+        await cleanup;
+      } finally {
+        if (cleanupInFlight === cleanup) cleanupInFlight = null;
+      }
     },
   };
 }

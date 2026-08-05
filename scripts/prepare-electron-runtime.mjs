@@ -310,6 +310,7 @@ async function main() {
   await fs.rm(runtimeDir, { recursive: true, force: true });
 
   await addFile(path.join(rootDir, 'next.config.mjs'), files);
+  await addDirectory('bin', files);
   await addDirectory('assets', files);
   await addDirectory('public', files);
   await addDirectory('dist-electron', files);
