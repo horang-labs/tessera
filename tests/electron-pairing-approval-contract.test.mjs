@@ -8,6 +8,10 @@ const settingsSource = fs.readFileSync(
   new URL('../src/components/settings/remote-access-section.tsx', import.meta.url),
   'utf8',
 );
+const decisionRouteSource = fs.readFileSync(
+  new URL('../src/app/api/pairing/requests/[id]/route.ts', import.meta.url),
+  'utf8',
+);
 
 test('Electron exposes narrow list and decision bridges for local pairing approval', () => {
   assert.match(preloadSource, /listPairingRequests:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('list-pairing-requests'\)/);
@@ -29,4 +33,19 @@ test('the local settings surface uses the Electron bridge for pending approvals'
   assert.match(settingsSource, /electronApi\.decidePairingRequest/);
   assert.match(settingsSource, /settings\.remoteAccess\.approveRequest/);
   assert.match(settingsSource, /settings\.remoteAccess\.denyRequest/);
+});
+
+test('rejected local decisions retain pending-device audit context', () => {
+  assert.match(
+    decisionRouteSource,
+    /logPairingDecisionRejection[\s\S]*pairingRequestLogContext\(requestId\)/,
+  );
+  assert.match(
+    decisionRouteSource,
+    /if \(denial\) \{\s*await logPairingDecisionRejection\(id, 'authorization-failed'\)/,
+  );
+  assert.equal(
+    [...decisionRouteSource.matchAll(/logPairingDecisionRejection\(id, 'invalid-request'\)/g)].length,
+    2,
+  );
 });

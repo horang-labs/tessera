@@ -41,6 +41,13 @@ async function pairingRequestLogContext(requestId: string) {
   };
 }
 
+async function logPairingDecisionRejection(requestId: string, code: string): Promise<void> {
+  logger.warn({
+    ...await pairingRequestLogContext(requestId),
+    code,
+  }, 'Pairing decision rejected');
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -119,26 +126,31 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await params;
   const denial = await requireLocalPairingManager(request);
-  if (denial) return denial;
+  if (denial) {
+    await logPairingDecisionRejection(id, 'authorization-failed');
+    return denial;
+  }
 
   let body: { decision?: unknown };
   try {
     body = await request.json() as { decision?: unknown };
   } catch {
+    await logPairingDecisionRejection(id, 'invalid-request');
     return NextResponse.json(
       { error: 'Invalid JSON body', code: 'invalid-request' },
       { status: 400 },
     );
   }
   if (!isPairingDecision(body.decision)) {
+    await logPairingDecisionRejection(id, 'invalid-request');
     return NextResponse.json(
       { error: 'Decision must be approve or deny', code: 'invalid-request' },
       { status: 400 },
     );
   }
 
-  const { id } = await params;
   try {
     const pairingRequest = await decidePairingRequest(id, body.decision);
     logger.info({
@@ -164,7 +176,11 @@ export async function PATCH(
       }, 'Pairing decision failed');
       return NextResponse.json({ error: error.message, code: error.code }, { status });
     }
-    logger.error({ requestId: id, error }, 'Pairing decision failed unexpectedly');
+    logger.error({
+      ...await pairingRequestLogContext(id),
+      decision: body.decision,
+      error,
+    }, 'Pairing decision failed unexpectedly');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
