@@ -1,13 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
+import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
-  supportsDirectTailscaleAccess:
-    process.platform === 'win32'
-    && !process.env.TESSERA_DEV_PORT
-    && !process.env.TESSERA_ELECTRON_TEST_INSTANCE,
+  supportsTailscaleFirewallConfiguration: supportsTailscaleFirewallConfiguration(),
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
   configureTailscaleFirewall: () => ipcRenderer.invoke('configure-tailscale-firewall'),
   createPairingCode: (action: 'issue' | 'rotate') =>

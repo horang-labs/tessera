@@ -37,6 +37,7 @@ import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
 import { registerAppSecretHeader } from './app-secret-header';
 import { configureTailscaleFirewall } from './windows-firewall';
+import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -1246,7 +1247,7 @@ function broadcastPopoutState(): void {
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
 ipcMain.handle('configure-tailscale-firewall', () => {
-  if (electronTestInstance || process.env.TESSERA_DEV_PORT) {
+  if (!supportsTailscaleFirewallConfiguration()) {
     return {
       ok: false,
       code: 'unsupported',

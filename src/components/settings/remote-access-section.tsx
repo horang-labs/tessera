@@ -32,7 +32,7 @@ type ElectronFirewallResult =
 type ElectronPairingApi = {
   isElectron?: boolean;
   platform?: string;
-  supportsDirectTailscaleAccess?: boolean;
+  supportsTailscaleFirewallConfiguration?: boolean;
   createPairingCode?: (action: 'issue' | 'rotate') => Promise<ElectronPairingResult>;
   configureTailscaleFirewall?: () => Promise<ElectronFirewallResult>;
 };
@@ -153,7 +153,7 @@ export default function RemoteAccessSection() {
   const canConfigureWindowsFirewall = Boolean(
     electronApi?.isElectron
     && electronApi.platform === 'win32'
-    && electronApi.supportsDirectTailscaleAccess
+    && electronApi.supportsTailscaleFirewallConfiguration
     && electronApi.configureTailscaleFirewall,
   );
 

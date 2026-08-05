@@ -7,6 +7,7 @@ import {
   WINDOWS_REMOTE_SERVER_HOST,
   resolveElectronServerHost,
 } from '../electron/server-listener';
+import { supportsTailscaleFirewallConfiguration } from '../electron/tailscale-firewall-capability';
 import {
   TAILSCALE_ADAPTER_NOT_FOUND_EXIT_CODE,
   buildTailscaleFirewallScript,
@@ -19,6 +20,27 @@ test('the packaged Windows server listens on external IPv4 interfaces only on Wi
   assert.equal(resolveElectronServerHost('darwin'), LOOPBACK_SERVER_HOST);
   assert.equal(resolveElectronServerHost('linux'), LOOPBACK_SERVER_HOST);
   assert.equal(LOOPBACK_SERVER_HOST, '127.0.0.1');
+});
+
+test('firewall configuration is limited to packaged Windows product instances', () => {
+  assert.equal(supportsTailscaleFirewallConfiguration({
+    platform: 'win32',
+    devServerPort: '',
+    testInstance: '',
+  }), true);
+  assert.equal(supportsTailscaleFirewallConfiguration({
+    platform: 'win32',
+    devServerPort: '32123',
+  }), false);
+  assert.equal(supportsTailscaleFirewallConfiguration({
+    platform: 'win32',
+    testInstance: 'ticket-14',
+  }), false);
+  assert.equal(supportsTailscaleFirewallConfiguration({
+    platform: 'linux',
+    devServerPort: '',
+    testInstance: '',
+  }), false);
 });
 
 test('the Electron child resolves its listener host instead of hard-coding loopback', () => {
@@ -96,10 +118,8 @@ test('the firewall action is exposed only through Electron main and preload IPC'
   const preloadSource = fs.readFileSync(new URL('../electron/preload.ts', import.meta.url), 'utf8');
 
   assert.match(mainSource, /ipcMain\.handle\('configure-tailscale-firewall'/);
-  assert.match(mainSource, /if \(electronTestInstance \|\| process\.env\.TESSERA_DEV_PORT\)/);
+  assert.match(mainSource, /if \(!supportsTailscaleFirewallConfiguration\(\)\)/);
   assert.match(mainSource, /configureTailscaleFirewall\(\{ port: serverPort \}\)/);
-  assert.match(preloadSource, /supportsDirectTailscaleAccess:/);
-  assert.match(preloadSource, /!process\.env\.TESSERA_DEV_PORT/);
-  assert.match(preloadSource, /!process\.env\.TESSERA_ELECTRON_TEST_INSTANCE/);
+  assert.match(preloadSource, /supportsTailscaleFirewallConfiguration: supportsTailscaleFirewallConfiguration\(\)/);
   assert.match(preloadSource, /configureTailscaleFirewall: \(\) => ipcRenderer\.invoke\('configure-tailscale-firewall'\)/);
 });
