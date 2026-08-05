@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tessera CLI"
+  short_description: "Control Tessera Worktrees and Sessions safely"
+  default_prompt: "Use $tessera-cli to create an isolated Tessera Worktree and launch a managed Session with explicit inputs."

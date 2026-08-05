@@ -229,6 +229,34 @@ async function launchDetached(
   });
 }
 
+test('launch preparation finalizes provider argv before shell resolution', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  createTerminalSession('prepared-launch-argv', 'claude-code');
+  const launchSpec = {
+    program: 'claude',
+    args: ['--plugin-dir', '__pending_plugin_dir__'],
+  };
+
+  await manager.startDetached({
+    userId: 'provider-launch-user',
+    terminalId: 'session-prepared-launch-argv',
+    cwd: workspace,
+    sessionId: 'prepared-launch-argv',
+    launchSpec,
+    prepareLaunch: async () => {
+      launchSpec.args[1] = '/home/agent/.tessera/claude-overlay/session/';
+    },
+  });
+
+  assert.match(
+    captured[0]?.args.join(' ') ?? '',
+    /\/home\/agent\/\.tessera\/claude-overlay\/session\//,
+  );
+  assert.doesNotMatch(captured[0]?.args.join(' ') ?? '', /__pending_plugin_dir__/);
+  await manager.closeSession('prepared-launch-argv', 'provider-launch-user');
+});
+
 test('surface and detached launches make the same fresh OpenCode argv decision', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);
@@ -705,9 +733,170 @@ test('shared provider launches inject the complete control bridge environment fo
     assert.equal(childEnv?.TESSERA_CONTROL_DESCRIPTOR, undefined);
     assert.equal(childEnv?.TESSERA_CONTROL_DESCRIPTOR_PATH, undefined);
 
+    let providerSkillPath: string;
+    if (provider === 'claude-code') {
+      const pluginDir = captured[0]?.args.join(' ').match(/'--plugin-dir' '([^']+)'/)?.[1];
+      assert.ok(pluginDir, 'Claude launch should include its Tessera plugin overlay');
+      providerSkillPath = path.join(pluginDir, 'skills', 'tessera-cli', 'SKILL.md');
+    } else if (provider === 'codex') {
+      assert.ok(childEnv?.CODEX_HOME, 'Codex launch should include its overlay home');
+      providerSkillPath = path.join(
+        childEnv.CODEX_HOME,
+        'skills',
+        'tessera-cli',
+        'SKILL.md',
+      );
+    } else {
+      assert.ok(
+        childEnv?.OPENCODE_CONFIG_DIR,
+        'OpenCode launch should include its overlay config directory',
+      );
+      providerSkillPath = path.join(
+        childEnv.OPENCODE_CONFIG_DIR,
+        'skills',
+        'tessera-cli',
+        'SKILL.md',
+      );
+    }
+    assert.equal(
+      fs.readFileSync(providerSkillPath, 'utf8'),
+      fs.readFileSync(path.join(process.cwd(), 'skills', 'tessera-cli', 'SKILL.md'), 'utf8'),
+    );
+
     await manager.closeSession(sessionId, 'provider-launch-user');
+    assert.equal(fs.existsSync(providerSkillPath), false);
     assert.deepEqual(disposed, [sessionId]);
     }
+  }
+});
+
+test('managed fake-provider launches discover the canonical skill in a WSL-like environment', async () => {
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const previousHome = process.env.HOME;
+  const previousPath = process.env.PATH;
+  const previousCodexHome = process.env.CODEX_HOME;
+  const previousTestInstance = process.env.TESSERA_ELECTRON_TEST_INSTANCE;
+  const guestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-managed-wsl-skill-'));
+  const fakeBin = path.join(guestHome, 'bin');
+  const fakeWsl = path.join(fakeBin, 'wsl.exe');
+  const userFiles = [
+    path.join(guestHome, '.claude/settings.json'),
+    path.join(guestHome, '.codex/skills/tessera-cli/SKILL.md'),
+    path.join(guestHome, '.config/opencode/skills/tessera-cli/SKILL.md'),
+  ];
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const sessionIds = ['managed-wsl-claude-code', 'managed-wsl-codex', 'managed-wsl-opencode'];
+  const transientOverlayDirs: string[] = [];
+
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(
+    fakeWsl,
+    '#!/bin/sh\n[ "$1" = "--exec" ] || exit 64\nshift\nexec "$@"\n',
+    { mode: 0o755 },
+  );
+  for (const userFile of userFiles) {
+    fs.mkdirSync(path.dirname(userFile), { recursive: true });
+    fs.writeFileSync(userFile, `user-owned:${path.basename(userFile)}\n`);
+  }
+
+  Object.defineProperty(process, 'platform', {
+    configurable: true,
+    enumerable: true,
+    value: 'win32',
+  });
+  process.env.HOME = guestHome;
+  process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+  process.env.CODEX_HOME = 'C:\\host\\must-not-be-read';
+  delete process.env.TESSERA_ELECTRON_TEST_INSTANCE;
+
+  try {
+    const launcher = modules.createProviderLaunchModule({
+      terminalManager: manager,
+      resolveAgentEnvironment: async () => 'wsl',
+      prepareControlCliBridge: async ({ projectId, sessionId }) => ({
+        commandPath: `/home/agent/.tessera/control/${sessionId}/tessera`,
+        environment: {
+          TESSERA_ENV: '1',
+          TESSERA_CLI_COMMAND: `/home/agent/.tessera/control/${sessionId}/tessera`,
+          TESSERA_PROJECT_ID: projectId,
+          TESSERA_SESSION_ID: sessionId,
+        },
+        dispose: async () => {},
+      }),
+    });
+
+    for (const [index, provider] of ['claude-code', 'codex', 'opencode'].entries()) {
+      const sessionId = sessionIds[index]!;
+      createTerminalSession(sessionId, provider);
+      await launcher.launch({
+        sessionId,
+        userId: 'provider-launch-user',
+        initialPrompt: `discover ${provider}`,
+        mode: 'detached',
+      });
+
+      const spawned = captured[index];
+      assert.equal(spawned?.command, 'wsl.exe');
+      assert.equal(spawned?.env?.TESSERA_ENV, '1');
+      assert.equal(
+        spawned?.env?.TESSERA_CLI_COMMAND,
+        `/home/agent/.tessera/control/${sessionId}/tessera`,
+      );
+      assert.equal(
+        spawned?.env?.WSLENV?.split(':').some((entry) => entry === 'TESSERA_CLI_COMMAND'),
+        true,
+      );
+
+      let skillPath: string;
+      if (provider === 'claude-code') {
+        const pluginDir = spawned?.args.join(' ').match(/--plugin-dir[^/]*(\/[^'\\ ]+)/)?.[1];
+        assert.ok(pluginDir);
+        transientOverlayDirs.push(pluginDir);
+        skillPath = path.join(pluginDir, 'skills/tessera-cli/SKILL.md');
+      } else if (provider === 'codex') {
+        assert.ok(spawned?.env?.CODEX_HOME?.startsWith(guestHome));
+        transientOverlayDirs.push(spawned.env.CODEX_HOME);
+        skillPath = path.join(spawned.env.CODEX_HOME, 'skills/tessera-cli/SKILL.md');
+      } else {
+        assert.ok(spawned?.env?.OPENCODE_CONFIG_DIR?.startsWith(guestHome));
+        skillPath = path.join(
+          spawned.env.OPENCODE_CONFIG_DIR,
+          'skills/tessera-cli/SKILL.md',
+        );
+      }
+      assert.equal(
+        fs.readFileSync(skillPath, 'utf8'),
+        fs.readFileSync(path.join(process.cwd(), 'skills/tessera-cli/SKILL.md'), 'utf8'),
+      );
+    }
+
+    for (const sessionId of sessionIds) {
+      await manager.closeSession(sessionId, 'provider-launch-user');
+    }
+    for (let retry = 0; retry < 50 && transientOverlayDirs.some(fs.existsSync); retry += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    for (const overlayDir of transientOverlayDirs) {
+      assert.equal(fs.existsSync(overlayDir), false);
+    }
+    for (const userFile of userFiles) {
+      assert.equal(
+        fs.readFileSync(userFile, 'utf8'),
+        `user-owned:${path.basename(userFile)}\n`,
+      );
+    }
+  } finally {
+    if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    if (previousTestInstance === undefined) delete process.env.TESSERA_ELECTRON_TEST_INSTANCE;
+    else process.env.TESSERA_ELECTRON_TEST_INSTANCE = previousTestInstance;
+    fs.rmSync(guestHome, { recursive: true, force: true });
   }
 });
 
@@ -803,6 +992,43 @@ test('fresh and resumed launches preserve each provider wrapper contract', async
   }
 
   assert.equal(captured.length, launches.length);
+});
+
+test('a WSL Claude background attach does not prepare a new plugin overlay', async () => {
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', {
+    configurable: true,
+    enumerable: true,
+    value: 'win32',
+  });
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  try {
+    createTerminalSession('wsl-claude-background-attach', 'claude-code', {
+      kind: 'terminal',
+      launched: true,
+      terminalProviderSessionId: '772b268d-7979-4fe7-aecf-50985ccb652f',
+      terminalProviderSessionActivation: 'background',
+    });
+    const launcher = modules.createProviderLaunchModule({
+      terminalManager: manager,
+      resolveAgentEnvironment: async () => 'wsl',
+    });
+
+    await launcher.launch({
+      sessionId: 'wsl-claude-background-attach',
+      userId: 'provider-launch-user',
+      mode: 'detached',
+    });
+
+    assert.match(captured[0]?.args.join(' ') ?? '', /claude.*attach.*772b268d/);
+    assert.doesNotMatch(captured[0]?.args.join(' ') ?? '', /--plugin-dir/);
+  } finally {
+    if (platformDescriptor) {
+      Object.defineProperty(process, 'platform', platformDescriptor);
+    }
+    await manager.closeSession('wsl-claude-background-attach', 'provider-launch-user');
+  }
 });
 
 test('initial prompt validation uses the exact UTF-8 byte boundary for every provider', async () => {

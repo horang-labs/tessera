@@ -10,6 +10,10 @@ import { sessionHistory } from '@/lib/session-history';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { HookCommandStyle } from './hook-command';
 import { buildClaudeHookSettingsJson } from './claude-hook-settings';
+import { createClaudeSkillOverlay } from './claude-skill-overlay';
+import {
+  createClaudeSkillOverlayInWsl,
+} from './claude-skill-overlay-wsl';
 import { createCodexOverlay } from './codex-overlay';
 import {
   createCodexOverlayInWsl,
@@ -271,6 +275,7 @@ async function buildLaunchDecision(
   request: ProviderLaunchRequest,
   persisted: ReturnType<typeof getPersistedProvider>,
   hookCommandStyle: HookCommandStyle,
+  claudePluginDir?: string,
 ): Promise<ProviderLaunchDecision> {
   const { providerId, providerState } = persisted;
 
@@ -290,6 +295,7 @@ async function buildLaunchDecision(
         ?? (providerSession.nativeFork ? 'background' : undefined),
       settingsJson: buildClaudeHookSettingsJson(hookCommandStyle),
       initialPrompt: request.initialPrompt,
+      claudePluginDir,
     });
     return {
       provider: persisted.provider,
@@ -501,13 +507,53 @@ export function createProviderLaunchModule(
           && !wslTerminalRuntime
           ? 'windows-cmd'
           : 'posix';
-        const decision = await buildLaunchDecision(request, persisted, hookCommandStyle);
+        let claudePluginDir: string | undefined;
+        if (persisted.providerId === 'claude-code') {
+          if (wslTerminalRuntime) {
+            claudePluginDir = '__tessera_claude_plugin_pending__';
+          } else {
+            const overlay = createClaudeSkillOverlay(terminalId);
+            resourceDisposers.add(overlay.dispose);
+            claudePluginDir = overlay.pluginDir;
+          }
+        }
+        const decision = await buildLaunchDecision(
+          request,
+          persisted,
+          hookCommandStyle,
+          claudePluginDir,
+        );
         decision.launchSpec.cwd = workDir;
 
         let launchEnv: Record<string, string | undefined> | undefined;
+        let prepareLaunch: (() => Promise<void>) | undefined;
         let launchEnvFactory:
           (() => Promise<Record<string, string | undefined> | undefined>) | undefined;
-        if (decision.providerId === 'codex') {
+        const claudePluginFlagIndex = decision.launchSpec.args?.indexOf('--plugin-dir') ?? -1;
+        if (
+          decision.providerId === 'claude-code'
+          && wslTerminalRuntime
+          && claudePluginFlagIndex >= 0
+          && decision.launchSpec.args
+        ) {
+          const claudeArgs = decision.launchSpec.args;
+          prepareLaunch = async () => {
+            try {
+              const overlay = await createClaudeSkillOverlayInWsl(terminalId);
+              claudeArgs[claudePluginFlagIndex + 1] = overlay.pluginDir;
+              resourceDisposers.add(() => {
+                void overlay.dispose().catch((error) => {
+                  logger.debug({ error }, 'Claude WSL skill overlay cleanup skipped');
+                });
+              });
+            } catch (error) {
+              logger.error({ error, terminalId }, 'Failed to prepare the Claude WSL skill overlay');
+              throw new Error(
+                `Failed to prepare the Claude WSL skill overlay: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+          };
+        } else if (decision.providerId === 'codex') {
           launchEnvFactory = async () => {
             try {
               const overlayHome = wslTerminalRuntime
@@ -643,6 +689,7 @@ export function createProviderLaunchModule(
               }
             : {}),
           launchSpec: decision.launchSpec,
+          prepareLaunch,
           paneToken,
           providerId: decision.providerId,
           detectConversationReset: decision.provider.detectTerminalConversationReset

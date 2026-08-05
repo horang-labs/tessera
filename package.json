@@ -32,6 +32,7 @@
   },
   "files": [
     "bin/",
+    "skills/",
     "dist-server/",
     "!dist-server/**/*.map",
     ".next/",

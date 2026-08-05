@@ -666,6 +666,12 @@ export class TerminalManager {
       assertOpeningActive();
       traceTerminalStage('load-node-pty:after', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal loaded node-pty');
+      if (options.prepareLaunch) {
+        traceTerminalStage('prepare-launch:before', { terminalId: options.terminalId });
+        await options.prepareLaunch();
+        assertOpeningActive();
+        traceTerminalStage('prepare-launch:after', { terminalId: options.terminalId });
+      }
       // A resolved shell already names its own program, argv, and directory, so
       // the cwd allowlist and the shell wrapping below have nothing left to do.
       let shellKind: TerminalShellKind | undefined;

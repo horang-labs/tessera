@@ -7,6 +7,7 @@ export interface ProviderTerminalLaunchInput {
   opencodeResumeId?: string;
   providerSessionActivation?: 'active' | 'background';
   initialPrompt?: string;
+  claudePluginDir?: string;
 }
 
 export interface ProviderTerminalLaunch {
@@ -58,6 +59,7 @@ export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput):
         input.sessionId,
         '--settings',
         input.settingsJson,
+        ...(input.claudePluginDir ? ['--plugin-dir', input.claudePluginDir] : []),
         ...(input.initialPrompt !== undefined ? ['--', input.initialPrompt] : []),
       ],
     };

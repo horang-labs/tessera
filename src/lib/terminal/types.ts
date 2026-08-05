@@ -50,6 +50,11 @@ export interface TerminalCreateOptions {
   rows?: number;
   launchSpec?: TerminalLaunchSpec;
   /**
+   * Finalizes launch-owned resources or argv inside TerminalManager's protected
+   * opening window, before the provider command is shell-quoted.
+   */
+  prepareLaunch?: () => Promise<void>;
+  /**
    * Fully resolved argv that skips cwd validation and shell wrapping. Only the
    * server may supply it, for work it started itself against a directory it
    * just created; a browser transport must go through launchSpec instead.

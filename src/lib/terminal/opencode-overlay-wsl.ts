@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import logger from '@/lib/logger';
 import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
 import { buildOpenCodeHookPluginSource } from './opencode-hook-plugin';
+import { buildPosixTesseraControlSkillMaterialization } from './tessera-control-skill';
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/=]*$/;
 const CREATE_TIMEOUT_MS = 20_000;
@@ -39,6 +40,9 @@ export function buildWslOpenCodeOverlayCreateScript(
     `printf '%s' '${pluginSourceB64}' | base64 -d > "$tmp"`,
     'chmod 600 "$tmp"',
     'mv -f "$tmp" "$plugins/tessera-lifecycle.js"',
+    'skills="$overlay/skills"',
+    'mkdir -p "$skills"',
+    ...buildPosixTesseraControlSkillMaterialization('skills', env),
     `printf '${OVERLAY_REPORT_LABEL}:%s\\n' "$overlay"`,
   ].join('\n');
 }

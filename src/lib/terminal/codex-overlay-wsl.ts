@@ -10,6 +10,10 @@ import {
   serializeCodexTrustBaseline,
 } from './codex-trust-state';
 import type { HookCommandStyle } from './hook-command';
+import {
+  buildPosixTesseraControlSkillMaterialization,
+  TESSERA_CONTROL_SKILL_NAME,
+} from './tessera-control-skill';
 
 /**
  * WSL 게스트 안에 per-terminal CODEX_HOME 오버레이를 만든다 (win32 호스트 +
@@ -103,7 +107,9 @@ export function buildWslCodexOverlayCreateScript(
   return [
     'set -eu',
     `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
-    'src="${CODEX_HOME:-$HOME/.codex}"',
+    // The Windows server may carry its own CODEX_HOME. In a bridged launch it
+    // cannot describe the WSL CLI account, so always resolve from guest HOME.
+    'src="$HOME/.codex"',
     // stale 재생성: 이전 런치 잔여 제거(심링크는 unlink만 → 타깃 무손상).
     'rm -rf "$overlay"',
     'mkdir -p "$overlay"',
@@ -112,11 +118,22 @@ export function buildWslCodexOverlayCreateScript(
     '    name="${entry##*/}"',
     // hooks.json/config.toml은 우리 파일로 대체. `-e`는 dangling 심링크와
     // 매치 실패로 남은 리터럴 글롭을 함께 거른다(호스트 statSync 스킵과 동일).
-    `    case "$name" in .|..|hooks.json|config.toml|${CODEX_OVERLAY_MARKER}|${CODEX_TRUST_BASELINE_FILE}) continue ;; esac`,
+    `    case "$name" in .|..|hooks.json|config.toml|skills|${CODEX_OVERLAY_MARKER}|${CODEX_TRUST_BASELINE_FILE}) continue ;; esac`,
     '    [ -e "$entry" ] || continue',
     '    ln -s "$src/$name" "$overlay/$name" 2>/dev/null || true',
     '  done',
     'fi',
+    'skills="$overlay/skills"',
+    'mkdir -p "$skills"',
+    'if [ -d "$src/skills" ]; then',
+    '  for entry in "$src"/skills/* "$src"/skills/.*; do',
+    '    name="${entry##*/}"',
+    `    case "$name" in .|..|${TESSERA_CONTROL_SKILL_NAME}) continue ;; esac`,
+    '    [ -e "$entry" ] || continue',
+    '    ln -s "$src/skills/$name" "$skills/$name" 2>/dev/null || true',
+    '  done',
+    'fi',
+    ...buildPosixTesseraControlSkillMaterialization('skills', env),
     `printf '%s' '${hooksJsonB64}' | base64 -d > "$overlay/hooks.json"`,
     'chmod 600 "$overlay/hooks.json"',
     // 호스트가 파싱하는 보고 라인들. --exec sh는 non-login이라 rc 노이즈가 없다.

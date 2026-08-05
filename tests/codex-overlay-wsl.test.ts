@@ -21,10 +21,14 @@ import {
  * 게스트 스크립트는 순수 POSIX sh다 — 서버가 win32에서 wsl.exe로 흘려보내는 것과
  * 동일한 내용을 이 리눅스 테스트 환경의 sh로 직접 실행해 게스트측 동작을 검증한다.
  */
-function runScript(script: string, home: string): string {
+function runScript(
+  script: string,
+  home: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+): string {
   return execFileSync('sh', ['-s'], {
     input: script,
-    env: { ...process.env, HOME: home, CODEX_HOME: '' },
+    env: { ...process.env, HOME: home, CODEX_HOME: '', ...extraEnv },
     encoding: 'utf8',
   });
 }
@@ -41,6 +45,12 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
   fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "gpt-5.4"\n\n[hooks.state."stale"]\nenabled = true\n');
   fs.writeFileSync(path.join(codexHome, 'hooks.json'), '{"user":"hooks"}');
   fs.writeFileSync(path.join(codexHome, '.hidden-file'), 'hidden');
+  const accountControlSkill = path.join(codexHome, 'skills', 'tessera-cli', 'SKILL.md');
+  const accountOtherSkill = path.join(codexHome, 'skills', 'user-skill', 'SKILL.md');
+  fs.mkdirSync(path.dirname(accountControlSkill), { recursive: true });
+  fs.mkdirSync(path.dirname(accountOtherSkill), { recursive: true });
+  fs.writeFileSync(accountControlSkill, 'user-owned Tessera skill\n');
+  fs.writeFileSync(accountOtherSkill, 'user-owned other skill\n');
 
   try {
     const hooksJson = '{"hooks":{}}\n';
@@ -60,6 +70,21 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
     assert.equal(fs.readlinkSync(path.join(overlay!, 'auth.json')), path.join(codexHome, 'auth.json'));
     assert.equal(fs.readlinkSync(path.join(overlay!, 'sessions')), path.join(codexHome, 'sessions'));
     assert.equal(fs.readlinkSync(path.join(overlay!, '.hidden-file')), path.join(codexHome, '.hidden-file'));
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/SKILL.md'), 'utf8'),
+      fs.readFileSync(path.join(process.cwd(), 'skills/tessera-cli/SKILL.md'), 'utf8'),
+    );
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/agents/openai.yaml'), 'utf8'),
+      fs.readFileSync(
+        path.join(process.cwd(), 'skills/tessera-cli/agents/openai.yaml'),
+        'utf8',
+      ),
+    );
+    assert.equal(
+      fs.readlinkSync(path.join(overlay!, 'skills/user-skill')),
+      path.join(codexHome, 'skills', 'user-skill'),
+    );
     // hooks.json은 우리 파일(심링크 아님), config.toml은 아직 없음(2차에서 기록).
     assert.equal(fs.lstatSync(path.join(overlay!, 'hooks.json')).isSymbolicLink(), false);
     assert.equal(fs.readFileSync(path.join(overlay!, 'hooks.json'), 'utf8'), hooksJson);
@@ -95,6 +120,8 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
     runScript(buildWslCodexOverlayCleanupScript('terminal-wsl-test'), home);
     assert.equal(fs.existsSync(overlay!), false);
     assert.equal(fs.existsSync(path.join(codexHome, 'auth.json')), true);
+    assert.equal(fs.readFileSync(accountControlSkill, 'utf8'), 'user-owned Tessera skill\n');
+    assert.equal(fs.readFileSync(accountOtherSkill, 'utf8'), 'user-owned other skill\n');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -112,6 +139,28 @@ test('WSL overlay create script tolerates a missing codex home', () => {
     assert.equal(fs.readFileSync(path.join(overlay!, 'hooks.json'), 'utf8'), '{}');
     // config가 없으면 보고 라인도 없다.
     assert.equal(readWslOverlayReport(stdout, 'TESSERA_CONFIG_B64'), undefined);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('WSL overlay ignores a host-side CODEX_HOME value', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-home-'));
+  const guestCodexHome = path.join(home, '.codex');
+  fs.mkdirSync(guestCodexHome, { recursive: true });
+  fs.writeFileSync(path.join(guestCodexHome, 'auth.json'), '{"guest":true}\n');
+  try {
+    const stdout = runScript(
+      buildWslCodexOverlayCreateScript('terminal-wsl-home', b64('{}')),
+      home,
+      { CODEX_HOME: 'C:\\host\\codex-home' },
+    );
+    const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
+    assert.equal(readWslOverlayReport(stdout, 'TESSERA_SRC'), guestCodexHome);
+    assert.equal(
+      fs.readlinkSync(path.join(overlay!, 'auth.json')),
+      path.join(guestCodexHome, 'auth.json'),
+    );
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
