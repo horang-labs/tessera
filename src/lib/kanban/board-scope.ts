@@ -51,3 +51,17 @@ export function collectKanbanScopeData(
     ),
   };
 }
+
+export function filterKanbanTasks(
+  tasks: TaskEntity[],
+  visibleTaskSessions: UnifiedSession[],
+  collectionId: string | null,
+): TaskEntity[] {
+  const visibleTaskSessionIds = new Set(visibleTaskSessions.map((session) => session.id));
+  return tasks.filter((task) => {
+    const hasVisibleSession = task.sessions.length === 0
+      || task.sessions.some((session) => visibleTaskSessionIds.has(session.id));
+    const isInCollection = !collectionId || task.collectionId === collectionId;
+    return hasVisibleSession && isInCollection;
+  });
+}

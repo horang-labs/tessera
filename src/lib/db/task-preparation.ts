@@ -18,6 +18,7 @@ import {
   type PreparationPhase,
   type PreparationStatus,
 } from '@/lib/projects/preparation-status-policy';
+import { PARENT_FIRST_WORKTREE_PATH_SQL } from './worktree-identity';
 
 /** Enough of the tail to show why a run failed, without storing a build log. */
 const MAX_STORED_OUTPUT_CHARS = 64 * 1024;
@@ -59,7 +60,7 @@ export interface TaskPreparationContext {
   /** The original checkout the worktree was created from. */
   projectDir: string;
   branchName: string | null;
-  /** The worktree itself, taken from a session that works in it. */
+  /** The parent-owned checkout, with a temporary child fallback for legacy data. */
   worktreePath: string | null;
 }
 
@@ -68,17 +69,12 @@ export function getTaskPreparationContext(taskId: string): TaskPreparationContex
   const db = getDb();
   const row = db.prepare(`
     SELECT
-      t.id AS id,
-      t.project_id AS project_id,
-      t.worktree_branch AS worktree_branch,
-      (
-        SELECT s.work_dir
-        FROM sessions s
-        WHERE s.task_id = t.id AND s.work_dir IS NOT NULL AND s.deleted = 0
-        LIMIT 1
-      ) AS work_dir
-    FROM tasks t
-    WHERE t.id = ?
+      tasks.id AS id,
+      tasks.project_id AS project_id,
+      tasks.worktree_branch AS worktree_branch,
+      ${PARENT_FIRST_WORKTREE_PATH_SQL} AS work_dir
+    FROM tasks
+    WHERE tasks.id = ?
   `).get(taskId) as {
     id: string;
     project_id: string;

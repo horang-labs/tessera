@@ -11,6 +11,7 @@ process.env.TESSERA_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'tessera-terminal
 process.env.NODE_ENV = 'test';
 
 let TerminalManager: typeof import('@/lib/terminal/terminal-manager').TerminalManager;
+let TerminalSessionWaitTimeoutError: typeof import('@/lib/terminal/terminal-manager').TerminalSessionWaitTimeoutError;
 let workspace = '';
 
 before(async () => {
@@ -21,6 +22,7 @@ before(async () => {
     import('@/lib/terminal/terminal-manager'),
   ]);
   TerminalManager = terminalModule.TerminalManager;
+  TerminalSessionWaitTimeoutError = terminalModule.TerminalSessionWaitTimeoutError;
   await initDatabase();
   workspace = mkdtempSync(path.join(tmpdir(), 'tessera-terminal-workspace-'));
   registerProject('terminal-test-project', workspace, 'Terminal test project');
@@ -229,6 +231,29 @@ test('terminal reservations isolate concurrent sessions before either PTY starts
   await manager.shutdownAll();
 });
 
+test('detached startup reports whether failure happened after PTY spawn', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      createHeadlessModel: () => {
+        throw new Error('forced model initialization failure');
+      },
+    },
+  );
+
+  await assert.rejects(
+    manager.startDetached(createOptions()),
+    (error: unknown) => error instanceof Error
+      && 'runtimeSpawned' in error
+      && error.runtimeSpawned === true,
+  );
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0]?.killCount, 1);
+});
+
 test('session PTY lifecycle reports running until the process exits', async () => {
   const spawned: FakePty[] = [];
   const runtimeStates: Array<{
@@ -270,6 +295,388 @@ test('session PTY lifecycle reports running until the process exits', async () =
     { sessionId: 'session-a', terminalId: 'terminal-a', userId: 'user-a', running: false },
   ]);
   assert.deepEqual([...manager.getActiveSessionIds('user-a')], []);
+});
+
+test('server-side Session snapshots expose the bounded live screen and normalized lifecycle', async () => {
+  const delivered: ServerTransportMessage[] = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+  );
+
+  await manager.startDetached(createOptions({ cols: 12, rows: 4 }));
+  spawned[0].emitData('\x1b[?1049hhello world');
+  await nextImmediate();
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'completed',
+    hookEvent: 'Stop',
+    stateAt: 1234,
+    preview: 'response\u0000ready',
+  }, 'user-a');
+
+  assert.deepEqual(await manager.readSessionSnapshot('session-a', 'user-a'), {
+    screen: 'hello world',
+    cols: 12,
+    rows: 4,
+    alternateScreen: true,
+    outputSequence: 1,
+    terminalId: 'terminal-a',
+    runtimeState: 'turn-complete',
+    stateAt: 1234,
+    lifecyclePreview: 'responseready',
+  });
+  assert.deepEqual(delivered, [], 'reading must not attach a terminal surface');
+});
+
+test('semantic Session prompts use one bracketed paste, synthesize running, and delay Enter', async () => {
+  const spawned: FakePty[] = [];
+  const lifecycle: ServerTransportMessage[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      semanticPromptSubmitDelayMs: 20,
+      onSessionStateChange: ({ message }) => lifecycle.push(message),
+    },
+  );
+  await manager.startDetached(createOptions());
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'completed',
+    hookEvent: 'Stop',
+    stateAt: 100,
+  }, 'user-a');
+
+  const submitted = await manager.submitSessionPrompt(
+    'session-a',
+    'user-a',
+    'first line\r\nsecond line\n\x1b[201~\x1b[31mvisible escape',
+  );
+
+  assert.deepEqual(spawned[0].writes, [
+    '\x1b[200~first line\rsecond line\r␛[201~␛[31mvisible escape\x1b[201~',
+  ]);
+  assert.equal(submitted.runtimeState, 'running');
+  assert.equal(submitted.terminalId, 'terminal-a');
+  assert.equal(
+    lifecycle.at(-1)?.type === 'session_state' ? lifecycle.at(-1)?.hookEvent : undefined,
+    'ControlPromptSubmit',
+  );
+  await assert.rejects(
+    manager.waitForSessionState('session-a', 'user-a', 'turn-complete', 5),
+    TerminalSessionWaitTimeoutError,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(spawned[0].writes, [
+    '\x1b[200~first line\rsecond line\r␛[201~␛[31mvisible escape\x1b[201~',
+    '\r',
+  ]);
+});
+
+test('named Session keys preserve their closed-set order and unavailable input writes nothing', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+  );
+  await manager.startDetached(createOptions());
+
+  const snapshot = await manager.sendSessionKeys('session-a', 'user-a', [
+    'enter', 'escape', 'ctrl-c', 'up', 'down', 'left', 'right',
+  ]);
+  assert.deepEqual(spawned[0].writes, [
+    '\r', '\x1b', '\x03', '\x1b[A', '\x1b[B', '\x1b[D', '\x1b[C',
+  ]);
+  assert.equal(snapshot.terminalId, 'terminal-a');
+
+  await assert.rejects(
+    manager.submitSessionPrompt('session-a', 'user-a', '   \n'),
+    (error: unknown) => error instanceof Error && error.name === 'TerminalSessionInputError',
+  );
+  await assert.rejects(
+    manager.sendSessionKeys('missing-session', 'user-a', ['enter']),
+    (error: unknown) => error instanceof Error && error.name === 'TerminalSessionRuntimeNotRunningError',
+  );
+  assert.equal(spawned[0].writes.length, 7);
+});
+
+test('stopping a Session waits for runtime exit and leaves its lifecycle observable', async () => {
+  const spawned: FakePty[] = [];
+  const runtimeStates: boolean[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      onSessionRuntimeStateChange: ({ running }) => runtimeStates.push(running),
+    },
+  );
+  await manager.startDetached(createOptions());
+
+  const stopped = await manager.stopSessionRuntime('session-a', 'user-a');
+
+  assert.equal(spawned[0].killCount, 1);
+  assert.equal(stopped.runtimeState, 'exited');
+  assert.equal(stopped.terminalId, 'terminal-a');
+  assert.deepEqual(runtimeStates, [true, false]);
+  assert.deepEqual([...manager.getActiveSessionIds('user-a')], []);
+  await assert.rejects(
+    manager.stopSessionRuntime('session-a', 'user-a'),
+    (error: unknown) => error instanceof Error
+      && error.name === 'TerminalSessionRuntimeNotRunningError',
+  );
+});
+
+test('Session snapshots keep visible text and output sequence on one parser boundary', async () => {
+  const spawned: FakePty[] = [];
+  let visibleText = '';
+  let releaseSnapshot!: () => void;
+  let markSnapshotStarted!: () => void;
+  const snapshotGate = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+  const snapshotStarted = new Promise<void>((resolve) => { markSnapshotStarted = resolve; });
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      createHeadlessModel: (cols, rows) => ({
+        write: (data) => { visibleText += data; },
+        resize: () => {},
+        snapshot: async () => {
+          const boundaryText = visibleText;
+          markSnapshotStarted();
+          await snapshotGate;
+          return {
+            data: '',
+            cols,
+            rows,
+            alternateScreen: false,
+            visibleText: boundaryText,
+          };
+        },
+        readVisibleText: () => visibleText,
+        dispose: () => {},
+      }),
+    },
+  );
+
+  await manager.startDetached(createOptions());
+  spawned[0].emitData('first boundary');
+  await nextImmediate();
+
+  const reading = manager.readSessionSnapshot('session-a', 'user-a');
+  await snapshotStarted;
+  spawned[0].emitData(' later output');
+  await nextImmediate();
+  releaseSnapshot();
+
+  const snapshot = await reading;
+  assert.equal(snapshot.screen, 'first boundary');
+  assert.equal(snapshot.outputSequence, 1);
+});
+
+test('Session waiters observe early and late lifecycle transitions without attaching or spawning', async () => {
+  const delivered: ServerTransportMessage[] = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+  );
+
+  await manager.startDetached(createOptions());
+  const first = manager.waitForSessionState('session-a', 'user-a', 'running', 1_000);
+  const second = manager.waitForSessionState('session-a', 'user-a', 'running', 1_000);
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+    stateAt: 2000,
+  }, 'user-a');
+
+  const snapshots = await Promise.all([first, second]);
+  assert.ok(snapshots.every((snapshot) => (
+    snapshot.runtimeState === 'running' && snapshot.stateAt === 2000
+  )));
+  assert.equal(
+    (await manager.waitForSessionState('session-a', 'user-a', 'running', 1_000)).runtimeState,
+    'running',
+    'a waiter registered after the transition must resolve from current state',
+  );
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(delivered, [], 'waiting must not attach a terminal surface');
+});
+
+test('Session runtime-exit waiters receive the final screen and unsupported progress times out', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+  );
+
+  assert.equal(
+    (await manager.readSessionSnapshot('session-a', 'user-a')).runtimeState,
+    'exited',
+  );
+  await manager.startDetached(createOptions());
+  spawned[0].emitData('final screen');
+  await nextImmediate();
+  const exited = manager.waitForSessionState(
+    'session-a',
+    'user-a',
+    'runtime-exit',
+    1_000,
+  );
+  spawned[0].emitExit(17);
+
+  const finalSnapshot = await exited;
+  assert.equal(finalSnapshot.runtimeState, 'exited');
+  assert.equal(finalSnapshot.terminalId, 'terminal-a');
+  assert.equal(finalSnapshot.screen, 'final screen');
+  assert.equal(finalSnapshot.outputSequence, 1);
+  assert.equal(
+    (await manager.readSessionSnapshot('session-a', 'user-a')).terminalId,
+    null,
+    'a later read must not claim a durable transcript or live terminal',
+  );
+  await assert.rejects(
+    manager.waitForSessionState('session-a', 'user-a', 'running', 10),
+    (error: unknown) => error instanceof TerminalSessionWaitTimeoutError
+      && error.condition === 'running',
+  );
+});
+
+test('Session observation reports starting while a detached PTY is still opening', async () => {
+  const spawned: FakePty[] = [];
+  let releaseLoader!: () => void;
+  const loaderGate = new Promise<void>((resolve) => { releaseLoader = resolve; });
+  const manager = new TerminalManager(
+    () => {},
+    async () => {
+      await loaderGate;
+      return createFactory(spawned);
+    },
+  );
+
+  const opening = manager.startDetached(createOptions());
+  const starting = await manager.readSessionSnapshot('session-a', 'user-a');
+  assert.equal(starting.runtimeState, 'starting');
+  assert.equal(starting.terminalId, 'terminal-a');
+  assert.equal(typeof starting.stateAt, 'number');
+
+  const running = manager.waitForSessionState('session-a', 'user-a', 'running', 1_000);
+  releaseLoader();
+  await opening;
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+    stateAt: 5000,
+  }, 'user-a');
+  assert.equal((await running).stateAt, 5000);
+  assert.equal(spawned.length, 1);
+});
+
+test('runtime-exit waiters observe a detached PTY that fails while opening', async () => {
+  let releaseLoader!: () => void;
+  const loaderGate = new Promise<void>((resolve) => { releaseLoader = resolve; });
+  const manager = new TerminalManager(
+    () => {},
+    async () => {
+      await loaderGate;
+      throw new Error('forced loader failure');
+    },
+  );
+
+  const opening = manager.startDetached(createOptions());
+  const exited = manager.waitForSessionState(
+    'session-a',
+    'user-a',
+    'runtime-exit',
+    1_000,
+  );
+  releaseLoader();
+
+  await assert.rejects(opening, /forced loader failure/);
+  const snapshot = await exited;
+  assert.equal(snapshot.runtimeState, 'exited');
+  assert.equal(snapshot.terminalId, 'terminal-a');
+  assert.equal(typeof snapshot.stateAt, 'number');
+});
+
+test('Session snapshots bound and sanitize screen output and lifecycle previews', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      createHeadlessModel: (cols, rows) => ({
+        write: () => {},
+        resize: () => {},
+        snapshot: async () => ({ data: '', cols, rows, alternateScreen: false }),
+        readVisibleText: () => `${'x'.repeat(64_100)}\u0000tail`,
+        dispose: () => {},
+      }),
+    },
+  );
+
+  await manager.startDetached(createOptions());
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'input_required',
+    hookEvent: 'PermissionRequest',
+    stateAt: 6000,
+    preview: `${'p'.repeat(2_100)}\u0000tail`,
+  }, 'user-a');
+
+  const snapshot = await manager.readSessionSnapshot('session-a', 'user-a');
+  assert.equal(snapshot.runtimeState, 'input-required');
+  assert.equal(snapshot.screen.length, 64_000);
+  assert.equal(snapshot.screen.includes('\u0000'), false);
+  assert.equal(snapshot.screen.endsWith('tail'), true);
+  assert.equal(snapshot.lifecyclePreview?.length, 2_000);
+  assert.equal(snapshot.lifecyclePreview?.includes('\u0000'), false);
+});
+
+test('Session snapshot lifecycle names are provider boundaries, never workflow completion', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+  );
+  await manager.startDetached(createOptions());
+
+  for (const [status, expected] of [
+    ['idle', 'idle'],
+    ['running', 'running'],
+    ['input_required', 'input-required'],
+    ['completed', 'turn-complete'],
+  ] as const) {
+    manager.recordSessionState({
+      type: 'session_state',
+      sessionId: 'session-a',
+      terminalId: 'terminal-a',
+      status,
+      hookEvent: 'TestLifecycle',
+      stateAt: 7000,
+    }, 'user-a');
+    const snapshot = await manager.readSessionSnapshot('session-a', 'user-a');
+    assert.equal(snapshot.runtimeState, expected);
+    assert.equal(JSON.stringify(snapshot).includes('done'), false);
+  }
 });
 
 test('a provider-declared single Escape settles a running turn when the stop hook is omitted', async () => {

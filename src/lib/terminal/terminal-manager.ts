@@ -12,7 +12,7 @@ import {
   resolveTerminalShell,
 } from './terminal-resolver';
 import { getServerPort } from '@/lib/server-port';
-import { revokePaneTokensForTerminal } from './pane-token-registry';
+import { revokePaneToken, revokePaneTokensForTerminal } from './pane-token-registry';
 import { cleanupCodexOverlayForTerminal } from './codex-overlay';
 import { cleanupCodexOverlayInWsl } from './codex-overlay-wsl';
 import {
@@ -38,6 +38,15 @@ import type {
   TerminalResolvedShell,
   TerminalShellKind,
 } from './types';
+import {
+  bracketSemanticPrompt,
+  isTerminalNamedKey,
+  normalizeSemanticPrompt,
+  terminalNamedKeySequence,
+  type TerminalNamedKey,
+} from './session-control-input';
+
+export type { TerminalNamedKey } from './session-control-input';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { shouldReleasePreviewRuntime } from './terminal-preview-policy';
 import { TerminalResizeOutputTransaction } from './terminal-resize-output-transaction';
@@ -55,6 +64,8 @@ export type ObserveTerminalSessionRuntime = (
   info: TerminalSessionRuntimeInfo,
 ) => void | (() => void) | Promise<void | (() => void)>;
 const MAX_REPLAY_BUFFER_CHARS = 200_000;
+const MAX_SESSION_SCREEN_CHARS = 64_000;
+const MAX_SESSION_LIFECYCLE_PREVIEW_CHARS = 2_000;
 const MAX_TERMINAL_COLS = 1_000;
 const MAX_TERMINAL_ROWS = 500;
 // 슬래시 fallback 프리필 타이밍 휴리스틱 (PTY 실측 기반)
@@ -141,7 +152,8 @@ function buildTerminalEnv(
   // Provider-specific launch metadata inherited by the PTY child process.
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
-      if (v !== undefined) nextEnv[k] = v;
+      if (v === undefined) delete nextEnv[k];
+      else nextEnv[k] = v;
     }
   }
 
@@ -168,6 +180,7 @@ interface TerminalRuntime {
   interruptInputPolicy: NonNullable<TerminalCreateOptions['interruptInputPolicy']>;
   generation: number;
   sequence: number;
+  runtimeStateAt: number;
   ended: boolean;
   exitEvent?: { exitCode: number; signal?: number };
   cwd: string;
@@ -214,13 +227,49 @@ interface TerminalRuntime {
   reboundFromSessionIds: Set<string>;
   previewOwnerToken?: string;
   onRuntimeExit?: TerminalCreateOptions['onRuntimeExit'];
+  pendingSessionSnapshots: Set<Promise<void>>;
+}
+
+export type TerminalSessionRuntimeState =
+  | 'starting'
+  | 'idle'
+  | 'running'
+  | 'input-required'
+  | 'turn-complete'
+  | 'exited';
+
+export interface TerminalSessionSnapshot {
+  screen: string;
+  cols: number | null;
+  rows: number | null;
+  alternateScreen: boolean;
+  outputSequence: number;
+  terminalId: string | null;
+  runtimeState: TerminalSessionRuntimeState;
+  stateAt: number | null;
+  lifecyclePreview?: string;
+}
+
+export type TerminalSessionWaitCondition =
+  | 'running'
+  | 'turn-complete'
+  | 'input-required'
+  | 'runtime-exit';
+
+interface TerminalSessionWaiter {
+  condition: TerminalSessionWaitCondition;
+  resolve: (snapshot: TerminalSessionSnapshot) => void;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 /** The runtime only needs these members; tests can inject a stub model. */
 export type TerminalHeadlessModelLike = Pick<
   TerminalHeadlessModel,
   'write' | 'resize' | 'snapshot' | 'readVisibleText' | 'dispose'
-> & Partial<Pick<TerminalHeadlessModel, 'whenSettled' | 'cursorPosition'>>;
+> & Partial<Pick<
+  TerminalHeadlessModel,
+  'whenSettled' | 'cursorPosition' | 'isAlternateScreen'
+>>;
 
 export interface TerminalManagerOptions {
   closeExitGraceMs?: number;
@@ -232,6 +281,8 @@ export interface TerminalManagerOptions {
    * instead of freezing the reattaching surface forever.
    */
   snapshotTimeoutMs?: number;
+  /** Delay between a semantic bracketed paste and its submit key. */
+  semanticPromptSubmitDelayMs?: number;
   createHeadlessModel?: (cols: number, rows: number) => TerminalHeadlessModelLike;
   onSessionRuntimeStateChange?: (state: {
     sessionId: string;
@@ -304,13 +355,16 @@ function appendWslenv(
   env: NodeJS.ProcessEnv,
   entries: Array<{ name: string; path?: boolean }>,
 ): void {
-  const existing = (env.WSLENV ?? '').split(':').filter(Boolean);
+  const existing = (env.WSLENV ?? '').split(':').filter((entry) => (
+    Boolean(entry) && env[entry.split('/')[0]] !== undefined
+  ));
   const byName = new Map(existing.map((entry) => [entry.split('/')[0], entry]));
   for (const entry of entries) {
     if (env[entry.name] === undefined) continue;
     byName.set(entry.name, `${entry.name}${entry.path ? '/p' : ''}`);
   }
   if (byName.size > 0) env.WSLENV = [...byName.values()].join(':');
+  else delete env.WSLENV;
 }
 
 async function loadNodePty(): Promise<TerminalPtyFactory> {
@@ -366,6 +420,8 @@ function traceTerminalStage(stage: string, metadata: Record<string, unknown> = {
   }
 }
 
+export type TerminalLaunchRuntimeState = 'unowned' | 'opening' | 'spawned';
+
 export class TerminalManager {
   private readonly terminals = new Map<string, TerminalRuntime>();
   private readonly openingTerminals = new Map<string, Promise<TerminalRuntime>>();
@@ -379,6 +435,11 @@ export class TerminalManager {
   private readonly disconnectedConnections = new Set<string>();
   private readonly blockedSessions = new Set<string>();
   private readonly cancelledOpeningKeys = new Set<string>();
+  private readonly sessionWaiters = new Map<string, Set<TerminalSessionWaiter>>();
+  private readonly openingSessionObservations = new Map<string, {
+    terminalId: string;
+    stateAt: number;
+  }>();
   private shuttingDown = false;
 
   constructor(
@@ -393,14 +454,7 @@ export class TerminalManager {
       ? this.getSessionKey(options.userId, options.sessionId)
       : null;
     if (this.shuttingDown || (blockedSessionKey && this.blockedSessions.has(blockedSessionKey))) {
-      if (options.sessionId) this.clearTerminalReservation(options.userId, options.sessionId);
-      if (options.launchSpec?.handoffSessionId) {
-        releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
-      }
-      options.launchObserverDisposer?.();
-      revokePaneTokensForTerminal(options.terminalId);
-      cleanupCodexOverlayForTerminal(options.terminalId);
-      cleanupCodexOverlayInWsl(options.terminalId);
+      this.disposeUnspawnedLaunch(options);
       this.sendToConnection(options.connectionId, {
         type: 'terminal_error',
         terminalId: options.terminalId,
@@ -452,6 +506,7 @@ export class TerminalManager {
       if (!opening) {
         createdByRequest = true;
         this.cancelledOpeningKeys.delete(key);
+        this.recordOpeningSession(resolvedOptions);
         opening = this.spawnRuntime(resolvedOptions, key);
         this.openingTerminals.set(openingKey, opening);
         this.openingByTerminalKey.set(key, opening);
@@ -468,6 +523,7 @@ export class TerminalManager {
             this.openingSessionByTerminalKey.delete(key);
             this.openingPreviewOwnerByTerminalKey.delete(key);
           }
+          this.clearOpeningSession(resolvedOptions);
           this.cancelledOpeningKeys.delete(key);
         }).catch(() => {});
       }
@@ -475,6 +531,13 @@ export class TerminalManager {
       try {
         runtime = await opening;
       } catch (error) {
+        if (resolvedOptions.sessionId) {
+          this.notifySessionWithoutRuntime(
+            resolvedOptions.sessionId,
+            resolvedOptions.userId,
+            resolvedOptions.terminalId,
+          );
+        }
         if (!createdByRequest) {
           options.launchObserverDisposer?.();
         }
@@ -514,26 +577,42 @@ export class TerminalManager {
   async startDetached(
     options: Omit<TerminalCreateOptions, 'connectionId' | 'surfaceId'>,
   ): Promise<void> {
-    if (this.shuttingDown) return;
+    if (this.shuttingDown) {
+      this.disposeUnspawnedLaunch(options);
+      throw new Error('Terminal host is shutting down.');
+    }
 
     const key = this.getKey(options.userId, options.terminalId);
-    if (this.terminals.has(key) || this.openingByTerminalKey.has(key)) return;
+    const openingKey = this.getOpeningKey(
+      options.userId,
+      options.terminalId,
+      options.sessionId,
+    );
+    const ownedRuntime = this.terminals.get(key);
+    const ownedOpening = this.openingTerminals.get(openingKey);
+    if (
+      (ownedRuntime && (!options.sessionId || ownedRuntime.sessionId === options.sessionId))
+      || ownedOpening
+    ) {
+      this.disposeSupersededLaunch(options);
+      if (ownedOpening) await ownedOpening;
+      return;
+    }
+    if (this.terminals.has(key) || this.openingByTerminalKey.has(key)) {
+      this.disposeUnspawnedLaunch(options);
+      throw new Error('The Session already has a live PTY runtime.');
+    }
 
     const resolvedOptions: TerminalCreateOptions = {
       ...options,
       connectionId: DETACHED_CONNECTION_ID,
       surfaceId: DETACHED_SURFACE_ID,
     };
-    const openingKey = this.getOpeningKey(
-      resolvedOptions.userId,
-      resolvedOptions.terminalId,
-      resolvedOptions.sessionId,
-    );
-
     // Registered the same way create() registers its own, so a surface that
     // attaches while this is still starting awaits this PTY instead of
     // spawning a second one for the same terminal.
     this.cancelledOpeningKeys.delete(key);
+    this.recordOpeningSession(resolvedOptions);
     const opening = this.spawnRuntime(resolvedOptions, key);
     this.openingTerminals.set(openingKey, opening);
     this.openingByTerminalKey.set(key, opening);
@@ -546,10 +625,22 @@ export class TerminalManager {
         this.openingByTerminalKey.delete(key);
         this.openingSessionByTerminalKey.delete(key);
       }
+      this.clearOpeningSession(resolvedOptions);
       this.cancelledOpeningKeys.delete(key);
     }).catch(() => {});
 
-    await opening;
+    try {
+      await opening;
+    } catch (error) {
+      if (resolvedOptions.sessionId) {
+        this.notifySessionWithoutRuntime(
+          resolvedOptions.sessionId,
+          resolvedOptions.userId,
+          resolvedOptions.terminalId,
+        );
+      }
+      throw error;
+    }
   }
 
   private async spawnRuntime(
@@ -575,6 +666,12 @@ export class TerminalManager {
       assertOpeningActive();
       traceTerminalStage('load-node-pty:after', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal loaded node-pty');
+      if (options.prepareLaunch) {
+        traceTerminalStage('prepare-launch:before', { terminalId: options.terminalId });
+        await options.prepareLaunch();
+        assertOpeningActive();
+        traceTerminalStage('prepare-launch:after', { terminalId: options.terminalId });
+      }
       // A resolved shell already names its own program, argv, and directory, so
       // the cwd allowlist and the shell wrapping below have nothing left to do.
       let shellKind: TerminalShellKind | undefined;
@@ -643,6 +740,10 @@ export class TerminalManager {
       );
       if (shellKind === 'wsl') {
         appendWslenv(terminalEnv, [
+          { name: 'TESSERA_ENV' },
+          { name: 'TESSERA_CLI_COMMAND' },
+          { name: 'TESSERA_PROJECT_ID' },
+          { name: 'TESSERA_WORKTREE_ID' },
           { name: 'TESSERA_PANE_TOKEN' },
           { name: 'TESSERA_SESSION_ID' },
           { name: 'TESSERA_HOOK_PORT' },
@@ -722,6 +823,7 @@ export class TerminalManager {
         interruptInputPolicy: options.interruptInputPolicy ?? 'none',
         generation,
         sequence: 0,
+        runtimeStateAt: Date.now(),
         ended: false,
         cwd: shell.displayCwd ?? shell.cwd,
         shell: shell.command,
@@ -753,6 +855,7 @@ export class TerminalManager {
         reboundFromSessionIds: new Set(),
         previewOwnerToken: options.previewOwnerToken,
         onRuntimeExit: options.onRuntimeExit,
+        pendingSessionSnapshots: new Set(),
       };
       if (options.appearance) {
         runtime.appearanceController = createTerminalAppearanceController(
@@ -903,12 +1006,7 @@ export class TerminalManager {
 
       return runtime;
     } catch (error) {
-      if (options.sessionId) {
-        this.clearTerminalReservation(options.userId, options.sessionId, options.terminalId);
-      }
-      if (options.launchSpec?.handoffSessionId) {
-        releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
-      }
+      const runtimeSpawned = terminalProcess !== null;
       try {
         terminalProcess?.kill();
       } catch {
@@ -918,12 +1016,35 @@ export class TerminalManager {
       if (this.terminals.get(key)?.process === terminalProcess) {
         this.terminals.delete(key);
       }
-      revokePaneTokensForTerminal(options.terminalId);
-      cleanupCodexOverlayForTerminal(options.terminalId);
-      cleanupCodexOverlayInWsl(options.terminalId);
-      options.launchObserverDisposer?.();
-      throw error;
+      this.disposeUnspawnedLaunch(options);
+      throw new TerminalRuntimeStartError(
+        error instanceof Error ? error.message : 'Failed to start terminal runtime.',
+        runtimeSpawned,
+        { cause: error },
+      );
     }
+  }
+
+  private disposeUnspawnedLaunch(
+    options: Omit<TerminalCreateOptions, 'connectionId' | 'surfaceId'>,
+  ): void {
+    if (options.sessionId) {
+      this.clearTerminalReservation(options.userId, options.sessionId, options.terminalId);
+    }
+    if (options.launchSpec?.handoffSessionId) {
+      releaseTerminalHandoffByTerminal(options.userId, options.terminalId);
+    }
+    options.launchObserverDisposer?.();
+    if (options.paneToken) revokePaneToken(options.paneToken);
+    cleanupCodexOverlayForTerminal(options.terminalId);
+    cleanupCodexOverlayInWsl(options.terminalId);
+  }
+
+  private disposeSupersededLaunch(
+    options: Omit<TerminalCreateOptions, 'connectionId' | 'surfaceId'>,
+  ): void {
+    options.launchObserverDisposer?.();
+    if (options.paneToken) revokePaneToken(options.paneToken);
   }
 
   private async attachRuntime(
@@ -1227,6 +1348,101 @@ export class TerminalManager {
     return true;
   }
 
+  /** Submit one semantic follow-up without depending on an attached terminal surface. */
+  async submitSessionPrompt(
+    sessionId: string,
+    userId: string,
+    text: string,
+  ): Promise<TerminalSessionSnapshot> {
+    const body = normalizeSemanticPrompt(text);
+    if (!body.trim()) {
+      throw new TerminalSessionInputError('The Session prompt must not be empty.');
+    }
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    if (runtime.prefillPending || !runtime.lastSessionState) {
+      throw new TerminalSessionInputError('The Session provider TUI is not ready for input.');
+    }
+
+    runtime.resizeOutputTransaction?.settle();
+    try {
+      runtime.process.write(bracketSemanticPrompt(body));
+    } catch {
+      throw new TerminalSessionInputError('The Session provider TUI did not accept input.');
+    }
+
+    const stateAt = Date.now();
+    const message: TerminalSessionStateMessage = {
+      type: 'session_state',
+      sessionId,
+      terminalId: runtime.terminalId,
+      status: 'running',
+      hookEvent: 'ControlPromptSubmit',
+      stateAt,
+    };
+    runtime.lastSessionState = message;
+    runtime.runtimeStateAt = stateAt;
+    this.notifySessionWaiters(runtime, message);
+    this.managerOptions.onSessionStateChange?.({ message, userId });
+
+    const delayMs = this.managerOptions.semanticPromptSubmitDelayMs ?? 500;
+    const timer = setTimeout(() => {
+      if (
+        runtime.ended
+        || runtime.closing
+        || this.getOwnedTerminal(runtime.terminalId, userId) !== runtime
+      ) return;
+      try {
+        runtime.process.write('\r');
+      } catch {
+        // A runtime can exit between the accepted paste and delayed submit.
+      }
+    }, Math.max(0, delayMs));
+    timer.unref?.();
+
+    return this.trackSessionSnapshot(runtime, message);
+  }
+
+  /** Send only the public, closed set of named control keys to one live Session runtime. */
+  async sendSessionKeys(
+    sessionId: string,
+    userId: string,
+    keys: TerminalNamedKey[],
+  ): Promise<TerminalSessionSnapshot> {
+    if (keys.length === 0 || !keys.every(isTerminalNamedKey)) {
+      throw new TerminalSessionInputError('At least one supported Session key is required.');
+    }
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    runtime.resizeOutputTransaction?.settle();
+    for (const key of keys) {
+      const data = terminalNamedKeySequence(key);
+      runtime.process.write(data);
+      this.observeAgentInterruptInput(runtime, data);
+    }
+    return this.trackSessionSnapshot(runtime);
+  }
+
+  /** Stop one exact live Session runtime and resolve only after its exit is observable. */
+  async stopSessionRuntime(
+    sessionId: string,
+    userId: string,
+  ): Promise<TerminalSessionSnapshot> {
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    this.blockedSessions.add(sessionKey);
+    try {
+      const exited = new Promise<TerminalSessionSnapshot>((resolve) => {
+        const waiter: TerminalSessionWaiter = { condition: 'runtime-exit', resolve };
+        const waiters = this.sessionWaiters.get(sessionKey) ?? new Set<TerminalSessionWaiter>();
+        waiters.add(waiter);
+        this.sessionWaiters.set(sessionKey, waiters);
+      });
+      this.closeRuntime(runtime);
+      return await exited;
+    } finally {
+      this.blockedSessions.delete(sessionKey);
+    }
+  }
+
   /** 살아있는 소유 runtime의 상태만 수락한다. false = 죽었거나 미소유인 pane의
    *  늦은 hook curl — 캐시도 브로드캐스트도 하면 안 되는 유령 상태다. */
   recordSessionState(message: TerminalSessionStateMessage, userId: string): boolean {
@@ -1243,6 +1459,8 @@ export class TerminalManager {
     }
     runtime.interruptInferredAt = undefined;
     runtime.lastSessionState = message;
+    runtime.runtimeStateAt = message.stateAt ?? Date.now();
+    this.notifySessionWaiters(runtime, message);
     return true;
   }
 
@@ -1264,6 +1482,55 @@ export class TerminalManager {
       }
     }
     return null;
+  }
+
+  /** Read a Session runtime without creating or attaching a terminal surface. */
+  async readSessionSnapshot(sessionId: string, userId: string): Promise<TerminalSessionSnapshot> {
+    const terminalId = this.sessionBindings.get(this.getSessionKey(userId, sessionId));
+    const runtime = terminalId ? this.getOwnedTerminal(terminalId, userId) : null;
+    if (!runtime || runtime.ended || runtime.sessionId !== sessionId) {
+      const opening = this.openingSessionObservations.get(this.getSessionKey(userId, sessionId));
+      if (opening) {
+        return {
+          ...exitedSessionSnapshot(),
+          terminalId: opening.terminalId,
+          runtimeState: 'starting',
+          stateAt: opening.stateAt,
+        };
+      }
+      return exitedSessionSnapshot();
+    }
+    return this.trackSessionSnapshot(runtime);
+  }
+
+  /** Wait for one provider/runtime condition without creating or consuming a surface. */
+  waitForSessionState(
+    sessionId: string,
+    userId: string,
+    condition: TerminalSessionWaitCondition,
+    timeoutMs: number,
+  ): Promise<TerminalSessionSnapshot> {
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    return new Promise<TerminalSessionSnapshot>((resolve, reject) => {
+      const waiter: TerminalSessionWaiter = { condition, resolve };
+      waiter.timer = setTimeout(() => {
+        this.removeSessionWaiter(sessionKey, waiter);
+        reject(new TerminalSessionWaitTimeoutError(condition, timeoutMs));
+      }, Math.max(0, timeoutMs));
+      const waiters = this.sessionWaiters.get(sessionKey) ?? new Set<TerminalSessionWaiter>();
+      waiters.add(waiter);
+      this.sessionWaiters.set(sessionKey, waiters);
+
+      // Subscribe first, then read. A transition in between is delivered by
+      // notifySessionWaiters, while an earlier transition is seen by this read.
+      void this.readSessionSnapshot(sessionId, userId).then((snapshot) => {
+        this.settleSessionWaiter(sessionKey, waiter, snapshot);
+      }).catch((error: unknown) => {
+        if (!this.removeSessionWaiter(sessionKey, waiter)) return;
+        if (waiter.timer) clearTimeout(waiter.timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      });
+    });
   }
 
   resize(
@@ -1470,6 +1737,11 @@ export class TerminalManager {
     this.disposeSessionObserver(runtime);
     runtime.resizeOutputTransaction?.dispose();
     this.flushPendingOutput(runtime);
+    const exitStateAt = Date.now();
+    const hasExitWaiters = runtime.sessionId
+      ? [...(this.sessionWaiters.get(this.getSessionKey(runtime.userId, runtime.sessionId)) ?? [])]
+        .some((waiter) => waiter.condition === 'runtime-exit')
+      : false;
     if (isCurrent) {
       this.terminals.delete(key);
       this.clearSessionBinding(runtime);
@@ -1492,7 +1764,25 @@ export class TerminalManager {
     )) {
       releaseTerminalHandoffByTerminal(runtime.userId, runtime.terminalId);
     }
-    runtime.model?.dispose();
+    if (hasExitWaiters || runtime.pendingSessionSnapshots.size > 0) {
+      void Promise.allSettled([...runtime.pendingSessionSnapshots]).then(async () => {
+        if (hasExitWaiters) {
+          await resolveSnapshotWithTimeout(
+            runtime.model,
+            this.managerOptions.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS,
+          ).catch((error) => {
+            logger.warn(
+              { error, terminalId: runtime.terminalId },
+              'Runtime-exit waiter used the last parsed screen',
+            );
+          });
+          this.notifySessionExitWaiters(runtime, exitStateAt);
+        }
+        runtime.model.dispose();
+      });
+    } else {
+      runtime.model.dispose();
+    }
     this.sendExit(runtime, event);
     if (runtime.onRuntimeExit) {
       // The buffer is what a surface attaching now would have been replayed, so
@@ -1765,10 +2055,20 @@ export class TerminalManager {
     userId: string,
     sessionId?: string | null,
   ): boolean {
+    return this.getLaunchRuntimeState(terminalId, userId, sessionId) !== 'unowned';
+  }
+
+  getLaunchRuntimeState(
+    terminalId: string,
+    userId: string,
+    sessionId?: string | null,
+  ): TerminalLaunchRuntimeState {
     const key = this.getKey(userId, terminalId);
     const runtime = this.terminals.get(key);
-    return Boolean(runtime && (!sessionId || runtime.sessionId === sessionId))
-      || this.openingTerminals.has(this.getOpeningKey(userId, terminalId, sessionId));
+    if (runtime && (!sessionId || runtime.sessionId === sessionId)) return 'spawned';
+    return this.openingTerminals.has(this.getOpeningKey(userId, terminalId, sessionId))
+      ? 'opening'
+      : 'unowned';
   }
 
   private getOwnedTerminal(terminalId: string, userId: string): TerminalRuntime | null {
@@ -1787,6 +2087,29 @@ export class TerminalManager {
 
   private getSessionKey(userId: string, sessionId: string): string {
     return `${userId}:${sessionId}`;
+  }
+
+  private recordOpeningSession(
+    options: Pick<TerminalCreateOptions, 'sessionId' | 'userId' | 'terminalId'>,
+  ): void {
+    if (!options.sessionId) return;
+    const sessionKey = this.getSessionKey(options.userId, options.sessionId);
+    if (!this.openingSessionObservations.has(sessionKey)) {
+      this.openingSessionObservations.set(sessionKey, {
+        terminalId: options.terminalId,
+        stateAt: Date.now(),
+      });
+    }
+  }
+
+  private clearOpeningSession(
+    options: Pick<TerminalCreateOptions, 'sessionId' | 'userId' | 'terminalId'>,
+  ): void {
+    if (!options.sessionId) return;
+    const sessionKey = this.getSessionKey(options.userId, options.sessionId);
+    if (this.openingSessionObservations.get(sessionKey)?.terminalId === options.terminalId) {
+      this.openingSessionObservations.delete(sessionKey);
+    }
   }
 
   private clearTerminalReservation(
@@ -1835,6 +2158,10 @@ export class TerminalManager {
   ): Promise<TerminalShellKind | undefined> {
     if (options.shellKind && options.shellKind !== 'default') {
       return options.shellKind;
+    }
+
+    if (options.agentEnvironment) {
+      return options.agentEnvironment === 'wsl' ? 'wsl' : options.shellKind;
     }
 
     const agentEnvironment = await getAgentEnvironment(options.userId);
@@ -1959,6 +2286,8 @@ export class TerminalManager {
     };
     runtime.interruptInferredAt = stateAt;
     runtime.lastSessionState = message;
+    runtime.runtimeStateAt = stateAt;
+    this.notifySessionWaiters(runtime, message);
     this.managerOptions.onSessionStateChange?.({
       message,
       userId: runtime.userId,
@@ -2012,5 +2341,256 @@ export class TerminalManager {
       const first = runtime.outputBuffer.shift();
       if (first) runtime.outputBufferSize -= first.length;
     }
+  }
+
+  private async captureSessionSnapshot(
+    runtime: TerminalRuntime,
+    observedState: TerminalSessionStateMessage | undefined = runtime.lastSessionState,
+  ): Promise<TerminalSessionSnapshot> {
+    this.flushPendingOutput(runtime);
+    const outputSequence = runtime.sequence;
+    let cols = runtime.cols;
+    let rows = runtime.rows;
+    let alternateScreen = false;
+    let visibleText: string | undefined;
+    try {
+      const modelSnapshot = await resolveSnapshotWithTimeout(
+        runtime.model,
+        this.managerOptions.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS,
+      );
+      cols = modelSnapshot.cols;
+      rows = modelSnapshot.rows;
+      alternateScreen = modelSnapshot.alternateScreen;
+      visibleText = modelSnapshot.visibleText;
+    } catch (error) {
+      logger.warn(
+        { error, terminalId: runtime.terminalId },
+        'Server-side Session snapshot used the last parsed screen',
+      );
+    }
+
+    return this.buildSessionSnapshot(runtime, {
+      visibleText: visibleText ?? runtime.model.readVisibleText(),
+      cols,
+      rows,
+      alternateScreen,
+      outputSequence,
+      runtimeState: normalizeSessionRuntimeState(observedState),
+      stateAt: observedState?.stateAt ?? runtime.runtimeStateAt,
+      lifecyclePreview: observedState?.preview,
+    });
+  }
+
+  private trackSessionSnapshot(
+    runtime: TerminalRuntime,
+    observedState?: TerminalSessionStateMessage,
+  ): Promise<TerminalSessionSnapshot> {
+    const snapshot = this.captureSessionSnapshot(runtime, observedState);
+    const completion = snapshot.then(() => undefined, () => undefined);
+    runtime.pendingSessionSnapshots.add(completion);
+    void completion.finally(() => runtime.pendingSessionSnapshots.delete(completion));
+    return snapshot;
+  }
+
+  private notifySessionWaiters(
+    runtime: TerminalRuntime,
+    observedState: TerminalSessionStateMessage,
+  ): void {
+    if (!runtime.sessionId) return;
+    const sessionKey = this.getSessionKey(runtime.userId, runtime.sessionId);
+    const waiters = this.sessionWaiters.get(sessionKey);
+    const runtimeState = normalizeSessionRuntimeState(observedState);
+    if (!waiters || ![...waiters].some((waiter) => waitConditionMatches(
+      waiter.condition,
+      runtimeState,
+    ))) return;
+
+    void this.trackSessionSnapshot(runtime, observedState).then((snapshot) => {
+      for (const waiter of [...(this.sessionWaiters.get(sessionKey) ?? [])]) {
+        this.settleSessionWaiter(sessionKey, waiter, snapshot);
+      }
+    }).catch((error) => {
+      logger.warn({ error, sessionId: runtime.sessionId }, 'Session waiter snapshot failed');
+    });
+  }
+
+  private notifySessionExitWaiters(runtime: TerminalRuntime, stateAt: number): void {
+    if (!runtime.sessionId) return;
+    const sessionKey = this.getSessionKey(runtime.userId, runtime.sessionId);
+    const waiters = this.sessionWaiters.get(sessionKey);
+    if (!waiters || ![...waiters].some((waiter) => waiter.condition === 'runtime-exit')) return;
+    const snapshot = this.buildSessionSnapshot(runtime, {
+      visibleText: runtime.model.readVisibleText(),
+      cols: runtime.cols,
+      rows: runtime.rows,
+      alternateScreen: runtime.model.isAlternateScreen?.() ?? false,
+      outputSequence: runtime.sequence,
+      runtimeState: 'exited',
+      stateAt,
+      lifecyclePreview: runtime.lastSessionState?.preview,
+    });
+    for (const waiter of [...waiters]) {
+      this.settleSessionWaiter(sessionKey, waiter, snapshot);
+    }
+  }
+
+  private notifySessionWithoutRuntime(
+    sessionId: string,
+    userId: string,
+    terminalId: string,
+  ): void {
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    const waiters = this.sessionWaiters.get(sessionKey);
+    if (!waiters) return;
+    const snapshot: TerminalSessionSnapshot = {
+      ...exitedSessionSnapshot(),
+      terminalId,
+      stateAt: Date.now(),
+    };
+    for (const waiter of [...waiters]) {
+      this.settleSessionWaiter(sessionKey, waiter, snapshot);
+    }
+  }
+
+  private settleSessionWaiter(
+    sessionKey: string,
+    waiter: TerminalSessionWaiter,
+    snapshot: TerminalSessionSnapshot,
+  ): void {
+    if (!waitConditionMatches(waiter.condition, snapshot.runtimeState)) return;
+    if (!this.removeSessionWaiter(sessionKey, waiter)) return;
+    if (waiter.timer) clearTimeout(waiter.timer);
+    waiter.resolve(snapshot);
+  }
+
+  private removeSessionWaiter(sessionKey: string, waiter: TerminalSessionWaiter): boolean {
+    const waiters = this.sessionWaiters.get(sessionKey);
+    if (!waiters?.delete(waiter)) return false;
+    if (waiters.size === 0) this.sessionWaiters.delete(sessionKey);
+    return true;
+  }
+
+  private requireLiveSessionRuntime(sessionId: string, userId: string): TerminalRuntime {
+    const terminalId = this.sessionBindings.get(this.getSessionKey(userId, sessionId));
+    const runtime = terminalId ? this.getOwnedTerminal(terminalId, userId) : null;
+    if (
+      !runtime
+      || runtime.ended
+      || runtime.closing
+      || runtime.sessionId !== sessionId
+    ) {
+      throw new TerminalSessionRuntimeNotRunningError(sessionId);
+    }
+    return runtime;
+  }
+
+  private buildSessionSnapshot(
+    runtime: TerminalRuntime,
+    values: {
+      visibleText: string;
+      cols: number;
+      rows: number;
+      alternateScreen: boolean;
+      outputSequence: number;
+      runtimeState: TerminalSessionRuntimeState;
+      stateAt: number;
+      lifecyclePreview?: string;
+    },
+  ): TerminalSessionSnapshot {
+    const lifecyclePreview = sanitizeBoundedPlainText(
+      values.lifecyclePreview ?? '',
+      MAX_SESSION_LIFECYCLE_PREVIEW_CHARS,
+    );
+    return {
+      screen: sanitizeBoundedPlainText(
+        values.visibleText,
+        MAX_SESSION_SCREEN_CHARS,
+      ).trimEnd(),
+      cols: values.cols,
+      rows: values.rows,
+      alternateScreen: values.alternateScreen,
+      outputSequence: values.outputSequence,
+      terminalId: runtime.terminalId,
+      runtimeState: values.runtimeState,
+      stateAt: values.stateAt,
+      ...(lifecyclePreview ? { lifecyclePreview } : {}),
+    };
+  }
+}
+
+function normalizeSessionRuntimeState(
+  state: TerminalSessionStateMessage | undefined,
+): TerminalSessionRuntimeState {
+  switch (state?.status) {
+    case 'idle': return 'idle';
+    case 'running': return 'running';
+    case 'input_required': return 'input-required';
+    case 'completed': return 'turn-complete';
+    default: return 'starting';
+  }
+}
+
+function exitedSessionSnapshot(): TerminalSessionSnapshot {
+  return {
+    screen: '',
+    cols: null,
+    rows: null,
+    alternateScreen: false,
+    outputSequence: 0,
+    terminalId: null,
+    runtimeState: 'exited',
+    stateAt: null,
+  };
+}
+
+function waitConditionMatches(
+  condition: TerminalSessionWaitCondition,
+  state: TerminalSessionRuntimeState,
+): boolean {
+  return condition === 'runtime-exit' ? state === 'exited' : condition === state;
+}
+
+function sanitizeBoundedPlainText(value: string, maxChars: number): string {
+  const sanitized = value
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '');
+  const characters = [...sanitized];
+  return characters.length <= maxChars
+    ? sanitized
+    : characters.slice(characters.length - maxChars).join('');
+}
+
+export class TerminalSessionWaitTimeoutError extends Error {
+  constructor(
+    readonly condition: TerminalSessionWaitCondition,
+    readonly timeoutMs: number,
+  ) {
+    super(`Session did not reach ${condition} within the requested timeout.`);
+    this.name = 'TerminalSessionWaitTimeoutError';
+  }
+}
+
+export class TerminalSessionInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TerminalSessionInputError';
+  }
+}
+
+export class TerminalSessionRuntimeNotRunningError extends Error {
+  constructor(readonly sessionId: string) {
+    super('The Session does not have a live PTY runtime.');
+    this.name = 'TerminalSessionRuntimeNotRunningError';
+  }
+}
+
+export class TerminalRuntimeStartError extends Error {
+  constructor(
+    message: string,
+    readonly runtimeSpawned: boolean,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'TerminalRuntimeStartError';
   }
 }

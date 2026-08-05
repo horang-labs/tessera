@@ -3,6 +3,7 @@ import path from 'node:path';
 
 export const ELECTRON_TEST_INSTANCE_ENV = 'TESSERA_ELECTRON_TEST_INSTANCE';
 export const ELECTRON_TEST_ROOT_ENV = 'TESSERA_ELECTRON_TEST_ROOT';
+export const ELECTRON_TEST_SERVER_PORT_ENV = 'TESSERA_ELECTRON_TEST_SERVER_PORT';
 
 const SAFE_TEST_INSTANCE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -84,6 +85,23 @@ export function acquireElectronInstanceLock(
   // product-wide lock only for this explicit test seam so 4-5 packaged apps
   // can run together. Normal launches still execute Electron's real lock.
   return testInstance ? true : requestSingleInstanceLock();
+}
+
+export function resolveElectronServerPort(
+  defaultPort: number,
+  testInstance: ElectronTestInstanceConfig | null,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  if (!testInstance) return defaultPort;
+
+  const rawPort = env[ELECTRON_TEST_SERVER_PORT_ENV]?.trim();
+  const port = rawPort && /^\d+$/.test(rawPort) ? Number(rawPort) : Number.NaN;
+  if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
+    throw new Error(
+      `${ELECTRON_TEST_SERVER_PORT_ENV} must be an integer between 1024 and 65535`,
+    );
+  }
+  return port;
 }
 
 export function getWslGuestTesseraStateRoot(

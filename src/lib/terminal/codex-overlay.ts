@@ -23,6 +23,10 @@ import {
   writeCodexConfigAtomically,
   writeCodexTrustBaseline,
 } from './codex-trust-state';
+import {
+  materializeTesseraControlSkill,
+  TESSERA_CONTROL_SKILL_NAME,
+} from './tessera-control-skill';
 
 /**
  * 실 CODEX_HOME. process.env.CODEX_HOME은 절대 오버레이로 덮어쓰지 않는다
@@ -169,7 +173,11 @@ export function createCodexOverlay(
 
   const isWin = getRuntimePlatform() === 'win32';
   for (const entry of entries) {
-    if (entry === 'hooks.json' || entry === CODEX_TRUST_BASELINE_FILE) continue;
+    if (
+      entry === 'hooks.json'
+      || entry === CODEX_TRUST_BASELINE_FILE
+      || entry === 'skills'
+    ) continue;
     const source = path.join(systemHome, entry);
     const target = path.join(overlayDir, entry);
     try {
@@ -200,6 +208,40 @@ export function createCodexOverlay(
       logger.warn({ err, entry }, 'codex overlay: skip entry');
     }
   }
+
+  const overlaySkillsDir = path.join(overlayDir, 'skills');
+  fs.mkdirSync(overlaySkillsDir, { recursive: true, mode: 0o700 });
+  let accountSkillEntries: string[] = [];
+  try {
+    accountSkillEntries = fs.readdirSync(path.join(systemHome, 'skills'));
+  } catch (error) {
+    if (fs.existsSync(path.join(systemHome, 'skills'))) {
+      logger.warn({ error }, 'codex overlay: user skills directory could not be read');
+    }
+  }
+  const accountSkillsDir = path.join(systemHome, 'skills');
+  for (const entry of accountSkillEntries) {
+    if (entry === TESSERA_CONTROL_SKILL_NAME) continue;
+    const source = path.join(accountSkillsDir, entry);
+    const target = path.join(overlaySkillsDir, entry);
+    try {
+      const stat = fs.statSync(source);
+      const type: fs.symlink.Type = stat.isDirectory() ? (isWin ? 'junction' : 'dir') : 'file';
+      try {
+        fs.symlinkSync(source, target, type);
+      } catch (error) {
+        if (!isWin || stat.isDirectory()) throw error;
+        try {
+          fs.linkSync(source, target);
+        } catch {
+          fs.copyFileSync(source, target);
+        }
+      }
+    } catch (error) {
+      logger.warn({ error, entry }, 'codex overlay: user skill could not be mirrored');
+    }
+  }
+  materializeTesseraControlSkill(overlaySkillsDir);
 
   const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksPath = path.join(overlayDir, 'hooks.json');

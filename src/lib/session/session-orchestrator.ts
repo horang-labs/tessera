@@ -189,6 +189,7 @@ export class SessionOrchestrator {
           ?? (path.isAbsolute(session.project_id) ? session.project_id : null);
 
         if (
+          !session.task_id &&
           session.worktree_branch &&
           session.work_dir &&
           !session.worktree_deleted_at &&

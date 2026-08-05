@@ -58,6 +58,18 @@ export function getVisibleProjects(): ProjectRow[] {
 }
 
 /**
+ * Get every registered project for read-only Control inspection, including
+ * projects hidden from the active sidebar.
+ */
+export function getAllProjects(): ProjectRow[] {
+  return getDb().prepare(`
+    SELECT *
+    FROM projects
+    ORDER BY visible DESC, sort_order, display_name
+  `).all() as ProjectRow[];
+}
+
+/**
  * Get projects that have Tessera conversation/task history, including closed
  * projects hidden from the active sidebar.
  */

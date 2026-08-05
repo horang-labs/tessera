@@ -60,10 +60,12 @@ function createChildSession(
 ): string {
   const sessionId = randomUUID();
   const title = childTitle(source, origin);
+  const effectiveCheckout = dbSessions.getSessionWorktreeContext(source.id);
   getDb().transaction(() => {
     dbSessions.createSession(sessionId, source.project_id, title, source.provider, {
-      workDir: source.work_dir ?? undefined,
-      worktreeManaged: source.worktree_managed === 1,
+      workDir: effectiveCheckout?.workDir ?? undefined,
+      worktreeBranch: effectiveCheckout?.worktreeBranch ?? undefined,
+      worktreeManaged: effectiveCheckout?.worktreeManaged ?? false,
       taskId: source.task_id ?? undefined,
       collectionId: source.collection_id ?? undefined,
       model: source.model ?? undefined,
@@ -72,8 +74,8 @@ function createChildSession(
       providerState,
     });
     dbSessions.updateSession(sessionId, {
-      worktree_branch: source.worktree_branch,
-      worktree_managed: source.worktree_managed ?? 0,
+      worktree_branch: effectiveCheckout?.worktreeBranch ?? null,
+      worktree_managed: effectiveCheckout?.worktreeManaged ? 1 : 0,
       chat_workflow_status: source.chat_workflow_status,
     });
     onCreated?.(sessionId);

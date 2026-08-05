@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { getProject, getVisibleProjects } from '@/lib/db/projects';
-import { getSession } from '@/lib/db/sessions';
+import { getSession, getSessionWorktreeContext } from '@/lib/db/sessions';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type {
   TerminalCwdResolution,
@@ -324,7 +324,11 @@ export function resolveAllowedTerminalCwd(options: {
   }
 
   if (session) {
-    addAllowedRoot(allowedRoots, seenRoots, session.work_dir);
+    addAllowedRoot(
+      allowedRoots,
+      seenRoots,
+      options.sessionId ? getSessionWorktreeContext(options.sessionId)?.workDir : null,
+    );
     addAllowedRoot(allowedRoots, seenRoots, getProject(session.project_id)?.decoded_path);
   } else {
     for (const project of getVisibleProjects()) {

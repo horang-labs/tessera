@@ -20,6 +20,7 @@ import {
 import { getKanbanMultiSessionDragIds, setKanbanChatDragData } from '@/lib/dnd/panel-session-drag';
 import {
   collectKanbanScopeData,
+  filterKanbanTasks,
   getKanbanScopeProjectIds,
   resolveKanbanScope,
 } from '@/lib/kanban/board-scope';
@@ -420,12 +421,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, [allSessions]);
 
   const filteredTasks = useMemo(() => {
-    const visibleTaskSessionIds = new Set(visibleTaskSessions.map((s) => s.id));
-    const baseTasks = tasks.filter((task) =>
-      task.sessions.some((session) => visibleTaskSessionIds.has(session.id))
-    );
-    if (!activeCollectionFilter) return baseTasks;
-    return baseTasks.filter((t) => t.collectionId === activeCollectionFilter);
+    return filterKanbanTasks(tasks, visibleTaskSessions, activeCollectionFilter);
   }, [tasks, activeCollectionFilter, visibleTaskSessions]);
 
   useEffect(() => {

@@ -61,6 +61,7 @@ export function persistCreatedSessionRecord(
     options.providerId,
     {
       workDir: options.resolvedWorkDir,
+      worktreeBranch: options.worktreeBranch,
       worktreeManaged: options.worktreeManaged,
       taskId: options.taskId,
       collectionId: options.collectionId,
@@ -83,13 +84,6 @@ export function persistCreatedSessionRecord(
       { has_custom_title: 1 },
       { skipTimestamp: true },
     );
-  }
-
-  if (options.worktreeBranch) {
-    dbSessions.updateSession(options.sessionId, {
-      worktree_branch: options.worktreeBranch,
-      worktree_managed: options.worktreeManaged ? 1 : 0,
-    });
   }
 
   return project;

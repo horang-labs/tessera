@@ -2,6 +2,7 @@ import './runtime/register-runtime-aliases';
 import next from 'next';
 import { loadEnvConfig } from '@next/env';
 import { createServer } from 'http';
+import type { AddressInfo } from 'net';
 import { initDatabase } from './src/lib/db/database';
 import { interruptRunningPreparations } from './src/lib/db/task-preparation';
 import { markServerShuttingDown } from './src/lib/server-lifecycle';
@@ -24,6 +25,14 @@ import logger from './src/lib/logger';
 import { getServerPort } from './src/lib/server-port';
 import { handleHookRequest } from './src/lib/cli/hook-receiver';
 import { warmWindowsConptyOnce } from './src/lib/terminal/windows-conpty-warmup';
+import { readAppVersion } from './src/lib/app-version';
+import {
+  CONTROL_ROUTE_PREFIX,
+} from './src/lib/control/http-handler';
+import {
+  startControlRuntimeHost,
+  type ControlRuntimeHost,
+} from './src/lib/control/runtime-host';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -61,6 +70,7 @@ async function startServer() {
   // In Next.js 16, setupWebSocketHandler() auto-registers on options.httpServer
   // to handle _next/webpack-hmr WebSocket upgrades for HMR.
   const server = createServer();
+  let controlRuntime: ControlRuntimeHost | null = null;
 
   const app = next({ dev, hostname, port, dir, httpServer: server } as Parameters<typeof next>[0]);
   const handle = app.getRequestHandler();
@@ -69,9 +79,14 @@ async function startServer() {
 
   // Attach request handler after Next.js is prepared
   server.on('request', (req, res) => {
+    const pathname = req.url?.split('?')[0] ?? '';
+    if (pathname === CONTROL_ROUTE_PREFIX || pathname.startsWith(`${CONTROL_ROUTE_PREFIX}/`)) {
+      res.writeHead(404).end();
+      return;
+    }
+
     // 상태 사이드채널: PTY claude 훅만 여기서 처리하고 Next로 넘기지 않는다.
     if (req.method === 'POST' && req.url) {
-      const pathname = req.url.split('?')[0];
       if (pathname === '/__tessera/hook') {
         void handleHookRequest(req, res);
         return;
@@ -87,43 +102,64 @@ async function startServer() {
   // Start HTTP server, then attach WebSocket
   server.on('error', (error) => {
     logger.error({ error }, 'Server failed to listen');
-    process.exit(1);
+    void Promise.resolve(controlRuntime?.close())
+      .catch(() => undefined)
+      .finally(() => process.exit(1));
   });
 
   server.listen(port, hostname, () => {
-    // Start WebSocket server on the same HTTP server
-    wsServer.start(server);
+    void (async () => {
+      const listeningPort = (server.address() as AddressInfo).port;
+      const appVersion = readAppVersion(dir);
+      controlRuntime = await startControlRuntimeHost({
+        appVersion,
+        appRoot: dir,
+        runtimeDirectory: process.env.TESSERA_CONTROL_RUNTIME_DIR,
+        descriptorPath: process.env.TESSERA_CONTROL_DESCRIPTOR_PATH,
+      });
 
-    // Pay the first ConPTY spawn cost (~seconds on Windows) before the user
-    // opens their first terminal.
-    warmWindowsConptyOnce();
+      // Start WebSocket server on the same HTTP server
+      wsServer.start(server);
 
-    // Start rate limit poller
-    rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
-    rateLimitPoller.start();
+      // Pay the first ConPTY spawn cost (~seconds on Windows) before the user
+      // opens their first terminal.
+      warmWindowsConptyOnce();
 
-    // Model config: one refresh per launch (doubles as the launch-count ping). No periodic
-    // poll — every Claude session creation triggers its own refresh ('session' event).
-    setModelConfigBroadcast((msg) => wsServer.broadcast(msg));
-    void triggerModelConfigRefresh('launch');
+      // Start rate limit poller
+      rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
+      rateLimitPoller.start();
 
-    // Start task PR poller + relay updates to connected clients
-    installTaskPrStatusBroadcast((msg) => wsServer.broadcast(msg));
-    installSessionPrStatusBroadcast((msg) => wsServer.broadcast(msg));
-    void taskPrPoller.start();
+      // Model config: one refresh per launch (doubles as the launch-count ping). No periodic
+      // poll — every Claude session creation triggers its own refresh ('session' event).
+      setModelConfigBroadcast((msg) => wsServer.broadcast(msg));
+      void triggerModelConfigRefresh('launch');
 
-    logger.info({
-      port,
-      hostname,
-      env: process.env.NODE_ENV || 'development',
+      // Start task PR poller + relay updates to connected clients
+      installTaskPrStatusBroadcast((msg) => wsServer.broadcast(msg));
+      installSessionPrStatusBroadcast((msg) => wsServer.broadcast(msg));
+      void taskPrPoller.start();
+
+      logger.info({
+        port: listeningPort,
+        hostname,
+        env: process.env.NODE_ENV || 'development',
       }, 'Server started');
-    const displayHost = hostname === '0.0.0.0' || hostname === '::' ? '127.0.0.1' : hostname;
-    if (process.env.TESSERA_CLI === '1') {
-      console.log(`\nTessera is running at:\n  http://${displayHost}:${port}\n\nPress Ctrl+C to stop.\n`);
-    } else {
-      console.log(`> Ready on http://${displayHost}:${port}`);
-      console.log(`> WebSocket on ws://${displayHost}:${port}/ws`);
-    }
+      const displayHost = hostname === '0.0.0.0' || hostname === '::' ? '127.0.0.1' : hostname;
+      if (process.env.TESSERA_CLI === '1') {
+        console.log(`\nTessera is running at:\n  http://${displayHost}:${listeningPort}\n\nPress Ctrl+C to stop.\n`);
+      } else {
+        console.log(`> Ready on http://${displayHost}:${listeningPort}`);
+        console.log(`> WebSocket on ws://${displayHost}:${listeningPort}/ws`);
+      }
+    })().catch((error) => {
+      // Descriptor errors can include its private path. Keep startup logging
+      // intentionally opaque while still failing closed.
+      void error;
+      logger.error('Failed to initialize the Control runtime');
+      void Promise.resolve(controlRuntime?.close())
+        .catch(() => undefined)
+        .finally(() => server.close(() => process.exit(1)));
+    });
   });
 
   // Graceful shutdown. Guard against duplicate signals (double Ctrl+C, SIGTERM
@@ -170,6 +206,15 @@ async function startServer() {
       await processManager.cleanup();
     } catch (err) {
       logger.error({ err }, 'Error during shutdown cleanup');
+    }
+
+    try {
+      logger.info('Closing Control runtime...');
+      await controlRuntime?.close();
+    } catch {
+      // Filesystem failures often include the descriptor path. Do not attach
+      // the raw error to logs for this credential-bearing lifecycle.
+      logger.error('Failed to close the Control runtime cleanly');
     }
 
     server.close(() => {

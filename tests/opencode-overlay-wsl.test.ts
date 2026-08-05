@@ -25,6 +25,12 @@ test('WSL OpenCode overlay stays guest-native and preserves installed dependenci
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-opencode-overlay-'));
   const firstPlugin = 'export const TesseraLifecyclePlugin = async () => ({ event() {} });\n';
   const secondPlugin = `${firstPlugin}// refreshed\n`;
+  const globalSkill = path.join(
+    home,
+    '.config/opencode/skills/tessera-cli/SKILL.md',
+  );
+  fs.mkdirSync(path.dirname(globalSkill), { recursive: true });
+  fs.writeFileSync(globalSkill, 'user-owned OpenCode skill\n');
 
   try {
     const firstStdout = runScript(buildWslOpenCodeOverlayCreateScript(b64(firstPlugin)), home);
@@ -34,6 +40,18 @@ test('WSL OpenCode overlay stays guest-native and preserves installed dependenci
       fs.readFileSync(path.join(overlay!, 'plugins/tessera-lifecycle.js'), 'utf8'),
       firstPlugin,
     );
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/SKILL.md'), 'utf8'),
+      fs.readFileSync(path.join(process.cwd(), 'skills/tessera-cli/SKILL.md'), 'utf8'),
+    );
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/agents/openai.yaml'), 'utf8'),
+      fs.readFileSync(
+        path.join(process.cwd(), 'skills/tessera-cli/agents/openai.yaml'),
+        'utf8',
+      ),
+    );
+    assert.equal(fs.readFileSync(globalSkill, 'utf8'), 'user-owned OpenCode skill\n');
 
     // OpenCode owns these runtime files. Preparing a later PTY must not remove
     // them, otherwise every session pays the plugin dependency install again.
@@ -57,6 +75,18 @@ test('WSL OpenCode overlay stays guest-native and preserves installed dependenci
       fs.readFileSync(path.join(overlay!, 'plugins/tessera-lifecycle.js'), 'utf8'),
       secondPlugin,
     );
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/SKILL.md'), 'utf8'),
+      fs.readFileSync(path.join(process.cwd(), 'skills/tessera-cli/SKILL.md'), 'utf8'),
+    );
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/agents/openai.yaml'), 'utf8'),
+      fs.readFileSync(
+        path.join(process.cwd(), 'skills/tessera-cli/agents/openai.yaml'),
+        'utf8',
+      ),
+    );
+    assert.equal(fs.readFileSync(globalSkill, 'utf8'), 'user-owned OpenCode skill\n');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

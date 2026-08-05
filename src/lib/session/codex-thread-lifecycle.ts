@@ -24,11 +24,12 @@ function getMutationTarget(
   const threadId = dbSessions.extractThreadId(session.provider_state);
   if (!threadId) return null;
   const projectWorkDir = dbProjects.getProject(session.project_id)?.decoded_path;
+  const effectiveWorkDir = dbSessions.getSessionWorktreeContext(session.id)?.workDir;
   // The worktree can vanish without worktree_deleted_at being recorded (e.g.
   // removed via a path that skips the DB marker); spawning with a missing cwd
   // fails with ENOENT, so trust the filesystem over the marker.
-  const sessionWorkDir = !session.worktree_deleted_at && session.work_dir && existsSync(session.work_dir)
-    ? session.work_dir
+  const sessionWorkDir = !session.worktree_deleted_at && effectiveWorkDir && existsSync(effectiveWorkDir)
+    ? effectiveWorkDir
     : null;
   return {
     sessionId: session.id,

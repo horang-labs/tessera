@@ -23,6 +23,9 @@ param(
   [ValidateRange(1024, 65530)]
   [int]$CdpBasePort = 9337,
 
+  [ValidateRange(1024, 65530)]
+  [int]$ServerBasePort = 32124,
+
   [string]$WslDistro = 'Ubuntu-24.04',
 
   [switch]$PrepareOnly
@@ -212,6 +215,7 @@ if (-not $PrepareOnly -and (Test-Path -LiteralPath $sessionManifestPath -PathTyp
 $environmentNames = @(
   'TESSERA_ELECTRON_TEST_INSTANCE',
   'TESSERA_ELECTRON_TEST_ROOT',
+  'TESSERA_ELECTRON_TEST_SERVER_PORT',
   'WSL_DISTRO_NAME',
   'ELECTRON_RUN_AS_NODE',
   'TESSERA_DEV_PORT',
@@ -241,8 +245,10 @@ try {
     $userDataDir = Join-Path $instanceRoot 'user-data'
     if ($PrepareOnly) {
       $cdpPort = $CdpBasePort + $offset
+      $testServerPort = $ServerBasePort + $offset
     } else {
       $cdpPort = Find-AvailableTcpPort -StartPort ($CdpBasePort + $offset) -ReservedPorts $reservedPorts
+      $testServerPort = Find-AvailableTcpPort -StartPort ($ServerBasePort + $offset) -ReservedPorts $reservedPorts
     }
 
     if ($instanceId.Length -gt 64) {
@@ -256,6 +262,7 @@ try {
 
     $env:TESSERA_ELECTRON_TEST_INSTANCE = $instanceId
     $env:TESSERA_ELECTRON_TEST_ROOT = $TestRoot
+    $env:TESSERA_ELECTRON_TEST_SERVER_PORT = [string]$testServerPort
     $env:WSL_DISTRO_NAME = $WslDistro
     foreach ($name in @(
       'ELECTRON_RUN_AS_NODE',
@@ -280,7 +287,7 @@ try {
       cdpUrl = "http://127.0.0.1:$cdpPort"
       cdpPort = $cdpPort
       serverUrl = $null
-      serverPort = $null
+      serverPort = $testServerPort
       launcherProcessId = $null
       electronProcessId = $null
       ready = $false
@@ -303,9 +310,11 @@ try {
         -Instances $results
 
       $cdp = Wait-CdpEndpoint -Port $cdpPort
+      if ($cdp.serverPort -ne $testServerPort) {
+        throw "Electron test server used unexpected port $($cdp.serverPort); expected $testServerPort"
+      }
       $result.electronProcessId = Get-CdpOwnerProcessId -Port $cdpPort
       $result.serverUrl = $cdp.serverUrl
-      $result.serverPort = $cdp.serverPort
       $result.ready = $true
       Write-SessionManifest `
         -Path $sessionManifestPath `

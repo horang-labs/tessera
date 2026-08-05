@@ -9,7 +9,7 @@ export function resolveSessionWorkspaceRoot(sessionId: string): string | null {
   const session = dbSessions.getSession(sessionId);
   if (!session) return null;
 
-  const workDir = session.work_dir?.trim();
+  const workDir = dbSessions.getSessionWorktreeContext(sessionId)?.workDir?.trim();
   if (workDir) return workDir;
 
   const projectPath = dbProjects.getProject(session.project_id)?.decoded_path?.trim();

@@ -3,6 +3,7 @@ import type {
   TerminalInterruptInputPolicy,
   TerminalResizeScrollbackPolicy,
 } from '@/lib/cli/providers/types';
+import type { AgentEnvironment } from '@/lib/settings/types';
 
 export type TerminalShellKind = 'default' | 'cmd' | 'powershell' | 'wsl';
 
@@ -43,9 +44,16 @@ export interface TerminalCreateOptions {
   cwd?: string | null;
   sessionId?: string | null;
   shellKind?: TerminalShellKind;
+  /** Already resolved by a server-owned launch module; avoids re-reading user settings. */
+  agentEnvironment?: AgentEnvironment;
   cols?: number;
   rows?: number;
   launchSpec?: TerminalLaunchSpec;
+  /**
+   * Finalizes launch-owned resources or argv inside TerminalManager's protected
+   * opening window, before the provider command is shell-quoted.
+   */
+  prepareLaunch?: () => Promise<void>;
   /**
    * Fully resolved argv that skips cwd validation and shell wrapping. Only the
    * server may supply it, for work it started itself against a directory it
@@ -89,7 +97,7 @@ export interface TerminalCreateOptions {
     output: string,
   ) => void;
   /** Server-owned environment overrides for the provider process. */
-  launchEnv?: Record<string, string>;
+  launchEnv?: Record<string, string | undefined>;
   /**
    * Async variant of launchEnv, resolved inside the opening window right before
    * PTY spawn. Slow preparation (e.g. the WSL guest Codex overlay, up to tens of
@@ -97,7 +105,7 @@ export interface TerminalCreateOptions {
    * outside the opening window a concurrent close_session cannot cancel it and
    * a duplicate terminal_create cannot deduplicate against it.
    */
-  launchEnvFactory?: () => Promise<Record<string, string> | undefined>;
+  launchEnvFactory?: () => Promise<Record<string, string | undefined> | undefined>;
 }
 
 export interface TerminalResolvedShell {

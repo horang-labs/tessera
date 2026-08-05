@@ -27,6 +27,18 @@ interface ManagedWorktreeAllocation {
   worktreePath: string;
 }
 
+export class ExplicitManagedWorktreeAllocationError extends Error {
+  constructor(
+    readonly code: 'branch_already_exists' | 'path_unavailable',
+    message: string,
+    readonly branchName: string,
+    readonly worktreePath?: string,
+  ) {
+    super(message);
+    this.name = 'ExplicitManagedWorktreeAllocationError';
+  }
+}
+
 export class ManagedWorktreeAllocationError extends Error {
   constructor(
     readonly code: 'name_unavailable' | 'allocation_failed',
@@ -53,7 +65,6 @@ export async function allocateManagedWorktree(
   const rootDir = options.rootDir ?? MANAGED_WORKTREE_ROOT;
   const pathTemplate = options.pathTemplate?.trim() ?? '';
   const usesPathTemplate = pathTemplate.length > 0;
-  const pathModule = getPathModule(rootDir);
   if (!usesPathTemplate) {
     await fs.mkdir(await resolvePathForHostFilesystem(rootDir), {
       recursive: true,
@@ -68,29 +79,24 @@ export async function allocateManagedWorktree(
   let firstCollision: ManagedWorktreeAllocation | null = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const branchName = buildManagedWorktreeName(projectDir, attempt, now, branchPrefix, baseSlug);
-    const worktreePath = usesPathTemplate
-      ? resolveManagedWorktreePathTemplate(pathTemplate, {
-          agentEnvironment: options.agentEnvironment,
-          projectDir,
-          branchName,
-        })
-      : pathModule.join(
-          rootDir,
-          ...buildManagedWorktreeRelativePath(projectDir, branchName).split('/')
-        );
-    const worktreePathModule = getPathModule(worktreePath);
+    const worktreePath = resolveAllocatedWorktreePath(projectDir, branchName, {
+      rootDir,
+      pathTemplate,
+      agentEnvironment: options.agentEnvironment,
+    });
 
-    const branchExists = await localBranchExists(projectDir, branchName, options.runGit);
-    const worktreePathExists = await pathExists(worktreePath);
+    const { branchExists, worktreePathExists } = await findAllocationCollision(
+      projectDir,
+      branchName,
+      worktreePath,
+      options.runGit,
+    );
     if (branchExists || worktreePathExists) {
       firstCollision ??= { branchName, worktreePath };
       continue;
     }
 
-    await fs.mkdir(
-      await resolvePathForHostFilesystem(worktreePathModule.dirname(worktreePath)),
-      { recursive: true, mode: 0o700 },
-    );
+    await ensureManagedWorktreeParent(worktreePath);
     return { branchName, worktreePath };
   }
 
@@ -106,6 +112,88 @@ export async function allocateManagedWorktree(
   throw new ManagedWorktreeAllocationError(
     'allocation_failed',
     'Failed to allocate managed worktree name'
+  );
+}
+
+export async function allocateExplicitManagedWorktree(
+  projectDir: string,
+  branchName: string,
+  options: {
+    rootDir: string;
+    runGit: GitRunner;
+    pathTemplate?: string | null;
+    agentEnvironment: AgentEnvironment;
+  },
+): Promise<ManagedWorktreeAllocation> {
+  const worktreePath = resolveAllocatedWorktreePath(projectDir, branchName, options);
+  const collision = await findAllocationCollision(
+    projectDir,
+    branchName,
+    worktreePath,
+    options.runGit,
+  );
+
+  if (collision.branchExists) {
+    throw new ExplicitManagedWorktreeAllocationError(
+      'branch_already_exists',
+      `Branch already exists: ${branchName}`,
+      branchName,
+      worktreePath,
+    );
+  }
+  if (collision.worktreePathExists) {
+    throw new ExplicitManagedWorktreeAllocationError(
+      'path_unavailable',
+      `The managed Worktree path already exists: ${worktreePath}`,
+      branchName,
+      worktreePath,
+    );
+  }
+
+  await ensureManagedWorktreeParent(worktreePath);
+  return { branchName, worktreePath };
+}
+
+function resolveAllocatedWorktreePath(
+  projectDir: string,
+  branchName: string,
+  options: {
+    rootDir: string;
+    pathTemplate?: string | null;
+    agentEnvironment?: AgentEnvironment;
+  },
+): string {
+  const pathTemplate = options.pathTemplate?.trim() ?? '';
+  if (pathTemplate) {
+    return resolveManagedWorktreePathTemplate(pathTemplate, {
+      agentEnvironment: options.agentEnvironment,
+      projectDir,
+      branchName,
+    });
+  }
+  return getPathModule(options.rootDir).join(
+    options.rootDir,
+    ...buildManagedWorktreeRelativePath(projectDir, branchName).split('/'),
+  );
+}
+
+async function findAllocationCollision(
+  projectDir: string,
+  branchName: string,
+  worktreePath: string,
+  runGit?: GitRunner,
+): Promise<{ branchExists: boolean; worktreePathExists: boolean }> {
+  const [branchExists, worktreePathExists] = await Promise.all([
+    localBranchExists(projectDir, branchName, runGit),
+    pathExists(worktreePath),
+  ]);
+  return { branchExists, worktreePathExists };
+}
+
+async function ensureManagedWorktreeParent(worktreePath: string): Promise<void> {
+  await fs.mkdir(
+    await resolvePathForHostFilesystem(getPathModule(worktreePath).dirname(worktreePath)),
+    { recursive: true, mode: 0o700 },
   );
 }
 

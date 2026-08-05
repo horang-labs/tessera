@@ -18,12 +18,20 @@ export function installDiffStatsBroadcast(): void {
     // included, not just worktree-branch-bound sessions. A chat working inside a
     // git worktree produces a real diff and should show the badge too. Task
     // auto-promotion below still keys off task_id, so it stays task-only.
-    const rows = dbSessions.getSessionsByWorkDir(workDir);
-    if (rows.length === 0) return;
+    const parentTaskId = dbTasks.findTaskIdForWorktree(workDir);
+    const workDirRows = dbSessions.getSessionsByWorkDir(workDir);
+    const taskRows = parentTaskId ? dbSessions.getSessionsByTaskId(parentTaskId) : [];
+    const rows = Array.from(
+      new Map([...workDirRows, ...taskRows].map((row) => [row.id, row])).values(),
+    );
     const sessionIds = rows.map((r) => r.id);
     const taskIds = Array.from(
-      new Set(rows.map((r) => r.task_id).filter((v): v is string => typeof v === 'string')),
+      new Set([
+        ...rows.map((r) => r.task_id).filter((v): v is string => typeof v === 'string'),
+        ...(parentTaskId ? [parentTaskId] : []),
+      ]),
     );
+    if (sessionIds.length === 0 && taskIds.length === 0) return;
     const diffAppeared =
       previousStats?.changedFiles === 0 &&
       stats !== null &&

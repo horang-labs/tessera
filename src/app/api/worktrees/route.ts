@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { setTaskWorktreeBranch, taskExists } from '@/lib/db/tasks';
+import { setTaskWorktreeCheckout, taskExists } from '@/lib/db/tasks';
 import logger from '@/lib/logger';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { startWorktreePreparation } from '@/lib/projects/worktree-preparation';
@@ -230,7 +230,7 @@ export async function POST(req: NextRequest) {
     // Recorded here rather than by a follow-up call from the client, so the
     // task and its worktree cannot be left disagreeing if that call never
     // arrives.
-    setTaskWorktreeBranch(taskId, branchName);
+    setTaskWorktreeCheckout(taskId, { branch: branchName, path: worktreePath });
 
     // The worktree exists the moment git succeeds, so its creation is reported
     // without waiting on preparation — which may take as long as the user's

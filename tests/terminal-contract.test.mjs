@@ -11,6 +11,8 @@ const terminalManagerSource = fs.readFileSync(new URL('../src/lib/terminal/termi
 const terminalResolverSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-resolver.ts', import.meta.url), 'utf8');
 const terminalLaunchIntentSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-launch-intent.ts', import.meta.url), 'utf8');
 const providerTerminalLaunchSource = fs.readFileSync(new URL('../src/lib/terminal/provider-launch.ts', import.meta.url), 'utf8');
+const providerLaunchModuleSource = fs.readFileSync(new URL('../src/lib/terminal/provider-launch-module.ts', import.meta.url), 'utf8');
+const sharedProviderLaunchModuleSource = fs.readFileSync(new URL('../src/lib/terminal/shared-provider-launch-module.ts', import.meta.url), 'utf8');
 const terminalHandoffLockSource = fs.readFileSync(new URL('../src/lib/terminal/terminal-handoff-lock.ts', import.meta.url), 'utf8');
 const processManagerSource = fs.readFileSync(new URL('../src/lib/cli/process-manager.ts', import.meta.url), 'utf8');
 const clientTerminalCwdSource = fs.readFileSync(new URL('../src/lib/terminal/client-terminal-cwd.ts', import.meta.url), 'utf8');
@@ -87,14 +89,14 @@ test('plain and OSC 8 terminal links share the validated Electron external URL b
 
 test('Claude PTY resumes persisted history and native fork provider sessions', () => {
   assert.match(
-    routingSource,
+    providerLaunchModuleSource,
     /resolveTerminalProviderSessionReference\(/,
   );
   assert.match(
-    routingSource,
-    /const resume = providerSession\.nativeFork[\s\S]*sessionHistory\.historyExists\(structured\.sessionId\)/,
+    providerLaunchModuleSource,
+    /const resume = providerSession\.nativeFork[\s\S]*sessionHistory\.historyExists\(request\.sessionId\)/,
   );
-  assert.doesNotMatch(routingSource, /isTerminalLaunched/);
+  assert.doesNotMatch(providerLaunchModuleSource, /isTerminalLaunched/);
   assert.doesNotMatch(hookReceiverSource, /markTerminalLaunched/);
 });
 
@@ -281,6 +283,22 @@ test('terminal messages route through the connection-scoped server terminal mana
   assert.match(routingSource, /case 'terminal_input':/);
   assert.match(routingSource, /case 'terminal_resize':/);
   assert.match(routingSource, /case 'terminal_close':/);
+  assert.match(routingSource, /await providerLaunchModule\.launch\(\{/);
+  assert.match(sharedProviderLaunchModuleSource, /terminalManager/);
+  assert.doesNotMatch(routingSource, /buildProviderTerminalLaunch/);
+});
+
+test('the shared provider launcher resolves the terminal manager lazily', () => {
+  assert.match(sharedProviderLaunchModuleSource, /let sharedProviderLaunchModule/);
+  assert.match(sharedProviderLaunchModuleSource, /function getSharedProviderLaunchModule\(\)/);
+  assert.match(
+    sharedProviderLaunchModuleSource,
+    /launch: \(request\) => getSharedProviderLaunchModule\(\)\.launch\(request\)/,
+  );
+  assert.doesNotMatch(
+    sharedProviderLaunchModuleSource,
+    /export const providerLaunchModule = createProviderLaunchModule\(/,
+  );
 });
 
 test('provider terminals keep their native alternate-screen behavior', () => {
@@ -393,10 +411,10 @@ test('terminal cwd is server validated before spawning a PTY', () => {
 });
 
 test('structured provider terminals launch from the persisted session workspace', () => {
-  assert.match(routingSource, /resolveSessionWorkspaceRoot\(sessionId\)/);
+  assert.match(providerLaunchModuleSource, /resolveSessionWorkspaceRoot\(request\.sessionId\)/);
   assert.match(
-    routingSource,
-    /launchSpec = \{ \.\.\.launchSpec, cwd: persistedSessionCwd \}/,
+    providerLaunchModuleSource,
+    /decision\.launchSpec\.cwd = workDir/,
   );
 });
 
@@ -610,15 +628,15 @@ test('WSL terminals cross hook coordinates and overlay homes via WSLENV', () => 
 test('codex overlay placement and hook style follow the terminal runtime', () => {
   // win32 + agentEnvironment 'wsl' → 게스트 파일시스템 오버레이(게스트 심링크),
   // 그 외 → 호스트 오버레이. 훅 스타일도 같은 판정을 공유한다(스폰과 일치).
-  assert.match(routingSource, /wslTerminalRuntime = getRuntimePlatform\(\) === 'win32' && agentEnvironment === 'wsl'/);
-  assert.match(routingSource, /await createCodexOverlayInWsl\(terminalId, hookCommandStyle\)/);
-  assert.match(routingSource, /createCodexOverlay\(terminalId, hookCommandStyle\)/);
-  assert.match(routingSource, /buildClaudeHookSettingsJson\(hookCommandStyle\)/);
+  assert.match(providerLaunchModuleSource, /wslTerminalRuntime = getRuntimePlatform\(\) === 'win32'/);
+  assert.match(providerLaunchModuleSource, /await createCodexOverlayInWsl\(terminalId, hookCommandStyle\)/);
+  assert.match(providerLaunchModuleSource, /createCodexOverlay\(terminalId, hookCommandStyle\)/);
+  assert.match(providerLaunchModuleSource, /buildClaudeHookSettingsJson\(hookCommandStyle\)/);
   // 오버레이 실패는 제네릭 error가 아니라 terminal_error로 표면에 알린다.
-  assert.match(routingSource, /Failed to prepare the Codex overlay/);
+  assert.match(providerLaunchModuleSource, /Failed to prepare the Codex overlay/);
   // 느린 오버레이 준비는 opening 윈도우 안(launchEnvFactory)에서 실행돼야
   // close_session 취소와 중복 create 방지가 그 구간을 지킨다.
-  assert.match(routingSource, /launchEnvFactory = async \(\) =>/);
+  assert.match(providerLaunchModuleSource, /launchEnvFactory = async \(\) =>/);
   assert.match(terminalManagerSource, /await options\.launchEnvFactory\(\)/);
   assert.match(
     terminalManagerSource,
@@ -627,28 +645,12 @@ test('codex overlay placement and hook style follow the terminal runtime', () =>
 });
 
 test('OpenCode WSL sessions prepare a guest-native shared overlay', () => {
-  const branchStart = routingSource.indexOf(
-    '} else if (!terminalExists && isStructuredOpenCode && structured) {',
-  );
-  const branchEnd = routingSource.indexOf(
-    '} else if (!terminalExists && message.launchIntent) {',
-    branchStart,
-  );
-  assert.ok(branchStart >= 0 && branchEnd > branchStart);
-  const openCodeBranch = routingSource.slice(branchStart, branchEnd);
-  const wslStart = openCodeBranch.indexOf('if (wslTerminalRuntime) {');
-  const nativeStart = openCodeBranch.indexOf('} else {', wslStart);
-  assert.ok(wslStart >= 0 && nativeStart > wslStart);
-
-  const wslBranch = openCodeBranch.slice(wslStart, nativeStart);
-  const nativeBranch = openCodeBranch.slice(nativeStart);
-  assert.match(wslBranch, /launchEnvFactory = async \(\) =>/);
-  assert.match(wslBranch, /await createOpenCodeOverlayInWsl\(\)/);
-  assert.match(wslBranch, /OPENCODE_CONFIG_DIR: overlayDir/);
-  assert.doesNotMatch(wslBranch, /createOpenCodeOverlay\(terminalId\)/);
-  assert.doesNotMatch(wslBranch, /launchObserverDisposer/);
-  assert.match(nativeBranch, /createOpenCodeOverlay\(terminalId\)/);
-  assert.match(nativeBranch, /launchObserverDisposer = overlay\.dispose/);
+  assert.match(providerLaunchModuleSource, /decision\.providerId === 'opencode'/);
+  assert.match(providerLaunchModuleSource, /if \(wslTerminalRuntime\) \{/);
+  assert.match(providerLaunchModuleSource, /await createOpenCodeOverlayInWsl\(\)/);
+  assert.match(providerLaunchModuleSource, /OPENCODE_CONFIG_DIR: overlayDir/);
+  assert.match(providerLaunchModuleSource, /const overlay = createOpenCodeOverlay\(terminalId\)/);
+  assert.match(providerLaunchModuleSource, /resourceDisposers\.add\(overlay\.dispose\)/);
 });
 
 test('login-shell profiles cannot silently displace the injected CODEX_HOME overlay', () => {
@@ -657,7 +659,7 @@ test('login-shell profiles cannot silently displace the injected CODEX_HOME over
   const reassert = /if \[ -n "\$\{TESSERA_CODEX_HOME:-\}" \]; then CODEX_HOME="\$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; /;
   const matches = terminalResolverSource.match(new RegExp(reassert, 'g')) ?? [];
   assert.equal(matches.length, 2, 'WSL inner와 posix -c 본문 모두 재단언해야 한다');
-  assert.match(routingSource, /TESSERA_CODEX_HOME: overlayHome/);
+  assert.match(providerLaunchModuleSource, /TESSERA_CODEX_HOME: overlayHome/);
   assert.match(terminalManagerSource, /\{ name: 'TESSERA_CODEX_HOME', path: !terminalEnv\.TESSERA_CODEX_HOME\?\.startsWith\('\/'\) \}/);
 });
 

@@ -62,7 +62,7 @@ function readCodexThreadId(sessionId: string): string {
 
 function readSessionLaunchCwd(sessionId: string): string | undefined {
   const session = dbSessions.getSession(sessionId);
-  const workDir = session?.work_dir?.trim();
+  const workDir = dbSessions.getSessionWorktreeContext(sessionId)?.workDir?.trim();
   if (workDir) return workDir;
   const projectDir = session?.project_id
     ? getProject(session.project_id)?.decoded_path?.trim()

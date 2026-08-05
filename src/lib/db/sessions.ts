@@ -6,6 +6,10 @@ import fs from 'fs';
 import { getDb } from './database';
 import { deleteTerminalProviderSessionsForTesseraSession } from './terminal-provider-sessions';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
+import {
+  PARENT_FIRST_WORKTREE_PATH_SQL,
+  resolveEffectiveWorktreeCheckout,
+} from './worktree-identity';
 
 export interface SessionRow {
   id: string;
@@ -37,6 +41,18 @@ export interface SessionQueryResult {
   sessions: SessionRow[];
   totalCount: number;
   nextCursor: string | null;
+}
+
+export interface SessionWorktreeContext {
+  taskId: string | null;
+  workDir: string | null;
+  worktreeBranch: string | null;
+  worktreeManaged: boolean;
+}
+
+export interface ManagedSessionCallerContext {
+  projectId: string;
+  worktreeId?: string;
 }
 
 function isUuidLikeSearchQuery(query: string): boolean {
@@ -125,6 +141,7 @@ export function createSession(
   provider: string,
   options: {
     workDir?: string;
+    worktreeBranch?: string;
     worktreeManaged?: boolean;
     taskId?: string;
     collectionId?: string;
@@ -136,6 +153,22 @@ export function createSession(
 ): void {
   const db = getDb();
   const now = new Date().toISOString();
+  const checkoutRow = options.taskId
+    ? db.prepare(`
+        SELECT
+          ${PARENT_FIRST_WORKTREE_PATH_SQL} AS worktree_path,
+          tasks.worktree_branch AS worktree_branch
+        FROM tasks
+        WHERE tasks.id = ?
+      `).get(options.taskId) as {
+        worktree_path: string | null;
+        worktree_branch: string | null;
+      } | undefined
+    : undefined;
+  const effectiveCheckout = resolveEffectiveWorktreeCheckout(checkoutRow);
+  const resolvedWorkDir = effectiveCheckout.path ?? options.workDir;
+  const resolvedWorktreeBranch = effectiveCheckout.branch ?? options.worktreeBranch;
+  const resolvedWorktreeManaged = effectiveCheckout.path ? true : options.worktreeManaged;
   // Keep newest sessions at the top of the project-local ordering.
   db.prepare(`
     UPDATE sessions SET sort_order = sort_order + 1
@@ -143,10 +176,10 @@ export function createSession(
   `).run(projectId);
   db.prepare(`
     INSERT INTO sessions (
-      id, project_id, title, provider, provider_state, model, reasoning_effort, service_tier, work_dir, worktree_managed,
+      id, project_id, title, provider, provider_state, model, reasoning_effort, service_tier, work_dir, worktree_branch, worktree_managed,
       task_id, collection_id, sort_order, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     id,
     projectId,
@@ -156,8 +189,9 @@ export function createSession(
     options.model ?? null,
     options.reasoningEffort ?? null,
     options.serviceTier ?? null,
-    options.workDir ?? null,
-    options.worktreeManaged ? 1 : 0,
+    resolvedWorkDir ?? null,
+    resolvedWorktreeBranch ?? null,
+    resolvedWorktreeManaged ? 1 : 0,
     options.taskId ?? null,
     options.collectionId ?? null,
     now,
@@ -210,6 +244,14 @@ export function getSessionsByWorkDir(workDir: string): Array<Pick<SessionRow, 'i
     FROM sessions
     WHERE work_dir = ? AND deleted = 0
   `).all(workDir) as Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch'>>;
+}
+
+export function getSessionsByTaskId(taskId: string): Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch'>> {
+  return getDb().prepare(`
+    SELECT id, task_id, worktree_branch
+    FROM sessions
+    WHERE task_id = ? AND deleted = 0
+  `).all(taskId) as Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch'>>;
 }
 
 /**
@@ -295,6 +337,65 @@ export function getSession(id: string): SessionRow | undefined {
     ${SESSION_SELECT_WITH_TASK}
     WHERE s.id = ?
   `).get(id) as SessionRow | undefined;
+}
+
+/** Resolve a Session's checkout through its parent Worktree when it has one. */
+export function getSessionWorktreeContext(id: string): SessionWorktreeContext | null {
+  const row = getDb().prepare(`
+    SELECT
+      s.task_id AS task_id,
+      CASE
+        WHEN tasks.id IS NULL THEN s.work_dir
+        ELSE ${PARENT_FIRST_WORKTREE_PATH_SQL}
+      END AS work_dir,
+      CASE
+        WHEN tasks.id IS NOT NULL
+          AND tasks.worktree_branch IS NOT NULL
+          AND TRIM(tasks.worktree_branch) <> ''
+          THEN tasks.worktree_branch
+        ELSE s.worktree_branch
+      END AS worktree_branch,
+      CASE
+        WHEN tasks.id IS NOT NULL
+          AND tasks.worktree_path IS NOT NULL
+          AND TRIM(tasks.worktree_path) <> ''
+          THEN 1
+        ELSE s.worktree_managed
+      END AS worktree_managed
+    FROM sessions s
+    LEFT JOIN tasks ON tasks.id = s.task_id
+    WHERE s.id = ? AND s.deleted = 0
+  `).get(id) as {
+    task_id: string | null;
+    work_dir: string | null;
+    worktree_branch: string | null;
+    worktree_managed: number;
+  } | undefined;
+  if (!row) return null;
+  return {
+    taskId: row.task_id,
+    workDir: row.work_dir,
+    worktreeBranch: row.worktree_branch,
+    worktreeManaged: row.worktree_managed === 1,
+  };
+}
+
+/** Public caller identity injected into a managed provider launched for this Session. */
+export function getManagedSessionCallerContext(id: string): ManagedSessionCallerContext | null {
+  const row = getDb().prepare(`
+    SELECT s.project_id, tasks.public_worktree_id
+    FROM sessions s
+    LEFT JOIN tasks ON tasks.id = s.task_id
+    WHERE s.id = ? AND s.deleted = 0
+  `).get(id) as {
+    project_id: string;
+    public_worktree_id: string | null;
+  } | undefined;
+  if (!row) return null;
+  return {
+    projectId: row.project_id,
+    ...(row.public_worktree_id ? { worktreeId: row.public_worktree_id } : {}),
+  };
 }
 
 export function getArchivedChatSessions(
