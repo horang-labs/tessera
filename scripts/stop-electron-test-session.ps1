@@ -45,6 +45,7 @@ function Test-PathWithinRoot {
 
 function Wait-RecordedProcessesExit {
   param(
+    [AllowEmptyCollection()]
     [Parameter(Mandatory = $true)][array]$ProcessIds,
     [int]$TimeoutSeconds = 15
   )

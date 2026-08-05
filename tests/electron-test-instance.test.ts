@@ -5,6 +5,7 @@ import {
   configureElectronTestInstance,
   getWslGuestTesseraStateRoot,
   readElectronTestInstanceId,
+  resolveElectronServerPort,
   resolveElectronTestInstanceConfig,
 } from '@/lib/electron-test-instance';
 
@@ -83,4 +84,34 @@ test('unsafe test instance ids fail closed instead of falling back to shared sta
       /TESSERA_ELECTRON_TEST_INSTANCE must match/,
     );
   }
+});
+
+test('normal Electron ignores a leaked isolated-test server port', () => {
+  assert.equal(resolveElectronServerPort(32123, null, {
+    TESSERA_ELECTRON_TEST_SERVER_PORT: '32124',
+  }), 32123);
+});
+
+test('an isolated Electron test instance requires and uses its dedicated server port', () => {
+  const testInstance = resolveElectronTestInstanceConfig({
+    env: {
+      TESSERA_ELECTRON_TEST_INSTANCE: 'parallel-1',
+      TESSERA_ELECTRON_TEST_ROOT: 'C:\\TesseraParallel',
+    },
+    platform: 'win32',
+  });
+
+  assert.equal(resolveElectronServerPort(32123, testInstance, {
+    TESSERA_ELECTRON_TEST_SERVER_PORT: '32124',
+  }), 32124);
+  assert.throws(
+    () => resolveElectronServerPort(32123, testInstance, {}),
+    /TESSERA_ELECTRON_TEST_SERVER_PORT must be an integer between 1024 and 65535/,
+  );
+  assert.throws(
+    () => resolveElectronServerPort(32123, testInstance, {
+      TESSERA_ELECTRON_TEST_SERVER_PORT: 'not-a-port',
+    }),
+    /TESSERA_ELECTRON_TEST_SERVER_PORT must be an integer between 1024 and 65535/,
+  );
 });

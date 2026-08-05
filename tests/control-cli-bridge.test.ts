@@ -182,6 +182,7 @@ test('a Windows-to-WSL bridge exposes only a guest executable and owns both arti
     assert.match(hostBridge, /TESSERA_WORKTREE_ID.*wt_wsl/);
     assert.match(hostBridge, /TESSERA_CLI_CWD/);
     assert.match(hostBridge, /TESSERA_CLI_WSL_DISTRO/);
+    assert.match(hostBridge, /@cliArgs \| ForEach-Object \{ Write-Output \$_ \}/);
     assert.doesNotMatch(hostBridge, /Bearer|authorization/i);
 
     await bridge.dispose();
@@ -356,14 +357,27 @@ test('the generated WSL executable crosses into a host process with cwd and cont
   await fs.writeFile(path.join(invocationCwd, 'prompt file.txt'), 'bridge prompt');
   const fakeCliPath = path.join(testRoot, 'fake-host-cli.cjs');
   await fs.writeFile(fakeCliPath, [
+    "const fs = require('node:fs');",
     'const keys = [',
     "  'TESSERA_ENV', 'TESSERA_AGENT_ENVIRONMENT', 'TESSERA_PROJECT_ID', 'TESSERA_SESSION_ID',",
     "  'TESSERA_WORKTREE_ID', 'TESSERA_CLI_CWD', 'TESSERA_CLI_WSL_DISTRO', 'TESSERA_CONTROL_DESCRIPTOR',",
     '];',
+    "let stdin = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => { stdin += chunk; });",
+    "process.stdin.on('end', () => {",
+    'const argv = process.argv.slice(2);',
+    "const promptFileIndex = argv.indexOf('--prompt-file');",
+    "const promptInput = promptFileIndex === -1 ? null : argv[promptFileIndex + 1] === '-'",
+    '  ? stdin',
+    "  : fs.readFileSync(argv[promptFileIndex + 1], 'utf8');",
     'console.log(JSON.stringify({',
-    '  argv: process.argv.slice(2),',
+    '  argv,',
     '  env: Object.fromEntries(keys.map((key) => [key, process.env[key]])),',
+    '  stdin,',
+    '  promptInput,',
     '}));',
+    '});',
     '',
   ].join('\n'));
   const windowsNode = execFileSync('powershell.exe', [
@@ -421,7 +435,108 @@ test('the generated WSL executable crosses into a host process with cwd and cont
       TESSERA_CLI_CWD: toWindowsPath(invocationCwd),
       TESSERA_CLI_WSL_DISTRO: process.env.WSL_DISTRO_NAME,
     });
+    assert.equal(received.stdin, '');
+    assert.equal(received.promptInput, null);
     assert.equal(result.stdout.includes('Bearer'), false);
+
+    const waited = await runBridge(
+      bridge.commandPath,
+      ['session', 'wait', 'session-child', '--for', 'turn-complete', '--timeout', '1', '--json'],
+      bridge.environment as Record<string, string>,
+      invocationCwd,
+    );
+    assert.equal(waited.code, 0, waited.stderr || waited.stdout);
+    assert.equal(waited.stderr, '');
+    assert.deepEqual(JSON.parse(waited.stdout).argv, [
+      '--control-descriptor',
+      'C:\\private\\exact-runtime.json',
+      'session',
+      'wait',
+      'session-child',
+      '--for',
+      'turn-complete',
+      '--timeout',
+      '1',
+      '--json',
+    ]);
+
+    const pipedInput = 'first line\nsecond line 🧩\n';
+    const piped = await runBridge(
+      bridge.commandPath,
+      ['session', 'launch', '--prompt-file', '-', '--json'],
+      bridge.environment as Record<string, string>,
+      invocationCwd,
+      pipedInput,
+    );
+    assert.equal(piped.code, 0, piped.stderr || piped.stdout);
+    assert.equal(piped.stderr, '');
+    const receivedPiped = JSON.parse(piped.stdout);
+    assert.deepEqual(receivedPiped.argv.slice(0, 5), [
+      '--control-descriptor',
+      'C:\\private\\exact-runtime.json',
+      'session',
+      'launch',
+      '--prompt-file',
+    ]);
+    assert.equal(path.win32.isAbsolute(receivedPiped.argv[5]), true);
+    assert.equal(receivedPiped.argv[6], '--json');
+    assert.equal(receivedPiped.stdin, '');
+    assert.equal(receivedPiped.promptInput, pipedInput);
+  } finally {
+    await factory.dispose();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
+test('a Windows GUI host exit code survives the WSL bridge', {
+  skip: !process.env.WSL_DISTRO_NAME || !fsSync.existsSync('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'),
+}, async () => {
+  const windowsTemp = execFileSync(
+    'powershell.exe',
+    ['-NoProfile', '-Command', '[System.IO.Path]::GetTempPath()'],
+    { encoding: 'utf8' },
+  ).trim();
+  const windowsTempInWsl = execFileSync('wslpath', ['-u', windowsTemp], {
+    encoding: 'utf8',
+  }).trim();
+  const testRoot = await fs.mkdtemp(path.join(windowsTempInWsl, 'tessera-wsl-gui-exit-'));
+  const fakeCliPath = path.join(testRoot, 'exit-23.vbs');
+  await fs.writeFile(fakeCliPath, 'WScript.Quit 23\r\n');
+  const windowsScriptHost = execFileSync('powershell.exe', [
+    '-NoProfile',
+    '-Command',
+    '(Get-Command wscript.exe).Source',
+  ], {
+    encoding: 'utf8',
+  }).trim();
+  const toWindowsPath = (hostPath: string) => execFileSync('wslpath', ['-w', hostPath], {
+    encoding: 'utf8',
+  }).trim();
+  const factory = createControlCliBridgeFactory({
+    runtimeId: 'runtime-real-wsl-gui-exit',
+    descriptorPath: 'C:\\private\\exact-runtime.json',
+    cliEntryPath: toWindowsPath(fakeCliPath),
+    hostExecutablePath: windowsScriptHost,
+    hostPlatform: 'win32',
+    artifactRoot: path.join(testRoot, 'host-artifacts'),
+    formatHostPathForWsl: toWindowsPath,
+  });
+
+  try {
+    const bridge = await factory.create({
+      agentEnvironment: 'wsl',
+      projectId: 'project-real-wsl',
+      sessionId: 'session-real-wsl',
+    });
+    const result = await runBridge(
+      bridge.commandPath,
+      ['status', '--json'],
+      bridge.environment as Record<string, string>,
+      testRoot,
+    );
+    assert.equal(result.code, 23, result.stderr || result.stdout);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
   } finally {
     await factory.dispose();
     await fs.rm(testRoot, { recursive: true, force: true });
@@ -469,12 +584,13 @@ function runBridge(
   args: string[],
   envOverrides: Record<string, string> = {},
   cwd = REPO_ROOT,
+  stdin?: string,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(commandPath, args, {
       cwd,
       env: { ...process.env, ...envOverrides },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
@@ -484,6 +600,7 @@ function runBridge(
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', reject);
     child.on('close', (code) => resolve({ code, stdout, stderr }));
+    if (stdin !== undefined) child.stdin.end(stdin);
   });
 }
 

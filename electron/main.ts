@@ -19,6 +19,7 @@ import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import {
   acquireElectronInstanceLock,
   configureElectronTestInstance,
+  resolveElectronServerPort,
 } from '../src/lib/electron-test-instance';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
@@ -711,7 +712,9 @@ async function startServer(): Promise<number> {
     return serverPort;
   }
 
-  const port = await findStablePort();
+  const port = electronTestInstance
+    ? resolveElectronServerPort(ELECTRON_DEFAULT_PORT, electronTestInstance)
+    : await findStablePort();
   log('debug', `Electron server port selected: ${port}`);
 
   return new Promise((resolve, reject) => {
