@@ -31,6 +31,7 @@ interface TestRuntime {
   descriptor: RuntimeDescriptorHandle;
   sessionStarts: Array<{ sessionId: string; initialPrompt?: string; allowPreparationFailure?: boolean }>;
   sessionWaits: Array<{ sessionId: string; condition: string; timeoutMs: number }>;
+  sessionControls: Array<{ sessionId: string; kind: string; value?: unknown }>;
   close(): Promise<void>;
 }
 
@@ -487,6 +488,71 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
       },
     ]);
 
+    const prompted = await runControlCli([
+      'session', 'prompt', createdSession.sessionId,
+      '--file', '-', '--json', '--control-descriptor', runtime.descriptor.path,
+    ], {
+      repoRoot: REPO_ROOT,
+      stdin: 'follow up\nwith context',
+    });
+    assert.equal(prompted.code, 0, prompted.stderr || prompted.stdout);
+    assert.equal(JSON.parse(prompted.stdout).data.runtimeState, 'running');
+
+    const keyed = await runCli([
+      'session', 'send-keys', createdSession.sessionId,
+      'escape', 'ctrl-c', 'enter', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(keyed.code, 0, keyed.stderr || keyed.stdout);
+    assert.equal(JSON.parse(keyed.stdout).data.runtimeState, 'input-required');
+
+    const controlsBeforeInvalid = runtime.sessionControls.length;
+    for (const args of [
+      ['session', 'prompt', createdSession.sessionId],
+      ['session', 'prompt', createdSession.sessionId, '--text', 'one', '--file', promptFile],
+      ['session', 'send-keys', createdSession.sessionId],
+      ['session', 'send-keys', createdSession.sessionId, 'enter', 'raw'],
+    ]) {
+      const invalid = await runCli([
+        ...args, '--json', '--control-descriptor', runtime.descriptor.path,
+      ]);
+      assert.equal(invalid.code, 2, args.join(' '));
+      assert.equal(JSON.parse(invalid.stdout).error.code, 'INVALID_USAGE');
+    }
+    const emptyPrompt = await runCli([
+      'session', 'prompt', createdSession.sessionId, '--text', '   ', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(emptyPrompt.code, 1);
+    assert.equal(JSON.parse(emptyPrompt.stdout).error.code, 'INPUT_NOT_ACCEPTED');
+    const unavailablePrompt = await runCli([
+      'session', 'prompt', createdSession.sessionId,
+      '--file', path.join(testRoot, 'missing-follow-up.txt'), '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(unavailablePrompt.code, 1);
+    assert.equal(JSON.parse(unavailablePrompt.stdout).error.code, 'INPUT_NOT_ACCEPTED');
+    assert.equal(runtime.sessionControls.length, controlsBeforeInvalid);
+
+    const stopped = await runCli([
+      'session', 'stop', createdSession.sessionId, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(stopped.code, 0, stopped.stderr || stopped.stdout);
+    assert.equal(JSON.parse(stopped.stdout).data.runtimeState, 'exited');
+    assert.deepEqual(runtime.sessionControls, [
+      { sessionId: createdSession.sessionId, kind: 'prompt', value: 'follow up\nwith context' },
+      { sessionId: createdSession.sessionId, kind: 'keys', value: ['escape', 'ctrl-c', 'enter'] },
+      { sessionId: createdSession.sessionId, kind: 'stop' },
+    ]);
+
+    const stoppedAgain = await runCli([
+      'session', 'stop', createdSession.sessionId, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(stoppedAgain.code, 1);
+    assert.equal(JSON.parse(stoppedAgain.stdout).error.code, 'SESSION_RUNTIME_NOT_RUNNING');
+
     const timedOut = await runCli([
       'session', 'wait', createdSession.sessionId,
       '--for', 'input-required', '--timeout', '1', '--json',
@@ -581,6 +647,9 @@ test('Session commands reject malformed success DTOs before JSON or human render
       ['session', 'start', 'session-valid-shape', '--no-prompt'],
       ['session', 'read', 'session-valid-shape'],
       ['session', 'wait', 'session-valid-shape', '--for', 'turn-complete'],
+      ['session', 'prompt', 'session-valid-shape', '--text', 'hello'],
+      ['session', 'send-keys', 'session-valid-shape', 'enter'],
+      ['session', 'stop', 'session-valid-shape'],
       [
         'session', 'launch', '--worktree', 'wt_valid_shape', '--provider', 'codex',
         '--no-prompt',
@@ -721,6 +790,7 @@ async function startRuntime(
   const sessionRecords: ControlSessionRecord[] = [];
   const sessionStarts: TestRuntime['sessionStarts'] = [];
   const sessionWaits: TestRuntime['sessionWaits'] = [];
+  const sessionControls: TestRuntime['sessionControls'] = [];
   const liveSessions = new Set<string>();
   let requestHandler: ReturnType<typeof createControlHttpHandler> | undefined;
   const server = http.createServer((request, response) => {
@@ -857,6 +927,41 @@ async function startRuntime(
         };
       },
     },
+    sessionController: {
+      prompt: async (sessionId: string, text: string) => {
+        if (!liveSessions.has(sessionId)) {
+          throw new ControlOperationError(
+            'SESSION_RUNTIME_NOT_RUNNING',
+            'The Session does not have a live PTY runtime.',
+            409,
+          );
+        }
+        sessionControls.push({ sessionId, kind: 'prompt', value: text });
+        return controlSnapshot('running');
+      },
+      sendKeys: async (sessionId: string, keys: string[]) => {
+        if (!liveSessions.has(sessionId)) {
+          throw new ControlOperationError(
+            'SESSION_RUNTIME_NOT_RUNNING',
+            'The Session does not have a live PTY runtime.',
+            409,
+          );
+        }
+        sessionControls.push({ sessionId, kind: 'keys', value: keys });
+        return controlSnapshot('input-required');
+      },
+      stop: async (sessionId: string) => {
+        if (!liveSessions.delete(sessionId)) {
+          throw new ControlOperationError(
+            'SESSION_RUNTIME_NOT_RUNNING',
+            'The Session does not have a live PTY runtime.',
+            409,
+          );
+        }
+        sessionControls.push({ sessionId, kind: 'stop' });
+        return controlSnapshot('exited');
+      },
+    },
   };
   const service = createControlService(serviceOptions as Parameters<typeof createControlService>[0]);
   requestHandler = createControlHttpHandler({ descriptor: descriptor.descriptor, service });
@@ -865,10 +970,25 @@ async function startRuntime(
     descriptor,
     sessionStarts,
     sessionWaits,
+    sessionControls,
     close: async () => {
       await descriptor.cleanup();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
+  };
+}
+
+function controlSnapshot(runtimeState: 'running' | 'input-required' | 'exited') {
+  return {
+    screen: 'unique detached output',
+    cols: runtimeState === 'exited' ? null : 100,
+    rows: runtimeState === 'exited' ? null : 30,
+    alternateScreen: false,
+    outputSequence: 9,
+    terminalId: 'terminal-observed',
+    runtimeState,
+    stateAt: 4000,
+    lifecyclePreview: 'provider response boundary',
   };
 }
 

@@ -152,6 +152,9 @@ export function controlUsage() {
   tessera session launch --worktree <worktree-id> --provider <provider-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--title <title>] [--allow-preparation-failure] [--json]
   tessera session read <session-id> [--json]
   tessera session wait <session-id> --for <running|turn-complete|input-required|runtime-exit> [--timeout <seconds>] [--json]
+  tessera session prompt <session-id> (--text <text> | --file <path|->) [--json]
+  tessera session send-keys <session-id> <enter|escape|ctrl-c|up|down|left|right>... [--json]
+  tessera session stop <session-id> [--json]
 
 Runtime selection:
   --control-descriptor PATH  Select one exact local Tessera runtime.
@@ -167,7 +170,7 @@ function parseControlInvocation(argv, env) {
 
   for (let index = 0; index < partitioned.before.length; index += 1) {
     const arg = partitioned.before[index];
-    if (arg === '--prompt' || arg === '--prompt-file') {
+    if (isLiteralValueOption(arg)) {
       commandArgs.push(arg);
       if (index + 1 < partitioned.before.length) {
         commandArgs.push(partitioned.before[index + 1]);
@@ -223,6 +226,54 @@ function parseControlInvocation(argv, env) {
       descriptorPath,
       kind: 'project-list',
       requestPath: '/__tessera/control/v1/projects',
+    };
+  }
+
+  if (
+    commandArgs.length >= 5
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'prompt'
+    && commandArgs[2]
+  ) {
+    return {
+      descriptorPath,
+      kind: 'session-prompt',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(commandArgs[2])}/prompt`,
+      requestBody: {},
+      sessionPromptChoice: parseSessionPrompt(commandArgs.slice(3)),
+    };
+  }
+
+  if (
+    commandArgs.length >= 4
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'send-keys'
+    && commandArgs[2]
+  ) {
+    const keys = commandArgs.slice(3);
+    const supported = new Set(['enter', 'escape', 'ctrl-c', 'up', 'down', 'left', 'right']);
+    if (keys.length === 0 || !keys.every((key) => supported.has(key))) {
+      throw new Error('Session keys must use only the supported names.');
+    }
+    return {
+      descriptorPath,
+      kind: 'session-send-keys',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(commandArgs[2])}/keys`,
+      requestBody: { keys },
+    };
+  }
+
+  if (
+    commandArgs.length === 3
+    && commandArgs[0] === 'session'
+    && commandArgs[1] === 'stop'
+    && commandArgs[2]
+  ) {
+    return {
+      descriptorPath,
+      kind: 'session-stop',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(commandArgs[2])}/stop`,
+      requestBody: {},
     };
   }
 
@@ -440,6 +491,14 @@ function parseSessionWait(args) {
   return { condition, timeoutSeconds };
 }
 
+function parseSessionPrompt(args) {
+  if (args.length !== 2 || !['--text', '--file'].includes(args[0])) {
+    throw new Error('Exactly one of --text and --file is required.');
+  }
+  if (args[1] === undefined) throw new Error(`${args[0]} requires a value.`);
+  return { kind: args[0] === '--text' ? 'text' : 'file', value: args[1] };
+}
+
 function parseSessionCreation(args) {
   const parsed = parseSessionOptions(args, {
     promptRequired: false,
@@ -522,11 +581,34 @@ function parseSessionOptions(args, options) {
 }
 
 async function materializePromptChoice(invocation) {
+  if (invocation.sessionPromptChoice) {
+    let text;
+    try {
+      text = invocation.sessionPromptChoice.kind === 'text'
+        ? invocation.sessionPromptChoice.value
+        : invocation.sessionPromptChoice.value === '-'
+          ? await readStandardInput()
+          : await fs.readFile(invocation.sessionPromptChoice.value, 'utf8');
+    } catch {
+      throw new ControlCliInputError(
+        'INPUT_NOT_ACCEPTED',
+        'The Session prompt input is unavailable.',
+      );
+    }
+    if (!text.trim()) {
+      throw new ControlCliInputError('INPUT_NOT_ACCEPTED', 'The Session prompt must not be empty.');
+    }
+    invocation.requestBody.text = text;
+    delete invocation.sessionPromptChoice;
+    return;
+  }
   if (!invocation.promptChoice) return;
   if (invocation.promptChoice.kind === 'none') return;
   const initialPrompt = invocation.promptChoice.kind === 'text'
     ? invocation.promptChoice.value
-    : await fs.readFile(invocation.promptChoice.value === '-' ? 0 : invocation.promptChoice.value, 'utf8');
+    : invocation.promptChoice.value === '-'
+      ? await readStandardInput()
+      : await fs.readFile(invocation.promptChoice.value, 'utf8');
   if (Buffer.byteLength(initialPrompt, 'utf8') > MAX_INITIAL_PROMPT_BYTES) {
     throw new ControlCliInputError(
       'INITIAL_PROMPT_TOO_LARGE',
@@ -535,6 +617,13 @@ async function materializePromptChoice(invocation) {
   }
   invocation.requestBody.initialPrompt = initialPrompt;
   delete invocation.promptChoice;
+}
+
+async function readStandardInput() {
+  process.stdin.setEncoding('utf8');
+  let value = '';
+  for await (const chunk of process.stdin) value += chunk;
+  return value;
 }
 
 class ControlCliInputError extends Error {
@@ -647,6 +736,14 @@ function withoutDescriptorSelector(argv) {
   const partitioned = partitionAtOptionTerminator(argv);
   for (let index = 0; index < partitioned.before.length; index += 1) {
     const arg = partitioned.before[index];
+    if (isLiteralValueOption(arg)) {
+      result.push(arg);
+      if (index + 1 < partitioned.before.length) {
+        result.push(partitioned.before[index + 1]);
+        index += 1;
+      }
+      continue;
+    }
     if (arg === CONTROL_DESCRIPTOR_OPTION) {
       index += 1;
       continue;
@@ -663,7 +760,7 @@ function withoutDescriptorSelector(argv) {
 function hasGlobalOption(argv, option) {
   const args = partitionAtOptionTerminator(argv).before;
   for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === '--prompt' || args[index] === '--prompt-file') {
+    if (isLiteralValueOption(args[index])) {
       index += 1;
       continue;
     }
@@ -686,7 +783,7 @@ function withoutHelpOptions(argv) {
   const partitioned = partitionAtOptionTerminator(argv);
   for (let index = 0; index < partitioned.before.length; index += 1) {
     const arg = partitioned.before[index];
-    if (arg === '--prompt' || arg === '--prompt-file') {
+    if (isLiteralValueOption(arg)) {
       result.push(arg);
       if (index + 1 < partitioned.before.length) {
         result.push(partitioned.before[index + 1]);
@@ -704,7 +801,7 @@ function withoutHelpOptions(argv) {
 function partitionAtOptionTerminator(argv) {
   let separatorIndex = -1;
   for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] === '--prompt' || argv[index] === '--prompt-file') {
+    if (isLiteralValueOption(argv[index])) {
       index += 1;
       continue;
     }
@@ -720,6 +817,13 @@ function partitionAtOptionTerminator(argv) {
         after: argv.slice(separatorIndex + 1),
         terminated: true,
       };
+}
+
+function isLiteralValueOption(value) {
+  return value === '--prompt'
+    || value === '--prompt-file'
+    || value === '--text'
+    || value === '--file';
 }
 
 async function readLiveDescriptor(descriptorPath) {
@@ -901,7 +1005,13 @@ function validateSuccessData(kind, data) {
       ? { session, terminalId: data.terminalId }
       : INVALID_SUCCESS_DATA;
   }
-  if (kind === 'session-read' || kind === 'session-wait') {
+  if (
+    kind === 'session-read'
+    || kind === 'session-wait'
+    || kind === 'session-prompt'
+    || kind === 'session-send-keys'
+    || kind === 'session-stop'
+  ) {
     return parseSessionSnapshot(data) ?? INVALID_SUCCESS_DATA;
   }
   return data;
@@ -1022,7 +1132,13 @@ function writeHumanSuccess(kind, data) {
     process.stdout.write(`${data.session.sessionId}\n${data.terminalId}\n`);
     return;
   }
-  if (kind === 'session-read' || kind === 'session-wait') {
+  if (
+    kind === 'session-read'
+    || kind === 'session-wait'
+    || kind === 'session-prompt'
+    || kind === 'session-send-keys'
+    || kind === 'session-stop'
+  ) {
     process.stdout.write(
       `${data.runtimeState}\t${data.terminalId ?? ''}\t${data.cols ?? ''}x${data.rows ?? ''}\tseq ${data.outputSequence}\n${data.screen}${data.screen ? '\n' : ''}`,
     );

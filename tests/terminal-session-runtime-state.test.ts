@@ -238,6 +238,19 @@ test('PTY runtime liveness remains active across completed turns', () => {
   const stopped = useSessionStore.getState().getSession(SESSION_ID);
   assert.equal(stopped?.isRunning, false);
   assert.equal(stopped?.status, 'stopped');
+
+  // Runtime exit retires only the surface. The durable menu entry remains and
+  // the existing resume boundary can announce the same Session as live again.
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    running: true,
+  } as ServerTransportMessage);
+  const reopened = useSessionStore.getState().getSession(SESSION_ID);
+  assert.equal(reopened?.id, SESSION_ID);
+  assert.equal(reopened?.isRunning, true);
+  assert.equal(reopened?.status, 'running');
 });
 
 test('PTY runtime exit closes a retained single-panel session tab', () => {

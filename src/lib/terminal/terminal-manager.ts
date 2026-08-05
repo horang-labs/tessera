@@ -38,6 +38,15 @@ import type {
   TerminalResolvedShell,
   TerminalShellKind,
 } from './types';
+import {
+  bracketSemanticPrompt,
+  isTerminalNamedKey,
+  normalizeSemanticPrompt,
+  terminalNamedKeySequence,
+  type TerminalNamedKey,
+} from './session-control-input';
+
+export type { TerminalNamedKey } from './session-control-input';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { shouldReleasePreviewRuntime } from './terminal-preview-policy';
 import { TerminalResizeOutputTransaction } from './terminal-resize-output-transaction';
@@ -271,6 +280,8 @@ export interface TerminalManagerOptions {
    * instead of freezing the reattaching surface forever.
    */
   snapshotTimeoutMs?: number;
+  /** Delay between a semantic bracketed paste and its submit key. */
+  semanticPromptSubmitDelayMs?: number;
   createHeadlessModel?: (cols: number, rows: number) => TerminalHeadlessModelLike;
   onSessionRuntimeStateChange?: (state: {
     sessionId: string;
@@ -1323,6 +1334,101 @@ export class TerminalManager {
     return true;
   }
 
+  /** Submit one semantic follow-up without depending on an attached terminal surface. */
+  async submitSessionPrompt(
+    sessionId: string,
+    userId: string,
+    text: string,
+  ): Promise<TerminalSessionSnapshot> {
+    const body = normalizeSemanticPrompt(text);
+    if (!body.trim()) {
+      throw new TerminalSessionInputError('The Session prompt must not be empty.');
+    }
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    if (runtime.prefillPending || !runtime.lastSessionState) {
+      throw new TerminalSessionInputError('The Session provider TUI is not ready for input.');
+    }
+
+    runtime.resizeOutputTransaction?.settle();
+    try {
+      runtime.process.write(bracketSemanticPrompt(body));
+    } catch {
+      throw new TerminalSessionInputError('The Session provider TUI did not accept input.');
+    }
+
+    const stateAt = Date.now();
+    const message: TerminalSessionStateMessage = {
+      type: 'session_state',
+      sessionId,
+      terminalId: runtime.terminalId,
+      status: 'running',
+      hookEvent: 'ControlPromptSubmit',
+      stateAt,
+    };
+    runtime.lastSessionState = message;
+    runtime.runtimeStateAt = stateAt;
+    this.notifySessionWaiters(runtime, message);
+    this.managerOptions.onSessionStateChange?.({ message, userId });
+
+    const delayMs = this.managerOptions.semanticPromptSubmitDelayMs ?? 500;
+    const timer = setTimeout(() => {
+      if (
+        runtime.ended
+        || runtime.closing
+        || this.getOwnedTerminal(runtime.terminalId, userId) !== runtime
+      ) return;
+      try {
+        runtime.process.write('\r');
+      } catch {
+        // A runtime can exit between the accepted paste and delayed submit.
+      }
+    }, Math.max(0, delayMs));
+    timer.unref?.();
+
+    return this.trackSessionSnapshot(runtime, message);
+  }
+
+  /** Send only the public, closed set of named control keys to one live Session runtime. */
+  async sendSessionKeys(
+    sessionId: string,
+    userId: string,
+    keys: TerminalNamedKey[],
+  ): Promise<TerminalSessionSnapshot> {
+    if (keys.length === 0 || !keys.every(isTerminalNamedKey)) {
+      throw new TerminalSessionInputError('At least one supported Session key is required.');
+    }
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    runtime.resizeOutputTransaction?.settle();
+    for (const key of keys) {
+      const data = terminalNamedKeySequence(key);
+      runtime.process.write(data);
+      this.observeAgentInterruptInput(runtime, data);
+    }
+    return this.trackSessionSnapshot(runtime);
+  }
+
+  /** Stop one exact live Session runtime and resolve only after its exit is observable. */
+  async stopSessionRuntime(
+    sessionId: string,
+    userId: string,
+  ): Promise<TerminalSessionSnapshot> {
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    const sessionKey = this.getSessionKey(userId, sessionId);
+    this.blockedSessions.add(sessionKey);
+    try {
+      const exited = new Promise<TerminalSessionSnapshot>((resolve) => {
+        const waiter: TerminalSessionWaiter = { condition: 'runtime-exit', resolve };
+        const waiters = this.sessionWaiters.get(sessionKey) ?? new Set<TerminalSessionWaiter>();
+        waiters.add(waiter);
+        this.sessionWaiters.set(sessionKey, waiters);
+      });
+      this.closeRuntime(runtime);
+      return await exited;
+    } finally {
+      this.blockedSessions.delete(sessionKey);
+    }
+  }
+
   /** 살아있는 소유 runtime의 상태만 수락한다. false = 죽었거나 미소유인 pane의
    *  늦은 hook curl — 캐시도 브로드캐스트도 하면 안 되는 유령 상태다. */
   recordSessionState(message: TerminalSessionStateMessage, userId: string): boolean {
@@ -2350,6 +2456,20 @@ export class TerminalManager {
     return true;
   }
 
+  private requireLiveSessionRuntime(sessionId: string, userId: string): TerminalRuntime {
+    const terminalId = this.sessionBindings.get(this.getSessionKey(userId, sessionId));
+    const runtime = terminalId ? this.getOwnedTerminal(terminalId, userId) : null;
+    if (
+      !runtime
+      || runtime.ended
+      || runtime.closing
+      || runtime.sessionId !== sessionId
+    ) {
+      throw new TerminalSessionRuntimeNotRunningError(sessionId);
+    }
+    return runtime;
+  }
+
   private buildSessionSnapshot(
     runtime: TerminalRuntime,
     values: {
@@ -2433,6 +2553,20 @@ export class TerminalSessionWaitTimeoutError extends Error {
   ) {
     super(`Session did not reach ${condition} within the requested timeout.`);
     this.name = 'TerminalSessionWaitTimeoutError';
+  }
+}
+
+export class TerminalSessionInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TerminalSessionInputError';
+  }
+}
+
+export class TerminalSessionRuntimeNotRunningError extends Error {
+  constructor(readonly sessionId: string) {
+    super('The Session does not have a live PTY runtime.');
+    this.name = 'TerminalSessionRuntimeNotRunningError';
   }
 }
 

@@ -21,6 +21,9 @@ import {
   pasteInputToTerminal,
   sendInputToTerminal,
 } from './terminal-surface-registry';
+import { normalizeSemanticPrompt } from './session-control-input';
+
+export { normalizeSemanticPrompt as normalizeTerminalChatText } from './session-control-input';
 
 /** Matches Orca's NATIVE_CHAT_SUBMIT_DELAY_MS — enough for a TUI to render the paste. */
 export const TERMINAL_CHAT_SUBMIT_DELAY_MS = 500;
@@ -37,10 +40,6 @@ export interface TerminalChatSendHandle {
  * Normalizes text for a TUI prompt: CRLF would submit twice, and a trailing
  * newline would submit before the delayed Enter is even sent.
  */
-export function normalizeTerminalChatText(text: string): string {
-  return text.replace(/\r\n?/g, '\n').replace(/\n+$/, '');
-}
-
 /**
  * Pastes `text` into the session's PTY and presses Enter after a short delay.
  * Returns null when no live terminal surface accepted the paste — the caller
@@ -50,7 +49,7 @@ export function sendTerminalChatMessage(
   sessionId: string,
   text: string,
 ): TerminalChatSendHandle | null {
-  const body = normalizeTerminalChatText(text);
+  const body = normalizeSemanticPrompt(text);
   if (!body.trim()) return null;
 
   const terminalId = getSessionTerminalId(sessionId);

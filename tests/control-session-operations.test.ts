@@ -6,6 +6,7 @@ import {
   createControlService,
   type ControlProjectRecord,
   type ControlSessionMutator,
+  type ControlSessionRuntimeController,
   type ControlSessionRecord,
   type ControlWorktreeRecord,
 } from '../src/lib/control/service';
@@ -39,6 +40,7 @@ function createFixture() {
   }> = [];
   const removed: string[] = [];
   const observations: Array<{ condition?: string; timeoutMs?: number }> = [];
+  const controls: Array<{ kind: string; value?: unknown }> = [];
   let failNextStart: ControlOperationError | null = null;
 
   const mutator: ControlSessionMutator = {
@@ -68,6 +70,20 @@ function createFixture() {
       removed.push(sessionId);
       const index = records.findIndex((record) => record.sessionId === sessionId);
       if (index >= 0) records.splice(index, 1);
+    },
+  };
+  const controller: ControlSessionRuntimeController = {
+    prompt: async (_sessionId, text) => {
+      controls.push({ kind: 'prompt', value: text });
+      return snapshot('running');
+    },
+    sendKeys: async (_sessionId, keys) => {
+      controls.push({ kind: 'keys', value: keys });
+      return snapshot('input-required');
+    },
+    stop: async () => {
+      controls.push({ kind: 'stop' });
+      return snapshot('exited');
     },
   };
   const service = createControlService({
@@ -113,15 +129,30 @@ function createFixture() {
         };
       },
     },
+    sessionController: controller,
   });
 
   return {
     records,
     removed,
     observations,
+    controls,
     service,
     starts,
     failStartWith(error: ControlOperationError) { failNextStart = error; },
+  };
+}
+
+function snapshot(runtimeState: 'running' | 'input-required' | 'exited') {
+  return {
+    screen: 'current screen',
+    cols: runtimeState === 'exited' ? null : 100,
+    rows: runtimeState === 'exited' ? null : 30,
+    alternateScreen: false,
+    outputSequence: 7,
+    terminalId: 'terminal-observed',
+    runtimeState,
+    stateAt: 3000,
   };
 }
 
@@ -202,6 +233,53 @@ test('Control rejects unsupported Session wait conditions and timeouts over one 
       && error.code === 'INVALID_USAGE',
   );
   assert.deepEqual(fixture.observations, []);
+});
+
+test('Control validates and projects prompt, named keys, and stop through one runtime seam', async () => {
+  const fixture = createFixture();
+  const created = await fixture.service.createSession({
+    worktreeId: WORKTREE.worktreeId,
+    provider: 'codex',
+  }, CONTEXT);
+
+  assert.equal((await fixture.service.promptSession({
+    sessionId: created.sessionId,
+    text: 'first\nsecond',
+  }, CONTEXT)).runtimeState, 'running');
+  assert.equal((await fixture.service.sendSessionKeys({
+    sessionId: created.sessionId,
+    keys: ['escape', 'ctrl-c', 'enter'],
+  }, CONTEXT)).runtimeState, 'input-required');
+  assert.equal((await fixture.service.stopSession(created.sessionId, CONTEXT)).runtimeState, 'exited');
+  assert.deepEqual(await fixture.service.showSession(created.sessionId, CONTEXT), created);
+  assert.equal(fixture.records[0]?.providerState, JSON.stringify({ kind: 'terminal' }));
+  assert.equal((await fixture.service.startSession({
+    sessionId: created.sessionId,
+  }, CONTEXT)).session.sessionId, created.sessionId);
+  assert.deepEqual(fixture.controls, [
+    { kind: 'prompt', value: 'first\nsecond' },
+    { kind: 'keys', value: ['escape', 'ctrl-c', 'enter'] },
+    { kind: 'stop' },
+  ]);
+  assert.deepEqual(fixture.starts, [{
+    sessionId: created.sessionId,
+  }]);
+
+  for (const request of [
+    () => fixture.service.promptSession({ sessionId: created.sessionId, text: ' \n ' }, CONTEXT),
+    () => fixture.service.sendSessionKeys({
+      sessionId: created.sessionId,
+      keys: ['enter', 'raw-bytes'] as ['enter'],
+    }, CONTEXT),
+    () => fixture.service.sendSessionKeys({ sessionId: created.sessionId, keys: [] }, CONTEXT),
+  ]) {
+    await assert.rejects(
+      request(),
+      (error: unknown) => error instanceof ControlOperationError
+        && ['INPUT_NOT_ACCEPTED', 'INVALID_USAGE'].includes(error.code),
+    );
+  }
+  assert.equal(fixture.controls.length, 3);
 });
 
 test('Control starts a pre-existing Session without deleting it when detached launch fails', async () => {

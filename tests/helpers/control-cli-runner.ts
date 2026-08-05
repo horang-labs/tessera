@@ -12,6 +12,7 @@ export function runControlCli(
   options: {
     repoRoot?: string;
     envOverrides?: Record<string, string>;
+    stdin?: string;
   } = {},
 ): Promise<ControlCliResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
@@ -25,7 +26,7 @@ export function runControlCli(
         TESSERA_PROJECT_ID: '',
         ...options.envOverrides,
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
@@ -35,5 +36,6 @@ export function runControlCli(
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', reject);
     child.on('close', (code) => resolve({ code, stdout, stderr }));
+    if (options.stdin !== undefined) child.stdin.end(options.stdin);
   });
 }

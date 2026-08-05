@@ -197,7 +197,7 @@ test('closing a running handoff keeps its lease until PTY exit confirmation', ()
   releaseTerminalHandoffByTerminal(userId, terminalId);
 });
 
-test('a close watchdog releases a handoff after PID death when onExit is missing', async () => {
+test('Session stop waits for forced watchdog shutdown when onExit is missing', async () => {
   const userId = 'watchdog-user';
   const terminalId = 'watchdog-terminal';
   const sessionId = 'watchdog-session';
@@ -208,7 +208,8 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
   const runtime = {
     terminalId,
     userId,
-    sessionId: null,
+    sessionId,
+    interruptInputPolicy: 'none' as const,
     generation: 1,
     sequence: 0,
     runtimeStateAt: 0,
@@ -224,7 +225,18 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
         if (signals.length === 2) alive = false;
       },
     },
-    model: { dispose() {}, resize() {} },
+    model: {
+      dispose() {},
+      resize() {},
+      readVisibleText: () => 'forced shutdown screen',
+      snapshot: async () => ({
+        data: '',
+        visibleText: 'forced shutdown screen',
+        cols: 80,
+        rows: 24,
+        alternateScreen: false,
+      }),
+    },
     subscribers: new Map(),
     viewportOwner: null,
     outputBuffer: [],
@@ -243,17 +255,17 @@ test('a close watchdog releases a handoff after PID death when onExit is missing
   );
   const internals = manager as unknown as {
     terminals: Map<string, typeof runtime>;
+    sessionBindings: Map<string, string>;
   };
   internals.terminals.set(`${userId}:${terminalId}`, runtime);
+  internals.sessionBindings.set(`${userId}:${sessionId}`, terminalId);
 
-  manager.close(terminalId, userId);
-  const deadline = Date.now() + 250;
-  while (isSessionHandedOffToTerminal(sessionId) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+  const stopped = await manager.stopSessionRuntime(sessionId, userId);
 
   assert.equal(signals[0], undefined);
   assert.equal(signals.length, 2);
+  assert.equal(stopped.runtimeState, 'exited');
+  assert.equal(stopped.screen, 'forced shutdown screen');
   assert.equal(isSessionHandedOffToTerminal(sessionId), false);
   assert.equal(manager.hasOrIsOpening(terminalId, userId), false);
 });

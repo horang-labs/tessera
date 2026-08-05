@@ -9,6 +9,10 @@ import type {
   TerminalSessionSnapshot,
   TerminalSessionWaitCondition,
 } from '@/lib/terminal/terminal-manager';
+import {
+  isTerminalNamedKey,
+  type TerminalNamedKey,
+} from '@/lib/terminal/session-control-input';
 import type {
   PreparationPhase,
   PreparationStatus,
@@ -30,9 +34,11 @@ export type ControlErrorCode =
   | 'PREPARATION_TIMEOUT'
   | 'PROVIDER_NOT_SUPPORTED'
   | 'INITIAL_PROMPT_TOO_LARGE'
+  | 'INPUT_NOT_ACCEPTED'
   | 'SESSION_NOT_FOUND'
   | 'SESSION_NOT_FRESH'
   | 'SESSION_RUNTIME_ALREADY_RUNNING'
+  | 'SESSION_RUNTIME_NOT_RUNNING'
   | 'WAIT_TIMEOUT'
   | 'WORKTREE_CREATE_FAILED'
   | 'WORKTREE_NOT_FOUND'
@@ -140,6 +146,22 @@ export interface ControlSessionObserver {
     condition: TerminalSessionWaitCondition,
     timeoutMs: number,
   ): Promise<TerminalSessionSnapshot>;
+}
+
+export interface ControlSessionRuntimeController {
+  prompt(sessionId: string, text: string): Promise<TerminalSessionSnapshot>;
+  sendKeys(sessionId: string, keys: TerminalNamedKey[]): Promise<TerminalSessionSnapshot>;
+  stop(sessionId: string): Promise<TerminalSessionSnapshot>;
+}
+
+export interface ControlSessionPromptRequest {
+  sessionId: string;
+  text: string;
+}
+
+export interface ControlSessionKeysRequest {
+  sessionId: string;
+  keys: TerminalNamedKey[];
 }
 
 export interface ControlSessionWaitRequest {
@@ -257,6 +279,18 @@ export interface ControlService {
     request: ControlSessionWaitRequest,
     context: ControlCallerContext,
   ): Promise<TerminalSessionSnapshot>;
+  promptSession(
+    request: ControlSessionPromptRequest,
+    context: ControlCallerContext,
+  ): Promise<TerminalSessionSnapshot>;
+  sendSessionKeys(
+    request: ControlSessionKeysRequest,
+    context: ControlCallerContext,
+  ): Promise<TerminalSessionSnapshot>;
+  stopSession(
+    sessionId: string,
+    context: ControlCallerContext,
+  ): Promise<TerminalSessionSnapshot>;
 }
 
 export class ControlOperationError extends Error {
@@ -301,6 +335,7 @@ export function createControlService(options: {
   sessions?: ControlSessionSource;
   sessionMutator?: ControlSessionMutator;
   sessionObserver?: ControlSessionObserver;
+  sessionController?: ControlSessionRuntimeController;
 }): ControlService {
   const {
     appVersion,
@@ -311,6 +346,7 @@ export function createControlService(options: {
     sessions,
     sessionMutator,
     sessionObserver,
+    sessionController,
   } = options;
 
   return {
@@ -534,6 +570,39 @@ export function createControlService(options: {
         timeoutSeconds * 1_000,
       );
     },
+
+    async promptSession(request) {
+      const controller = requireSessionController(sessions, sessionController);
+      requireSession(controller.sessions, request.sessionId);
+      if (!request.text.trim()) {
+        throw new ControlOperationError(
+          'INPUT_NOT_ACCEPTED',
+          'The Session prompt must not be empty.',
+          409,
+          { sessionId: request.sessionId },
+        );
+      }
+      return controller.controller.prompt(request.sessionId, request.text);
+    },
+
+    async sendSessionKeys(request) {
+      const controller = requireSessionController(sessions, sessionController);
+      requireSession(controller.sessions, request.sessionId);
+      if (request.keys.length === 0 || !request.keys.every(isTerminalNamedKey)) {
+        throw new ControlOperationError(
+          'INVALID_USAGE',
+          'At least one supported Session key is required.',
+          400,
+        );
+      }
+      return controller.controller.sendKeys(request.sessionId, request.keys);
+    },
+
+    async stopSession(sessionId) {
+      const controller = requireSessionController(sessions, sessionController);
+      requireSession(controller.sessions, sessionId);
+      return controller.controller.stop(sessionId);
+    },
   };
 }
 
@@ -571,6 +640,18 @@ function requireSessionObserver(
   throw new ControlOperationError(
     'INSTANCE_UNAVAILABLE',
     'This Tessera runtime cannot observe Sessions.',
+    503,
+  );
+}
+
+function requireSessionController(
+  sessions: ControlSessionSource | undefined,
+  sessionController: ControlSessionRuntimeController | undefined,
+): { sessions: ControlSessionSource; controller: ControlSessionRuntimeController } {
+  if (sessions && sessionController) return { sessions, controller: sessionController };
+  throw new ControlOperationError(
+    'INSTANCE_UNAVAILABLE',
+    'This Tessera runtime cannot control Sessions.',
     503,
   );
 }

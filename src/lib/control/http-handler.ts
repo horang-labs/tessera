@@ -1,5 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  isTerminalNamedKey,
+  type TerminalNamedKey,
+} from '@/lib/terminal/session-control-input';
 import type { RuntimeDescriptor } from './runtime-descriptor';
 import {
   ControlOperationError,
@@ -182,6 +186,44 @@ export function createControlHttpHandler(options: {
         return true;
       }
 
+      const sessionPromptMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/prompt$`),
+      );
+      if (sessionPromptMatch) {
+        requireMethod(request, 'POST');
+        const sessionId = decodeControlId(sessionPromptMatch[1], 'Session');
+        writeSuccess(response, await service.promptSession({
+          sessionId,
+          ...await readSessionPromptBody(request),
+        }, context));
+        return true;
+      }
+
+      const sessionKeysMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/keys$`),
+      );
+      if (sessionKeysMatch) {
+        requireMethod(request, 'POST');
+        const sessionId = decodeControlId(sessionKeysMatch[1], 'Session');
+        writeSuccess(response, await service.sendSessionKeys({
+          sessionId,
+          ...await readSessionKeysBody(request),
+        }, context));
+        return true;
+      }
+
+      const sessionStopMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/stop$`),
+      );
+      if (sessionStopMatch) {
+        requireMethod(request, 'POST');
+        const sessionId = decodeControlId(sessionStopMatch[1], 'Session');
+        const body = await readJsonObject(request);
+        rejectUnknownFields(body, [], 'Session stop');
+        writeSuccess(response, await service.stopSession(sessionId, context));
+        return true;
+      }
+
       const sessionShowMatch = pathname.match(
         new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)$`),
       );
@@ -344,6 +386,34 @@ async function readSessionWaitBody(request: IncomingMessage): Promise<{
       ? {}
       : { timeoutSeconds: Number(body.timeoutSeconds) }),
   };
+}
+
+async function readSessionPromptBody(request: IncomingMessage): Promise<{ text: string }> {
+  const body = await readJsonObject(request);
+  rejectUnknownFields(body, ['text'], 'Session prompt');
+  if (typeof body.text !== 'string') {
+    throw new ControlOperationError('INVALID_USAGE', 'The Session prompt is invalid.', 400);
+  }
+  return { text: body.text };
+}
+
+async function readSessionKeysBody(request: IncomingMessage): Promise<{
+  keys: TerminalNamedKey[];
+}> {
+  const body = await readJsonObject(request);
+  rejectUnknownFields(body, ['keys'], 'Session keys');
+  if (
+    !Array.isArray(body.keys)
+    || body.keys.length === 0
+    || !body.keys.every(isTerminalNamedKey)
+  ) {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      'At least one supported Session key is required.',
+      400,
+    );
+  }
+  return { keys: body.keys as TerminalNamedKey[] };
 }
 
 function readSessionCreationFields(body: Record<string, unknown>): {
