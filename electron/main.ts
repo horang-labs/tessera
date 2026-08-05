@@ -11,10 +11,23 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron';
 import { fork, ChildProcess, spawnSync } from 'child_process';
-import * as net from 'net';
 import * as path from 'path';
 import * as fs from 'fs';
-import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
+import { networkInterfaces } from 'node:os';
+import QRCode from 'qrcode';
+import {
+  createTray,
+  destroyTray,
+  updateTrayCloseBehavior,
+  updateTrayRemoteAccessStatus,
+} from './tray';
+import {
+  buildQuitConfirmation,
+  parseRemoteAccessStatus,
+  retainLastRemoteAccessStatus,
+  resolveElectronLanguage,
+  type RemoteAccessStatus,
+} from './remote-access-status';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import {
   acquireElectronInstanceLock,
@@ -22,7 +35,12 @@ import {
   resolveElectronServerPort,
 } from '../src/lib/electron-test-instance';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
+import { isPairingDecision } from '../src/lib/auth/pairing-contract';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
+import { registerAppSecretHeader } from './app-secret-header';
+import { configureTailscaleFirewall } from './windows-firewall';
+import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
+import { buildRemoteAccessAddressCandidates } from './network-addresses';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -57,7 +75,6 @@ const WINDOWS_TITLEBAR_DIMMED_THEME = {
 const TESSERA_HOMEPAGE = 'https://github.com/horang-labs/tessera';
 const MAX_SHELL_PATH_LENGTH = 32768;
 const ELECTRON_DEFAULT_PORT = 32123;
-const ELECTRON_PORT_SCAN_LIMIT = 100;
 const UI_STORAGE_PATH = getTesseraDataPath('ui-state.json');
 
 function readUiStorage(): Record<string, string> {
@@ -430,7 +447,8 @@ if (process.env.TESSERA_DISABLE_GPU === '1') {
   app.commandLine.appendSwitch('max-active-webgl-contexts', '128');
 }
 
-// The embedded server listens on 127.0.0.1 only, but windows load http://localhost.
+// App windows keep a stable localhost origin even though the packaged Windows
+// server also listens on external IPv4 interfaces for direct Tailscale access.
 // On hosts where connecting to ::1 stalls (observed ~210ms per connect with WSL /
 // VPN network stacks), every fresh renderer connection pays that penalty. Pin
 // localhost to IPv4 in Chromium's resolver; keeping the literal "localhost" URL
@@ -448,6 +466,10 @@ let closeRequestSequence = 0;
 let activeCloseRequest: Promise<void> | null = null;
 let activeQuitConfirmation: Promise<void> | null = null;
 let terminalSummarySequence = 0;
+let pairingPresentationSequence = 0;
+let electronAppSecret = '';
+let remoteAccessStatus: RemoteAccessStatus | null = null;
+let remoteAccessStatusTimer: NodeJS.Timeout | null = null;
 
 type WindowCloseAction = 'quit' | 'tray' | 'cancel';
 type WindowsCloseBehavior = 'ask' | 'tray' | 'quit';
@@ -459,6 +481,9 @@ type PendingCloseRequest = {
 const WINDOW_CLOSE_RESPONSE_TIMEOUT_MS = 15_000;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 8_000;
 const TERMINAL_SUMMARY_TIMEOUT_MS = 1_500;
+const PAIRING_PRESENTATION_TIMEOUT_MS = 5_000;
+const REMOTE_ACCESS_STATUS_TIMEOUT_MS = 1_500;
+const REMOTE_ACCESS_STATUS_POLL_INTERVAL_MS = 2_000;
 const pendingCloseRequests = new Map<string, PendingCloseRequest>();
 type TerminalRuntimeSummary = { activeCount: number; sessionCount: number };
 type PendingTerminalSummary = {
@@ -466,6 +491,19 @@ type PendingTerminalSummary = {
   timeout: NodeJS.Timeout;
 };
 const pendingTerminalSummaries = new Map<string, PendingTerminalSummary>();
+type PairingPresentation = {
+  pairingLink: string;
+  createdAt: string;
+  expiresAt: string;
+};
+type PairingPresentationResult =
+  | ({ ok: true } & PairingPresentation)
+  | { ok: false; code: string; error: string };
+type PendingPairingPresentation = {
+  resolve: (result: PairingPresentationResult) => void;
+  timeout: NodeJS.Timeout;
+};
+const pendingPairingPresentations = new Map<string, PendingPairingPresentation>();
 let windowsCloseBehavior: WindowsCloseBehavior = 'ask';
 
 function resolveTerminalSummary(
@@ -483,6 +521,233 @@ function resolveAllTerminalSummaries(): void {
   for (const requestId of [...pendingTerminalSummaries.keys()]) {
     resolveTerminalSummary(requestId, { activeCount: -1, sessionCount: -1 });
   }
+}
+
+function resolvePairingPresentation(
+  requestId: string,
+  result: PairingPresentationResult,
+): void {
+  const pending = pendingPairingPresentations.get(requestId);
+  if (!pending) return;
+  clearTimeout(pending.timeout);
+  pendingPairingPresentations.delete(requestId);
+  pending.resolve(result);
+}
+
+function resolveAllPairingPresentations(): void {
+  for (const requestId of [...pendingPairingPresentations.keys()]) {
+    resolvePairingPresentation(requestId, {
+      ok: false,
+      code: 'server-unavailable',
+      error: 'The Tessera server is unavailable',
+    });
+  }
+}
+
+async function requestPairingPresentationOverHttp(
+  action: 'issue' | 'rotate',
+): Promise<PairingPresentationResult> {
+  try {
+    const { APP_SECRET_HEADER, APP_SECRET_PATH } = await import('../src/lib/auth/app-secret');
+    const secret = (await fs.promises.readFile(APP_SECRET_PATH, 'utf8')).trim();
+    const response = await fetch(`http://127.0.0.1:${serverPort}/api/pairing`, {
+      method: action === 'rotate' ? 'PUT' : 'POST',
+      headers: {
+        [APP_SECRET_HEADER]: secret,
+        origin: `http://127.0.0.1:${serverPort}`,
+      },
+    });
+    const body = await response.json().catch(() => null) as {
+      pairingLink?: unknown;
+      createdAt?: unknown;
+      expiresAt?: unknown;
+      code?: unknown;
+      error?: unknown;
+    } | null;
+    if (
+      response.ok
+      && typeof body?.pairingLink === 'string'
+      && typeof body.createdAt === 'string'
+      && typeof body.expiresAt === 'string'
+    ) {
+      return {
+        ok: true,
+        pairingLink: body.pairingLink,
+        createdAt: body.createdAt,
+        expiresAt: body.expiresAt,
+      };
+    }
+    return {
+      ok: false,
+      code: typeof body?.code === 'string' ? body.code : 'pairing-failed',
+      error: typeof body?.error === 'string' ? body.error : 'Pairing failed',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'server-unavailable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function requestPairingPresentation(
+  action: 'issue' | 'rotate',
+): Promise<PairingPresentationResult> {
+  const child = serverProcess;
+  if (!child?.connected) {
+    if (app.isPackaged) {
+      return Promise.resolve({
+        ok: false,
+        code: 'server-unavailable',
+        error: 'The Tessera server is not connected',
+      });
+    }
+    // electron:dev owns the server in the npm process, so child IPC is not
+    // available there. Keep QR generation in main while using its loopback API.
+    return requestPairingPresentationOverHttp(action);
+  }
+
+  const requestId = `pairing-presentation-${Date.now()}-${++pairingPresentationSequence}`;
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingPairingPresentations.delete(requestId);
+      resolve({
+        ok: false,
+        code: 'server-timeout',
+        error: 'Timed out while creating the pairing link',
+      });
+    }, PAIRING_PRESENTATION_TIMEOUT_MS);
+    timeout.unref?.();
+    pendingPairingPresentations.set(requestId, { resolve, timeout });
+
+    try {
+      child.send({ type: 'pairing_presentation_request', requestId, action }, (error) => {
+        if (!error) return;
+        resolvePairingPresentation(requestId, {
+          ok: false,
+          code: 'server-unavailable',
+          error: error.message,
+        });
+      });
+    } catch (error) {
+      resolvePairingPresentation(requestId, {
+        ok: false,
+        code: 'server-unavailable',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+}
+
+async function createPairingCode(action: 'issue' | 'rotate'): Promise<
+  | (PairingPresentation & { ok: true; qrDataUrl: string })
+  | { ok: false; code: string; error: string }
+> {
+  const presentation = await requestPairingPresentation(action);
+  if (!presentation.ok) return presentation;
+
+  const qrDataUrl = await QRCode.toDataURL(presentation.pairingLink, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 256,
+    color: { dark: '#17191cff', light: '#ffffffff' },
+  });
+  return { ...presentation, qrDataUrl };
+}
+
+type PairingApprovalApiResult =
+  | { ok: true; requests?: unknown; request?: unknown }
+  | { ok: false; code: string; error: string };
+
+async function requestPairingApprovalApi(
+  pathname: string,
+  init?: { method: 'PATCH'; body: string },
+): Promise<PairingApprovalApiResult> {
+  if (!serverPort || !electronAppSecret) {
+    return { ok: false, code: 'server-unavailable', error: 'The Tessera server is unavailable' };
+  }
+
+  try {
+    const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+    const response = await fetch(`http://127.0.0.1:${serverPort}${pathname}`, {
+      ...init,
+      headers: {
+        [APP_SECRET_HEADER]: electronAppSecret,
+        origin: `http://127.0.0.1:${serverPort}`,
+        ...(init ? { 'content-type': 'application/json' } : {}),
+      },
+      signal: AbortSignal.timeout(PAIRING_PRESENTATION_TIMEOUT_MS),
+    });
+    const body = await response.json().catch(() => null) as {
+      requests?: unknown;
+      request?: unknown;
+      code?: unknown;
+      error?: unknown;
+    } | null;
+    if (response.ok) {
+      return {
+        ok: true,
+        ...(body && 'requests' in body ? { requests: body.requests } : {}),
+        ...(body && 'request' in body ? { request: body.request } : {}),
+      };
+    }
+    return {
+      ok: false,
+      code: typeof body?.code === 'string' ? body.code : 'pairing-request-failed',
+      error: typeof body?.error === 'string' ? body.error : 'Pairing request failed',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'server-unavailable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function requestRemoteAccessStatus(): Promise<RemoteAccessStatus | null> {
+  if (!serverPort || !electronAppSecret) return null;
+
+  try {
+    const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+    const response = await fetch(`http://127.0.0.1:${serverPort}/api/devices`, {
+      headers: {
+        [APP_SECRET_HEADER]: electronAppSecret,
+        origin: `http://127.0.0.1:${serverPort}`,
+      },
+      signal: AbortSignal.timeout(REMOTE_ACCESS_STATUS_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    return parseRemoteAccessStatus(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+async function refreshRemoteAccessStatus(): Promise<void> {
+  const status = await requestRemoteAccessStatus();
+  // Keep the last verified snapshot through transient polling failures. This
+  // avoids both tray flicker and an unnecessary quit warning after we already
+  // established that no remote device is connected.
+  remoteAccessStatus = retainLastRemoteAccessStatus(remoteAccessStatus, status);
+  if (!status) return;
+  updateTrayRemoteAccessStatus(remoteAccessStatus);
+}
+
+function startRemoteAccessStatusMonitor(): void {
+  stopRemoteAccessStatusMonitor();
+  void refreshRemoteAccessStatus();
+  remoteAccessStatusTimer = setInterval(() => {
+    void refreshRemoteAccessStatus();
+  }, REMOTE_ACCESS_STATUS_POLL_INTERVAL_MS);
+  remoteAccessStatusTimer.unref?.();
+}
+
+function stopRemoteAccessStatusMonitor(): void {
+  if (!remoteAccessStatusTimer) return;
+  clearInterval(remoteAccessStatusTimer);
+  remoteAccessStatusTimer = null;
 }
 
 function requestTerminalSummary(): Promise<TerminalRuntimeSummary> {
@@ -514,29 +779,20 @@ function requestTerminalSummary(): Promise<TerminalRuntimeSummary> {
   });
 }
 
-async function confirmTerminalQuit(activeCount: number): Promise<boolean> {
-  if (activeCount === 0) return true;
+async function confirmAppQuit(activeCount: number): Promise<boolean> {
+  const copy = buildQuitConfirmation(
+    resolveElectronLanguage(app.getLocale()),
+    activeCount,
+    remoteAccessStatus,
+  );
+  if (!copy) return true;
 
-  const isKorean = app.getLocale().toLowerCase().startsWith('ko');
-  const summaryUnavailable = activeCount < 0;
   const options = {
     type: 'warning' as const,
     title: 'Tessera',
-    message: isKorean
-      ? (summaryUnavailable
-          ? '터미널 상태를 확인하지 못했습니다. Tessera를 종료할까요?'
-          : `실행 중인 터미널 ${activeCount}개를 종료할까요?`)
-      : (summaryUnavailable
-          ? 'Terminal status is unavailable. Quit Tessera?'
-          : `Quit ${activeCount} active terminal${activeCount === 1 ? '' : 's'}?`),
-    detail: isKorean
-      ? (summaryUnavailable
-          ? '종료하면 실행 중인 터미널 작업이 함께 중단될 수 있습니다.'
-          : 'Tessera를 종료하면 터미널에서 실행 중인 Claude Code/Codex 작업도 함께 종료됩니다.')
-      : (summaryUnavailable
-          ? 'Quitting may stop active terminal work.'
-          : 'Quitting Tessera will also stop the Claude Code/Codex work running in these terminals.'),
-    buttons: isKorean ? ['취소', 'Tessera 종료'] : ['Cancel', 'Quit Tessera'],
+    message: copy.message,
+    detail: copy.detail,
+    buttons: copy.buttons,
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -550,8 +806,11 @@ async function confirmTerminalQuit(activeCount: number): Promise<boolean> {
 async function beginAppQuit(): Promise<void> {
   if (isQuitRequested) return;
 
-  const summary = await requestTerminalSummary();
-  if (!(await confirmTerminalQuit(summary.activeCount))) return;
+  const [summary] = await Promise.all([
+    requestTerminalSummary(),
+    refreshRemoteAccessStatus(),
+  ]);
+  if (!(await confirmAppQuit(summary.activeCount))) return;
 
   isQuitRequested = true;
   isQuitting = true;
@@ -560,6 +819,7 @@ async function beginAppQuit(): Promise<void> {
     pending.resolve('cancel');
     pendingCloseRequests.delete(requestId);
   }
+  stopRemoteAccessStatusMonitor();
   destroyTray();
   app.quit();
 }
@@ -677,33 +937,6 @@ function forceKillProcessTree(proc: ChildProcess): void {
   }
 }
 
-// ── Port allocation ────────────────────────────────────────────────────────
-async function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE' || error.code === 'EACCES') {
-        resolve(false);
-        return;
-      }
-      reject(error);
-    });
-    srv.listen(port, '127.0.0.1', () => {
-      srv.close(() => resolve(true));
-    });
-  });
-}
-
-async function findStablePort(): Promise<number> {
-  for (let offset = 0; offset < ELECTRON_PORT_SCAN_LIMIT; offset += 1) {
-    const candidate = ELECTRON_DEFAULT_PORT + offset;
-    if (await isPortAvailable(candidate)) return candidate;
-  }
-  throw new Error(
-    `No available port found from ${ELECTRON_DEFAULT_PORT} to ${ELECTRON_DEFAULT_PORT + ELECTRON_PORT_SCAN_LIMIT - 1}`
-  );
-}
-
 // ── Server lifecycle ───────────────────────────────────────────────────────
 async function startServer(): Promise<number> {
   const devPort = process.env.TESSERA_DEV_PORT;
@@ -712,10 +945,8 @@ async function startServer(): Promise<number> {
     return serverPort;
   }
 
-  const port = electronTestInstance
-    ? resolveElectronServerPort(ELECTRON_DEFAULT_PORT, electronTestInstance)
-    : await findStablePort();
-  log('debug', `Electron server port selected: ${port}`);
+  const port = resolveElectronServerPort(ELECTRON_DEFAULT_PORT, electronTestInstance);
+  log('debug', `Electron server port: ${port}`);
 
   return new Promise((resolve, reject) => {
     const isPackaged = app.isPackaged;
@@ -732,8 +963,8 @@ async function startServer(): Promise<number> {
       NODE_ENV: isPackaged ? 'production' : 'development',
       ELECTRON_CHILD: '1',
       TESSERA_ELECTRON_SERVER: '1',
+      TESSERA_ELECTRON_PACKAGED: isPackaged ? '1' : '0',
       TESSERA_PRODUCTION_DB: '1',
-      TESSERA_ELECTRON_AUTH_BYPASS: '1',
       TESSERA_APP_ROOT: appRoot,
       TESSERA_CHANNEL: process.env.TESSERA_CHANNEL || (isPackaged ? 'github-release' : 'dev'),
       // Makes the Electron exe behave as plain Node.js for fork()
@@ -764,8 +995,17 @@ async function startServer(): Promise<number> {
       requestId?: string;
       activeCount?: number;
       sessionCount?: number;
+      pairingLink?: string;
+      createdAt?: string;
+      expiresAt?: string;
+      code?: string;
     }) => {
-      log('debug', `Server message: ${JSON.stringify(msg)}`);
+      log(
+        'debug',
+        msg?.type?.startsWith('pairing_presentation')
+          ? `Server message: ${msg.type}`
+          : `Server message: ${JSON.stringify(msg)}`,
+      );
       if (
         msg?.type === 'terminal_summary'
         && typeof msg.requestId === 'string'
@@ -775,6 +1015,28 @@ async function startServer(): Promise<number> {
         resolveTerminalSummary(msg.requestId, {
           activeCount: msg.activeCount,
           sessionCount: msg.sessionCount,
+        });
+      } else if (
+        msg?.type === 'pairing_presentation'
+        && typeof msg.requestId === 'string'
+        && typeof msg.pairingLink === 'string'
+        && typeof msg.createdAt === 'string'
+        && typeof msg.expiresAt === 'string'
+      ) {
+        resolvePairingPresentation(msg.requestId, {
+          ok: true,
+          pairingLink: msg.pairingLink,
+          createdAt: msg.createdAt,
+          expiresAt: msg.expiresAt,
+        });
+      } else if (
+        msg?.type === 'pairing_presentation_error'
+        && typeof msg.requestId === 'string'
+      ) {
+        resolvePairingPresentation(msg.requestId, {
+          ok: false,
+          code: typeof msg.code === 'string' ? msg.code : 'pairing-failed',
+          error: typeof msg.message === 'string' ? msg.message : 'Pairing failed',
         });
       } else if (msg?.type === 'ready') {
         clearTimeout(timeout);
@@ -789,6 +1051,7 @@ async function startServer(): Promise<number> {
 
     serverProcess.on('exit', (code) => {
       resolveAllTerminalSummaries();
+      resolveAllPairingPresentations();
       log(isQuitting ? 'debug' : 'error', `Server child exited with code ${code}`);
       serverProcess = null;
       if (!isQuitting) {
@@ -1037,6 +1300,49 @@ function broadcastPopoutState(): void {
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-server-port', () => serverPort);
+ipcMain.handle('get-remote-access-address-candidates', () => (
+  buildRemoteAccessAddressCandidates(networkInterfaces(), serverPort)
+));
+ipcMain.on('supports-tailscale-firewall-configuration', (event) => {
+  event.returnValue = supportsTailscaleFirewallConfiguration();
+});
+ipcMain.handle('configure-tailscale-firewall', () => {
+  if (!supportsTailscaleFirewallConfiguration()) {
+    return {
+      ok: false,
+      code: 'unsupported',
+      error: 'Firewall configuration is disabled outside the packaged product server',
+    };
+  }
+  return configureTailscaleFirewall({ port: serverPort });
+});
+ipcMain.handle('create-pairing-code', (_event, action: unknown) => {
+  if (action !== 'issue' && action !== 'rotate') {
+    return { ok: false, code: 'invalid-action', error: 'Invalid pairing action' };
+  }
+  return createPairingCode(action);
+});
+ipcMain.handle('list-pairing-requests', () => (
+  requestPairingApprovalApi('/api/pairing/requests')
+));
+ipcMain.handle('decide-pairing-request', (_event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, code: 'invalid-request', error: 'Invalid pairing decision' };
+  }
+  const { requestId, decision } = payload as { requestId?: unknown; decision?: unknown };
+  if (
+    typeof requestId !== 'string'
+    || requestId.length === 0
+    || requestId.length > 128
+    || !isPairingDecision(decision)
+  ) {
+    return { ok: false, code: 'invalid-request', error: 'Invalid pairing decision' };
+  }
+  return requestPairingApprovalApi(
+    `/api/pairing/requests/${encodeURIComponent(requestId)}`,
+    { method: 'PATCH', body: JSON.stringify({ decision }) },
+  );
+});
 ipcMain.handle('read-terminal-clipboard', () => readTerminalClipboard(clipboard));
 ipcMain.handle('write-terminal-clipboard-text', (_event, text: unknown) => (
   writeTerminalClipboardText(clipboard, text)
@@ -1250,13 +1556,18 @@ ipcMain.on('set-titlebar-theme', (event, theme: TitlebarTheme, options?: Titleba
 app.whenReady().then(async () => {
   try {
     const port = await startServer();
+    electronAppSecret = await registerAppSecretHeader(port);
     mainWindow = createWindow(port);
     createTray(mainWindow, requestAppQuit, {
       closeBehavior: windowsCloseBehavior,
       onCloseBehaviorChange: handleTrayCloseBehaviorChange,
+      language: resolveElectronLanguage(app.getLocale()),
+      remoteAccessStatus,
     });
+    startRemoteAccessStatusMonitor();
   } catch (err) {
     dialog.showErrorBox('Tessera', `Failed to start server: ${err}`);
+    remoteAccessStatus = { registeredDeviceCount: 0, connectedDeviceCount: 0 };
     requestAppQuit();
   }
 });

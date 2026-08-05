@@ -1,10 +1,21 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { PairingDecision } from '../src/lib/auth/pairing-contract';
 import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
+  supportsTailscaleFirewallConfiguration:
+    ipcRenderer.sendSync('supports-tailscale-firewall-configuration'),
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  getRemoteAccessAddressCandidates: () =>
+    ipcRenderer.invoke('get-remote-access-address-candidates'),
+  configureTailscaleFirewall: () => ipcRenderer.invoke('configure-tailscale-firewall'),
+  createPairingCode: (action: 'issue' | 'rotate') =>
+    ipcRenderer.invoke('create-pairing-code', action),
+  listPairingRequests: () => ipcRenderer.invoke('list-pairing-requests'),
+  decidePairingRequest: (requestId: string, decision: PairingDecision) =>
+    ipcRenderer.invoke('decide-pairing-request', { requestId, decision }),
   readTerminalClipboard: () =>
     ipcRenderer.invoke('read-terminal-clipboard') as Promise<TerminalClipboardPayload>,
   writeTerminalClipboardText: (text: string) =>

@@ -38,7 +38,7 @@ const server = spawn(
       PORT: String(port),
       NODE_ENV: 'development',
       TESSERA_DATA_DIR: dataDir,
-      TESSERA_ELECTRON_AUTH_BYPASS: '1',
+      TESSERA_ELECTRON_RUNTIME: '1',
       LOG_LEVEL: 'error',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -53,8 +53,9 @@ server.stderr.on('data', (chunk) => {
 });
 
 let browser;
+let appSecret;
 try {
-  await waitForServer(`${appOrigin}/api/settings`, server);
+  appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
   browser = await chromium.launch({ headless: true });
   await testWaitsForAuthoritativeNative(browser, appOrigin);
@@ -278,7 +279,10 @@ async function testReinitializesAfterEnvironmentChange(browserInstance, origin) 
 }
 
 async function createElectronPage(browserInstance, persistedEnvironment) {
-  const context = await browserInstance.newContext({ viewport: { width: 1200, height: 850 } });
+  const context = await browserInstance.newContext({
+    viewport: { width: 1200, height: 850 },
+    extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
+  });
   await context.addInitScript((environment) => {
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
@@ -421,8 +425,11 @@ async function waitForServer(url, child) {
       throw new Error(`isolated Tessera server exited with code ${child.exitCode}`);
     }
     try {
-      const response = await fetch(url);
-      if (response.ok) return;
+      const secret = (await fs.readFile(path.join(dataDir, 'auth', 'app-secret'), 'utf8')).trim();
+      const response = await fetch(url, {
+        headers: { 'x-tessera-app-secret': secret },
+      });
+      if (response.ok) return secret;
     } catch {
       // The development server is still starting.
     }

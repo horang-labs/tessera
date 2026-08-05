@@ -14,7 +14,8 @@ import { taskPrPoller } from './src/lib/github/task-pr-poller';
 import { installTaskPrStatusBroadcast, uninstallTaskPrStatusBroadcast } from './src/lib/github/task-pr-broadcast';
 import { installSessionPrStatusBroadcast, uninstallSessionPrStatusBroadcast } from './src/lib/github/session-pr-broadcast';
 import { ensureRSAKeys } from './src/lib/auth/keys';
-import { readUsersFile } from './src/lib/users';
+import { ensureAppSecret } from './src/lib/auth/app-secret';
+import { resolveServerDefaultUserId } from './src/lib/server-default-user';
 import { SettingsManager } from './src/lib/settings/manager';
 import { pruneExpiredArchivedWorktrees } from './src/lib/archive/archive-service';
 import { prewarmCliStatusSnapshot } from './src/lib/cli/provider-status-prewarm';
@@ -33,6 +34,7 @@ import {
   startControlRuntimeHost,
   type ControlRuntimeHost,
 } from './src/lib/control/runtime-host';
+import { attachRemoteAddressHeader } from './src/lib/http/remote-address-header';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -52,10 +54,10 @@ async function startServer() {
   // serving provider options already reflects the last known remote list.
   await ensureRemoteModelConfigLoaded();
   await ensureRSAKeys();
+  await ensureAppSecret();
   prewarmCliStatusSnapshot('server');
   try {
-    const users = await readUsersFile();
-    const userId = users.users[0]?.id;
+    const userId = await resolveServerDefaultUserId();
     if (userId) {
       const settings = await SettingsManager.load(userId);
       if (settings.autoDeleteArchivedWorktrees) {
@@ -79,6 +81,7 @@ async function startServer() {
 
   // Attach request handler after Next.js is prepared
   server.on('request', (req, res) => {
+    attachRemoteAddressHeader(req);
     const pathname = req.url?.split('?')[0] ?? '';
     if (pathname === CONTROL_ROUTE_PREFIX || pathname.startsWith(`${CONTROL_ROUTE_PREFIX}/`)) {
       res.writeHead(404).end();

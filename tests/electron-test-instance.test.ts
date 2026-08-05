@@ -86,7 +86,7 @@ test('unsafe test instance ids fail closed instead of falling back to shared sta
   }
 });
 
-test('normal Electron ignores a leaked isolated-test server port', () => {
+test('normal Electron keeps the fixed port even if a test port leaks into its environment', () => {
   assert.equal(resolveElectronServerPort(32123, null, {
     TESSERA_ELECTRON_TEST_SERVER_PORT: '32124',
   }), 32123);

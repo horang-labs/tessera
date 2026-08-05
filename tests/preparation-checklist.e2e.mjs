@@ -35,6 +35,7 @@ const serverOutput = [];
 let server = null;
 let browser = null;
 let page = null;
+let appSecret = null;
 const results = [];
 
 function logs() {
@@ -63,7 +64,7 @@ async function startServer() {
       PORT: String(port),
       TESSERA_DEV_PORT: String(port),
       TESSERA_DATA_DIR: dataDir,
-      TESSERA_ELECTRON_AUTH_BYPASS: '1',
+      TESSERA_ELECTRON_RUNTIME: '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -79,7 +80,10 @@ async function startServer() {
   while (Date.now() < deadline) {
     if (server.exitCode !== null) throw new Error(`server exited early:\n${logs()}`);
     try {
-      if ((await fetch(`${origin}/api/settings`)).ok) return;
+      appSecret = (await fs.readFile(path.join(dataDir, 'auth', 'app-secret'), 'utf8')).trim();
+      if ((await fetch(`${origin}/api/settings`, {
+        headers: { 'x-tessera-app-secret': appSecret },
+      })).ok) return;
     } catch {
       // still starting
     }
@@ -105,7 +109,11 @@ async function stopServer() {
 async function api(pathname, init) {
   const response = await fetch(`${origin}${pathname}`, {
     ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    headers: {
+      'content-type': 'application/json',
+      'x-tessera-app-secret': appSecret,
+      ...(init?.headers ?? {}),
+    },
   });
   const text = await response.text();
   let json = null;
@@ -494,7 +502,10 @@ try {
   assert.equal(registered.ok, true, `could not register the project: ${registered.text}`);
 
   browser = await chromium.launch({ headless });
-  page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  page = await browser.newPage({
+    viewport: { width: 1400, height: 1000 },
+    extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
+  });
 
   for (const [name, phase] of phases) {
     try {

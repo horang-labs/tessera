@@ -1,15 +1,15 @@
-import { getElectronAuthUserId } from '@/lib/auth/electron-user';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
+import { getElectronAuthUserId } from '@/lib/electron-user';
+import { isElectronRuntime } from '@/lib/electron-runtime';
 import { readUsersFile } from '@/lib/users';
 
 interface ControlUserIdDependencies {
-  isElectronAuthBypassEnabled(): boolean;
+  isElectronRuntime(): boolean;
   getElectronAuthUserId(): Promise<string>;
   readFirstUserId(): Promise<string | undefined>;
 }
 
 const defaultDependencies: ControlUserIdDependencies = {
-  isElectronAuthBypassEnabled,
+  isElectronRuntime,
   getElectronAuthUserId,
   readFirstUserId: async () => (await readUsersFile()).users[0]?.id,
 };
@@ -18,7 +18,7 @@ const defaultDependencies: ControlUserIdDependencies = {
 export async function resolveControlUserId(
   dependencies: ControlUserIdDependencies = defaultDependencies,
 ): Promise<string | undefined> {
-  if (dependencies.isElectronAuthBypassEnabled()) {
+  if (dependencies.isElectronRuntime()) {
     return dependencies.getElectronAuthUserId();
   }
   return dependencies.readFirstUserId();

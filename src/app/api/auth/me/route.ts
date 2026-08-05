@@ -1,25 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken } from '@/lib/auth/jwt';
 import { findUserById } from '@/lib/users';
 import { createAuthError } from '@/lib/error';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
-import { getElectronAuthUser } from '@/lib/auth/electron-user';
+import { getElectronAuthUser } from '@/lib/electron-user';
+import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
+import { evaluateRequestAndLog } from '@/lib/auth/request-gate';
 import type { MeResponse } from '@/types/auth';
 
 export async function GET(request: NextRequest) {
   try {
-    if (isElectronAuthBypassEnabled()) {
-      const user = await getElectronAuthUser();
-      if (user) {
-        return NextResponse.json({
-          user,
-        } satisfies MeResponse);
-      }
-    }
-
-    const token = request.cookies.get('jwt')?.value;
-
-    if (!token) {
+    const input = requestGateInputFromNextRequest(request);
+    const decision = await evaluateRequestAndLog(input);
+    if (!decision.allow) {
       const error = createAuthError(
         'unauthorized',
         'Authentication required',
@@ -30,20 +21,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(error, { status: 401 });
     }
 
-    const payload = await verifyToken(token);
-    if (!payload) {
-      const error = createAuthError(
-        'unauthorized',
-        'Authentication required',
-        401,
-        'No valid authentication token.',
-        '/api/auth/me'
-      );
-      return NextResponse.json(error, { status: 401 });
-    }
-
-    const user = await findUserById(payload.sub);
-    if (!user) {
+    const electronUser = await getElectronAuthUser();
+    const storedUser = decision.userId === electronUser.id
+      ? null
+      : await findUserById(decision.userId);
+    if (!storedUser && decision.userId !== electronUser.id) {
       const error = createAuthError(
         'unauthorized',
         'Authentication required',
@@ -56,9 +38,9 @@ export async function GET(request: NextRequest) {
 
     const response: MeResponse = {
       user: {
-        id: user.id,
-        username: user.username,
-        lastLoginAt: user.lastLoginAt.toISOString(),
+        id: storedUser?.id ?? electronUser.id,
+        username: storedUser?.username ?? electronUser.username,
+        lastLoginAt: storedUser?.lastLoginAt.toISOString() ?? electronUser.lastLoginAt,
       },
     };
 

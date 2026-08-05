@@ -5,7 +5,7 @@ import { resolveControlUserId } from '@/lib/control/user-context';
 test('Electron-local Control mutations use the same user identity as HTTP and WebSocket auth', async () => {
   let usersFileReads = 0;
   const userId = await resolveControlUserId({
-    isElectronAuthBypassEnabled: () => true,
+    isElectronRuntime: () => true,
     getElectronAuthUserId: async () => 'electron-local-user',
     readFirstUserId: async () => {
       usersFileReads += 1;
@@ -20,7 +20,7 @@ test('Electron-local Control mutations use the same user identity as HTTP and We
 test('authenticated web Control mutations retain the configured first user identity', async () => {
   let electronUserReads = 0;
   const userId = await resolveControlUserId({
-    isElectronAuthBypassEnabled: () => false,
+    isElectronRuntime: () => false,
     getElectronAuthUserId: async () => {
       electronUserReads += 1;
       return 'electron-local-user';

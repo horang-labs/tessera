@@ -8,7 +8,7 @@ import { NextRequest } from 'next/server';
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-skill-preparation-test-'));
 process.env.TESSERA_DATA_DIR = dataDir;
 process.env.TESSERA_PRODUCTION_DB = '1';
-process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
+process.env.TESSERA_ELECTRON_RUNTIME = '1';
 
 type Modules = {
   route: typeof import('@/app/api/sessions/[id]/skills/route');
@@ -17,6 +17,7 @@ type Modules = {
   taskPreparation: typeof import('@/lib/db/task-preparation');
   openCodeDiscovery: typeof import('@/lib/cli/providers/opencode/command-discovery-client');
   processManager: typeof import('@/lib/cli/process-manager')['processManager'];
+  appSecret: string;
 };
 
 let loaded: Promise<Modules> | null = null;
@@ -30,6 +31,7 @@ function modules(): Promise<Modules> {
       taskPreparation,
       openCodeDiscovery,
       { processManager },
+      { ensureAppSecret },
     ] = await Promise.all([
       import('@/lib/db/database'),
       import('@/app/api/sessions/[id]/skills/route'),
@@ -38,9 +40,19 @@ function modules(): Promise<Modules> {
       import('@/lib/db/task-preparation'),
       import('@/lib/cli/providers/opencode/command-discovery-client'),
       import('@/lib/cli/process-manager'),
+      import('@/lib/auth/app-secret'),
     ]);
     await initDatabase();
-    return { route, sessions, tasks, taskPreparation, openCodeDiscovery, processManager };
+    const appSecret = await ensureAppSecret();
+    return {
+      route,
+      sessions,
+      tasks,
+      taskPreparation,
+      openCodeDiscovery,
+      processManager,
+      appSecret,
+    };
   })();
   return loaded;
 }
@@ -59,6 +71,7 @@ test('pre-session skill discovery waits until blocking preparation finishes', as
     tasks,
     taskPreparation,
     openCodeDiscovery,
+    appSecret,
   } = await modules();
   const taskId = 'skill-preparation-task';
   const sessionId = 'skill-preparation-session';
@@ -81,7 +94,12 @@ test('pre-session skill discovery waits until blocking preparation finishes', as
   });
 
   const responsePromise = route.GET(
-    new NextRequest(`http://localhost/api/sessions/${sessionId}/skills`),
+    new NextRequest(`http://localhost/api/sessions/${sessionId}/skills`, {
+      headers: {
+        host: 'localhost',
+        'x-tessera-app-secret': appSecret,
+      },
+    }),
     { params: Promise.resolve({ id: sessionId }) },
   );
 
@@ -113,6 +131,7 @@ test('failed blocking preparation never becomes an incomplete skill catalog', as
     tasks,
     taskPreparation,
     openCodeDiscovery,
+    appSecret,
   } = await modules();
   const taskId = 'failed-skill-preparation-task';
   const sessionId = 'failed-skill-preparation-session';
@@ -136,7 +155,12 @@ test('failed blocking preparation never becomes an incomplete skill catalog', as
   });
 
   const response = await route.GET(
-    new NextRequest(`http://localhost/api/sessions/${sessionId}/skills`),
+    new NextRequest(`http://localhost/api/sessions/${sessionId}/skills`, {
+      headers: {
+        host: 'localhost',
+        'x-tessera-app-secret': appSecret,
+      },
+    }),
     { params: Promise.resolve({ id: sessionId }) },
   );
 

@@ -1,21 +1,19 @@
 import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
-import { verifyToken } from '@/lib/auth/jwt';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
-import { getElectronAuthUserId } from '@/lib/auth/electron-user';
+import { cookies, headers } from 'next/headers';
+import { requestGateInputFromServerContext } from '@/lib/auth/next-request-gate';
+import { evaluateRequestAndLog } from '@/lib/auth/request-gate';
 import { SettingsManager } from '@/lib/settings/manager';
 import { getSetupEntryRoute } from '@/lib/setup/setup-routing';
-import { findUserById, hasAnyUsers } from '@/lib/users';
+import { hasAnyUsers } from '@/lib/users';
 
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
-  if (!isElectronAuthBypassEnabled() && !(await hasAnyUsers())) {
-    redirect('/setup');
-  }
-
   const userId = await resolveEntryUserId();
   if (!userId) {
+    if (!(await hasAnyUsers())) {
+      redirect('/setup');
+    }
     redirect('/login');
   }
 
@@ -24,17 +22,12 @@ export default async function HomePage() {
 }
 
 async function resolveEntryUserId(): Promise<string | null> {
-  if (isElectronAuthBypassEnabled()) {
-    return getElectronAuthUserId();
-  }
-
-  const cookieStore = await cookies();
-  const token = cookieStore.get('jwt')?.value;
-  if (!token) return null;
-
-  const payload = await verifyToken(token);
-  if (!payload) return null;
-
-  const user = await findUserById(payload.sub);
-  return user?.id ?? null;
+  const [requestHeaders, requestCookies] = await Promise.all([headers(), cookies()]);
+  const decision = await evaluateRequestAndLog(requestGateInputFromServerContext({
+    headers: requestHeaders,
+    cookies: requestCookies,
+    method: 'GET',
+    rawUrl: '/',
+  }));
+  return decision.allow ? decision.userId : null;
 }

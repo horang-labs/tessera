@@ -9,10 +9,11 @@ import { createServer } from 'http';
 import { initDatabase } from '../src/lib/db/database';
 import '../src/lib/cli/providers/bootstrap';
 import { ensureRSAKeys } from '../src/lib/auth/keys';
+import { ensureAppSecret } from '../src/lib/auth/app-secret';
 import { wsServer } from '../src/lib/ws/server';
 import { processManager } from '../src/lib/cli/process-manager';
 import { getAgentEnvironment } from '../src/lib/cli/spawn-cli';
-import { getElectronAuthUserId } from '../src/lib/auth/electron-user';
+import { resolveServerDefaultUserId } from '../src/lib/server-default-user';
 import { rateLimitPoller } from '../src/lib/rate-limit/poller';
 import { taskPrPoller } from '../src/lib/github/task-pr-poller';
 import { installTaskPrStatusBroadcast, uninstallTaskPrStatusBroadcast } from '../src/lib/github/task-pr-broadcast';
@@ -31,6 +32,9 @@ import {
   startControlRuntimeHost,
   type ControlRuntimeHost,
 } from '../src/lib/control/runtime-host';
+import { attachRemoteAddressHeader } from '../src/lib/http/remote-address-header';
+import { createPairingPresentation } from '../src/lib/auth/pairing-presentation';
+import { resolveElectronServerHost } from './server-listener';
 
 process.env.ELECTRON_CHILD = '1';
 process.env.TESSERA_ELECTRON_SERVER = '1';
@@ -38,7 +42,10 @@ process.env.TESSERA_PRODUCTION_DB = '1';
 snapshotTelemetryStartupDataState();
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = '127.0.0.1';
+const hostname = resolveElectronServerHost(
+  process.platform,
+  process.env.TESSERA_ELECTRON_PACKAGED === '1',
+);
 const port = parseInt(process.env.PORT || '3000', 10);
 const isElectronChild = process.env.ELECTRON_CHILD === '1';
 const originalParentPid = process.ppid;
@@ -127,8 +134,11 @@ initDatabase().then(() => {
 }).then(() => {
   logStartup('debug', 'Model config cache loaded, calling ensureRSAKeys...');
   return ensureRSAKeys();
+}).then(() => {
+  logStartup('debug', 'RSA keys ensured, calling ensureAppSecret...');
+  return ensureAppSecret();
 }).then(async () => {
-  logStartup('debug', 'RSA keys ensured, creating server and calling app.prepare...');
+  logStartup('debug', 'App secret ensured, creating server and calling app.prepare...');
   prewarmCliStatusSnapshot('electron-server-child');
 
   // Create HTTP server first so Next.js can attach its HMR upgrade handler.
@@ -141,6 +151,7 @@ initDatabase().then(() => {
 
   // Attach request handler after Next.js is prepared
   server.on('request', (req, res) => {
+    attachRemoteAddressHeader(req);
     const pathname = req.url?.split('?')[0] ?? '';
     if (pathname === CONTROL_ROUTE_PREFIX || pathname.startsWith(`${CONTROL_ROUTE_PREFIX}/`)) {
       res.writeHead(404).end();
@@ -160,13 +171,16 @@ initDatabase().then(() => {
         appRoot: dir,
         runtimeDirectory: process.env.TESSERA_CONTROL_RUNTIME_DIR,
         descriptorPath: process.env.TESSERA_CONTROL_DESCRIPTOR_PATH,
-        resolveUserId: getElectronAuthUserId,
+        resolveUserId: resolveServerDefaultUserId,
       });
 
       wsServer.start(server);
       rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
       rateLimitPoller.setEnvironmentResolver(async () => {
-        const userId = await getElectronAuthUserId();
+        const userId = await resolveServerDefaultUserId();
+        if (!userId) {
+          throw new Error('Electron server default user is unavailable');
+        }
         return getAgentEnvironment(userId);
       });
       rateLimitPoller.start();
@@ -262,7 +276,7 @@ initDatabase().then(() => {
   shutdownHandler = shutdown;
 
   // IPC shutdown from Electron main process
-  process.on('message', (msg: { type: string; requestId?: string }) => {
+  process.on('message', (msg: { type: string; requestId?: string; action?: string }) => {
     if (msg?.type === 'shutdown') {
       void shutdown('ipc-shutdown');
     } else if (msg?.type === 'terminal_summary_request' && typeof msg.requestId === 'string') {
@@ -270,6 +284,25 @@ initDatabase().then(() => {
         type: 'terminal_summary',
         requestId: msg.requestId,
         ...terminalManager.getRuntimeSummary(),
+      });
+    } else if (
+      msg?.type === 'pairing_presentation_request'
+      && typeof msg.requestId === 'string'
+      && (msg.action === 'issue' || msg.action === 'rotate')
+    ) {
+      void createPairingPresentation(msg.action).then((presentation) => {
+        process.send?.({
+          type: 'pairing_presentation',
+          requestId: msg.requestId,
+          ...presentation,
+        });
+      }).catch((error: unknown) => {
+        process.send?.({
+          type: 'pairing_presentation_error',
+          requestId: msg.requestId,
+          code: error instanceof Error && 'code' in error ? String(error.code) : 'pairing-failed',
+          message: error instanceof Error ? error.message : String(error),
+        });
       });
     }
   });
