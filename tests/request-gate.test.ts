@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
+import { pairApprovedDevice } from './helpers/approved-device';
 
 let tempDir: string;
 const previousDataDir = process.env.TESSERA_DATA_DIR;
@@ -148,16 +149,13 @@ test('ignores remote-access settings from a device while saving its other settin
   const { PUT } = await import('../src/app/api/settings/route');
   const {
     clearDeviceRegistry,
-    issuePairingToken,
-    redeemPairingToken,
   } = await import('../src/lib/auth/device-registry');
   const { loadMachineSettings, saveMachineSettings } = await import(
     '../src/lib/settings/machine-settings'
   );
   await clearDeviceRegistry();
   await saveMachineSettings({ advertisedAddress: 'https://local-only.example' });
-  const pairing = await issuePairingToken();
-  const device = await redeemPairingToken(pairing.token, 'Remote phone');
+  const { device } = await pairApprovedDevice('Remote phone');
   process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
   let response: Response;
   try {
@@ -367,20 +365,20 @@ test('accepts a redeemed device token and rejects it immediately after revocatio
   const {
     DeviceRegistryError,
     PAIRING_TOKEN_TTL_MS,
-    issuePairingToken,
-    redeemPairingToken,
+    claimPairingToken,
     revokeDevice,
   } = await import('../src/lib/auth/device-registry');
   const { evaluateRequest } = await import('../src/lib/auth/request-gate');
   const issuedAt = new Date('2026-08-03T00:00:00.000Z');
-  const pairing = await issuePairingToken(issuedAt);
-  const device = await redeemPairingToken(pairing.token, 'Test phone', issuedAt);
+  const { pairing, device } = await pairApprovedDevice('Test phone', issuedAt);
   await assert.rejects(
-    () => redeemPairingToken(
-      pairing.token,
-      'Second phone',
-      new Date(issuedAt.getTime() + PAIRING_TOKEN_TTL_MS + 1),
-    ),
+    () => claimPairingToken({
+      token: pairing.token,
+      name: 'Second phone',
+      browser: 'Test browser',
+      platform: 'Test platform',
+      remoteAddress: '127.0.0.1',
+    }, undefined, new Date(issuedAt.getTime() + PAIRING_TOKEN_TTL_MS + 1)),
     (error: unknown) => error instanceof DeviceRegistryError
       && error.code === 'pairing-used',
   );
@@ -402,43 +400,52 @@ test('accepts a redeemed device token and rejects it immediately after revocatio
   );
 });
 
-test('rejects an expired pairing token and consumes it on the first failed redemption', async () => {
+test('rejects an expired pairing token and invalidates it on the first failed claim', async () => {
   const {
     DeviceRegistryError,
     PAIRING_TOKEN_TTL_MS,
     issuePairingToken,
-    redeemPairingToken,
+    claimPairingToken,
   } = await import('../src/lib/auth/device-registry');
   const issuedAt = new Date('2026-08-03T00:00:00.000Z');
   const pairing = await issuePairingToken(issuedAt);
 
   await assert.rejects(
-    () => redeemPairingToken(
-      pairing.token,
-      'Expired phone',
-      new Date(issuedAt.getTime() + PAIRING_TOKEN_TTL_MS),
-    ),
+    () => claimPairingToken({
+      token: pairing.token,
+      name: 'Expired phone',
+      browser: 'Test browser',
+      platform: 'Test platform',
+      remoteAddress: '127.0.0.1',
+    }, undefined, new Date(issuedAt.getTime() + PAIRING_TOKEN_TTL_MS)),
     (error: unknown) => error instanceof DeviceRegistryError
       && error.code === 'pairing-expired',
   );
   await assert.rejects(
-    () => redeemPairingToken(
-      pairing.token,
-      'Expired phone',
-      new Date(issuedAt.getTime() + PAIRING_TOKEN_TTL_MS + 1),
-    ),
+    () => claimPairingToken({
+      token: pairing.token,
+      name: 'Expired phone',
+      browser: 'Test browser',
+      platform: 'Test platform',
+      remoteAddress: '127.0.0.1',
+    }, undefined, new Date(issuedAt.getTime() + PAIRING_TOKEN_TTL_MS + 1)),
     (error: unknown) => error instanceof DeviceRegistryError
       && error.code === 'pairing-invalid',
   );
 });
 
-test('completes the pairing API flow and revokes the issued cookie immediately', async () => {
+test('pairing APIs require local approval before issuing one device cookie', async () => {
   const { NextRequest } = await import('next/server');
   const pairingRoute = await import('../src/app/api/pairing/route');
-  const redeemRoute = await import('../src/app/api/pairing/redeem/route');
+  const pairingRequestsRoute = await import('../src/app/api/pairing/requests/route');
+  const pairingRequestRoute = await import('../src/app/api/pairing/requests/[id]/route');
   const devicesRoute = await import('../src/app/api/devices/route');
   const deviceRoute = await import('../src/app/api/devices/[id]/route');
-  const { clearDeviceRegistry } = await import('../src/lib/auth/device-registry');
+  const {
+    clearDeviceRegistry,
+    listDevices,
+    PAIRING_REQUEST_COOKIE,
+  } = await import('../src/lib/auth/device-registry');
   const { evaluateRequest } = await import('../src/lib/auth/request-gate');
   const secret = await appSecretModule.ensureAppSecret();
   await clearDeviceRegistry();
@@ -459,57 +466,160 @@ test('completes the pairing API flow and revokes the issued cookie immediately',
   const issuedToken = new URLSearchParams(new URL(issued.pairingLink).hash.slice(1)).get('t');
   assert.ok(issuedToken);
 
-  const rotateResponse = await pairingRoute.PUT(new NextRequest(
-    'http://localhost:32123/api/pairing',
-    { method: 'PUT', headers: appHeaders },
-  ));
-  assert.equal(rotateResponse.status, 200);
-  const rotated = await rotateResponse.json() as { pairingLink: string; pairingToken?: string };
-  assert.equal(rotated.pairingToken, undefined);
-  const rotatedToken = new URLSearchParams(new URL(rotated.pairingLink).hash.slice(1)).get('t');
-  assert.ok(rotatedToken);
-  assert.notEqual(rotatedToken, issuedToken);
-
-  const oldTokenResponse = await redeemRoute.POST(new NextRequest(
-    'http://localhost:32123/api/pairing/redeem',
+  const claimResponse = await pairingRequestsRoute.POST(new NextRequest(
+    'http://localhost:32123/api/pairing/requests',
     {
       method: 'POST',
-      headers: appHeaders,
-      body: JSON.stringify({ token: issuedToken, name: 'Old phone' }),
+      headers: {
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+        'user-agent': 'Mobile Safari on iOS',
+        'sec-ch-ua-platform': 'iOS',
+        'x-tessera-remote-address': '100.64.0.8',
+      },
+      body: JSON.stringify({ token: issuedToken, name: 'Test phone' }),
     },
   ));
-  assert.equal(oldTokenResponse.status, 401);
+  assert.equal(claimResponse.status, 201);
+  const claim = await claimResponse.json() as {
+    request: { id: string; comparisonCode: string; expiresAt: string };
+  };
+  assert.match(claim.request.comparisonCode, /^\d{6}$/);
+  const pendingSetCookie = claimResponse.headers.get('set-cookie') ?? '';
+  assert.match(pendingSetCookie, new RegExp(`^${PAIRING_REQUEST_COOKIE}=[A-Za-z0-9_-]{43};`));
+  assert.match(pendingSetCookie, /HttpOnly/i);
+  assert.match(pendingSetCookie, /SameSite=strict/i);
+  assert.match(pendingSetCookie, /Path=\/api\/pairing\/requests/i);
+  assert.doesNotMatch(pendingSetCookie, /(?:^|;\s*)device=/);
+  const pollingCredential = new RegExp(
+    `(?:^|;\\s*)${PAIRING_REQUEST_COOKIE}=([^;]+)`,
+  ).exec(pendingSetCookie)?.[1];
+  assert.ok(pollingCredential);
+  assert.deepEqual(await listDevices(), []);
 
-  const redeemResponse = await redeemRoute.POST(new NextRequest(
-    'http://localhost:32123/api/pairing/redeem',
+  const unauthenticatedMe = await evaluateRequest(requestInput({
+    cookies: { [PAIRING_REQUEST_COOKIE]: pollingCredential },
+  }));
+  assert.deepEqual(unauthenticatedMe, { allow: false, reason: 'unauthorized', status: 401 });
+  assert.deepEqual(
+    await evaluateRequest(requestInput({
+      purpose: 'ws-upgrade',
+      cookies: { [PAIRING_REQUEST_COOKIE]: pollingCredential },
+    })),
+    { allow: false, reason: 'unauthorized', wsCloseCode: 1008 },
+  );
+
+  const localListResponse = await pairingRequestsRoute.GET(new NextRequest(
+    'http://localhost:32123/api/pairing/requests',
+    { headers: appHeaders },
+  ));
+  assert.equal(localListResponse.status, 200);
+  const pendingRequests = (await localListResponse.json()).requests as Array<{
+    id: string;
+    name: string;
+    browser: string;
+    platform: string;
+    remoteAddress: string;
+    comparisonCode: string;
+    status: string;
+  }>;
+  assert.deepEqual(pendingRequests.map((request) => ({
+    id: request.id,
+    name: request.name,
+    remoteAddress: request.remoteAddress,
+    comparisonCode: request.comparisonCode,
+    status: request.status,
+  })), [{
+    id: claim.request.id,
+    name: 'Test phone',
+    remoteAddress: '100.64.0.8',
+    comparisonCode: claim.request.comparisonCode,
+    status: 'pending',
+  }]);
+  assert.match(pendingRequests[0].browser, /Safari/i);
+  assert.match(pendingRequests[0].platform, /iOS/i);
+
+  const pendingPoll = await pairingRequestRoute.POST(new NextRequest(
+    `http://localhost:32123/api/pairing/requests/${claim.request.id}`,
     {
       method: 'POST',
-      headers: appHeaders,
-      body: JSON.stringify({ token: rotatedToken, name: 'Test phone' }),
+      headers: {
+        cookie: `${PAIRING_REQUEST_COOKIE}=${pollingCredential}`,
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
     },
-  ));
-  assert.equal(redeemResponse.status, 201);
-  const redeemed = await redeemResponse.json() as { device: { id: string; name: string } };
+  ), { params: Promise.resolve({ id: claim.request.id }) });
+  assert.equal(pendingPoll.status, 200);
+  assert.deepEqual(await pendingPoll.json(), {
+    status: 'pending',
+    expiresAt: claim.request.expiresAt,
+  });
+
+  const unauthenticatedApproval = await pairingRequestRoute.PATCH(new NextRequest(
+    `http://localhost:32123/api/pairing/requests/${claim.request.id}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({ decision: 'approve' }),
+    },
+  ), { params: Promise.resolve({ id: claim.request.id }) });
+  assert.equal(unauthenticatedApproval.status, 401);
+
+  const approveResponse = await pairingRequestRoute.PATCH(new NextRequest(
+    `http://localhost:32123/api/pairing/requests/${claim.request.id}`,
+    {
+      method: 'PATCH',
+      headers: appHeaders,
+      body: JSON.stringify({ decision: 'approve' }),
+    },
+  ), { params: Promise.resolve({ id: claim.request.id }) });
+  assert.equal(approveResponse.status, 200);
+  assert.equal((await approveResponse.json()).request.status, 'approved');
+  assert.deepEqual(await listDevices(), [], 'approval alone must not create a ghost device');
+
+  const redeemResponse = await pairingRequestRoute.POST(new NextRequest(
+    `http://localhost:32123/api/pairing/requests/${claim.request.id}`,
+    {
+      method: 'POST',
+      headers: {
+        cookie: `${PAIRING_REQUEST_COOKIE}=${pollingCredential}`,
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+    },
+  ), { params: Promise.resolve({ id: claim.request.id }) });
+  assert.equal(redeemResponse.status, 200);
+  const redeemed = await redeemResponse.json() as {
+    status: string;
+    device: { id: string; name: string };
+  };
+  assert.equal(redeemed.status, 'approved');
   assert.equal(redeemed.device.name, 'Test phone');
   const setCookie = redeemResponse.headers.get('set-cookie') ?? '';
-  assert.match(setCookie, /^device=[A-Za-z0-9_-]{43};/);
+  assert.match(setCookie, /(?:^|,\s*)device=[A-Za-z0-9_-]{43};/);
   assert.match(setCookie, /HttpOnly/i);
-  const deviceToken = /(?:^|;\s*)device=([^;]+)/.exec(setCookie)?.[1];
+  const deviceToken = /(?:^|,\s*)device=([^;]+)/.exec(setCookie)?.[1];
   assert.ok(deviceToken);
 
-  const reusedTokenResponse = await redeemRoute.POST(new NextRequest(
-    'http://localhost:32123/api/pairing/redeem',
+  const duplicatePoll = await pairingRequestRoute.POST(new NextRequest(
+    `http://localhost:32123/api/pairing/requests/${claim.request.id}`,
     {
       method: 'POST',
-      headers: appHeaders,
-      body: JSON.stringify({ token: rotatedToken, name: 'Reused phone' }),
+      headers: {
+        cookie: `${PAIRING_REQUEST_COOKIE}=${pollingCredential}`,
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
     },
-  ));
-  assert.equal(reusedTokenResponse.status, 409);
-  assert.deepEqual(await reusedTokenResponse.json(), {
-    error: 'Pairing token has already been used',
-    code: 'pairing-used',
-  });
+  ), { params: Promise.resolve({ id: claim.request.id }) });
+  assert.equal(duplicatePoll.status, 409);
+  assert.equal((await duplicatePoll.json()).status, 'used');
 
   const deviceHeaders = {
     cookie: `device=${deviceToken}`,
@@ -540,6 +650,71 @@ test('completes the pairing API flow and revokes the issued cookie immediately',
     { method: 'POST', headers: deviceHeaders },
   ));
   assert.equal(remoteIssueResponse.status, 403);
+
+  const nextIssueResponse = await pairingRoute.POST(new NextRequest(
+    'http://localhost:32123/api/pairing',
+    { method: 'POST', headers: appHeaders },
+  ));
+  const nextIssue = await nextIssueResponse.json() as { pairingLink: string };
+  const nextToken = new URLSearchParams(new URL(nextIssue.pairingLink).hash.slice(1)).get('t');
+  assert.ok(nextToken);
+  const nextClaimResponse = await pairingRequestsRoute.POST(new NextRequest(
+    'http://localhost:32123/api/pairing/requests',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+        'x-tessera-remote-address': '100.64.0.9',
+      },
+      body: JSON.stringify({ token: nextToken, name: 'Second phone' }),
+    },
+  ));
+  const nextClaim = await nextClaimResponse.json() as { request: { id: string } };
+  const deviceApproval = await pairingRequestRoute.PATCH(new NextRequest(
+    `http://localhost:32123/api/pairing/requests/${nextClaim.request.id}`,
+    {
+      method: 'PATCH',
+      headers: {
+        cookie: `device=${deviceToken}`,
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({ decision: 'approve' }),
+    },
+  ), { params: Promise.resolve({ id: nextClaim.request.id }) });
+  assert.equal(deviceApproval.status, 403);
+
+  const { ensureRSAKeys } = await import('../src/lib/auth/keys');
+  const { generateToken } = await import('../src/lib/auth/jwt');
+  await ensureRSAKeys();
+  const jwt = await generateToken('persisted-user', 'persisted');
+  const jwtApproval = await pairingRequestRoute.PATCH(new NextRequest(
+    `http://localhost:32123/api/pairing/requests/${nextClaim.request.id}`,
+    {
+      method: 'PATCH',
+      headers: {
+        cookie: `jwt=${jwt}`,
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({ decision: 'approve' }),
+    },
+  ), { params: Promise.resolve({ id: nextClaim.request.id }) });
+  assert.equal(jwtApproval.status, 403);
+
+  const denyResponse = await pairingRequestRoute.PATCH(new NextRequest(
+    `http://localhost:32123/api/pairing/requests/${nextClaim.request.id}`,
+    {
+      method: 'PATCH',
+      headers: appHeaders,
+      body: JSON.stringify({ decision: 'deny' }),
+    },
+  ), { params: Promise.resolve({ id: nextClaim.request.id }) });
+  assert.equal(denyResponse.status, 200);
 
   const revokeResponse = await deviceRoute.DELETE(new NextRequest(
     `http://localhost:32123/api/devices/${redeemed.device.id}`,
@@ -687,16 +862,13 @@ test('accepts the normalized advertised Origin for WebSocket upgrades', async ()
 test('direct Tailscale and LAN paths remain behind the HTTP and WebSocket gates', async () => {
   const {
     clearDeviceRegistry,
-    issuePairingToken,
-    redeemPairingToken,
   } = await import('../src/lib/auth/device-registry');
   const { evaluateRequest } = await import('../src/lib/auth/request-gate');
   const { saveMachineSettings } = await import('../src/lib/settings/machine-settings');
   const tailscaleOrigin = 'http://100.103.66.17:32123';
   await clearDeviceRegistry();
   await saveMachineSettings({ advertisedAddress: tailscaleOrigin });
-  const pairing = await issuePairingToken();
-  const device = await redeemPairingToken(pairing.token, 'Tailscale phone');
+  const { device } = await pairApprovedDevice('Tailscale phone');
 
   assert.deepEqual(
     await evaluateRequest(requestInput({

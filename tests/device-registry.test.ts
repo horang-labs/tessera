@@ -3,6 +3,7 @@ import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
+import { pairApprovedDevice } from './helpers/approved-device';
 
 let tempDir: string;
 const previousDataDir = process.env.TESSERA_DATA_DIR;
@@ -23,8 +24,7 @@ test('stores a private atomic registry, enforces the device cap, and clears ever
   await registry.clearDeviceRegistry();
 
   for (let index = 0; index < registry.MAX_PAIRED_DEVICES; index += 1) {
-    const pairing = await registry.issuePairingToken();
-    await registry.redeemPairingToken(pairing.token, `Device ${index + 1}`);
+    await pairApprovedDevice(`Device ${index + 1}`);
   }
 
   const devices = await registry.listDevices();

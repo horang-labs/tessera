@@ -35,6 +35,7 @@ import {
   resolveElectronServerPort,
 } from '../src/lib/electron-test-instance';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
+import { isPairingDecision } from '../src/lib/auth/pairing-contract';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
 import { registerAppSecretHeader } from './app-secret-header';
 import { configureTailscaleFirewall } from './windows-firewall';
@@ -655,6 +656,56 @@ async function createPairingCode(action: 'issue' | 'rotate'): Promise<
   return { ...presentation, qrDataUrl };
 }
 
+type PairingApprovalApiResult =
+  | { ok: true; requests?: unknown; request?: unknown }
+  | { ok: false; code: string; error: string };
+
+async function requestPairingApprovalApi(
+  pathname: string,
+  init?: { method: 'PATCH'; body: string },
+): Promise<PairingApprovalApiResult> {
+  if (!serverPort || !electronAppSecret) {
+    return { ok: false, code: 'server-unavailable', error: 'The Tessera server is unavailable' };
+  }
+
+  try {
+    const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+    const response = await fetch(`http://127.0.0.1:${serverPort}${pathname}`, {
+      ...init,
+      headers: {
+        [APP_SECRET_HEADER]: electronAppSecret,
+        origin: `http://127.0.0.1:${serverPort}`,
+        ...(init ? { 'content-type': 'application/json' } : {}),
+      },
+      signal: AbortSignal.timeout(PAIRING_PRESENTATION_TIMEOUT_MS),
+    });
+    const body = await response.json().catch(() => null) as {
+      requests?: unknown;
+      request?: unknown;
+      code?: unknown;
+      error?: unknown;
+    } | null;
+    if (response.ok) {
+      return {
+        ok: true,
+        ...(body && 'requests' in body ? { requests: body.requests } : {}),
+        ...(body && 'request' in body ? { request: body.request } : {}),
+      };
+    }
+    return {
+      ok: false,
+      code: typeof body?.code === 'string' ? body.code : 'pairing-request-failed',
+      error: typeof body?.error === 'string' ? body.error : 'Pairing request failed',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'server-unavailable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function requestRemoteAccessStatus(): Promise<RemoteAccessStatus | null> {
   if (!serverPort || !electronAppSecret) return null;
 
@@ -1270,6 +1321,27 @@ ipcMain.handle('create-pairing-code', (_event, action: unknown) => {
     return { ok: false, code: 'invalid-action', error: 'Invalid pairing action' };
   }
   return createPairingCode(action);
+});
+ipcMain.handle('list-pairing-requests', () => (
+  requestPairingApprovalApi('/api/pairing/requests')
+));
+ipcMain.handle('decide-pairing-request', (_event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, code: 'invalid-request', error: 'Invalid pairing decision' };
+  }
+  const { requestId, decision } = payload as { requestId?: unknown; decision?: unknown };
+  if (
+    typeof requestId !== 'string'
+    || requestId.length === 0
+    || requestId.length > 128
+    || !isPairingDecision(decision)
+  ) {
+    return { ok: false, code: 'invalid-request', error: 'Invalid pairing decision' };
+  }
+  return requestPairingApprovalApi(
+    `/api/pairing/requests/${encodeURIComponent(requestId)}`,
+    { method: 'PATCH', body: JSON.stringify({ decision }) },
+  );
 });
 ipcMain.handle('read-terminal-clipboard', () => readTerminalClipboard(clipboard));
 ipcMain.handle('write-terminal-clipboard-text', (_event, text: unknown) => (

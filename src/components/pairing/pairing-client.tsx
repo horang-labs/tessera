@@ -1,11 +1,18 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import type { TFunction } from 'i18next';
+import { isPairingRequest, type PairingRequest } from '@/lib/auth/pairing-contract';
+import { useI18n } from '@/lib/i18n';
+import { formatPairingTimeRemaining } from './pairing-time';
 
 type PairingView =
-  | 'redeeming'
+  | 'requesting'
+  | 'waiting'
+  | 'approved'
   | 'missing'
   | 'expired'
+  | 'denied'
   | 'used'
   | 'invalid'
   | 'rate-limited'
@@ -13,12 +20,140 @@ type PairingView =
   | 'network'
   | 'unexpected';
 
+type PairingStatusMark = 'requesting' | 'waiting' | 'success' | 'info' | 'error';
+
+interface PairingViewDefinition {
+  eyebrow: string;
+  title: string;
+  detail: string;
+  testId: string;
+  role: 'status' | 'alert';
+  ariaLive: 'polite' | 'assertive';
+  mark: PairingStatusMark;
+}
+
+const PAIRING_VIEW_DEFINITIONS: Record<PairingView, PairingViewDefinition> = {
+  requesting: {
+    eyebrow: 'pairing.requestingEyebrow',
+    title: 'pairing.requestingTitle',
+    detail: 'pairing.requestingDetail',
+    testId: 'pairing-requesting',
+    role: 'status',
+    ariaLive: 'polite',
+    mark: 'requesting',
+  },
+  waiting: {
+    eyebrow: 'pairing.waitingEyebrow',
+    title: 'pairing.waitingTitle',
+    detail: 'pairing.waitingDetail',
+    testId: 'pairing-waiting',
+    role: 'status',
+    ariaLive: 'polite',
+    mark: 'waiting',
+  },
+  approved: {
+    eyebrow: 'pairing.approvedEyebrow',
+    title: 'pairing.approvedTitle',
+    detail: 'pairing.approvedDetail',
+    testId: 'pairing-approved',
+    role: 'status',
+    ariaLive: 'assertive',
+    mark: 'success',
+  },
+  missing: {
+    eyebrow: 'pairing.missingEyebrow',
+    title: 'pairing.missingTitle',
+    detail: 'pairing.missingDetail',
+    testId: 'pairing-missing-token',
+    role: 'alert',
+    ariaLive: 'polite',
+    mark: 'info',
+  },
+  expired: {
+    eyebrow: 'pairing.expiredEyebrow',
+    title: 'pairing.expiredTitle',
+    detail: 'pairing.expiredDetail',
+    testId: 'pairing-error',
+    role: 'alert',
+    ariaLive: 'polite',
+    mark: 'error',
+  },
+  denied: {
+    eyebrow: 'pairing.deniedEyebrow',
+    title: 'pairing.deniedTitle',
+    detail: 'pairing.deniedDetail',
+    testId: 'pairing-denied',
+    role: 'alert',
+    ariaLive: 'assertive',
+    mark: 'error',
+  },
+  used: {
+    eyebrow: 'pairing.usedEyebrow',
+    title: 'pairing.usedTitle',
+    detail: 'pairing.usedDetail',
+    testId: 'pairing-error',
+    role: 'alert',
+    ariaLive: 'polite',
+    mark: 'error',
+  },
+  invalid: {
+    eyebrow: 'pairing.invalidEyebrow',
+    title: 'pairing.invalidTitle',
+    detail: 'pairing.invalidDetail',
+    testId: 'pairing-error',
+    role: 'alert',
+    ariaLive: 'polite',
+    mark: 'error',
+  },
+  'rate-limited': {
+    eyebrow: 'pairing.rateLimitedEyebrow',
+    title: 'pairing.rateLimitedTitle',
+    detail: 'pairing.rateLimitedDetail',
+    testId: 'pairing-error',
+    role: 'alert',
+    ariaLive: 'polite',
+    mark: 'error',
+  },
+  capacity: {
+    eyebrow: 'pairing.capacityEyebrow',
+    title: 'pairing.capacityTitle',
+    detail: 'pairing.capacityDetail',
+    testId: 'pairing-error',
+    role: 'alert',
+    ariaLive: 'polite',
+    mark: 'error',
+  },
+  network: {
+    eyebrow: 'pairing.networkEyebrow',
+    title: 'pairing.networkTitle',
+    detail: 'pairing.networkDetail',
+    testId: 'pairing-error',
+    role: 'alert',
+    ariaLive: 'polite',
+    mark: 'error',
+  },
+  unexpected: {
+    eyebrow: 'pairing.unexpectedEyebrow',
+    title: 'pairing.unexpectedTitle',
+    detail: 'pairing.unexpectedDetail',
+    testId: 'pairing-error',
+    role: 'alert',
+    ariaLive: 'polite',
+    mark: 'error',
+  },
+};
+
 interface PairingErrorBody {
   code?: unknown;
   error?: unknown;
+  status?: unknown;
 }
 
-interface RedemptionRequest {
+interface PairingClaimBody extends PairingErrorBody {
+  request?: unknown;
+}
+
+interface ClaimRequest {
   token: string;
   promise: Promise<Response>;
 }
@@ -26,61 +161,9 @@ interface RedemptionRequest {
 declare global {
   interface Window {
     __tesseraPairingToken?: string;
-    __tesseraPairingRedemption?: RedemptionRequest;
+    __tesseraPairingClaim?: ClaimRequest;
   }
 }
-
-const VIEW_COPY: Record<PairingView, {
-  eyebrow: string;
-  title: string;
-  detail: string;
-}> = {
-  redeeming: {
-    eyebrow: 'Secure handoff',
-    title: 'Connecting this device',
-    detail: 'Tessera is exchanging this one-time link for a private device credential.',
-  },
-  missing: {
-    eyebrow: 'Pairing link needed',
-    title: 'Open the complete link',
-    detail: 'Scan the QR code again or open the link shown in Tessera on your main computer.',
-  },
-  expired: {
-    eyebrow: 'Link expired',
-    title: 'This pairing link has expired',
-    detail: 'Pairing links last two minutes. Create a fresh one from Tessera and try again.',
-  },
-  used: {
-    eyebrow: 'Link already claimed',
-    title: 'This pairing link has already been used',
-    detail: 'If this browser is not connected, create a new pairing link from Tessera.',
-  },
-  invalid: {
-    eyebrow: 'Link not recognized',
-    title: "This pairing link isn't valid",
-    detail: 'Check that the full link was opened, or create a new one from Tessera.',
-  },
-  'rate-limited': {
-    eyebrow: 'Pairing paused',
-    title: 'Too many pairing attempts',
-    detail: 'Wait a minute, then open a newly generated pairing link.',
-  },
-  capacity: {
-    eyebrow: 'Device limit reached',
-    title: 'No more devices can be added',
-    detail: 'Remove an existing device in Tessera settings, then create a new pairing link.',
-  },
-  network: {
-    eyebrow: 'Connection interrupted',
-    title: "Couldn't reach Tessera",
-    detail: 'Check this device’s connection to your Tessera address, then try again.',
-  },
-  unexpected: {
-    eyebrow: 'Pairing interrupted',
-    title: "Tessera couldn't connect this device",
-    detail: 'Try the link again. If it still fails, create a fresh pairing link.',
-  },
-};
 
 function takePairingToken(): string | null {
   const bootstrappedToken = window.__tesseraPairingToken;
@@ -99,31 +182,43 @@ function takePairingToken(): string | null {
   return bootstrappedToken || null;
 }
 
-function redeem(token: string): Promise<Response> {
-  const pending = window.__tesseraPairingRedemption;
-  if (pending?.token === token) return pending.promise;
+function claimPairingRequest(token: string): Promise<Response> {
+  const activeClaim = window.__tesseraPairingClaim;
+  if (activeClaim?.token === token) return activeClaim.promise;
 
-  const promise = fetch('/api/pairing/redeem', {
+  const promise = fetch('/api/pairing/requests', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
     cache: 'no-store',
     referrerPolicy: 'no-referrer',
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({ token, name: deviceName() }),
   });
-  window.__tesseraPairingRedemption = { token, promise };
-  const clearPendingRequest = () => {
-    if (window.__tesseraPairingRedemption?.promise === promise) {
-      delete window.__tesseraPairingRedemption;
+  window.__tesseraPairingClaim = { token, promise };
+  const clearClaim = () => {
+    if (window.__tesseraPairingClaim?.promise === promise) {
+      delete window.__tesseraPairingClaim;
     }
   };
-  void promise.then(clearPendingRequest, clearPendingRequest);
+  void promise.then(clearClaim, clearClaim);
   return promise;
 }
 
-function viewForError(code: unknown, status: number): PairingView {
-  if (code === 'pairing-expired') return 'expired';
-  if (code === 'pairing-used') return 'used';
+function pollPairingRequest(requestId: string): Promise<Response> {
+  return fetch(`/api/pairing/requests/${encodeURIComponent(requestId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    cache: 'no-store',
+    referrerPolicy: 'no-referrer',
+    body: '{}',
+  });
+}
+
+function viewForError(code: unknown, status: number, state?: unknown): PairingView {
+  if (state === 'denied') return 'denied';
+  if (state === 'expired' || code === 'pairing-expired') return 'expired';
+  if (state === 'used' || code === 'pairing-used') return 'used';
   if (code === 'pairing-invalid' || code === 'invalid-request') return 'invalid';
   if (code === 'rate-limited' || status === 429) return 'rate-limited';
   if (code === 'capacity-reached') return 'capacity';
@@ -135,16 +230,27 @@ function deviceName(): string {
   return platform ? `Browser on ${platform}` : 'Browser';
 }
 
-export function PairingClient() {
-  const tokenRef = useRef<string | null | undefined>(undefined);
-  const [view, setView] = useState<PairingView>('redeeming');
-  const [attempt, setAttempt] = useState(0);
+function copyForView(view: PairingView, t: TFunction) {
+  const definition = PAIRING_VIEW_DEFINITIONS[view];
+  return {
+    eyebrow: t(definition.eyebrow),
+    title: t(definition.title),
+    detail: t(definition.detail),
+  };
+}
 
-  useEffect(function redeemPairingLink() {
+export function PairingClient() {
+  const { t } = useI18n();
+  const tokenRef = useRef<string | null | undefined>(undefined);
+  const [request, setRequest] = useState<PairingRequest | null>(null);
+  const [view, setView] = useState<PairingView>('requesting');
+  const [attempt, setAttempt] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(function claimPairingLink() {
+    if (request) return;
     let cancelled = false;
-    if (tokenRef.current === undefined) {
-      tokenRef.current = takePairingToken();
-    }
+    if (tokenRef.current === undefined) tokenRef.current = takePairingToken();
     const token = tokenRef.current;
 
     if (!token) {
@@ -156,29 +262,76 @@ export function PairingClient() {
       };
     }
 
-    void redeem(token)
+    void claimPairingRequest(token)
       .then(async (response) => {
-        if (response.ok) {
-          window.location.replace('/');
+        const body = await response.json().catch(() => null) as PairingClaimBody | null;
+        if (!response.ok || !isPairingRequest(body?.request)) {
+          if (!cancelled) setView(viewForError(body?.code, response.status, body?.status));
           return;
         }
-
-        const body = await response.json().catch(() => null) as PairingErrorBody | null;
-        if (!cancelled) setView(viewForError(body?.code, response.status));
+        if (!cancelled) {
+          setRequest(body.request);
+          setNow(Date.now());
+          setView(body.request.status === 'approved' ? 'approved' : 'waiting');
+        }
       })
       .catch(() => {
         if (!cancelled) setView('network');
       });
 
-    return function ignoreSettledRequestAfterLeaving() {
+    return function ignoreClaimAfterLeaving() {
       cancelled = true;
     };
-  }, [attempt]);
+  }, [attempt, request]);
 
-  const copy = VIEW_COPY[view];
-  const isLoading = view === 'redeeming';
+  useEffect(function waitForLocalApproval() {
+    if (!request) return;
+    let cancelled = false;
+    let nextPoll: number | undefined;
+    let redirectTimer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const response = await pollPairingRequest(request.id);
+        const body = await response.json().catch(() => null) as PairingErrorBody | null;
+        if (cancelled) return;
+
+        if (response.ok && body?.status === 'pending') {
+          setView('waiting');
+          nextPoll = window.setTimeout(() => void poll(), 900);
+          return;
+        }
+        if (response.ok && body?.status === 'approved') {
+          setView('approved');
+          redirectTimer = window.setTimeout(() => window.location.replace('/chat'), 700);
+          return;
+        }
+        setView(viewForError(body?.code, response.status, body?.status));
+      } catch {
+        if (!cancelled) setView('network');
+      }
+    };
+
+    void poll();
+    return function stopApprovalPolling() {
+      cancelled = true;
+      if (nextPoll !== undefined) window.clearTimeout(nextPoll);
+      if (redirectTimer !== undefined) window.clearTimeout(redirectTimer);
+    };
+  }, [attempt, request]);
+
+  useEffect(function tickPairingExpiry() {
+    if (!request || view !== 'waiting') return;
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return function stopPairingExpiryClock() {
+      window.clearInterval(interval);
+    };
+  }, [request, view]);
+
+  const copy = copyForView(view, t);
+  const definition = PAIRING_VIEW_DEFINITIONS[view];
   const canRetry = view === 'network' || view === 'unexpected';
-  const testId = view === 'missing' ? 'pairing-missing-token' : 'pairing-error';
+  const remainingMs = request ? Date.parse(request.expiresAt) - now : 0;
 
   return (
     <main className="relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-(--chat-bg) px-5 py-10 text-(--text-primary)">
@@ -198,18 +351,18 @@ export function PairingClient() {
             </span>
           </div>
           <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-(--text-muted)">
-            Device link
+            {t('pairing.deviceLink')}
           </span>
         </header>
 
         <div
-          role={isLoading ? 'status' : 'alert'}
-          aria-live="polite"
-          data-testid={isLoading ? 'pairing-progress' : testId}
-          className="grid min-h-80 grid-cols-[2.75rem_1fr] gap-5 px-5 py-9 sm:grid-cols-[3.25rem_1fr] sm:gap-7 sm:px-8 sm:py-11"
+          role={definition.role}
+          aria-live={definition.ariaLive}
+          data-testid={definition.testId}
+          className="grid min-h-96 grid-cols-[2.75rem_1fr] gap-5 px-5 py-9 sm:grid-cols-[3.25rem_1fr] sm:gap-7 sm:px-8 sm:py-11"
         >
           <div className="flex flex-col items-center">
-            <StatusMark view={view} />
+            <StatusMark mark={definition.mark} />
             <div className="mt-4 min-h-28 w-px flex-1 bg-(--divider)" />
           </div>
 
@@ -224,10 +377,29 @@ export function PairingClient() {
               {copy.detail}
             </p>
 
-            {isLoading ? (
+            {view === 'waiting' && request ? (
+              <div className="mt-8 border-y border-(--divider) py-5">
+                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-(--text-muted)">
+                  {t('pairing.comparisonCode')}
+                </p>
+                <p className="mt-2 font-mono text-4xl font-semibold tracking-[0.22em] text-(--text-primary)">
+                  {request.comparisonCode.slice(0, 3)} {request.comparisonCode.slice(3)}
+                </p>
+                <div className="mt-4 flex items-center justify-between gap-4 text-xs text-(--text-muted)">
+                  <span>{t('pairing.approveInApp')}</span>
+                  <span className="shrink-0 font-mono tabular-nums">
+                    {t('pairing.expiresIn', {
+                      time: formatPairingTimeRemaining(remainingMs),
+                    })}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            {view === 'requesting' ? (
               <div className="mt-auto flex items-center gap-2.5 pt-10 text-xs text-(--text-muted)">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-(--success) motion-reduce:animate-none" />
-                The link has been removed from this address
+                {t('pairing.tokenRemoved')}
               </div>
             ) : null}
 
@@ -235,20 +407,20 @@ export function PairingClient() {
               <button
                 type="button"
                 onClick={() => {
-                  setView('redeeming');
+                  setView(request ? 'waiting' : 'requesting');
                   setAttempt((current) => current + 1);
                 }}
                 className="mt-9 w-fit border border-(--input-border) bg-(--input-bg) px-4 py-2.5 text-sm font-medium text-(--text-primary) transition-colors hover:border-(--accent) hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
               >
-                Try again
+                {t('pairing.tryAgain')}
               </button>
             ) : null}
           </div>
         </div>
 
         <footer className="flex items-center justify-between gap-4 border-t border-(--divider) px-5 py-3.5 text-[0.68rem] text-(--text-muted) sm:px-7">
-          <span>One-time encrypted credential exchange</span>
-          <span className="font-mono uppercase tracking-[0.12em]">No token retained in URL</span>
+          <span>{t('pairing.footerApproval')}</span>
+          <span className="font-mono uppercase tracking-[0.12em]">{t('pairing.footerNoToken')}</span>
         </footer>
       </section>
     </main>
@@ -266,8 +438,8 @@ function TesseraMark() {
   );
 }
 
-function StatusMark({ view }: { view: PairingView }) {
-  if (view === 'redeeming') {
+function StatusMark({ mark }: { mark: PairingStatusMark }) {
+  if (mark === 'requesting') {
     return (
       <span
         aria-hidden="true"
@@ -278,17 +450,29 @@ function StatusMark({ view }: { view: PairingView }) {
     );
   }
 
-  const isMissing = view === 'missing';
+  if (mark === 'waiting') {
+    return (
+      <span aria-hidden="true" className="relative grid h-11 w-11 place-items-center rounded-full border border-(--status-warning-border) bg-(--status-warning-bg)">
+        <span className="absolute h-2.5 w-2.5 animate-ping rounded-full bg-(--status-warning-text) motion-reduce:animate-none" />
+        <span className="relative h-2.5 w-2.5 rounded-full bg-(--status-warning-text)" />
+      </span>
+    );
+  }
+
+  const isSuccess = mark === 'success';
+  const isMissing = mark === 'info';
   return (
     <span
       aria-hidden="true"
       className={`grid h-11 w-11 place-items-center rounded-full border ${
-        isMissing
-          ? 'border-(--status-info-border) bg-(--status-info-bg) text-(--status-info-text)'
-          : 'border-(--status-error-border) bg-(--status-error-bg) text-(--status-error-text)'
+        isSuccess
+          ? 'border-(--status-success-border) bg-(--status-success-bg) text-(--status-success-text)'
+          : isMissing
+            ? 'border-(--status-info-border) bg-(--status-info-bg) text-(--status-info-text)'
+            : 'border-(--status-error-border) bg-(--status-error-bg) text-(--status-error-text)'
       }`}
     >
-      <span className="text-lg font-medium leading-none">{isMissing ? 'i' : '×'}</span>
+      <span className="text-lg font-medium leading-none">{isSuccess ? '✓' : isMissing ? 'i' : '×'}</span>
     </span>
   );
 }

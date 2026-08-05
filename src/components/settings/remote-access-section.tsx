@@ -1,19 +1,32 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   AlertTriangle,
   Check,
+  CheckCircle2,
+  Clock3,
   Copy,
+  Laptop,
   Link2,
+  MapPin,
   QrCode,
   RadioTower,
   RefreshCw,
   ShieldCheck,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { formatPairingTimeRemaining } from '@/components/pairing/pairing-time';
 import { normalizeAdvertisedAddress } from '@/lib/auth/advertised-address';
+import {
+  isPairingRequest,
+  type PairingDecision,
+  type PairingRequest,
+  type PairingRequestStatus,
+} from '@/lib/auth/pairing-contract';
 import { useI18n } from '@/lib/i18n';
+import { getIntlLocale } from '@/lib/i18n/locale-map';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
 import PairedDeviceManagement from './paired-device-management';
@@ -38,6 +51,48 @@ type ElectronFirewallResult =
   | { ok: true }
   | { ok: false; code: string; error: string };
 
+type ElectronPairingRequestListResult =
+  | { ok: true; requests?: unknown }
+  | { ok: false; code: string; error: string };
+
+type ElectronPairingDecisionResult =
+  | { ok: true; request?: unknown }
+  | { ok: false; code: string; error: string };
+
+type PairingStatusTone = 'pending' | 'success' | 'neutral';
+
+const PAIRING_STATUS_PRESENTATION: Record<PairingRequestStatus, {
+  labelKey: string;
+  tone: PairingStatusTone;
+  showExpiredTime: boolean;
+}> = {
+  pending: {
+    labelKey: 'settings.remoteAccess.requestStatusPending',
+    tone: 'pending',
+    showExpiredTime: false,
+  },
+  approved: {
+    labelKey: 'settings.remoteAccess.requestStatusApproved',
+    tone: 'success',
+    showExpiredTime: false,
+  },
+  denied: {
+    labelKey: 'settings.remoteAccess.requestStatusDenied',
+    tone: 'neutral',
+    showExpiredTime: false,
+  },
+  expired: {
+    labelKey: 'settings.remoteAccess.requestStatusExpired',
+    tone: 'neutral',
+    showExpiredTime: true,
+  },
+  redeemed: {
+    labelKey: 'settings.remoteAccess.requestStatusRedeemed',
+    tone: 'success',
+    showExpiredTime: false,
+  },
+};
+
 interface RemoteAccessAddressCandidate {
   interfaceName: string;
   address: string;
@@ -51,6 +106,11 @@ type ElectronPairingApi = {
   supportsTailscaleFirewallConfiguration?: boolean;
   getRemoteAccessAddressCandidates?: () => Promise<RemoteAccessAddressCandidate[]>;
   createPairingCode?: (action: 'issue' | 'rotate') => Promise<ElectronPairingResult>;
+  listPairingRequests?: () => Promise<ElectronPairingRequestListResult>;
+  decidePairingRequest?: (
+    requestId: string,
+    decision: PairingDecision,
+  ) => Promise<ElectronPairingDecisionResult>;
   configureTailscaleFirewall?: () => Promise<ElectronFirewallResult>;
 };
 
@@ -109,16 +169,10 @@ async function pairingRequest(action: 'issue' | 'rotate'): Promise<PairingPresen
   throw error;
 }
 
-function formatRemaining(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = String(totalSeconds % 60).padStart(2, '0');
-  return `${minutes}:${seconds}`;
-}
-
 export default function RemoteAccessSection() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const showToast = useNotificationStore((state) => state.showToast);
+  const knownPairingRequestIds = useRef(new Set<string>());
   const [address, setAddress] = useState('');
   const [addressCandidates, setAddressCandidates] = useState<RemoteAccessAddressCandidate[]>([]);
   const [savedAddress, setSavedAddress] = useState<string | null>(null);
@@ -130,6 +184,9 @@ export default function RemoteAccessSection() {
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [firewallError, setFirewallError] = useState<string | null>(null);
   const [presentation, setPresentation] = useState<PairingPresentation | null>(null);
+  const [pairingRequests, setPairingRequests] = useState<PairingRequest[]>([]);
+  const [pairingRequestsFailed, setPairingRequestsFailed] = useState(false);
+  const [decidingRequestId, setDecidingRequestId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(function loadRemoteAccessSettings() {
@@ -182,6 +239,54 @@ export default function RemoteAccessSection() {
       window.clearInterval(interval);
     };
   }, [presentation]);
+
+  useEffect(function synchronizePairingApprovalRequests() {
+    const electronApi = getElectronPairingApi();
+    if (
+      !presentation
+      || !electronApi?.isElectron
+      || !electronApi.listPairingRequests
+    ) return;
+
+    let cancelled = false;
+    let requestInFlight = false;
+    const refresh = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      try {
+        const result = await electronApi.listPairingRequests?.();
+        if (!result?.ok || !Array.isArray(result.requests)) throw new Error('invalid-response');
+        const requests = result.requests.filter(isPairingRequest);
+        if (cancelled) return;
+
+        for (const request of requests) {
+          if (
+            request.status === 'pending'
+            && !knownPairingRequestIds.current.has(request.id)
+          ) {
+            showToast(
+              t('settings.remoteAccess.newPairingRequest', { name: request.name }),
+              'warning',
+            );
+          }
+          knownPairingRequestIds.current.add(request.id);
+        }
+        setPairingRequests(requests);
+        setPairingRequestsFailed(false);
+      } catch {
+        if (!cancelled) setPairingRequestsFailed(true);
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 1_000);
+    return function stopPairingRequestSynchronization() {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [presentation, showToast, t]);
 
   const normalizedDraft = (() => {
     try {
@@ -320,6 +425,56 @@ export default function RemoteAccessSection() {
     } catch {
       showToast(presentation.pairingLink, 'warning');
     }
+  };
+
+  const handlePairingDecision = async (
+    requestId: string,
+    decision: PairingDecision,
+  ) => {
+    const electronApi = getElectronPairingApi();
+    if (!electronApi?.decidePairingRequest) return;
+    setDecidingRequestId(requestId);
+    setPairingRequestsFailed(false);
+    try {
+      const result = await electronApi.decidePairingRequest(requestId, decision);
+      if (!result.ok || !isPairingRequest(result.request)) {
+        throw new Error(result.ok ? 'invalid-response' : result.error);
+      }
+      setPairingRequests((current) => current.map((request) => (
+        request.id === requestId ? result.request as PairingRequest : request
+      )));
+      showToast(
+        t(decision === 'approve'
+          ? 'settings.remoteAccess.requestApproved'
+          : 'settings.remoteAccess.requestDenied'),
+        decision === 'approve' ? 'success' : 'info',
+      );
+    } catch {
+      setPairingRequestsFailed(true);
+      showToast(t('settings.remoteAccess.pairingDecisionFailed'), 'error');
+    } finally {
+      setDecidingRequestId(null);
+    }
+  };
+
+  const handlePairingDecisionKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    requestId: string,
+    decision: PairingDecision,
+  ) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    void handlePairingDecision(requestId, decision);
+  };
+
+  const formatRequestTime = (value: string): string => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat(getIntlLocale(language), {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    }).format(date);
   };
 
   return (
@@ -545,7 +700,9 @@ export default function RemoteAccessSection() {
                 <p className="text-xs font-medium">
                   {isExpired
                     ? t('settings.remoteAccess.expired')
-                    : t('settings.remoteAccess.expiresIn', { time: formatRemaining(remainingMs) })}
+                    : t('settings.remoteAccess.expiresIn', {
+                        time: formatPairingTimeRemaining(remainingMs),
+                      })}
                 </p>
                 <Button
                   type="button"
@@ -561,6 +718,169 @@ export default function RemoteAccessSection() {
             </div>
           </div>
         )}
+
+        {presentation && electronApi?.isElectron && electronApi.listPairingRequests ? (
+          <section
+            data-testid="pairing-approval-requests"
+            aria-labelledby="pairing-approval-title"
+            className="mt-4 overflow-hidden rounded-xl border border-(--status-warning-border) bg-(--chat-bg)"
+          >
+            <div className="flex items-start gap-3 border-b border-(--status-warning-border) bg-(--status-warning-bg) px-4 py-3 text-(--status-warning-text)">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <h4 id="pairing-approval-title" className="text-sm font-semibold">
+                  {t('settings.remoteAccess.approvalTitle')}
+                </h4>
+                <p className="mt-1 text-xs leading-5 opacity-90">
+                  {t('settings.remoteAccess.approvalDescription')}
+                </p>
+              </div>
+            </div>
+
+            {pairingRequestsFailed ? (
+              <p
+                role="alert"
+                className="border-b border-(--status-error-border) bg-(--status-error-bg) px-4 py-2.5 text-xs text-(--status-error-text)"
+              >
+                {t('settings.remoteAccess.pairingRequestsFailed')}
+              </p>
+            ) : null}
+
+            {pairingRequests.length === 0 ? (
+              <div className="flex items-center gap-3 px-4 py-5 text-sm text-(--text-muted)">
+                <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-(--divider)">
+                  <span className="absolute h-2 w-2 animate-ping rounded-full bg-(--accent) motion-reduce:animate-none" />
+                  <span className="relative h-2 w-2 rounded-full bg-(--accent)" />
+                </span>
+                {t('settings.remoteAccess.waitingForPairingRequest')}
+              </div>
+            ) : (
+              <div className="space-y-3 p-3" aria-live="polite">
+                {pairingRequests.map((request) => {
+                  const hasExpired = Date.parse(request.expiresAt) <= now;
+                  const status: PairingRequestStatus = hasExpired
+                    && (request.status === 'pending' || request.status === 'approved')
+                    ? 'expired'
+                    : request.status;
+                  const statusPresentation = PAIRING_STATUS_PRESENTATION[status];
+                  const canDecide = status === 'pending' && decidingRequestId === null;
+                  const requestRemainingMs = Date.parse(request.expiresAt) - now;
+                  const statusLabel = t(statusPresentation.labelKey);
+
+                  return (
+                    <article
+                      key={request.id}
+                      data-testid={`pairing-approval-request-${request.id}`}
+                      className={cn(
+                        'relative overflow-hidden rounded-lg border bg-(--input-bg) p-4',
+                        statusPresentation.tone === 'pending'
+                          ? 'border-(--status-warning-border) shadow-[inset_3px_0_0_var(--status-warning-text)]'
+                          : 'border-(--divider)',
+                      )}
+                    >
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-(--divider) bg-(--chat-bg) text-(--accent)">
+                                <Laptop className="h-4 w-4" />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-(--text-primary)">
+                                  {request.name}
+                                </p>
+                                <p className="truncate text-xs text-(--text-muted)">
+                                  {request.browser} · {request.platform}
+                                </p>
+                              </div>
+                            </div>
+                            <span className={cn(
+                              'rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                              statusPresentation.tone === 'pending'
+                                ? 'border-(--status-warning-border) bg-(--status-warning-bg) text-(--status-warning-text)'
+                                : statusPresentation.tone === 'success'
+                                  ? 'border-(--status-success-border) bg-(--status-success-bg) text-(--status-success-text)'
+                                  : 'border-(--divider) bg-(--chat-bg) text-(--text-muted)',
+                            )}>
+                              {statusLabel}
+                            </span>
+                          </div>
+
+                          <dl className="mt-4 grid gap-2 text-xs text-(--text-secondary) sm:grid-cols-2">
+                            <div className="flex items-center gap-2">
+                              <MapPin className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+                              <dt className="sr-only">{t('settings.remoteAccess.remoteAddress')}</dt>
+                              <dd className="min-w-0 truncate font-mono">{request.remoteAddress}</dd>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Clock3 className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+                              <dt className="sr-only">{t('settings.remoteAccess.requestedAt')}</dt>
+                              <dd>
+                                {formatRequestTime(request.createdAt)} · {' '}
+                                {statusPresentation.showExpiredTime
+                                  ? t('settings.remoteAccess.requestStatusExpired')
+                                  : t('settings.remoteAccess.expiresIn', {
+                                      time: formatPairingTimeRemaining(requestRemainingMs),
+                                    })}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+
+                        <div className="shrink-0 lg:w-40">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-muted)">
+                            {t('settings.remoteAccess.comparisonCode')}
+                          </p>
+                          <p
+                            data-testid={`pairing-comparison-code-${request.id}`}
+                            className="mt-1 font-mono text-2xl font-semibold tracking-[0.24em] text-(--text-primary)"
+                          >
+                            {request.comparisonCode.slice(0, 3)} {request.comparisonCode.slice(3)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-col-reverse gap-2 border-t border-(--divider) pt-3 sm:flex-row sm:justify-end">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => void handlePairingDecision(request.id, 'deny')}
+                          onKeyDown={(event) => (
+                            handlePairingDecisionKeyDown(event, request.id, 'deny')
+                          )}
+                          disabled={!canDecide}
+                          aria-label={t('settings.remoteAccess.denyRequestLabel', { name: request.name })}
+                          data-testid={`pairing-deny-${request.id}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                          {t('settings.remoteAccess.denyRequest')}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void handlePairingDecision(request.id, 'approve')}
+                          onKeyDown={(event) => (
+                            handlePairingDecisionKeyDown(event, request.id, 'approve')
+                          )}
+                          disabled={!canDecide}
+                          aria-label={t('settings.remoteAccess.approveRequestLabel', { name: request.name })}
+                          data-testid={`pairing-approve-${request.id}`}
+                          className="bg-(--success) hover:brightness-95"
+                        >
+                          {decidingRequestId === request.id
+                            ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            : <CheckCircle2 className="h-3.5 w-3.5" />}
+                          {t('settings.remoteAccess.approveRequest')}
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : null}
 
         {pairingError ? (
           <p className="mt-3 text-xs text-(--status-error-text)">{pairingError}</p>

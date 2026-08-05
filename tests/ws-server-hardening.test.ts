@@ -6,6 +6,7 @@ import { createServer, type Server } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import path from 'node:path';
 import test from 'node:test';
+import { pairApprovedDevice } from './helpers/approved-device';
 import WebSocket from 'ws';
 import {
   MAX_TCP_CONNECTIONS,
@@ -134,8 +135,7 @@ test('bounds TCP and WebSocket connections and force-terminates an over-capacity
   process.env.TESSERA_ELECTRON_RUNTIME = '1';
   const registry = await import('../src/lib/auth/device-registry');
   await registry.clearDeviceRegistry();
-  const pairing = await registry.issuePairingToken();
-  const device = await registry.redeemPairingToken(pairing.token, 'Capacity test');
+  const { device } = await pairApprovedDevice('Capacity test');
   const httpServer = createServer();
   const transport = new TesseraWebSocketServer({
     maxConnections: 2,
@@ -182,8 +182,7 @@ test('preserves a valid device identity when the legacy Electron bypass flag is 
   process.env.PORT = '3100';
   const registry = await import('../src/lib/auth/device-registry');
   await registry.clearDeviceRegistry();
-  const pairing = await registry.issuePairingToken();
-  const device = await registry.redeemPairingToken(pairing.token, 'Remote phone');
+  const { device } = await pairApprovedDevice('Remote phone');
   const httpServer = createServer();
   const transport = new TesseraWebSocketServer({ heartbeatIntervalMs: 60_000 });
   const port = await listen(httpServer);
@@ -245,8 +244,7 @@ test('force-terminates every open connection authenticated by a revoked device',
   process.env.PORT = '3100';
   const registry = await import('../src/lib/auth/device-registry');
   await registry.clearDeviceRegistry();
-  const pairing = await registry.issuePairingToken();
-  const device = await registry.redeemPairingToken(pairing.token, 'Revoked phone');
+  const { device } = await pairApprovedDevice('Revoked phone');
   const httpServer = createServer();
   const transport = new TesseraWebSocketServer({ heartbeatIntervalMs: 60_000 });
   const port = await listen(httpServer);
@@ -340,8 +338,7 @@ test('keeps image-sized frames and non-/ws upgrades available', async () => {
   const registry = await import('../src/lib/auth/device-registry');
   await initDatabase();
   await registry.clearDeviceRegistry();
-  const pairing = await registry.issuePairingToken();
-  const device = await registry.redeemPairingToken(pairing.token, 'Payload test');
+  const { device } = await pairApprovedDevice('Payload test');
   const httpServer = createServer();
   httpServer.on('upgrade', (request, socket) => {
     if (request.url === '/_next/webpack-hmr') {

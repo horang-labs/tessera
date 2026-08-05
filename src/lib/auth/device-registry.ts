@@ -3,15 +3,24 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import logger from '../logger';
 import { getTesseraDataPath } from '../tessera-data-dir';
+import type {
+  PairingDecision,
+  PairingRequest,
+  PairingRequestStatus,
+} from './pairing-contract';
+
+export type { PairingRequest, PairingRequestStatus } from './pairing-contract';
 
 const DEVICE_TOKEN_BYTES = 32;
 const TOKEN_LENGTH = 43;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const MAX_CONSUMED_PAIRING_TOKENS = 16;
 const CONSUMED_PAIRING_TOKEN_RETENTION_MS = 24 * 60 * 60 * 1000;
+const PAIRING_REQUEST_RETENTION_MS = 5 * 60 * 1000;
 export const PAIRING_TOKEN_TTL_MS = 2 * 60 * 1000;
 export const MAX_PAIRED_DEVICES = 8;
 export const DEVICE_TOKEN_COOKIE = 'device';
+export const PAIRING_REQUEST_COOKIE = 'pairing_pending';
 
 export function getDeviceRegistryPath(): string {
   return getTesseraDataPath('auth', 'device-registry.json');
@@ -46,6 +55,7 @@ interface RegistryState {
 interface RegistryStore {
   loadedPath: string | null;
   state: RegistryState;
+  pairingRequests: Map<string, StoredPairingRequest>;
   mutationQueue: Promise<void>;
 }
 
@@ -66,12 +76,37 @@ export interface RedeemedDevice extends PairedDevice {
   token: string;
 }
 
+interface StoredPairingRequest extends PairingRequest {
+  pairingTokenHash: string;
+  pollingCredential: string;
+}
+
+export interface PairingClaimInput {
+  token: string;
+  name: string;
+  browser: string;
+  platform: string;
+  remoteAddress: string;
+}
+
+export interface ClaimedPairingRequest {
+  request: PairingRequest;
+  pollingCredential: string;
+  created: boolean;
+}
+
+export type PairingDecisionResult =
+  | { status: 'pending' | 'denied' | 'expired' | 'used'; expiresAt: string }
+  | { status: 'redeemed'; expiresAt: string; device: RedeemedDevice };
+
 export type DeviceRegistryErrorCode =
   | 'capacity-reached'
   | 'pairing-active'
   | 'pairing-expired'
   | 'pairing-used'
-  | 'pairing-invalid';
+  | 'pairing-invalid'
+  | 'pairing-request-invalid'
+  | 'pairing-request-handled';
 
 export class DeviceRegistryError extends Error {
   constructor(public readonly code: DeviceRegistryErrorCode, message: string) {
@@ -93,8 +128,12 @@ const registryGlobal = globalThis as typeof globalThis & {
 const store = registryGlobal[STORE_KEY] ??= {
   loadedPath: null,
   state: EMPTY_STATE,
+  pairingRequests: new Map(),
   mutationQueue: Promise.resolve(),
 };
+// The global store survives development module reloads. Initialize fields added
+// by newer code without making pending requests persistent across processes.
+store.pairingRequests ??= new Map();
 
 function cloneState(state: RegistryState): RegistryState {
   return {
@@ -212,7 +251,10 @@ async function persist(registryPath: string, nextState: RegistryState): Promise<
 }
 
 async function mutate<T>(
-  operation: (state: RegistryState) => T | Promise<T>,
+  operation: (
+    state: RegistryState,
+    pairingRequests: Map<string, StoredPairingRequest>,
+  ) => T | Promise<T>,
   shouldPersist: (value: T) => boolean = () => true,
 ): Promise<T> {
   const previousMutation = store.mutationQueue;
@@ -224,11 +266,15 @@ async function mutate<T>(
   try {
     const registryPath = await ensureLoaded();
     const nextState = cloneState(store.state);
-    const value = await operation(nextState);
+    const nextPairingRequests = new Map(
+      [...store.pairingRequests].map(([id, request]) => [id, { ...request }]),
+    );
+    const value = await operation(nextState, nextPairingRequests);
     if (shouldPersist(value)) {
       await persist(registryPath, nextState);
       store.state = nextState;
     }
+    store.pairingRequests = nextPairingRequests;
     return value;
   } finally {
     releaseMutation();
@@ -260,6 +306,10 @@ function hashPairingToken(token: string): string {
   return createHash('sha256').update(token).digest('base64url');
 }
 
+function tokenMatches(candidate: string | undefined, storedToken: string): boolean {
+  return constantTimeTokenMatch(normalizeCandidateToken(candidate ?? ''), storedToken);
+}
+
 function pruneConsumedPairingTokens(state: RegistryState, now: Date): void {
   state.consumedPairingTokens = state.consumedPairingTokens.filter(
     (token) => Date.parse(token.expiresAt) > now.getTime(),
@@ -288,6 +338,78 @@ function publicDevice(device: StoredDevice): PairedDevice {
   };
 }
 
+function publicPairingRequest(request: StoredPairingRequest): PairingRequest {
+  return {
+    id: request.id,
+    name: request.name,
+    browser: request.browser,
+    platform: request.platform,
+    remoteAddress: request.remoteAddress,
+    comparisonCode: request.comparisonCode,
+    createdAt: request.createdAt,
+    expiresAt: request.expiresAt,
+    status: request.status,
+  };
+}
+
+function displayValue(value: string, fallback: string, maxLength = 120): string {
+  return value.trim().replace(/[\u0000-\u001f\u007f]/g, '').slice(0, maxLength) || fallback;
+}
+
+function markExpiredPairingRequests(
+  pairingRequests: Map<string, StoredPairingRequest>,
+  now: Date,
+): void {
+  for (const [requestId, request] of pairingRequests) {
+    if (Date.parse(request.expiresAt) + PAIRING_REQUEST_RETENTION_MS <= now.getTime()) {
+      pairingRequests.delete(requestId);
+      continue;
+    }
+    if (
+      (request.status === 'pending' || request.status === 'approved')
+      && Date.parse(request.expiresAt) <= now.getTime()
+    ) {
+      request.status = 'expired';
+    }
+  }
+}
+
+function expireOpenPairingRequests(
+  pairingRequests: Map<string, StoredPairingRequest>,
+): void {
+  for (const request of pairingRequests.values()) {
+    if (request.status === 'pending' || request.status === 'approved') {
+      request.status = 'expired';
+    }
+  }
+}
+
+function appendConsumedPairingToken(
+  state: RegistryState,
+  pairingToken: StoredPairingToken,
+  now: Date,
+): void {
+  state.consumedPairingTokens.push({
+    tokenHash: hashPairingToken(pairingToken.token),
+    expiresAt: new Date(
+      now.getTime() + CONSUMED_PAIRING_TOKEN_RETENTION_MS,
+    ).toISOString(),
+  });
+  state.consumedPairingTokens = state.consumedPairingTokens.slice(
+    -MAX_CONSUMED_PAIRING_TOKENS,
+  );
+}
+
+function createStoredDevice(name: string, now: Date): StoredDevice {
+  return {
+    id: randomUUID(),
+    token: randomBytes(DEVICE_TOKEN_BYTES).toString('base64url'),
+    name: displayValue(name, 'Paired device', 80),
+    registeredAt: now.toISOString(),
+    lastSeenAt: null,
+  };
+}
+
 function newPairingToken(now: Date): StoredPairingToken {
   return {
     token: randomBytes(DEVICE_TOKEN_BYTES).toString('base64url'),
@@ -303,8 +425,9 @@ function assertCapacity(state: RegistryState): void {
 }
 
 export async function issuePairingToken(now = new Date()): Promise<IssuedPairingToken> {
-  return mutate((state) => {
+  return mutate((state, pairingRequests) => {
     pruneConsumedPairingTokens(state, now);
+    markExpiredPairingRequests(pairingRequests, now);
     assertCapacity(state);
     if (
       state.pairingToken
@@ -312,18 +435,161 @@ export async function issuePairingToken(now = new Date()): Promise<IssuedPairing
     ) {
       throw new DeviceRegistryError('pairing-active', 'A pairing token is already active');
     }
+    expireOpenPairingRequests(pairingRequests);
     state.pairingToken = newPairingToken(now);
     return { ...state.pairingToken };
   });
 }
 
 export async function rotatePairingToken(now = new Date()): Promise<IssuedPairingToken> {
-  return mutate((state) => {
+  return mutate((state, pairingRequests) => {
     pruneConsumedPairingTokens(state, now);
     assertCapacity(state);
+    expireOpenPairingRequests(pairingRequests);
     state.pairingToken = newPairingToken(now);
     return { ...state.pairingToken };
   });
+}
+
+export async function claimPairingToken(
+  input: PairingClaimInput,
+  presentedPollingCredential?: string,
+  now = new Date(),
+): Promise<ClaimedPairingRequest> {
+  const outcome = await mutate((state, pairingRequests):
+    | { claim: ClaimedPairingRequest; error?: never }
+    | { claim?: never; error: DeviceRegistryError } => {
+    pruneConsumedPairingTokens(state, now);
+    markExpiredPairingRequests(pairingRequests, now);
+
+    const candidateHash = hashPairingToken(input.token);
+    for (const request of pairingRequests.values()) {
+      if (
+        tokenMatches(candidateHash, request.pairingTokenHash)
+        && tokenMatches(presentedPollingCredential, request.pollingCredential)
+      ) {
+        return {
+          claim: {
+            request: publicPairingRequest(request),
+            pollingCredential: request.pollingCredential,
+            created: false,
+          },
+        };
+      }
+    }
+
+    const pairingToken = state.pairingToken;
+    const candidateToken = normalizeCandidateToken(input.token);
+    if (!pairingToken || !constantTimeTokenMatch(candidateToken, pairingToken.token)) {
+      if (wasPairingTokenConsumed(state, input.token)) {
+        throw new DeviceRegistryError('pairing-used', 'Pairing token has already been used');
+      }
+      throw new DeviceRegistryError('pairing-invalid', 'Pairing token is invalid');
+    }
+
+    state.pairingToken = null;
+    if (Date.parse(pairingToken.expiresAt) <= now.getTime()) {
+      return {
+        error: new DeviceRegistryError('pairing-expired', 'Pairing token has expired'),
+      };
+    }
+    assertCapacity(state);
+    appendConsumedPairingToken(state, pairingToken, now);
+
+    const request: StoredPairingRequest = {
+      id: randomUUID(),
+      name: displayValue(input.name, 'Browser', 80),
+      browser: displayValue(input.browser, 'Unknown browser'),
+      platform: displayValue(input.platform, 'Unknown platform'),
+      remoteAddress: displayValue(input.remoteAddress, 'unknown'),
+      comparisonCode: String(
+        randomBytes(4).readUInt32BE(0) % 1_000_000,
+      ).padStart(6, '0'),
+      createdAt: now.toISOString(),
+      expiresAt: pairingToken.expiresAt,
+      status: 'pending',
+      pairingTokenHash: hashPairingToken(pairingToken.token),
+      pollingCredential: randomBytes(DEVICE_TOKEN_BYTES).toString('base64url'),
+    };
+    pairingRequests.set(request.id, request);
+    return {
+      claim: {
+        request: publicPairingRequest(request),
+        pollingCredential: request.pollingCredential,
+        created: true,
+      },
+    };
+  });
+  if (outcome.error) throw outcome.error;
+  return outcome.claim;
+}
+
+export async function listPairingRequests(now = new Date()): Promise<PairingRequest[]> {
+  return mutate((_state, pairingRequests) => {
+    markExpiredPairingRequests(pairingRequests, now);
+    return [...pairingRequests.values()]
+      .map(publicPairingRequest)
+      .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  }, () => false);
+}
+
+export async function decidePairingRequest(
+  requestId: string,
+  decision: PairingDecision,
+  now = new Date(),
+): Promise<PairingRequest> {
+  return mutate((state, pairingRequests) => {
+    markExpiredPairingRequests(pairingRequests, now);
+    const request = pairingRequests.get(requestId);
+    if (!request) {
+      throw new DeviceRegistryError('pairing-request-invalid', 'Pairing request was not found');
+    }
+    if (request.status === 'expired') {
+      throw new DeviceRegistryError('pairing-expired', 'Pairing request has expired');
+    }
+    if (request.status !== 'pending') {
+      throw new DeviceRegistryError('pairing-request-handled', 'Pairing request was already handled');
+    }
+    if (decision === 'approve') assertCapacity(state);
+    request.status = decision === 'approve' ? 'approved' : 'denied';
+    return publicPairingRequest(request);
+  }, () => false);
+}
+
+export async function receivePairingDecision(
+  requestId: string,
+  pollingCredential: string | undefined,
+  now = new Date(),
+): Promise<PairingDecisionResult> {
+  return mutate((state, pairingRequests) => {
+    markExpiredPairingRequests(pairingRequests, now);
+    const request = pairingRequests.get(requestId);
+    if (!request || !tokenMatches(pollingCredential, request.pollingCredential)) {
+      return { status: 'expired', expiresAt: now.toISOString() };
+    }
+    if (request.status === 'pending') {
+      return { status: 'pending', expiresAt: request.expiresAt };
+    }
+    if (request.status === 'denied') {
+      return { status: 'denied', expiresAt: request.expiresAt };
+    }
+    if (request.status === 'expired') {
+      return { status: 'expired', expiresAt: request.expiresAt };
+    }
+    if (request.status === 'redeemed') {
+      return { status: 'used', expiresAt: request.expiresAt };
+    }
+
+    assertCapacity(state);
+    const device = createStoredDevice(request.name, now);
+    state.devices.push(device);
+    request.status = 'redeemed';
+    return {
+      status: 'redeemed',
+      expiresAt: request.expiresAt,
+      device: { ...publicDevice(device), token: device.token },
+    };
+  }, (result) => result.status === 'redeemed');
 }
 
 export async function getPairingStatus(now = new Date()): Promise<{
@@ -338,58 +604,6 @@ export async function getPairingStatus(now = new Date()): Promise<{
     createdAt: pairingToken.createdAt,
     expiresAt: pairingToken.expiresAt,
   };
-}
-
-export async function redeemPairingToken(
-  candidate: string,
-  deviceName: string,
-  now = new Date(),
-): Promise<RedeemedDevice> {
-  const outcome = await mutate((state):
-    | { device: RedeemedDevice; error?: never }
-    | { device?: never; error: DeviceRegistryError } => {
-    pruneConsumedPairingTokens(state, now);
-    const pairingToken = state.pairingToken;
-    const candidateToken = normalizeCandidateToken(candidate);
-    if (
-      !pairingToken
-      || !constantTimeTokenMatch(candidateToken, pairingToken.token)
-    ) {
-      if (wasPairingTokenConsumed(state, candidate)) {
-        throw new DeviceRegistryError('pairing-used', 'Pairing token has already been used');
-      }
-      throw new DeviceRegistryError('pairing-invalid', 'Pairing token is invalid');
-    }
-    state.pairingToken = null;
-    if (Date.parse(pairingToken.expiresAt) <= now.getTime()) {
-      return {
-        error: new DeviceRegistryError('pairing-expired', 'Pairing token has expired'),
-      };
-    }
-    assertCapacity(state);
-    state.consumedPairingTokens.push({
-      tokenHash: hashPairingToken(pairingToken.token),
-      expiresAt: new Date(
-        now.getTime() + CONSUMED_PAIRING_TOKEN_RETENTION_MS,
-      ).toISOString(),
-    });
-    state.consumedPairingTokens = state.consumedPairingTokens.slice(
-      -MAX_CONSUMED_PAIRING_TOKENS,
-    );
-
-    const registeredAt = now.toISOString();
-    const device: StoredDevice = {
-      id: randomUUID(),
-      token: randomBytes(DEVICE_TOKEN_BYTES).toString('base64url'),
-      name: deviceName.trim().slice(0, 80) || 'Paired device',
-      registeredAt,
-      lastSeenAt: null,
-    };
-    state.devices.push(device);
-    return { device: { ...publicDevice(device), token: device.token } };
-  });
-  if (outcome.error) throw outcome.error;
-  return outcome.device;
 }
 
 export async function resolveDeviceToken(
@@ -434,11 +648,12 @@ export async function revokeDevice(deviceId: string): Promise<boolean> {
 }
 
 export async function clearDeviceRegistry(): Promise<string[]> {
-  return mutate((state) => {
+  return mutate((state, pairingRequests) => {
     const revokedDeviceIds = state.devices.map((device) => device.id);
     state.devices = [];
     state.pairingToken = null;
     state.consumedPairingTokens = [];
+    pairingRequests.clear();
     return revokedDeviceIds;
   });
 }

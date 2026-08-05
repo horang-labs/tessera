@@ -80,11 +80,65 @@ async function stopServer() {
 try {
   await startServer();
   const appSecret = (await fs.readFile(path.join(dataDir, 'auth', 'app-secret'), 'utf8')).trim();
+  const settingsResponse = await fetch(`${origin}/api/settings`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      origin,
+      'x-tessera-app-secret': appSecret,
+    },
+    body: JSON.stringify({
+      machineSettings: { advertisedAddress: origin },
+    }),
+  });
+  assert.equal(settingsResponse.status, 200, await settingsResponse.text());
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
   });
+  await context.addInitScript(() => {
+    window.__pairingRequests = [];
+    window.__pairingDecisions = [];
+    window.__pairingListFails = false;
+    const storage = new Map();
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        isElectron: true,
+        platform: 'linux',
+        supportsTailscaleFirewallConfiguration: false,
+        getRemoteAccessAddressCandidates: async () => [],
+        createPairingCode: async () => ({
+          ok: true,
+          pairingLink: `${window.location.origin}/pair#t=${'x'.repeat(43)}`,
+          qrDataUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 120_000).toISOString(),
+        }),
+        listPairingRequests: async () => {
+          if (window.__pairingListFails) {
+            return { ok: false, code: 'server-unavailable', error: 'server unavailable' };
+          }
+          return {
+            ok: true,
+            requests: window.__pairingRequests.map((request) => ({ ...request })),
+          };
+        },
+        decidePairingRequest: async (requestId, decision) => {
+          window.__pairingDecisions.push({ requestId, decision });
+          const request = window.__pairingRequests.find((candidate) => candidate.id === requestId);
+          if (!request) return { ok: false, code: 'not-found', error: 'not found' };
+          request.status = decision === 'approve' ? 'approved' : 'denied';
+          return { ok: true, request: { ...request } };
+        },
+        uiStorageGetItem: (key) => storage.get(key) ?? null,
+        uiStorageSetItem: (key, value) => storage.set(key, value),
+        uiStorageRemoveItem: (key) => storage.delete(key),
+      },
+    });
+  });
   const page = await context.newPage();
+  page.on('pageerror', (error) => serverOutput.push(`[renderer:error] ${error.stack ?? error.message}\n`));
   let devices = [
     {
       id: 'phone-1',
@@ -129,8 +183,102 @@ try {
   });
 
   await page.goto(`${origin}/chat`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  // This test authenticates HTTP with the Electron app header, which browsers
+  // cannot attach to WebSocket upgrades. Keep the expected dev-only WS overlay
+  // from intercepting otherwise valid settings interactions.
+  await page.addStyleTag({ content: 'nextjs-portal { pointer-events: none !important; }' });
+  await page.evaluate(() => {
+    const removeDevOverlay = () => {
+      document.querySelectorAll('nextjs-portal').forEach((portal) => portal.remove());
+    };
+    removeDevOverlay();
+    new MutationObserver(removeDevOverlay).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+  });
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByTestId('settings-nav-remote-access').click();
+
+  await page.getByRole('button', { name: 'Add device' }).click();
+  const approvalSection = page.getByTestId('pairing-approval-requests');
+  await approvalSection.waitFor();
+  assert.equal(await approvalSection.getAttribute('aria-labelledby'), 'pairing-approval-title');
+  await page.getByText(/Waiting for another device to scan the pairing code/).waitFor();
+  await page.evaluate(() => {
+    window.__pairingRequests.push({
+      id: 'pending-phone',
+      name: 'Travel phone',
+      browser: 'Mobile Safari',
+      platform: 'iOS',
+      remoteAddress: '100.64.0.8',
+      comparisonCode: '381204',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 90_000).toISOString(),
+      status: 'pending',
+    });
+  });
+
+  const approvalCard = page.getByTestId('pairing-approval-request-pending-phone');
+  await approvalCard.waitFor({ timeout: 15_000 });
+  assert.match(await approvalCard.innerText(), /Travel phone/);
+  assert.match(await approvalCard.innerText(), /Mobile Safari/);
+  assert.match(await approvalCard.innerText(), /iOS/);
+  assert.match(await approvalCard.innerText(), /100\.64\.0\.8/);
+  assert.match((await approvalCard.innerText()).replaceAll(/\s/g, ''), /381204/);
+  const approveButton = page.getByRole('button', { name: 'Approve Travel phone' });
+  await approveButton.focus();
+  assert.equal(await approveButton.evaluate((button) => document.activeElement === button), true);
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => window.__pairingDecisions.length === 1, null, {
+    timeout: 15_000,
+  });
+  await approvalCard.getByText('Approved', { exact: true }).waitFor({ timeout: 15_000 });
+  assert.equal(await page.getByTestId('pairing-approve-pending-phone').isDisabled(), true);
+
+  await page.evaluate(() => {
+    window.__pairingRequests.push({
+      id: 'denied-tablet',
+      name: 'Unknown tablet',
+      browser: 'Chrome',
+      platform: 'Android',
+      remoteAddress: '100.64.0.9',
+      comparisonCode: '719553',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      status: 'pending',
+    });
+  });
+  await page.getByRole('button', { name: 'Deny Unknown tablet' }).click();
+  assert.match(await page.getByTestId('pairing-approval-request-denied-tablet').innerText(), /Denied/);
+  assert.deepEqual(await page.evaluate(() => window.__pairingDecisions), [
+    { requestId: 'pending-phone', decision: 'approve' },
+    { requestId: 'denied-tablet', decision: 'deny' },
+  ]);
+
+  await page.evaluate(() => {
+    window.__pairingRequests.push({
+      id: 'expired-laptop',
+      name: 'Expired laptop',
+      browser: 'Firefox',
+      platform: 'Linux',
+      remoteAddress: '100.64.0.10',
+      comparisonCode: '440219',
+      createdAt: new Date(Date.now() - 180_000).toISOString(),
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      status: 'expired',
+    });
+  });
+  const expiredCard = page.getByTestId('pairing-approval-request-expired-laptop');
+  await expiredCard.waitFor({ timeout: 15_000 });
+  assert.match(await expiredCard.innerText(), /Expired/);
+  assert.equal(await page.getByTestId('pairing-approve-expired-laptop').isDisabled(), true);
+  assert.equal(await page.getByTestId('pairing-deny-expired-laptop').isDisabled(), true);
+
+  await page.evaluate(() => { window.__pairingListFails = true; });
+  await page.getByRole('alert').filter({ hasText: 'Pending device requests could not be refreshed.' })
+    .waitFor({ timeout: 15_000 });
+  await page.evaluate(() => { window.__pairingListFails = false; });
 
   await page.getByTestId('paired-device-phone-1').waitFor({ timeout: 15_000 });
   assert.equal(await page.getByTestId('paired-device-phone-1-status').innerText(), 'Connected now');
@@ -161,6 +309,11 @@ try {
     disableAllConfirmed: true,
     emptyStateVisible: true,
     capacityVisible: true,
+    pairingApprovalVisible: true,
+    pairingDecisionButtonsAccessible: true,
+    pairingKeyboardApproval: true,
+    pairingExpiredState: true,
+    pairingListErrorState: true,
   }, null, 2));
 } catch (error) {
   console.error(error);
