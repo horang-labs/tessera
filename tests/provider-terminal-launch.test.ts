@@ -39,6 +39,21 @@ test('Codex PTY starts with the requested model and reasoning effort', () => {
   );
 });
 
+test('Codex PTY starts with the requested fast service tier', () => {
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'codex',
+      sessionId: 'tessera-session',
+      resume: false,
+      serviceTier: 'fast',
+    }),
+    {
+      command: 'codex',
+      args: ['--config', 'service_tier="fast"'],
+    },
+  );
+});
+
 test('Claude PTY starts an empty Tessera session with --session-id', () => {
   assert.deepEqual(
     buildProviderTerminalLaunch({
@@ -125,6 +140,25 @@ test('Codex PTY reapplies the persisted model and reasoning effort when it resum
       args: [
         '--model', 'gpt-5.6-sol',
         '--config', 'model_reasoning_effort="xhigh"',
+        'resume', 'thread_123',
+      ],
+    },
+  );
+});
+
+test('Codex PTY explicitly disables fast mode when it resumes', () => {
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'codex',
+      sessionId: 'tessera-session',
+      resume: true,
+      codexResumeId: 'thread_123',
+      serviceTier: 'default',
+    }),
+    {
+      command: 'codex',
+      args: [
+        '--config', 'service_tier="default"',
         'resume', 'thread_123',
       ],
     },

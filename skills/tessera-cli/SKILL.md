@@ -39,7 +39,7 @@ If `--current` is unavailable, use `--project "$project_id"` with an exact obser
 
 ## Launch and observe a Session
 
-Choose an explicit provider ID; do not silently inherit the caller's provider. When the user explicitly chooses a Claude Code or Codex model or effort, pass it with `--model` and `--effort`; otherwise omit both options so the provider's own defaults remain in effect. Do not invent a model or effort on the user's behalf. For a multiline initial prompt, prefer stdin so shell quoting cannot alter the content:
+Choose an explicit provider ID; do not silently inherit the caller's provider. When the user explicitly chooses a Claude Code or Codex model or effort, pass it with `--model` and `--effort`; otherwise omit both options so the provider's own defaults remain in effect. For Codex, pass `--fast` or `--no-fast` only when the user explicitly chooses that service tier. Do not invent a model, effort, or service tier on the user's behalf. For a multiline initial prompt, prefer stdin so shell quoting cannot alter the content:
 
 ```sh
 "$TESSERA_CLI_COMMAND" session launch \
@@ -53,7 +53,9 @@ Choose an explicit provider ID; do not silently inherit the caller's provider. W
 TESSERA_PROMPT
 ```
 
-The same `--model` and `--effort` options are accepted by `session create`; the stored selection is applied later by `session start` and reapplied when the provider conversation resumes. These options currently apply only to the `claude-code` and `codex` providers.
+When the user explicitly selects a Codex service tier, add exactly one of `--fast` or `--no-fast` to that command.
+
+The same `--model`, `--effort`, `--fast`, and `--no-fast` options are accepted by `session create`; the stored selection is applied later by `session start` and reapplied when the provider conversation resumes. Model and effort selection currently apply only to `claude-code` and `codex`. Fast selection applies only to `codex`; `--no-fast` is an explicit opt-out and is not equivalent to omitting both flags.
 
 Use `--no-prompt` only when an intentionally empty interactive Session is required. Use `--allow-preparation-failure` only for the explicit recovery case described above.
 

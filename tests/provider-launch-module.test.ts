@@ -202,7 +202,7 @@ function createTerminalSession(
   sessionId: string,
   provider: string,
   providerState: Record<string, unknown> = { kind: 'terminal' },
-  selection: { model?: string; reasoningEffort?: string } = {},
+  selection: { model?: string; reasoningEffort?: string; serviceTier?: string } = {},
 ): void {
   modules.sessions.createSession(
     sessionId,
@@ -322,7 +322,7 @@ test('persisted Claude and Codex selections reach the provider PTY argv', async 
     'selected-codex',
     'codex',
     { kind: 'terminal' },
-    { model: 'gpt-5.6-sol', reasoningEffort: 'high' },
+    { model: 'gpt-5.6-sol', reasoningEffort: 'high', serviceTier: 'fast' },
   );
   createTerminalSession(
     'selected-claude',
@@ -337,6 +337,7 @@ test('persisted Claude and Codex selections reach the provider PTY argv', async 
   const codexShell = captured[0]?.args.join('\n') ?? '';
   assert.match(codexShell, /exec 'codex' '--model' 'gpt-5\.6-sol'/);
   assert.match(codexShell, /'--config' 'model_reasoning_effort="high"'/);
+  assert.match(codexShell, /'--config' 'service_tier="fast"'/);
 
   const claudeShell = captured[1]?.args.join('\n') ?? '';
   assert.match(claudeShell, /exec 'claude' '--session-id' 'selected-claude'/);

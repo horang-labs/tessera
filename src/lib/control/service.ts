@@ -108,6 +108,7 @@ export interface ControlSessionRecord {
   providerState: string | null;
   model?: string;
   reasoningEffort?: string;
+  serviceTier?: string;
   updatedAt: string;
 }
 
@@ -118,12 +119,21 @@ export interface ControlSessionSource {
   get(sessionId: string): ControlSessionRecord | undefined;
 }
 
+export const CONTROL_CODEX_SERVICE_TIERS = ['fast', 'default'] as const;
+export type ControlCodexServiceTier = typeof CONTROL_CODEX_SERVICE_TIERS[number];
+
+export function isControlCodexServiceTier(value: unknown): value is ControlCodexServiceTier {
+  return typeof value === 'string'
+    && CONTROL_CODEX_SERVICE_TIERS.some((serviceTier) => serviceTier === value);
+}
+
 export interface ControlSessionCreationRequest {
   worktreeId: string;
   provider: string;
   title?: string;
   model?: string;
   reasoningEffort?: string;
+  serviceTier?: ControlCodexServiceTier;
 }
 
 export interface ControlSessionStartRequest {
@@ -684,7 +694,7 @@ function requireSession(
 function validateSessionCreationRequest(
   request: Pick<
     ControlSessionCreationRequest,
-    'provider' | 'title' | 'model' | 'reasoningEffort'
+    'provider' | 'title' | 'model' | 'reasoningEffort' | 'serviceTier'
   >,
 ): void {
   if (!request.provider.trim()) {
@@ -708,6 +718,16 @@ function validateSessionCreationRequest(
       'Session model and effort selection is supported only for Claude Code and Codex.',
       400,
     );
+  }
+  if (request.serviceTier !== undefined && provider !== 'codex') {
+    throw new ControlOperationError(
+      'INVALID_USAGE',
+      'Session fast mode selection is supported only for Codex.',
+      400,
+    );
+  }
+  if (request.serviceTier !== undefined && !isControlCodexServiceTier(request.serviceTier)) {
+    throw new ControlOperationError('INVALID_USAGE', 'The Session fast mode is invalid.', 400);
   }
   validateSessionSelectionValue(request.model, 'model', 512);
   validateSessionSelectionValue(request.reasoningEffort, 'effort', 64);
@@ -739,6 +759,7 @@ function toPublicSession(session: ControlSessionRecord): PublicSessionDto {
     ...(session.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: session.reasoningEffort }),
+    ...(session.serviceTier === undefined ? {} : { serviceTier: session.serviceTier }),
     updatedAt: session.updatedAt,
   };
 }

@@ -7,7 +7,9 @@ import {
 import type { RuntimeDescriptor } from './runtime-descriptor';
 import {
   ControlOperationError,
+  isControlCodexServiceTier,
   type ControlCallerContext,
+  type ControlCodexServiceTier,
   type ControlErrorCode,
   type ControlService,
 } from './service';
@@ -322,11 +324,12 @@ async function readSessionCreationBody(request: IncomingMessage): Promise<{
   title?: string;
   model?: string;
   reasoningEffort?: string;
+  serviceTier?: ControlCodexServiceTier;
 }> {
   const body = await readJsonObject(request);
   rejectUnknownFields(
     body,
-    ['worktreeId', 'provider', 'title', 'model', 'reasoningEffort'],
+    ['worktreeId', 'provider', 'title', 'model', 'reasoningEffort', 'serviceTier'],
     'Session',
   );
   return readSessionCreationFields(body);
@@ -347,6 +350,7 @@ async function readSessionLaunchBody(request: IncomingMessage): Promise<{
   title?: string;
   model?: string;
   reasoningEffort?: string;
+  serviceTier?: ControlCodexServiceTier;
   initialPrompt?: string;
   allowPreparationFailure?: boolean;
 }> {
@@ -359,6 +363,7 @@ async function readSessionLaunchBody(request: IncomingMessage): Promise<{
       'title',
       'model',
       'reasoningEffort',
+      'serviceTier',
       'initialPrompt',
       'allowPreparationFailure',
     ],
@@ -438,6 +443,7 @@ function readSessionCreationFields(body: Record<string, unknown>): {
   title?: string;
   model?: string;
   reasoningEffort?: string;
+  serviceTier?: ControlCodexServiceTier;
 } {
   const worktreeId = requireBodyString(body, 'worktreeId', 'A Worktree ID is required.');
   const provider = requireBodyString(body, 'provider', 'An explicit supported provider is required.');
@@ -450,6 +456,9 @@ function readSessionCreationFields(body: Record<string, unknown>): {
   if (body.reasoningEffort !== undefined && typeof body.reasoningEffort !== 'string') {
     throw new ControlOperationError('INVALID_USAGE', 'The Session effort is invalid.', 400);
   }
+  if (body.serviceTier !== undefined && !isControlCodexServiceTier(body.serviceTier)) {
+    throw new ControlOperationError('INVALID_USAGE', 'The Session fast mode is invalid.', 400);
+  }
   return {
     worktreeId,
     provider,
@@ -458,6 +467,9 @@ function readSessionCreationFields(body: Record<string, unknown>): {
     ...(body.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: body.reasoningEffort }),
+    ...(body.serviceTier === undefined
+      ? {}
+      : { serviceTier: body.serviceTier as ControlCodexServiceTier }),
   };
 }
 

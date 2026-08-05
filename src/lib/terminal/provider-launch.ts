@@ -10,6 +10,7 @@ export interface ProviderTerminalLaunchInput {
   claudePluginDir?: string;
   model?: string;
   reasoningEffort?: string | null;
+  serviceTier?: string | null;
 }
 
 export interface ProviderTerminalLaunch {
@@ -54,6 +55,9 @@ function buildCodexSelectionArgs(input: ProviderTerminalLaunchInput): string[] {
   if (input.model) args.push('--model', input.model);
   if (input.reasoningEffort && input.reasoningEffort !== 'auto') {
     args.push('--config', `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`);
+  }
+  if (input.serviceTier) {
+    args.push('--config', `service_tier=${JSON.stringify(input.serviceTier)}`);
   }
   return args;
 }

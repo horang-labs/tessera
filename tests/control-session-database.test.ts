@@ -90,11 +90,13 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
       title: 'Detached Codex',
       model: 'gpt-5.6-sol',
       reasoningEffort: 'high',
+      serviceTier: 'fast',
     });
     assert.equal(created.worktreeId, worktreeId);
     assert.equal(created.providerState, JSON.stringify({ kind: 'terminal' }));
     assert.equal(created.model, 'gpt-5.6-sol');
     assert.equal(created.reasoningEffort, 'high');
+    assert.equal(created.serviceTier, 'fast');
     assert.equal(JSON.stringify(created).includes('internal-task-id'), false);
 
     const row = sessions.getSession(created.sessionId);
@@ -103,6 +105,7 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
     assert.equal(row?.worktree_branch, 'feature/session-control');
     assert.equal(row?.model, 'gpt-5.6-sol');
     assert.equal(row?.reasoning_effort, 'high');
+    assert.equal(row?.service_tier, 'fast');
     assert.equal(sessions.extractSessionKind(row?.provider_state ?? null), 'terminal');
 
     sessions.createSession(

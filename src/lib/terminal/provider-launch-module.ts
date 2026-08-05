@@ -229,6 +229,7 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
   providerState: string | null;
   model?: string;
   reasoningEffort: string | null;
+  serviceTier: string | null;
 } {
   const session = dbSessions.getSession(request.sessionId);
   if (!session || session.deleted === 1) {
@@ -264,6 +265,7 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
       providerState: session.provider_state,
       model: session.model ?? undefined,
       reasoningEffort: session.reasoning_effort,
+      serviceTier: session.service_tier,
     };
   } catch (error) {
     throw providerLaunchError(
@@ -281,7 +283,7 @@ async function buildLaunchDecision(
   hookCommandStyle: HookCommandStyle,
   claudePluginDir?: string,
 ): Promise<ProviderLaunchDecision> {
-  const { providerId, providerState, model, reasoningEffort } = persisted;
+  const { providerId, providerState, model, reasoningEffort, serviceTier } = persisted;
 
   if (providerId === 'claude-code') {
     const providerSession = resolveTerminalProviderSessionReference(
@@ -328,6 +330,7 @@ async function buildLaunchDecision(
       initialPrompt: request.initialPrompt,
       model,
       reasoningEffort,
+      serviceTier,
     });
     return {
       provider: persisted.provider,

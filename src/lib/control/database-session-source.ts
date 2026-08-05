@@ -14,12 +14,13 @@ interface SessionProjectionRow {
   provider_state: string | null;
   model: string | null;
   reasoning_effort: string | null;
+  service_tier: string | null;
   updated_at: string;
 }
 
 const SESSION_PROJECTION_SQL = `
   SELECT s.id AS session_id, t.public_worktree_id, s.project_id, s.title,
-         s.provider, s.provider_state, s.model, s.reasoning_effort, s.updated_at
+         s.provider, s.provider_state, s.model, s.reasoning_effort, s.service_tier, s.updated_at
   FROM sessions s
   JOIN tasks t ON t.id = s.task_id
   WHERE s.deleted = 0
@@ -61,6 +62,7 @@ function toRecord(row: SessionProjectionRow): ControlSessionRecord {
     providerState: row.provider_state,
     ...(row.model === null ? {} : { model: row.model }),
     ...(row.reasoning_effort === null ? {} : { reasoningEffort: row.reasoning_effort }),
+    ...(row.service_tier === null ? {} : { serviceTier: row.service_tier }),
     updatedAt: row.updated_at,
   };
 }

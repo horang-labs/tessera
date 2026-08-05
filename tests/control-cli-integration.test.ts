@@ -362,7 +362,7 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
     const created = await runCli([
       'session', 'create', '--worktree', worktree.worktreeId,
       '--provider', 'codex', '--title', 'Created only',
-      '--model', 'gpt-5.6-sol', '--effort', 'high', '--json',
+      '--model', 'gpt-5.6-sol', '--effort', 'high', '--fast', '--json',
       '--control-descriptor', runtime.descriptor.path,
     ]);
     assert.equal(created.code, 0, created.stderr || created.stdout);
@@ -371,6 +371,7 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
     assert.equal(createdSession.provider, 'codex');
     assert.equal(createdSession.model, 'gpt-5.6-sol');
     assert.equal(createdSession.reasoningEffort, 'high');
+    assert.equal(createdSession.serviceTier, 'fast');
     assert.equal(Object.hasOwn(createdSession, 'providerState'), false);
 
     const started = await runCli([
@@ -406,7 +407,7 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
 
     const literalTerminatorPrompt = await runCli([
       'session', 'launch', '--worktree', worktree.worktreeId,
-      '--provider', 'codex', '--prompt', '--', '--json',
+      '--provider', 'codex', '--no-fast', '--prompt', '--', '--json',
       '--control-descriptor', runtime.descriptor.path,
     ]);
     const reorderedLiteralTerminatorPrompt = await runCli([
@@ -425,6 +426,7 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
       reorderedLiteralTerminatorPrompt.stderr || reorderedLiteralTerminatorPrompt.stdout,
     );
     assert.equal(runtime.sessionStarts[3]?.initialPrompt, '--');
+    assert.equal(JSON.parse(literalTerminatorPrompt.stdout).data.session.serviceTier, 'default');
     assert.equal(runtime.sessionStarts[4]?.initialPrompt, '--');
 
     const listed = await runCli([
@@ -579,6 +581,10 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
       ['session', 'start', createdSession.sessionId],
       ['session', 'start', createdSession.sessionId, '--prompt', 'one', '--no-prompt'],
       ['session', 'launch', '--worktree', worktree.worktreeId, '--provider', 'codex'],
+      [
+        'session', 'launch', '--worktree', worktree.worktreeId, '--provider', 'codex',
+        '--fast', '--no-fast', '--no-prompt',
+      ],
       ['session', 'create', '--worktree', worktree.worktreeId],
       ['session', 'read', createdSession.sessionId, '--timeout', '1'],
       ['session', 'wait', createdSession.sessionId, '--for', 'done'],
@@ -873,6 +879,7 @@ async function startRuntime(
         title?: string;
         model?: string;
         reasoningEffort?: string;
+        serviceTier?: string;
       }) => {
         const owner = worktrees.find((worktree) => worktree.worktreeId === request.worktreeId);
         if (!owner) throw new Error('missing test Worktree');
@@ -885,6 +892,7 @@ async function startRuntime(
           providerState: JSON.stringify({ kind: 'terminal' }),
           model: request.model,
           reasoningEffort: request.reasoningEffort,
+          serviceTier: request.serviceTier,
           updatedAt: new Date().toISOString(),
         };
         sessionRecords.push(session);

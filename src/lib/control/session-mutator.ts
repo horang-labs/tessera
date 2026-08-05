@@ -61,6 +61,7 @@ export function createDatabaseControlSessionMutator(options: {
           providerState: JSON.stringify({ kind: 'terminal' }),
           model: request.model?.trim(),
           reasoningEffort: request.reasoningEffort?.trim(),
+          serviceTier: request.serviceTier,
         },
       );
       const created = source.get(sessionId);

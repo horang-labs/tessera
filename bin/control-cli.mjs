@@ -150,9 +150,9 @@ export function controlUsage() {
   tessera worktree create (--current | --project <project-id>) -b <new-branch> <start-point> [--title <title>] [--json]
   tessera session list --worktree <worktree-id> [--json]
   tessera session show <session-id> [--json]
-  tessera session create --worktree <worktree-id> --provider <provider-id> [--title <title>] [--model <model>] [--effort <level>] [--json]
+  tessera session create --worktree <worktree-id> --provider <provider-id> [--title <title>] [--model <model>] [--effort <level>] [--fast | --no-fast] [--json]
   tessera session start <session-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--allow-preparation-failure] [--json]
-  tessera session launch --worktree <worktree-id> --provider <provider-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--title <title>] [--model <model>] [--effort <level>] [--allow-preparation-failure] [--json]
+  tessera session launch --worktree <worktree-id> --provider <provider-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--title <title>] [--model <model>] [--effort <level>] [--fast | --no-fast] [--allow-preparation-failure] [--json]
   tessera session read <session-id> [--json]
   tessera session wait <session-id> --for <running|turn-complete|input-required|runtime-exit> [--timeout <seconds>] [--json]
   tessera session prompt <session-id> (--text <text> | --file <path|->) [--json]
@@ -389,6 +389,7 @@ function parseControlInvocation(argv, env) {
         ...(launch.reasoningEffort === undefined
           ? {}
           : { reasoningEffort: launch.reasoningEffort }),
+        ...(launch.serviceTier === undefined ? {} : { serviceTier: launch.serviceTier }),
         initialPrompt: null,
         ...(launch.allowPreparationFailure ? { allowPreparationFailure: true } : {}),
       },
@@ -509,7 +510,9 @@ function parseSessionPrompt(args) {
 function parseSessionCreation(args) {
   const parsed = parseSessionOptions(args, {
     promptRequired: false,
-    allowed: new Set(['--worktree', '--provider', '--title', '--model', '--effort']),
+    allowed: new Set([
+      '--worktree', '--provider', '--title', '--model', '--effort', '--fast', '--no-fast',
+    ]),
   });
   if (!parsed.worktreeId) throw new Error('--worktree requires a Worktree ID.');
   if (!parsed.provider) throw new Error('--provider requires a provider ID.');
@@ -521,6 +524,7 @@ function parseSessionCreation(args) {
     ...(parsed.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: parsed.reasoningEffort }),
+    ...(parsed.serviceTier === undefined ? {} : { serviceTier: parsed.serviceTier }),
   };
 }
 
@@ -544,7 +548,7 @@ function parseSessionLaunch(args) {
 
 function parseSessionOptions(args, options) {
   const allowed = options.allowed ?? new Set([
-    '--worktree', '--provider', '--title', '--model', '--effort',
+    '--worktree', '--provider', '--title', '--model', '--effort', '--fast', '--no-fast',
     '--prompt', '--prompt-file', '--no-prompt',
     '--allow-preparation-failure',
   ]);
@@ -554,6 +558,7 @@ function parseSessionOptions(args, options) {
     title: undefined,
     model: undefined,
     reasoningEffort: undefined,
+    serviceTier: undefined,
     promptChoice: undefined,
     allowPreparationFailure: false,
   };
@@ -570,6 +575,13 @@ function parseSessionOptions(args, options) {
     }
     if (arg === '--allow-preparation-failure') {
       parsed.allowPreparationFailure = true;
+      continue;
+    }
+    if (arg === '--fast' || arg === '--no-fast') {
+      if (parsed.serviceTier !== undefined) {
+        throw new Error('Exactly one of --fast and --no-fast may be supplied.');
+      }
+      parsed.serviceTier = arg === '--fast' ? 'fast' : 'default';
       continue;
     }
     const value = args[index + 1];
@@ -845,7 +857,9 @@ function validateHelpInvocation(argv) {
   if (args[0] !== 'session' || args[1] !== 'create') return;
   parseSessionOptions(args.slice(2), {
     promptRequired: false,
-    allowed: new Set(['--worktree', '--provider', '--title', '--model', '--effort']),
+    allowed: new Set([
+      '--worktree', '--provider', '--title', '--model', '--effort', '--fast', '--no-fast',
+    ]),
   });
 }
 
@@ -1094,12 +1108,14 @@ function parsePublicSessionDto(value) {
   if (!fields.every((field) => isNonEmptyString(value[field]))) return null;
   if (value.model !== undefined && !isNonEmptyString(value.model)) return null;
   if (value.reasoningEffort !== undefined && !isNonEmptyString(value.reasoningEffort)) return null;
+  if (value.serviceTier !== undefined && !isNonEmptyString(value.serviceTier)) return null;
   return {
     ...Object.fromEntries(fields.map((field) => [field, value[field]])),
     ...(value.model === undefined ? {} : { model: value.model }),
     ...(value.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: value.reasoningEffort }),
+    ...(value.serviceTier === undefined ? {} : { serviceTier: value.serviceTier }),
   };
 }
 

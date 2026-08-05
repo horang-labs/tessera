@@ -44,7 +44,7 @@ function createFixture() {
   let failNextStart: ControlOperationError | null = null;
 
   const mutator: ControlSessionMutator = {
-    create: async ({ worktreeId, provider, title, model, reasoningEffort }) => {
+    create: async ({ worktreeId, provider, title, model, reasoningEffort, serviceTier }) => {
       const record: ControlSessionRecord = {
         sessionId: `session-${records.length + 1}`,
         worktreeId,
@@ -54,6 +54,7 @@ function createFixture() {
         providerState: JSON.stringify({ kind: 'terminal' }),
         model,
         reasoningEffort,
+        serviceTier,
         updatedAt: '2026-08-04T00:00:00.000Z',
       };
       records.push(record);
@@ -195,11 +196,22 @@ test('Control keeps explicit Claude and Codex selections and rejects unsupported
     provider: 'codex',
     model: 'gpt-5.6-sol',
     reasoningEffort: 'high',
+    serviceTier: 'fast',
   }, CONTEXT);
 
   assert.equal(created.model, 'gpt-5.6-sol');
   assert.equal(created.reasoningEffort, 'high');
+  assert.equal(created.serviceTier, 'fast');
 
+  await assert.rejects(
+    fixture.service.createSession({
+      worktreeId: WORKTREE.worktreeId,
+      provider: 'claude-code',
+      serviceTier: 'fast',
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlOperationError
+      && error.code === 'INVALID_USAGE',
+  );
   await assert.rejects(
     fixture.service.createSession({
       worktreeId: WORKTREE.worktreeId,
