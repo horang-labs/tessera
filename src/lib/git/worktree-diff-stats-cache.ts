@@ -5,6 +5,7 @@ import { isDiffStatsEntryStale } from './worktree-diff-stats-staleness';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
 const DEBOUNCE_MS = 300;
+const MAX_CONCURRENT_COMPUTES = 2;
 
 type Listener = (
   workDir: string,
@@ -24,6 +25,8 @@ interface CacheState {
   pendingUserIds: Map<string, Set<string>>;
   rerunUserIds: Map<string, Set<string>>;
   inFlight: Map<string, Promise<WorktreeDiffStats | null>>;
+  activeComputeCount: number;
+  queuedComputes: Array<() => Promise<void>>;
   listeners: Set<Listener>;
 }
 
@@ -38,13 +41,45 @@ function getState(): CacheState {
       pendingUserIds: new Map(),
       rerunUserIds: new Map(),
       inFlight: new Map(),
+      activeComputeCount: 0,
+      queuedComputes: [],
       listeners: new Set(),
     };
   }
   const state = g[GLOBAL_KEY]!;
   // Keep Next.js hot-reload state created by an older module shape usable.
   state.rerunUserIds ??= new Map();
+  state.activeComputeCount ??= 0;
+  state.queuedComputes ??= [];
   return state;
+}
+
+function drainComputeQueue(): void {
+  const state = getState();
+  while (
+    state.activeComputeCount < MAX_CONCURRENT_COMPUTES
+    && state.queuedComputes.length > 0
+  ) {
+    const compute = state.queuedComputes.shift()!;
+    state.activeComputeCount += 1;
+    void compute().finally(() => {
+      state.activeComputeCount -= 1;
+      drainComputeQueue();
+    });
+  }
+}
+
+function runWithComputeLimit<T>(compute: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    getState().queuedComputes.push(async () => {
+      try {
+        resolve(await compute());
+      } catch (error) {
+        reject(error);
+      }
+    });
+    drainComputeQueue();
+  });
 }
 
 function normalize(workDir: string): string {
@@ -129,10 +164,12 @@ async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeD
       // queried. Keep one shared promise, but repeat the query until no newer
       // request remains so the final broadcast cannot expose stale counts.
       while (true) {
-        const agentEnvironment = nextUserIds[0]
-          ? await getAgentEnvironment(nextUserIds[0])
-          : undefined;
-        stats = await computeWorktreeDiffStats(workDir, agentEnvironment);
+        stats = await runWithComputeLimit(async () => {
+          const agentEnvironment = nextUserIds[0]
+            ? await getAgentEnvironment(nextUserIds[0])
+            : undefined;
+          return computeWorktreeDiffStats(workDir, agentEnvironment);
+        });
         const previousStats = state.entries.get(workDir)?.stats;
         state.entries.set(workDir, { stats, computedAt: Date.now() });
         notifyListeners(workDir, stats, nextUserIds, previousStats);
