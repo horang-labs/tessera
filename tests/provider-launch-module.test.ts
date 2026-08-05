@@ -202,6 +202,7 @@ function createTerminalSession(
   sessionId: string,
   provider: string,
   providerState: Record<string, unknown> = { kind: 'terminal' },
+  selection: { model?: string; reasoningEffort?: string } = {},
 ): void {
   modules.sessions.createSession(
     sessionId,
@@ -211,6 +212,7 @@ function createTerminalSession(
     {
       workDir: workspace,
       providerState: JSON.stringify(providerState),
+      ...selection,
     },
   );
 }
@@ -311,6 +313,38 @@ test('surface and detached launches make the same fresh OpenCode argv decision',
   );
 
   await manager.closeSession('detached-opencode', 'provider-launch-user');
+});
+
+test('persisted Claude and Codex selections reach the provider PTY argv', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  createTerminalSession(
+    'selected-codex',
+    'codex',
+    { kind: 'terminal' },
+    { model: 'gpt-5.6-sol', reasoningEffort: 'high' },
+  );
+  createTerminalSession(
+    'selected-claude',
+    'claude-code',
+    { kind: 'terminal' },
+    { model: 'claude-opus-4-8', reasoningEffort: 'xhigh' },
+  );
+
+  await launchDetached(manager, 'selected-codex');
+  await launchDetached(manager, 'selected-claude');
+
+  const codexShell = captured[0]?.args.join('\n') ?? '';
+  assert.match(codexShell, /exec 'codex' '--model' 'gpt-5\.6-sol'/);
+  assert.match(codexShell, /'--config' 'model_reasoning_effort="high"'/);
+
+  const claudeShell = captured[1]?.args.join('\n') ?? '';
+  assert.match(claudeShell, /exec 'claude' '--session-id' 'selected-claude'/);
+  assert.match(claudeShell, /'--model' 'claude-opus-4-8'/);
+  assert.match(claudeShell, /"effortLevel":"xhigh"/);
+
+  await manager.closeSession('selected-codex', 'provider-launch-user');
+  await manager.closeSession('selected-claude', 'provider-launch-user');
 });
 
 test('an immediate provider exit after detached spawn keeps the durable Session', async () => {

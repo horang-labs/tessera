@@ -39,17 +39,21 @@ If `--current` is unavailable, use `--project "$project_id"` with an exact obser
 
 ## Launch and observe a Session
 
-Choose an explicit provider ID; do not silently inherit the caller's provider. For a multiline initial prompt, prefer stdin so shell quoting cannot alter the content:
+Choose an explicit provider ID; do not silently inherit the caller's provider. When the user explicitly chooses a Claude Code or Codex model or effort, pass it with `--model` and `--effort`; otherwise omit both options so the provider's own defaults remain in effect. Do not invent a model or effort on the user's behalf. For a multiline initial prompt, prefer stdin so shell quoting cannot alter the content:
 
 ```sh
 "$TESSERA_CLI_COMMAND" session launch \
   --worktree "$worktree_id" \
   --provider "$provider_id" \
+  --model "$model_id" \
+  --effort "$effort" \
   --prompt-file - \
   --json <<'TESSERA_PROMPT'
 <initial instructions>
 TESSERA_PROMPT
 ```
+
+The same `--model` and `--effort` options are accepted by `session create`; the stored selection is applied later by `session start` and reapplied when the provider conversation resumes. These options currently apply only to the `claude-code` and `codex` providers.
 
 Use `--no-prompt` only when an intentionally empty interactive Session is required. Use `--allow-preparation-failure` only for the explicit recovery case described above.
 

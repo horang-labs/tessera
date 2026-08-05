@@ -44,7 +44,7 @@ function createFixture() {
   let failNextStart: ControlOperationError | null = null;
 
   const mutator: ControlSessionMutator = {
-    create: async ({ worktreeId, provider, title }) => {
+    create: async ({ worktreeId, provider, title, model, reasoningEffort }) => {
       const record: ControlSessionRecord = {
         sessionId: `session-${records.length + 1}`,
         worktreeId,
@@ -52,6 +52,8 @@ function createFixture() {
         title: title ?? 'New Session',
         provider,
         providerState: JSON.stringify({ kind: 'terminal' }),
+        model,
+        reasoningEffort,
         updatedAt: '2026-08-04T00:00:00.000Z',
       };
       records.push(record);
@@ -184,6 +186,39 @@ test('Control creates a durable PTY Session and lists it only through its public
     (error: unknown) => error instanceof ControlOperationError
       && error.code === 'WORKTREE_NOT_FOUND',
   );
+});
+
+test('Control keeps explicit Claude and Codex selections and rejects unsupported providers', async () => {
+  const fixture = createFixture();
+  const created = await fixture.service.createSession({
+    worktreeId: WORKTREE.worktreeId,
+    provider: 'codex',
+    model: 'gpt-5.6-sol',
+    reasoningEffort: 'high',
+  }, CONTEXT);
+
+  assert.equal(created.model, 'gpt-5.6-sol');
+  assert.equal(created.reasoningEffort, 'high');
+
+  await assert.rejects(
+    fixture.service.createSession({
+      worktreeId: WORKTREE.worktreeId,
+      provider: 'opencode',
+      model: 'openai/gpt-5.6-sol',
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlOperationError
+      && error.code === 'INVALID_USAGE',
+  );
+  await assert.rejects(
+    fixture.service.createSession({
+      worktreeId: WORKTREE.worktreeId,
+      provider: 'claude-code',
+      reasoningEffort: 'high\n--dangerous',
+    }, CONTEXT),
+    (error: unknown) => error instanceof ControlOperationError
+      && error.code === 'INVALID_USAGE',
+  );
+  assert.equal(fixture.records.length, 1);
 });
 
 test('Control reads and waits on a durable Session through the observation seam', async () => {

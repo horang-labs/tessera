@@ -8,6 +8,8 @@ export interface ProviderTerminalLaunchInput {
   providerSessionActivation?: 'active' | 'background';
   initialPrompt?: string;
   claudePluginDir?: string;
+  model?: string;
+  reasoningEffort?: string | null;
 }
 
 export interface ProviderTerminalLaunch {
@@ -26,6 +28,35 @@ export const TERMINAL_PROVIDER_COMMANDS: Readonly<Record<string, string>> = {
   codex: 'codex',
   opencode: 'opencode',
 };
+
+function buildClaudeSettingsJson(
+  settingsJson: string,
+  reasoningEffort: string | null | undefined,
+): string {
+  if (!reasoningEffort || reasoningEffort === 'auto' || reasoningEffort === 'max') {
+    return settingsJson;
+  }
+  const settings = JSON.parse(settingsJson) as unknown;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('claude terminal launch requires object settings');
+  }
+  const merged = settings as Record<string, unknown>;
+  if (reasoningEffort === 'ultracode') {
+    merged.ultracode = true;
+  } else {
+    merged.effortLevel = reasoningEffort;
+  }
+  return JSON.stringify(merged);
+}
+
+function buildCodexSelectionArgs(input: ProviderTerminalLaunchInput): string[] {
+  const args: string[] = [];
+  if (input.model) args.push('--model', input.model);
+  if (input.reasoningEffort && input.reasoningEffort !== 'auto') {
+    args.push('--config', `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`);
+  }
+  return args;
+}
 
 /**
  * 클라 argv 불신. {providerId, sessionId, resume, ...} 만 받아 서버가 최소 argv 전량 조립.
@@ -57,8 +88,10 @@ export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput):
       args: [
         input.resume ? '--resume' : '--session-id',
         input.sessionId,
+        ...(input.model ? ['--model', input.model] : []),
+        ...(input.reasoningEffort === 'max' ? ['--effort', 'max'] : []),
         '--settings',
-        input.settingsJson,
+        buildClaudeSettingsJson(input.settingsJson, input.reasoningEffort),
         ...(input.claudePluginDir ? ['--plugin-dir', input.claudePluginDir] : []),
         ...(input.initialPrompt !== undefined ? ['--', input.initialPrompt] : []),
       ],
@@ -66,14 +99,21 @@ export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput):
   }
 
   if (input.providerId === 'codex') {
+    const selectionArgs = buildCodexSelectionArgs(input);
     // 신규는 세션식별 인자 없음(codex가 rollout id 자체 발급).
     // resume는 이전 훅에서 캡처한 codexResumeId 필요.
     if (input.resume && input.codexResumeId) {
-      return { command: TERMINAL_PROVIDER_COMMANDS.codex, args: ['resume', input.codexResumeId] };
+      return {
+        command: TERMINAL_PROVIDER_COMMANDS.codex,
+        args: [...selectionArgs, 'resume', input.codexResumeId],
+      };
     }
     return {
       command: TERMINAL_PROVIDER_COMMANDS.codex,
-      args: input.initialPrompt !== undefined ? ['--', input.initialPrompt] : [],
+      args: [
+        ...selectionArgs,
+        ...(input.initialPrompt !== undefined ? ['--', input.initialPrompt] : []),
+      ],
     };
   }
 
