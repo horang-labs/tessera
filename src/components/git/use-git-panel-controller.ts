@@ -548,7 +548,10 @@ export function useGitPanelController(sessionId: string | null) {
         action: "generate_commit_message",
         target: "commit_message",
         result: "success",
-        file_count: files.length,
+        // `changed_file_count` rather than the commit path's `file_count`:
+        // `sanitizeTelemetryProperties` only forwards registered keys, and this
+        // is the registered one for a count of changed files.
+        changed_file_count: files.length,
       });
     } catch (nextError) {
       // Stays on the button. A failure here must not disturb the commit path.
@@ -564,7 +567,7 @@ export function useGitPanelController(sessionId: string | null) {
         action: "generate_commit_message",
         target: "commit_message",
         result: "failed",
-        file_count: files.length,
+        changed_file_count: files.length,
       });
     } finally {
       setGeneratingMessage(false);

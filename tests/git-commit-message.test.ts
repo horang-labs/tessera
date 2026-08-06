@@ -81,13 +81,17 @@ test('the message comes back from the one-shot call, prompted with the selection
   });
 });
 
-test('a selection of new files still describes them to the model', async (t) => {
+test('a selection of new files shows the model their contents', async (t) => {
   if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
 
   await withTempRepo(async (target, repoDir) => {
-    // Git has never heard of these, so `git diff HEAD` says nothing about them
-    // and the prompt has to carry the selection itself.
-    fs.writeFileSync(path.join(repoDir, 'brand-new.ts'), 'export const x = 1;\n');
+    // Git has never heard of these, so `git diff HEAD` says nothing about them.
+    // A commit of freshly written files is the normal shape of agent work, and
+    // summarizing it from path names alone is guesswork.
+    fs.writeFileSync(
+      path.join(repoDir, 'brand-new.ts'),
+      'export function reticulateSplines() { return 42; }\n',
+    );
 
     const recorder = recordingGenerator('feat: add brand-new module');
     const message = await generateCommitMessage(
@@ -98,7 +102,49 @@ test('a selection of new files still describes them to the model', async (t) => 
 
     assert.equal(message, 'feat: add brand-new module');
     assert.match(recorder.prompts[0], /brand-new\.ts/);
-    assert.match(recorder.prompts[0], /untracked/);
+    assert.match(recorder.prompts[0], /reticulateSplines/);
+  });
+});
+
+test('a repository with no commits yet can still be summarized', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  // `git diff HEAD` is fatal on an unborn branch, but `git commit` works there,
+  // so the panel would offer a working Commit beside a generate that errors.
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-unborn-'));
+  try {
+    await execFileAsync('git', ['init', '--initial-branch=main'], { cwd: repoDir });
+    fs.writeFileSync(path.join(repoDir, 'first.txt'), 'the very first file\n');
+
+    const recorder = recordingGenerator('chore: initial commit');
+    const message = await generateCommitMessage(
+      { workDir: repoDir, agentEnvironment: LOCAL_ENVIRONMENT },
+      ['first.txt'],
+      recorder.generate,
+    );
+
+    assert.equal(message, 'chore: initial commit');
+    assert.match(recorder.prompts[0], /first\.txt/);
+  } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test('a reply that adds an explanation keeps only the subject line', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withTempRepo(async (target, repoDir) => {
+    fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'seed changed\n');
+
+    const message = await generateCommitMessage(
+      target,
+      ['seed.txt'],
+      async () => 'fix: tighten the seed\n\nThis change adjusts the seed file so that…',
+    );
+
+    // The one-shot path returns raw text now, so a chatty model would otherwise
+    // drop a paragraph of prose into the commit message field.
+    assert.equal(message, 'fix: tighten the seed');
   });
 });
 

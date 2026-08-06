@@ -115,3 +115,11 @@ export interface TranslatedText {
   /** Translated text in the requested target language. */
   text: string;
 }
+
+/**
+ * Result of CliProvider.generateText().
+ */
+export interface GeneratedText {
+  /** The model's reply, exactly as it arrived. */
+  text: string;
+}

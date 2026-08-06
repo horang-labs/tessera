@@ -3,6 +3,7 @@ import type {
   CheckStatusOptions,
   CliProvider,
   CliStatusResult,
+  GeneratedText,
   GeneratedTitle,
   ParsedMessage,
   SpawnOptions,
@@ -445,6 +446,25 @@ export class OpenCodeAdapter implements CliProvider {
       return await this._generateTitleViaRun(prompt, userId);
     } catch (err) {
       logger.warn('OpenCodeAdapter: generateTitle failed', {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Runs a caller-built prompt one-shot and returns the raw reply text, with no
+   * title parsing and no length clamp — see the contract note on `generateText`.
+   *
+   * Returns null on any error/timeout/empty (fail-open).
+   */
+  async generateText(prompt: string, userId?: string): Promise<GeneratedText | null> {
+    try {
+      const text = await this._runOneShot(prompt, userId);
+      const t = text.trim();
+      return t ? { text: t } : null;
+    } catch (err) {
+      logger.warn('OpenCodeAdapter: generateText failed', {
         error: (err as Error).message,
       });
       return null;

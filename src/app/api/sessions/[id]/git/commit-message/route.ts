@@ -75,6 +75,11 @@ export async function POST(
  * The session's own provider runs the call, so the message is written by the
  * same agent family the user picked for the work — but as a separate headless
  * invocation, never through the running session.
+ *
+ * `generateText`, not `generateTitle`: the title path carries a title-shaped
+ * system prompt and clamps its answer to 30 characters on the Claude provider,
+ * which would cut a commit subject off mid-word. Both run on the same one-shot
+ * spawn primitive, which is what ADR 0005 asks for.
  */
 function resolveOneShotGenerator(
   sessionId: string,
@@ -89,8 +94,14 @@ function resolveOneShotGenerator(
     }
 
     const provider = cliProviderRegistry.getProvider(providerId);
-    const result = await provider.generateTitle(prompt, userId);
-    return result?.title ?? null;
+    if (typeof provider.generateText !== 'function') {
+      throw new CommitMessageGenerationError(
+        `Provider '${providerId}' cannot generate a commit message`,
+      );
+    }
+
+    const result = await provider.generateText(prompt, userId);
+    return result?.text ?? null;
   };
 }
 
