@@ -177,6 +177,32 @@ export async function readTerminalSessionReplayState(
   return state;
 }
 
+/**
+ * Recorded `toolParams` for a tool call in a terminal session's transcript.
+ *
+ * The Tessera-side counterpart (`sessionHistory.readToolCallParams`) can never
+ * answer for a PTY session: its conversation is not written to Tessera's own
+ * JSONL, so that file holds no `tool_call` events at all. Server code that
+ * re-derives an on-disk path from a tool call — the inline image endpoint — has
+ * to come here instead.
+ */
+export async function readTerminalToolCallParams(
+  session: dbSessions.SessionRow,
+  toolUseId: string,
+  userId?: string,
+): Promise<Record<string, any> | null> {
+  const state = await readTerminalSessionReplayState(session, userId);
+  if (!state) return null;
+
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    const message = state.messages[i];
+    if (message.type === 'tool_call' && message.toolUseId === toolUseId) {
+      return message.toolParams ?? null;
+    }
+  }
+  return null;
+}
+
 /** Page a terminal session's transcript using the same cursor contract as Tessera history. */
 export async function readTerminalSessionHistory(
   session: dbSessions.SessionRow,

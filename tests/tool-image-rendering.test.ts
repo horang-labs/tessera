@@ -56,6 +56,19 @@ test('tool-image route resolves the recorded path for the host filesystem', () =
   assert.doesNotMatch(routeSource, /fs\.(stat|readFile)\(rawPath\)/);
 });
 
+test('tool-image route reads a PTY session\'s tool call from the provider transcript', () => {
+  const routeSource = fs.readFileSync(
+    new URL('../src/app/api/sessions/[id]/tool-image/route.ts', import.meta.url),
+    'utf8',
+  );
+
+  // A PTY session's conversation is never written to Tessera's own history, so
+  // `sessionHistory.readToolCallParams` always answers null for one and every
+  // inline image 404s. The transcript the chat view decodes is the only source.
+  assert.match(routeSource, /supportsTerminalTranscriptHistory\(session\)/);
+  assert.match(routeSource, /readTerminalToolCallParams\(session, toolUseId/);
+});
+
 // --- codex view_image (imageView) end-to-end through the parser ---
 
 test('Codex imageView maps to a file_read tool call with an inline image result', () => {
