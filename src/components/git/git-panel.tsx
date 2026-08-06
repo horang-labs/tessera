@@ -314,9 +314,12 @@ export function GitPanel({
             changedFileCount={controller.changedFileCount}
             commit={{
               committing: controller.committing,
+              generateError: controller.generateMessageError,
+              generating: controller.generatingMessage,
               isSelected: controller.isSelectedForCommit,
               message: controller.commitMessage,
               onCommit: () => void controller.commitSelectedFiles(),
+              onGenerate: () => void controller.generateCommitMessage(),
               onMessageChange: controller.setCommitMessage,
               onToggleFile: controller.toggleCommitFile,
               totals: controller.commitTotals,

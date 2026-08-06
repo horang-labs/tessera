@@ -31,6 +31,7 @@ import type {
   SpawnOptions,
   SpawnResult,
   ParsedMessage,
+  GeneratedText,
   GeneratedTitle,
   TranslatedText,
   SkillSource,
@@ -999,6 +1000,25 @@ export class CodexAdapter implements CliProvider {
    *
    * Returns null on any error/timeout/empty result (fail-open).
    */
+  /**
+   * Runs a caller-built prompt one-shot and returns the raw agent text, with no
+   * title parsing and no length clamp — see the contract note on `generateText`.
+   *
+   * Returns null on any error/timeout/empty (fail-open).
+   */
+  async generateText(prompt: string, userId?: string): Promise<GeneratedText | null> {
+    try {
+      const text = await this._execOneShot(prompt, userId);
+      const t = text.trim();
+      return t ? { text: t } : null;
+    } catch (err) {
+      logger.warn('CodexAdapter: generateText failed', {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
   async translateText(
     prompt: string,
     userId?: string,

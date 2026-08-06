@@ -212,7 +212,7 @@ async function unstageAddedPaths(
   }
 }
 
-async function readChangeSet(
+export async function readChangeSet(
   target: GitActionTarget,
   runGit: GitRunner,
 ): Promise<GitChangedFile[]> {

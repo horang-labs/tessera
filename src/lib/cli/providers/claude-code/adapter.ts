@@ -22,6 +22,7 @@ import type {
   SpawnOptions,
   SpawnResult,
   ParsedMessage,
+  GeneratedText,
   GeneratedTitle,
   TranslatedText,
   CliRawLogSink,
@@ -463,6 +464,26 @@ export class ClaudeCodeAdapter implements CliProvider {
       logger.warn({
         error: (err as Error).message,
       }, 'ClaudeCodeAdapter: generateTitle failed');
+      return null;
+    }
+  }
+
+  /**
+   * Runs a caller-built prompt one-shot and returns the model's raw reply.
+   * Unlike generateTitle this attaches no system prompt and no length clamp —
+   * the title contract (30 characters, title-shaped instructions) would silently
+   * cut a caller's answer in half.
+   *
+   * Returns null on any error/timeout/empty (fail-open).
+   */
+  async generateText(prompt: string, userId?: string): Promise<GeneratedText | null> {
+    try {
+      const text = await this._callCliRaw(prompt, userId);
+      return text.trim() ? { text: text.trim() } : null;
+    } catch (err) {
+      logger.warn({
+        error: (err as Error).message,
+      }, 'ClaudeCodeAdapter: generateText failed');
       return null;
     }
   }

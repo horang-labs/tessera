@@ -1061,6 +1061,9 @@ export interface I18nMessages {
       includeFile: string;
       button: string;
       buttonPending: string;
+      generateLabel: string;
+      generateFailed: string;
+      generateFailedPrefix: string;
       successToast: string;
       failureToast: string;
     };
