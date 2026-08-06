@@ -12,11 +12,10 @@ import { getTesseraDataPath } from '../tessera-data-dir';
 import {
   getWslHostedWindowsHomeMountPath,
   getWindowsHostedWslRootFilesystemPath,
-  isWslFilesystemPath,
 } from '../filesystem/path-environment';
 import { resolvePathForHostFilesystem } from '../filesystem/host-path';
 import type { AgentEnvironment } from '../settings/types';
-import { createGitRunner, type GitRunner } from './git-runner';
+import type { GitRunner } from './git-runner';
 import { getRuntimePlatform } from '../system/runtime-platform';
 import { isRunningInWsl } from '../cli/cli-exec';
 
@@ -257,10 +256,16 @@ export async function resolveManagedWorktreeRoot(
   return MANAGED_WORKTREE_ROOT;
 }
 
+/**
+ * `runGit` is required. It used to default to a runner built from the two
+ * paths, which meant a caller with no user attached got path inference without
+ * asking for it — and a caller that simply forgot the argument got it too.
+ * Callers without a user now say so with `resolveGitEnvironment`.
+ */
 export async function removeManagedWorktree(
   projectDir: string,
   worktreePath: string,
-  runGit: GitRunner = createGitRunner(inferManagedGitEnvironment(projectDir, worktreePath)),
+  runGit: GitRunner,
 ): Promise<void> {
   await runGit(
     ['-C', projectDir, 'worktree', 'remove', '--force', worktreePath],
@@ -358,15 +363,6 @@ function resolveWslPosixFallbackManagedWorktreeRoot(candidate: string): string |
   return normalized.startsWith('/var/tmp/tessera-worktrees')
     ? '/var/tmp/tessera-worktrees'
     : null;
-}
-
-function inferManagedGitEnvironment(
-  projectDir: string,
-  worktreePath: string,
-): AgentEnvironment {
-  return isWslFilesystemPath(projectDir) || isWslFilesystemPath(worktreePath)
-    ? 'wsl'
-    : 'native';
 }
 
 function getRelativePathIfInside(rootDir: string, candidate: string): string | null {
