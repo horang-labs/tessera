@@ -5,6 +5,7 @@ import {
   type GitStateSnapshot,
 } from '@/lib/git/primary-git-action';
 import { describeDefaultBranchPushConfirmation } from '@/lib/git/default-branch-confirmation';
+import { deriveGitActionMenu } from '@/lib/git/git-action-menu';
 
 /** Working directly on the repository's default branch, with commits to send. */
 const ON_DEFAULT_BRANCH: GitStateSnapshot = {
@@ -107,6 +108,39 @@ test('pushing any other branch runs without being interrupted', () => {
   );
 });
 
+test('Commit & Push at the default branch is asked about, in its own words', () => {
+  // The dropdown's one compound pushes too, so it must clear the same gate the
+  // primary button clears — reaching `main` by way of a menu entry rather than
+  // a button is still reaching `main` (§8).
+  const dirty: GitStateSnapshot = { ...ON_DEFAULT_BRANCH, changedFileCount: 3 };
+  const commitPush = deriveGitActionMenu(dirty).find(
+    (action) => action.id === 'commit_push',
+  )!;
+
+  const confirmation = describeDefaultBranchPushConfirmation(commitPush, dirty);
+
+  assert.equal(confirmation?.branch, 'main');
+  // Its own copy: what it is about to do is commit *and* push, and §8 assembles
+  // the copy per action rather than reusing one string.
+  assert.equal(
+    confirmation?.titleKey,
+    'gitPanel.push.defaultBranchConfirm.commitPushTitle',
+  );
+});
+
+test('a menu action that does not push is never asked about', () => {
+  const dirty: GitStateSnapshot = { ...ON_DEFAULT_BRANCH, changedFileCount: 3 };
+
+  for (const id of ['commit', 'pull', 'create_pr']) {
+    const action = deriveGitActionMenu(dirty).find((item) => item.id === id)!;
+    assert.equal(
+      describeDefaultBranchPushConfirmation(action, dirty),
+      null,
+      `${id} raised a push confirmation`,
+    );
+  }
+});
+
 test('every locale can say what the confirmation asks, and names the branch', async () => {
   // `t()` renders an unknown key verbatim, so a missing translation reaches the
   // dialog as `gitPanel.push.defaultBranchConfirm.title`.
@@ -117,13 +151,22 @@ test('every locale can say what the confirmation asks, and names the branch', as
     zh: (await import('@/lib/i18n/zh')).zh,
   });
 
-  const confirmations = [ON_DEFAULT_BRANCH, { ...ON_DEFAULT_BRANCH, upstream: null }]
-    .map((snapshot) =>
-      describeDefaultBranchPushConfirmation(
-        derivePrimaryGitAction(snapshot),
-        snapshot,
-      ),
-    );
+  const dirty: GitStateSnapshot = { ...ON_DEFAULT_BRANCH, changedFileCount: 3 };
+  const confirmations = [
+    ...[ON_DEFAULT_BRANCH, { ...ON_DEFAULT_BRANCH, upstream: null }].map(
+      (snapshot) =>
+        describeDefaultBranchPushConfirmation(
+          derivePrimaryGitAction(snapshot),
+          snapshot,
+        ),
+    ),
+    // The menu's compound asks the same question in its own words, so its copy
+    // has to exist everywhere the button's does.
+    describeDefaultBranchPushConfirmation(
+      deriveGitActionMenu(dirty).find((action) => action.id === 'commit_push')!,
+      dirty,
+    ),
+  ];
 
   for (const [language, bundle] of locales) {
     for (const confirmation of confirmations) {

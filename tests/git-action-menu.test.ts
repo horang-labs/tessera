@@ -1,0 +1,357 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  deriveGitActionMenu,
+  GIT_MENU_ACTION_IDS,
+} from '@/lib/git/git-action-menu';
+import type { GitStateSnapshot } from '@/lib/git/primary-git-action';
+
+/**
+ * A branch that is committed, pushed, tracking and already has a pull request —
+ * the far end of the ladder, where delivery is finished. The same starting point
+ * the primary-action tests use, so the two derivations can be read side by side.
+ */
+const SYNCED: GitStateSnapshot = {
+  branch: 'feature/0807-t237',
+  upstream: 'origin/feature/0807-t237',
+  ahead: 0,
+  behind: 0,
+  changedFileCount: 0,
+  hasRemote: true,
+  pullRequest: 'exists',
+  defaultBranch: 'dev',
+};
+
+/** The one entry with this id — the menu never lists an action twice. */
+function entry(
+  snapshot: GitStateSnapshot | null,
+  id: string,
+): ReturnType<typeof deriveGitActionMenu>[number] {
+  const matches = deriveGitActionMenu(snapshot).filter((item) => item.id === id);
+  assert.equal(matches.length, 1, `${id} appears ${matches.length} times`);
+  return matches[0]!;
+}
+
+test('Commit carries the size of the change set, and says why it cannot run', () => {
+  const dirty = entry({ ...SYNCED, changedFileCount: 4 }, 'commit');
+  assert.equal(dirty.enabled, true);
+  assert.deepEqual(dirty.labelParams, { count: 4 });
+
+  const clean = entry(SYNCED, 'commit');
+  assert.equal(clean.enabled, false);
+  assert.equal(clean.disabledReasonKey, 'gitPanel.commit.nothingToCommit');
+  // A bare verb rather than "Commit (0)": the count is there to say how big the
+  // operation is, and there is no operation.
+  assert.equal(clean.labelParams, undefined);
+});
+
+test('Push counts the commits it would send, and wears Publish without an upstream', () => {
+  const ahead = entry({ ...SYNCED, ahead: 2 }, 'push');
+  assert.equal(ahead.kind, 'push');
+  assert.equal(ahead.enabled, true);
+  assert.deepEqual(ahead.labelParams, { count: 2 });
+
+  const nothing = entry(SYNCED, 'push');
+  assert.equal(nothing.enabled, false);
+  assert.equal(nothing.disabledReasonKey, 'gitPanel.push.nothingToPush');
+
+  // Same action, different word (§2) — and it is offered with no commits ahead,
+  // because publishing the branch is the point rather than the commits on it.
+  const unpublished = entry({ ...SYNCED, upstream: null, ahead: 0 }, 'push');
+  assert.equal(unpublished.id, 'push');
+  assert.equal(unpublished.kind, 'publish');
+  assert.equal(unpublished.enabled, true);
+  assert.equal(unpublished.labelKey, 'gitPanel.push.publishButton');
+});
+
+test('nothing reaches a remote from a detached HEAD or a repository without one', () => {
+  const detached = entry({ ...SYNCED, branch: null, ahead: 2 }, 'push');
+  assert.equal(detached.enabled, false);
+  assert.equal(detached.disabledReasonKey, 'gitPanel.primary.detachedHead');
+
+  const remoteless = entry(
+    { ...SYNCED, hasRemote: false, upstream: null, ahead: 2 },
+    'push',
+  );
+  assert.equal(remoteless.enabled, false);
+  assert.equal(remoteless.disabledReasonKey, 'gitPanel.primary.noRemote');
+});
+
+test('Pull counts what is waiting, and an unpublished branch is told what to do first', () => {
+  const behind = entry({ ...SYNCED, behind: 3 }, 'pull');
+  assert.equal(behind.enabled, true);
+  assert.deepEqual(behind.labelParams, { count: 3 });
+
+  const caughtUp = entry(SYNCED, 'pull');
+  assert.equal(caughtUp.enabled, false);
+  assert.equal(caughtUp.disabledReasonKey, 'gitPanel.pull.nothingToPull');
+
+  // §4's example of a reason that says what would make the action available,
+  // rather than only that it is unavailable.
+  const unpublished = entry({ ...SYNCED, upstream: null, behind: 0 }, 'pull');
+  assert.equal(unpublished.enabled, false);
+  assert.equal(unpublished.disabledReasonKey, 'gitPanel.pull.noUpstream');
+});
+
+test('Create PR names each of the things that can stand in its way', () => {
+  const ready = entry({ ...SYNCED, pullRequest: 'none' }, 'create_pr');
+  assert.equal(ready.enabled, true);
+  assert.equal(ready.disabledReasonKey, null);
+
+  const already = entry(SYNCED, 'create_pr');
+  assert.equal(already.enabled, false);
+  assert.equal(already.disabledReasonKey, 'gitPanel.pr.alreadyOpen');
+
+  const unpublished = entry(
+    { ...SYNCED, upstream: null, pullRequest: 'none' },
+    'create_pr',
+  );
+  assert.equal(unpublished.enabled, false);
+  assert.equal(unpublished.disabledReasonKey, 'gitPanel.pr.noUpstream');
+
+  // Nothing merges into itself.
+  const onDefault = entry(
+    { ...SYNCED, branch: 'dev', upstream: 'origin/dev', pullRequest: 'none' },
+    'create_pr',
+  );
+  assert.equal(onDefault.enabled, false);
+  assert.equal(onDefault.disabledReasonKey, 'gitPanel.pr.defaultBranch');
+
+  // Still being asked over the network is not the same as "there is none", and
+  // an enabled Create PR under the cursor on every session switch is what
+  // telling the two apart avoids (ADR 0007).
+  const asking = entry({ ...SYNCED, pullRequest: 'unknown' }, 'create_pr');
+  assert.equal(asking.enabled, false);
+  assert.equal(asking.disabledReasonKey, 'gitPanel.pr.statusUnknown');
+
+  const noGitHub = entry({ ...SYNCED, pullRequest: 'unsupported' }, 'create_pr');
+  assert.equal(noGitHub.enabled, false);
+  assert.equal(noGitHub.disabledReasonKey, 'gitPanel.pr.unavailable');
+});
+
+test('Commit & Push needs both halves, and names whichever one is missing', () => {
+  const ready = entry({ ...SYNCED, changedFileCount: 2 }, 'commit_push');
+  assert.equal(ready.enabled, true);
+  assert.deepEqual(ready.labelParams, { count: 2 });
+
+  // The commit half comes first, because it is the half the user can act on
+  // without leaving the panel.
+  const clean = entry(SYNCED, 'commit_push');
+  assert.equal(clean.enabled, false);
+  assert.equal(clean.disabledReasonKey, 'gitPanel.commit.nothingToCommit');
+
+  const detached = entry(
+    { ...SYNCED, changedFileCount: 2, branch: null },
+    'commit_push',
+  );
+  assert.equal(detached.enabled, false);
+  assert.equal(detached.disabledReasonKey, 'gitPanel.primary.detachedHead');
+
+  // An unpublished branch is no obstacle: the push half publishes it, which is
+  // the same action under a different word (§2).
+  const unpublished = entry(
+    { ...SYNCED, changedFileCount: 2, upstream: null, ahead: 0 },
+    'commit_push',
+  );
+  assert.equal(unpublished.enabled, true);
+});
+
+test('the remembered choice is promoted to the top, and nothing else moves', () => {
+  const promoted = deriveGitActionMenu(SYNCED, { promoted: 'commit_push' })
+    .map((item) => item.id);
+
+  assert.deepEqual(promoted, ['commit_push', 'commit', 'push', 'pull', 'create_pr']);
+});
+
+test('a promotion the menu does not recognise leaves the order alone', () => {
+  // What comes back from storage a version later, or from a hand-edited key.
+  const stale = deriveGitActionMenu(SYNCED, {
+    promoted: 'force_push' as never,
+  }).map((item) => item.id);
+
+  assert.deepEqual(stale, [...GIT_MENU_ACTION_IDS]);
+  assert.deepEqual(
+    deriveGitActionMenu(SYNCED, { promoted: null }).map((item) => item.id),
+    [...GIT_MENU_ACTION_IDS],
+  );
+});
+
+test('a promoted action that cannot run is still promoted, and still disabled', () => {
+  // Promotion is about position, not about permission: an action that jumped
+  // its own queue and then silently sank back would be a menu that changes
+  // shape, which is the one thing §4 rules out.
+  const [first] = deriveGitActionMenu(SYNCED, { promoted: 'pull' });
+
+  assert.equal(first?.id, 'pull');
+  assert.equal(first?.enabled, false);
+  assert.equal(first?.disabledReasonKey, 'gitPanel.pull.nothingToPull');
+});
+
+/** Enough snapshots to reach every label and every reason the menu can name. */
+const COVERING_SNAPSHOTS: (GitStateSnapshot | null)[] = [
+  null,
+  SYNCED,
+  { ...SYNCED, changedFileCount: 2 },
+  { ...SYNCED, ahead: 3 },
+  { ...SYNCED, behind: 4 },
+  { ...SYNCED, upstream: null },
+  { ...SYNCED, branch: null },
+  { ...SYNCED, hasRemote: false, upstream: null },
+  { ...SYNCED, pullRequest: 'none' },
+  { ...SYNCED, pullRequest: 'unknown' },
+  { ...SYNCED, pullRequest: 'unsupported' },
+  { ...SYNCED, branch: 'dev', upstream: 'origin/dev', pullRequest: 'none' },
+];
+
+test('every label and reason the menu can name resolves in every locale', async () => {
+  // `t()` renders a key it does not have verbatim, so a missing translation
+  // reaches the menu as `gitPanel.commitPush.button` rather than as a word.
+  const locales = Object.entries({
+    en: (await import('@/lib/i18n/en')).en,
+    ko: (await import('@/lib/i18n/ko')).ko,
+    ja: (await import('@/lib/i18n/ja')).ja,
+    zh: (await import('@/lib/i18n/zh')).zh,
+  });
+
+  const keys = new Set<string>();
+  for (const snapshot of COVERING_SNAPSHOTS) {
+    for (const action of deriveGitActionMenu(snapshot)) {
+      keys.add(action.labelKey);
+      if (action.disabledReasonKey) keys.add(action.disabledReasonKey);
+    }
+  }
+
+  for (const [language, bundle] of locales) {
+    for (const key of keys) {
+      const value = key
+        .split('.')
+        .reduce<unknown>(
+          (node, segment) => (node as Record<string, unknown> | undefined)?.[segment],
+          bundle,
+        );
+      assert.equal(typeof value, 'string', `${language} is missing ${key}`);
+    }
+  }
+});
+
+test('every count the menu carries survives being rendered, in every locale', async () => {
+  // `count` is i18next's plural selector, so a label that renders as a plain
+  // string in one locale can go through a plural form in another and drop the
+  // number the menu handed it.
+  const counted = COVERING_SNAPSHOTS.flatMap((snapshot) =>
+    deriveGitActionMenu(snapshot).filter((action) => action.labelParams),
+  );
+  assert.ok(counted.length > 0, 'no counted label was reached');
+
+  const { i18n } = await import('@/lib/i18n');
+  for (const language of ['en', 'ko', 'ja', 'zh']) {
+    await i18n.changeLanguage(language);
+    for (const action of counted) {
+      const rendered = i18n.t(action.labelKey, action.labelParams);
+      assert.match(
+        rendered,
+        new RegExp(String(action.labelParams!.count)),
+        `${language} drops the count on ${action.labelKey}: ${rendered}`,
+      );
+    }
+  }
+  await i18n.changeLanguage('en');
+});
+
+/**
+ * A `window` with nothing but the storage on it, which is all the memory module
+ * reaches for. Restored by the caller, because these tests share a process.
+ */
+function withFakeStorage(seed: Record<string, string>): () => void {
+  const store = new Map(Object.entries(seed));
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    writable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => void store.set(key, value),
+        removeItem: (key: string) => void store.delete(key),
+      },
+    },
+  });
+
+  return () => {
+    if (original) Object.defineProperty(globalThis, 'window', original);
+    else delete (globalThis as { window?: unknown }).window;
+  };
+}
+
+test('the last chosen action is remembered, and comes back on the next visit', async () => {
+  const restore = withFakeStorage({});
+  try {
+    const memory = await import('@/lib/git/git-action-memory');
+    assert.equal(memory.readRememberedGitAction(), null);
+
+    memory.rememberGitAction('commit_push');
+    assert.equal(memory.readRememberedGitAction(), 'commit_push');
+  } finally {
+    restore();
+  }
+});
+
+test('a remembered action this version no longer has is read as nothing', async () => {
+  const memory = await import('@/lib/git/git-action-memory');
+  const restore = withFakeStorage({
+    [memory.GIT_ACTION_MEMORY_KEY]: 'force_push',
+  });
+  try {
+    assert.equal(memory.readRememberedGitAction(), null);
+  } finally {
+    restore();
+  }
+});
+
+test('with no window there is nothing to remember and nothing to read', async () => {
+  // Server-rendered, where the panel is drawn before any storage exists. The
+  // menu still has to come back in its resting order rather than throwing.
+  const memory = await import('@/lib/git/git-action-memory');
+
+  assert.equal(readsWithoutWindow(memory.readRememberedGitAction), null);
+  assert.doesNotThrow(() => memory.rememberGitAction('pull'));
+});
+
+function readsWithoutWindow<T>(read: () => T): T {
+  assert.equal(typeof (globalThis as { window?: unknown }).window, 'undefined');
+  return read();
+}
+
+test('state that is not known yet disables every action, and says so', () => {
+  for (const entry of deriveGitActionMenu(null)) {
+    assert.equal(entry.enabled, false, `${entry.id} is offered on unknown state`);
+    // Not "nothing to do": Tessera switches sessions constantly and loads Git
+    // state asynchronously, so a menu that answered from an absent snapshot
+    // would be answering about the session before this one (ADR 0007).
+    assert.equal(entry.disabledReasonKey, 'gitPanel.primary.stateUnknown');
+  }
+});
+
+test('the menu lists every action, in the same order, whatever the state', () => {
+  const snapshots: (GitStateSnapshot | null)[] = [
+    null,
+    SYNCED,
+    { ...SYNCED, changedFileCount: 4 },
+    { ...SYNCED, ahead: 2 },
+    { ...SYNCED, behind: 3 },
+    { ...SYNCED, upstream: null },
+    { ...SYNCED, hasRemote: false, upstream: null },
+    { ...SYNCED, branch: null },
+    { ...SYNCED, pullRequest: 'none' },
+  ];
+
+  for (const snapshot of snapshots) {
+    const ids = deriveGitActionMenu(snapshot).map((entry) => entry.id);
+    assert.deepEqual(
+      ids,
+      [...GIT_MENU_ACTION_IDS],
+      `the menu changed shape for ${JSON.stringify(snapshot)}`,
+    );
+  }
+});

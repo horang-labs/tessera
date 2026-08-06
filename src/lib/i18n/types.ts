@@ -1061,6 +1061,9 @@ export interface I18nMessages {
       includeFile: string;
       button: string;
       buttonPending: string;
+      menuButtonCount: string;
+      nothingToCommit: string;
+      draftRequired: string;
       generateLabel: string;
       generateFailed: string;
       generateFailedPrefix: string;
@@ -1069,8 +1072,14 @@ export interface I18nMessages {
       hookRejectedToast: string;
       hookRejectedNoDetailToast: string;
     };
+    commitPush: {
+      button: string;
+      buttonCount: string;
+      buttonPending: string;
+    };
     push: {
       button: string;
+      buttonCount: string;
       buttonPending: string;
       publishButton: string;
       publishButtonPending: string;
@@ -1088,10 +1097,16 @@ export interface I18nMessages {
         publishBody: string;
         confirm: string;
         publishConfirm: string;
+        commitPushTitle: string;
+        commitPushBody: string;
+        commitPushConfirm: string;
       };
     };
     pull: {
       button: string;
+      menuButton: string;
+      nothingToPull: string;
+      noUpstream: string;
       buttonPending: string;
       successToast: string;
       failureToast: string;
@@ -1107,11 +1122,17 @@ export interface I18nMessages {
       defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
+      noUpstream: string;
+      alreadyOpen: string;
     };
     primary: {
       stateUnknown: string;
       detachedHead: string;
       noRemote: string;
+    };
+    menu: {
+      label: string;
+      pending: string;
     };
   };
   memoryPanel: {
