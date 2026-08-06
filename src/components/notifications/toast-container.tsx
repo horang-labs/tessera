@@ -16,6 +16,7 @@ import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { switchToSessionProject } from '@/lib/session/switch-session-project';
 
 const MAX_VISIBLE_TOASTS = 5;
 const ACTION_TOAST_DURATION = 3000;
@@ -114,6 +115,10 @@ export function ToastContainer() {
 
     clearUnreadCount(sessionId);
     wsClient.sendMarkAsRead(sessionId);
+
+    // Notified session may live in another project — bring that project into scope first,
+    // otherwise it opens in a tab belonging to the project currently on screen.
+    if (!switchToSessionProject(session.projectDir)) return;
 
     // Kanban peek mode: open the session in the board peek panel instead of a tab
     const boardStore = useBoardStore.getState();
