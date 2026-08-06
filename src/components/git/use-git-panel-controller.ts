@@ -106,6 +106,12 @@ export function useGitPanelController(sessionId: string | null) {
     () => new Set<string>(),
   );
   const [committing, setCommitting] = useState(false);
+  const [generatingMessage, setGeneratingMessage] = useState(false);
+  // A generation failure stays here rather than in a toast: it belongs to the
+  // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
+  const [generateMessageError, setGenerateMessageError] = useState<string | null>(
+    null,
+  );
   const lastDiffStatsTokenRef = useRef<string | null>(null);
 
   const sessionSnapshot = useSessionStore((state) =>
@@ -216,6 +222,7 @@ export function useGitPanelController(sessionId: string | null) {
     // selection under it — neither survives a switch.
     setCommitMessage("");
     setDeselectedPaths(new Set<string>());
+    setGenerateMessageError(null);
 
     if (!sessionId || isTransientSessionId(sessionId)) {
       setLoading(false);
@@ -493,6 +500,77 @@ export function useGitPanelController(sessionId: string | null) {
     });
   }, []);
 
+  const changeCommitMessage = useCallback((value: string) => {
+    setCommitMessage(value);
+    // Typing over the field answers the failure; keeping it visible would leave
+    // a complaint about text the user has already replaced.
+    setGenerateMessageError(null);
+  }, []);
+
+  const generateCommitMessage = useCallback(async () => {
+    // The button is disabled without a selection, and a poll can empty one out
+    // from under a click that is already on its way.
+    if (!sessionId || commitFiles.length === 0 || generatingMessage || committing) {
+      return;
+    }
+
+    const files = commitFiles.map((file) => file.path);
+    setGeneratingMessage(true);
+    setGenerateMessageError(null);
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/git/commit-message`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files }),
+        },
+      );
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          extractGitPanelErrorMessage(
+            payload,
+            t("gitPanel.commit.generateFailed"),
+          ),
+        );
+      }
+
+      const message = (payload as { message?: unknown }).message;
+      if (typeof message !== "string" || !message.trim()) {
+        throw new Error(t("gitPanel.commit.generateFailed"));
+      }
+
+      setCommitMessage(message);
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "generate_commit_message",
+        target: "commit_message",
+        result: "success",
+        file_count: files.length,
+      });
+    } catch (nextError) {
+      // Stays on the button. A failure here must not disturb the commit path.
+      setGenerateMessageError(
+        summarizeGitFailure(
+          nextError instanceof Error
+            ? nextError.message
+            : t("gitPanel.commit.generateFailed"),
+        ),
+      );
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "generate_commit_message",
+        target: "commit_message",
+        result: "failed",
+        file_count: files.length,
+      });
+    } finally {
+      setGeneratingMessage(false);
+    }
+  }, [commitFiles, committing, generatingMessage, sessionId, t]);
+
   const commitSelectedFiles = useCallback(async () => {
     const message = commitMessage.trim();
     // The button is disabled without these. This is the second guard the design
@@ -544,6 +622,7 @@ export function useGitPanelController(sessionId: string | null) {
 
       setCommitMessage("");
       setDeselectedPaths(new Set<string>());
+      setGenerateMessageError(null);
       toast.success(t("gitPanel.commit.successToast", { origin }));
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
@@ -694,6 +773,9 @@ export function useGitPanelController(sessionId: string | null) {
     diffError,
     diffLoading,
     error,
+    generateCommitMessage,
+    generateMessageError,
+    generatingMessage,
     isSelectedForCommit,
     loading,
     moveSelection,
@@ -701,7 +783,7 @@ export function useGitPanelController(sessionId: string | null) {
     selectedFile,
     selectedFileIndex,
     selectedPath,
-    setCommitMessage,
+    setCommitMessage: changeCommitMessage,
     setSelectedPath,
     toggleCommitFile,
   };

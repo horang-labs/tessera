@@ -567,9 +567,12 @@ export function GitPanelContentSection({
   changedFileCount: number;
   commit: {
     committing: boolean;
+    generateError: string | null;
+    generating: boolean;
     isSelected: (path: string) => boolean;
     message: string;
     onCommit: () => void;
+    onGenerate: () => void;
     onMessageChange: (value: string) => void;
     onToggleFile: (path: string) => void;
     totals: { files: number; added: number; removed: number };
@@ -613,8 +616,11 @@ export function GitPanelContentSection({
           <div className="flex h-full flex-col gap-2">
             <GitCommitForm
               committing={commit.committing}
+              generateError={commit.generateError}
+              generating={commit.generating}
               message={commit.message}
               onCommit={commit.onCommit}
+              onGenerate={commit.onGenerate}
               onMessageChange={commit.onMessageChange}
               totals={commit.totals}
             />
