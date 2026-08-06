@@ -20,6 +20,7 @@ import {
   GitPanelSummarySection,
 } from "./git-panel-sections";
 import { useGitPanelController } from "./use-git-panel-controller";
+import { GitDefaultBranchConfirmDialog } from "./git-default-branch-confirm-dialog";
 import {
   openWorkspaceFileTab,
   previewWorkspaceFileTab,
@@ -343,6 +344,16 @@ export function GitPanel({
           />
         </>
       )}
+
+      {/*
+        Outside the tab switch: the confirmation belongs to the push that is
+        being asked about, not to whichever tab happens to be open behind it.
+      */}
+      <GitDefaultBranchConfirmDialog
+        confirmation={controller.pushConfirmation}
+        onCancel={controller.cancelPrimaryAction}
+        onConfirm={() => void controller.confirmPrimaryAction()}
+      />
     </aside>
   );
 }

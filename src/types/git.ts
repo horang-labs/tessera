@@ -122,6 +122,14 @@ export interface GitActionFailure {
   kind: GitFailureKind;
   message: string;
   stderr: string;
+  /**
+   * What the command wrote on stdout. Kept alongside stderr because a Git
+   * command can split its account across both: `git pull` reports the fetch on
+   * stderr and the merge — "CONFLICT (content): …", "Automatic merge failed" —
+   * on stdout, so a failure holding only stderr says a ref moved and never that
+   * the merge could not be finished.
+   */
+  stdout: string;
   exitCode: number | null;
   changedFiles: GitChangedFile[];
 }
@@ -147,6 +155,13 @@ export interface GitPushOutcome {
   setUpstream: boolean;
 }
 
+export interface GitPullOutcome {
+  action: "pull";
+  branch: string;
+  /** The tracking branch the commits came from, e.g. `origin/main`. */
+  upstream: string;
+}
+
 export interface GitCreatePullRequestOutcome {
   action: "create_pr";
   /** The branch the pull request was opened from. */
@@ -169,6 +184,7 @@ export interface GitCreatePullRequestOutcome {
 export type GitActionOutcome =
   | GitCommitOutcome
   | GitPushOutcome
+  | GitPullOutcome
   | GitCreatePullRequestOutcome;
 
 export type GitActionResult =

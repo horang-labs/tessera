@@ -65,8 +65,8 @@ function describeRejection(
     return { code: "invalid_file_path", status: 404 };
   }
   // The request was well formed and the repository is what refuses it — the
-  // button is already disabled for all of these, so this only catches a click
-  // that raced the state it was derived from.
+  // ladder already declines to offer these, so this only catches a click that
+  // raced the state it was derived from.
   if (
     code === "detached_head"
     || code === "no_remote"
@@ -96,11 +96,10 @@ function parseGitActionBody(
     files?: unknown;
   };
 
-  // Push takes no parameters at all: whether it publishes a new remote branch
-  // is read from the repository, never asked for by the client. Creating a pull
-  // request is the same — the branch, the repository and the base are read from
-  // the repository and from GitHub.
-  if (action === "push" || action === "create_pr") {
+  // Push, pull and create_pr take no parameters at all: which branch moves, to
+  // or from where — and for a pull request, which repository and which base —
+  // is read from the repository and from GitHub, never asked for by the client.
+  if (action === "push" || action === "pull" || action === "create_pr") {
     return { action: { action } };
   }
   if (action !== "commit") {

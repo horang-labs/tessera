@@ -22,6 +22,10 @@ import {
   type GitStateSnapshot,
 } from "@/lib/git/primary-git-action";
 import {
+  describeDefaultBranchPushConfirmation,
+  type GitDefaultBranchConfirmation,
+} from "@/lib/git/default-branch-confirmation";
+import {
   describeGitActionOrigin,
   describeGitActionToast,
   describeGitRequestFailureToast,
@@ -44,6 +48,29 @@ interface GitPanelSessionCacheEntry {
   diffCache: Record<string, GitDiffData>;
   selectedPath: string | null;
 }
+
+/** Every verb whose whole request is the verb — no parameters, no draft. */
+type GitBranchActionVerb = "push" | "pull" | "create_pr";
+
+/**
+ * What a branch action says when the request never came back with anything of
+ * its own — a network that dropped, a route that answered nothing readable.
+ */
+const BRANCH_ACTION_FALLBACK: Record<GitBranchActionVerb, string> = {
+  push: "Failed to push.",
+  pull: "Failed to pull.",
+  create_pr: "Failed to create the pull request.",
+};
+
+/**
+ * What each of them acts on, for telemetry. A pull request is not the branch —
+ * it is a thing opened about the branch — and the registered target says so.
+ */
+const BRANCH_ACTION_TELEMETRY_TARGET: Record<GitBranchActionVerb, string> = {
+  push: "branch",
+  pull: "branch",
+  create_pr: "pull_request",
+};
 
 const PANEL_CACHE_LIMIT = 20;
 const GIT_PANEL_POLL_INTERVAL_MS = 5000;
@@ -160,6 +187,13 @@ export function useGitPanelController(sessionId: string | null) {
     },
     [],
   );
+  /**
+   * The question standing between the button and a push to the default branch,
+   * or null when there is nothing to ask (§8). It is also the dialog's open
+   * state: there is only ever one push to confirm, the one just pressed.
+   */
+  const [pushConfirmation, setPushConfirmation] =
+    useState<GitDefaultBranchConfirmation | null>(null);
   const [generatingMessage, setGeneratingMessage] = useState(false);
   // A generation failure stays here rather than in a toast: it belongs to the
   // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
@@ -277,6 +311,9 @@ export function useGitPanelController(sessionId: string | null) {
     setCommitMessage("");
     setDeselectedPaths(new Set<string>());
     setGenerateMessageError(null);
+    // The question was asked about the branch the panel was showing a moment
+    // ago; answering it here would push a different session's branch.
+    setPushConfirmation(null);
 
     if (!sessionId || isTransientSessionId(sessionId)) {
       setLoading(false);
@@ -737,92 +774,41 @@ export function useGitPanelController(sessionId: string | null) {
   ]);
 
   /**
-   * Push, and Publish Branch, which is the same request — what the button said
-   * before is the only difference, and what actually happened is read back off
-   * the result rather than assumed from the label (§7).
+   * The actions whose whole request is the verb: Push, Publish Branch — the same
+   * request, differing only in what the button said before it — Pull, and Create
+   * PR. None of them takes a parameter, because which branch moves to or from
+   * where — and for a pull request, which repository and which base — is read
+   * where the action runs, and what actually happened is read back off the
+   * result rather than assumed from the label (§7).
    */
-  const pushBranch = useCallback(async () => {
+  const runBranchAction = useCallback(async (verb: GitBranchActionVerb) => {
     if (!sessionId || !pendingWorkDir || pendingHere) return;
 
     const workDir = pendingWorkDir;
-    markPending(workDir, "push");
+    markPending(workDir, verb);
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "push" }),
-        },
-      );
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(extractGitPanelErrorMessage(payload, "Failed to push."));
-      }
-
-      const result = payload as GitActionResult;
-      reportAction(describeGitActionToast(result, commitOrigin, "push"));
-      void captureTelemetryEvent("git_action_triggered", {
-        source: "git_panel",
-        action: "push",
-        target: "branch",
-        result: result.ok ? "success" : "failed",
-        ...(result.ok ? {} : { failure_kind: result.failure.kind }),
-      });
-    } catch (nextError) {
-      reportAction(
-        describeGitRequestFailureToast(
-          nextError instanceof Error ? nextError.message : "Failed to push.",
-          commitOrigin,
-          "push",
-        ),
-      );
-    } finally {
-      markPending(workDir, null);
-    }
-  }, [
-    commitOrigin,
-    markPending,
-    pendingHere,
-    pendingWorkDir,
-    reportAction,
-    sessionId,
-  ]);
-
-  /**
-   * The last step of delivery, on the same button as the rest of it (§3). The
-   * request carries nothing: which branch, which repository and which base are
-   * all read where the action runs.
-   */
-  const createPullRequest = useCallback(async () => {
-    if (!sessionId || !pendingWorkDir || pendingHere) return;
-
-    const workDir = pendingWorkDir;
-    markPending(workDir, "create_pr");
-    try {
-      const response = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "create_pr" }),
+          body: JSON.stringify({ action: verb }),
         },
       );
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
-          extractGitPanelErrorMessage(payload, "Failed to create the pull request."),
+          extractGitPanelErrorMessage(payload, BRANCH_ACTION_FALLBACK[verb]),
         );
       }
 
       const result = payload as GitActionResult;
-      reportAction(describeGitActionToast(result, commitOrigin, "create_pr"));
+      reportAction(describeGitActionToast(result, commitOrigin, verb));
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
-        action: "create_pr",
-        target: "pull_request",
+        action: verb,
+        target: BRANCH_ACTION_TELEMETRY_TARGET[verb],
         result: result.ok ? "success" : "failed",
         ...(result.ok ? {} : { failure_kind: result.failure.kind }),
       });
@@ -831,9 +817,9 @@ export function useGitPanelController(sessionId: string | null) {
         describeGitRequestFailureToast(
           nextError instanceof Error
             ? nextError.message
-            : "Failed to create the pull request.",
+            : BRANCH_ACTION_FALLBACK[verb],
           commitOrigin,
-          "create_pr",
+          verb,
         ),
       );
     } finally {
@@ -851,10 +837,34 @@ export function useGitPanelController(sessionId: string | null) {
   /** The one button. Which verb it runs is the ladder's answer, not the user's. */
   const runPrimaryAction = useCallback(() => {
     if (!primaryAction.enabled) return;
-    if (primaryAction.action === "push") return pushBranch();
-    if (primaryAction.action === "create_pr") return createPullRequest();
-    return commitSelectedFiles();
-  }, [commitSelectedFiles, createPullRequest, primaryAction, pushBranch]);
+    if (primaryAction.action === "commit") return commitSelectedFiles();
+    // §8: a push at the default branch is asked about before anything runs,
+    // and the panel is left exactly as it was until the answer comes back.
+    // Returns null for anything that is not a push, so pull and create_pr pass
+    // straight through.
+    const confirmation = describeDefaultBranchPushConfirmation(
+      primaryAction,
+      stateSnapshot,
+    );
+    if (confirmation) {
+      setPushConfirmation(confirmation);
+      return;
+    }
+    return runBranchAction(primaryAction.action);
+  }, [commitSelectedFiles, primaryAction, runBranchAction, stateSnapshot]);
+
+  /** Answering yes runs the push the confirmation was raised for, and nothing else. */
+  const confirmPrimaryAction = useCallback(() => {
+    setPushConfirmation(null);
+    // The dialog closes rather than holding a spinner of its own: progress
+    // belongs at the button (§7), which is where the pending label already is.
+    // "push" is a constant here, not a read of the current ladder: the
+    // confirmation only ever comes from a push, and the ladder may have moved
+    // while the dialog was open.
+    return runBranchAction("push");
+  }, [runBranchAction]);
+
+  const cancelPrimaryAction = useCallback(() => setPushConfirmation(null), []);
 
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;
@@ -985,6 +995,9 @@ export function useGitPanelController(sessionId: string | null) {
     primaryAction,
     actionPending: pendingHere !== null,
     runPrimaryAction,
+    pushConfirmation,
+    confirmPrimaryAction,
+    cancelPrimaryAction,
     selectedFile,
     selectedFileIndex,
     selectedPath,

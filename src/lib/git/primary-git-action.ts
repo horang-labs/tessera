@@ -14,7 +14,12 @@
 import type { GitPanelData } from "@/types/git";
 
 /** What the button says. `publish` and `push` run the same action (§2). */
-export type GitPrimaryActionKind = 'commit' | 'push' | 'publish' | 'create_pr';
+export type GitPrimaryActionKind =
+  | 'commit'
+  | 'push'
+  | 'publish'
+  | 'pull'
+  | 'create_pr';
 
 /**
  * What the panel knows about a pull request for this branch. `unknown` is a
@@ -36,15 +41,20 @@ export interface GitStateSnapshot {
   upstream: string | null;
   /** Commits this branch has that its upstream does not. */
   ahead: number;
+  /** Commits the upstream has that this branch does not. */
+  behind: number;
   /** Uncommitted entries in the working tree. */
   changedFileCount: number;
   /** False when the repository has no remote to push to at all. */
   hasRemote: boolean;
   pullRequest: GitPullRequestReadiness;
   /**
-   * What the repository merges into, or null when `refs/remotes/origin/HEAD`
-   * never resolved. A pull request from the default branch would have to be
-   * opened against itself, which GitHub refuses.
+   * The repository's default branch, as `origin/HEAD` points at it. Null when
+   * that ref is not set — a repository Git was never told the answer for.
+   *
+   * Two questions read it: the confirmation in §8 asks whether a push is about
+   * to reach it, and the pull-request rung refuses to open one from the default
+   * branch, which would have to be opened against itself.
    */
   defaultBranch: string | null;
 }
@@ -53,12 +63,14 @@ export type GitPrimaryActionLabelKey =
   | 'gitPanel.commit.button'
   | 'gitPanel.push.button'
   | 'gitPanel.push.publishButton'
+  | 'gitPanel.pull.button'
   | 'gitPanel.pr.createButton';
 
 export type GitPrimaryActionPendingLabelKey =
   | 'gitPanel.commit.buttonPending'
   | 'gitPanel.push.buttonPending'
   | 'gitPanel.push.publishButtonPending'
+  | 'gitPanel.pull.buttonPending'
   | 'gitPanel.pr.createButtonPending';
 
 export type GitPrimaryActionReasonKey =
@@ -73,9 +85,14 @@ export type GitPrimaryActionReasonKey =
 export interface GitPrimaryAction {
   kind: GitPrimaryActionKind;
   /** What the action route is asked to run. */
-  action: 'commit' | 'push' | 'create_pr';
+  action: 'commit' | 'push' | 'pull' | 'create_pr';
   enabled: boolean;
   labelKey: GitPrimaryActionLabelKey;
+  /**
+   * What the label interpolates, where the count is worth saying before the
+   * button is pressed (§4). Absent on the rungs whose label is a bare verb.
+   */
+  labelParams?: { count: number };
   pendingLabelKey: GitPrimaryActionPendingLabelKey;
   /** Why the button cannot be pressed; null while it can. */
   disabledReasonKey: GitPrimaryActionReasonKey | null;
@@ -105,6 +122,7 @@ export function gitStateSnapshotFromPanel(
     branch: panel.detached ? null : panel.branch || null,
     upstream: panel.upstream,
     ahead: panel.ahead,
+    behind: panel.behind,
     // The uncapped count: a file list truncated for display is still a dirty
     // tree, and the commit rung must not vanish because there is too much to
     // show.
@@ -150,7 +168,14 @@ export function derivePrimaryGitAction(
   // committing without a branch is ordinary, pushing without one is not.
   if (snapshot.changedFileCount > 0) return commitAction(true, null);
 
-  const blocked = describePushObstacle(snapshot);
+  const blocked = describeRemoteObstacle(snapshot);
+
+  // Above the ahead rung, and only ever with an upstream to pull from: a branch
+  // that is behind cannot fast-forward its own push anyway, and one that has
+  // never been published has nothing to be behind (§3).
+  if (!blocked && snapshot.upstream && snapshot.behind > 0) {
+    return pullAction(snapshot.behind);
+  }
 
   if (!snapshot.upstream) return publishAction(!blocked, blocked);
   if (blocked) return pushAction(false, blocked);
@@ -175,7 +200,7 @@ export function derivePrimaryGitAction(
 }
 
 /** What stops this branch reaching a remote at all, before counting commits. */
-function describePushObstacle(
+function describeRemoteObstacle(
   snapshot: GitStateSnapshot,
 ): GitPrimaryActionReasonKey | null {
   if (!snapshot.branch) return 'gitPanel.primary.detachedHead';
@@ -252,5 +277,21 @@ function publishAction(
     labelKey: 'gitPanel.push.publishButton',
     pendingLabelKey: 'gitPanel.push.publishButtonPending',
     disabledReasonKey,
+  };
+}
+
+/**
+ * Always enabled: this rung exists only because there are commits to bring in,
+ * and the count it carries is the reason it is offered rather than decoration.
+ */
+function pullAction(behind: number): GitPrimaryAction {
+  return {
+    kind: 'pull',
+    action: 'pull',
+    enabled: true,
+    labelKey: 'gitPanel.pull.button',
+    labelParams: { count: behind },
+    pendingLabelKey: 'gitPanel.pull.buttonPending',
+    disabledReasonKey: null,
   };
 }

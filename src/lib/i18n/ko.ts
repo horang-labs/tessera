@@ -1107,6 +1107,22 @@ export const ko: I18nMessages = {
       failureToast: '푸시 실패 · {{origin}} — {{reason}}',
       hookRejectedToast: 'git 훅이 푸시를 거부함 · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git 훅이 푸시를 거부함 · {{origin}}',
+      defaultBranchConfirm: {
+        title: '기본 브랜치에 푸시할까요?',
+        body: '이 작업은 "{{branch}}" 브랜치의 로컬 커밋을 푸시합니다.',
+        publishTitle: '기본 브랜치를 게시할까요?',
+        publishBody: '이 작업은 "{{branch}}" 브랜치를 원격에 게시하고 로컬 커밋을 푸시합니다.',
+        confirm: '{{branch}}에 푸시',
+        publishConfirm: '{{branch}} 게시',
+      },
+    },
+    pull: {
+      button: '풀 ({{count}})',
+      buttonPending: '풀 중…',
+      successToast: '{{remoteBranch}}에서 풀함 · {{origin}}',
+      failureToast: '풀 실패 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git 훅이 풀을 거부함 · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git 훅이 풀을 거부함 · {{origin}}',
     },
     pr: {
       createdToast: 'PR #{{number}}을(를) {{baseBranch}}(으)로 열었습니다 · {{origin}}',

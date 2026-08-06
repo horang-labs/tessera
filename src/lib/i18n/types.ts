@@ -1081,6 +1081,22 @@ export interface I18nMessages {
       failureToast: string;
       hookRejectedToast: string;
       hookRejectedNoDetailToast: string;
+      defaultBranchConfirm: {
+        title: string;
+        body: string;
+        publishTitle: string;
+        publishBody: string;
+        confirm: string;
+        publishConfirm: string;
+      };
+    };
+    pull: {
+      button: string;
+      buttonPending: string;
+      successToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
     };
     pr: {
       createdToast: string;

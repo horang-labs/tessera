@@ -1100,6 +1100,22 @@ export const en: I18nMessages = {
       failureToast: 'Push failed · {{origin}} — {{reason}}',
       hookRejectedToast: 'A git hook rejected the push · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'A git hook rejected the push · {{origin}}',
+      defaultBranchConfirm: {
+        title: 'Push to default branch?',
+        body: 'This action will push local commits on "{{branch}}".',
+        publishTitle: 'Publish the default branch?',
+        publishBody: 'This action will publish "{{branch}}" and push local commits on it.',
+        confirm: 'Push to {{branch}}',
+        publishConfirm: 'Publish {{branch}}',
+      },
+    },
+    pull: {
+      button: 'Pull ({{count}})',
+      buttonPending: 'Pulling…',
+      successToast: 'Pulled from {{remoteBranch}} · {{origin}}',
+      failureToast: 'Pull failed · {{origin}} — {{reason}}',
+      hookRejectedToast: 'A git hook rejected the pull · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'A git hook rejected the pull · {{origin}}',
     },
     pr: {
       createdToast: 'Opened PR #{{number}} into {{baseBranch}} · {{origin}}',

@@ -77,6 +77,15 @@ export interface GitPushAction {
 }
 
 /**
+ * Catching the worktree up with its upstream. Like push, it takes no parameters:
+ * which branch is pulled from where is the repository's answer, not the
+ * client's.
+ */
+export interface GitPullAction {
+  action: "pull";
+}
+
+/**
  * Opening the pull request. Like push it takes no parameters: the branch, the
  * repository and the base all come from the repository and from GitHub, so the
  * client cannot direct a pull request anywhere it has not been shown.
@@ -89,6 +98,7 @@ export interface GitCreatePullRequestAction {
 export type GitAction =
   | GitCommitAction
   | GitPushAction
+  | GitPullAction
   | GitCreatePullRequestAction;
 
 export type GitActionRejectionCode =
@@ -120,6 +130,7 @@ export async function executeGitAction(
 ): Promise<GitActionResult> {
   const runGit = createGitRunner(target.agentEnvironment);
   if (action.action === "push") return runPush(target, runGit);
+  if (action.action === "pull") return runPull(target, runGit);
   if (action.action === "create_pr") {
     // The GitHub CLI runs where the agent does, for the same reason Git does
     // (ADR 0006). It is passed in rather than reached for inside, so the one
@@ -379,6 +390,10 @@ function describeGhFailure(result: GhCommandResult): GitActionFailure {
     kind: classifyGhFailure(result),
     message: truncateStderr(stderr || "The GitHub CLI (gh) failed"),
     stderr: truncateStderr(result.stderr),
+    // gh splits its account the way `git pull` does: `gh pr create` prints the
+    // URL it made on stdout and its complaint on stderr, so a failure that kept
+    // only one of the two could drop the half that says what happened.
+    stdout: truncateStderr(result.stdout),
     exitCode: result.exitCode,
     // Empty rather than read: opening a pull request runs no command that can
     // touch the working tree, so there is no change set this failure moved. The
@@ -399,6 +414,89 @@ function classifyGhFailure(result: GhCommandResult): GitFailureKind {
     return "authentication";
   }
   return "command_failed";
+}
+
+/**
+ * Pull, which is how the panel catches a worktree up without a terminal
+ * (`docs/design/git-delivery.md` §3). Bare `git pull` rather than a pinned
+ * strategy: the repository's own `pull.rebase` / `pull.ff` configuration is the
+ * user's answer to how their branches reconcile, and Tessera has no screen on
+ * which to ask the question again.
+ */
+async function runPull(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<GitActionResult> {
+  const branch = await readCurrentBranch(target.workDir, runGit);
+  if (!branch) {
+    throw new GitActionRejection(
+      "detached_head",
+      "HEAD is detached, so there is no branch to pull into",
+    );
+  }
+
+  const upstream = await readUpstream(target.workDir, runGit);
+  if (!upstream) {
+    // The ladder only offers Pull on a branch that is behind something, which
+    // takes an upstream; this is the handler-side guard for a click that raced
+    // the state it was derived from.
+    throw new GitActionRejection(
+      "no_upstream",
+      "This branch has no upstream to pull from",
+    );
+  }
+
+  try {
+    // No `timeoutMs`: the runner's generous default stands, because the fetch
+    // half of a pull is as slow as the network and a merge can run hooks.
+    await pullWithDivergenceFallback(target, runGit);
+  } catch (error) {
+    // No commit-specific promotion: a pull's merge hooks name themselves, and
+    // the runner already recognizes those.
+    return {
+      ok: false,
+      failure: await describeFailure(error, target, runGit, (failed) => failed.kind),
+    };
+  }
+
+  return { ok: true, outcome: { action: "pull", branch, upstream } };
+}
+
+/**
+ * Git 2.27 and later refuse a divergent pull outright when the repository pins
+ * no reconciliation policy, and say only that one must be chosen. That refusal
+ * is not a state the user can leave from this panel — there is no setting to
+ * change and pressing the same button again fails identically — so it is
+ * answered here with `--no-rebase`, the merge Git itself did before it started
+ * asking. A repository that *has* configured a policy never reaches this: the
+ * first attempt already obeyed it.
+ */
+async function pullWithDivergenceFallback(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<void> {
+  try {
+    await runGit(["pull"], { cwd: target.workDir });
+  } catch (error) {
+    if (!isDivergentPullRefusal(error)) throw error;
+    await runGit(["pull", "--no-rebase"], { cwd: target.workDir });
+  }
+}
+
+/**
+ * English, like every pattern in the runner, and Git translates this text — a
+ * localized Git therefore falls through and reports its own refusal, which is
+ * the same assumption `classifyGitFailure` has always made.
+ */
+const DIVERGENT_PULL_PATTERNS = [
+  "need to specify how to reconcile divergent branches",
+  "divergent branches and need to specify how to reconcile them",
+];
+
+function isDivergentPullRefusal(error: unknown): boolean {
+  if (!(error instanceof GitCommandError)) return false;
+  const haystack = `${error.stderr}\n${error.message}`.toLowerCase();
+  return DIVERGENT_PULL_PATTERNS.some((pattern) => haystack.includes(pattern));
 }
 
 /**
@@ -548,6 +646,11 @@ export async function readChangeSet(
 /**
  * `classify` is where the caller adds what it knows and the runner cannot: the
  * commit path can read silence as a hook refusing, a push cannot.
+ *
+ * Both output streams are kept. Which of them carries the reason is the
+ * command's business, not this function's — `git commit` explains itself on
+ * stderr, `git pull` reports its merge on stdout — and ADR 0005 asks for the
+ * detail to survive rather than for a choice to be made here.
  */
 async function describeFailure(
   error: unknown,
@@ -562,6 +665,7 @@ async function describeFailure(
       kind: classify(error),
       message: truncateStderr(error.message),
       stderr: truncateStderr(error.stderr),
+      stdout: truncateStderr(error.stdout),
       exitCode: error.exitCode,
       changedFiles,
     };
@@ -571,6 +675,7 @@ async function describeFailure(
     kind: "command_failed",
     message: error instanceof Error ? error.message : String(error),
     stderr: "",
+    stdout: "",
     exitCode: null,
     changedFiles,
   };
