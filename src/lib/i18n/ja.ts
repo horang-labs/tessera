@@ -1100,6 +1100,14 @@ export const ja: I18nMessages = {
       failureToast: 'プッシュ失敗 · {{origin}} — {{reason}}',
       hookRejectedToast: 'git フックがプッシュを拒否しました · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git フックがプッシュを拒否しました · {{origin}}',
+      defaultBranchConfirm: {
+        title: 'デフォルトブランチにプッシュしますか?',
+        body: 'この操作は "{{branch}}" のローカルコミットをプッシュします。',
+        publishTitle: 'デフォルトブランチを公開しますか?',
+        publishBody: 'この操作は "{{branch}}" をリモートに作成し、ローカルコミットをプッシュします。',
+        confirm: '{{branch}} にプッシュ',
+        publishConfirm: '{{branch}} を公開',
+      },
     },
     primary: {
       stateUnknown: 'git の状態を読み込み中…',

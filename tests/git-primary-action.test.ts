@@ -36,6 +36,7 @@ const SYNCED: GitStateSnapshot = {
   ahead: 0,
   changedFileCount: 0,
   hasRemote: true,
+  defaultBranch: 'dev',
 };
 
 test('state that is not known yet holds a disabled Commit frame', () => {
