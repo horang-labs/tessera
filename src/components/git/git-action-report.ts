@@ -10,6 +10,7 @@
  */
 import type {
   GitActionResult,
+  GitConflictOperation,
   GitCreatePullRequestOutcome,
   GitPullOutcome,
   GitPushOutcome,
@@ -37,14 +38,18 @@ export type GitActionToastKey =
   | "gitPanel.pull.hookRejectedNoDetailToast"
   | "gitPanel.pr.createdToast"
   | "gitPanel.pr.createdNoDetailToast"
-  | "gitPanel.pr.failureToast";
+  | "gitPanel.pr.failureToast"
+  | "gitPanel.conflict.mergeAbortedToast"
+  | "gitPanel.conflict.rebaseAbortedToast"
+  | "gitPanel.conflict.cherryPickAbortedToast"
+  | "gitPanel.conflict.abortFailureToast";
 
 /**
  * Which action was attempted. A failure carries no verb of its own — the same
  * `command_failed` arrives from a commit and from a push — so the caller, which
  * is the only party that knows what it pressed, says.
  */
-export type GitActionVerb = "commit" | "push" | "pull" | "create_pr";
+export type GitActionVerb = "commit" | "push" | "pull" | "create_pr" | "abort";
 
 export interface GitActionToast {
   tone: "success" | "error";
@@ -101,6 +106,22 @@ const FAILURE_KEYS: Record<
   create_pr: {
     failure: "gitPanel.pr.failureToast",
   },
+  // An abort runs no hook, so there is no rejection for it to be given wording
+  // for. What it can hit is a worktree Git will not unwind, which is a failure.
+  abort: {
+    failure: "gitPanel.conflict.abortFailureToast",
+  },
+};
+
+/**
+ * §9's escape, reported by the operation that was actually unwound rather than
+ * by the one the menu was labelled for — the two can differ, because the action
+ * re-reads the worktree before it picks a command.
+ */
+const ABORT_SUCCESS_KEY: Record<GitConflictOperation, GitActionToastKey> = {
+  merge: "gitPanel.conflict.mergeAbortedToast",
+  rebase: "gitPanel.conflict.rebaseAbortedToast",
+  cherry_pick: "gitPanel.conflict.cherryPickAbortedToast",
 };
 
 /** Named for a session with neither a branch nor a worktree to point at. */
@@ -131,6 +152,17 @@ export function describeGitActionToast(
     }
     if (result.outcome.action === "create_pr") {
       return describeCreatePullRequestOutcome(result.outcome, origin);
+    }
+    if (result.outcome.action === "abort") {
+      return {
+        tone: "success",
+        messageKey: ABORT_SUCCESS_KEY[result.outcome.operation],
+        params: { origin },
+        // The commit path was blocked while the operation ran, so there is no
+        // draft this could have cleared — and the tree the abort restored is
+        // the one the user may now want to commit.
+        clearsDraft: false,
+      };
     }
     return {
       tone: "success",

@@ -20,6 +20,14 @@ const SYNCED: GitStateSnapshot = {
   hasRemote: true,
   pullRequest: 'exists',
   defaultBranch: 'dev',
+  conflictOperation: null,
+};
+
+/** The same branch, stopped in the middle of a merge it could not finish. */
+const CONFLICTED: GitStateSnapshot = {
+  ...SYNCED,
+  changedFileCount: 3,
+  conflictOperation: 'merge',
 };
 
 /** The one entry with this id — the menu never lists an action twice. */
@@ -156,6 +164,62 @@ test('Commit & Push needs both halves, and names whichever one is missing', () =
   assert.equal(unpublished.enabled, true);
 });
 
+test('a conflict closes the commit path in the menu as well as on the button', () => {
+  // The dirty tree a stopped merge leaves would otherwise read as two runnable
+  // entries; both of them end in a commit Git refuses (§9).
+  const commit = entry(CONFLICTED, 'commit');
+  assert.equal(commit.enabled, false);
+  assert.equal(commit.disabledReasonKey, 'gitPanel.conflict.mergeInProgress');
+
+  const commitPush = entry(CONFLICTED, 'commit_push');
+  assert.equal(commitPush.enabled, false);
+  assert.equal(commitPush.disabledReasonKey, 'gitPanel.conflict.mergeInProgress');
+});
+
+test('the way out is in the menu, labelled from the operation that was detected', () => {
+  const merge = entry(CONFLICTED, 'abort');
+  assert.equal(merge.enabled, true);
+  assert.equal(merge.labelKey, 'gitPanel.conflict.abortMerge');
+
+  const rebase = entry({ ...CONFLICTED, conflictOperation: 'rebase' }, 'abort');
+  assert.equal(rebase.labelKey, 'gitPanel.conflict.abortRebase');
+
+  const cherryPick = entry(
+    { ...CONFLICTED, conflictOperation: 'cherry_pick' },
+    'abort',
+  );
+  assert.equal(cherryPick.labelKey, 'gitPanel.conflict.abortCherryPick');
+});
+
+test('the abort is offered only while there is something to abort', () => {
+  // It cannot be listed on a normal rung the way the delivery actions are:
+  // there is no operation to name it after, so there is no label to draw. §2
+  // makes it reachable during a conflict and nowhere else.
+  for (const snapshot of [null, SYNCED, { ...SYNCED, changedFileCount: 2 }]) {
+    assert.equal(
+      deriveGitActionMenu(snapshot).some((action) => action.id === 'abort'),
+      false,
+    );
+  }
+});
+
+test('the abort sits after the delivery actions, which keep their order', () => {
+  const ids = deriveGitActionMenu(CONFLICTED).map((action) => action.id);
+
+  assert.deepEqual(ids, [...GIT_MENU_ACTION_IDS, 'abort']);
+});
+
+test('the abort is never promoted over the actions the user actually chose', () => {
+  // The memory is a preference for a workflow (§4). An escape hatch that jumped
+  // to the top of the menu because it was the last thing pressed would put a
+  // destructive action under the cursor on the next conflict.
+  const [first] = deriveGitActionMenu(CONFLICTED, {
+    promoted: 'abort' as never,
+  });
+
+  assert.equal(first?.id, 'commit');
+});
+
 test('the remembered choice is promoted to the top, and nothing else moves', () => {
   const promoted = deriveGitActionMenu(SYNCED, { promoted: 'commit_push' })
     .map((item) => item.id);
@@ -201,6 +265,9 @@ const COVERING_SNAPSHOTS: (GitStateSnapshot | null)[] = [
   { ...SYNCED, pullRequest: 'unknown' },
   { ...SYNCED, pullRequest: 'unsupported' },
   { ...SYNCED, branch: 'dev', upstream: 'origin/dev', pullRequest: 'none' },
+  CONFLICTED,
+  { ...CONFLICTED, conflictOperation: 'rebase' },
+  { ...CONFLICTED, conflictOperation: 'cherry_pick' },
 ];
 
 test('every label and reason the menu can name resolves in every locale', async () => {
@@ -334,6 +401,8 @@ test('state that is not known yet disables every action, and says so', () => {
 });
 
 test('the menu lists every action, in the same order, whatever the state', () => {
+  // Every state except a conflict, which appends the one entry that cannot be
+  // drawn without one — covered above.
   const snapshots: (GitStateSnapshot | null)[] = [
     null,
     SYNCED,

@@ -42,6 +42,7 @@ const SYNCED: GitStateSnapshot = {
   hasRemote: true,
   pullRequest: 'exists',
   defaultBranch: 'dev',
+  conflictOperation: null,
 };
 
 test('state that is not known yet holds a disabled Commit frame', () => {
@@ -249,6 +250,62 @@ test('committing rotates the same button from Commit to Push', () => {
 
   assert.equal(dirty.kind, 'commit');
   assert.equal(committed.kind, 'push');
+});
+
+test('a conflict outranks the uncommitted changes it produced', () => {
+  // A stopped merge leaves a tree full of conflicted files, so the dirty rung
+  // would otherwise claim it and offer a commit Git refuses (§9). The conflict
+  // rung sits above it for exactly that reason.
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    changedFileCount: 3,
+    conflictOperation: 'merge',
+  });
+
+  assert.equal(action.kind, 'conflict');
+  assert.equal(action.enabled, false);
+  assert.equal(action.disabledReasonKey, 'gitPanel.conflict.mergeInProgress');
+});
+
+test('the blocked rung names the operation the worktree is actually in', () => {
+  const rebase = derivePrimaryGitAction({ ...SYNCED, conflictOperation: 'rebase' });
+  const cherryPick = derivePrimaryGitAction({
+    ...SYNCED,
+    conflictOperation: 'cherry_pick',
+  });
+
+  assert.equal(rebase.disabledReasonKey, 'gitPanel.conflict.rebaseInProgress');
+  assert.equal(
+    cherryPick.disabledReasonKey,
+    'gitPanel.conflict.cherryPickInProgress',
+  );
+});
+
+test('a conflict blocks the branch rungs too, not only the dirty one', () => {
+  // Nothing below the conflict rung is reachable while one is in progress: a
+  // clean-looking tree mid-rebase would otherwise be offered a push.
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    ahead: 2,
+    conflictOperation: 'rebase',
+  });
+
+  assert.equal(action.kind, 'conflict');
+  assert.equal(action.enabled, false);
+});
+
+test('aborting rotates the button back to a normal action', () => {
+  const conflicted = derivePrimaryGitAction({
+    ...SYNCED,
+    changedFileCount: 3,
+    conflictOperation: 'merge',
+  });
+  // What the panel reads back once the abort lands: the operation is gone and
+  // the tree it conflicted is gone with it (§9).
+  const aborted = derivePrimaryGitAction(SYNCED);
+
+  assert.equal(conflicted.kind, 'conflict');
+  assert.equal(aborted.kind, 'push');
 });
 
 test('a panel with no state yet is the unknown rung, not a clean tree', () => {

@@ -27,6 +27,7 @@ import {
 } from "@/lib/git/default-branch-confirmation";
 import {
   deriveGitActionMenu,
+  type GitDeliveryMenuActionId,
   type GitMenuActionId,
 } from "@/lib/git/git-action-menu";
 import {
@@ -58,7 +59,7 @@ interface GitPanelSessionCacheEntry {
 }
 
 /** Every verb whose whole request is the verb — no parameters, no draft. */
-type GitBranchActionVerb = "push" | "pull" | "create_pr";
+type GitBranchActionVerb = "push" | "pull" | "create_pr" | "abort";
 
 /**
  * What is running in a working directory. The menu's compound is one entry
@@ -75,6 +76,7 @@ const BRANCH_ACTION_FALLBACK: Record<GitBranchActionVerb, string> = {
   push: "Failed to push.",
   pull: "Failed to pull.",
   create_pr: "Failed to create the pull request.",
+  abort: "Failed to abort.",
 };
 
 /**
@@ -85,6 +87,9 @@ const BRANCH_ACTION_TELEMETRY_TARGET: Record<GitBranchActionVerb, string> = {
   push: "branch",
   pull: "branch",
   create_pr: "pull_request",
+  // Not the branch: what an abort unwinds is the operation the worktree is in,
+  // and the branch is only where it lands afterwards.
+  abort: "conflict",
 };
 
 const PANEL_CACHE_LIMIT = 20;
@@ -221,7 +226,7 @@ export function useGitPanelController(sessionId: string | null) {
    * differ from the client's.
    */
   const [rememberedAction, setRememberedAction] =
-    useState<GitMenuActionId | null>(null);
+    useState<GitDeliveryMenuActionId | null>(null);
 
   useEffect(() => {
     setRememberedAction(readRememberedGitAction());
@@ -943,6 +948,11 @@ export function useGitPanelController(sessionId: string | null) {
     const chosen = menuActions.find((action) => action.id === id);
     if (!chosen?.enabled) return;
     if ((id === "commit" || id === "commit_push") && commitDraftBlocked) return;
+
+    // §9's escape runs without being remembered. It is not a workflow the user
+    // repeats, and promoting it would put a destructive entry at the top of the
+    // menu the next time a worktree got stuck.
+    if (id === "abort") return runBranchAction("abort");
 
     // Remembered on the press rather than on the outcome: what §4 promotes is
     // the workflow the user reaches for, and a push that failed is still the

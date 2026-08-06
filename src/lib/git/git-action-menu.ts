@@ -12,12 +12,20 @@
  * Labels are i18n keys for the same reason the ladder's are: this module answers
  * a question about repository state, and state has no language.
  */
+import type { GitConflictOperation } from '@/types/git';
 import type { GitStateSnapshot } from './primary-git-action';
 
 /**
- * Every action, in the order the menu always draws them: the order of delivery.
- * Nothing is added or removed at runtime — a shape that moves under the cursor
- * cannot be learned, and §4 makes never changing shape the point of the menu.
+ * Every delivery action, in the order the menu always draws them. Nothing is
+ * added or removed at runtime — a shape that moves under the cursor cannot be
+ * learned, and §4 makes never changing shape the point of the menu.
+ *
+ * The abort of §9 is deliberately not one of them. It is not a step of delivery
+ * but the way out of a worktree that is stuck part-way through one, and it
+ * cannot be drawn at all without an operation to name it after: "Abort" on a
+ * repository with nothing in progress is a word, not an action. It is appended
+ * while a conflict is detected and nowhere else, which is what §2 means by
+ * "only reachable during a conflict".
  */
 export const GIT_MENU_ACTION_IDS = [
   'commit',
@@ -27,8 +35,15 @@ export const GIT_MENU_ACTION_IDS = [
   'create_pr',
 ] as const;
 
+/**
+ * A delivery action — the set the menu's memory promotes from. The escape is not
+ * in here: a remembered abort would put a destructive action at the top of the
+ * menu the next time a conflict happened, which is not the workflow §4 promotes.
+ */
+export type GitDeliveryMenuActionId = (typeof GIT_MENU_ACTION_IDS)[number];
+
 /** What the panel is asked to run, and the stable name the menu remembers. */
-export type GitMenuActionId = (typeof GIT_MENU_ACTION_IDS)[number];
+export type GitMenuActionId = GitDeliveryMenuActionId | 'abort';
 
 /**
  * Which face an action is wearing. `publish` is `push` on a branch that has no
@@ -47,9 +62,15 @@ export type GitMenuActionLabelKey =
   | 'gitPanel.push.publishButton'
   | 'gitPanel.pull.menuButton'
   | 'gitPanel.pull.button'
-  | 'gitPanel.pr.createButton';
+  | 'gitPanel.pr.createButton'
+  | 'gitPanel.conflict.abortMerge'
+  | 'gitPanel.conflict.abortRebase'
+  | 'gitPanel.conflict.abortCherryPick';
 
 export type GitMenuActionReasonKey =
+  | 'gitPanel.conflict.mergeInProgress'
+  | 'gitPanel.conflict.rebaseInProgress'
+  | 'gitPanel.conflict.cherryPickInProgress'
   | 'gitPanel.primary.stateUnknown'
   | 'gitPanel.primary.detachedHead'
   | 'gitPanel.primary.noRemote'
@@ -75,7 +96,7 @@ export interface GitMenuAction {
 }
 
 /** The label an unknown snapshot draws — the bare verb, with no size to claim. */
-const RESTING_LABEL_KEY: Record<GitMenuActionId, GitMenuActionLabelKey> = {
+const RESTING_LABEL_KEY: Record<GitDeliveryMenuActionId, GitMenuActionLabelKey> = {
   commit: 'gitPanel.commit.button',
   commit_push: 'gitPanel.commitPush.button',
   push: 'gitPanel.push.button',
@@ -93,7 +114,7 @@ export interface GitActionMenuOptions {
    * and stays disabled — sinking it back would be the menu changing shape,
    * which is exactly what §4 rules out.
    */
-  promoted?: GitMenuActionId | null;
+  promoted?: GitDeliveryMenuActionId | null;
 }
 
 export function deriveGitActionMenu(
@@ -104,13 +125,19 @@ export function deriveGitActionMenu(
   const promoted = actions.findIndex((action) => action.id === options.promoted);
   // -1 covers both "nothing remembered" and a name this version no longer has —
   // an unreadable memory is not a reason to draw a different menu.
-  if (promoted <= 0) return actions;
+  const ordered = promoted <= 0
+    ? actions
+    : [actions[promoted]!, ...actions.filter((_, index) => index !== promoted)];
 
-  return [actions[promoted]!, ...actions.filter((_, index) => index !== promoted)];
+  // Appended after the promotion rather than before it, so the escape stays at
+  // the end of the menu whatever the user last reached for (§9).
+  return snapshot?.conflictOperation
+    ? [...ordered, describeAbort(snapshot.conflictOperation)]
+    : ordered;
 }
 
 function describeMenuAction(
-  id: GitMenuActionId,
+  id: GitDeliveryMenuActionId,
   snapshot: GitStateSnapshot | null,
 ): GitMenuAction {
   if (!snapshot) {
@@ -143,9 +170,10 @@ function describeCommitPush(snapshot: GitStateSnapshot): GitMenuAction {
   const dirty = snapshot.changedFileCount > 0;
   // The commit half first: it is the half the user can do something about
   // without leaving the panel, so it is the more useful thing to be told.
-  const blocked: GitMenuActionReasonKey | null = !dirty
-    ? 'gitPanel.commit.nothingToCommit'
-    : describeRemoteObstacle(snapshot);
+  const blocked: GitMenuActionReasonKey | null = describeConflictObstacle(snapshot)
+    ?? (!dirty
+      ? 'gitPanel.commit.nothingToCommit'
+      : describeRemoteObstacle(snapshot));
 
   return {
     id: 'commit_push',
@@ -163,14 +191,65 @@ function describeCommitPush(snapshot: GitStateSnapshot): GitMenuAction {
  */
 function describeCommit(snapshot: GitStateSnapshot): GitMenuAction {
   const dirty = snapshot.changedFileCount > 0;
+  const blocked = describeConflictObstacle(snapshot)
+    ?? (dirty ? null : 'gitPanel.commit.nothingToCommit');
 
   return {
     id: 'commit',
     kind: 'commit',
-    enabled: dirty,
+    enabled: !blocked,
     labelKey: dirty ? 'gitPanel.commit.menuButtonCount' : 'gitPanel.commit.button',
     ...(dirty ? { labelParams: { count: snapshot.changedFileCount } } : {}),
-    disabledReasonKey: dirty ? null : 'gitPanel.commit.nothingToCommit',
+    disabledReasonKey: blocked,
+  };
+}
+
+/**
+ * What an unfinished merge, rebase or cherry-pick says about the commit path
+ * (§9). It comes before every other reason those two entries can give, because
+ * it is the one the user has to clear first: a tree full of conflict markers is
+ * not a change set, and Git refuses the commit whatever else is true of it.
+ *
+ * Only the commit path asks. §9 blocks that and offers the escape; what a push
+ * or a pull says for itself is unchanged.
+ */
+function describeConflictObstacle(
+  snapshot: GitStateSnapshot,
+): GitMenuActionReasonKey | null {
+  return snapshot.conflictOperation
+    ? CONFLICT_REASON_KEY[snapshot.conflictOperation]
+    : null;
+}
+
+const CONFLICT_REASON_KEY: Record<GitConflictOperation, GitMenuActionReasonKey> = {
+  merge: 'gitPanel.conflict.mergeInProgress',
+  rebase: 'gitPanel.conflict.rebaseInProgress',
+  cherry_pick: 'gitPanel.conflict.cherryPickInProgress',
+};
+
+const ABORT_LABEL_KEY: Record<GitConflictOperation, GitMenuActionLabelKey> = {
+  merge: 'gitPanel.conflict.abortMerge',
+  rebase: 'gitPanel.conflict.abortRebase',
+  cherry_pick: 'gitPanel.conflict.abortCherryPick',
+};
+
+/**
+ * The way out (§9). Always runnable, because it exists only when there is
+ * something to abort — the detection that put it in the menu is the same one the
+ * execution layer re-runs before it picks a command.
+ *
+ * It is labelled from the operation Git is actually in rather than from a
+ * generic word: `git merge --abort` and `git rebase --abort` unwind different
+ * things, and a button that did not say which is running is a button the user
+ * has to guess at while their worktree is already broken.
+ */
+function describeAbort(operation: GitConflictOperation): GitMenuAction {
+  return {
+    id: 'abort',
+    kind: 'abort',
+    enabled: true,
+    labelKey: ABORT_LABEL_KEY[operation],
+    disabledReasonKey: null,
   };
 }
 

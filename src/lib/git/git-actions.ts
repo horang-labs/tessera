@@ -34,7 +34,9 @@ import type {
   GitActionResult,
   GitChangedFile,
   GitCommitOutcome,
+  GitConflictOperation,
 } from "@/types/git";
+import { detectGitConflictOperation } from "./git-conflict-state";
 import { parseGitStatus } from "./git-status";
 
 /**
@@ -94,12 +96,23 @@ export interface GitCreatePullRequestAction {
   action: "create_pr";
 }
 
+/**
+ * The way out of an unfinished merge, rebase or cherry-pick (§9). Like the rest
+ * it takes no parameters: *which* operation is aborted is read from the worktree
+ * here, not asked for, so a menu drawn a moment ago cannot ask for a
+ * `git rebase --abort` on a worktree that is now mid-merge.
+ */
+export interface GitAbortAction {
+  action: "abort";
+}
+
 /** Widens as `docs/design/git-delivery.md` §2 lands the remaining actions. */
 export type GitAction =
   | GitCommitAction
   | GitPushAction
   | GitPullAction
-  | GitCreatePullRequestAction;
+  | GitCreatePullRequestAction
+  | GitAbortAction;
 
 export type GitActionRejectionCode =
   | "empty_message"
@@ -108,7 +121,8 @@ export type GitActionRejectionCode =
   | "detached_head"
   | "no_remote"
   | "no_upstream"
-  | "not_github_remote";
+  | "not_github_remote"
+  | "no_conflict_in_progress";
 
 /**
  * The request was refused before Git ran. Distinct from a `GitActionFailure`,
@@ -131,6 +145,7 @@ export async function executeGitAction(
   const runGit = createGitRunner(target.agentEnvironment);
   if (action.action === "push") return runPush(target, runGit);
   if (action.action === "pull") return runPull(target, runGit);
+  if (action.action === "abort") return runAbort(target, runGit);
   if (action.action === "create_pr") {
     // The GitHub CLI runs where the agent does, for the same reason Git does
     // (ADR 0006). It is passed in rather than reached for inside, so the one
@@ -462,6 +477,75 @@ async function runPull(
   return { ok: true, outcome: { action: "pull", branch, upstream } };
 }
 
+/** Which Git command unwinds each operation. There is one per operation. */
+const ABORT_ARGS: Record<GitConflictOperation, string[]> = {
+  merge: ["merge", "--abort"],
+  rebase: ["rebase", "--abort"],
+  cherry_pick: ["cherry-pick", "--abort"],
+};
+
+/**
+ * The escape of `docs/design/git-delivery.md` §9: whatever the worktree is stuck
+ * part-way through, put it back the way it was.
+ *
+ * The operation is detected here rather than taken from the request. The panel
+ * detected one too, in order to draw the label — but the panel is polled, and a
+ * worktree can change hands between the draw and the press. Re-reading is what
+ * keeps the command matched to the state it actually runs against; running
+ * `git merge --abort` on a rebase would fail, and running it on a *later* merge
+ * the user started meanwhile would throw away work they never asked to lose.
+ */
+async function runAbort(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<GitActionResult> {
+  // The repository root, not the working directory: the markers live beside the
+  // worktree's own git directory, and a session's working directory is allowed
+  // to be a directory inside it. Probing the working directory would find no
+  // `.git` there and refuse an abort the panel had just offered — the one thing
+  // §9 promises is that the user can always get out.
+  //
+  // `--show-toplevel` costs a Git process, which the panel's detection is not
+  // allowed to spend but this one is: an abort is already running Git, and the
+  // panel is the read that has to stay cheap.
+  const repoRoot = await readRepoRoot(target.workDir, runGit);
+  const operation = await detectGitConflictOperation(
+    repoRoot,
+    target.agentEnvironment,
+  );
+  if (!operation) {
+    // The menu lists this entry only while an operation is detected; this is the
+    // handler-side guard for a press that raced the state it was drawn from.
+    throw new GitActionRejection(
+      "no_conflict_in_progress",
+      "This worktree has no merge, rebase or cherry-pick to abort",
+    );
+  }
+
+  try {
+    await runGit(ABORT_ARGS[operation], { cwd: target.workDir });
+  } catch (error) {
+    // No hook promotion: an abort runs none. What it does fail on is a worktree
+    // Git will not unwind — an index another process is holding, a file it
+    // cannot restore — and the runner's own classification says that best.
+    return {
+      ok: false,
+      failure: await describeFailure(error, target, runGit, (failed) => failed.kind),
+    };
+  }
+
+  return {
+    ok: true,
+    outcome: {
+      action: "abort",
+      operation,
+      // After the abort, not before: a rebase runs on a detached HEAD, so the
+      // branch the user is back on is only readable once the unwind is done.
+      branch: await readCurrentBranch(target.workDir, runGit),
+    },
+  };
+}
+
 /**
  * Git 2.27 and later refuse a divergent pull outright when the repository pins
  * no reconciliation policy, and say only that one must be chosen. That refusal
@@ -535,6 +619,19 @@ async function readCurrentBranch(
     timeoutMs: PROBE_TIMEOUT_MS,
   });
   return stdout.trim() || null;
+}
+
+/**
+ * Where the worktree actually starts. Falls back to the working directory when
+ * Git will not say, which leaves the caller exactly where it would have been.
+ */
+async function readRepoRoot(workDir: string, runGit: GitRunner): Promise<string> {
+  const result = await runGit(["rev-parse", "--show-toplevel"], {
+    cwd: workDir,
+    timeoutMs: PROBE_TIMEOUT_MS,
+  }).catch(() => null);
+
+  return result?.stdout.trim() || workDir;
 }
 
 /** Null both when there is no upstream and when Git could not be asked. */

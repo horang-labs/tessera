@@ -11,11 +11,20 @@
  * for the renderer and for the server, and only one of the two has a language.
  */
 
-import type { GitPanelData } from "@/types/git";
+import type { GitConflictOperation, GitPanelData } from "@/types/git";
 
-/** What the button says. `publish` and `push` run the same action (§2). */
+/**
+ * What the button says. `publish` and `push` run the same action (§2).
+ *
+ * `conflict` is the one kind that runs nothing: it is the commit path held
+ * closed while a merge, rebase or cherry-pick is unfinished (§9). It is a kind
+ * of its own rather than a disabled `commit` because the surfaces around the
+ * button read the kind to decide whether to draw the commit form under it, and
+ * a worktree whose commit cannot run must not be offered one to write.
+ */
 export type GitPrimaryActionKind =
   | 'commit'
+  | 'conflict'
   | 'push'
   | 'publish'
   | 'pull'
@@ -57,6 +66,12 @@ export interface GitStateSnapshot {
    * branch, which would have to be opened against itself.
    */
   defaultBranch: string | null;
+  /**
+   * The operation this worktree is stopped in the middle of, or null. Detected
+   * by filesystem probe rather than by a Git command, so it rides on the panel
+   * state at no cost to a normal read (§9).
+   */
+  conflictOperation: GitConflictOperation | null;
 }
 
 export type GitPrimaryActionLabelKey =
@@ -74,6 +89,9 @@ export type GitPrimaryActionPendingLabelKey =
   | 'gitPanel.pr.createButtonPending';
 
 export type GitPrimaryActionReasonKey =
+  | 'gitPanel.conflict.mergeInProgress'
+  | 'gitPanel.conflict.rebaseInProgress'
+  | 'gitPanel.conflict.cherryPickInProgress'
   | 'gitPanel.primary.stateUnknown'
   | 'gitPanel.primary.detachedHead'
   | 'gitPanel.primary.noRemote'
@@ -130,6 +148,10 @@ export function gitStateSnapshotFromPanel(
     hasRemote: panel.hasRemote,
     pullRequest: readPullRequestReadiness(panel),
     defaultBranch: panel.defaultBranch,
+    // A payload from before this field existed — one held in the client store
+    // across a reload, one still in flight over the socket — is a worktree with
+    // nothing in progress, which is the state that changes nothing.
+    conflictOperation: panel.conflictOperation ?? null,
   };
 }
 
@@ -164,7 +186,13 @@ export function derivePrimaryGitAction(
 ): GitPrimaryAction {
   if (!snapshot) return commitAction(false, 'gitPanel.primary.stateUnknown');
 
-  // The dirty rung comes first, and it is the one rung a detached HEAD keeps:
+  // Above everything, including the dirty rung (§9). A stopped merge leaves a
+  // tree full of conflicted files, so the rung below would claim it and offer a
+  // commit Git refuses; and nothing further down the ladder can run either while
+  // the sequencer holds the worktree. The way out is the abort in the menu.
+  if (snapshot.conflictOperation) return conflictAction(snapshot.conflictOperation);
+
+  // The dirty rung comes next, and it is the one rung a detached HEAD keeps:
   // committing without a branch is ordinary, pushing without one is not.
   if (snapshot.changedFileCount > 0) return commitAction(true, null);
 
@@ -219,6 +247,35 @@ function commitAction(
     labelKey: 'gitPanel.commit.button',
     pendingLabelKey: 'gitPanel.commit.buttonPending',
     disabledReasonKey,
+  };
+}
+
+/**
+ * The commit path, held closed for as long as the worktree is in the middle of
+ * something (§9). It keeps the Commit label rather than borrowing the abort's,
+ * because what the button offers has not changed — it is the same rung, and the
+ * reason beside it says what is standing in front of it and what to do about it.
+ *
+ * Resolving the conflict is still the editor's or the terminal's job. What the
+ * panel guarantees is that the user is told, is offered nothing that cannot
+ * work, and can always get out through the menu.
+ */
+const CONFLICT_REASON_KEY: Record<GitConflictOperation, GitPrimaryActionReasonKey> = {
+  merge: 'gitPanel.conflict.mergeInProgress',
+  rebase: 'gitPanel.conflict.rebaseInProgress',
+  cherry_pick: 'gitPanel.conflict.cherryPickInProgress',
+};
+
+function conflictAction(operation: GitConflictOperation): GitPrimaryAction {
+  return {
+    kind: 'conflict',
+    // Never dispatched — the rung is disabled and `runPrimaryAction` refuses a
+    // disabled rung before it reads this. It names the path being blocked.
+    action: 'commit',
+    enabled: false,
+    labelKey: 'gitPanel.commit.button',
+    pendingLabelKey: 'gitPanel.commit.buttonPending',
+    disabledReasonKey: CONFLICT_REASON_KEY[operation],
   };
 }
 

@@ -72,6 +72,7 @@ function describeRejection(
     || code === "no_remote"
     || code === "no_upstream"
     || code === "not_github_remote"
+    || code === "no_conflict_in_progress"
   ) {
     return { code, status: 409 };
   }
@@ -96,10 +97,16 @@ function parseGitActionBody(
     files?: unknown;
   };
 
-  // Push, pull and create_pr take no parameters at all: which branch moves, to
-  // or from where — and for a pull request, which repository and which base —
-  // is read from the repository and from GitHub, never asked for by the client.
-  if (action === "push" || action === "pull" || action === "create_pr") {
+  // Push, pull, create_pr and abort take no parameters at all: which branch
+  // moves, to or from where — and for a pull request, which repository and which
+  // base; for an abort, which operation is unwound — is read where the action
+  // runs, never asked for by the client.
+  if (
+    action === "push"
+    || action === "pull"
+    || action === "create_pr"
+    || action === "abort"
+  ) {
     return { action: { action } };
   }
   if (action !== "commit") {
