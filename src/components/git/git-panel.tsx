@@ -315,6 +315,7 @@ export function GitPanel({
             changedFileCount={controller.changedFileCount}
             commit={{
               committing: controller.committing,
+              draftBlocked: controller.commitDraftBlocked,
               generateError: controller.generateMessageError,
               generating: controller.generatingMessage,
               isSelected: controller.isSelectedForCommit,
@@ -328,6 +329,10 @@ export function GitPanel({
               action: controller.primaryAction,
               pending: controller.actionPending,
               onRun: () => void controller.runPrimaryAction(),
+            }}
+            menu={{
+              actions: controller.menuActions,
+              onRun: (id) => void controller.runMenuAction(id),
             }}
             selectedPath={controller.selectedPath}
             setSelectedPath={controller.setSelectedPath}

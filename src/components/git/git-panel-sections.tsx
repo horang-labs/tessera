@@ -25,7 +25,9 @@ import { useI18n } from "@/lib/i18n";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
+import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
 import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
+import { GitActionMenu } from "./git-action-menu";
 import { GitCommitForm } from "./git-commit-form";
 import { GitPrimaryActionBar } from "./git-primary-action";
 import {
@@ -558,6 +560,7 @@ export function GitPanelContentSection({
   data,
   error,
   loading,
+  menu,
   primary,
   selectedPath,
   sessionId,
@@ -570,6 +573,7 @@ export function GitPanelContentSection({
   changedFileCount: number;
   commit: {
     committing: boolean;
+    draftBlocked: boolean;
     generateError: string | null;
     generating: boolean;
     isSelected: (path: string) => boolean;
@@ -588,6 +592,11 @@ export function GitPanelContentSection({
     pending: boolean;
     onRun: () => void;
   };
+  /** Every Git action, always, derived independently of the primary (§4). */
+  menu: {
+    actions: readonly GitMenuAction[];
+    onRun: (id: GitMenuActionId) => void;
+  };
   selectedPath: string | null;
   sessionId: string | null;
   setSelectedPath: (path: string | null) => void;
@@ -602,6 +611,18 @@ export function GitPanelContentSection({
     canOpenFile: boolean;
     position: { x: number; y: number };
   } | null>(null);
+
+  // One element, handed to whichever of the two surfaces draws the button: the
+  // menu is the same list either way, and §4 keeps it beside the button on every
+  // rung rather than only on the ones with a commit form under them.
+  const actionMenu = (
+    <GitActionMenu
+      actions={menu.actions}
+      pending={primary.pending}
+      commitDraftBlocked={commit.draftBlocked}
+      onRun={menu.onRun}
+    />
+  );
 
   return (
     <>
@@ -626,6 +647,7 @@ export function GitPanelContentSection({
               committing={commit.committing}
               generateError={commit.generateError}
               generating={commit.generating}
+              menu={actionMenu}
               message={commit.message}
               onCommit={primary.onRun}
               onGenerate={commit.onGenerate}
@@ -636,6 +658,7 @@ export function GitPanelContentSection({
           ) : (
             <GitPrimaryActionBar
               action={primary.action}
+              menu={actionMenu}
               pending={primary.pending}
               onRun={primary.onRun}
             />

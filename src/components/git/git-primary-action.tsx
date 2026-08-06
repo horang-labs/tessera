@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
@@ -66,10 +67,17 @@ export function GitPrimaryActionButton({
  */
 export function GitPrimaryActionBar({
   action,
+  menu,
   pending,
   onRun,
 }: {
   action: GitPrimaryAction;
+  /**
+   * The dropdown, which sits beside the button on every rung (§4) — including
+   * the ones where the button itself cannot be pressed, since the whole point
+   * of the menu is that it always offers the same list.
+   */
+  menu?: ReactNode;
   pending: boolean;
   onRun: () => void;
 }) {
@@ -83,7 +91,10 @@ export function GitPrimaryActionBar({
       >
         {action.disabledReasonKey ? t(action.disabledReasonKey) : null}
       </span>
-      <GitPrimaryActionButton action={action} pending={pending} onRun={onRun} />
+      <div className="flex shrink-0 items-center gap-1">
+        <GitPrimaryActionButton action={action} pending={pending} onRun={onRun} />
+        {menu}
+      </div>
     </div>
   );
 }

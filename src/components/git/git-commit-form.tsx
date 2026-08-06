@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { LoaderCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
@@ -23,6 +24,7 @@ export function GitCommitForm({
   committing,
   generateError,
   generating,
+  menu,
   message,
   onCommit,
   onGenerate,
@@ -33,6 +35,8 @@ export function GitCommitForm({
   committing: boolean;
   generateError: string | null;
   generating: boolean;
+  /** The dropdown, beside the button here as it is on every other rung (§4). */
+  menu?: ReactNode;
   message: string;
   onCommit: () => void;
   onGenerate: () => void;
@@ -115,6 +119,7 @@ export function GitCommitForm({
           blocked={commitBlocked}
           onRun={onCommit}
         />
+        {menu}
       </div>
     </div>
   );

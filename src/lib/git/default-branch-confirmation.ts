@@ -11,19 +11,23 @@
  * state rather than about a component. Copy is per action rather than one fixed
  * string (§8), so the answer carries keys instead of words.
  */
+import type { GitMenuAction } from './git-action-menu';
 import type { GitPrimaryAction, GitStateSnapshot } from './primary-git-action';
 
 export type GitDefaultBranchConfirmTitleKey =
   | 'gitPanel.push.defaultBranchConfirm.title'
-  | 'gitPanel.push.defaultBranchConfirm.publishTitle';
+  | 'gitPanel.push.defaultBranchConfirm.publishTitle'
+  | 'gitPanel.push.defaultBranchConfirm.commitPushTitle';
 
 export type GitDefaultBranchConfirmBodyKey =
   | 'gitPanel.push.defaultBranchConfirm.body'
-  | 'gitPanel.push.defaultBranchConfirm.publishBody';
+  | 'gitPanel.push.defaultBranchConfirm.publishBody'
+  | 'gitPanel.push.defaultBranchConfirm.commitPushBody';
 
 export type GitDefaultBranchConfirmLabelKey =
   | 'gitPanel.push.defaultBranchConfirm.confirm'
-  | 'gitPanel.push.defaultBranchConfirm.publishConfirm';
+  | 'gitPanel.push.defaultBranchConfirm.publishConfirm'
+  | 'gitPanel.push.defaultBranchConfirm.commitPushConfirm';
 
 export interface GitDefaultBranchConfirmation {
   /**
@@ -44,22 +48,44 @@ export interface GitDefaultBranchConfirmation {
 }
 
 /**
+ * Anything that can reach the remote — the button's push, and the menu's Commit
+ * & Push, which pushes at the end of it. Reaching the default branch by way of a
+ * menu entry rather than a button is still reaching it.
+ */
+type GitDefaultBranchPushCandidate =
+  | Pick<GitPrimaryAction, 'action' | 'kind'>
+  | Pick<GitMenuAction, 'id' | 'kind'>;
+
+/**
  * Null means run the action — there is nothing to ask about. There is no third
  * answer: creating a feature branch and running the action there needs a
  * branch-creation action and a client-supplied ref, both out of v1 scope (§8).
  */
 export function describeDefaultBranchPushConfirmation(
-  action: GitPrimaryAction,
+  action: GitDefaultBranchPushCandidate,
   snapshot: GitStateSnapshot | null,
 ): GitDefaultBranchConfirmation | null {
   if (!snapshot) return null;
-  if (action.action !== 'push') return null;
+  if (action.kind !== 'push' && action.kind !== 'publish' && action.kind !== 'commit_push') {
+    return null;
+  }
 
   // `null` branch is a detached HEAD, where there is nothing to push and no
   // name to say; `null` default branch is a repository Git was never told the
   // answer for. Neither is a match for the other.
   const target = snapshot.branch;
   if (!target || target !== snapshot.defaultBranch) return null;
+
+  // Copy per action rather than one fixed string (§8): each of the three says
+  // what it is actually about to do to the branch it names.
+  if (action.kind === 'commit_push') {
+    return {
+      branch: target,
+      titleKey: 'gitPanel.push.defaultBranchConfirm.commitPushTitle',
+      bodyKey: 'gitPanel.push.defaultBranchConfirm.commitPushBody',
+      confirmLabelKey: 'gitPanel.push.defaultBranchConfirm.commitPushConfirm',
+    };
+  }
 
   return action.kind === 'publish'
     ? {
