@@ -29,13 +29,17 @@ const PANEL: GitPanelData = {
   github: { available: false, reasonCode: null, reason: null, pullRequest: null },
 };
 
-/** A branch that is committed, pushed and tracking — the quiet middle of the ladder. */
+/**
+ * A branch that is committed, pushed, tracking and already has a pull request —
+ * the far end of the ladder, where delivery is finished.
+ */
 const SYNCED: GitStateSnapshot = {
   branch: 'feature/0807-t233',
   upstream: 'origin/feature/0807-t233',
   ahead: 0,
   changedFileCount: 0,
   hasRemote: true,
+  pullRequest: 'exists',
 };
 
 test('state that is not known yet holds a disabled Commit frame', () => {
@@ -85,6 +89,49 @@ test('a clean branch with nothing ahead offers a Push it says is empty', () => {
   assert.equal(action.kind, 'push');
   assert.equal(action.enabled, false);
   assert.equal(action.disabledReasonKey, 'gitPanel.push.nothingToPush');
+});
+
+test('a synced branch with no pull request offers Create PR', () => {
+  const action = derivePrimaryGitAction({ ...SYNCED, pullRequest: 'none' });
+
+  assert.equal(action.kind, 'create_pr');
+  assert.equal(action.action, 'create_pr');
+  assert.equal(action.enabled, true);
+  assert.equal(action.labelKey, 'gitPanel.pr.createButton');
+});
+
+test('a branch that already has a pull request is not offered another', () => {
+  const action = derivePrimaryGitAction(SYNCED);
+
+  assert.notEqual(action.kind, 'create_pr');
+  assert.equal(action.enabled, false);
+});
+
+test('a repository that cannot host a pull request says why, rather than offering one', () => {
+  const action = derivePrimaryGitAction({ ...SYNCED, pullRequest: 'unsupported' });
+
+  assert.equal(action.kind, 'create_pr');
+  assert.equal(action.enabled, false);
+  assert.equal(action.disabledReasonKey, 'gitPanel.pr.unavailable');
+});
+
+test('a pull request state that has not arrived yet holds a disabled frame', () => {
+  // The same rule as the unknown Git state above: GitHub is asked over the
+  // network, and "not answered yet" must not read as "no pull request".
+  const action = derivePrimaryGitAction({ ...SYNCED, pullRequest: 'unknown' });
+
+  assert.equal(action.kind, 'create_pr');
+  assert.equal(action.enabled, false);
+  assert.equal(action.disabledReasonKey, 'gitPanel.pr.statusUnknown');
+});
+
+test('pushing rotates the same button from Push to Create PR', () => {
+  const ahead = derivePrimaryGitAction({ ...SYNCED, ahead: 2, pullRequest: 'none' });
+  // What the panel reads back once the push lands: nothing ahead, no PR yet.
+  const pushed = derivePrimaryGitAction({ ...SYNCED, pullRequest: 'none' });
+
+  assert.equal(ahead.kind, 'push');
+  assert.equal(pushed.kind, 'create_pr');
 });
 
 test('a repository with no remote cannot publish, and says so', () => {
@@ -158,6 +205,64 @@ test('a repository whose remote is not named origin can still push', () => {
   assert.equal(action.enabled, true);
 });
 
+test('a linked pull request reaches the ladder however the panel learned of it', () => {
+  // `github.pullRequest` is always null on the wire; the PR the panel actually
+  // shows arrives as `prStatus`, merged in from the live PR store.
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    github: { ...PANEL.github, available: true, reasonCode: null },
+    prStatus: {
+      number: 236,
+      url: 'https://github.com/horang-labs/tessera/pull/236',
+      state: 'open',
+      lastSynced: '2026-08-07T00:00:00.000Z',
+    },
+  });
+
+  assert.equal(snapshot?.pullRequest, 'exists');
+});
+
+test('GitHub answering "no pull request" is what unlocks Create PR', () => {
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    github: {
+      ...PANEL.github,
+      available: true,
+      reasonCode: 'no_pull_request',
+      reason: 'No pull request is linked to the current branch.',
+    },
+  });
+
+  assert.equal(snapshot?.pullRequest, 'none');
+  assert.equal(derivePrimaryGitAction(snapshot).enabled, true);
+});
+
+test('a repository GitHub cannot answer for is unsupported, not pull-request-free', () => {
+  const notGitHub = gitStateSnapshotFromPanel({
+    ...PANEL,
+    github: { ...PANEL.github, reasonCode: 'not_github_remote' },
+  });
+  // The PR probe reports the same conclusion from the other side — a missing or
+  // signed-out `gh` cannot open a pull request either.
+  const noGhCli = gitStateSnapshotFromPanel({
+    ...PANEL,
+    github: { ...PANEL.github, available: true, reasonCode: 'no_pull_request' },
+    prUnsupported: true,
+  });
+
+  assert.equal(notGitHub?.pullRequest, 'unsupported');
+  assert.equal(noGhCli?.pullRequest, 'unsupported');
+});
+
+test('a panel whose GitHub state has not arrived reports it as unknown', () => {
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    github: { ...PANEL.github, reasonCode: 'unknown' },
+  });
+
+  assert.equal(snapshot?.pullRequest, 'unknown');
+});
+
 test('a truncated file list still counts as a dirty tree', () => {
   const snapshot = gitStateSnapshotFromPanel({
     ...PANEL,
@@ -188,6 +293,9 @@ test('every label and reason the ladder can name resolves in every locale', asyn
     { ...SYNCED, upstream: null },
     { ...SYNCED, upstream: null, hasRemote: false },
     { ...SYNCED, branch: null, ahead: 1 },
+    { ...SYNCED, pullRequest: 'none' as const },
+    { ...SYNCED, pullRequest: 'unknown' as const },
+    { ...SYNCED, pullRequest: 'unsupported' as const },
   ];
 
   const keys = new Set<string>();

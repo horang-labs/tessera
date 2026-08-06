@@ -1101,6 +1101,15 @@ export const ja: I18nMessages = {
       hookRejectedToast: 'git フックがプッシュを拒否しました · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git フックがプッシュを拒否しました · {{origin}}',
     },
+    pr: {
+      createdToast: 'PR #{{number}} を {{baseBranch}} 宛に作成しました · {{origin}}',
+      createdNoDetailToast: 'プルリクエストを作成しました · {{origin}}',
+      failureToast: 'プルリクエストの作成に失敗しました · {{origin}} — {{reason}}',
+      createButton: 'PR を作成',
+      createButtonPending: 'PR を作成中…',
+      statusUnknown: 'GitHub のプルリクエストを確認中…',
+      unavailable: 'プルリクエストには GitHub リモートとログイン済みの gh CLI が必要です',
+    },
     primary: {
       stateUnknown: 'git の状態を読み込み中…',
       detachedHead: 'HEAD が分離されています — プッシュするにはブランチをチェックアウトしてください',

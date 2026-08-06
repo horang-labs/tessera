@@ -14,7 +14,20 @@
 import type { GitPanelData } from "@/types/git";
 
 /** What the button says. `publish` and `push` run the same action (§2). */
-export type GitPrimaryActionKind = 'commit' | 'push' | 'publish';
+export type GitPrimaryActionKind = 'commit' | 'push' | 'publish' | 'create_pr';
+
+/**
+ * What the panel knows about a pull request for this branch. `unknown` is a
+ * state of its own rather than a synonym for `none`: GitHub is asked over the
+ * network, and answering "no pull request" before the answer arrives would put
+ * an enabled Create PR under the cursor on every session switch (ADR 0007).
+ */
+export type GitPullRequestReadiness =
+  | 'exists'
+  | 'none'
+  | 'unknown'
+  /** Not a GitHub remote, or no `gh` to ask with — no pull request is possible. */
+  | 'unsupported';
 
 export interface GitStateSnapshot {
   /** Null on a detached HEAD, where there is no branch to push. */
@@ -27,28 +40,33 @@ export interface GitStateSnapshot {
   changedFileCount: number;
   /** False when the repository has no remote to push to at all. */
   hasRemote: boolean;
+  pullRequest: GitPullRequestReadiness;
 }
 
 export type GitPrimaryActionLabelKey =
   | 'gitPanel.commit.button'
   | 'gitPanel.push.button'
-  | 'gitPanel.push.publishButton';
+  | 'gitPanel.push.publishButton'
+  | 'gitPanel.pr.createButton';
 
 export type GitPrimaryActionPendingLabelKey =
   | 'gitPanel.commit.buttonPending'
   | 'gitPanel.push.buttonPending'
-  | 'gitPanel.push.publishButtonPending';
+  | 'gitPanel.push.publishButtonPending'
+  | 'gitPanel.pr.createButtonPending';
 
 export type GitPrimaryActionReasonKey =
   | 'gitPanel.primary.stateUnknown'
   | 'gitPanel.primary.detachedHead'
   | 'gitPanel.primary.noRemote'
-  | 'gitPanel.push.nothingToPush';
+  | 'gitPanel.push.nothingToPush'
+  | 'gitPanel.pr.statusUnknown'
+  | 'gitPanel.pr.unavailable';
 
 export interface GitPrimaryAction {
   kind: GitPrimaryActionKind;
   /** What the action route is asked to run. */
-  action: 'commit' | 'push';
+  action: 'commit' | 'push' | 'create_pr';
   enabled: boolean;
   labelKey: GitPrimaryActionLabelKey;
   pendingLabelKey: GitPrimaryActionPendingLabelKey;
@@ -85,7 +103,26 @@ export function gitStateSnapshotFromPanel(
     // show.
     changedFileCount: panel.changedFilesTotal ?? panel.changedFiles.length,
     hasRemote: panel.hasRemote,
+    pullRequest: readPullRequestReadiness(panel),
   };
+}
+
+/**
+ * Three sources answer the same question, and the order between them is what
+ * matters. `prStatus` is the pull request the panel actually shows — it arrives
+ * from the live PR store, while `github.pullRequest` is null on every payload
+ * the server sends. `prUnsupported` is the probe reporting that it cannot ask
+ * GitHub at all — no `gh`, signed out, or a remote that is not GitHub — and
+ * `github.reasonCode` is the server's own reading of the remote.
+ */
+function readPullRequestReadiness(panel: GitPanelData): GitPullRequestReadiness {
+  if (panel.prStatus || panel.github.pullRequest) return 'exists';
+  if (panel.prUnsupported) return 'unsupported';
+  if (panel.github.reasonCode === 'no_pull_request') return 'none';
+  if (panel.github.reasonCode === 'unknown' || panel.github.reasonCode === null) {
+    return 'unknown';
+  }
+  return 'unsupported';
 }
 
 /**
@@ -108,11 +145,18 @@ export function derivePrimaryGitAction(
   const blocked = describePushObstacle(snapshot);
 
   if (!snapshot.upstream) return publishAction(!blocked, blocked);
+  if (blocked) return pushAction(false, blocked);
+  if (snapshot.ahead > 0) return pushAction(true, null);
 
-  return pushAction(
-    !blocked && snapshot.ahead > 0,
-    blocked ?? (snapshot.ahead > 0 ? null : 'gitPanel.push.nothingToPush'),
-  );
+  // Committed, pushed and tracking: the only step of delivery left is the pull
+  // request (§3). A branch that already has one drops through to the push rung,
+  // which says there is nothing to do — the panel reflects the pull request it
+  // has rather than offering to open a second one.
+  if (snapshot.pullRequest === 'exists') {
+    return pushAction(false, 'gitPanel.push.nothingToPush');
+  }
+
+  return createPullRequestAction(snapshot.pullRequest);
 }
 
 /** What stops this branch reaching a remote at all, before counting commits. */
@@ -148,6 +192,33 @@ function pushAction(
     enabled,
     labelKey: 'gitPanel.push.button',
     pendingLabelKey: 'gitPanel.push.buttonPending',
+    disabledReasonKey,
+  };
+}
+
+/**
+ * The last rung. It renders on all three of its readiness values rather than
+ * only the one it can run on, because the alternative — falling back to the
+ * push rung — is the "nothing to do" frame ADR 0007 refuses for a state that is
+ * merely not known yet, and it would leave a repository with no GitHub remote
+ * with nothing to read but a push it does not need.
+ */
+function createPullRequestAction(
+  readiness: GitPullRequestReadiness,
+): GitPrimaryAction {
+  const disabledReasonKey: GitPrimaryActionReasonKey | null =
+    readiness === 'none'
+      ? null
+      : readiness === 'unknown'
+        ? 'gitPanel.pr.statusUnknown'
+        : 'gitPanel.pr.unavailable';
+
+  return {
+    kind: 'create_pr',
+    action: 'create_pr',
+    enabled: readiness === 'none',
+    labelKey: 'gitPanel.pr.createButton',
+    pendingLabelKey: 'gitPanel.pr.createButtonPending',
     disabledReasonKey,
   };
 }

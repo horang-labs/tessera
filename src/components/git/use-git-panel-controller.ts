@@ -790,12 +790,71 @@ export function useGitPanelController(sessionId: string | null) {
     sessionId,
   ]);
 
+  /**
+   * The last step of delivery, on the same button as the rest of it (§3). The
+   * request carries nothing: which branch, which repository and which base are
+   * all read where the action runs.
+   */
+  const createPullRequest = useCallback(async () => {
+    if (!sessionId || !pendingWorkDir || pendingHere) return;
+
+    const workDir = pendingWorkDir;
+    markPending(workDir, "create_pr");
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "create_pr" }),
+        },
+      );
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          extractGitPanelErrorMessage(payload, "Failed to create the pull request."),
+        );
+      }
+
+      const result = payload as GitActionResult;
+      reportAction(describeGitActionToast(result, commitOrigin, "create_pr"));
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "create_pr",
+        target: "pull_request",
+        result: result.ok ? "success" : "failed",
+        ...(result.ok ? {} : { failure_kind: result.failure.kind }),
+      });
+    } catch (nextError) {
+      reportAction(
+        describeGitRequestFailureToast(
+          nextError instanceof Error
+            ? nextError.message
+            : "Failed to create the pull request.",
+          commitOrigin,
+          "create_pr",
+        ),
+      );
+    } finally {
+      markPending(workDir, null);
+    }
+  }, [
+    commitOrigin,
+    markPending,
+    pendingHere,
+    pendingWorkDir,
+    reportAction,
+    sessionId,
+  ]);
+
   /** The one button. Which verb it runs is the ladder's answer, not the user's. */
   const runPrimaryAction = useCallback(() => {
     if (!primaryAction.enabled) return;
     if (primaryAction.action === "push") return pushBranch();
+    if (primaryAction.action === "create_pr") return createPullRequest();
     return commitSelectedFiles();
-  }, [commitSelectedFiles, primaryAction, pushBranch]);
+  }, [commitSelectedFiles, createPullRequest, primaryAction, pushBranch]);
 
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;

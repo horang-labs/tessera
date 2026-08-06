@@ -8,7 +8,11 @@
  * the same button again re-runs the action (ADR 0005 — there is no retry
  * control). The controller only renders what this returns.
  */
-import type { GitActionResult, GitPushOutcome } from "@/types/git";
+import type {
+  GitActionResult,
+  GitCreatePullRequestOutcome,
+  GitPushOutcome,
+} from "@/types/git";
 import { summarizeGitFailure, summarizeHookRejection } from "./git-panel-shared";
 
 export type GitActionToastKey =
@@ -21,23 +25,33 @@ export type GitActionToastKey =
   | "gitPanel.push.publishedToast"
   | "gitPanel.push.failureToast"
   | "gitPanel.push.hookRejectedToast"
-  | "gitPanel.push.hookRejectedNoDetailToast";
+  | "gitPanel.push.hookRejectedNoDetailToast"
+  | "gitPanel.pr.createdToast"
+  | "gitPanel.pr.createdNoDetailToast"
+  | "gitPanel.pr.failureToast";
 
 /**
  * Which action was attempted. A failure carries no verb of its own — the same
  * `command_failed` arrives from a commit and from a push — so the caller, which
  * is the only party that knows what it pressed, says.
  */
-export type GitActionVerb = "commit" | "push";
+export type GitActionVerb = "commit" | "push" | "create_pr";
 
 export interface GitActionToast {
   tone: "success" | "error";
   messageKey: GitActionToastKey;
   /**
    * `reason` is absent when there is nothing worth quoting, `remoteBranch` when
-   * the action was not a push or Git would not say which branch it wrote.
+   * the action was not a push or Git would not say which branch it wrote, and
+   * `number` / `baseBranch` when the pull request could not be read back.
    */
-  params: { origin: string; reason?: string; remoteBranch?: string };
+  params: {
+    origin: string;
+    reason?: string;
+    remoteBranch?: string;
+    number?: number;
+    baseBranch?: string;
+  };
   /**
    * Only a completed commit clears the message and the file selection. A
    * failure leaves both in place, which is what makes the same button a retry,
@@ -46,13 +60,17 @@ export interface GitActionToast {
   clearsDraft: boolean;
 }
 
-/** The four things a failing action can be told to say, per verb. */
+/**
+ * What a failing action can be told to say, per verb. The hook keys are optional
+ * because a hook is something Git runs: `gh` opening a pull request has none to
+ * be refused by, and giving that verb hook wording would invent a rejection.
+ */
 const FAILURE_KEYS: Record<
   GitActionVerb,
   {
     failure: GitActionToastKey;
-    hookRejected: GitActionToastKey;
-    hookRejectedNoDetail: GitActionToastKey;
+    hookRejected?: GitActionToastKey;
+    hookRejectedNoDetail?: GitActionToastKey;
   }
 > = {
   commit: {
@@ -64,6 +82,9 @@ const FAILURE_KEYS: Record<
     failure: "gitPanel.push.failureToast",
     hookRejected: "gitPanel.push.hookRejectedToast",
     hookRejectedNoDetail: "gitPanel.push.hookRejectedNoDetailToast",
+  },
+  create_pr: {
+    failure: "gitPanel.pr.failureToast",
   },
 };
 
@@ -87,19 +108,23 @@ export function describeGitActionToast(
   attempted: GitActionVerb = "commit",
 ): GitActionToast {
   if (result.ok) {
-    return result.outcome.action === "push"
-      ? describePushOutcome(result.outcome, origin)
-      : {
-        tone: "success",
-        messageKey: "gitPanel.commit.successToast",
-        params: { origin },
-        clearsDraft: true,
-      };
+    if (result.outcome.action === "push") {
+      return describePushOutcome(result.outcome, origin);
+    }
+    if (result.outcome.action === "create_pr") {
+      return describeCreatePullRequestOutcome(result.outcome, origin);
+    }
+    return {
+      tone: "success",
+      messageKey: "gitPanel.commit.successToast",
+      params: { origin },
+      clearsDraft: true,
+    };
   }
 
   const keys = FAILURE_KEYS[attempted];
   const { kind, message, stderr } = result.failure;
-  if (kind === "hook_rejected") {
+  if (kind === "hook_rejected" && keys.hookRejected && keys.hookRejectedNoDetail) {
     // A hook can refuse without printing anything, and then the only message
     // there is comes from the runner ("git exited with code 1"). Quoting that
     // would replace "your code was refused" with Git plumbing.
@@ -151,6 +176,33 @@ function describePushOutcome(
       ? "gitPanel.push.publishedToast"
       : "gitPanel.push.successToast",
     params: { origin, remoteBranch: outcome.remoteBranch },
+    clearsDraft: false,
+  };
+}
+
+/**
+ * §7: the report says which pull request opened and where it went, because the
+ * base is GitHub's answer rather than the panel's — the user has not been shown
+ * it before this point. Without the read-back the report drops to what is still
+ * certainly true: a pull request now exists for this branch.
+ */
+function describeCreatePullRequestOutcome(
+  outcome: GitCreatePullRequestOutcome,
+  origin: string,
+): GitActionToast {
+  if (outcome.number === null || !outcome.baseBranch) {
+    return {
+      tone: "success",
+      messageKey: "gitPanel.pr.createdNoDetailToast",
+      params: { origin },
+      clearsDraft: false,
+    };
+  }
+
+  return {
+    tone: "success",
+    messageKey: "gitPanel.pr.createdToast",
+    params: { origin, number: outcome.number, baseBranch: outcome.baseBranch },
     clearsDraft: false,
   };
 }
