@@ -402,8 +402,24 @@ function namesARefusingHook(stderr: string): boolean {
   return stderr.split('\n').some((line) => {
     if (isGitDiagnosticLine(line)) return false;
     const normalized = line.toLowerCase();
-    return HOOK_REJECTION_PATTERNS.some((pattern) => normalized.includes(pattern));
+    return HOOK_REJECTION_PATTERNS.some((pattern) => mentionsHookByName(normalized, pattern));
   });
+}
+
+/** What a hook name is preceded by when it is part of a path rather than prose. */
+const PATH_CHARACTERS = new Set(['/', '\\', '.']);
+
+/**
+ * Git lists offending paths on their own indented lines, carrying no prefix to
+ * mark them as Git's — the merge that would overwrite `\t.husky/pre-commit`
+ * being the shape that matters. There the hook name is a path Git is reporting,
+ * so only a mention that does not sit inside one counts.
+ */
+function mentionsHookByName(line: string, pattern: string): boolean {
+  for (let index = line.indexOf(pattern); index !== -1; index = line.indexOf(pattern, index + 1)) {
+    if (index === 0 || !PATH_CHARACTERS.has(line[index - 1]!)) return true;
+  }
+  return false;
 }
 
 function classifyGitFailure(stderr: string): GitFailureKind {

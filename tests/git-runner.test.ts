@@ -141,6 +141,16 @@ test('a hook saying no is promoted out of a generic command failure', async (t) 
     "error: failed to push some refs to '/srv/repo.git'",
   ].join('\n');
   assert.equal((await kindOf(pushRejection)).kind, 'hook_rejected');
+
+  // Git lists offending paths on their own indented lines, with no prefix of
+  // its own to give them away. A hook file in that list is a path Git is
+  // reporting, not a hook that said anything.
+  const blockedByLocalChanges = [
+    'error: Your local changes to the following files would be overwritten by merge:',
+    '\t.husky/pre-commit',
+    'Please commit your changes or stash them before you merge.',
+  ].join('\n');
+  assert.equal((await kindOf(blockedByLocalChanges)).kind, 'command_failed');
 });
 
 test('the default timeout clears the slowest legitimate command by a wide margin', () => {
