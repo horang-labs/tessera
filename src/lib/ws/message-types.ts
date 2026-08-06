@@ -370,6 +370,24 @@ export type AppServerMessage =
       scrollbackAnsi?: string;
       pendingEscapeTailAnsi?: string;
     }
+  /**
+   * The grid the PTY has actually applied, echoed after every terminal_resize.
+   *
+   * `terminal_resize` is fire-and-forget: a surface that is not the viewport
+   * owner has its request dropped, and a request that races a detach never
+   * reaches the PTY at all. Without a readback the client settles on a size the
+   * PTY never took — xterm renders one grid while the TUI draws another, which
+   * is the garbled-until-manual-resize failure. This is the readback.
+   */
+  | {
+      type: 'terminal_grid';
+      terminalId: string;
+      surfaceId: string;
+      cols: number;
+      rows: number;
+      /** False when another surface owns the viewport and this request was dropped. */
+      accepted: boolean;
+    }
   | {
       type: 'terminal_output';
       terminalId: string;

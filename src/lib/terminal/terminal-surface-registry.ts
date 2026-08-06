@@ -43,6 +43,15 @@ import {
   type TerminalScrollTarget,
 } from './terminal-scroll-controller';
 import { LayoutSettleRunner } from './layout-settle-runner';
+import {
+  waitForStableStartupGrid,
+  type TerminalGridDimensions,
+} from './terminal-startup-grid-settle';
+import {
+  reconcileTerminalGrid,
+  type TerminalGridAck,
+  type TerminalGridReconcileHandle,
+} from './terminal-grid-reconcile';
 import { createTerminalExternalLinkHandlers } from './terminal-external-link';
 import {
   QuietTerminalRenderRecovery,
@@ -225,6 +234,11 @@ type SnapshotReplayState =
   | { epoch: number; phase: 'parsing'; watchdogTimerId: number | null }
   | { epoch: number; phase: 'fitting' };
 
+function hasFrameClock(): boolean {
+  return typeof requestAnimationFrame === 'function'
+    && typeof cancelAnimationFrame === 'function';
+}
+
 function getParkingLot(): HTMLElement {
   if (parkingLot?.isConnected) return parkingLot;
 
@@ -308,6 +322,12 @@ export class TerminalSurface {
   private pendingFitFrameId: number | null = null;
   private pendingFitClaim = false;
   private resizeSettleTimerId: number | null = null;
+  /** Last grid the server reported the PTY at; null until the first echo. */
+  private appliedGrid: TerminalGridAck | null = null;
+  /** Grid sent with the last create request — where reconcile starts counting. */
+  private lastRequestedGrid: TerminalGridDimensions | null = null;
+  private gridReconcile: TerminalGridReconcileHandle | null = null;
+  private startupGridPromise: Promise<TerminalGridDimensions | undefined> | null = null;
   private initializePromise: Promise<boolean> | null = null;
   private coldParkTimerId: number | null = null;
   private attachedConnectionGeneration = 0;
@@ -472,7 +492,13 @@ export class TerminalSurface {
       return true;
     }
 
-    const dimensions = this.getDimensions();
+    // The grid measured here becomes the PTY's size, and for a session that is
+    // never revealed afterwards it stays that size for the runtime's whole life.
+    // A pane measured mid-layout hands over a grid no viewport ever had, so wait
+    // for the measurement to stop moving before committing to it.
+    const dimensions = await this.settleStartupGrid();
+    if (this.disposed || !this.autoConnect) return false;
+    this.lastRequestedGrid = dimensions ?? null;
     const pendingLaunch = takePendingTerminalLaunch(this.options.terminalId);
     if (pendingLaunch) this.pendingLaunch = pendingLaunch;
     if (pendingLaunch?.locksSourceSession && pendingLaunch.intent) {
@@ -741,6 +767,8 @@ export class TerminalSurface {
     if (this.disposed) return;
     this.disposed = true;
     this.cancelColdPark();
+    this.gridReconcile?.cancel();
+    this.gridReconcile = null;
     if (options.detach !== false && this.attachedConnectionGeneration > 0) {
       wsClient.detachTerminal(this.actualTerminalId, this.surfaceId);
     }
@@ -766,6 +794,11 @@ export class TerminalSurface {
       wsClient.detachTerminal(this.actualTerminalId, this.surfaceId);
       this.attachedConnectionGeneration = 0;
     }
+    // The PTY outlives the park, but this surface's measurements do not: the
+    // grid it settles on next belongs to the next attach, not this one.
+    this.gridReconcile?.cancel();
+    this.gridReconcile = null;
+    this.appliedGrid = null;
     this.releaseRenderResources();
   }
 
@@ -1188,6 +1221,16 @@ export class TerminalSurface {
           this.toAppearance(requested.theme, requested.mode),
         );
       }
+      this.startGridReconcile();
+      return;
+    }
+
+    if (message.type === 'terminal_grid') {
+      this.appliedGrid = {
+        cols: message.cols,
+        rows: message.rows,
+        accepted: message.accepted,
+      };
       return;
     }
 
@@ -1636,6 +1679,94 @@ export class TerminalSurface {
     if (this.mountedHost.closest('[aria-hidden="true"]')) return false;
     const rect = this.mountedHost.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
+  }
+
+  /**
+   * Resolve the grid to spawn or attach at, once layout has stopped moving.
+   *
+   * Never hangs: the settle loop always calls back — including for a surface
+   * disposed mid-wait — and a pane that cannot be measured at all resolves
+   * immediately with whatever dimensions are already known.
+   */
+  private settleStartupGrid(): Promise<TerminalGridDimensions | undefined> {
+    if (this.startupGridPromise) return this.startupGridPromise;
+    if (!hasFrameClock() || !this.isMountedHostVisible()) {
+      return Promise.resolve(this.getDimensions());
+    }
+    const promise = new Promise<TerminalGridDimensions | undefined>((resolve) => {
+      waitForStableStartupGrid({
+        isAlive: () => !this.disposed,
+        measure: () => this.measureProposedGrid(),
+        onSettled: (grid) => {
+          this.startupGridPromise = null;
+          resolve(grid ?? this.getDimensions());
+        },
+        requestFrame: (callback) => requestAnimationFrame(callback),
+        cancelFrame: (handle) => cancelAnimationFrame(handle),
+      });
+    });
+    this.startupGridPromise = promise;
+    return promise;
+  }
+
+  /**
+   * The grid the container currently wants, or null while it cannot be read.
+   *
+   * Blind only while the snapshot is *parsing*, matching `fitAndResize`: the
+   * replay holds xterm at the source grid until the write barrier lands, and a
+   * measurement taken then would describe the grid the snapshot came from.
+   *
+   * Not blind during the `fitting` phase that follows, deliberately. That phase
+   * ends when a fit completes, and the fit it waits on is a plain
+   * `requestStableFit` that silently returns early whenever a chain is already
+   * in flight. If that one request is lost, the replay never finishes and xterm
+   * stays on the snapshot's grid — so this is exactly the state the reconcile
+   * has to be able to see and act on.
+   */
+  private measureProposedGrid(): TerminalGridDimensions | null {
+    if (this.snapshotReplay?.phase === 'parsing' || !this.isMountedHostVisible()) return null;
+    const proposed = this.getProposedDimensions();
+    if (!proposed || proposed.cols <= 2 || proposed.rows <= 1) return null;
+    return proposed;
+  }
+
+  /**
+   * Drive this surface's grid and the PTY's to the same value, and verify it.
+   *
+   * Runs on every attach rather than only on a detected mismatch: from
+   * `terminal_started` alone the surface cannot tell whether the runtime it
+   * joined was spawned at a sane grid, and the snapshot it is about to replay
+   * was serialized at whatever that grid was.
+   */
+  private startGridReconcile(): void {
+    // Both loops are frame-driven, and terminal_started can land in a context
+    // that has no frame clock at all. There is nothing to reconcile across then.
+    if (!hasFrameClock()) return;
+    this.gridReconcile?.cancel();
+    // A stale echo describes the previous attachment's PTY, not this one's.
+    this.appliedGrid = null;
+    this.gridReconcile = reconcileTerminalGrid({
+      initialGrid: this.lastRequestedGrid ?? { cols: 0, rows: 0 },
+      isAlive: () => !this.disposed && this.attachedConnectionGeneration > 0,
+      isAuthoritative: () => (
+        this.isMountedHostVisible() && this.snapshotReplay?.phase !== 'parsing'
+      ),
+      measure: () => this.measureProposedGrid(),
+      getRendererGrid: () => (
+        this.terminal ? { cols: this.terminal.cols, rows: this.terminal.rows } : null
+      ),
+      // fitAndResize is the one place that resizes xterm and forwards the result
+      // together. Sending behind its back would let the reconcile correct the
+      // PTY while xterm stayed stale — the same split-grid state it exists to
+      // prevent, just mirrored.
+      forward: () => this.fitAndResize(false, true),
+      getAppliedGrid: () => this.appliedGrid,
+      requestFrame: (callback) => requestAnimationFrame(callback),
+      cancelFrame: (handle) => cancelAnimationFrame(handle),
+      onSettled: () => {
+        this.gridReconcile = null;
+      },
+    });
   }
 
   private getDimensions(): { cols: number; rows: number } | undefined {

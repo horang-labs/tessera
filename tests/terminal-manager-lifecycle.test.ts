@@ -1014,8 +1014,14 @@ test('cold attach receives one snapshot boundary followed by monotonic live outp
   }));
 
   const targeted = delivered.filter(({ connectionId }) => connectionId === 'connection-b');
-  assert.deepEqual(targeted.map(({ message }) => message.type), ['terminal_started', 'terminal_snapshot']);
-  const snapshot = targeted[1].message;
+  // terminal_grid sits after terminal_started on purpose: the surface starts its
+  // reconcile loop on `started` and drops any echo it held from a previous
+  // attachment, so an echo sent ahead of it would be discarded unread.
+  assert.deepEqual(
+    targeted.map(({ message }) => message.type),
+    ['terminal_started', 'terminal_grid', 'terminal_snapshot'],
+  );
+  const snapshot = targeted[2].message;
   assert.equal(snapshot.type, 'terminal_snapshot');
   if (snapshot.type === 'terminal_snapshot') {
     assert.equal(snapshot.seq, 1);
@@ -1342,6 +1348,96 @@ test('cold attach snapshots the source grid before the destination fit and force
     spawned[0].killSignals.filter((signal) => signal === 'SIGWINCH').length,
     process.platform === 'win32' ? 0 : 2,
   );
+  await manager.shutdownAll();
+});
+
+test('attach echoes the grid the PTY is actually on, not the one requested', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ cols: 100, rows: 30 }));
+  delivered.length = 0;
+  await manager.create(createOptions({
+    connectionId: 'connection-b',
+    surfaceId: 'surface-b',
+    cols: 140,
+    rows: 45,
+  }));
+
+  const grid = delivered.find(({ connectionId, message }) => (
+    connectionId === 'connection-b' && message.type === 'terminal_grid'
+  ))?.message;
+  assert.equal(grid?.type, 'terminal_grid');
+  if (grid?.type === 'terminal_grid') {
+    // The attaching pane asked for 140x45; the PTY is still on the grid it was
+    // spawned at. Without being told which, the surface cannot tell a stale PTY
+    // from one that already agrees, and its snapshot replay is about to arrive
+    // at that same stale grid.
+    assert.deepEqual({ cols: grid.cols, rows: grid.rows }, { cols: 100, rows: 30 });
+    assert.equal(grid.accepted, true);
+  }
+
+  await manager.shutdownAll();
+});
+
+test('a resize is answered with the grid the PTY applied', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ cols: 100, rows: 30 }));
+  delivered.length = 0;
+  manager.resize('terminal-a', 'user-a', 'connection-a', 'surface-a', 140, 45);
+
+  const grid = delivered.find(({ message }) => message.type === 'terminal_grid')?.message;
+  assert.equal(grid?.type, 'terminal_grid');
+  if (grid?.type === 'terminal_grid') {
+    assert.deepEqual({ cols: grid.cols, rows: grid.rows }, { cols: 140, rows: 45 });
+    assert.equal(grid.accepted, true);
+  }
+
+  await manager.shutdownAll();
+});
+
+test('a surface that lost the viewport is told its resize went nowhere', async () => {
+  const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    (connectionId, message) => delivered.push({ connectionId, message }),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({ cols: 100, rows: 30 }));
+  await manager.create(createOptions({
+    connectionId: 'connection-b',
+    surfaceId: 'surface-b',
+    cols: 140,
+    rows: 45,
+  }));
+  delivered.length = 0;
+  spawned[0].resizes.length = 0;
+
+  manager.resize('terminal-a', 'user-a', 'connection-a', 'surface-a', 200, 60);
+
+  assert.deepEqual(spawned[0].resizes, [], 'a non-owner must not move the PTY');
+  const grid = delivered.find(({ connectionId, message }) => (
+    connectionId === 'connection-a' && message.type === 'terminal_grid'
+  ))?.message;
+  assert.equal(grid?.type, 'terminal_grid');
+  if (grid?.type === 'terminal_grid') {
+    // Silence here is what let a surface keep rendering against a grid it never
+    // got: it has to hear that it lost, so it can stop instead of settling.
+    assert.equal(grid.accepted, false);
+    assert.deepEqual({ cols: grid.cols, rows: grid.rows }, { cols: 100, rows: 30 });
+  }
+
   await manager.shutdownAll();
 });
 
