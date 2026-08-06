@@ -1080,6 +1080,16 @@ export const ko: I18nMessages = {
       selectFileTitle: '파일을 선택하세요',
       selectFileBody: '위의 변경된 파일을 선택하면 패치 미리보기가 표시됩니다.',
     },
+    commit: {
+      messageLabel: '커밋 메시지',
+      messagePlaceholder: '무엇을 커밋하는지 설명하세요',
+      selectionSummary: '{{files}}개 선택됨',
+      includeFile: '{{path}}을(를) 커밋에 포함',
+      button: '커밋',
+      buttonPending: '커밋 중…',
+      successToast: '커밋함 · {{origin}}',
+      failureToast: '커밋 실패 · {{origin}} — {{reason}}',
+    },
   },
   memoryPanel: {
     sections: {

@@ -1054,6 +1054,16 @@ export interface I18nMessages {
       selectFileTitle: string;
       selectFileBody: string;
     };
+    commit: {
+      messageLabel: string;
+      messagePlaceholder: string;
+      selectionSummary: string;
+      includeFile: string;
+      button: string;
+      buttonPending: string;
+      successToast: string;
+      failureToast: string;
+    };
   };
   memoryPanel: {
     sections: {

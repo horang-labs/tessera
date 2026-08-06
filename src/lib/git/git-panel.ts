@@ -26,6 +26,8 @@ import {
   resolveGitEnvironment,
   type GitEnvironmentSource,
 } from "@/lib/git/git-environment";
+import { parseGitStatus } from "@/lib/git/git-status";
+import type { GitActionTarget } from "@/lib/git/git-actions";
 import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
 import { getRuntimePlatform } from "@/lib/system/runtime-platform";
 import type { AgentEnvironment } from "@/lib/settings/types";
@@ -35,7 +37,6 @@ import type {
   GitChecksSummary,
   GitCommitSummary,
   GitDiffData,
-  GitFileState,
   GitPanelData,
 } from "@/types/git";
 
@@ -338,6 +339,22 @@ async function resolveSessionWorkDir(sessionId: string): Promise<string> {
   return context.workDir;
 }
 
+/**
+ * Where a Git action for this session runs. The execution module deliberately
+ * does not resolve sessions, so route handlers come through here instead of
+ * accepting a worktree path from the client.
+ */
+export async function resolveSessionGitTarget(
+  sessionId: string,
+  userId: string,
+): Promise<GitActionTarget> {
+  const workDir = await resolveSessionWorkDir(sessionId);
+  return {
+    workDir,
+    agentEnvironment: await resolveGitEnvironment({ userId }),
+  };
+}
+
 async function resolveRepoRoot(
   workDir: string,
   agentEnvironment: AgentEnvironment,
@@ -379,69 +396,6 @@ function parseAheadBehind(raw: string | null): {
     ahead: Number.isFinite(ahead) ? ahead : 0,
     behind: Number.isFinite(behind) ? behind : 0,
   };
-}
-
-function inferFileState(
-  indexStatus: string,
-  workTreeStatus: string,
-): GitFileState {
-  const pair = `${indexStatus}${workTreeStatus}`;
-  if (pair === "??") return "untracked";
-  if (pair.includes("U") || pair === "AA" || pair === "DD") return "conflicted";
-  if (indexStatus === "R" || workTreeStatus === "R") return "renamed";
-  if (indexStatus === "C" || workTreeStatus === "C") return "copied";
-  if (indexStatus === "A" || workTreeStatus === "A") return "added";
-  if (indexStatus === "D" || workTreeStatus === "D") return "deleted";
-  if (indexStatus === "T" || workTreeStatus === "T") return "typechange";
-  if (indexStatus === "M" || workTreeStatus === "M") return "modified";
-  return "unknown";
-}
-
-export function parseGitStatus(stdout: string): GitChangedFile[] {
-  const tokens = stdout.split("\0").filter(Boolean);
-  const files: GitChangedFile[] = [];
-  let index = tokens[0]?.startsWith("## ") ? 1 : 0;
-
-  while (index < tokens.length) {
-    const entry = tokens[index];
-    if (!entry || entry.length < 3) {
-      index += 1;
-      continue;
-    }
-
-    const indexStatus = entry[0] ?? " ";
-    const workTreeStatus = entry[1] ?? " ";
-    const pathValue = entry.slice(3);
-    let previousPath: string | undefined;
-
-    if (
-      indexStatus === "R" ||
-      workTreeStatus === "R" ||
-      indexStatus === "C" ||
-      workTreeStatus === "C"
-    ) {
-      previousPath = tokens[index + 1] || undefined;
-      index += 1;
-    }
-
-    const state = inferFileState(indexStatus, workTreeStatus);
-    const displayStatus = `${indexStatus}${workTreeStatus}`.trim() || "??";
-
-    files.push({
-      path: pathValue,
-      ...(previousPath ? { previousPath } : {}),
-      indexStatus,
-      workTreeStatus,
-      state,
-      staged: indexStatus !== " " && indexStatus !== "?",
-      unstaged: workTreeStatus !== " ",
-      displayStatus,
-    });
-
-    index += 1;
-  }
-
-  return files;
 }
 
 export function parseRecentCommits(stdout: string): GitCommitSummary[] {

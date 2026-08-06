@@ -1073,6 +1073,16 @@ export const zh: I18nMessages = {
       selectFileTitle: '选择文件',
       selectFileBody: '从上方选择变更文件以查看补丁预览。',
     },
+    commit: {
+      messageLabel: '提交信息',
+      messagePlaceholder: '描述本次提交的内容',
+      selectionSummary: '已选择 {{files}} 个',
+      includeFile: '将 {{path}} 包含在提交中',
+      button: '提交',
+      buttonPending: '提交中…',
+      successToast: '已提交 · {{origin}}',
+      failureToast: '提交失败 · {{origin}} — {{reason}}',
+    },
   },
   memoryPanel: {
     sections: {

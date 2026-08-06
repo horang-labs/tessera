@@ -312,6 +312,15 @@ export function GitPanel({
             loading={controller.loading}
             error={controller.error}
             changedFileCount={controller.changedFileCount}
+            commit={{
+              committing: controller.committing,
+              isSelected: controller.isSelectedForCommit,
+              message: controller.commitMessage,
+              onCommit: () => void controller.commitSelectedFiles(),
+              onMessageChange: controller.setCommitMessage,
+              onToggleFile: controller.toggleCommitFile,
+              totals: controller.commitTotals,
+            }}
             selectedPath={controller.selectedPath}
             setSelectedPath={controller.setSelectedPath}
             onCopyFilePath={controller.copyFilePath}

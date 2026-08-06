@@ -25,6 +25,7 @@ import { useI18n } from "@/lib/i18n";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
 import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
+import { GitCommitForm } from "./git-commit-form";
 import {
   FILE_STATE_META,
 } from "./git-panel-shared";
@@ -551,6 +552,7 @@ export function GitPanelSummarySection({
 
 export function GitPanelContentSection({
   changedFileCount,
+  commit,
   data,
   error,
   loading,
@@ -563,6 +565,15 @@ export function GitPanelContentSection({
   onOpenReadOnlyFile,
 }: {
   changedFileCount: number;
+  commit: {
+    committing: boolean;
+    isSelected: (path: string) => boolean;
+    message: string;
+    onCommit: () => void;
+    onMessageChange: (value: string) => void;
+    onToggleFile: (path: string) => void;
+    totals: { files: number; added: number; removed: number };
+  };
   data: GitPanelData | null;
   error: string | null;
   loading: boolean;
@@ -600,6 +611,13 @@ export function GitPanelContentSection({
           />
         ) : (
           <div className="flex h-full flex-col gap-2">
+            <GitCommitForm
+              committing={commit.committing}
+              message={commit.message}
+              onCommit={commit.onCommit}
+              onMessageChange={commit.onMessageChange}
+              totals={commit.totals}
+            />
             <div className="flex items-center justify-between px-1">
               <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
                 Changed files
@@ -644,26 +662,39 @@ export function GitPanelContentSection({
                         });
                       }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedPath(file.path);
-                          onOpenDiffFile(file);
-                        }}
-                        onDoubleClick={() => {
-                          setSelectedPath(file.path);
-                          onPinDiffFile(file);
-                        }}
-                        className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left"
-                      >
-                        <FileBadge file={file} />
-                        <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-                          {file.path}
-                        </span>
-                        <span className="transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
-                          <FileDiffStats stats={file.diffStats} />
-                        </span>
-                      </button>
+                      <div className="flex w-full min-w-0 items-center">
+                        <input
+                          type="checkbox"
+                          checked={commit.isSelected(file.path)}
+                          disabled={commit.committing}
+                          onChange={() => commit.onToggleFile(file.path)}
+                          aria-label={t("gitPanel.commit.includeFile", {
+                            path: file.path,
+                          })}
+                          data-testid={`git-commit-file-checkbox-${file.path}`}
+                          className="ml-2 h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPath(file.path);
+                            onOpenDiffFile(file);
+                          }}
+                          onDoubleClick={() => {
+                            setSelectedPath(file.path);
+                            onPinDiffFile(file);
+                          }}
+                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+                        >
+                          <FileBadge file={file} />
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                            {file.path}
+                          </span>
+                          <span className="transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+                            <FileDiffStats stats={file.diffStats} />
+                          </span>
+                        </button>
+                      </div>
                       <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                         <Tooltip content="Open diff">
                           <button

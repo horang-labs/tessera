@@ -1073,6 +1073,16 @@ export const en: I18nMessages = {
       selectFileTitle: 'Select a file',
       selectFileBody: 'Pick a changed file above to render its patch preview.',
     },
+    commit: {
+      messageLabel: 'Commit message',
+      messagePlaceholder: 'Describe what you are committing',
+      selectionSummary: '{{files}} selected',
+      includeFile: 'Include {{path}} in the commit',
+      button: 'Commit',
+      buttonPending: 'Committing…',
+      successToast: 'Committed · {{origin}}',
+      failureToast: 'Commit failed · {{origin}} — {{reason}}',
+    },
   },
   memoryPanel: {
     sections: {
