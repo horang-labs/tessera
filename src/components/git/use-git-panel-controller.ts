@@ -117,9 +117,24 @@ export function useGitPanelController(sessionId: string | null) {
   const [deselectedPaths, setDeselectedPaths] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
-  // One Git action at a time, and the panel has to know which one so the
-  // pending label on the button is the verb that is actually running.
-  const [pendingAction, setPendingAction] = useState<GitActionVerb | null>(null);
+  /**
+   * One Git action at a time, and the panel has to know which one — the pending
+   * label has to be the verb that is actually running — and *whose*.
+   *
+   * The panel is a single component pointed at whichever session is active,
+   * while this state outlives a switch. Without the session id, a commit still
+   * running when the user moves on would spin a pending label on a session that
+   * ran nothing, which is exactly the frame ADR 0007 wants stable; and clearing
+   * it on switch instead would let a switch away and back start a second one on
+   * top of the first.
+   */
+  const [pendingAction, setPendingAction] = useState<
+    { sessionId: string; verb: GitActionVerb } | null
+  >(null);
+  // Only the acting session sees the action it started.
+  const pendingHere = pendingAction?.sessionId === sessionId
+    ? pendingAction.verb
+    : null;
   const [generatingMessage, setGeneratingMessage] = useState(false);
   // A generation failure stays here rather than in a toast: it belongs to the
   // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
@@ -635,7 +650,7 @@ export function useGitPanelController(sessionId: string | null) {
     const files = commitFiles.map((file) => file.path);
     const report = reportAction;
 
-    setPendingAction("commit");
+    setPendingAction({ sessionId, verb: "commit" });
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
@@ -693,7 +708,7 @@ export function useGitPanelController(sessionId: string | null) {
   const pushBranch = useCallback(async () => {
     if (!sessionId || pendingAction) return;
 
-    setPendingAction("push");
+    setPendingAction({ sessionId, verb: "push" });
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
@@ -848,7 +863,7 @@ export function useGitPanelController(sessionId: string | null) {
     commitTotals,
     // The commit form disables its own inputs while its action runs; a push
     // leaves them alone, since it is not what they feed.
-    committing: pendingAction === "commit",
+    committing: pendingHere === "commit",
     copyBranch,
     copyFilePath,
     copyWorktreePath,
@@ -865,7 +880,7 @@ export function useGitPanelController(sessionId: string | null) {
     moveSelection,
     openExternal,
     primaryAction,
-    actionPending: pendingAction !== null,
+    actionPending: pendingHere !== null,
     runPrimaryAction,
     selectedFile,
     selectedFileIndex,
