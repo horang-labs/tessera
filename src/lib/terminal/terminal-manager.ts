@@ -1069,6 +1069,12 @@ export class TerminalManager {
     runtime.subscribers.set(subscriberKey, subscriber);
     runtime.viewportOwner = subscriberKey;
     this.sendStarted(runtime, subscriber, reattached);
+    // Seed the surface with the grid the PTY is actually on. Its reconcile loop
+    // verifies against this echo, and a pane that already agrees would otherwise
+    // have nothing to verify against — no resize means no echo — and would spin
+    // out its whole frame budget before giving up on an answer that was never
+    // coming. This subscriber just took the viewport, so the echo is accepted.
+    this.sendGrid(runtime, subscriber.connectionId, subscriber.surfaceId, true);
     const runtimeAppearance = runtime.appearanceController?.getAppearance();
     if (
       reattached
@@ -1550,8 +1556,35 @@ export class TerminalManager {
     if (claim || runtime.viewportOwner === null) {
       runtime.viewportOwner = subscriberKey;
     }
-    if (runtime.viewportOwner !== subscriberKey) return;
+    if (runtime.viewportOwner !== subscriberKey) {
+      this.sendGrid(runtime, connectionId, surfaceId, false);
+      return;
+    }
     this.resizeRuntime(runtime, cols, rows, replayRefresh);
+    this.sendGrid(runtime, connectionId, surfaceId, true);
+  }
+
+  /**
+   * Echo the PTY's applied grid so the surface can verify what it sent landed.
+   * Sent on every resize, accepted or dropped: a surface that never hears back
+   * cannot tell "the PTY took 178x57" from "another surface owns the viewport
+   * and my request went nowhere", and would keep rendering against a grid the
+   * TUI is not drawing at.
+   */
+  private sendGrid(
+    runtime: TerminalRuntime,
+    connectionId: string,
+    surfaceId: string,
+    accepted: boolean,
+  ): void {
+    this.sendToConnection(connectionId, {
+      type: 'terminal_grid',
+      terminalId: runtime.terminalId,
+      surfaceId,
+      cols: runtime.cols,
+      rows: runtime.rows,
+      accepted,
+    });
   }
 
   detach(terminalId: string, userId: string, connectionId: string, surfaceId: string): void {
