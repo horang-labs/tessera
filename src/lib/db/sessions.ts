@@ -246,6 +246,49 @@ export function getSessionsByWorkDir(workDir: string): Array<Pick<SessionRow, 'i
   `).all(workDir) as Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch'>>;
 }
 
+/**
+ * Sessions a Git action has to refresh: everyone still on screen who shares the
+ * working directory the action moved (`docs/design/git-delivery.md` §11).
+ *
+ * Narrower than `getSessionsByWorkDir` on two counts and wider on a third.
+ *
+ * Narrower: that one lists anything not deleted, which is right for worktree
+ * cleanup and wrong here — an archived session is on no screen, and a shared
+ * checkout accumulates hundreds of them, each of which would otherwise cost a
+ * full panel recompute per commit.
+ *
+ * Wider: a task-owned session takes its working directory from the task
+ * (`getSessionWorktreeContext`), so it can sit on this tree with an empty
+ * `work_dir` of its own. Matching on the session row alone would miss it — the
+ * same two-sided lookup `worktree-diff-stats-broadcast.ts:21-26` already does.
+ * The task arm resolves the path the one canonical way, so a task that has not
+ * stored its own path yet is still matched through its oldest child rather than
+ * dropping every childless sibling out of the fan-out.
+ */
+export function getActiveSessionIdsSharingWorkDir(workDir: string): string[] {
+  const rows = getDb()
+    .prepare(`
+      SELECT s.id AS id
+      FROM sessions s
+      LEFT JOIN tasks t ON t.id = s.task_id
+      WHERE (
+        s.work_dir = ?
+        OR (
+          s.task_id IS NOT NULL
+          AND (
+            SELECT ${PARENT_FIRST_WORKTREE_PATH_SQL}
+            FROM tasks
+            WHERE tasks.id = s.task_id
+          ) = ?
+        )
+      )
+      AND ${ACTIVE_SESSION_SCOPE_SQL}
+      ORDER BY s.created_at ASC, s.id ASC
+    `)
+    .all(workDir, workDir) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
+}
+
 export function getSessionsByTaskId(taskId: string): Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch'>> {
   return getDb().prepare(`
     SELECT id, task_id, worktree_branch
