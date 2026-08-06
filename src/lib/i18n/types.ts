@@ -1125,6 +1125,19 @@ export interface I18nMessages {
       noUpstream: string;
       alreadyOpen: string;
     };
+    conflict: {
+      mergeInProgress: string;
+      rebaseInProgress: string;
+      cherryPickInProgress: string;
+      abortMerge: string;
+      abortRebase: string;
+      abortCherryPick: string;
+      abortPending: string;
+      mergeAbortedToast: string;
+      rebaseAbortedToast: string;
+      cherryPickAbortedToast: string;
+      abortFailureToast: string;
+    };
     primary: {
       stateUnknown: string;
       detachedHead: string;

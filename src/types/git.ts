@@ -30,6 +30,13 @@ export interface GitChangedFile {
   diffStats?: WorktreeFileDiffStats | null;
 }
 
+/**
+ * The Git operation a worktree stopped in the middle of
+ * (`docs/design/git-delivery.md` §9). Null is the ordinary state, not a fourth
+ * kind: there is nothing in progress and nothing to abort.
+ */
+export type GitConflictOperation = "merge" | "rebase" | "cherry_pick";
+
 export interface GitCommitSummary {
   oidShort: string;
   subject: string;
@@ -103,6 +110,13 @@ export interface GitPanelData {
   remoteBranchExists?: boolean;
   /** Current HEAD commit SHA (full). `null` when detached/unresolvable. */
   headSha?: string | null;
+  /**
+   * The merge, rebase or cherry-pick this worktree is stopped part-way through,
+   * or null. It rides on the panel state rather than being asked for separately
+   * because it is a filesystem probe, not a Git command, and costs a normal
+   * panel read nothing (`docs/design/git-delivery.md` §9).
+   */
+  conflictOperation?: GitConflictOperation | null;
 }
 
 export interface GitDiffData {
@@ -181,11 +195,32 @@ export interface GitCreatePullRequestOutcome {
   baseBranch: string | null;
 }
 
+/**
+ * The way out of an unfinished merge, rebase or cherry-pick
+ * (`docs/design/git-delivery.md` §9).
+ */
+export interface GitAbortOutcome {
+  action: "abort";
+  /**
+   * What was actually aborted. Read from the worktree immediately before the
+   * command ran rather than taken from the request, so the report names the
+   * operation Git was in and not the one the menu was drawn for.
+   */
+  operation: GitConflictOperation;
+  /**
+   * The branch the worktree is back on. Read *after* the abort: a rebase runs on
+   * a detached HEAD, and the branch only exists again once the abort is done.
+   * Null when the abort restored a detached HEAD, which a cherry-pick can.
+   */
+  branch: string | null;
+}
+
 export type GitActionOutcome =
   | GitCommitOutcome
   | GitPushOutcome
   | GitPullOutcome
-  | GitCreatePullRequestOutcome;
+  | GitCreatePullRequestOutcome
+  | GitAbortOutcome;
 
 export type GitActionResult =
   | { ok: true; outcome: GitActionOutcome }

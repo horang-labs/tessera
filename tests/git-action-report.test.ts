@@ -149,6 +149,10 @@ test('every key a report can name resolves to a real string in every locale', as
     'gitPanel.pull.failureToast',
     'gitPanel.pull.hookRejectedToast',
     'gitPanel.pull.hookRejectedNoDetailToast',
+    'gitPanel.conflict.mergeAbortedToast',
+    'gitPanel.conflict.rebaseAbortedToast',
+    'gitPanel.conflict.cherryPickAbortedToast',
+    'gitPanel.conflict.abortFailureToast',
   ];
 
   for (const [language, bundle] of locales) {
@@ -163,6 +167,36 @@ test('every key a report can name resolves to a real string in every locale', as
       assert.match(value as string, /\{\{origin\}\}/, `${language}.${key} drops its provenance`);
     }
   }
+});
+
+test('an abort is reported by the operation it actually unwound', () => {
+  // Not by the one the menu was labelled for: the action re-reads the worktree
+  // before it picks a command, so the outcome is what the report follows (§9).
+  const toast = describeGitActionToast(
+    { ok: true, outcome: { action: 'abort', operation: 'rebase', branch: 'main' } },
+    'main',
+    'abort',
+  );
+
+  assert.equal(toast.tone, 'success');
+  assert.equal(toast.messageKey, 'gitPanel.conflict.rebaseAbortedToast');
+  assert.equal(toast.params.origin, 'main');
+  // The tree the abort restored is the one the user may now want to commit, and
+  // the commit path was blocked while the operation ran, so there was no draft
+  // for this to clear either way.
+  assert.equal(toast.clearsDraft, false);
+});
+
+test('a failed abort says the abort failed, not the commit', () => {
+  const toast = describeGitActionToast(
+    failedWith({ message: 'fatal: could not remove index.lock' }),
+    'main',
+    'abort',
+  );
+
+  assert.equal(toast.tone, 'error');
+  assert.equal(toast.messageKey, 'gitPanel.conflict.abortFailureToast');
+  assert.match(toast.params.reason ?? '', /index\.lock/);
 });
 
 test('a first push reports the remote branch it created', () => {

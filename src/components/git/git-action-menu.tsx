@@ -146,7 +146,12 @@ function GitActionMenuItem({
         "flex w-full flex-col items-start gap-0.5 px-2.5 py-1.5 text-left text-[11px] transition-colors",
         disabled
           ? "cursor-not-allowed text-(--text-muted)"
-          : "text-(--text-primary) hover:bg-(--sidebar-hover)",
+          // §9's escape throws away whatever the operation had reached, and it
+          // is the one entry here that does. Orca, whose conflict model this
+          // adopts, marks it destructive for the same reason.
+          : action.id === "abort"
+            ? "text-(--status-error-text) hover:bg-(--sidebar-hover)"
+            : "text-(--text-primary) hover:bg-(--sidebar-hover)",
       )}
     >
       <span className="w-full truncate font-medium">
@@ -180,8 +185,11 @@ interface GitActionMenuPosition {
  */
 const MENU_WIDTH = 232;
 const VIEWPORT_PADDING = 8;
-/** Roughly the tallest the menu gets: five entries, some carrying a reason. */
-const MENU_MAX_HEIGHT = 220;
+/**
+ * Roughly the tallest the menu gets: the five delivery entries, some carrying a
+ * reason, plus §9's abort on the one rung that has it.
+ */
+const MENU_MAX_HEIGHT = 250;
 
 function calculateMenuPosition(trigger: HTMLElement): GitActionMenuPosition {
   const rect = trigger.getBoundingClientRect();

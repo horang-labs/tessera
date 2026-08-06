@@ -26,6 +26,7 @@ import {
   resolveGitEnvironment,
   type GitEnvironmentSource,
 } from "@/lib/git/git-environment";
+import { detectGitConflictOperation } from "@/lib/git/git-conflict-state";
 import { parseGitStatus } from "@/lib/git/git-status";
 import type { GitActionTarget } from "@/lib/git/git-actions";
 import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
@@ -843,6 +844,12 @@ export async function getGitPanelData(
   const bareSessionPr = sessionContext.taskId
     ? null
     : getCachedSessionPr(sessionId) ?? null;
+  // §9: a filesystem probe rather than a Git command, so it adds no process to
+  // this read. `repoRoot` rather than `workDir` because the marker files live
+  // beside the worktree's own git directory, and `workDir` is allowed to be a
+  // directory inside it; `workDir` rides along as the reference this server can
+  // translate the repository root against on a bridged setup.
+  const conflictOperation = await detectGitConflictOperation(repoRoot, workDir);
   const { ahead, behind } = parseAheadBehind(aheadBehindRaw);
   const prSummary = prContext
     ? { wasUnsupported: prContext.wasUnsupported, prStatus: prContext.prStatus }
@@ -895,6 +902,7 @@ export async function getGitPanelData(
     remoteBranchExists:
       prContext?.remoteBranchExists ?? bareSessionPr?.remoteBranchExists,
     headSha: headShaRaw && /^[0-9a-f]{40}$/i.test(headShaRaw) ? headShaRaw : null,
+    conflictOperation,
   };
 }
 

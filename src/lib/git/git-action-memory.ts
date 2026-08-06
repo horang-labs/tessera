@@ -12,17 +12,19 @@
  */
 import {
   GIT_MENU_ACTION_IDS,
-  type GitMenuActionId,
+  type GitDeliveryMenuActionId,
 } from './git-action-menu';
 
 export const GIT_ACTION_MEMORY_KEY = 'tessera:git:last-action';
 
 /**
- * Null both when nothing has been chosen yet and when what is stored is not an
- * action this version has. A name that outlived its action must read as nothing
- * rather than promote an entry the menu cannot draw.
+ * Null both when nothing has been chosen yet and when what is stored is not a
+ * delivery action this version has. A name that outlived its action must read as
+ * nothing rather than promote an entry the menu cannot draw. §9's abort is not
+ * one of these: it is not a workflow to repeat, and it is not drawn at all
+ * unless the worktree is in one.
  */
-export function readRememberedGitAction(): GitMenuActionId | null {
+export function readRememberedGitAction(): GitDeliveryMenuActionId | null {
   if (typeof window === 'undefined') return null;
 
   try {
@@ -35,7 +37,7 @@ export function readRememberedGitAction(): GitMenuActionId | null {
   }
 }
 
-export function rememberGitAction(id: GitMenuActionId): void {
+export function rememberGitAction(id: GitDeliveryMenuActionId): void {
   if (typeof window === 'undefined') return;
 
   try {
@@ -45,7 +47,7 @@ export function rememberGitAction(id: GitMenuActionId): void {
   }
 }
 
-function isGitMenuActionId(value: unknown): value is GitMenuActionId {
+function isGitMenuActionId(value: unknown): value is GitDeliveryMenuActionId {
   return (
     typeof value === 'string'
     && (GIT_MENU_ACTION_IDS as readonly string[]).includes(value)

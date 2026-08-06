@@ -1144,6 +1144,22 @@ export const en: I18nMessages = {
       noUpstream: 'Publish the branch first to open a pull request',
       alreadyOpen: 'This branch already has a pull request',
     },
+    conflict: {
+      // Kept to about the width of the longest reason beside it: the panel's
+      // reason line truncates, and the words that say what is wrong have to
+      // survive that.
+      mergeInProgress: 'Unfinished merge — resolve it or abort it',
+      rebaseInProgress: 'Unfinished rebase — resolve it or abort it',
+      cherryPickInProgress: 'Unfinished cherry-pick — resolve or abort',
+      abortMerge: 'Abort merge',
+      abortRebase: 'Abort rebase',
+      abortCherryPick: 'Abort cherry-pick',
+      abortPending: 'Aborting…',
+      mergeAbortedToast: 'Merge aborted · {{origin}}',
+      rebaseAbortedToast: 'Rebase aborted · {{origin}}',
+      cherryPickAbortedToast: 'Cherry-pick aborted · {{origin}}',
+      abortFailureToast: 'Abort failed · {{origin}} — {{reason}}',
+    },
     primary: {
       stateUnknown: 'Reading git state…',
       detachedHead: 'HEAD is detached — check out a branch to push',
