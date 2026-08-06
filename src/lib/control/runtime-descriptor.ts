@@ -8,17 +8,22 @@ import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 export const CONTROL_API_VERSION = 1 as const;
 const MAX_DESCRIPTOR_BYTES = 16 * 1024;
 const execFileAsync = promisify(execFile);
+// Read and write the DACL section only. `Get-Acl`/`Set-Acl` carry every section the
+// descriptor exposes, so once a target is already protected they try to persist its
+// SACL too and fail with PrivilegeNotHeldException ('SeSecurityPrivilege'). That made
+// the very first run succeed and every later one fail, which takes down startup.
 const WINDOWS_PRIVATE_ACL_SCRIPT = [
   '$targetPath = $env:TESSERA_ACL_TARGET',
   '$directoryFlag = $env:TESSERA_ACL_DIRECTORY',
   '$currentAccount = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name',
-  '$acl = Get-Acl -LiteralPath $targetPath',
+  '$item = Get-Item -LiteralPath $targetPath -Force',
+  '$acl = $item.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)',
   '$acl.SetAccessRuleProtection($true, $false)',
   'foreach ($entry in @($acl.Access)) { $acl.PurgeAccessRules($entry.IdentityReference) }',
   '$inheritance = if ($directoryFlag -eq "1") { [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit } else { [System.Security.AccessControl.InheritanceFlags]::None }',
   '$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($currentAccount, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)',
   '$acl.SetAccessRule($rule)',
-  'Set-Acl -LiteralPath $targetPath -AclObject $acl',
+  '$item.SetAccessControl($acl)',
 ].join('; ');
 
 export interface RuntimeDescriptor {
