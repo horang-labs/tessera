@@ -165,15 +165,16 @@ function loadTaskSessions(
 ): { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean } {
   const db = getDb();
   const rows = db.prepare(`
-    SELECT id, title, provider, provider_state, created_at, updated_at, work_dir, worktree_managed, archived
+    SELECT id, title, provider, provider_state, created_at, updated_at, work_dir, worktree_managed, archived, sort_order
     FROM sessions
     WHERE task_id = ? AND deleted = 0
-    ORDER BY updated_at DESC
+    ORDER BY sort_order ASC, created_at DESC
   `).all(taskId) as (SessionForTask & {
     work_dir?: string | null;
     worktree_managed?: number | null;
     archived?: number | null;
     created_at: string;
+    sort_order: number;
   })[];
 
   const sessions = rows
@@ -185,6 +186,7 @@ function loadTaskSessions(
       lastModified: r.updated_at,
       isRunning: activeSessionIds.has(r.id),
       kind: extractSessionKind(r.provider_state),
+      sortOrder: r.sort_order,
     }));
 
   // Derive workDir from the first session that has one. Archived children still

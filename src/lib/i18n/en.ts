@@ -1364,6 +1364,7 @@ export const en: I18nMessages = {
       title: 'PR #{{number}} · {{state}}',
     },
     showMore: 'Show {{count}} more...',
+    showLess: 'Show less',
   },
   pairing: {
     deviceLink: 'Device link',

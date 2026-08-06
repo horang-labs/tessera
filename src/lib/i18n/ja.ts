@@ -1364,6 +1364,7 @@ export const ja: I18nMessages = {
       title: 'PR #{{number}} · {{state}}',
     },
     showMore: 'さらに {{count}} 件...',
+    showLess: '折りたたむ',
   },
   pairing: {
     deviceLink: 'デバイス接続',

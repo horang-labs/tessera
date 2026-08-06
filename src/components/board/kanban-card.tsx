@@ -8,6 +8,8 @@ import { useI18n } from '@/lib/i18n';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { setKanbanTaskDragData, setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
+import { useSubSessionCap } from '@/hooks/use-sub-session-cap';
+import { useSubSessionReorder } from '@/hooks/use-sub-session-reorder';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useBoardStore } from '@/stores/board-store';
 import {
@@ -608,6 +610,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const sessionCount = task.sessions.length;
   const isMultiSession = sessionCount > 1;
   const expanded = isMultiSession;
+  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
+  const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const isActive = task.sessions.some((s) => s.id === activeSessionId);
   const primarySessionId = task.sessions[0]?.id;
   const isGeneratingTitle = useSessionStore((state) =>
@@ -1160,7 +1164,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
           <div className="relative ml-[22px] pl-3 mt-2 border-t border-(--divider) pt-1.5">
             {/* Vertical tree line */}
             <div className="absolute left-0 top-[6px] bottom-2 w-px bg-(--divider)" />
-            {task.sessions.map((s) => (
+            {visibleSessions.map((s) => (
               <KanbanSubSessionItem
                 key={s.id}
                 session={s}
@@ -1178,8 +1182,23 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 onOpenInNewTab={onSessionOpenInNewTab}
                 onGenerateTitle={onSessionGenerateTitle}
                 onStopProcess={onSessionStopProcess}
+                reorder={subSessionReorder}
               />
             ))}
+
+            {showToggle && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggle();
+                }}
+                className="w-full px-2 py-1 text-left text-[0.6875rem] text-(--text-muted) hover:text-(--accent-light)"
+                data-testid="kanban-sub-session-show-more"
+              >
+                {revealed ? t('task.showLess') : t('task.showMore', { count: hiddenCount })}
+              </button>
+            )}
 
             {/* Summary context row */}
             {task.summary && (
@@ -1220,9 +1239,11 @@ function KanbanSubSessionItem({
   onGenerateTitle,
   onMoveToProject,
   onStopProcess,
+  reorder,
 }: {
   session: TaskSession;
   isActive: boolean;
+  reorder?: ReturnType<typeof useSubSessionReorder>;
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick: (e: React.MouseEvent) => void;
   onRename?: (sessionId: string, newTitle: string) => void;
@@ -1318,8 +1339,16 @@ function KanbanSubSessionItem({
       <div
         role="button"
         draggable={!isRenaming}
-        onDragStart={handleDragStart}
-        onDragEnd={(e) => e.stopPropagation()}
+        onDragStart={(e) => {
+          handleDragStart(e);
+          reorder?.handleDragStart(session.id);
+        }}
+        onDragEnd={(e) => {
+          e.stopPropagation();
+          reorder?.handleDragEnd();
+        }}
+        onDragOver={(e) => reorder?.handleDragOver(e, session.id)}
+        onDrop={(e) => reorder?.handleDrop(e, session.id)}
         onClick={(e) => {
           if (!isRenaming) onClick(e);
         }}
@@ -1332,6 +1361,7 @@ function KanbanSubSessionItem({
         className={cn(
           'relative flex items-center gap-1.5 px-2 py-1 my-px rounded',
           isRenaming ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+          reorder?.draggingSessionId === session.id && 'opacity-40',
           'text-[0.75rem] transition-colors duration-150',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--text-primary) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1341,7 +1371,16 @@ function KanbanSubSessionItem({
         )}
         data-session-id={session.id}
         data-testid={`kanban-sub-session-${session.id}`}
+        data-drop-position={reorder?.indicatorFor(session.id) ?? undefined}
       >
+        {reorder?.indicatorFor(session.id) && (
+          <div
+            className={cn(
+              'pointer-events-none absolute inset-x-0 h-0.5 rounded-full bg-(--accent)',
+              reorder.indicatorFor(session.id) === 'before' ? '-top-px' : '-bottom-px',
+            )}
+          />
+        )}
         {/* Tree connector line */}
         <div className="absolute -left-3 top-1/2 w-[10px] h-px bg-(--divider)" />
         {isActive && <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-(--accent)" />}

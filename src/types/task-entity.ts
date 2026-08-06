@@ -86,6 +86,11 @@ export interface TaskSession {
   isRunning: boolean;
   /** Fixed execution surface inherited from the linked session. */
   kind?: 'chat' | 'terminal';
+  /**
+   * Display order within the task. Starts out as creation order (a new session
+   * is inserted at 0 and pushes the rest down) and survives manual drag-reorder.
+   */
+  sortOrder: number;
 }
 
 export function generateTaskId(): string {
