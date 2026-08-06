@@ -5,6 +5,7 @@ import 'monaco-editor/min/vs/editor/editor.main.css';
 import './globals.css';
 import './terminal.css';
 import { I18nHtmlLang } from '@/components/i18n-html-lang';
+import { RendererConsoleBridge } from '@/components/renderer-console-bridge';
 import { Agentation } from 'agentation';
 import { ElectronCloseDialog } from '@/components/layout/electron-close-dialog';
 import { TelemetryProvider } from '@/components/telemetry/telemetry-provider';
@@ -59,6 +60,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
+        <RendererConsoleBridge />
         <I18nHtmlLang />
         <ThemeInitializer />
         <TelemetryProvider />

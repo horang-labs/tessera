@@ -1,5 +1,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { DEBUG_DIAGNOSTICS } from '@/lib/debug-diagnostics';
 import { en } from './en';
 import { ko } from './ko';
 import { zh } from './zh';
@@ -23,7 +24,7 @@ i18n
       escapeValue: false,
     },
     missingKeyHandler: (lngs, ns, key) => {
-      if (process.env.NODE_ENV === 'development') {
+      if (DEBUG_DIAGNOSTICS) {
         console.warn(`[i18n] Missing key: ${key} (${lngs.join(', ')})`);
       }
     },

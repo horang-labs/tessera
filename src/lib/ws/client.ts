@@ -10,6 +10,7 @@ import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { TerminalAppearance, TerminalLaunchIntent } from '@/lib/terminal/types';
 import { v4 as uuidv4 } from 'uuid';
+import { DEBUG_DIAGNOSTICS } from '@/lib/debug-diagnostics';
 import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useProvidersStore } from '@/stores/providers-store';
@@ -86,7 +87,7 @@ export class WebSocketClient {
       this.ws.onmessage = (event) => {
         try {
           const msg: ServerTransportMessage = JSON.parse(event.data);
-          if (process.env.NODE_ENV === 'development') {
+          if (DEBUG_DIAGNOSTICS) {
             // [DEBUG] Log every WebSocket message received on client
             const detail = msg.type === 'replay_events' ? `events=${msg.events.map(event => event.type).join(',')}` :
                            msg.type === 'notification' ? `event=${(msg as any).event}` :

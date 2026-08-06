@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { createContext } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Panel, PanelDropEdge, PanelNode, PanelStore, PanelStoreState, TabPanelData } from '@/types/panel';
+import { DEBUG_DIAGNOSTICS } from '@/lib/debug-diagnostics';
 import { useSessionStore } from '@/stores/session-store';
 
 export const EMPTY_PANELS: Record<string, Panel> = Object.freeze({});
@@ -129,7 +130,7 @@ function replaceLeafWithExistingLeaf(node: PanelNode, sourcePanelId: string, tar
 // --- 개발 환경 불변 조건 검증 ---
 
 function assertInvariants(tabData: TabPanelData): void {
-  if (process.env.NODE_ENV !== 'development') return;
+  if (!DEBUG_DIAGNOSTICS) return;
 
   // 불변 조건 1: activePanelId는 panels에 존재해야 함
   if (!tabData.panels[tabData.activePanelId]) {
@@ -501,7 +502,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
           p => p.sessionId === sessionId && !(candidateTabId === tabId && p.id === panelId)
         );
         if (duplicate) {
-          if (process.env.NODE_ENV === 'development') {
+          if (DEBUG_DIAGNOSTICS) {
             console.warn('[panel-store] assignSessionInTab() no-op: session already open in tab', candidateTabId, 'panel', duplicate.id);
           }
           return;

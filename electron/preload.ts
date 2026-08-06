@@ -5,6 +5,13 @@ import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clip
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
+  // Renderer console mirroring. The main process only registers these channels in a debug
+  // build, so on a release send() lands on no listener and costs nothing. See
+  // src/lib/renderer-console-bridge.ts.
+  logRendererConsole: (level: string, text: string) =>
+    ipcRenderer.send('renderer-console-log', { level, text }),
+  notifyRendererConsoleBridgeReady: () =>
+    ipcRenderer.send('renderer-console-bridge-ready'),
   supportsTailscaleFirewallConfiguration:
     ipcRenderer.sendSync('supports-tailscale-firewall-configuration'),
   getServerPort: () => ipcRenderer.invoke('get-server-port'),

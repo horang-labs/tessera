@@ -356,18 +356,147 @@ function normalizeElectronLogLevel(value: string | undefined): ElectronLogLevel 
   return null;
 }
 
-const ELECTRON_LOG_LEVEL =
-  normalizeElectronLogLevel(process.env.TESSERA_ELECTRON_LOG_LEVEL) ??
-  normalizeElectronLogLevel(process.env.LOG_LEVEL) ??
-  (app.isPackaged ? 'error' : 'debug');
+/**
+ * Level baked into the build itself. `electron-builder` writes it with
+ * `-c.extraMetadata.tesseraLogLevel=debug` (see the `electron:build:*:debug` scripts), so a
+ * debug build logs everything on a plain double-click — no environment variable to set,
+ * which a user launching the portable exe from Explorer has no way to do.
+ */
+function readBuildStampedLogLevel(): string | undefined {
+  try {
+    const manifest = fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8');
+    const parsed = JSON.parse(manifest) as { tesseraLogLevel?: unknown };
+    return typeof parsed.tesseraLogLevel === 'string' ? parsed.tesseraLogLevel : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+type LogLevelSource = 'TESSERA_ELECTRON_LOG_LEVEL' | 'LOG_LEVEL' | 'build' | 'default';
+
+function resolveLogLevel(): { level: ElectronLogLevel; source: LogLevelSource } {
+  const fromElectronEnv = normalizeElectronLogLevel(process.env.TESSERA_ELECTRON_LOG_LEVEL);
+  if (fromElectronEnv) return { level: fromElectronEnv, source: 'TESSERA_ELECTRON_LOG_LEVEL' };
+
+  const fromEnv = normalizeElectronLogLevel(process.env.LOG_LEVEL);
+  if (fromEnv) return { level: fromEnv, source: 'LOG_LEVEL' };
+
+  const fromBuild = normalizeElectronLogLevel(readBuildStampedLogLevel());
+  if (fromBuild) return { level: fromBuild, source: 'build' };
+
+  return { level: app.isPackaged ? 'error' : 'debug', source: 'default' };
+}
+
+const RESOLVED_LOG_LEVEL = resolveLogLevel();
+const ELECTRON_LOG_LEVEL = RESOLVED_LOG_LEVEL.level;
+
+/**
+ * The level someone actually asked for, as opposed to the built-in default. Only this is
+ * handed down to the server child: passing the default too would silently raise an unpackaged
+ * run's server logging from pino's `info` to `debug`.
+ */
+const EXPLICIT_LOG_LEVEL =
+  RESOLVED_LOG_LEVEL.source === 'default' ? null : RESOLVED_LOG_LEVEL.level;
+
+// A debug build writes orders of magnitude more than an error-level one, and the log is
+// append-only, so cap it and keep a single previous generation. Sized for a debug session:
+// truncating the run that reproduced the bug defeats the point.
+const LOG_MAX_BYTES = 500 * 1024 * 1024;
+let logBytesWritten: number | null = null;
+let logFd: number | null = null;
+
+function closeLogFd() {
+  if (logFd === null) return;
+  try {
+    fs.closeSync(logFd);
+  } catch {
+    // Already gone; nothing to release.
+  }
+  logFd = null;
+}
+
+/**
+ * Keep the log open across writes. `appendFileSync` reopens and closes the file on every
+ * line, which is fine at error level but turns into the dominant cost once a debug build
+ * starts funnelling pino output and the renderer console through here. Writes stay
+ * synchronous on purpose — a crash has to leave its last lines on disk.
+ */
+function ensureLogFd(): number | null {
+  if (logFd !== null) return logFd;
+  try {
+    fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
+    logFd = fs.openSync(LOG_PATH, 'a');
+  } catch {
+    logFd = null;
+  }
+  return logFd;
+}
+
+function rotateLogIfNeeded(incomingBytes: number) {
+  if (logBytesWritten === null) {
+    try {
+      logBytesWritten = fs.statSync(LOG_PATH).size;
+    } catch {
+      logBytesWritten = 0;
+    }
+  }
+  if (logBytesWritten + incomingBytes <= LOG_MAX_BYTES) return;
+  try {
+    // Windows refuses to rename a file that is still open, so release the handle first.
+    closeLogFd();
+    fs.rmSync(`${LOG_PATH}.1`, { force: true });
+    fs.renameSync(LOG_PATH, `${LOG_PATH}.1`);
+    logBytesWritten = 0;
+  } catch {
+    // Rotation is best effort — keep appending rather than dropping the line. Drop the
+    // byte counter so the next write re-reads the real size instead of retrying forever.
+    logBytesWritten = null;
+  }
+}
+
+function writeLogLine(level: ElectronLogLevel, msg: string) {
+  // A serialized stack spans several lines. Indent the continuation so one entry still reads
+  // as one entry in a file where every other line opens with a timestamp.
+  const body = msg.includes('\n') ? msg.replace(/\n/g, '\n    ') : msg;
+  const line = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${body}\n`;
+  const bytes = Buffer.byteLength(line);
+  rotateLogIfNeeded(bytes);
+  const fd = ensureLogFd();
+  if (fd === null) return;
+  try {
+    fs.writeSync(fd, line);
+    logBytesWritten = (logBytesWritten ?? 0) + bytes;
+  } catch {
+    // The handle went stale (log deleted or rotated underneath us). Reopen next time.
+    closeLogFd();
+    logBytesWritten = null;
+  }
+}
 
 function log(level: ElectronLogLevel, msg: string) {
   if (LOG_LEVEL_WEIGHT[level] < LOG_LEVEL_WEIGHT[ELECTRON_LOG_LEVEL]) {
     return;
   }
-  fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
-  fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}\n`);
+  writeLogLine(level, msg);
 }
+
+/**
+ * A run marker, written whatever the level is. The log is append-only across launches, so
+ * without it the first question asked of any bug report — which of these lines belong to the
+ * run I care about — has no answer. Recording where the level came from also answers the
+ * follow-up: why this build is (or is not) logging what was expected.
+ */
+function logSessionBanner() {
+  const rule = '='.repeat(16);
+  writeLogLine(
+    'info',
+    `${rule} Tessera ${app.getVersion()} started ` +
+      `[level=${ELECTRON_LOG_LEVEL} via ${RESOLVED_LOG_LEVEL.source}] ` +
+      `[${process.platform}-${process.arch} packaged=${app.isPackaged} pid=${process.pid}] ${rule}`,
+  );
+}
+
+logSessionBanner();
 
 function classifyServerStdout(line: string): ElectronLogLevel {
   try {
@@ -416,6 +545,103 @@ function attachServerProcessLogging(child: ChildProcess) {
 
   child.stderr?.on('data', (chunk: string | Buffer) => {
     logServerProcessChunk('stderr', chunk);
+  });
+}
+
+// Chromium's console severities, in the order `console-message` reports them.
+const RENDERER_CONSOLE_LEVELS: ElectronLogLevel[] = ['debug', 'info', 'warn', 'error'];
+
+type RendererConsoleDetails = {
+  level?: number | string;
+  message?: string;
+  lineNumber?: number;
+  sourceId?: string;
+};
+
+function rendererConsoleLevel(level: number | string | undefined): ElectronLogLevel {
+  if (typeof level === 'number') {
+    return RENDERER_CONSOLE_LEVELS[level] ?? 'debug';
+  }
+  return normalizeElectronLogLevel(level) ?? 'debug';
+}
+
+/**
+ * Mirror the renderer's console into the same file as the main and server logs. Without this
+ * the UI side is only visible through DevTools, so a bug report from a packaged build arrives
+ * with the server half of the story and nothing from the window.
+ *
+ * Always attached, at every level: each message is mapped to its Chromium severity and then
+ * filtered by `log()` like any other line. An error-level build therefore still records a
+ * renderer `console.error` — which is exactly the line worth having — while dropping its
+ * `console.debug` chatter.
+ */
+const DEBUG_LOGGING_ENABLED = ELECTRON_LOG_LEVEL === 'debug';
+
+// Per-webContents state for the two renderer paths, so the IPC bridge can retire the
+// `console-message` mirror for its own window once it takes over.
+type RendererConsoleMirror = {
+  label: string;
+  listener: (...payload: unknown[]) => void;
+};
+const rendererConsoleMirrors = new Map<number, RendererConsoleMirror>();
+
+function attachRendererConsoleLogging(win: BrowserWindow, label: string) {
+  // Electron 33 emits the positional form `(event, level, message, line, sourceId)`; 35+
+  // replaced it with `(event, details)`. Accept both so an upgrade doesn't silently stop this.
+  const listener = (...payload: unknown[]) => {
+    const [, second, third, fourth, fifth] = payload;
+    const details =
+      second && typeof second === 'object' ? (second as RendererConsoleDetails) : null;
+
+    const level = rendererConsoleLevel(
+      details ? details.level : (second as number | string | undefined),
+    );
+    const message = details ? (details.message ?? '') : String(third ?? '');
+    const sourceId = details ? details.sourceId : (fifth as string | undefined);
+    const lineNumber = details ? details.lineNumber : (fourth as number | undefined);
+    const origin = sourceId ? ` (${sourceId}:${lineNumber ?? 0})` : '';
+
+    log(level, `[renderer:${label}] ${message}${origin}`);
+  };
+
+  const contentsId = win.webContents.id;
+  rendererConsoleMirrors.set(contentsId, { label, listener });
+  win.webContents.on('console-message', listener);
+  win.webContents.once('destroyed', () => {
+    rendererConsoleMirrors.delete(contentsId);
+  });
+}
+
+/**
+ * Receive the renderer's console through IPC, where the arguments are still structured.
+ *
+ * `console-message` hands over whatever Chromium flattened to a string, so an object argument
+ * arrives as `[object Object]` and an Error loses its stack. The renderer-side bridge
+ * (src/lib/renderer-console-bridge.ts) serializes before sending, which is why this exists
+ * alongside the mirror rather than instead of it.
+ *
+ * Registered only in a debug build. On a release the channels have no listener, so the
+ * preload's `send()` is a no-op even if something calls it.
+ */
+function registerRendererConsoleBridge() {
+  if (!DEBUG_LOGGING_ENABLED) return;
+
+  ipcMain.on('renderer-console-log', (event, payload: { level?: unknown; text?: unknown }) => {
+    if (typeof payload?.text !== 'string') return;
+    const level = normalizeElectronLogLevel(
+      typeof payload.level === 'string' ? payload.level : undefined,
+    ) ?? 'debug';
+    const label = rendererConsoleMirrors.get(event.sender.id)?.label ?? 'window';
+    log(level, `[renderer:${label}] ${payload.text}`);
+  });
+
+  ipcMain.on('renderer-console-bridge-ready', event => {
+    // The bridge now reports the same calls with their arguments intact; keeping the mirror
+    // would log every line twice, once in its flattened form.
+    const mirror = rendererConsoleMirrors.get(event.sender.id);
+    if (!mirror) return;
+    event.sender.removeListener('console-message', mirror.listener);
+    log('debug', `[renderer:${mirror.label}] console bridge attached; mirror detached`);
   });
 }
 
@@ -967,6 +1193,10 @@ async function startServer(): Promise<number> {
       TESSERA_PRODUCTION_DB: '1',
       TESSERA_APP_ROOT: appRoot,
       TESSERA_CHANNEL: process.env.TESSERA_CHANNEL || (isPackaged ? 'github-release' : 'dev'),
+      // Carry a requested level down so the child's own startup log and pino agree with the
+      // main process. Without this a build-stamped debug level would stop at this boundary,
+      // since the child only ever reads the environment.
+      ...(EXPLICIT_LOG_LEVEL ? { LOG_LEVEL: EXPLICIT_LOG_LEVEL } : {}),
       // Makes the Electron exe behave as plain Node.js for fork()
       ELECTRON_RUN_AS_NODE: '1',
     };
@@ -1147,6 +1377,8 @@ function createWindow(port: number): BrowserWindow {
     win.removeMenu();
   }
 
+  attachRendererConsoleLogging(win, 'main');
+
   const url = `http://localhost:${port}`;
   win.loadURL(url);
 
@@ -1264,6 +1496,8 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
     win.removeMenu();
   }
 
+  attachRendererConsoleLogging(win, 'popout');
+
   const url = `http://localhost:${port}${route}`;
   win.loadURL(url);
 
@@ -1299,6 +1533,8 @@ function broadcastPopoutState(): void {
 }
 
 // ── IPC ────────────────────────────────────────────────────────────────────
+registerRendererConsoleBridge();
+
 ipcMain.handle('get-server-port', () => serverPort);
 ipcMain.handle('get-remote-access-address-candidates', () => (
   buildRemoteAccessAddressCandidates(networkInterfaces(), serverPort)

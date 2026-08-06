@@ -12,6 +12,7 @@ import type {
   PersistedTabStoreV3,
 } from '@/types/tab';
 import { TAB_STORE_KEY, LRU_LIMIT } from '@/types/tab';
+import { DEBUG_DIAGNOSTICS } from '@/lib/debug-diagnostics';
 import { PANEL_LAYOUT_STORAGE_KEY } from '@/types/panel';
 import type { PersistedPanelLayout, PanelNode, TabPanelData } from '@/types/panel';
 import { usePanelStore } from '@/stores/panel-store';
@@ -293,7 +294,7 @@ function toPersistedTab(tab: Tab, snapshot: TabPanelData | undefined): Persisted
 // --- 개발 환경 불변 조건 검증 ---
 
 function assertTabStoreInvariants(state: TabStoreState): void {
-  if (process.env.NODE_ENV !== 'development') return;
+  if (!DEBUG_DIAGNOSTICS) return;
 
   const tabIds = new Set(state.tabs.map(t => t.id));
 
