@@ -111,9 +111,24 @@ export function summarizeGitFailure(message: string): string {
       .map((line) => line.trim())
       .find(Boolean) ?? message.trim();
 
-  return firstMeaningfulLine.length > FAILURE_TOAST_LIMIT
-    ? `${firstMeaningfulLine.slice(0, FAILURE_TOAST_LIMIT)}…`
-    : firstMeaningfulLine;
+  return truncateForToast(firstMeaningfulLine);
+}
+
+/**
+ * A hook reads the other way round. Git leads with what went wrong, but a hook
+ * runner narrates its way there — "Preparing lint-staged…" first, the verdict
+ * last — and Git relays the whole of it. Taking the first line would quote the
+ * hook starting up rather than the hook refusing.
+ */
+export function summarizeHookRejection(message: string): string {
+  const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+  return truncateForToast(lines[lines.length - 1] ?? message.trim());
+}
+
+function truncateForToast(line: string): string {
+  return line.length > FAILURE_TOAST_LIMIT
+    ? `${line.slice(0, FAILURE_TOAST_LIMIT)}…`
+    : line;
 }
 
 export function getFileScopeLabel(file: GitChangedFile | null): string | null {

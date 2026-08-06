@@ -33,12 +33,17 @@ export const DEFAULT_GIT_TIMEOUT_MS = 600_000;
 export const DEFAULT_GIT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 /**
- * How a Git command failed. `authentication` and `not_found` are promoted out
- * of `command_failed` because a caller can act on them — the rest is stderr.
+ * How a Git command failed. `authentication`, `not_found` and `hook_rejected`
+ * are promoted out of `command_failed` because a caller can act on them — the
+ * rest is stderr.
+ *
+ * `hook_rejected` earns its place by answering a different question from the
+ * others: the tool worked and the user's own code was refused.
  */
 export type GitFailureKind =
   | 'authentication'
   | 'not_found'
+  | 'hook_rejected'
   | 'timeout'
   | 'spawn_failed'
   | 'command_failed';
@@ -186,6 +191,15 @@ function runCommand(
       ...(options.cwd ? { cwd: options.cwd } : {}),
       // stdin is ignored, so a credential prompt would block the child
       // forever; tell git to fail instead of prompting.
+      //
+      // The locale is deliberately left alone. Pinning `LC_ALL=C` would make
+      // every pattern in this file reliable on a localized machine, but it also
+      // reaches stdout the panel renders as-is — `%cr` in the recent-commits
+      // log is translated text, so the panel would read "3 hours ago" to a user
+      // whose Git speaks Korean. Fixing that properly means asking for `%ct`
+      // and formatting the relative time against the app's own language, which
+      // is a change to what the panel displays rather than to how failures are
+      // classified.
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -325,6 +339,102 @@ const NOT_FOUND_PATTERNS = [
   'no such remote',
 ];
 
+/**
+ * How Git prefixes a line it wrote itself. `remote:` output is excluded on
+ * purpose: `remote: error: hook declined` is a server echoing its own hook, not
+ * this Git explaining a failure.
+ *
+ * English, like every other pattern here, and Git translates these. A localized
+ * Git therefore reads to this file as if it had said nothing in its own voice —
+ * the same assumption the authentication and not-found patterns have always
+ * made. See the note on the spawn env for why it is not fixed with `LC_ALL`.
+ */
+const GIT_DIAGNOSTIC_PREFIXES = ['fatal:', 'error:', 'warning:', 'hint:'];
+
+function isGitDiagnosticLine(line: string): boolean {
+  const normalized = line.trimStart().toLowerCase();
+  return GIT_DIAGNOSTIC_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+/** True when any line reads as Git's own diagnostic rather than a child's output. */
+export function hasGitDiagnosticLine(text: string): boolean {
+  return text.split('\n').some(isGitDiagnosticLine);
+}
+
+/**
+ * Git sends hook output to stderr along with its own, and says nothing itself
+ * about which hook refused, so the signal is whatever the hook printed. Named
+ * runners identify themselves; a hand-written hook may not, and one that also
+ * stays silent is caught in the commit path instead
+ * (`src/lib/git/git-actions.ts`), where the command being `git commit` is known.
+ *
+ * These are substring matches, so a hook's *filename* can trip them —
+ * `fatal: cannot open '.husky/pre-commit'` is Git failing to read a file, not a
+ * hook refusing anything. `hasGitDiagnosticLine` is what tells the two apart.
+ */
+const HOOK_REJECTION_PATTERNS = [
+  'pre-commit',
+  'commit-msg',
+  'pre-push',
+  'pre-rebase',
+  'pre-merge-commit',
+  'prepare-commit-msg',
+  'hook declined',
+  'hook failed',
+  'husky',
+  'lefthook',
+  'lint-staged',
+  'pre-receive hook',
+  'update hook',
+];
+
+/**
+ * Line by line, not over the whole of stderr: Git signs a failed push off with
+ * an `error: failed to push some refs` line of its own, below the
+ * `! [remote rejected] … (pre-receive hook declined)` line that carries the
+ * verdict. Judging stderr as a whole would let Git's sign-off bury the refusal.
+ *
+ * What each line has to clear is that the hook's name is not merely *mentioned*
+ * in something Git said — `fatal: cannot open '.husky/pre-commit'` is Git
+ * failing to read a file, and a hook's filename is still just a path.
+ */
+function namesARefusingHook(stderr: string): boolean {
+  return stderr.split('\n').some((line) => {
+    if (isGitDiagnosticLine(line) || isPathOnlyLine(line)) return false;
+    const normalized = line.toLowerCase();
+    return HOOK_REJECTION_PATTERNS.some((pattern) => mentionsHookByName(normalized, pattern));
+  });
+}
+
+/**
+ * A line that is nothing but a path is Git listing a file, not a hook saying
+ * anything — the paths under "your local changes would be overwritten", the
+ * ignored paths `git add` refuses. Indentation does not identify them: Git
+ * indents that list with a tab but flush-lefts the ignored one, and
+ * ` ! [remote rejected] …` leads with a space while carrying a real verdict.
+ * A hook that speaks writes a sentence; a listed path has nothing else on it.
+ */
+function isPathOnlyLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length > 0 && !/\s/.test(trimmed);
+}
+
+/** What a hook name is preceded by when it is part of a path rather than prose. */
+const PATH_CHARACTERS = new Set(['/', '\\', '.']);
+
+/**
+ * Git lists offending paths on their own indented lines, carrying no prefix to
+ * mark them as Git's — the merge that would overwrite `\t.husky/pre-commit`
+ * being the shape that matters. There the hook name is a path Git is reporting,
+ * so only a mention that does not sit inside one counts.
+ */
+function mentionsHookByName(line: string, pattern: string): boolean {
+  for (let index = line.indexOf(pattern); index !== -1; index = line.indexOf(pattern, index + 1)) {
+    if (index === 0 || !PATH_CHARACTERS.has(line[index - 1]!)) return true;
+  }
+  return false;
+}
+
 function classifyGitFailure(stderr: string): GitFailureKind {
   const haystack = stderr.toLowerCase();
   // Authentication first: a private repository answers "Repository not found"
@@ -335,5 +445,8 @@ function classifyGitFailure(stderr: string): GitFailureKind {
   if (NOT_FOUND_PATTERNS.some((pattern) => haystack.includes(pattern))) {
     return 'not_found';
   }
+  // After both, so a hook that fails on a credential or a missing ref is still
+  // reported as the thing the user can act on.
+  if (namesARefusingHook(stderr)) return 'hook_rejected';
   return 'command_failed';
 }

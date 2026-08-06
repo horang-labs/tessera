@@ -17,6 +17,8 @@
 import {
   createGitRunner,
   GitCommandError,
+  hasGitDiagnosticLine,
+  type GitFailureKind,
   type GitRunner,
 } from "@/lib/worktrees/git-runner";
 import logger from "@/lib/logger";
@@ -236,7 +238,7 @@ async function describeFailure(
 
   if (error instanceof GitCommandError) {
     return {
-      kind: error.kind,
+      kind: promoteHookRejection(error),
       message: truncateStderr(error.message),
       stderr: truncateStderr(error.stderr),
       exitCode: error.exitCode,
@@ -251,6 +253,42 @@ async function describeFailure(
     exitCode: null,
     changedFiles,
   };
+}
+
+/**
+ * What `git commit` exits with when a hook refuses. Anything else came from
+ * somewhere other than Git declining the commit, which matters because a
+ * bridged agent environment wraps the command in
+ * `sh -c "cd -- '<path>' && exec git …"` (`spawn-cli-runtime.ts`): a wrapper
+ * that fails reports sh's stderr and sh's exit code — 2 for an unreachable
+ * working directory, 127 for a missing binary — and `null` means the process
+ * was killed from outside and never reported at all. `exec` passes Git's own
+ * code through untouched, so a real hook rejection still arrives as 1.
+ */
+const GIT_COMMIT_REJECTED_EXIT_CODE = 1;
+
+/**
+ * The runner classifies by what the output says, which catches a hook that
+ * names itself or its runner. Here the command is known to be `git commit`, and
+ * that supports the stronger inference the runner cannot make on its own: when
+ * Git refuses a commit for its own reasons it always explains itself, in its
+ * own voice, on stderr. So a commit that failed while Git said nothing was
+ * refused by something Git invoked — a hook — whether that hook printed a
+ * complaint of its own or exited in silence.
+ *
+ * `stdout` guards the one case where Git reports without a diagnostic prefix:
+ * "nothing added to commit" goes there, and it is Git speaking, not a hook.
+ *
+ * Exported for the tests that pin the exit codes this must not promote; nothing
+ * else calls it.
+ */
+export function promoteHookRejection(error: GitCommandError): GitFailureKind {
+  if (error.kind !== 'command_failed') return error.kind;
+  if (error.exitCode !== GIT_COMMIT_REJECTED_EXIT_CODE) return error.kind;
+  if (error.stdout.trim()) return error.kind;
+  if (hasGitDiagnosticLine(error.stderr)) return error.kind;
+
+  return 'hook_rejected';
 }
 
 /**

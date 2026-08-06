@@ -85,6 +85,95 @@ test('authentication and not-found are promoted out of a generic failure', async
   );
 });
 
+test('a hook saying no is promoted out of a generic command failure', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  const runShell = createGitShellRunner(LOCAL_ENVIRONMENT, { timeoutMs: 10_000 });
+  const kindOf = async (stderr: string): Promise<GitCommandError> => {
+    const error = await runShell(`echo ${JSON.stringify(stderr)} >&2; exit 1`)
+      .then(() => null, (caught: unknown) => caught);
+    assert.ok(error instanceof GitCommandError);
+    return error;
+  };
+
+  // Git redirects hook output to stderr, so what a rejecting hook said is what
+  // there is to classify by — the runners name themselves.
+  assert.equal(
+    (await kindOf('husky - pre-commit script failed')).kind,
+    'hook_rejected',
+  );
+  assert.equal((await kindOf('lefthook: pre-push hook failed')).kind, 'hook_rejected');
+  assert.equal(
+    (await kindOf('remote: error: hook declined to update refs/heads/main')).kind,
+    'hook_rejected',
+  );
+
+  // A hook rejection is the user's code being refused. A credential problem and
+  // a missing ref are the tool failing, and stay where they were.
+  assert.equal(
+    (await kindOf('fatal: Authentication failed for pre-commit-hooks.example')).kind,
+    'authentication',
+  );
+  assert.equal(
+    (await kindOf('error: gpg failed to sign the data\nfatal: failed to write commit object')).kind,
+    'command_failed',
+  );
+
+  // Git speaking in its own voice outranks a hook name that happens to appear
+  // in the text — a hook file is also just a path Git can fail to read.
+  assert.equal(
+    (await kindOf("fatal: cannot open '.husky/pre-commit': Permission denied")).kind,
+    'command_failed',
+  );
+  // `remote:` is the server echoing its hook, not a Git diagnostic prefix.
+  assert.equal(
+    (await kindOf('remote: error: hook declined to update refs/heads/main')).kind,
+    'hook_rejected',
+  );
+
+  // A real push rejection, verbatim. Git always signs off with an `error:` line
+  // of its own, so the hook's verdict has to be read line by line — judging the
+  // whole of stderr would let that last line bury the refusal above it.
+  const pushRejection = [
+    'remote: policy: no direct pushes',
+    'To /srv/repo.git',
+    ' ! [remote rejected] main -> main (pre-receive hook declined)',
+    "error: failed to push some refs to '/srv/repo.git'",
+  ].join('\n');
+  assert.equal((await kindOf(pushRejection)).kind, 'hook_rejected');
+
+  // Git lists offending paths on their own indented lines, with no prefix of
+  // its own to give them away. A hook file in that list is a path Git is
+  // reporting, not a hook that said anything.
+  const blockedByLocalChanges = [
+    'error: Your local changes to the following files would be overwritten by merge:',
+    '\t.husky/pre-commit',
+    'Please commit your changes or stash them before you merge.',
+  ].join('\n');
+  assert.equal((await kindOf(blockedByLocalChanges)).kind, 'command_failed');
+
+  // The same list, but the hook config lives at the repository root — where
+  // lefthook and lint-staged put theirs — so there is no directory in front of
+  // the name to mark it as a path. A listed path is a line that is only a path.
+  assert.equal(
+    (await kindOf([
+      'error: Your local changes to the following files would be overwritten by merge:',
+      '\tlefthook.yml',
+      'Please commit your changes or stash them before you merge.',
+    ].join('\n'))).kind,
+    'command_failed',
+  );
+  // `git add` lists ignored paths flush left, so the name starts the line.
+  assert.equal(
+    (await kindOf([
+      'The following paths are ignored by one of your .gitignore files:',
+      'lint-staged.config.js',
+      'hint: Use -f if you really want to add them.',
+    ].join('\n'))).kind,
+    'command_failed',
+  );
+});
+
 test('the default timeout clears the slowest legitimate command by a wide margin', () => {
   // `worktree add` on a large repository runs for minutes and had no deadline
   // before the merge; a tight default would turn a slow success into a failure.

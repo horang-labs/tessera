@@ -1085,6 +1085,8 @@ export const en: I18nMessages = {
       generateFailedPrefix: 'Generation failed — {{reason}}',
       successToast: 'Committed · {{origin}}',
       failureToast: 'Commit failed · {{origin}} — {{reason}}',
+      hookRejectedToast: 'A git hook rejected the commit · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'A git hook rejected the commit · {{origin}}',
     },
   },
   memoryPanel: {

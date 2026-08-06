@@ -1085,6 +1085,8 @@ export const zh: I18nMessages = {
       generateFailedPrefix: '生成失败 — {{reason}}',
       successToast: '已提交 · {{origin}}',
       failureToast: '提交失败 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git 钩子拒绝了此次提交 · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git 钩子拒绝了此次提交 · {{origin}}',
     },
   },
   memoryPanel: {

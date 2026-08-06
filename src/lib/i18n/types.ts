@@ -1066,6 +1066,8 @@ export interface I18nMessages {
       generateFailedPrefix: string;
       successToast: string;
       failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
     };
   };
   memoryPanel: {

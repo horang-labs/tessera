@@ -1085,6 +1085,8 @@ export const ja: I18nMessages = {
       generateFailedPrefix: '生成に失敗 — {{reason}}',
       successToast: 'コミットしました · {{origin}}',
       failureToast: 'コミット失敗 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git フックがコミットを拒否しました · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git フックがコミットを拒否しました · {{origin}}',
     },
   },
   memoryPanel: {

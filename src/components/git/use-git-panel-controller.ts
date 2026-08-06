@@ -17,6 +17,12 @@ import type {
   GitPanelData,
 } from "@/types/git";
 import {
+  describeGitActionOrigin,
+  describeGitActionToast,
+  describeGitRequestFailureToast,
+  type GitActionToast,
+} from "./git-action-report";
+import {
   extractGitPanelErrorMessage,
   summarizeGitFailure,
 } from "./git-panel-shared";
@@ -574,6 +580,11 @@ export function useGitPanelController(sessionId: string | null) {
     }
   }, [commitFiles, committing, generatingMessage, sessionId, t]);
 
+  // Which of the parallel sessions a toast is about. Held here rather than
+  // inside the action so the callback depends on the name, not on every panel
+  // refresh that leaves the name unchanged.
+  const commitOrigin = describeGitActionOrigin(panelData);
+
   const commitSelectedFiles = useCallback(async () => {
     const message = commitMessage.trim();
     // The button is disabled without these. This is the second guard the design
@@ -581,10 +592,22 @@ export function useGitPanelController(sessionId: string | null) {
     // emptied underneath it.
     if (!sessionId || !message || commitFiles.length === 0 || committing) return;
 
-    // Tessera runs many sessions at once, so a bare "Committed" says nothing
-    // about which worktree moved.
-    const origin = panelData?.branch || panelData?.worktreeName || "worktree";
     const files = commitFiles.map((file) => file.path);
+
+    // A toast is raised the same way whichever layer refused, and the draft
+    // survives every failure so this button is itself the retry.
+    const report = (toastReport: GitActionToast): void => {
+      const rendered = t(toastReport.messageKey, toastReport.params);
+      if (toastReport.tone === "success") toast.success(rendered);
+      else toast.error(rendered);
+
+      if (!toastReport.clearsDraft) return;
+      setCommitMessage("");
+      setDeselectedPaths(new Set<string>());
+      // The draft is gone, so a stale generation failure would be complaining
+      // about text that no longer exists (#232).
+      setGenerateMessageError(null);
+    };
 
     setCommitting(true);
     try {
@@ -605,45 +628,23 @@ export function useGitPanelController(sessionId: string | null) {
       }
 
       const result = payload as GitActionResult;
-      if (!result.ok) {
-        toast.error(
-          t("gitPanel.commit.failureToast", {
-            origin,
-            reason: summarizeGitFailure(result.failure.message),
-          }),
-        );
-        void captureTelemetryEvent("git_action_triggered", {
-          source: "git_panel",
-          action: "commit",
-          target: "commit",
-          result: "failed",
-          failure_kind: result.failure.kind,
-          file_count: files.length,
-        });
-        return;
-      }
-
-      setCommitMessage("");
-      setDeselectedPaths(new Set<string>());
-      setGenerateMessageError(null);
-      toast.success(t("gitPanel.commit.successToast", { origin }));
+      report(describeGitActionToast(result, commitOrigin));
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
         action: "commit",
         target: "commit",
-        result: "success",
+        result: result.ok ? "success" : "failed",
+        ...(result.ok ? {} : { failure_kind: result.failure.kind }),
         file_count: files.length,
       });
       // The route triggers the state refresh and broadcasts it; the client
       // never asks for one (docs/design/git-delivery.md §11).
     } catch (nextError) {
-      toast.error(
-        t("gitPanel.commit.failureToast", {
-          origin,
-          reason: summarizeGitFailure(
-            nextError instanceof Error ? nextError.message : "Failed to commit.",
-          ),
-        }),
+      report(
+        describeGitRequestFailureToast(
+          nextError instanceof Error ? nextError.message : "Failed to commit.",
+          commitOrigin,
+        ),
       );
     } finally {
       setCommitting(false);
@@ -651,9 +652,8 @@ export function useGitPanelController(sessionId: string | null) {
   }, [
     commitFiles,
     commitMessage,
+    commitOrigin,
     committing,
-    panelData?.branch,
-    panelData?.worktreeName,
     sessionId,
     t,
   ]);

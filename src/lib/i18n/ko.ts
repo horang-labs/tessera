@@ -1092,6 +1092,8 @@ export const ko: I18nMessages = {
       generateFailedPrefix: '생성 실패 — {{reason}}',
       successToast: '커밋함 · {{origin}}',
       failureToast: '커밋 실패 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git 훅이 커밋을 거부함 · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git 훅이 커밋을 거부함 · {{origin}}',
     },
   },
   memoryPanel: {
