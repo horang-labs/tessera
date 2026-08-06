@@ -1104,7 +1104,7 @@ export const zh: I18nMessages = {
         title: '推送到默认分支?',
         body: '此操作会推送 "{{branch}}" 上的本地提交。',
         publishTitle: '发布默认分支?',
-        publishBody: '此操作会在远程创建 "{{branch}}" 并推送其本地提交。',
+        publishBody: '此操作会将 "{{branch}}" 发布到远程并推送其本地提交。',
         confirm: '推送到 {{branch}}',
         publishConfirm: '发布 {{branch}}',
       },

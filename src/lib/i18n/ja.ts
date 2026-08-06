@@ -1104,7 +1104,7 @@ export const ja: I18nMessages = {
         title: 'デフォルトブランチにプッシュしますか?',
         body: 'この操作は "{{branch}}" のローカルコミットをプッシュします。',
         publishTitle: 'デフォルトブランチを公開しますか?',
-        publishBody: 'この操作は "{{branch}}" をリモートに作成し、ローカルコミットをプッシュします。',
+        publishBody: 'この操作は "{{branch}}" をリモートに公開し、ローカルコミットをプッシュします。',
         confirm: '{{branch}} にプッシュ',
         publishConfirm: '{{branch}} を公開',
       },

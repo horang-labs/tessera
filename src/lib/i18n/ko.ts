@@ -1111,7 +1111,7 @@ export const ko: I18nMessages = {
         title: '기본 브랜치에 푸시할까요?',
         body: '이 작업은 "{{branch}}" 브랜치의 로컬 커밋을 푸시합니다.',
         publishTitle: '기본 브랜치를 게시할까요?',
-        publishBody: '이 작업은 "{{branch}}" 브랜치를 원격에 만들고 로컬 커밋을 푸시합니다.',
+        publishBody: '이 작업은 "{{branch}}" 브랜치를 원격에 게시하고 로컬 커밋을 푸시합니다.',
         confirm: '{{branch}}에 푸시',
         publishConfirm: '{{branch}} 게시',
       },
