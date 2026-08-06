@@ -1364,6 +1364,7 @@ export const zh: I18nMessages = {
       title: 'PR #{{number}} · {{state}}',
     },
     showMore: '显示更多 {{count}} 项...',
+    showLess: '收起',
   },
   pairing: {
     deviceLink: '设备连接',

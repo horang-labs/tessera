@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useInlineRename } from '@/hooks/use-inline-rename';
+import { useSubSessionCap } from '@/hooks/use-sub-session-cap';
+import { useSubSessionReorder } from '@/hooks/use-sub-session-reorder';
 import { setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { cn } from '@/lib/utils';
@@ -484,10 +486,12 @@ function SubSessionRow({
   onRename,
   isRenameRequested,
   onRenameComplete,
+  reorder,
 }: {
   sess: TaskSession;
   activeSessionId: string | null;
   collectionId: string | null;
+  reorder?: ReturnType<typeof useSubSessionReorder>;
   onSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
   onSessionDoubleClick?: (session: UnifiedSession) => void;
   onContextMenu?: ItemContextMenuHandler;
@@ -565,13 +569,17 @@ function SubSessionRow({
     event.stopPropagation();
     setPanelSessionDragData(event.dataTransfer, sess.id);
     event.dataTransfer.effectAllowed = 'move';
-  }, [isRenaming, sess.id]);
+    reorder?.handleDragStart(sess.id);
+  }, [isRenaming, sess.id, reorder]);
+
+  const dropPosition = reorder?.indicatorFor(sess.id) ?? null;
 
   return (
     <div
       className={cn(
         'group/sub relative my-px flex items-center gap-1.5 rounded px-2 py-1 text-[0.75rem] transition-colors duration-150',
         isRenaming ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+        reorder?.draggingSessionId === sess.id && 'opacity-40',
         isSelected
           ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
           : isActive
@@ -580,7 +588,12 @@ function SubSessionRow({
       )}
       draggable={!isRenaming}
       onDragStart={handleDragStart}
-      onDragEnd={(event) => event.stopPropagation()}
+      onDragEnd={(event) => {
+        event.stopPropagation();
+        reorder?.handleDragEnd();
+      }}
+      onDragOver={(event) => reorder?.handleDragOver(event, sess.id)}
+      onDrop={(event) => reorder?.handleDrop(event, sess.id)}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => {
         setIsHovered(false);
@@ -604,7 +617,16 @@ function SubSessionRow({
       }}
       data-session-id={sess.id}
       data-testid={`collection-subsession-${sess.id}`}
+      data-drop-position={dropPosition ?? undefined}
     >
+      {dropPosition && (
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-x-0 h-0.5 rounded-full bg-(--accent)',
+            dropPosition === 'before' ? '-top-px' : '-bottom-px',
+          )}
+        />
+      )}
       <div className="absolute -left-3 top-1/2 h-px w-[10px] bg-(--divider)" />
       {isActive && (
         <div className="absolute -left-3 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)" />
@@ -752,6 +774,8 @@ export function TaskItemRow({
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<DOMRect | null>(null);
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isMultiSession = task.sessions.length > 1;
+  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
+  const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const isTaskActive = !isMultiSession && task.sessions.length === 1 && task.sessions[0].id === activeSessionId;
   const isPending = task.isPending === true;
   const primarySessionId = task.sessions[0]?.id;
@@ -1156,7 +1180,7 @@ export function TaskItemRow({
           }}
         >
           <div className="absolute bottom-2 left-0 top-0 w-px bg-(--divider)" />
-          {task.sessions.map((session) => (
+          {visibleSessions.map((session) => (
             <SubSessionRow
               key={session.id}
               sess={session}
@@ -1170,8 +1194,22 @@ export function TaskItemRow({
               onRename={onSessionRename}
               isRenameRequested={renamingSessionId === session.id}
               onRenameComplete={onRenameComplete}
+              reorder={subSessionReorder}
             />
           ))}
+          {showToggle && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggle();
+              }}
+              className="w-full px-2 py-1 text-left text-[0.6875rem] text-(--text-muted) hover:text-(--sidebar-text-active)"
+              data-testid={`collection-task-show-more-${task.id}`}
+            >
+              {revealed ? t('task.showLess') : t('task.showMore', { count: hiddenCount })}
+            </button>
+          )}
         </div>
       )}
 

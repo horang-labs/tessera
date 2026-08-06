@@ -122,6 +122,16 @@ interface BoardState {
   setDragOverCollection: (colId: string | null) => void;
   setCollectionDropIndicator: (indicator: { targetId: string; position: 'before' | 'after' } | null) => void;
 
+  // Sub-session reorder DnD (sessions listed under a task, sidebar + kanban).
+  // dragover cannot read dataTransfer payloads, so the dragged row's identity
+  // lives here — that is how the drop target knows it belongs to the same task.
+  draggingSubSession: { taskId: string; sessionId: string } | null;
+  subSessionDropIndicator: { targetSessionId: string; position: 'before' | 'after' } | null;
+  setDraggingSubSession: (item: { taskId: string; sessionId: string } | null) => void;
+  setSubSessionDropIndicator: (
+    indicator: { targetSessionId: string; position: 'before' | 'after' } | null,
+  ) => void;
+
   // Collection group reorder DnD state
   draggingCollectionGroupId: string | null;
   collectionGroupDragOverIndex: number | null;
@@ -522,6 +532,16 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }),
   setDragOverCollection: (colId) => set({ dragOverCollectionId: colId }),
   setCollectionDropIndicator: (indicator) => set({ collectionDropIndicator: indicator }),
+
+  // Sub-session reorder DnD
+  draggingSubSession: null,
+  subSessionDropIndicator: null,
+  setDraggingSubSession: (item) =>
+    set({
+      draggingSubSession: item,
+      ...(item === null && { subSessionDropIndicator: null }),
+    }),
+  setSubSessionDropIndicator: (indicator) => set({ subSessionDropIndicator: indicator }),
 
   // Collection group reorder DnD
   draggingCollectionGroupId: null,

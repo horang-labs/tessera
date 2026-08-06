@@ -1345,6 +1345,7 @@ export interface I18nMessages {
       title: string;
     };
     showMore: string;
+    showLess: string;
   };
   pairing: {
     deviceLink: string;

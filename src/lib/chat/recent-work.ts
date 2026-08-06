@@ -141,6 +141,7 @@ function fallbackTaskItemsFromSessions(
       lastModified: session.lastModified,
       isRunning: session.isRunning,
       kind: session.kind,
+      sortOrder: session.sortOrder,
     }));
     const task: TaskEntity = {
       id: taskId,

@@ -1371,6 +1371,7 @@ export const ko: I18nMessages = {
       title: 'PR #{{number}} · {{state}}',
     },
     showMore: '{{count}}개 더 보기...',
+    showLess: '접기',
   },
   pairing: {
     deviceLink: '기기 연결',
