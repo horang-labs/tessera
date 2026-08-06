@@ -10,6 +10,7 @@
  */
 
 import * as dbSessions from '@/lib/db/sessions';
+import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import logger from '@/lib/logger';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type { TaskPrStatus } from '@/types/task-pr-status';
@@ -115,7 +116,13 @@ export function syncSessionPr(
       if (session.task_id) return;
       if (!session.work_dir) return;
 
-      const branch = await resolveCurrentBranch(session.work_dir, options.agentEnvironment);
+      // Callers that know the user pass the configured environment in. The
+      // background refreshes that do not have one fall back to the worktree
+      // path, which is stated here rather than defaulted further down.
+      const agentEnvironment = options.agentEnvironment
+        ?? await resolveGitEnvironment({ inferFromPaths: [session.work_dir] });
+
+      const branch = await resolveCurrentBranch(session.work_dir, agentEnvironment);
       if (!branch) {
         markUnsupportedIfChanged(sessionId);
         return;
@@ -124,7 +131,7 @@ export function syncSessionPr(
       const probe = await probeTaskPrStatus({
         workDir: session.work_dir,
         branch,
-        agentEnvironment: options.agentEnvironment,
+        agentEnvironment,
       });
 
       if (probe.kind === 'unsupported') {

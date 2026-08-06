@@ -12,11 +12,10 @@ import { getTesseraDataPath } from '../tessera-data-dir';
 import {
   getWslHostedWindowsHomeMountPath,
   getWindowsHostedWslRootFilesystemPath,
-  isWslFilesystemPath,
 } from '../filesystem/path-environment';
 import { resolvePathForHostFilesystem } from '../filesystem/host-path';
 import type { AgentEnvironment } from '../settings/types';
-import { createGitRunner, type GitRunner } from './git-runner';
+import type { GitRunner } from './git-runner';
 import { getRuntimePlatform } from '../system/runtime-platform';
 import { isRunningInWsl } from '../cli/cli-exec';
 
@@ -257,10 +256,11 @@ export async function resolveManagedWorktreeRoot(
   return MANAGED_WORKTREE_ROOT;
 }
 
+/** `runGit` is required: callers name their environment via ADR 0006. */
 export async function removeManagedWorktree(
   projectDir: string,
   worktreePath: string,
-  runGit: GitRunner = createGitRunner(inferManagedGitEnvironment(projectDir, worktreePath)),
+  runGit: GitRunner,
 ): Promise<void> {
   await runGit(
     ['-C', projectDir, 'worktree', 'remove', '--force', worktreePath],
@@ -358,15 +358,6 @@ function resolveWslPosixFallbackManagedWorktreeRoot(candidate: string): string |
   return normalized.startsWith('/var/tmp/tessera-worktrees')
     ? '/var/tmp/tessera-worktrees'
     : null;
-}
-
-function inferManagedGitEnvironment(
-  projectDir: string,
-  worktreePath: string,
-): AgentEnvironment {
-  return isWslFilesystemPath(projectDir) || isWslFilesystemPath(worktreePath)
-    ? 'wsl'
-    : 'native';
 }
 
 function getRelativePathIfInside(rootDir: string, candidate: string): string | null {

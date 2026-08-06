@@ -3,7 +3,6 @@ import { readFile } from "fs/promises";
 import path from "path";
 import {
   getFilesystemPathBasename,
-  isWindowsHostedWslFilesystemPath,
   resolveWslDisplayPathAgainstWindowsHostedPath,
 } from "@/lib/filesystem/path-environment";
 import { resolvePathForHostFilesystem } from "@/lib/filesystem/host-path";
@@ -18,7 +17,11 @@ import {
   getCachedDiffStats,
   getCachedDiffStatsRevalidating,
 } from "@/lib/git/worktree-diff-stats-cache";
-import { getAgentEnvironment, spawnCli } from "@/lib/cli/spawn-cli";
+import { spawnCli } from "@/lib/cli/spawn-cli";
+import {
+  resolveGitEnvironment,
+  type GitEnvironmentSource,
+} from "@/lib/git/git-environment";
 import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
 import { getRuntimePlatform } from "@/lib/system/runtime-platform";
 import type { AgentEnvironment } from "@/lib/settings/types";
@@ -938,7 +941,7 @@ export async function getGitPanelData(
 ): Promise<GitPanelData> {
   const sessionContext = await resolveSessionContext(sessionId);
   const { workDir } = sessionContext;
-  const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
+  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const {
     repoRoot,
     branchRaw,
@@ -1017,7 +1020,7 @@ export async function getGitChangedFilesData(
   userId?: string,
 ): Promise<GitChangedFilesData> {
   const workDir = await resolveSessionWorkDir(sessionId);
-  const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
+  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   let changedFiles: ChangedFilesResult;
   if (shouldBatchGitCommands(agentEnvironment)) {
     changedFiles = (await getBatchedChangedFiles(workDir, agentEnvironment)).changedFiles;
@@ -1040,7 +1043,7 @@ export async function fetchGitPanelData(
 ): Promise<GitPanelData> {
   const sessionContext = await resolveSessionContext(sessionId);
   const { workDir } = sessionContext;
-  const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
+  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   await resolveRepoRoot(workDir, agentEnvironment);
   const upstream = await runOptionalCommand(
     "git",
@@ -1059,7 +1062,7 @@ export async function getGitDiffData(
   userId?: string,
 ): Promise<GitDiffData> {
   const workDir = await resolveSessionWorkDir(sessionId);
-  const agentEnvironment = await resolveCommandEnvironment(workDir, userId);
+  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
   const changedFiles = await getChangedFiles(workDir, agentEnvironment);
   const fileEntry = changedFiles.files.find((file) => file.path === relativePath);
@@ -1107,19 +1110,10 @@ export async function getGitDiffData(
   };
 }
 
-async function resolveCommandEnvironment(
-  workDir: string,
-  userId?: string,
-): Promise<AgentEnvironment> {
-  if (userId) {
-    return getAgentEnvironment(userId);
-  }
-
-  if (isWindowsHostedWslFilesystemPath(workDir)) return "wsl";
-  if (getRuntimePlatform() === "win32" && workDir.trim().startsWith("/")) {
-    return "wsl";
-  }
-  return "native";
+// `userId` is optional here because the recompute path (`git-panel-cache`)
+// runs with no user attached.
+function gitEnvironmentSourceFor(workDir: string, userId?: string): GitEnvironmentSource {
+  return userId ? { userId } : { inferFromPaths: [workDir] };
 }
 
 async function resolveNodeFilesystemPath(
