@@ -1094,6 +1094,7 @@ export const en: I18nMessages = {
     commitPush: {
       button: 'Commit & Push',
       buttonCount: 'Commit & Push ({{count}})',
+      buttonPending: 'Committing & pushing…',
     },
     push: {
       button: 'Push',

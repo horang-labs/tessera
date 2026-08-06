@@ -1075,6 +1075,7 @@ export interface I18nMessages {
     commitPush: {
       button: string;
       buttonCount: string;
+      buttonPending: string;
     };
     push: {
       button: string;

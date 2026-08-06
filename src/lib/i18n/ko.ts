@@ -1101,6 +1101,7 @@ export const ko: I18nMessages = {
     commitPush: {
       button: '커밋 후 푸시',
       buttonCount: '커밋 후 푸시 ({{count}})',
+      buttonPending: '커밋 후 푸시 중…',
     },
     push: {
       button: '푸시',

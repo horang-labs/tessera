@@ -65,7 +65,7 @@ type GitBranchActionVerb = "push" | "pull" | "create_pr";
  * rather than the two requests it makes, because what the panel has to disable
  * is the whole press, not each half as it goes by.
  */
-type GitPendingVerb = GitActionVerb | "commit_push";
+export type GitPendingVerb = GitActionVerb | "commit_push";
 
 /**
  * What a branch action says when the request never came back with anything of
@@ -1098,10 +1098,14 @@ export function useGitPanelController(sessionId: string | null) {
     changedFileCount,
     commitMessage,
     commitTotals,
-    // The commit form disables its own inputs while its action runs; a push
-    // leaves them alone, since it is not what they feed. The menu's compound
-    // counts, because its first half is that same commit.
-    committing: pendingHere === "commit" || pendingHere === "commit_push",
+    /**
+     * Whatever is running against this working directory, or null. Every
+     * surface that has to say what is happening reads this one value rather
+     * than a boolean of its own: the menu can start an action the button did
+     * not, so "something is running" and "this is what is running" are
+     * different questions and §7 needs the second one answered.
+     */
+    pendingVerb: pendingHere,
     commitDraftBlocked,
     copyBranch,
     copyFilePath,
@@ -1121,7 +1125,6 @@ export function useGitPanelController(sessionId: string | null) {
     primaryAction,
     menuActions,
     runMenuAction,
-    actionPending: pendingHere !== null,
     runPrimaryAction,
     pushConfirmation,
     confirmPrimaryAction,

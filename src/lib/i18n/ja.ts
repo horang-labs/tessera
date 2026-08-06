@@ -1094,6 +1094,7 @@ export const ja: I18nMessages = {
     commitPush: {
       button: 'コミットしてプッシュ',
       buttonCount: 'コミットしてプッシュ ({{count}})',
+      buttonPending: 'コミットしてプッシュ中…',
     },
     push: {
       button: 'プッシュ',

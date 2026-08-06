@@ -123,10 +123,14 @@ function GitActionMenuItem({
   const { t } = useI18n();
   const disabled = pending || blocked || !action.enabled;
   // `blocked` only ever arrives on an action the git state left available, so
-  // there is no competing reason for it to displace.
-  const reasonKey = blocked
-    ? "gitPanel.commit.draftRequired"
-    : action.disabledReasonKey;
+  // there is no competing reason for it to displace. The running action outranks
+  // both: §4 asks a disabled entry to say why, and an entry greyed out with
+  // nothing under it would be the one disable in the menu that stays silent.
+  const reasonKey = pending
+    ? "gitPanel.menu.pending"
+    : blocked
+      ? "gitPanel.commit.draftRequired"
+      : action.disabledReasonKey;
   const reason = disabled && reasonKey ? t(reasonKey) : null;
 
   return (

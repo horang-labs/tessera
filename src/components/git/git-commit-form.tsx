@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import { GitPrimaryActionButton } from "./git-primary-action";
+import type { GitPendingVerb } from "./use-git-panel-controller";
 
 /**
  * The commit surface, inline above the changed-file list rather than in a
@@ -21,7 +22,7 @@ import { GitPrimaryActionButton } from "./git-primary-action";
  * that could not answer leaves the commit path exactly as it was.
  */
 export function GitCommitForm({
-  committing,
+  pendingVerb,
   generateError,
   generating,
   menu,
@@ -32,7 +33,13 @@ export function GitCommitForm({
   primaryAction,
   totals,
 }: {
-  committing: boolean;
+  /**
+   * Whatever is running against this working directory, or null — not only this
+   * form's own commit. A pull started from the menu holds the same `index.lock`
+   * a commit would, so §7 disables these inputs for it too; leaving them live
+   * would take a commit press the controller can only discard in silence.
+   */
+  pendingVerb: GitPendingVerb | null;
   generateError: string | null;
   generating: boolean;
   /** The dropdown, beside the button here as it is on every other rung (§4). */
@@ -50,19 +57,20 @@ export function GitCommitForm({
   totals: { files: number; added: number; removed: number };
 }) {
   const { t } = useI18n();
+  const busy = pendingVerb !== null;
   // What the ladder cannot see: a message still to be typed, a selection the
   // user emptied. §5 requires both, and this is the field-side half of it.
   const commitBlocked = message.trim().length === 0 || totals.files === 0;
   // Nothing selected means there is no change set to summarize, so the user is
   // never offered a summary of nothing.
-  const canGenerate = totals.files > 0 && !generating && !committing;
+  const canGenerate = totals.files > 0 && !generating && !busy;
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-(--divider) bg-(--chat-bg) p-2">
       <textarea
         value={message}
         onChange={(event) => onMessageChange(event.target.value)}
-        disabled={committing || generating}
+        disabled={busy || generating}
         rows={2}
         aria-label={t("gitPanel.commit.messageLabel")}
         placeholder={t("gitPanel.commit.messagePlaceholder")}
@@ -115,7 +123,7 @@ export function GitCommitForm({
         </Button>
         <GitPrimaryActionButton
           action={primaryAction}
-          pending={committing}
+          pendingVerb={pendingVerb}
           blocked={commitBlocked}
           onRun={onCommit}
         />

@@ -1094,6 +1094,7 @@ export const zh: I18nMessages = {
     commitPush: {
       button: '提交并推送',
       buttonCount: '提交并推送 ({{count}})',
+      buttonPending: '正在提交并推送…',
     },
     push: {
       button: '推送',

@@ -5,6 +5,29 @@ import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
+import type { GitPendingVerb } from "./use-git-panel-controller";
+
+/**
+ * What the button says while an action runs. Read off the verb that is actually
+ * running rather than off the ladder, because the two can disagree: the menu can
+ * start a push on a rung whose button says Pull, and a button that spent that
+ * moment saying "Pulling…" would be naming an action nobody pressed — the same
+ * thing ADR 0007 refuses for the resting label.
+ */
+function resolvePendingLabelKey(
+  action: GitPrimaryAction,
+  verb: GitPendingVerb,
+): string {
+  if (verb === "commit") return "gitPanel.commit.buttonPending";
+  if (verb === "commit_push") return "gitPanel.commitPush.buttonPending";
+  if (verb === "pull") return "gitPanel.pull.buttonPending";
+  if (verb === "create_pr") return "gitPanel.pr.createButtonPending";
+  // Push and Publish Branch are one action, and only the ladder knows which
+  // word this repository's state calls for.
+  return action.kind === "publish"
+    ? "gitPanel.push.publishButtonPending"
+    : "gitPanel.push.buttonPending";
+}
 
 /**
  * The Git panel's one button (`docs/design/git-delivery.md` §3, ADR 0007).
@@ -16,12 +39,17 @@ import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
  */
 export function GitPrimaryActionButton({
   action,
-  pending,
+  pendingVerb,
   blocked,
   onRun,
 }: {
   action: GitPrimaryAction;
-  pending: boolean;
+  /**
+   * The action running against this working directory, or null. It can be one
+   * the menu started rather than one this button did, which is why the button
+   * takes the verb rather than a boolean.
+   */
+  pendingVerb: GitPendingVerb | null;
   /**
    * The surface around the button refusing it for something the ladder cannot
    * see — an empty commit message, a selection the user emptied.
@@ -30,6 +58,7 @@ export function GitPrimaryActionButton({
   onRun: () => void;
 }) {
   const { t } = useI18n();
+  const pending = pendingVerb !== null;
   const disabled = pending || blocked || !action.enabled;
   const reason = action.disabledReasonKey ? t(action.disabledReasonKey) : undefined;
 
@@ -44,10 +73,10 @@ export function GitPrimaryActionButton({
       data-git-action={action.kind}
       className="h-7 shrink-0 px-3 text-[11px]"
     >
-      {pending ? (
+      {pendingVerb ? (
         <>
           <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />
-          {t(action.pendingLabelKey)}
+          {t(resolvePendingLabelKey(action, pendingVerb))}
         </>
       ) : (
         // The count rides on the label where the size of the operation is worth
@@ -68,7 +97,7 @@ export function GitPrimaryActionButton({
 export function GitPrimaryActionBar({
   action,
   menu,
-  pending,
+  pendingVerb,
   onRun,
 }: {
   action: GitPrimaryAction;
@@ -78,7 +107,7 @@ export function GitPrimaryActionBar({
    * of the menu is that it always offers the same list.
    */
   menu?: ReactNode;
-  pending: boolean;
+  pendingVerb: GitPendingVerb | null;
   onRun: () => void;
 }) {
   const { t } = useI18n();
@@ -92,7 +121,11 @@ export function GitPrimaryActionBar({
         {action.disabledReasonKey ? t(action.disabledReasonKey) : null}
       </span>
       <div className="flex shrink-0 items-center gap-1">
-        <GitPrimaryActionButton action={action} pending={pending} onRun={onRun} />
+        <GitPrimaryActionButton
+          action={action}
+          pendingVerb={pendingVerb}
+          onRun={onRun}
+        />
         {menu}
       </div>
     </div>

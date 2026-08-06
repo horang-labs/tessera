@@ -26,6 +26,7 @@ import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions"
 import { cn } from "@/lib/utils";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
+import type { GitPendingVerb } from "./use-git-panel-controller";
 import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
 import { GitActionMenu } from "./git-action-menu";
 import { GitCommitForm } from "./git-commit-form";
@@ -572,7 +573,6 @@ export function GitPanelContentSection({
 }: {
   changedFileCount: number;
   commit: {
-    committing: boolean;
     draftBlocked: boolean;
     generateError: string | null;
     generating: boolean;
@@ -589,7 +589,8 @@ export function GitPanelContentSection({
   /** The one Git action this state calls for, and the press that runs it. */
   primary: {
     action: GitPrimaryAction;
-    pending: boolean;
+    /** What is running here, whether this button or the menu started it. */
+    pendingVerb: GitPendingVerb | null;
     onRun: () => void;
   };
   /** Every Git action, always, derived independently of the primary (§4). */
@@ -618,7 +619,7 @@ export function GitPanelContentSection({
   const actionMenu = (
     <GitActionMenu
       actions={menu.actions}
-      pending={primary.pending}
+      pending={primary.pendingVerb !== null}
       commitDraftBlocked={commit.draftBlocked}
       onRun={menu.onRun}
     />
@@ -644,7 +645,7 @@ export function GitPanelContentSection({
           */}
           {primary.action.kind === "commit" ? (
             <GitCommitForm
-              committing={commit.committing}
+              pendingVerb={primary.pendingVerb}
               generateError={commit.generateError}
               generating={commit.generating}
               menu={actionMenu}
@@ -659,7 +660,7 @@ export function GitPanelContentSection({
             <GitPrimaryActionBar
               action={primary.action}
               menu={actionMenu}
-              pending={primary.pending}
+              pendingVerb={primary.pendingVerb}
               onRun={primary.onRun}
             />
           )}
@@ -721,7 +722,10 @@ export function GitPanelContentSection({
                             <input
                               type="checkbox"
                               checked={commit.isSelected(file.path)}
-                              disabled={commit.committing}
+                              // The selection is an input to the commit, so it
+                              // locks with the rest of the form (§7) rather
+                              // than only while a commit is what is running.
+                              disabled={primary.pendingVerb !== null}
                               onChange={() => commit.onToggleFile(file.path)}
                               aria-label={t("gitPanel.commit.includeFile", {
                                 path: file.path,

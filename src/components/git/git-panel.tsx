@@ -314,7 +314,6 @@ export function GitPanel({
             error={controller.error}
             changedFileCount={controller.changedFileCount}
             commit={{
-              committing: controller.committing,
               draftBlocked: controller.commitDraftBlocked,
               generateError: controller.generateMessageError,
               generating: controller.generatingMessage,
@@ -327,7 +326,7 @@ export function GitPanel({
             }}
             primary={{
               action: controller.primaryAction,
-              pending: controller.actionPending,
+              pendingVerb: controller.pendingVerb,
               onRun: () => void controller.runPrimaryAction(),
             }}
             menu={{
