@@ -118,23 +118,35 @@ export function useGitPanelController(sessionId: string | null) {
     () => new Set<string>(),
   );
   /**
-   * One Git action at a time, and the panel has to know which one — the pending
-   * label has to be the verb that is actually running — and *whose*.
+   * The Git action each session has in flight, if any.
    *
-   * The panel is a single component pointed at whichever session is active,
-   * while this state outlives a switch. Without the session id, a commit still
-   * running when the user moves on would spin a pending label on a session that
-   * ran nothing, which is exactly the frame ADR 0007 wants stable; and clearing
-   * it on switch instead would let a switch away and back start a second one on
-   * top of the first.
+   * Keyed by session because the panel is a single component pointed at
+   * whichever session is active, while this state outlives a switch. One slot
+   * for the whole panel gets it wrong whichever way it is read: shared, a commit
+   * still running when the user moves on spins a pending label on a session that
+   * ran nothing; cleared on switch, moving away and back re-enables the button
+   * over the action already running.
+   *
+   * Sessions do not queue behind each other. They are separate working
+   * directories reached through separate routes, nothing on the server
+   * serializes them, and two browser tabs could always run them at once anyway.
    */
-  const [pendingAction, setPendingAction] = useState<
-    { sessionId: string; verb: GitActionVerb } | null
-  >(null);
-  // Only the acting session sees the action it started.
-  const pendingHere = pendingAction?.sessionId === sessionId
-    ? pendingAction.verb
-    : null;
+  const [pendingActions, setPendingActions] = useState<
+    Readonly<Record<string, GitActionVerb>>
+  >(() => ({}));
+  const pendingHere = (sessionId ? pendingActions[sessionId] : null) ?? null;
+
+  const markPending = useCallback(
+    (id: string, verb: GitActionVerb | null): void => {
+      setPendingActions((current) => {
+        const next = { ...current };
+        if (verb) next[id] = verb;
+        else delete next[id];
+        return next;
+      });
+    },
+    [],
+  );
   const [generatingMessage, setGeneratingMessage] = useState(false);
   // A generation failure stays here rather than in a toast: it belongs to the
   // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
@@ -539,7 +551,7 @@ export function useGitPanelController(sessionId: string | null) {
   const generateCommitMessage = useCallback(async () => {
     // The button is disabled without a selection, and a poll can empty one out
     // from under a click that is already on its way.
-    if (!sessionId || commitFiles.length === 0 || generatingMessage || pendingAction) {
+    if (!sessionId || commitFiles.length === 0 || generatingMessage || pendingHere) {
       return;
     }
 
@@ -601,7 +613,7 @@ export function useGitPanelController(sessionId: string | null) {
     } finally {
       setGeneratingMessage(false);
     }
-  }, [commitFiles, generatingMessage, pendingAction, sessionId, t]);
+  }, [commitFiles, generatingMessage, pendingHere, sessionId, t]);
 
   // Which of the parallel sessions a toast is about. Held here rather than
   // inside the action so the callback depends on the name, not on every panel
@@ -645,12 +657,12 @@ export function useGitPanelController(sessionId: string | null) {
     // The button is disabled without these. This is the second guard the design
     // asks for, and it also catches a click that lands after the selection
     // emptied underneath it.
-    if (!sessionId || !message || commitFiles.length === 0 || pendingAction) return;
+    if (!sessionId || !message || commitFiles.length === 0 || pendingHere) return;
 
     const files = commitFiles.map((file) => file.path);
     const report = reportAction;
 
-    setPendingAction({ sessionId, verb: "commit" });
+    markPending(sessionId, "commit");
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
@@ -689,13 +701,15 @@ export function useGitPanelController(sessionId: string | null) {
         ),
       );
     } finally {
-      setPendingAction(null);
+      // The id this action started under, not whichever session is active now.
+      markPending(sessionId, null);
     }
   }, [
     commitFiles,
     commitMessage,
     commitOrigin,
-    pendingAction,
+    markPending,
+    pendingHere,
     reportAction,
     sessionId,
   ]);
@@ -706,9 +720,9 @@ export function useGitPanelController(sessionId: string | null) {
    * the result rather than assumed from the label (§7).
    */
   const pushBranch = useCallback(async () => {
-    if (!sessionId || pendingAction) return;
+    if (!sessionId || pendingHere) return;
 
-    setPendingAction({ sessionId, verb: "push" });
+    markPending(sessionId, "push");
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
@@ -742,9 +756,9 @@ export function useGitPanelController(sessionId: string | null) {
         ),
       );
     } finally {
-      setPendingAction(null);
+      markPending(sessionId, null);
     }
-  }, [commitOrigin, pendingAction, reportAction, sessionId]);
+  }, [commitOrigin, markPending, pendingHere, reportAction, sessionId]);
 
   /** The one button. Which verb it runs is the ladder's answer, not the user's. */
   const runPrimaryAction = useCallback(() => {
