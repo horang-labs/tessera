@@ -17,6 +17,7 @@
 import {
   createGitRunner,
   GitCommandError,
+  type GitFailureKind,
   type GitRunner,
 } from "@/lib/worktrees/git-runner";
 import logger from "@/lib/logger";
@@ -236,7 +237,7 @@ async function describeFailure(
 
   if (error instanceof GitCommandError) {
     return {
-      kind: error.kind,
+      kind: promoteHookRejection(error),
       message: truncateStderr(error.message),
       stderr: truncateStderr(error.stderr),
       exitCode: error.exitCode,
@@ -251,6 +252,34 @@ async function describeFailure(
     exitCode: null,
     changedFiles,
   };
+}
+
+/** How Git prefixes a line it wrote itself, in any of its own diagnostics. */
+const GIT_DIAGNOSTIC_PREFIXES = ['fatal:', 'error:', 'warning:', 'hint:'];
+
+/**
+ * The runner classifies by what the output says, which catches a hook that
+ * names itself or its runner. Here the command is known to be `git commit`, and
+ * that supports the stronger inference the runner cannot make on its own: when
+ * Git refuses a commit for its own reasons it always explains itself, in its
+ * own voice, on stderr. So a commit that failed while Git said nothing was
+ * refused by something Git invoked — a hook — whether that hook printed a
+ * complaint of its own or exited in silence.
+ *
+ * `stdout` guards the one case where Git reports without a diagnostic prefix:
+ * "nothing added to commit" goes there, and it is Git speaking, not a hook.
+ */
+function promoteHookRejection(error: GitCommandError): GitFailureKind {
+  if (error.kind !== 'command_failed') return error.kind;
+  if (error.stdout.trim()) return error.kind;
+
+  const spokeAsGit = error.stderr
+    .split('\n')
+    .some((line) => GIT_DIAGNOSTIC_PREFIXES.some(
+      (prefix) => line.trimStart().toLowerCase().startsWith(prefix),
+    ));
+
+  return spokeAsGit ? error.kind : 'hook_rejected';
 }
 
 /**

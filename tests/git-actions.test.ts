@@ -187,11 +187,62 @@ test('an empty selection is refused', async (t) => {
   });
 });
 
+test('a hook that refuses without saying anything is still reported as a hook', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withTempRepo(async (target, repoDir) => {
+    fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'seed changed\n');
+    // A hand-written hook need not print anything, and Git prints nothing of
+    // its own for a rejected commit. Silence is the whole signal.
+    installPreCommitHook(repoDir, '#!/bin/sh\nexit 1\n');
+
+    const result = await executeGitAction(target, {
+      action: 'commit',
+      message: 'refused in silence',
+      files: ['seed.txt'],
+    });
+
+    assert.equal(result.ok, false, 'expected the commit to fail');
+    if (result.ok) return;
+    assert.equal(result.failure.kind, 'hook_rejected');
+    assert.deepEqual(
+      result.failure.changedFiles.map((file) => file.path),
+      ['seed.txt'],
+    );
+  });
+});
+
+test('a commit Git itself refuses is not dressed up as a hook rejection', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withTempRepo(async (target, repoDir) => {
+    fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'seed changed\n');
+    // No hook here. Git fails on its own and says so in its own voice.
+    await execFileAsync('git', ['config', 'commit.gpgsign', 'true'], { cwd: repoDir });
+    await execFileAsync('git', ['config', 'user.signingkey', 'no-such-key'], { cwd: repoDir });
+
+    const result = await executeGitAction(target, {
+      action: 'commit',
+      message: 'git says no',
+      files: ['seed.txt'],
+    });
+
+    assert.equal(result.ok, false, 'expected the commit to fail');
+    if (result.ok) return;
+    assert.equal(result.failure.kind, 'command_failed');
+    assert.match(result.failure.stderr, /gpg/i);
+  });
+});
+
 function installRejectingPreCommitHook(repoDir: string): void {
+  installPreCommitHook(repoDir, '#!/bin/sh\necho "lint said no" >&2\nexit 1\n');
+}
+
+function installPreCommitHook(repoDir: string, script: string): void {
   const hookDir = path.join(repoDir, '.git', 'hooks');
   fs.mkdirSync(hookDir, { recursive: true });
   const hookPath = path.join(hookDir, 'pre-commit');
-  fs.writeFileSync(hookPath, '#!/bin/sh\necho "lint said no" >&2\nexit 1\n');
+  fs.writeFileSync(hookPath, script);
   fs.chmodSync(hookPath, 0o755);
 }
 
@@ -212,7 +263,9 @@ test('a failing commit returns a structured failure and leaves the tree alone', 
 
     assert.equal(result.ok, false, 'expected the commit to fail');
     if (result.ok) return;
-    assert.equal(result.failure.kind, 'command_failed');
+    // The hook spoke and Git did not, so this is the user's code being refused
+    // rather than the tool breaking (#230).
+    assert.equal(result.failure.kind, 'hook_rejected');
     assert.equal(result.failure.exitCode, 1);
     assert.match(result.failure.stderr, /lint said no/);
     assert.match(result.failure.message, /lint said no/);

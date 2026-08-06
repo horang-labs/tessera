@@ -1063,6 +1063,8 @@ export interface I18nMessages {
       buttonPending: string;
       successToast: string;
       failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
     };
   };
   memoryPanel: {

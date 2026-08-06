@@ -1089,6 +1089,8 @@ export const ko: I18nMessages = {
       buttonPending: '커밋 중…',
       successToast: '커밋함 · {{origin}}',
       failureToast: '커밋 실패 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git 훅이 커밋을 거부함 · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git 훅이 커밋을 거부함 · {{origin}}',
     },
   },
   memoryPanel: {

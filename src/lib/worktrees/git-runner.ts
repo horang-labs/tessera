@@ -33,12 +33,17 @@ export const DEFAULT_GIT_TIMEOUT_MS = 600_000;
 export const DEFAULT_GIT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 /**
- * How a Git command failed. `authentication` and `not_found` are promoted out
- * of `command_failed` because a caller can act on them — the rest is stderr.
+ * How a Git command failed. `authentication`, `not_found` and `hook_rejected`
+ * are promoted out of `command_failed` because a caller can act on them — the
+ * rest is stderr.
+ *
+ * `hook_rejected` earns its place by answering a different question from the
+ * others: the tool worked and the user's own code was refused.
  */
 export type GitFailureKind =
   | 'authentication'
   | 'not_found'
+  | 'hook_rejected'
   | 'timeout'
   | 'spawn_failed'
   | 'command_failed';
@@ -325,6 +330,29 @@ const NOT_FOUND_PATTERNS = [
   'no such remote',
 ];
 
+/**
+ * Git sends hook output to stderr along with its own, and says nothing itself
+ * about which hook refused, so the signal is whatever the hook printed. Named
+ * runners identify themselves; a hand-written hook may not, and one that also
+ * stays silent is caught in the commit path instead
+ * (`src/lib/git/git-actions.ts`), where the command being `git commit` is known.
+ */
+const HOOK_REJECTION_PATTERNS = [
+  'pre-commit',
+  'commit-msg',
+  'pre-push',
+  'pre-rebase',
+  'pre-merge-commit',
+  'prepare-commit-msg',
+  'hook declined',
+  'hook failed',
+  'husky',
+  'lefthook',
+  'lint-staged',
+  'pre-receive hook',
+  'update hook',
+];
+
 function classifyGitFailure(stderr: string): GitFailureKind {
   const haystack = stderr.toLowerCase();
   // Authentication first: a private repository answers "Repository not found"
@@ -334,6 +362,11 @@ function classifyGitFailure(stderr: string): GitFailureKind {
   }
   if (NOT_FOUND_PATTERNS.some((pattern) => haystack.includes(pattern))) {
     return 'not_found';
+  }
+  // After both, so a hook that fails on a credential or a missing ref is still
+  // reported as the thing the user can act on.
+  if (HOOK_REJECTION_PATTERNS.some((pattern) => haystack.includes(pattern))) {
+    return 'hook_rejected';
   }
   return 'command_failed';
 }

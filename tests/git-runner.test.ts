@@ -85,6 +85,41 @@ test('authentication and not-found are promoted out of a generic failure', async
   );
 });
 
+test('a hook saying no is promoted out of a generic command failure', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  const runShell = createGitShellRunner(LOCAL_ENVIRONMENT, { timeoutMs: 10_000 });
+  const kindOf = async (stderr: string): Promise<GitCommandError> => {
+    const error = await runShell(`echo ${JSON.stringify(stderr)} >&2; exit 1`)
+      .then(() => null, (caught: unknown) => caught);
+    assert.ok(error instanceof GitCommandError);
+    return error;
+  };
+
+  // Git redirects hook output to stderr, so what a rejecting hook said is what
+  // there is to classify by — the runners name themselves.
+  assert.equal(
+    (await kindOf('husky - pre-commit script failed')).kind,
+    'hook_rejected',
+  );
+  assert.equal((await kindOf('lefthook: pre-push hook failed')).kind, 'hook_rejected');
+  assert.equal(
+    (await kindOf('remote: error: hook declined to update refs/heads/main')).kind,
+    'hook_rejected',
+  );
+
+  // A hook rejection is the user's code being refused. A credential problem and
+  // a missing ref are the tool failing, and stay where they were.
+  assert.equal(
+    (await kindOf('fatal: Authentication failed for pre-commit-hooks.example')).kind,
+    'authentication',
+  );
+  assert.equal(
+    (await kindOf('error: gpg failed to sign the data\nfatal: failed to write commit object')).kind,
+    'command_failed',
+  );
+});
+
 test('the default timeout clears the slowest legitimate command by a wide margin', () => {
   // `worktree add` on a large repository runs for minutes and had no deadline
   // before the merge; a tight default would turn a slow success into a failure.

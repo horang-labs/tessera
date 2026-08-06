@@ -1082,6 +1082,8 @@ export const en: I18nMessages = {
       buttonPending: 'Committing…',
       successToast: 'Committed · {{origin}}',
       failureToast: 'Commit failed · {{origin}} — {{reason}}',
+      hookRejectedToast: 'A git hook rejected the commit · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'A git hook rejected the commit · {{origin}}',
     },
   },
   memoryPanel: {

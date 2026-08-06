@@ -1082,6 +1082,8 @@ export const ja: I18nMessages = {
       buttonPending: 'コミット中…',
       successToast: 'コミットしました · {{origin}}',
       failureToast: 'コミット失敗 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git フックがコミットを拒否しました · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git フックがコミットを拒否しました · {{origin}}',
     },
   },
   memoryPanel: {
