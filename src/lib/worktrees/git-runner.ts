@@ -400,10 +400,23 @@ const HOOK_REJECTION_PATTERNS = [
  */
 function namesARefusingHook(stderr: string): boolean {
   return stderr.split('\n').some((line) => {
-    if (isGitDiagnosticLine(line)) return false;
+    if (isGitDiagnosticLine(line) || isPathOnlyLine(line)) return false;
     const normalized = line.toLowerCase();
     return HOOK_REJECTION_PATTERNS.some((pattern) => mentionsHookByName(normalized, pattern));
   });
+}
+
+/**
+ * A line that is nothing but a path is Git listing a file, not a hook saying
+ * anything — the paths under "your local changes would be overwritten", the
+ * ignored paths `git add` refuses. Indentation does not identify them: Git
+ * indents that list with a tab but flush-lefts the ignored one, and
+ * ` ! [remote rejected] …` leads with a space while carrying a real verdict.
+ * A hook that speaks writes a sentence; a listed path has nothing else on it.
+ */
+function isPathOnlyLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length > 0 && !/\s/.test(trimmed);
 }
 
 /** What a hook name is preceded by when it is part of a path rather than prose. */

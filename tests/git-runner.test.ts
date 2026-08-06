@@ -151,6 +151,27 @@ test('a hook saying no is promoted out of a generic command failure', async (t) 
     'Please commit your changes or stash them before you merge.',
   ].join('\n');
   assert.equal((await kindOf(blockedByLocalChanges)).kind, 'command_failed');
+
+  // The same list, but the hook config lives at the repository root — where
+  // lefthook and lint-staged put theirs — so there is no directory in front of
+  // the name to mark it as a path. A listed path is a line that is only a path.
+  assert.equal(
+    (await kindOf([
+      'error: Your local changes to the following files would be overwritten by merge:',
+      '\tlefthook.yml',
+      'Please commit your changes or stash them before you merge.',
+    ].join('\n'))).kind,
+    'command_failed',
+  );
+  // `git add` lists ignored paths flush left, so the name starts the line.
+  assert.equal(
+    (await kindOf([
+      'The following paths are ignored by one of your .gitignore files:',
+      'lint-staged.config.js',
+      'hint: Use -f if you really want to add them.',
+    ].join('\n'))).kind,
+    'command_failed',
+  );
 });
 
 test('the default timeout clears the slowest legitimate command by a wide margin', () => {
