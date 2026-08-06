@@ -192,13 +192,15 @@ function runCommand(
       // stdin is ignored, so a credential prompt would block the child
       // forever; tell git to fail instead of prompting.
       //
-      // `LC_ALL=C` keeps Git's diagnostics in the language every pattern below
-      // is written in. Git translates them, so on a localized machine
-      // `classifyGitFailure` would stop recognising an authentication failure
-      // or a missing ref, and `hasGitDiagnosticLine` would stop telling Git's
-      // own voice from a hook's. This is display text the user rarely sees and
-      // never a value the product branches on afterwards.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },
+      // The locale is deliberately left alone. Pinning `LC_ALL=C` would make
+      // every pattern in this file reliable on a localized machine, but it also
+      // reaches stdout the panel renders as-is — `%cr` in the recent-commits
+      // log is translated text, so the panel would read "3 hours ago" to a user
+      // whose Git speaks Korean. Fixing that properly means asking for `%ct`
+      // and formatting the relative time against the app's own language, which
+      // is a change to what the panel displays rather than to how failures are
+      // classified.
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     };
@@ -341,6 +343,11 @@ const NOT_FOUND_PATTERNS = [
  * How Git prefixes a line it wrote itself. `remote:` output is excluded on
  * purpose: `remote: error: hook declined` is a server echoing its own hook, not
  * this Git explaining a failure.
+ *
+ * English, like every other pattern here, and Git translates these. A localized
+ * Git therefore reads to this file as if it had said nothing in its own voice —
+ * the same assumption the authentication and not-found patterns have always
+ * made. See the note on the spawn env for why it is not fixed with `LC_ALL`.
  */
 const GIT_DIAGNOSTIC_PREFIXES = ['fatal:', 'error:', 'warning:', 'hint:'];
 
