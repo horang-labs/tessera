@@ -2,8 +2,32 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   derivePrimaryGitAction,
+  gitStateSnapshotFromPanel,
   type GitStateSnapshot,
 } from '@/lib/git/primary-git-action';
+import type { GitPanelData } from '@/types/git';
+
+const PANEL: GitPanelData = {
+  sessionId: 's1',
+  workDir: '/repo',
+  repoRoot: '/repo',
+  repoName: 'repo',
+  worktreeName: 'repo',
+  worktreePath: '/repo',
+  branch: 'feature/0807-t233',
+  upstream: 'origin/feature/0807-t233',
+  ahead: 0,
+  behind: 0,
+  remoteUrl: 'git@github.com:horang-labs/tessera.git',
+  repoUrl: null,
+  defaultBranch: 'dev',
+  branches: [],
+  changedFiles: [],
+  recentCommits: [],
+  detached: false,
+  hasRemote: true,
+  github: { available: false, reasonCode: null, reason: null, pullRequest: null },
+};
 
 /** A branch that is committed, pushed and tracking — the quiet middle of the ladder. */
 const SYNCED: GitStateSnapshot = {
@@ -95,6 +119,55 @@ test('committing rotates the same button from Commit to Push', () => {
 
   assert.equal(dirty.kind, 'commit');
   assert.equal(committed.kind, 'push');
+});
+
+test('a panel with no state yet is the unknown rung, not a clean tree', () => {
+  assert.equal(gitStateSnapshotFromPanel(null), null);
+});
+
+test('a detached HEAD reaches the ladder as one, despite the panel labelling it', () => {
+  // The panel renders a detached HEAD as `detached@<sha>` because that is what
+  // the summary shows. Read as a branch name it would offer to publish a branch
+  // called "detached@0f1e2d3".
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    branch: 'detached@0f1e2d3',
+    detached: true,
+    upstream: null,
+  });
+
+  assert.equal(snapshot?.branch, null);
+  assert.equal(
+    derivePrimaryGitAction(snapshot).disabledReasonKey,
+    'gitPanel.primary.detachedHead',
+  );
+});
+
+test('a repository whose remote is not named origin can still push', () => {
+  // `remoteUrl` is `git remote get-url origin` and is null here; the repository
+  // has a remote all the same, and the execution layer will find it.
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    remoteUrl: null,
+    hasRemote: true,
+    upstream: null,
+  });
+
+  const action = derivePrimaryGitAction(snapshot);
+  assert.equal(action.kind, 'publish');
+  assert.equal(action.enabled, true);
+});
+
+test('a truncated file list still counts as a dirty tree', () => {
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    changedFiles: [],
+    changedFilesTotal: 4000,
+    changedFilesTruncated: true,
+  });
+
+  assert.equal(snapshot?.changedFileCount, 4000);
+  assert.equal(derivePrimaryGitAction(snapshot).kind, 'commit');
 });
 
 test('every label and reason the ladder can name resolves in every locale', async () => {

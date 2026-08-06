@@ -553,6 +553,8 @@ interface GitPanelSnapshot {
   upstream: string | null;
   aheadBehindRaw: string | null;
   remoteUrl: string | null;
+  /** `git remote`, one name per line. Null when the command could not run. */
+  remoteListRaw: string | null;
   defaultBranchRaw: string | null;
   branchListRaw: string | null;
   changedFiles: ChangedFilesResult;
@@ -589,6 +591,10 @@ function getGitPanelBatchCommands(): GitBatchCommand[] {
       args: ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
     },
     { key: "remoteUrl", args: ["remote", "get-url", "origin"] },
+    // Separately from the URL above: the primary Git action needs to know
+    // whether there is anywhere to push, and that is not the same question as
+    // whether a remote called `origin` exists.
+    { key: "remotes", args: ["remote"] },
     {
       key: "defaultBranch",
       args: ["symbolic-ref", "refs/remotes/origin/HEAD"],
@@ -655,6 +661,7 @@ async function getBatchedGitPanelSnapshot(
     upstream,
     aheadBehindRaw: getOptionalBatchOutput(results, "aheadBehind"),
     remoteUrl: getOptionalBatchOutput(results, "remoteUrl"),
+    remoteListRaw: getOptionalBatchOutput(results, "remotes"),
     defaultBranchRaw: getOptionalBatchOutput(results, "defaultBranch"),
     branchListRaw: getOptionalBatchOutput(results, "branchList"),
     changedFiles: attachFileDiffStats(
@@ -693,6 +700,7 @@ async function getSeparateGitPanelSnapshot(
     upstream,
     aheadBehindRaw,
     remoteUrl,
+    remoteListRaw,
     defaultBranchRaw,
     branchListRaw,
     changedFiles,
@@ -706,6 +714,7 @@ async function getSeparateGitPanelSnapshot(
       agentEnvironment,
     ),
     runOptionalGitCommand(["remote", "get-url", "origin"], workDir, agentEnvironment),
+    runOptionalGitCommand(["remote"], workDir, agentEnvironment),
     runOptionalGitCommand(
       ["symbolic-ref", "refs/remotes/origin/HEAD"],
       workDir,
@@ -731,6 +740,7 @@ async function getSeparateGitPanelSnapshot(
     upstream,
     aheadBehindRaw,
     remoteUrl,
+    remoteListRaw,
     defaultBranchRaw,
     branchListRaw,
     changedFiles,
@@ -816,6 +826,7 @@ export async function getGitPanelData(
     upstream,
     aheadBehindRaw,
     remoteUrl,
+    remoteListRaw,
     defaultBranchRaw,
     branchListRaw,
     changedFiles,
@@ -850,10 +861,14 @@ export async function getGitPanelData(
     worktreePath: workDir,
     branch:
       branchRaw || (detachedHead ? `detached@${detachedHead}` : "unknown"),
+    detached: !branchRaw,
     upstream,
     ahead,
     behind,
     remoteUrl,
+    // Any remote, not just `origin`: what the primary Git action needs to know
+    // is whether a push has anywhere to go.
+    hasRemote: Boolean(remoteListRaw?.trim()),
     repoUrl: normalizeGithubUrl(remoteUrl),
     defaultBranch: getDefaultBranchName(defaultBranchRaw),
     branches: (branchListRaw ?? "")

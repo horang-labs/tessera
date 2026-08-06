@@ -18,6 +18,7 @@ import type {
 } from "@/types/git";
 import {
   derivePrimaryGitAction,
+  gitStateSnapshotFromPanel,
   type GitStateSnapshot,
 } from "@/lib/git/primary-git-action";
 import {
@@ -599,19 +600,10 @@ export function useGitPanelController(sessionId: string | null) {
    * yet. Folding those into "clean tree" is what would make the button flash
    * through Publish Branch on every session switch (ADR 0007).
    */
-  const stateSnapshot = useMemo<GitStateSnapshot | null>(() => {
-    if (loading || error || !panelData) return null;
-
-    return {
-      branch: panelData.branch || null,
-      upstream: panelData.upstream,
-      ahead: panelData.ahead,
-      // The uncapped count: a truncated file list still means a dirty tree.
-      changedFileCount:
-        panelData.changedFilesTotal ?? panelData.changedFiles.length,
-      hasRemote: Boolean(panelData.remoteUrl),
-    };
-  }, [error, loading, panelData]);
+  const stateSnapshot = useMemo<GitStateSnapshot | null>(
+    () => (loading || error ? null : gitStateSnapshotFromPanel(panelData)),
+    [error, loading, panelData],
+  );
 
   const primaryAction = useMemo(
     () => derivePrimaryGitAction(stateSnapshot),

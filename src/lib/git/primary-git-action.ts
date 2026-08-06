@@ -11,6 +11,8 @@
  * for the renderer and for the server, and only one of the two has a language.
  */
 
+import type { GitPanelData } from "@/types/git";
+
 /** What the button says. `publish` and `push` run the same action (§2). */
 export type GitPrimaryActionKind = 'commit' | 'push' | 'publish';
 
@@ -52,6 +54,38 @@ export interface GitPrimaryAction {
   pendingLabelKey: GitPrimaryActionPendingLabelKey;
   /** Why the button cannot be pressed; null while it can. */
   disabledReasonKey: GitPrimaryActionReasonKey | null;
+}
+
+/**
+ * What the panel knows, in the terms the ladder asks its questions in. It sits
+ * here rather than in the panel component because two of the three translations
+ * are ones a caller would get wrong by reading the payload literally:
+ *
+ * - `branch` is a *display* string, and a detached HEAD is spelled
+ *   `detached@<sha>` in it. Taken at face value it is a branch name, and the
+ *   ladder would offer to publish it.
+ * - `remoteUrl` is `git remote get-url origin` alone, so a repository whose
+ *   remote is named anything else reads as having none — and the button would
+ *   sit permanently disabled saying so, on a repository that can push perfectly
+ *   well.
+ *
+ * `null` in, `null` out: no panel data is the unknown rung.
+ */
+export function gitStateSnapshotFromPanel(
+  panel: GitPanelData | null | undefined,
+): GitStateSnapshot | null {
+  if (!panel) return null;
+
+  return {
+    branch: panel.detached ? null : panel.branch || null,
+    upstream: panel.upstream,
+    ahead: panel.ahead,
+    // The uncapped count: a file list truncated for display is still a dirty
+    // tree, and the commit rung must not vanish because there is too much to
+    // show.
+    changedFileCount: panel.changedFilesTotal ?? panel.changedFiles.length,
+    hasRemote: panel.hasRemote,
+  };
 }
 
 /**
