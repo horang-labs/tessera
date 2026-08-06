@@ -123,9 +123,6 @@ export class WebSocketServer {
    * Start WebSocket server
    */
   start(httpServer: import('http').Server): void {
-    // The TCP cap also covers clients that never complete an HTTP or WebSocket
-    // handshake, while the lower WebSocket cap bounds upgraded connections.
-    httpServer.maxConnections = MAX_TCP_CONNECTIONS;
     // Use noServer mode so ws doesn't intercept ALL upgrade requests on the
     // HTTP server.  Next.js 16 auto-attaches its own upgrade listener for HMR
     // (_next/webpack-hmr); if ws grabs every upgrade first, HMR gets a 400.
@@ -135,30 +132,7 @@ export class WebSocketServer {
       this.handleConnection(ws, req);
     });
 
-    // Only handle upgrade requests destined for /ws
-    httpServer.on('upgrade', (req, socket, head) => {
-      // Tessera must not validate or consume unrelated upgrades. In
-      // development, Next.js owns its HMR WebSocket on this same server.
-      if (parseUpgradePath(req.url) !== '/ws') return;
-
-      const input = requestGateInputFromUpgrade(req);
-      const parsedUrl = parseRequestUrl(input);
-      if (!parsedUrl) {
-        void evaluateRequestAndLog(input)
-          .catch((error) => logger.error({ error }, 'Malformed WebSocket upgrade gate failed'))
-          .finally(() => socket.destroy());
-        return;
-      }
-
-      this.wss!.handleUpgrade(req, socket, head, (ws) => {
-        if (this.wss!.clients.size > this.maxConnections) {
-          logger.warn({ maxConnections: this.maxConnections }, 'WebSocket connection rejected: capacity reached');
-          this.rejectConnection(ws, 1013, 'Maximum connections reached');
-          return;
-        }
-        this.wss!.emit('connection', ws, req);
-      });
-    });
+    this.attach(httpServer);
 
     // Setup protocol adapter callback
     protocolAdapter.setSendToUser((userId, message) => {
@@ -202,6 +176,47 @@ export class WebSocketServer {
       maxConnections: this.maxConnections,
       maxPayload: WS_MAX_PAYLOAD_BYTES,
     }, 'WebSocket server started');
+  }
+
+  /**
+   * Serve /ws on one more HTTP listener. The packaged Electron server binds
+   * loopback and, when remote access is on, a direct address; both listeners
+   * share this one WebSocket server and its connection registry.
+   */
+  attach(httpServer: import('http').Server): void {
+    if (!this.wss) {
+      logger.warn('WebSocket upgrade handler requested before the server started');
+      return;
+    }
+
+    // The TCP cap also covers clients that never complete an HTTP or WebSocket
+    // handshake, while the lower WebSocket cap bounds upgraded connections.
+    httpServer.maxConnections = MAX_TCP_CONNECTIONS;
+
+    // Only handle upgrade requests destined for /ws
+    httpServer.on('upgrade', (req, socket, head) => {
+      // Tessera must not validate or consume unrelated upgrades. In
+      // development, Next.js owns its HMR WebSocket on this same server.
+      if (parseUpgradePath(req.url) !== '/ws') return;
+
+      const input = requestGateInputFromUpgrade(req);
+      const parsedUrl = parseRequestUrl(input);
+      if (!parsedUrl) {
+        void evaluateRequestAndLog(input)
+          .catch((error) => logger.error({ error }, 'Malformed WebSocket upgrade gate failed'))
+          .finally(() => socket.destroy());
+        return;
+      }
+
+      this.wss!.handleUpgrade(req, socket, head, (ws) => {
+        if (this.wss!.clients.size > this.maxConnections) {
+          logger.warn({ maxConnections: this.maxConnections }, 'WebSocket connection rejected: capacity reached');
+          this.rejectConnection(ws, 1013, 'Maximum connections reached');
+          return;
+        }
+        this.wss!.emit('connection', ws, req);
+      });
+    });
   }
 
   listConnections(): WebSocketConnectionInfo[] {

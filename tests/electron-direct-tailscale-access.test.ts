@@ -5,8 +5,8 @@ import type { NetworkInterfaceInfo } from 'node:os';
 
 import {
   LOOPBACK_SERVER_HOST,
-  REMOTE_SERVER_HOST,
-  resolveElectronServerHost,
+  resolveDirectListenerHost,
+  resolveDirectListenerTarget,
 } from '../electron/server-listener';
 import {
   buildRemoteAccessAddressCandidates,
@@ -21,18 +21,103 @@ import {
 } from '../electron/windows-firewall';
 import { normalizeAdvertisedAddress } from '../src/lib/auth/advertised-address';
 
-test('packaged desktop servers listen on external IPv4 interfaces on every supported platform', () => {
-  assert.equal(REMOTE_SERVER_HOST, '0.0.0.0');
-  for (const platform of ['win32', 'darwin', 'linux'] satisfies NodeJS.Platform[]) {
-    assert.equal(resolveElectronServerHost(platform, true), REMOTE_SERVER_HOST, platform);
-  }
-  assert.equal(resolveElectronServerHost('freebsd', true), LOOPBACK_SERVER_HOST);
+const TAILNET_INTERFACES = { Tailscale: [ipv4('100.70.80.90')] };
+const TAILNET_ADDRESS = 'http://100.70.80.90:32123';
+
+test('packaged desktop servers take the advertised address as a direct listener', () => {
   assert.equal(LOOPBACK_SERVER_HOST, '127.0.0.1');
+
+  for (const platform of ['win32', 'darwin', 'linux'] satisfies NodeJS.Platform[]) {
+    assert.deepEqual(
+      resolveDirectListenerTarget({
+        platform,
+        isPackaged: true,
+        advertisedAddress: TAILNET_ADDRESS,
+        interfaces: TAILNET_INTERFACES,
+      }),
+      { host: '100.70.80.90', pending: false },
+      platform,
+    );
+  }
+
+  assert.deepEqual(
+    resolveDirectListenerTarget({
+      platform: 'freebsd',
+      isPackaged: true,
+      advertisedAddress: TAILNET_ADDRESS,
+      interfaces: TAILNET_INTERFACES,
+    }),
+    { host: null, pending: false },
+  );
+});
+
+test('a packaged server without remote access configured never leaves loopback', () => {
+  for (const advertisedAddress of [null, undefined, '']) {
+    assert.deepEqual(
+      resolveDirectListenerTarget({
+        platform: 'win32',
+        isPackaged: true,
+        advertisedAddress,
+        interfaces: TAILNET_INTERFACES,
+      }),
+      { host: null, pending: false },
+      String(advertisedAddress),
+    );
+  }
 });
 
 test('unpackaged Electron server children keep their listener on loopback', () => {
   for (const platform of ['win32', 'darwin', 'linux'] satisfies NodeJS.Platform[]) {
-    assert.equal(resolveElectronServerHost(platform, false), LOOPBACK_SERVER_HOST, platform);
+    assert.deepEqual(
+      resolveDirectListenerTarget({
+        platform,
+        isPackaged: false,
+        advertisedAddress: TAILNET_ADDRESS,
+        interfaces: TAILNET_INTERFACES,
+      }),
+      { host: null, pending: false },
+      platform,
+    );
+  }
+});
+
+test('remote access configured before its interface exists stays pending, not abandoned', () => {
+  assert.deepEqual(
+    resolveDirectListenerTarget({
+      platform: 'win32',
+      isPackaged: true,
+      advertisedAddress: TAILNET_ADDRESS,
+      interfaces: { Ethernet: [ipv4('192.168.1.20')] },
+    }),
+    { host: null, pending: true },
+  );
+});
+
+test('only an advertised address that belongs to a live interface becomes a listener', () => {
+  const interfaces = {
+    Ethernet: [ipv4('192.168.1.20')],
+    Tailscale: [ipv4('100.70.80.90')],
+  };
+
+  assert.equal(
+    resolveDirectListenerHost('http://100.70.80.90:32123', interfaces),
+    '100.70.80.90',
+  );
+  // The user may advertise a LAN address on purpose; that stays their choice.
+  assert.equal(
+    resolveDirectListenerHost('http://192.168.1.20:32123', interfaces),
+    '192.168.1.20',
+  );
+
+  for (const advertised of [
+    'https://tunnel.example.com',        // tunnelled — its client dials loopback
+    'http://100.70.80.91:32123',         // tailnet address this machine lost
+    'http://127.0.0.1:32123',            // loopback is already served
+    'http://0.0.0.0:32123',              // never a real destination
+    'http://[fd7a:115c:a1e0::1]:32123',  // IPv6 interfaces are not bound directly
+    'not-a-url',
+  ]) {
+    assert.equal(resolveDirectListenerHost(advertised, interfaces), null, advertised);
   }
 });
 
@@ -139,20 +224,38 @@ test('firewall configuration is limited to packaged Windows product instances', 
   }), false);
 });
 
-test('the Electron child resolves its listener host instead of hard-coding loopback', () => {
+test('the Electron child serves loopback itself and delegates remote access to a second listener', () => {
   const source = fs.readFileSync(
     new URL('../electron/server-child.ts', import.meta.url),
     'utf8',
   );
   const mainSource = fs.readFileSync(new URL('../electron/main.ts', import.meta.url), 'utf8');
-
-  assert.match(
-    source,
-    /resolveElectronServerHost\(\s*process\.platform,\s*process\.env\.TESSERA_ELECTRON_PACKAGED === '1',?\s*\)/,
+  const listenerSource = fs.readFileSync(
+    new URL('../electron/server-listener.ts', import.meta.url),
+    'utf8',
   );
-  assert.match(mainSource, /TESSERA_ELECTRON_PACKAGED: isPackaged \? '1' : '0'/);
-  assert.doesNotMatch(source, /const hostname = ['"]127\.0\.0\.1['"]/);
+
+  assert.match(source, /const hostname = LOOPBACK_SERVER_HOST;/);
   assert.match(source, /server\.listen\(port, hostname,/);
+  assert.match(source, /directListeners\.configure\(\{/);
+  assert.match(source, /wsServer\.attach\(listener\)/);
+  assert.match(source, /await directListeners\.sync\(\)/);
+  assert.match(source, /directListeners\.closeAll\(\)/);
+  assert.match(mainSource, /TESSERA_ELECTRON_PACKAGED: isPackaged \? '1' : '0'/);
+
+  // The Windows Defender prompt on every launch came from the wildcard bind.
+  assert.doesNotMatch(source, /0\.0\.0\.0/);
+  assert.doesNotMatch(listenerSource, /'0\.0\.0\.0'/);
+});
+
+test('saving the remote access address rebinds without an app restart', () => {
+  const source = fs.readFileSync(
+    new URL('../src/app/api/settings/route.ts', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(source, /import \{ directListeners \} from '@\/lib\/http\/direct-listeners'/);
+  assert.match(source, /await directListeners\.sync\(\)/);
 });
 
 test('Electron windows keep localhost origins while the packaged listener is external', () => {
