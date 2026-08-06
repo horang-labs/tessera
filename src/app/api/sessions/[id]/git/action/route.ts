@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUserId } from "@/lib/auth/api-auth";
 import {
-  executeGitAction,
   GitActionRejection,
   type GitAction,
   type GitActionRejectionCode,
 } from "@/lib/git/git-actions";
-import { GitPanelError, resolveSessionGitTarget } from "@/lib/git/git-panel";
-import { refreshWorkDirSessionsInBackground } from "@/lib/git/session-diff-refresh";
+import { GitPanelError } from "@/lib/git/git-panel";
+import { runSessionGitAction } from "@/lib/git/session-git-action";
 import { jsonError } from "@/lib/http/json-error";
 import logger from "@/lib/logger";
 
@@ -33,12 +32,10 @@ export async function POST(
       return jsonError("invalid_request", parsed.message, 400);
     }
 
-    const target = await resolveSessionGitTarget(id, auth.userId);
-    const result = await executeGitAction(target, parsed.action);
-
-    // §11: trigger the refresh on success and failure alike — a failed action
-    // can still have moved the tree — and never wait for it.
-    refreshWorkDirSessionsInBackground(target.workDir, auth.userId, "git_action");
+    // Resolving the working directory, running the action and triggering the
+    // state refresh all live behind this call (§11); the route only decides how
+    // the outcome is written to the wire.
+    const result = await runSessionGitAction(id, auth.userId, parsed.action);
 
     // A Git failure is an outcome of the request, not a broken request, and
     // ADR 0005 requires its detail to reach the client intact. `jsonError`
