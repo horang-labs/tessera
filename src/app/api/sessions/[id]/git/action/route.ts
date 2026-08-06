@@ -64,6 +64,12 @@ function describeRejection(
   if (code === "file_not_in_change_set") {
     return { code: "invalid_file_path", status: 404 };
   }
+  // The request was well formed and the repository is what refuses it — the
+  // button is already disabled for both, so this only catches a click that
+  // raced the state it was derived from.
+  if (code === "detached_head" || code === "no_remote") {
+    return { code, status: 409 };
+  }
   return { code: "invalid_request", status: 400 };
 }
 
@@ -85,6 +91,11 @@ function parseGitActionBody(
     files?: unknown;
   };
 
+  // Push takes no parameters at all: whether it publishes a new remote branch
+  // is read from the repository, never asked for by the client.
+  if (action === "push") {
+    return { action: { action: "push" } };
+  }
   if (action !== "commit") {
     return { message: `Unsupported git action: ${String(action)}` };
   }

@@ -318,11 +318,15 @@ export function GitPanel({
               generating: controller.generatingMessage,
               isSelected: controller.isSelectedForCommit,
               message: controller.commitMessage,
-              onCommit: () => void controller.commitSelectedFiles(),
               onGenerate: () => void controller.generateCommitMessage(),
               onMessageChange: controller.setCommitMessage,
               onToggleFile: controller.toggleCommitFile,
               totals: controller.commitTotals,
+            }}
+            primary={{
+              action: controller.primaryAction,
+              pending: controller.actionPending,
+              onRun: () => void controller.runPrimaryAction(),
             }}
             selectedPath={controller.selectedPath}
             setSelectedPath={controller.setSelectedPath}

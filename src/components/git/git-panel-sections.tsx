@@ -24,8 +24,10 @@ import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { useI18n } from "@/lib/i18n";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
+import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
 import { GitCommitForm } from "./git-commit-form";
+import { GitPrimaryActionBar } from "./git-primary-action";
 import {
   FILE_STATE_META,
 } from "./git-panel-shared";
@@ -556,6 +558,7 @@ export function GitPanelContentSection({
   data,
   error,
   loading,
+  primary,
   selectedPath,
   sessionId,
   setSelectedPath,
@@ -571,7 +574,6 @@ export function GitPanelContentSection({
     generating: boolean;
     isSelected: (path: string) => boolean;
     message: string;
-    onCommit: () => void;
     onGenerate: () => void;
     onMessageChange: (value: string) => void;
     onToggleFile: (path: string) => void;
@@ -580,6 +582,12 @@ export function GitPanelContentSection({
   data: GitPanelData | null;
   error: string | null;
   loading: boolean;
+  /** The one Git action this state calls for, and the press that runs it. */
+  primary: {
+    action: GitPrimaryAction;
+    pending: boolean;
+    onRun: () => void;
+  };
   selectedPath: string | null;
   sessionId: string | null;
   setSelectedPath: (path: string | null) => void;
@@ -605,176 +613,196 @@ export function GitPanelContentSection({
         />
       ) : null}
 
-      {loading || error || !data ? null : (
-        changedFileCount === 0 ? (
-          <EmptyPanelMessage
-            title={t("gitPanel.empty.cleanTitle")}
-            body={t("gitPanel.empty.cleanBody")}
-            icon="clean"
-          />
-        ) : (
-          <div className="flex h-full flex-col gap-2">
+      {!sessionId ? null : (
+        <div className="flex h-full flex-col gap-2">
+          {/*
+            The primary action renders on every rung, including the ones where
+            the panel below it has nothing to show — a clean tree still has a
+            push to offer, and a session whose state has not arrived holds a
+            disabled Commit rather than a gap (ADR 0007).
+          */}
+          {primary.action.kind === "commit" ? (
             <GitCommitForm
               committing={commit.committing}
               generateError={commit.generateError}
               generating={commit.generating}
               message={commit.message}
-              onCommit={commit.onCommit}
+              onCommit={primary.onRun}
               onGenerate={commit.onGenerate}
               onMessageChange={commit.onMessageChange}
+              primaryAction={primary.action}
               totals={commit.totals}
             />
-            <div className="flex items-center justify-between px-1">
-              <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
-                Changed files
-              </span>
-              <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
-                {data.changedFilesTruncated
-                  ? (data.changedFilesTotal ?? `${changedFileCount}+`)
-                  : changedFileCount}
-              </span>
-            </div>
-            <ScrollArea className="flex-1">
-              <div className="flex flex-col">
-                {data.changedFiles.map((file) => {
-                  const isSelected = file.path === selectedPath;
-                  const canOpenReadOnly = file.state !== "deleted";
-                  const absolutePath = toAbsoluteWorkspacePath(data.worktreePath, file.path);
-                  return (
-                    <div
-                      key={file.path}
-                      draggable={Boolean(sessionId)}
-                      onDragStart={(event) => {
-                        if (!sessionId) return;
-                        setSelectedPath(file.path);
-                        setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path, absolutePath);
-                      }}
-                      className={cn(
-                        "group relative border-l-2 transition-colors",
-                        isSelected
-                          ? "border-l-(--accent) bg-(--accent)/10 text-(--text-primary)"
-                          : "border-l-transparent text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
-                      )}
-                      data-testid={`git-panel-file-row-${file.path}`}
-                      onContextMenu={(event) => {
-                        if (!absolutePath) return;
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setSelectedPath(file.path);
-                        setContextMenu({
-                          absolutePath,
-                          canOpenFile: canOpenReadOnly,
-                          position: { x: event.clientX, y: event.clientY },
-                        });
-                      }}
-                    >
-                      <div className="flex w-full min-w-0 items-center">
-                        <input
-                          type="checkbox"
-                          checked={commit.isSelected(file.path)}
-                          disabled={commit.committing}
-                          onChange={() => commit.onToggleFile(file.path)}
-                          aria-label={t("gitPanel.commit.includeFile", {
-                            path: file.path,
-                          })}
-                          data-testid={`git-commit-file-checkbox-${file.path}`}
-                          className="ml-2 h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
+          ) : (
+            <GitPrimaryActionBar
+              action={primary.action}
+              pending={primary.pending}
+              onRun={primary.onRun}
+            />
+          )}
+
+          {loading || error || !data ? null : (
+            changedFileCount === 0 ? (
+              <EmptyPanelMessage
+                title={t("gitPanel.empty.cleanTitle")}
+                body={t("gitPanel.empty.cleanBody")}
+                icon="clean"
+              />
+            ) : (
+              <>
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
+                    Changed files
+                  </span>
+                  <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
+                    {data.changedFilesTruncated
+                      ? (data.changedFilesTotal ?? `${changedFileCount}+`)
+                      : changedFileCount}
+                  </span>
+                </div>
+                <ScrollArea className="flex-1">
+                  <div className="flex flex-col">
+                    {data.changedFiles.map((file) => {
+                      const isSelected = file.path === selectedPath;
+                      const canOpenReadOnly = file.state !== "deleted";
+                      const absolutePath = toAbsoluteWorkspacePath(data.worktreePath, file.path);
+                      return (
+                        <div
+                          key={file.path}
+                          draggable={Boolean(sessionId)}
+                          onDragStart={(event) => {
+                            if (!sessionId) return;
                             setSelectedPath(file.path);
-                            onOpenDiffFile(file);
+                            setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path, absolutePath);
                           }}
-                          onDoubleClick={() => {
+                          className={cn(
+                            "group relative border-l-2 transition-colors",
+                            isSelected
+                              ? "border-l-(--accent) bg-(--accent)/10 text-(--text-primary)"
+                              : "border-l-transparent text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+                          )}
+                          data-testid={`git-panel-file-row-${file.path}`}
+                          onContextMenu={(event) => {
+                            if (!absolutePath) return;
+                            event.preventDefault();
+                            event.stopPropagation();
                             setSelectedPath(file.path);
-                            onPinDiffFile(file);
+                            setContextMenu({
+                              absolutePath,
+                              canOpenFile: canOpenReadOnly,
+                              position: { x: event.clientX, y: event.clientY },
+                            });
                           }}
-                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
                         >
-                          <FileBadge file={file} />
-                          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-                            {file.path}
-                          </span>
-                          <span className="transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
-                            <FileDiffStats stats={file.diffStats} />
-                          </span>
-                        </button>
-                      </div>
-                      <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-                        <Tooltip content="Open diff">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedPath(file.path);
-                              onOpenDiffFile(file);
-                            }}
-                            className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-                            aria-label={`Open diff for ${file.path}`}
-                          >
-                            <GitCompare className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                        <Tooltip
-                          content={
-                            canOpenReadOnly
-                              ? "Open file"
-                              : "Deleted file has no working copy"
-                          }
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedPath(file.path);
-                              onOpenReadOnlyFile(file);
-                            }}
-                            onDragStart={(event) => {
-                              event.stopPropagation();
-                              if (!sessionId || !canOpenReadOnly) {
-                                event.preventDefault();
-                                return;
+                          <div className="flex w-full min-w-0 items-center">
+                            <input
+                              type="checkbox"
+                              checked={commit.isSelected(file.path)}
+                              disabled={commit.committing}
+                              onChange={() => commit.onToggleFile(file.path)}
+                              aria-label={t("gitPanel.commit.includeFile", {
+                                path: file.path,
+                              })}
+                              data-testid={`git-commit-file-checkbox-${file.path}`}
+                              className="ml-2 h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPath(file.path);
+                                onOpenDiffFile(file);
+                              }}
+                              onDoubleClick={() => {
+                                setSelectedPath(file.path);
+                                onPinDiffFile(file);
+                              }}
+                              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+                            >
+                              <FileBadge file={file} />
+                              <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                                {file.path}
+                              </span>
+                              <span className="transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+                                <FileDiffStats stats={file.diffStats} />
+                              </span>
+                            </button>
+                          </div>
+                          <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                            <Tooltip content="Open diff">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedPath(file.path);
+                                  onOpenDiffFile(file);
+                                }}
+                                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+                                aria-label={`Open diff for ${file.path}`}
+                              >
+                                <GitCompare className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                            <Tooltip
+                              content={
+                                canOpenReadOnly
+                                  ? "Open file"
+                                  : "Deleted file has no working copy"
                               }
-                              setSelectedPath(file.path);
-                              setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path, absolutePath);
-                            }}
-                            draggable={Boolean(sessionId && canOpenReadOnly)}
-                            disabled={!canOpenReadOnly}
-                            className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary) disabled:pointer-events-none disabled:opacity-35"
-                            aria-label={`Open file ${file.path}`}
-                          >
-                            <FileText className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="Copy absolute path">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onCopyFilePath(file.path);
-                            }}
-                            className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-                            aria-label={`Copy absolute path for ${file.path}`}
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </ScrollArea>
-            {data.changedFilesTruncated ? (
-              <div className="px-2 pb-1 text-[10px] leading-snug text-(--text-muted)">
-                {data.changedFilesTotal != null
-                  ? `Showing ${changedFileCount} of ${data.changedFilesTotal} changed files. `
-                  : `Showing the first ${changedFileCount} changed files; the repository has many more. `}
-                Add large or generated folders (e.g. .venv, node_modules) to
-                .gitignore to see the rest.
-              </div>
-            ) : null}
-          </div>
-        )
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedPath(file.path);
+                                  onOpenReadOnlyFile(file);
+                                }}
+                                onDragStart={(event) => {
+                                  event.stopPropagation();
+                                  if (!sessionId || !canOpenReadOnly) {
+                                    event.preventDefault();
+                                    return;
+                                  }
+                                  setSelectedPath(file.path);
+                                  setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path, absolutePath);
+                                }}
+                                draggable={Boolean(sessionId && canOpenReadOnly)}
+                                disabled={!canOpenReadOnly}
+                                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary) disabled:pointer-events-none disabled:opacity-35"
+                                aria-label={`Open file ${file.path}`}
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                            <Tooltip content="Copy absolute path">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onCopyFilePath(file.path);
+                                }}
+                                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+                                aria-label={`Copy absolute path for ${file.path}`}
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+                {data.changedFilesTruncated ? (
+                  <div className="px-2 pb-1 text-[10px] leading-snug text-(--text-muted)">
+                    {data.changedFilesTotal != null
+                      ? `Showing ${changedFileCount} of ${data.changedFilesTotal} changed files. `
+                      : `Showing the first ${changedFileCount} changed files; the repository has many more. `}
+                    Add large or generated folders (e.g. .venv, node_modules) to
+                    .gitignore to see the rest.
+                  </div>
+                ) : null}
+              </>
+            )
+          )}
+        </div>
       )}
     </div>
     {contextMenu ? (

@@ -1088,6 +1088,24 @@ export const en: I18nMessages = {
       hookRejectedToast: 'A git hook rejected the commit · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'A git hook rejected the commit · {{origin}}',
     },
+    push: {
+      button: 'Push',
+      buttonPending: 'Pushing…',
+      publishButton: 'Publish Branch',
+      publishButtonPending: 'Publishing…',
+      nothingToPush: 'Nothing to push',
+      successToast: 'Pushed to {{remoteBranch}} · {{origin}}',
+      successNoUpstreamToast: 'Pushed · {{origin}}',
+      publishedToast: 'Published {{remoteBranch}} · {{origin}}',
+      failureToast: 'Push failed · {{origin}} — {{reason}}',
+      hookRejectedToast: 'A git hook rejected the push · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'A git hook rejected the push · {{origin}}',
+    },
+    primary: {
+      stateUnknown: 'Reading git state…',
+      detachedHead: 'HEAD is detached — check out a branch to push',
+      noRemote: 'This repository has no remote to push to',
+    },
   },
   memoryPanel: {
     sections: {

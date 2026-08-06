@@ -1088,6 +1088,24 @@ export const ja: I18nMessages = {
       hookRejectedToast: 'git フックがコミットを拒否しました · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git フックがコミットを拒否しました · {{origin}}',
     },
+    push: {
+      button: 'プッシュ',
+      buttonPending: 'プッシュ中…',
+      publishButton: 'ブランチを公開',
+      publishButtonPending: '公開中…',
+      nothingToPush: 'プッシュするコミットがありません',
+      successToast: '{{remoteBranch}} にプッシュしました · {{origin}}',
+      successNoUpstreamToast: 'プッシュしました · {{origin}}',
+      publishedToast: '{{remoteBranch}} を作成しました · {{origin}}',
+      failureToast: 'プッシュ失敗 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git フックがプッシュを拒否しました · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git フックがプッシュを拒否しました · {{origin}}',
+    },
+    primary: {
+      stateUnknown: 'git の状態を読み込み中…',
+      detachedHead: 'HEAD が分離されています — プッシュするにはブランチをチェックアウトしてください',
+      noRemote: 'このリポジトリにはプッシュ先のリモートがありません',
+    },
   },
   memoryPanel: {
     sections: {

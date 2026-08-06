@@ -1095,6 +1095,24 @@ export const ko: I18nMessages = {
       hookRejectedToast: 'git 훅이 커밋을 거부함 · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git 훅이 커밋을 거부함 · {{origin}}',
     },
+    push: {
+      button: '푸시',
+      buttonPending: '푸시 중…',
+      publishButton: '브랜치 게시',
+      publishButtonPending: '게시 중…',
+      nothingToPush: '푸시할 커밋이 없습니다',
+      successToast: '{{remoteBranch}}(으)로 푸시함 · {{origin}}',
+      successNoUpstreamToast: '푸시함 · {{origin}}',
+      publishedToast: '{{remoteBranch}} 브랜치를 만들었습니다 · {{origin}}',
+      failureToast: '푸시 실패 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git 훅이 푸시를 거부함 · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git 훅이 푸시를 거부함 · {{origin}}',
+    },
+    primary: {
+      stateUnknown: 'git 상태를 읽는 중…',
+      detachedHead: 'HEAD가 분리되어 있습니다 — 푸시하려면 브랜치를 체크아웃하세요',
+      noRemote: '이 저장소에는 푸시할 리모트가 없습니다',
+    },
   },
   memoryPanel: {
     sections: {

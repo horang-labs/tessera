@@ -17,10 +17,15 @@ import type {
   GitPanelData,
 } from "@/types/git";
 import {
+  derivePrimaryGitAction,
+  type GitStateSnapshot,
+} from "@/lib/git/primary-git-action";
+import {
   describeGitActionOrigin,
   describeGitActionToast,
   describeGitRequestFailureToast,
   type GitActionToast,
+  type GitActionVerb,
 } from "./git-action-report";
 import {
   extractGitPanelErrorMessage,
@@ -111,7 +116,9 @@ export function useGitPanelController(sessionId: string | null) {
   const [deselectedPaths, setDeselectedPaths] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
-  const [committing, setCommitting] = useState(false);
+  // One Git action at a time, and the panel has to know which one so the
+  // pending label on the button is the verb that is actually running.
+  const [pendingAction, setPendingAction] = useState<GitActionVerb | null>(null);
   const [generatingMessage, setGeneratingMessage] = useState(false);
   // A generation failure stays here rather than in a toast: it belongs to the
   // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
@@ -516,7 +523,7 @@ export function useGitPanelController(sessionId: string | null) {
   const generateCommitMessage = useCallback(async () => {
     // The button is disabled without a selection, and a poll can empty one out
     // from under a click that is already on its way.
-    if (!sessionId || commitFiles.length === 0 || generatingMessage || committing) {
+    if (!sessionId || commitFiles.length === 0 || generatingMessage || pendingAction) {
       return;
     }
 
@@ -578,38 +585,65 @@ export function useGitPanelController(sessionId: string | null) {
     } finally {
       setGeneratingMessage(false);
     }
-  }, [commitFiles, committing, generatingMessage, sessionId, t]);
+  }, [commitFiles, generatingMessage, pendingAction, sessionId, t]);
 
   // Which of the parallel sessions a toast is about. Held here rather than
   // inside the action so the callback depends on the name, not on every panel
   // refresh that leaves the name unchanged.
   const commitOrigin = describeGitActionOrigin(panelData);
 
+  /**
+   * `null` while this session's Git state is not known — which is a rung of the
+   * ladder, not an absence of one. Anything short of loaded state counts:
+   * a panel still loading, a panel that failed to load, a session with no data
+   * yet. Folding those into "clean tree" is what would make the button flash
+   * through Publish Branch on every session switch (ADR 0007).
+   */
+  const stateSnapshot = useMemo<GitStateSnapshot | null>(() => {
+    if (loading || error || !panelData) return null;
+
+    return {
+      branch: panelData.branch || null,
+      upstream: panelData.upstream,
+      ahead: panelData.ahead,
+      // The uncapped count: a truncated file list still means a dirty tree.
+      changedFileCount:
+        panelData.changedFilesTotal ?? panelData.changedFiles.length,
+      hasRemote: Boolean(panelData.remoteUrl),
+    };
+  }, [error, loading, panelData]);
+
+  const primaryAction = useMemo(
+    () => derivePrimaryGitAction(stateSnapshot),
+    [stateSnapshot],
+  );
+
+  // A toast is raised the same way whichever layer refused, and the draft
+  // survives every failure so the same button is itself the retry.
+  const reportAction = useCallback((toastReport: GitActionToast): void => {
+    const rendered = t(toastReport.messageKey, toastReport.params);
+    if (toastReport.tone === "success") toast.success(rendered);
+    else toast.error(rendered);
+
+    if (!toastReport.clearsDraft) return;
+    setCommitMessage("");
+    setDeselectedPaths(new Set<string>());
+    // The draft is gone, so a stale generation failure would be complaining
+    // about text that no longer exists (#232).
+    setGenerateMessageError(null);
+  }, [t]);
+
   const commitSelectedFiles = useCallback(async () => {
     const message = commitMessage.trim();
     // The button is disabled without these. This is the second guard the design
     // asks for, and it also catches a click that lands after the selection
     // emptied underneath it.
-    if (!sessionId || !message || commitFiles.length === 0 || committing) return;
+    if (!sessionId || !message || commitFiles.length === 0 || pendingAction) return;
 
     const files = commitFiles.map((file) => file.path);
+    const report = reportAction;
 
-    // A toast is raised the same way whichever layer refused, and the draft
-    // survives every failure so this button is itself the retry.
-    const report = (toastReport: GitActionToast): void => {
-      const rendered = t(toastReport.messageKey, toastReport.params);
-      if (toastReport.tone === "success") toast.success(rendered);
-      else toast.error(rendered);
-
-      if (!toastReport.clearsDraft) return;
-      setCommitMessage("");
-      setDeselectedPaths(new Set<string>());
-      // The draft is gone, so a stale generation failure would be complaining
-      // about text that no longer exists (#232).
-      setGenerateMessageError(null);
-    };
-
-    setCommitting(true);
+    setPendingAction("commit");
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
@@ -628,7 +662,7 @@ export function useGitPanelController(sessionId: string | null) {
       }
 
       const result = payload as GitActionResult;
-      report(describeGitActionToast(result, commitOrigin));
+      report(describeGitActionToast(result, commitOrigin, "commit"));
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
         action: "commit",
@@ -644,19 +678,73 @@ export function useGitPanelController(sessionId: string | null) {
         describeGitRequestFailureToast(
           nextError instanceof Error ? nextError.message : "Failed to commit.",
           commitOrigin,
+          "commit",
         ),
       );
     } finally {
-      setCommitting(false);
+      setPendingAction(null);
     }
   }, [
     commitFiles,
     commitMessage,
     commitOrigin,
-    committing,
+    pendingAction,
+    reportAction,
     sessionId,
-    t,
   ]);
+
+  /**
+   * Push, and Publish Branch, which is the same request — what the button said
+   * before is the only difference, and what actually happened is read back off
+   * the result rather than assumed from the label (§7).
+   */
+  const pushBranch = useCallback(async () => {
+    if (!sessionId || pendingAction) return;
+
+    setPendingAction("push");
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "push" }),
+        },
+      );
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(extractGitPanelErrorMessage(payload, "Failed to push."));
+      }
+
+      const result = payload as GitActionResult;
+      reportAction(describeGitActionToast(result, commitOrigin, "push"));
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "push",
+        target: "branch",
+        result: result.ok ? "success" : "failed",
+        ...(result.ok ? {} : { failure_kind: result.failure.kind }),
+      });
+    } catch (nextError) {
+      reportAction(
+        describeGitRequestFailureToast(
+          nextError instanceof Error ? nextError.message : "Failed to push.",
+          commitOrigin,
+          "push",
+        ),
+      );
+    } finally {
+      setPendingAction(null);
+    }
+  }, [commitOrigin, pendingAction, reportAction, sessionId]);
+
+  /** The one button. Which verb it runs is the ladder's answer, not the user's. */
+  const runPrimaryAction = useCallback(() => {
+    if (!primaryAction.enabled) return;
+    if (primaryAction.action === "push") return pushBranch();
+    return commitSelectedFiles();
+  }, [commitSelectedFiles, primaryAction, pushBranch]);
 
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;
@@ -765,9 +853,10 @@ export function useGitPanelController(sessionId: string | null) {
   return {
     changedFileCount,
     commitMessage,
-    commitSelectedFiles,
     commitTotals,
-    committing,
+    // The commit form disables its own inputs while its action runs; a push
+    // leaves them alone, since it is not what they feed.
+    committing: pendingAction === "commit",
     copyBranch,
     copyFilePath,
     copyWorktreePath,
@@ -783,6 +872,9 @@ export function useGitPanelController(sessionId: string | null) {
     loading,
     moveSelection,
     openExternal,
+    primaryAction,
+    actionPending: pendingAction !== null,
+    runPrimaryAction,
     selectedFile,
     selectedFileIndex,
     selectedPath,

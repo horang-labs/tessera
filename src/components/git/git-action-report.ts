@@ -8,26 +8,64 @@
  * the same button again re-runs the action (ADR 0005 — there is no retry
  * control). The controller only renders what this returns.
  */
-import type { GitActionResult } from "@/types/git";
+import type { GitActionResult, GitPushOutcome } from "@/types/git";
 import { summarizeGitFailure, summarizeHookRejection } from "./git-panel-shared";
 
 export type GitActionToastKey =
   | "gitPanel.commit.successToast"
   | "gitPanel.commit.failureToast"
   | "gitPanel.commit.hookRejectedToast"
-  | "gitPanel.commit.hookRejectedNoDetailToast";
+  | "gitPanel.commit.hookRejectedNoDetailToast"
+  | "gitPanel.push.successToast"
+  | "gitPanel.push.successNoUpstreamToast"
+  | "gitPanel.push.publishedToast"
+  | "gitPanel.push.failureToast"
+  | "gitPanel.push.hookRejectedToast"
+  | "gitPanel.push.hookRejectedNoDetailToast";
+
+/**
+ * Which action was attempted. A failure carries no verb of its own — the same
+ * `command_failed` arrives from a commit and from a push — so the caller, which
+ * is the only party that knows what it pressed, says.
+ */
+export type GitActionVerb = "commit" | "push";
 
 export interface GitActionToast {
   tone: "success" | "error";
   messageKey: GitActionToastKey;
-  /** `reason` is absent when there is nothing worth quoting. */
-  params: { origin: string; reason?: string };
   /**
-   * Only a completed action clears the message and the file selection. A
-   * failure leaves both in place, which is what makes the same button a retry.
+   * `reason` is absent when there is nothing worth quoting, `remoteBranch` when
+   * the action was not a push or Git would not say which branch it wrote.
+   */
+  params: { origin: string; reason?: string; remoteBranch?: string };
+  /**
+   * Only a completed commit clears the message and the file selection. A
+   * failure leaves both in place, which is what makes the same button a retry,
+   * and a push never owned the draft to begin with.
    */
   clearsDraft: boolean;
 }
+
+/** The four things a failing action can be told to say, per verb. */
+const FAILURE_KEYS: Record<
+  GitActionVerb,
+  {
+    failure: GitActionToastKey;
+    hookRejected: GitActionToastKey;
+    hookRejectedNoDetail: GitActionToastKey;
+  }
+> = {
+  commit: {
+    failure: "gitPanel.commit.failureToast",
+    hookRejected: "gitPanel.commit.hookRejectedToast",
+    hookRejectedNoDetail: "gitPanel.commit.hookRejectedNoDetailToast",
+  },
+  push: {
+    failure: "gitPanel.push.failureToast",
+    hookRejected: "gitPanel.push.hookRejectedToast",
+    hookRejectedNoDetail: "gitPanel.push.hookRejectedNoDetailToast",
+  },
+};
 
 /** Named for a session with neither a branch nor a worktree to point at. */
 const UNATTRIBUTED_ORIGIN = "worktree";
@@ -46,16 +84,20 @@ export function describeGitActionOrigin(
 export function describeGitActionToast(
   result: GitActionResult,
   origin: string,
+  attempted: GitActionVerb = "commit",
 ): GitActionToast {
   if (result.ok) {
-    return {
-      tone: "success",
-      messageKey: "gitPanel.commit.successToast",
-      params: { origin },
-      clearsDraft: true,
-    };
+    return result.outcome.action === "push"
+      ? describePushOutcome(result.outcome, origin)
+      : {
+        tone: "success",
+        messageKey: "gitPanel.commit.successToast",
+        params: { origin },
+        clearsDraft: true,
+      };
   }
 
+  const keys = FAILURE_KEYS[attempted];
   const { kind, message, stderr } = result.failure;
   if (kind === "hook_rejected") {
     // A hook can refuse without printing anything, and then the only message
@@ -64,13 +106,13 @@ export function describeGitActionToast(
     return stderr.trim()
       ? {
         tone: "error",
-        messageKey: "gitPanel.commit.hookRejectedToast",
+        messageKey: keys.hookRejected,
         params: { origin, reason: summarizeHookRejection(message) },
         clearsDraft: false,
       }
       : {
         tone: "error",
-        messageKey: "gitPanel.commit.hookRejectedNoDetailToast",
+        messageKey: keys.hookRejectedNoDetail,
         params: { origin },
         clearsDraft: false,
       };
@@ -78,8 +120,37 @@ export function describeGitActionToast(
 
   return {
     tone: "error",
-    messageKey: "gitPanel.commit.failureToast",
+    messageKey: keys.failure,
     params: { origin, reason: summarizeGitFailure(message) },
+    clearsDraft: false,
+  };
+}
+
+/**
+ * §7: a push says whether it set an upstream and which remote branch it wrote,
+ * so a first push is explained after the fact as well as before it. Without the
+ * upstream — a read-back that stumbled after the push already landed — the
+ * report drops to what is still certainly true.
+ */
+function describePushOutcome(
+  outcome: GitPushOutcome,
+  origin: string,
+): GitActionToast {
+  if (!outcome.remoteBranch) {
+    return {
+      tone: "success",
+      messageKey: "gitPanel.push.successNoUpstreamToast",
+      params: { origin },
+      clearsDraft: false,
+    };
+  }
+
+  return {
+    tone: "success",
+    messageKey: outcome.setUpstream
+      ? "gitPanel.push.publishedToast"
+      : "gitPanel.push.successToast",
+    params: { origin, remoteBranch: outcome.remoteBranch },
     clearsDraft: false,
   };
 }
@@ -92,10 +163,11 @@ export function describeGitActionToast(
 export function describeGitRequestFailureToast(
   message: string,
   origin: string,
+  attempted: GitActionVerb = "commit",
 ): GitActionToast {
   return {
     tone: "error",
-    messageKey: "gitPanel.commit.failureToast",
+    messageKey: FAILURE_KEYS[attempted].failure,
     params: { origin, reason: summarizeGitFailure(message) },
     clearsDraft: false,
   };

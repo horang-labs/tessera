@@ -1069,6 +1069,24 @@ export interface I18nMessages {
       hookRejectedToast: string;
       hookRejectedNoDetailToast: string;
     };
+    push: {
+      button: string;
+      buttonPending: string;
+      publishButton: string;
+      publishButtonPending: string;
+      nothingToPush: string;
+      successToast: string;
+      successNoUpstreamToast: string;
+      publishedToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
+    };
+    primary: {
+      stateUnknown: string;
+      detachedHead: string;
+      noRemote: string;
+    };
   };
   memoryPanel: {
     sections: {

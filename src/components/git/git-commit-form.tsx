@@ -3,6 +3,8 @@
 import { LoaderCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
+import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
+import { GitPrimaryActionButton } from "./git-primary-action";
 
 /**
  * The commit surface, inline above the changed-file list rather than in a
@@ -25,6 +27,7 @@ export function GitCommitForm({
   onCommit,
   onGenerate,
   onMessageChange,
+  primaryAction,
   totals,
 }: {
   committing: boolean;
@@ -34,10 +37,18 @@ export function GitCommitForm({
   onCommit: () => void;
   onGenerate: () => void;
   onMessageChange: (value: string) => void;
+  /**
+   * Commit is a rung of the same ladder every other Git verb sits on, so the
+   * button here is the panel's one primary button rather than a second one that
+   * happens to say the same word.
+   */
+  primaryAction: GitPrimaryAction;
   totals: { files: number; added: number; removed: number };
 }) {
   const { t } = useI18n();
-  const canCommit = message.trim().length > 0 && totals.files > 0 && !committing;
+  // What the ladder cannot see: a message still to be typed, a selection the
+  // user emptied. §5 requires both, and this is the field-side half of it.
+  const commitBlocked = message.trim().length === 0 || totals.files === 0;
   // Nothing selected means there is no change set to summarize, so the user is
   // never offered a summary of nothing.
   const canGenerate = totals.files > 0 && !generating && !committing;
@@ -98,23 +109,12 @@ export function GitCommitForm({
             <Sparkles className="h-3 w-3" />
           )}
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          onClick={onCommit}
-          disabled={!canCommit}
-          data-testid="git-commit-button"
-          className="h-7 shrink-0 px-3 text-[11px]"
-        >
-          {committing ? (
-            <>
-              <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />
-              {t("gitPanel.commit.buttonPending")}
-            </>
-          ) : (
-            t("gitPanel.commit.button")
-          )}
-        </Button>
+        <GitPrimaryActionButton
+          action={primaryAction}
+          pending={committing}
+          blocked={commitBlocked}
+          onRun={onCommit}
+        />
       </div>
     </div>
   );

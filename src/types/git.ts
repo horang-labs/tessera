@@ -129,7 +129,19 @@ export interface GitCommitOutcome {
   files: string[];
 }
 
-export type GitActionOutcome = GitCommitOutcome;
+export interface GitPushOutcome {
+  action: "push";
+  branch: string;
+  /**
+   * Where the branch tracks now that the push has landed, e.g. `origin/main`.
+   * Null when Git would not say — the push still happened.
+   */
+  remoteBranch: string | null;
+  /** True when this push is what created the tracking link. */
+  setUpstream: boolean;
+}
+
+export type GitActionOutcome = GitCommitOutcome | GitPushOutcome;
 
 export type GitActionResult =
   | { ok: true; outcome: GitActionOutcome }

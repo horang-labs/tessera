@@ -135,6 +135,12 @@ test('every key a report can name resolves to a real string in every locale', as
     'gitPanel.commit.failureToast',
     'gitPanel.commit.hookRejectedToast',
     'gitPanel.commit.hookRejectedNoDetailToast',
+    'gitPanel.push.successToast',
+    'gitPanel.push.successNoUpstreamToast',
+    'gitPanel.push.publishedToast',
+    'gitPanel.push.failureToast',
+    'gitPanel.push.hookRejectedToast',
+    'gitPanel.push.hookRejectedNoDetailToast',
   ];
 
   for (const [language, bundle] of locales) {
@@ -149,6 +155,84 @@ test('every key a report can name resolves to a real string in every locale', as
       assert.match(value as string, /\{\{origin\}\}/, `${language}.${key} drops its provenance`);
     }
   }
+});
+
+test('a first push reports the remote branch it created', () => {
+  const toast = describeGitActionToast(
+    {
+      ok: true,
+      outcome: {
+        action: 'push',
+        branch: 'feature/0807-t233',
+        remoteBranch: 'origin/feature/0807-t233',
+        setUpstream: true,
+      },
+    },
+    'feature/0807-t233',
+    'push',
+  );
+
+  assert.equal(toast.tone, 'success');
+  assert.equal(toast.messageKey, 'gitPanel.push.publishedToast');
+  assert.equal(toast.params.remoteBranch, 'origin/feature/0807-t233');
+  // Nothing about a push belongs to the commit draft.
+  assert.equal(toast.clearsDraft, false);
+});
+
+test('a push onto an existing upstream is reported as a push, not as a publish', () => {
+  const toast = describeGitActionToast(
+    {
+      ok: true,
+      outcome: {
+        action: 'push',
+        branch: 'feature/0807-t233',
+        remoteBranch: 'origin/feature/0807-t233',
+        setUpstream: false,
+      },
+    },
+    'feature/0807-t233',
+    'push',
+  );
+
+  assert.equal(toast.messageKey, 'gitPanel.push.successToast');
+  assert.equal(toast.params.remoteBranch, 'origin/feature/0807-t233');
+});
+
+test('a push whose upstream could not be read back still reports the push', () => {
+  const toast = describeGitActionToast(
+    {
+      ok: true,
+      outcome: {
+        action: 'push',
+        branch: 'feature/0807-t233',
+        remoteBranch: null,
+        setUpstream: false,
+      },
+    },
+    'feature/0807-t233',
+    'push',
+  );
+
+  // The push landed; a follow-up read that stumbled must not turn it into a
+  // report about a remote branch named "null".
+  assert.equal(toast.messageKey, 'gitPanel.push.successNoUpstreamToast');
+  assert.equal(toast.params.remoteBranch, undefined);
+});
+
+test('a failed push says the push failed, not the commit', () => {
+  const toast = describeGitActionToast(failedWith({}), 'main', 'push');
+  const rejected = describeGitActionToast(
+    failedWith({ kind: 'hook_rejected', message: 'pre-push said no', stderr: 'pre-push said no' }),
+    'main',
+    'push',
+  );
+
+  assert.equal(toast.messageKey, 'gitPanel.push.failureToast');
+  assert.equal(rejected.messageKey, 'gitPanel.push.hookRejectedToast');
+  assert.equal(
+    describeGitRequestFailureToast('Session is no longer available', 'main', 'push').messageKey,
+    'gitPanel.push.failureToast',
+  );
 });
 
 test('a request that never reached Git still reports with provenance', () => {
