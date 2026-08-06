@@ -89,6 +89,37 @@ function jsonResponse(status: number, payload: unknown): Response {
   });
 }
 
+/**
+ * A server that answers each endpoint with what that endpoint really carries.
+ *
+ * `/git/changes` answers with the change set and nothing else — no branch, no
+ * ahead/behind — which is the whole of #239: a poll pointed there refreshes the
+ * file list while the values the ladder is derived from stay at their mount
+ * values. A stub that served the full panel whatever was asked for would let a
+ * poll read the wrong endpoint and still pass.
+ */
+function panelServer(states: GitPanelData[]): typeof fetch {
+  const queue = [...states];
+  let last = states[0] ?? panelState();
+
+  return (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/git')) {
+      last = queue.shift() ?? last;
+      return jsonResponse(200, last);
+    }
+    if (url.endsWith('/git/changes')) {
+      return jsonResponse(200, {
+        sessionId: last.sessionId,
+        changedFiles: last.changedFiles,
+        changedFilesTotal: last.changedFilesTotal,
+        changedFilesTruncated: last.changedFilesTruncated,
+      });
+    }
+    return jsonResponse(404, { error: { code: 'not_found' } });
+  }) as typeof fetch;
+}
+
 test('the panel read asks the endpoint that carries the branch and ahead/behind', async () => {
   const requested: string[] = [];
   const state = panelState({ branch: 'feature/e2e-pr', ahead: 0, behind: 2 });
@@ -149,16 +180,14 @@ test('a read that never reached the server is a failure, not a crash', async () 
 test('a branch switched outside the panel arrives on the next poll', async () => {
   const clock = fakeClock();
   const applied: GitPanelData[] = [];
-  const responses = [
-    panelState({ branch: 'main' }),
-    panelState({ branch: 'feature/e2e-pr' }),
-  ];
-
   const stop = startGitPanelPolling({
     sessionId: 'session-1',
     apply: (data) => applied.push(data),
     isVisible: () => true,
-    fetchImpl: async () => jsonResponse(200, responses.shift() ?? panelState()),
+    fetchImpl: panelServer([
+      panelState({ branch: 'main' }),
+      panelState({ branch: 'feature/e2e-pr' }),
+    ]),
     timers: clock.timers,
   });
 
@@ -174,13 +203,11 @@ test('a branch switched outside the panel arrives on the next poll', async () =>
 test('a branch that fell behind reaches the Pull rung on the poll, without a remount', async () => {
   const clock = fakeClock();
   const applied: GitPanelData[] = [];
-  const responses = [panelState({ behind: 0 }), panelState({ behind: 2 })];
-
   const stop = startGitPanelPolling({
     sessionId: 'session-1',
     apply: (data) => applied.push(data),
     isVisible: () => true,
-    fetchImpl: async () => jsonResponse(200, responses.shift() ?? panelState()),
+    fetchImpl: panelServer([panelState({ behind: 0 }), panelState({ behind: 2 })]),
     timers: clock.timers,
   });
 
