@@ -5,14 +5,21 @@ import { useGitPanelStore } from "@/stores/git-panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
+import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
+import { toast } from "@/stores/notification-store";
 import type {
+  GitActionResult,
+  GitChangedFile,
   GitChangedFilesData,
   GitDiffData,
   GitPanelData,
 } from "@/types/git";
-import { extractGitPanelErrorMessage } from "./git-panel-shared";
+import {
+  extractGitPanelErrorMessage,
+  summarizeGitFailure,
+} from "./git-panel-shared";
 
 // Optimistic session IDs created by use-session-crud.ts before the server
 // responds with the real id. These never exist in the server DB, so any
@@ -72,6 +79,7 @@ function rememberPanelSessionCache(
 }
 
 export function useGitPanelController(sessionId: string | null) {
+  const { t } = useI18n();
   const initialCache = getPanelSessionCache(sessionId);
   const data = useGitPanelStore((state) =>
     sessionId ? state.dataBySessionId[sessionId] ?? null : null,
@@ -90,6 +98,14 @@ export function useGitPanelController(sessionId: string | null) {
   );
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [commitMessage, setCommitMessage] = useState("");
+  // Checkboxes start selected, so it is the *de*selection that has to persist.
+  // The changed-file list is re-polled every few seconds; holding the selection
+  // instead would make every poll fight over files that had just appeared.
+  const [deselectedPaths, setDeselectedPaths] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const [committing, setCommitting] = useState(false);
   const lastDiffStatsTokenRef = useRef<string | null>(null);
 
   const sessionSnapshot = useSessionStore((state) =>
@@ -196,6 +212,10 @@ export function useGitPanelController(sessionId: string | null) {
     setSelectedPath(cached?.selectedPath ?? null);
     setDiffCache(cached?.diffCache ?? {});
     setDiffError(null);
+    // A commit draft belongs to the session it was typed in, and so does the
+    // selection under it — neither survives a switch.
+    setCommitMessage("");
+    setDeselectedPaths(new Set<string>());
 
     if (!sessionId || isTransientSessionId(sessionId)) {
       setLoading(false);
@@ -424,6 +444,138 @@ export function useGitPanelController(sessionId: string | null) {
     [panelData, selectedPath],
   );
 
+  // A path that left the change set must not stay deselected: if the same file
+  // changes again it is a new choice, and it should arrive checked like the
+  // rest.
+  useEffect(() => {
+    const files = panelData?.changedFiles;
+    if (!files) return;
+
+    setDeselectedPaths((current) => {
+      if (current.size === 0) return current;
+      const live = new Set(files.map((file) => file.path));
+      const next = new Set([...current].filter((path) => live.has(path)));
+      return next.size === current.size ? current : next;
+    });
+  }, [panelData]);
+
+  const commitFiles = useMemo<GitChangedFile[]>(
+    () =>
+      (panelData?.changedFiles ?? []).filter(
+        (file) => !deselectedPaths.has(file.path),
+      ),
+    [deselectedPaths, panelData],
+  );
+
+  // Counts the commit itself would produce, not the worktree's — the summary
+  // above still reports the whole tree.
+  const commitTotals = useMemo(() => {
+    let added = 0;
+    let removed = 0;
+    for (const file of commitFiles) {
+      added += file.diffStats?.added ?? 0;
+      removed += file.diffStats?.removed ?? 0;
+    }
+    return { files: commitFiles.length, added, removed };
+  }, [commitFiles]);
+
+  const isSelectedForCommit = useCallback(
+    (path: string) => !deselectedPaths.has(path),
+    [deselectedPaths],
+  );
+
+  const toggleCommitFile = useCallback((path: string) => {
+    setDeselectedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const commitSelectedFiles = useCallback(async () => {
+    const message = commitMessage.trim();
+    // The button is disabled without these. This is the second guard the design
+    // asks for, and it also catches a click that lands after the selection
+    // emptied underneath it.
+    if (!sessionId || !message || commitFiles.length === 0 || committing) return;
+
+    // Tessera runs many sessions at once, so a bare "Committed" says nothing
+    // about which worktree moved.
+    const origin = panelData?.branch || panelData?.worktreeName || "worktree";
+    const files = commitFiles.map((file) => file.path);
+
+    setCommitting(true);
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "commit", message, files }),
+        },
+      );
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          extractGitPanelErrorMessage(payload, "Failed to commit."),
+        );
+      }
+
+      const result = payload as GitActionResult;
+      if (!result.ok) {
+        toast.error(
+          t("gitPanel.commit.failureToast", {
+            origin,
+            reason: summarizeGitFailure(result.failure.message),
+          }),
+        );
+        void captureTelemetryEvent("git_action_triggered", {
+          source: "git_panel",
+          action: "commit",
+          target: "commit",
+          result: "failed",
+          failure_kind: result.failure.kind,
+          file_count: files.length,
+        });
+        return;
+      }
+
+      setCommitMessage("");
+      setDeselectedPaths(new Set<string>());
+      toast.success(t("gitPanel.commit.successToast", { origin }));
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "commit",
+        target: "commit",
+        result: "success",
+        file_count: files.length,
+      });
+      // The route triggers the state refresh and broadcasts it; the client
+      // never asks for one (docs/design/git-delivery.md §11).
+    } catch (nextError) {
+      toast.error(
+        t("gitPanel.commit.failureToast", {
+          origin,
+          reason: summarizeGitFailure(
+            nextError instanceof Error ? nextError.message : "Failed to commit.",
+          ),
+        }),
+      );
+    } finally {
+      setCommitting(false);
+    }
+  }, [
+    commitFiles,
+    commitMessage,
+    committing,
+    panelData?.branch,
+    panelData?.worktreeName,
+    sessionId,
+    t,
+  ]);
+
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;
   const checksUrl = panelData?.prStatus?.url
@@ -530,6 +682,10 @@ export function useGitPanelController(sessionId: string | null) {
 
   return {
     changedFileCount,
+    commitMessage,
+    commitSelectedFiles,
+    commitTotals,
+    committing,
     copyBranch,
     copyFilePath,
     copyWorktreePath,
@@ -538,13 +694,16 @@ export function useGitPanelController(sessionId: string | null) {
     diffError,
     diffLoading,
     error,
+    isSelectedForCommit,
     loading,
     moveSelection,
     openExternal,
     selectedFile,
     selectedFileIndex,
     selectedPath,
+    setCommitMessage,
     setSelectedPath,
+    toggleCommitFile,
   };
 }
 

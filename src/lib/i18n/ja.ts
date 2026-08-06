@@ -1073,6 +1073,16 @@ export const ja: I18nMessages = {
       selectFileTitle: 'ファイルを選択',
       selectFileBody: '上の変更されたファイルを選択すると、パッチプレビューを表示します。',
     },
+    commit: {
+      messageLabel: 'コミットメッセージ',
+      messagePlaceholder: '何をコミットするか説明してください',
+      selectionSummary: '{{files}} 件選択',
+      includeFile: '{{path}} をコミットに含める',
+      button: 'コミット',
+      buttonPending: 'コミット中…',
+      successToast: 'コミットしました · {{origin}}',
+      failureToast: 'コミット失敗 · {{origin}} — {{reason}}',
+    },
   },
   memoryPanel: {
     sections: {

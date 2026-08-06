@@ -97,6 +97,25 @@ export function extractGitPanelErrorMessage(
   return fallback;
 }
 
+/** How much of a Git failure a toast carries before it stops being readable. */
+const FAILURE_TOAST_LIMIT = 180;
+
+/**
+ * Git failures arrive as raw stderr, which for a rejecting hook can be pages of
+ * it. A toast gets the first line that says something, truncated.
+ */
+export function summarizeGitFailure(message: string): string {
+  const firstMeaningfulLine =
+    message
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean) ?? message.trim();
+
+  return firstMeaningfulLine.length > FAILURE_TOAST_LIMIT
+    ? `${firstMeaningfulLine.slice(0, FAILURE_TOAST_LIMIT)}…`
+    : firstMeaningfulLine;
+}
+
 export function getFileScopeLabel(file: GitChangedFile | null): string | null {
   if (!file) return null;
   if (file.state === "untracked") return "Working tree";

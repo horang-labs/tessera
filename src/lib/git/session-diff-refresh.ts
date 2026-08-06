@@ -78,6 +78,25 @@ export function refreshSessionDiffStateInBackground(
   });
 }
 
+/**
+ * Refresh every session that shares a working directory, not just the one that
+ * acted (`docs/design/git-delivery.md` §11). A Git action changes the tree for
+ * all of them, and nothing else would tell the others.
+ *
+ * Fire-and-forget on purpose: the action response must not wait for the refresh,
+ * and a refresh that fails must never turn a successful commit into a reported
+ * failure.
+ */
+export function refreshWorkDirSessionsInBackground(
+  workDir: string,
+  userId: string,
+  reason: string,
+): void {
+  for (const session of dbSessions.getSessionsByWorkDir(workDir)) {
+    refreshSessionDiffStateInBackground(session.id, userId, reason);
+  }
+}
+
 export function refreshSessionDiffStateSoon(
   sessionId: string,
   userId: string,

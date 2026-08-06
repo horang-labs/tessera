@@ -1,5 +1,6 @@
 // src/types/git.ts
 
+import type { GitFailureKind } from '@/lib/worktrees/git-runner';
 import type { TaskPrStatus } from './task-pr-status';
 import type {
   WorktreeDiffStats,
@@ -105,6 +106,34 @@ export interface GitDiffData {
   diff: string;
   truncated: boolean;
 }
+
+/**
+ * What a Git action answers with. A failure is a value rather than an error
+ * shape because ADR 0005 requires the classified kind, the raw stderr and the
+ * change set to survive all the way to the client.
+ */
+export interface GitActionFailure {
+  kind: GitFailureKind;
+  message: string;
+  stderr: string;
+  exitCode: number | null;
+  changedFiles: GitChangedFile[];
+}
+
+export interface GitCommitOutcome {
+  action: "commit";
+  sha: string;
+  subject: string;
+  branch: string | null;
+  /** The paths the commit actually named, in selection order. */
+  files: string[];
+}
+
+export type GitActionOutcome = GitCommitOutcome;
+
+export type GitActionResult =
+  | { ok: true; outcome: GitActionOutcome }
+  | { ok: false; failure: GitActionFailure };
 
 export interface GitChangedFilesData {
   sessionId: string;
