@@ -6,6 +6,10 @@ import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
 import * as dbSessions from '@/lib/db/sessions';
 import { sessionHistory } from '@/lib/session-history';
+import {
+  readTerminalToolCallParams,
+  supportsTerminalTranscriptHistory,
+} from '@/lib/session/terminal-session-history';
 import { inferImageMime, isImagePath } from '@/lib/tool-results/tool-image';
 
 // Codex screenshots / large reads can be a few MB; cap to avoid serving huge files.
@@ -34,11 +38,16 @@ export async function GET(
       return jsonError('invalid_params', 'toolUseId is required', 400);
     }
 
-    if (!dbSessions.getSession(id)) {
+    const session = dbSessions.getSession(id);
+    if (!session) {
       return jsonError('not_found', 'Session not found', 404);
     }
 
-    const toolParams = await sessionHistory.readToolCallParams(id, toolUseId);
+    // A PTY session's conversation never reaches Tessera's own history, so its
+    // tool calls only exist in the provider transcript the chat view decodes.
+    const toolParams = supportsTerminalTranscriptHistory(session)
+      ? await readTerminalToolCallParams(session, toolUseId, auth.userId)
+      : await sessionHistory.readToolCallParams(id, toolUseId);
     if (!toolParams) {
       return jsonError('not_found', 'Tool call not found', 404);
     }
