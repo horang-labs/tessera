@@ -351,14 +351,14 @@ const NOT_FOUND_PATTERNS = [
  */
 const GIT_DIAGNOSTIC_PREFIXES = ['fatal:', 'error:', 'warning:', 'hint:'];
 
+function isGitDiagnosticLine(line: string): boolean {
+  const normalized = line.trimStart().toLowerCase();
+  return GIT_DIAGNOSTIC_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
 /** True when any line reads as Git's own diagnostic rather than a child's output. */
 export function hasGitDiagnosticLine(text: string): boolean {
-  return text
-    .split('\n')
-    .some((line) => {
-      const normalized = line.trimStart().toLowerCase();
-      return GIT_DIAGNOSTIC_PREFIXES.some((prefix) => normalized.startsWith(prefix));
-    });
+  return text.split('\n').some(isGitDiagnosticLine);
 }
 
 /**
@@ -388,6 +388,24 @@ const HOOK_REJECTION_PATTERNS = [
   'update hook',
 ];
 
+/**
+ * Line by line, not over the whole of stderr: Git signs a failed push off with
+ * an `error: failed to push some refs` line of its own, below the
+ * `! [remote rejected] … (pre-receive hook declined)` line that carries the
+ * verdict. Judging stderr as a whole would let Git's sign-off bury the refusal.
+ *
+ * What each line has to clear is that the hook's name is not merely *mentioned*
+ * in something Git said — `fatal: cannot open '.husky/pre-commit'` is Git
+ * failing to read a file, and a hook's filename is still just a path.
+ */
+function namesARefusingHook(stderr: string): boolean {
+  return stderr.split('\n').some((line) => {
+    if (isGitDiagnosticLine(line)) return false;
+    const normalized = line.toLowerCase();
+    return HOOK_REJECTION_PATTERNS.some((pattern) => normalized.includes(pattern));
+  });
+}
+
 function classifyGitFailure(stderr: string): GitFailureKind {
   const haystack = stderr.toLowerCase();
   // Authentication first: a private repository answers "Repository not found"
@@ -400,11 +418,6 @@ function classifyGitFailure(stderr: string): GitFailureKind {
   }
   // After both, so a hook that fails on a credential or a missing ref is still
   // reported as the thing the user can act on.
-  if (
-    HOOK_REJECTION_PATTERNS.some((pattern) => haystack.includes(pattern))
-    && !hasGitDiagnosticLine(stderr)
-  ) {
-    return 'hook_rejected';
-  }
+  if (namesARefusingHook(stderr)) return 'hook_rejected';
   return 'command_failed';
 }

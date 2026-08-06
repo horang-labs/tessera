@@ -130,6 +130,17 @@ test('a hook saying no is promoted out of a generic command failure', async (t) 
     (await kindOf('remote: error: hook declined to update refs/heads/main')).kind,
     'hook_rejected',
   );
+
+  // A real push rejection, verbatim. Git always signs off with an `error:` line
+  // of its own, so the hook's verdict has to be read line by line — judging the
+  // whole of stderr would let that last line bury the refusal above it.
+  const pushRejection = [
+    'remote: policy: no direct pushes',
+    'To /srv/repo.git',
+    ' ! [remote rejected] main -> main (pre-receive hook declined)',
+    "error: failed to push some refs to '/srv/repo.git'",
+  ].join('\n');
+  assert.equal((await kindOf(pushRejection)).kind, 'hook_rejected');
 });
 
 test('the default timeout clears the slowest legitimate command by a wide margin', () => {
