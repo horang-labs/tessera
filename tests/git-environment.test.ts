@@ -89,15 +89,25 @@ test('a posix path infers wsl when the server itself runs inside WSL', async (t)
   );
 });
 
-test('Windows paths and drive mounts infer native', async () => {
+test('Windows paths infer native', async () => {
   await withPlatform('win32', async () => {
     assert.equal(
       await resolveGitEnvironment({ inferFromPaths: ['C:\\Users\\work\\repo'] }),
       'native',
     );
   });
+});
 
-  // /mnt/c is the Windows filesystem seen from WSL, not a distro-local path.
+test('a Windows drive mount infers native on the server that can see it', async (t) => {
+  if (!isRunningInWsl()) {
+    t.skip('not running inside WSL — /mnt/c only means anything here');
+    return;
+  }
+
+  // /mnt/c is the Windows filesystem seen from WSL, not a distro-local path,
+  // so a WSL server runs git against it natively. Only asserted on this
+  // platform: a Windows server never sees a path in this form, and the
+  // posix-path clause would (correctly, for that server) call it wsl.
   assert.equal(
     await resolveGitEnvironment({ inferFromPaths: ['/mnt/c/Users/work/repo'] }),
     'native',

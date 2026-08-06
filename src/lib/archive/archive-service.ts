@@ -476,10 +476,9 @@ async function removeArchivedWorktree(
         throw new Error('Failed to resolve source project for managed worktree cleanup');
       }
       try {
-        // Retention runs on a timer with no user attached. Asking the setting
-        // would answer 'native' for everyone, which cannot remove a WSL
-        // worktree, so this is the one place that reads the environment off
-        // the paths instead.
+        // Retention runs on a timer with no user attached, so the environment
+        // comes off the paths: asking the setting would answer 'native' for
+        // everyone, which cannot remove a WSL worktree.
         await removeManagedWorktree(
           sourceProjectDir,
           item.workDir,

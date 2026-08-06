@@ -10,8 +10,6 @@
 import type { SpawnOptions } from 'child_process';
 import logger from '@/lib/logger';
 import { spawnCli } from '@/lib/cli/spawn-cli';
-import { isWindowsHostedWslFilesystemPath } from '@/lib/filesystem/path-environment';
-import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { createGitRunner } from '@/lib/worktrees/git-runner';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
@@ -77,7 +75,7 @@ async function execGhInDir(
 }
 
 export async function isGhCliAvailable(
-  agentEnvironment: AgentEnvironment = 'native',
+  agentEnvironment: AgentEnvironment,
 ): Promise<boolean> {
   const cached = ghAvailableCache.get(agentEnvironment);
   if (cached !== undefined) return cached;
@@ -103,7 +101,7 @@ export function resetGhAvailabilityCache(): void {
  */
 export async function resolveCurrentBranch(
   workDir: string,
-  agentEnvironment: AgentEnvironment = inferGitHubToolEnvironment(workDir),
+  agentEnvironment: AgentEnvironment,
 ): Promise<string | null> {
   if (!workDir) return null;
   const result = await execGitInDir(
@@ -152,10 +150,9 @@ interface GhPrListItem {
 export async function probeTaskPrStatus(params: {
   workDir: string;
   branch: string;
-  agentEnvironment?: AgentEnvironment;
+  agentEnvironment: AgentEnvironment;
 }): Promise<PrProbeResult> {
-  const { workDir, branch } = params;
-  const agentEnvironment = params.agentEnvironment ?? inferGitHubToolEnvironment(workDir);
+  const { workDir, branch, agentEnvironment } = params;
 
   if (!workDir) return { kind: 'unsupported', reason: 'workdir_missing' };
   if (!branch) return { kind: 'unsupported', reason: 'branch_missing' };
@@ -301,8 +298,3 @@ function runCliCommand(
   });
 }
 
-function inferGitHubToolEnvironment(workDir: string): AgentEnvironment {
-  if (isWindowsHostedWslFilesystemPath(workDir)) return 'wsl';
-  if (getRuntimePlatform() === 'win32' && workDir.trim().startsWith('/')) return 'wsl';
-  return 'native';
-}

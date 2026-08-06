@@ -256,12 +256,7 @@ export async function resolveManagedWorktreeRoot(
   return MANAGED_WORKTREE_ROOT;
 }
 
-/**
- * `runGit` is required. It used to default to a runner built from the two
- * paths, which meant a caller with no user attached got path inference without
- * asking for it — and a caller that simply forgot the argument got it too.
- * Callers without a user now say so with `resolveGitEnvironment`.
- */
+/** `runGit` is required: callers name their environment via ADR 0006. */
 export async function removeManagedWorktree(
   projectDir: string,
   worktreePath: string,

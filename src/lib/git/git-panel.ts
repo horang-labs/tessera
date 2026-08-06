@@ -941,7 +941,7 @@ export async function getGitPanelData(
 ): Promise<GitPanelData> {
   const sessionContext = await resolveSessionContext(sessionId);
   const { workDir } = sessionContext;
-  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSource(workDir, userId));
+  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const {
     repoRoot,
     branchRaw,
@@ -1020,7 +1020,7 @@ export async function getGitChangedFilesData(
   userId?: string,
 ): Promise<GitChangedFilesData> {
   const workDir = await resolveSessionWorkDir(sessionId);
-  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSource(workDir, userId));
+  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   let changedFiles: ChangedFilesResult;
   if (shouldBatchGitCommands(agentEnvironment)) {
     changedFiles = (await getBatchedChangedFiles(workDir, agentEnvironment)).changedFiles;
@@ -1043,7 +1043,7 @@ export async function fetchGitPanelData(
 ): Promise<GitPanelData> {
   const sessionContext = await resolveSessionContext(sessionId);
   const { workDir } = sessionContext;
-  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSource(workDir, userId));
+  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   await resolveRepoRoot(workDir, agentEnvironment);
   const upstream = await runOptionalCommand(
     "git",
@@ -1062,7 +1062,7 @@ export async function getGitDiffData(
   userId?: string,
 ): Promise<GitDiffData> {
   const workDir = await resolveSessionWorkDir(sessionId);
-  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSource(workDir, userId));
+  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
   const changedFiles = await getChangedFiles(workDir, agentEnvironment);
   const fileEntry = changedFiles.files.find((file) => file.path === relativePath);
@@ -1110,12 +1110,9 @@ export async function getGitDiffData(
   };
 }
 
-/**
- * These entry points take `userId` optionally because the recompute path
- * (`git-panel-cache`) can run with no user attached. Naming the fallback here
- * keeps it a stated choice rather than something a caller falls into.
- */
-function gitEnvironmentSource(workDir: string, userId?: string): GitEnvironmentSource {
+// `userId` is optional here because the recompute path (`git-panel-cache`)
+// runs with no user attached.
+function gitEnvironmentSourceFor(workDir: string, userId?: string): GitEnvironmentSource {
   return userId ? { userId } : { inferFromPaths: [workDir] };
 }
 

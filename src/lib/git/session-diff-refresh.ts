@@ -1,5 +1,5 @@
 import * as dbSessions from '@/lib/db/sessions';
-import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import logger from '@/lib/logger';
 import { syncTaskPr } from '@/lib/github/task-pr-sync';
 import { syncSessionPr } from '@/lib/github/session-pr-sync';
@@ -55,10 +55,10 @@ export async function refreshSessionDiffState(
   // is built from stale prContext/sessionPr cache and the PR-derived
   // github.available / github.reasonCode lag until the next reload.
   if (session.taskId) {
-    const agentEnvironment = await getAgentEnvironment(userId);
+    const agentEnvironment = await resolveGitEnvironment({ userId });
     await runOperation('task_pr_status', syncTaskPr(session.taskId, { agentEnvironment }));
   } else if (session.workDir) {
-    const agentEnvironment = await getAgentEnvironment(userId);
+    const agentEnvironment = await resolveGitEnvironment({ userId });
     await runOperation('session_pr_status', syncSessionPr(sessionId, { agentEnvironment }));
   }
 
