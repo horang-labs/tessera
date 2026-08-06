@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUserId } from "@/lib/auth/api-auth";
 import { getGitPanelData, GitPanelError } from "@/lib/git/git-panel";
+import { scheduleGitRemoteRefresh } from "@/lib/git/git-remote-refresh";
 import { jsonError } from "@/lib/http/json-error";
 import logger from "@/lib/logger";
 
@@ -17,6 +18,23 @@ export async function GET(
     if ("response" in auth) return auth.response;
 
     const payload = await getGitPanelData(id, auth.userId);
+
+    // The read itself stays local — this answers with what the refs say now,
+    // and moves them behind the response for whoever reads next (#239). It is
+    // rate-limited per working directory, so the panel's 5s poll does not mean
+    // a fetch every 5s; the response is never delayed by it.
+    // The catch is a second net, not the first: the refresh swallows its own
+    // failures so the interval is consumed. Without it, anything that slipped
+    // out would land on the process-wide `unhandledRejection` handler and be
+    // logged as an error once per poll, per open panel.
+    void scheduleGitRemoteRefresh({
+      sessionId: id,
+      workDir: payload.workDir,
+      userId: auth.userId,
+    }).catch((error) => {
+      logger.debug({ error, sessionId: id }, "Git panel remote refresh failed");
+    });
+
     return NextResponse.json(payload);
   } catch (error) {
     if (error instanceof GitPanelError) {

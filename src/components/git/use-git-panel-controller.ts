@@ -34,6 +34,8 @@ import {
   readRememberedGitAction,
   rememberGitAction,
 } from "@/lib/git/git-action-memory";
+import { startGitPanelPolling } from "@/lib/git/git-panel-poll";
+import { readGitPanelState } from "@/lib/git/git-panel-read";
 import {
   describeGitActionOrigin,
   describeGitActionToast,
@@ -93,12 +95,6 @@ const BRANCH_ACTION_TELEMETRY_TARGET: Record<GitBranchActionVerb, string> = {
 };
 
 const PANEL_CACHE_LIMIT = 20;
-const GIT_PANEL_POLL_INTERVAL_MS = 5000;
-// Upper bound and slow-scan multiplier for adaptive polling: after a slow scan
-// (e.g. a huge repo) we wait roughly `elapsed * BACKOFF` before the next tick so
-// we never re-poll on top of an unfinished scan, capped at MAX.
-const GIT_PANEL_POLL_MAX_INTERVAL_MS = 60_000;
-const GIT_PANEL_POLL_SLOW_BACKOFF = 3;
 const gitPanelSessionCache = new Map<string, GitPanelSessionCacheEntry>();
 
 async function writeClipboardText(value: string | null | undefined) {
@@ -267,35 +263,22 @@ export function useGitPanelController(sessionId: string | null) {
     }
 
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/git`);
-      const payload = await response.json().catch(() => ({}));
+      // The same read the poll makes (#239). Anything the panel can show on
+      // mount, it can therefore show without one.
+      const result = await readGitPanelState(sessionId);
 
-      if (!response.ok) {
-        // Race: optimistic session id resolved on the client before the DB
-        // row is visible. Stay quiet — the next sessionId change (or a retry
-        // via visibilitychange) will pick up the real state.
-        if (
-          response.status === 404 &&
-          (payload as { error?: { code?: string } } | null)?.error?.code ===
-            "session_not_found"
-        ) {
-          return;
-        }
-        throw new Error(
-          extractGitPanelErrorMessage(payload, "Failed to load git summary."),
-        );
+      // Race: optimistic session id resolved on the client before the DB row is
+      // visible. Stay quiet — the next sessionId change (or a retry via
+      // visibilitychange) will pick up the real state.
+      if (result.kind === "session_missing") return;
+
+      if (result.kind === "failed") {
+        if (!silent) setError(result.message);
+        return;
       }
 
-      applyGitPanelData(sessionId, payload as GitPanelData);
+      applyGitPanelData(sessionId, result.data);
       setError(null);
-    } catch (nextError) {
-      if (!silent) {
-        setError(
-          nextError instanceof Error
-            ? nextError.message
-            : "Failed to load git summary.",
-        );
-      }
     } finally {
       setLoading(false);
     }
@@ -401,50 +384,23 @@ export function useGitPanelController(sessionId: string | null) {
     };
   }, [loadPanel, sessionId]);
 
+  /**
+   * The background refresh (#239). It reads the whole panel state rather than
+   * the change set alone: the branch and the ahead/behind counts are what the
+   * primary-action ladder is derived from (§3), and a poll that left them at
+   * their mount values made the panel look alive while silently mis-deciding
+   * the push confirmation (§8), the pull rung and the pull-request rung.
+   */
   useEffect(() => {
     if (!sessionId || isTransientSessionId(sessionId)) return;
     if (typeof document === "undefined" || typeof window === "undefined") return;
 
-    let cancelled = false;
-    let timer: number | undefined;
-    let inFlight = false;
-
-    const schedule = (delayMs: number) => {
-      if (cancelled) return;
-      timer = window.setTimeout(runTick, delayMs);
-    };
-
-    const runTick = async () => {
-      if (cancelled) return;
-      if (document.visibilityState !== "visible" || inFlight) {
-        schedule(GIT_PANEL_POLL_INTERVAL_MS);
-        return;
-      }
-      inFlight = true;
-      const startedAt = performance.now();
-      try {
-        await loadChangedFiles();
-      } finally {
-        inFlight = false;
-        const elapsed = performance.now() - startedAt;
-        const nextDelay = Math.min(
-          GIT_PANEL_POLL_MAX_INTERVAL_MS,
-          Math.max(
-            GIT_PANEL_POLL_INTERVAL_MS,
-            Math.round(elapsed * GIT_PANEL_POLL_SLOW_BACKOFF),
-          ),
-        );
-        schedule(nextDelay);
-      }
-    };
-
-    schedule(GIT_PANEL_POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [loadChangedFiles, sessionId]);
+    return startGitPanelPolling({
+      sessionId,
+      apply: (data) => applyGitPanelData(sessionId, data),
+      isVisible: () => document.visibilityState === "visible",
+    });
+  }, [applyGitPanelData, sessionId]);
 
   const panelData = useMemo<GitPanelData | null>(() => {
     if (!data) return null;

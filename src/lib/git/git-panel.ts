@@ -931,13 +931,46 @@ export async function getGitChangedFilesData(
   };
 }
 
-export async function fetchGitPanelData(
-  sessionId: string,
-  userId?: string,
-): Promise<GitPanelData> {
-  const sessionContext = await resolveSessionContext(sessionId);
-  const { workDir } = sessionContext;
-  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
+/**
+ * Move `refs/remotes/*` for this working directory, so a branch that has fallen
+ * behind can be seen to have. The remote is the one the branch tracks rather
+ * than `origin` by name, and `--prune` drops refs the remote no longer has.
+ *
+ * The only Git command in a panel read path that touches the network, which is
+ * why it is not part of a panel read: `git-remote-refresh.ts` decides how often
+ * it is worth running (#239).
+ */
+/**
+ * The Git directory this working directory's `refs/remotes/*` actually live in.
+ *
+ * For a managed worktree that is the *main* repository's `.git`, not the
+ * worktree's own pointer file, so every worktree of one repository answers with
+ * the same path — which is what lets one fetch serve all of them (#239).
+ *
+ * `--path-format=absolute` is what makes them agree: without it a plain checkout
+ * answers the relative `.git` while its linked worktrees answer an absolute
+ * path, and the two would not match. Null when Git could not say — an older Git
+ * that does not know the flag, or a directory that is not a repository — and the
+ * caller falls back to the working directory.
+ */
+export async function getGitCommonDir(
+  workDir: string,
+  environmentSource: GitEnvironmentSource,
+): Promise<string | null> {
+  const agentEnvironment = await resolveGitEnvironment(environmentSource);
+  const commonDir = await runOptionalGitCommand(
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    workDir,
+    agentEnvironment,
+  );
+  return commonDir?.trim() || null;
+}
+
+export async function fetchGitRemote(
+  workDir: string,
+  environmentSource: GitEnvironmentSource,
+): Promise<void> {
+  const agentEnvironment = await resolveGitEnvironment(environmentSource);
   await resolveRepoRoot(workDir, agentEnvironment);
   const upstream = await runOptionalGitCommand(
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
@@ -946,6 +979,17 @@ export async function fetchGitPanelData(
   );
   const remoteName = getFetchRemoteName(upstream);
   await runGitCommand(["fetch", "--prune", remoteName], workDir, agentEnvironment);
+}
+
+export async function fetchGitPanelData(
+  sessionId: string,
+  userId?: string,
+): Promise<GitPanelData> {
+  const { workDir } = await resolveSessionContext(sessionId);
+  // The fallback is stated here rather than defaulted inside `fetchGitRemote`
+  // (ADR 0006): this function's own `userId` is optional, so the call site is
+  // where "no user, infer from the path" has to be visible.
+  await fetchGitRemote(workDir, gitEnvironmentSourceFor(workDir, userId));
   return getGitPanelData(sessionId, userId);
 }
 
