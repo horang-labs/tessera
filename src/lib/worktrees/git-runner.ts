@@ -303,7 +303,12 @@ function runCommand(
   });
 }
 
-function killProcessGroup(child: ChildProcess): void {
+/**
+ * Shared with the `gh` runner (`src/lib/github/gh-cli.ts`), which spawns through
+ * the same `spawnCli` contract and therefore has the same wedged-grandchild
+ * problem and the same group-leader guarantee to solve it with.
+ */
+export function killProcessGroup(child: ChildProcess): void {
   try {
     // detached spawn makes the command a group leader on POSIX; kill the whole
     // group so wedged grandchildren die with it.

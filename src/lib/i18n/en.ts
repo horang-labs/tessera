@@ -1107,6 +1107,7 @@ export const en: I18nMessages = {
       failureToast: 'Creating the pull request failed · {{origin}} — {{reason}}',
       createButton: 'Create PR',
       createButtonPending: 'Creating PR…',
+      defaultBranch: 'A pull request needs a branch other than the default one',
       statusUnknown: 'Checking GitHub for a pull request…',
       unavailable: 'A pull request needs a GitHub remote and a signed-in gh CLI',
     },

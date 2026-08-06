@@ -7,21 +7,32 @@
  * side of the boundary (ADR 0006). `spawnCli` is what applies that.
  *
  * A non-zero exit is a result, not an exception: the caller classifies what gh
- * said. Only a process that never started resolves with a null exit code, and
- * its stderr is the spawn error.
+ * said. Only a process that never started — or one that had to be killed —
+ * resolves with a null exit code, and its stderr says which.
  */
 import type { SpawnOptions } from 'child_process';
 import { spawnCli } from '@/lib/cli/spawn-cli';
+import { killProcessGroup } from '@/lib/worktrees/git-runner';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
 /** Enough for any JSON gh returns; a runaway process cannot fill memory. */
 const GH_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Well clear of a slow GitHub API round trip, and far below the Git runner's ten
+ * minutes: gh runs no hooks and pushes no objects, so nothing legitimate here
+ * takes a minute. Without a bound a wedged gh never settles, and the panel's
+ * in-flight frame (§7) has nothing to end it — the button spins until reload.
+ */
+const GH_TIMEOUT_MS = 60_000;
+
 export interface GhCommandResult {
-  /** Null when gh never ran at all — then `stderr` is the spawn error. */
+  /** Null when gh never ran, or when it ran and had to be killed. */
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  /** True when the runner killed it for taking longer than `GH_TIMEOUT_MS`. */
+  timedOut?: boolean;
 }
 
 export interface GhInvocationOptions {
@@ -54,16 +65,39 @@ function runGh(
     const child = spawnCli('gh', args, spawnOptions, agentEnvironment);
     const stdout = createOutputCollector();
     const stderr = createOutputCollector();
+    let settled = false;
+    // Our own timer rather than spawn's `timeout`, for the same reason the Git
+    // runner keeps one: a wedged grandchild inherits the stdio pipes and holds
+    // 'close' back even once gh itself is gone.
+    const killTimer = setTimeout(() => {
+      if (settled) return;
+      killProcessGroup(child);
+      settle({
+        exitCode: null,
+        stdout: stdout.read(),
+        stderr:
+          stderr.read()
+          || `gh did not respond within ${GH_TIMEOUT_MS}ms and was terminated`,
+        timedOut: true,
+      });
+    }, GH_TIMEOUT_MS);
+
+    const settle = (result: GhCommandResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      resolve(result);
+    };
 
     child.stdout?.on('data', stdout.push);
     child.stderr?.on('data', stderr.push);
 
     child.on('close', (code) => {
-      resolve({ exitCode: code, stdout: stdout.read(), stderr: stderr.read() });
+      settle({ exitCode: code, stdout: stdout.read(), stderr: stderr.read() });
     });
 
     child.on('error', (error) => {
-      resolve({ exitCode: null, stdout: stdout.read(), stderr: error.message });
+      settle({ exitCode: null, stdout: stdout.read(), stderr: error.message });
     });
   });
 }

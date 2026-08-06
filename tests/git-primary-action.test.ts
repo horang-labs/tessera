@@ -40,6 +40,7 @@ const SYNCED: GitStateSnapshot = {
   changedFileCount: 0,
   hasRemote: true,
   pullRequest: 'exists',
+  defaultBranch: 'dev',
 };
 
 test('state that is not known yet holds a disabled Commit frame', () => {
@@ -132,6 +133,30 @@ test('pushing rotates the same button from Push to Create PR', () => {
 
   assert.equal(ahead.kind, 'push');
   assert.equal(pushed.kind, 'create_pr');
+});
+
+test('the default branch is not offered a pull request it would open against itself', () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    branch: 'dev',
+    upstream: 'origin/dev',
+    pullRequest: 'none',
+  });
+
+  assert.equal(action.enabled, false);
+  assert.equal(action.disabledReasonKey, 'gitPanel.pr.defaultBranch');
+});
+
+test('a repository that never resolved a default branch still offers Create PR', () => {
+  // `defaultBranch` is read from `refs/remotes/origin/HEAD`, which a clone can
+  // legitimately lack. Not knowing must not withhold the action.
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    defaultBranch: null,
+    pullRequest: 'none',
+  });
+
+  assert.equal(action.enabled, true);
 });
 
 test('a repository with no remote cannot publish, and says so', () => {
@@ -263,6 +288,12 @@ test('a panel whose GitHub state has not arrived reports it as unknown', () => {
   assert.equal(snapshot?.pullRequest, 'unknown');
 });
 
+test('the default branch reaches the ladder as the panel reports it', () => {
+  const snapshot = gitStateSnapshotFromPanel({ ...PANEL, defaultBranch: 'dev' });
+
+  assert.equal(snapshot?.defaultBranch, 'dev');
+});
+
 test('a truncated file list still counts as a dirty tree', () => {
   const snapshot = gitStateSnapshotFromPanel({
     ...PANEL,
@@ -296,6 +327,7 @@ test('every label and reason the ladder can name resolves in every locale', asyn
     { ...SYNCED, pullRequest: 'none' as const },
     { ...SYNCED, pullRequest: 'unknown' as const },
     { ...SYNCED, pullRequest: 'unsupported' as const },
+    { ...SYNCED, branch: 'dev', upstream: 'origin/dev', pullRequest: 'none' as const },
   ];
 
   const keys = new Set<string>();

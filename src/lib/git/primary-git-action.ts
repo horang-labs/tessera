@@ -41,6 +41,12 @@ export interface GitStateSnapshot {
   /** False when the repository has no remote to push to at all. */
   hasRemote: boolean;
   pullRequest: GitPullRequestReadiness;
+  /**
+   * What the repository merges into, or null when `refs/remotes/origin/HEAD`
+   * never resolved. A pull request from the default branch would have to be
+   * opened against itself, which GitHub refuses.
+   */
+  defaultBranch: string | null;
 }
 
 export type GitPrimaryActionLabelKey =
@@ -61,7 +67,8 @@ export type GitPrimaryActionReasonKey =
   | 'gitPanel.primary.noRemote'
   | 'gitPanel.push.nothingToPush'
   | 'gitPanel.pr.statusUnknown'
-  | 'gitPanel.pr.unavailable';
+  | 'gitPanel.pr.unavailable'
+  | 'gitPanel.pr.defaultBranch';
 
 export interface GitPrimaryAction {
   kind: GitPrimaryActionKind;
@@ -104,6 +111,7 @@ export function gitStateSnapshotFromPanel(
     changedFileCount: panel.changedFilesTotal ?? panel.changedFiles.length,
     hasRemote: panel.hasRemote,
     pullRequest: readPullRequestReadiness(panel),
+    defaultBranch: panel.defaultBranch,
   };
 }
 
@@ -156,6 +164,13 @@ export function derivePrimaryGitAction(
     return pushAction(false, 'gitPanel.push.nothingToPush');
   }
 
+  // Nothing merges into itself. Only when the panel actually resolved a default
+  // branch: a clone whose `origin/HEAD` never resolved reports null, and not
+  // knowing is not a reason to withhold the action.
+  if (snapshot.defaultBranch && snapshot.branch === snapshot.defaultBranch) {
+    return createPullRequestAction('none', 'gitPanel.pr.defaultBranch');
+  }
+
   return createPullRequestAction(snapshot.pullRequest);
 }
 
@@ -205,18 +220,21 @@ function pushAction(
  */
 function createPullRequestAction(
   readiness: GitPullRequestReadiness,
+  /** What blocks the rung for a reason the readiness value cannot express. */
+  blocked: GitPrimaryActionReasonKey | null = null,
 ): GitPrimaryAction {
   const disabledReasonKey: GitPrimaryActionReasonKey | null =
-    readiness === 'none'
-      ? null
-      : readiness === 'unknown'
-        ? 'gitPanel.pr.statusUnknown'
-        : 'gitPanel.pr.unavailable';
+    blocked
+      ?? (readiness === 'none'
+        ? null
+        : readiness === 'unknown'
+          ? 'gitPanel.pr.statusUnknown'
+          : 'gitPanel.pr.unavailable');
 
   return {
     kind: 'create_pr',
     action: 'create_pr',
-    enabled: readiness === 'none',
+    enabled: readiness === 'none' && !blocked,
     labelKey: 'gitPanel.pr.createButton',
     pendingLabelKey: 'gitPanel.pr.createButtonPending',
     disabledReasonKey,

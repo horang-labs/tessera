@@ -206,6 +206,27 @@ test('a gh that is not installed is a spawn failure, not a generic one', async (
   });
 });
 
+test('a gh the runner had to kill is reported as a timeout, not as a missing binary', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withSyncedRepo(async ({ workDir, runGit }) => {
+    // Both cases carry a null exit code; only `timedOut` separates "gh is not
+    // installed" from "GitHub never answered", and they are fixed differently.
+    const gh = fakeGh(() => ({
+      exitCode: null,
+      stdout: '',
+      stderr: 'gh did not respond within 60000ms and was terminated',
+      timedOut: true,
+    }));
+
+    const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.failure.kind, 'timeout');
+  });
+});
+
 test('a gh that is signed out is reported as authentication, not as a broken command', async (t) => {
   if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
 

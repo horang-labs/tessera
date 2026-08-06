@@ -1107,6 +1107,7 @@ export const ja: I18nMessages = {
       failureToast: 'プルリクエストの作成に失敗しました · {{origin}} — {{reason}}',
       createButton: 'PR を作成',
       createButtonPending: 'PR を作成中…',
+      defaultBranch: 'プルリクエストはデフォルトブランチ以外から作成してください',
       statusUnknown: 'GitHub のプルリクエストを確認中…',
       unavailable: 'プルリクエストには GitHub リモートとログイン済みの gh CLI が必要です',
     },

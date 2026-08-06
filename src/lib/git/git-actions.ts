@@ -388,9 +388,12 @@ function describeGhFailure(result: GhCommandResult): GitActionFailure {
 }
 
 function classifyGhFailure(result: GhCommandResult): GitFailureKind {
-  // A null exit code is a process that never started. In practice that is gh
-  // missing from the agent environment, which is a different thing to fix from
-  // anything gh could have told us.
+  // Killed by the runner rather than answered by GitHub — the network, not the
+  // request, and pressing the button again is the right response.
+  if (result.timedOut) return "timeout";
+  // A null exit code is otherwise a process that never started. In practice that
+  // is gh missing from the agent environment, which is a different thing to fix
+  // from anything gh could have told us.
   if (result.exitCode === null) return "spawn_failed";
   if (/gh auth login|authentication token|not logged in/i.test(result.stderr)) {
     return "authentication";

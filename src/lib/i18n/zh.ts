@@ -1107,6 +1107,7 @@ export const zh: I18nMessages = {
       failureToast: '创建拉取请求失败 · {{origin}} — {{reason}}',
       createButton: '创建 PR',
       createButtonPending: '正在创建 PR…',
+      defaultBranch: '拉取请求需要在非默认分支上创建',
       statusUnknown: '正在向 GitHub 确认拉取请求…',
       unavailable: '创建拉取请求需要 GitHub 远程仓库和已登录的 gh CLI',
     },

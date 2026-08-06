@@ -1088,6 +1088,7 @@ export interface I18nMessages {
       failureToast: string;
       createButton: string;
       createButtonPending: string;
+      defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
     };
