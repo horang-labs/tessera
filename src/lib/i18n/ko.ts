@@ -1116,6 +1116,14 @@ export const ko: I18nMessages = {
         publishConfirm: '{{branch}} 게시',
       },
     },
+    pull: {
+      button: '풀 ({{count}})',
+      buttonPending: '풀 중…',
+      successToast: '{{remoteBranch}}에서 풀함 · {{origin}}',
+      failureToast: '풀 실패 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git 훅이 풀을 거부함 · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git 훅이 풀을 거부함 · {{origin}}',
+    },
     primary: {
       stateUnknown: 'git 상태를 읽는 중…',
       detachedHead: 'HEAD가 분리되어 있습니다 — 푸시하려면 브랜치를 체크아웃하세요',

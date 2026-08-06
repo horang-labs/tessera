@@ -8,8 +8,16 @@
  * the same button again re-runs the action (ADR 0005 — there is no retry
  * control). The controller only renders what this returns.
  */
-import type { GitActionResult, GitPushOutcome } from "@/types/git";
-import { summarizeGitFailure, summarizeHookRejection } from "./git-panel-shared";
+import type {
+  GitActionResult,
+  GitPullOutcome,
+  GitPushOutcome,
+} from "@/types/git";
+import {
+  summarizeGitFailure,
+  summarizeHookRejection,
+  summarizeMergeFailure,
+} from "./git-panel-shared";
 
 export type GitActionToastKey =
   | "gitPanel.commit.successToast"
@@ -21,14 +29,18 @@ export type GitActionToastKey =
   | "gitPanel.push.publishedToast"
   | "gitPanel.push.failureToast"
   | "gitPanel.push.hookRejectedToast"
-  | "gitPanel.push.hookRejectedNoDetailToast";
+  | "gitPanel.push.hookRejectedNoDetailToast"
+  | "gitPanel.pull.successToast"
+  | "gitPanel.pull.failureToast"
+  | "gitPanel.pull.hookRejectedToast"
+  | "gitPanel.pull.hookRejectedNoDetailToast";
 
 /**
  * Which action was attempted. A failure carries no verb of its own — the same
  * `command_failed` arrives from a commit and from a push — so the caller, which
  * is the only party that knows what it pressed, says.
  */
-export type GitActionVerb = "commit" | "push";
+export type GitActionVerb = "commit" | "push" | "pull";
 
 export interface GitActionToast {
   tone: "success" | "error";
@@ -65,6 +77,12 @@ const FAILURE_KEYS: Record<
     hookRejected: "gitPanel.push.hookRejectedToast",
     hookRejectedNoDetail: "gitPanel.push.hookRejectedNoDetailToast",
   },
+  // A pull runs the merge hooks, so it can be refused by one the same way.
+  pull: {
+    failure: "gitPanel.pull.failureToast",
+    hookRejected: "gitPanel.pull.hookRejectedToast",
+    hookRejectedNoDetail: "gitPanel.pull.hookRejectedNoDetailToast",
+  },
 };
 
 /** Named for a session with neither a branch nor a worktree to point at. */
@@ -87,18 +105,22 @@ export function describeGitActionToast(
   attempted: GitActionVerb = "commit",
 ): GitActionToast {
   if (result.ok) {
-    return result.outcome.action === "push"
-      ? describePushOutcome(result.outcome, origin)
-      : {
-        tone: "success",
-        messageKey: "gitPanel.commit.successToast",
-        params: { origin },
-        clearsDraft: true,
-      };
+    if (result.outcome.action === "push") {
+      return describePushOutcome(result.outcome, origin);
+    }
+    if (result.outcome.action === "pull") {
+      return describePullOutcome(result.outcome, origin);
+    }
+    return {
+      tone: "success",
+      messageKey: "gitPanel.commit.successToast",
+      params: { origin },
+      clearsDraft: true,
+    };
   }
 
   const keys = FAILURE_KEYS[attempted];
-  const { kind, message, stderr } = result.failure;
+  const { kind, message, stderr, stdout } = result.failure;
   if (kind === "hook_rejected") {
     // A hook can refuse without printing anything, and then the only message
     // there is comes from the runner ("git exited with code 1"). Quoting that
@@ -121,7 +143,14 @@ export function describeGitActionToast(
   return {
     tone: "error",
     messageKey: keys.failure,
-    params: { origin, reason: summarizeGitFailure(message) },
+    params: {
+      origin,
+      // A pull is the one verb that can fail mid-merge, and a merge says what
+      // it did before it says that it could not finish — on the other stream.
+      reason: attempted === "pull"
+        ? summarizeMergeFailure(stdout, message)
+        : summarizeGitFailure(message),
+    },
     clearsDraft: false,
   };
 }
@@ -151,6 +180,23 @@ function describePushOutcome(
       ? "gitPanel.push.publishedToast"
       : "gitPanel.push.successToast",
     params: { origin, remoteBranch: outcome.remoteBranch },
+    clearsDraft: false,
+  };
+}
+
+/**
+ * A pull names the tracking branch it caught up with, for the same reason a push
+ * names the one it wrote: several sessions move at once, and "Pulled" alone does
+ * not say which worktree took what from where (§7).
+ */
+function describePullOutcome(
+  outcome: GitPullOutcome,
+  origin: string,
+): GitActionToast {
+  return {
+    tone: "success",
+    messageKey: "gitPanel.pull.successToast",
+    params: { origin, remoteBranch: outcome.upstream },
     clearsDraft: false,
   };
 }

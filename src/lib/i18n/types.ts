@@ -1090,6 +1090,14 @@ export interface I18nMessages {
         publishConfirm: string;
       };
     };
+    pull: {
+      button: string;
+      buttonPending: string;
+      successToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
+    };
     primary: {
       stateUnknown: string;
       detachedHead: string;

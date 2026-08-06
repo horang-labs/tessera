@@ -1109,6 +1109,14 @@ export const en: I18nMessages = {
         publishConfirm: 'Publish {{branch}}',
       },
     },
+    pull: {
+      button: 'Pull ({{count}})',
+      buttonPending: 'Pulling…',
+      successToast: 'Pulled from {{remoteBranch}} · {{origin}}',
+      failureToast: 'Pull failed · {{origin}} — {{reason}}',
+      hookRejectedToast: 'A git hook rejected the pull · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'A git hook rejected the pull · {{origin}}',
+    },
     primary: {
       stateUnknown: 'Reading git state…',
       detachedHead: 'HEAD is detached — check out a branch to push',

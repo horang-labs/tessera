@@ -70,15 +70,25 @@ export interface GitPushAction {
   action: "push";
 }
 
+/**
+ * Catching the worktree up with its upstream. Like push, it takes no parameters:
+ * which branch is pulled from where is the repository's answer, not the
+ * client's.
+ */
+export interface GitPullAction {
+  action: "pull";
+}
+
 /** Widens as `docs/design/git-delivery.md` §2 lands the remaining actions. */
-export type GitAction = GitCommitAction | GitPushAction;
+export type GitAction = GitCommitAction | GitPushAction | GitPullAction;
 
 export type GitActionRejectionCode =
   | "empty_message"
   | "no_files_selected"
   | "file_not_in_change_set"
   | "detached_head"
-  | "no_remote";
+  | "no_remote"
+  | "no_upstream";
 
 /**
  * The request was refused before Git ran. Distinct from a `GitActionFailure`,
@@ -100,6 +110,7 @@ export async function executeGitAction(
 ): Promise<GitActionResult> {
   const runGit = createGitRunner(target.agentEnvironment);
   if (action.action === "push") return runPush(target, runGit);
+  if (action.action === "pull") return runPull(target, runGit);
   return runCommit(target, action, runGit);
 }
 
@@ -200,6 +211,89 @@ async function runPush(
       setUpstream: !upstream,
     },
   };
+}
+
+/**
+ * Pull, which is how the panel catches a worktree up without a terminal
+ * (`docs/design/git-delivery.md` §3). Bare `git pull` rather than a pinned
+ * strategy: the repository's own `pull.rebase` / `pull.ff` configuration is the
+ * user's answer to how their branches reconcile, and Tessera has no screen on
+ * which to ask the question again.
+ */
+async function runPull(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<GitActionResult> {
+  const branch = await readCurrentBranch(target, runGit);
+  if (!branch) {
+    throw new GitActionRejection(
+      "detached_head",
+      "HEAD is detached, so there is no branch to pull into",
+    );
+  }
+
+  const upstream = await readUpstream(target, runGit);
+  if (!upstream) {
+    // The ladder only offers Pull on a branch that is behind something, which
+    // takes an upstream; this is the handler-side guard for a click that raced
+    // the state it was derived from.
+    throw new GitActionRejection(
+      "no_upstream",
+      "This branch has no upstream to pull from",
+    );
+  }
+
+  try {
+    // No `timeoutMs`: the runner's generous default stands, because the fetch
+    // half of a pull is as slow as the network and a merge can run hooks.
+    await pullWithDivergenceFallback(target, runGit);
+  } catch (error) {
+    // No commit-specific promotion: a pull's merge hooks name themselves, and
+    // the runner already recognizes those.
+    return {
+      ok: false,
+      failure: await describeFailure(error, target, runGit, (failed) => failed.kind),
+    };
+  }
+
+  return { ok: true, outcome: { action: "pull", branch, upstream } };
+}
+
+/**
+ * Git 2.27 and later refuse a divergent pull outright when the repository pins
+ * no reconciliation policy, and say only that one must be chosen. That refusal
+ * is not a state the user can leave from this panel — there is no setting to
+ * change and pressing the same button again fails identically — so it is
+ * answered here with `--no-rebase`, the merge Git itself did before it started
+ * asking. A repository that *has* configured a policy never reaches this: the
+ * first attempt already obeyed it.
+ */
+async function pullWithDivergenceFallback(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<void> {
+  try {
+    await runGit(["pull"], { cwd: target.workDir });
+  } catch (error) {
+    if (!isDivergentPullRefusal(error)) throw error;
+    await runGit(["pull", "--no-rebase"], { cwd: target.workDir });
+  }
+}
+
+/**
+ * English, like every pattern in the runner, and Git translates this text — a
+ * localized Git therefore falls through and reports its own refusal, which is
+ * the same assumption `classifyGitFailure` has always made.
+ */
+const DIVERGENT_PULL_PATTERNS = [
+  "need to specify how to reconcile divergent branches",
+  "divergent branches and need to specify how to reconcile them",
+];
+
+function isDivergentPullRefusal(error: unknown): boolean {
+  if (!(error instanceof GitCommandError)) return false;
+  const haystack = `${error.stderr}\n${error.message}`.toLowerCase();
+  return DIVERGENT_PULL_PATTERNS.some((pattern) => haystack.includes(pattern));
 }
 
 /**
@@ -349,6 +443,11 @@ export async function readChangeSet(
 /**
  * `classify` is where the caller adds what it knows and the runner cannot: the
  * commit path can read silence as a hook refusing, a push cannot.
+ *
+ * Both output streams are kept. Which of them carries the reason is the
+ * command's business, not this function's — `git commit` explains itself on
+ * stderr, `git pull` reports its merge on stdout — and ADR 0005 asks for the
+ * detail to survive rather than for a choice to be made here.
  */
 async function describeFailure(
   error: unknown,
@@ -363,6 +462,7 @@ async function describeFailure(
       kind: classify(error),
       message: truncateStderr(error.message),
       stderr: truncateStderr(error.stderr),
+      stdout: truncateStderr(error.stdout),
       exitCode: error.exitCode,
       changedFiles,
     };
@@ -372,6 +472,7 @@ async function describeFailure(
     kind: "command_failed",
     message: error instanceof Error ? error.message : String(error),
     stderr: "",
+    stdout: "",
     exitCode: null,
     changedFiles,
   };
