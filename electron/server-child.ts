@@ -5,7 +5,8 @@
  */
 import '../runtime/register-runtime-aliases';
 import next from 'next';
-import { createServer } from 'http';
+import { createServer, type Server } from 'http';
+import { networkInterfaces } from 'node:os';
 import { initDatabase } from '../src/lib/db/database';
 import '../src/lib/cli/providers/bootstrap';
 import { ensureRSAKeys } from '../src/lib/auth/keys';
@@ -33,8 +34,13 @@ import {
   type ControlRuntimeHost,
 } from '../src/lib/control/runtime-host';
 import { attachRemoteAddressHeader } from '../src/lib/http/remote-address-header';
+import { directListeners } from '../src/lib/http/direct-listeners';
+import { loadMachineSettings } from '../src/lib/settings/machine-settings';
 import { createPairingPresentation } from '../src/lib/auth/pairing-presentation';
-import { resolveElectronServerHost } from './server-listener';
+import {
+  LOOPBACK_SERVER_HOST,
+  resolveDirectListenerTarget,
+} from './server-listener';
 
 process.env.ELECTRON_CHILD = '1';
 process.env.TESSERA_ELECTRON_SERVER = '1';
@@ -42,10 +48,11 @@ process.env.TESSERA_PRODUCTION_DB = '1';
 snapshotTelemetryStartupDataState();
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = resolveElectronServerHost(
-  process.platform,
-  process.env.TESSERA_ELECTRON_PACKAGED === '1',
-);
+// The listener the app itself talks to. A remote-access address never widens
+// this one; it gets its own listener through directListeners, so the port is
+// never opened on adapters the user did not advertise.
+const hostname = LOOPBACK_SERVER_HOST;
+const isPackaged = process.env.TESSERA_ELECTRON_PACKAGED === '1';
 const port = parseInt(process.env.PORT || '3000', 10);
 const isElectronChild = process.env.ELECTRON_CHILD === '1';
 const originalParentPid = process.ppid;
@@ -150,18 +157,39 @@ initDatabase().then(() => {
   await app.prepare();
 
   // Attach request handler after Next.js is prepared
-  server.on('request', (req, res) => {
-    attachRemoteAddressHeader(req);
-    const pathname = req.url?.split('?')[0] ?? '';
-    if (pathname === CONTROL_ROUTE_PREFIX || pathname.startsWith(`${CONTROL_ROUTE_PREFIX}/`)) {
-      res.writeHead(404).end();
-      return;
-    }
-    if (req.method === 'POST' && req.url?.split('?')[0] === '/__tessera/hook') {
-      void handleHookRequest(req, res);
-      return;
-    }
-    handle(req, res);
+  const attachRequestHandler = (target: Server) => {
+    target.on('request', (req, res) => {
+      attachRemoteAddressHeader(req);
+      const pathname = req.url?.split('?')[0] ?? '';
+      if (pathname === CONTROL_ROUTE_PREFIX || pathname.startsWith(`${CONTROL_ROUTE_PREFIX}/`)) {
+        res.writeHead(404).end();
+        return;
+      }
+      if (req.method === 'POST' && req.url?.split('?')[0] === '/__tessera/hook') {
+        void handleHookRequest(req, res);
+        return;
+      }
+      handle(req, res);
+    });
+  };
+  attachRequestHandler(server);
+
+  directListeners.configure({
+    port,
+    createListener: () => {
+      const listener = createServer();
+      attachRequestHandler(listener);
+      wsServer.attach(listener);
+      return listener;
+    },
+    // Resolved on every sync: the tailnet address can change between launches,
+    // and Tailscale may still have been starting up when the app did.
+    resolveTarget: async () => resolveDirectListenerTarget({
+      platform: process.platform,
+      isPackaged,
+      advertisedAddress: (await loadMachineSettings()).advertisedAddress,
+      interfaces: networkInterfaces(),
+    }),
   });
 
   server.listen(port, hostname, () => {
@@ -175,6 +203,10 @@ initDatabase().then(() => {
       });
 
       wsServer.start(server);
+      // Only now can a direct listener serve /ws, so bind it after the
+      // WebSocket server exists rather than alongside the loopback listen.
+      await directListeners.sync();
+
       rateLimitPoller.setBroadcast((msg) => wsServer.broadcast(msg));
       rateLimitPoller.setEnvironmentResolver(async () => {
         const userId = await resolveServerDefaultUserId();
@@ -197,9 +229,16 @@ initDatabase().then(() => {
       installSessionPrStatusBroadcast((msg) => wsServer.broadcast(msg));
       void taskPrPoller.start();
 
-      logger.info({ port, hostname, env: process.env.NODE_ENV }, 'Electron server started');
+      const directHosts = directListeners.activeHosts();
+      logger.info(
+        { port, hostname, directHosts, env: process.env.NODE_ENV },
+        'Electron server started',
+      );
       console.log(`> Ready on http://${hostname}:${port}`);
       console.log(`> WebSocket on ws://${hostname}:${port}/ws`);
+      for (const directHost of directHosts) {
+        console.log(`> Remote access on http://${directHost}:${port}`);
+      }
 
       // Signal readiness to Electron main process only after the exact-instance
       // Control transport and provider bridge are ready.
@@ -212,6 +251,8 @@ initDatabase().then(() => {
       logStartup('fatal', 'Failed to initialize the Control runtime');
       process.send?.({ type: 'error', message: 'Failed to initialize the Control runtime' });
       void Promise.resolve(controlRuntime?.close())
+        .catch(() => undefined)
+        .then(() => directListeners.closeAll())
         .catch(() => undefined)
         .finally(() => server.close(() => process.exit(1)));
     });
@@ -235,6 +276,9 @@ initDatabase().then(() => {
     logger.info({ reason }, 'Shutting down server...');
 
     try {
+      logger.info('Closing remote access listeners...');
+      await directListeners.closeAll();
+
       logger.info('Closing WebSocket connections...');
       await wsServer.shutdown();
 

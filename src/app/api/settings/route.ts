@@ -22,6 +22,7 @@ import {
   saveMachineSettings,
   type MachineSettings,
 } from '@/lib/settings/machine-settings';
+import { directListeners } from '@/lib/http/direct-listeners';
 import logger from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
@@ -115,6 +116,9 @@ export async function PUT(request: NextRequest) {
       machineSettings = await saveMachineSettings({
         advertisedAddress: advertisedAddressUpdate,
       });
+      // Bind or release the direct listener right away, so turning remote
+      // access on or off takes effect without restarting the app.
+      await directListeners.sync();
     }
     invalidateAgentEnvironmentCache(userId);
     // Settings changes can flip which providers are reachable; the next
