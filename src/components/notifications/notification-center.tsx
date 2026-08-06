@@ -12,6 +12,7 @@ import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { switchToSessionProject } from '@/lib/session/switch-session-project';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 
 interface NotificationCenterProps {
@@ -85,6 +86,13 @@ function NotificationCenterContent({
     wsClient.sendMarkAsRead(sessionId);
 
     const session = getSession(sessionId);
+
+    // Notified session may live in another project — bring that project into scope first,
+    // otherwise it opens in a tab belonging to the project currently on screen.
+    if (!switchToSessionProject(session?.projectDir)) {
+      onClose();
+      return;
+    }
 
     // Kanban peek mode: open the session in the board peek panel instead of a tab
     const boardStore = useBoardStore.getState();
