@@ -1,4 +1,3 @@
-import type { SpawnOptions } from "child_process";
 import { readFile } from "fs/promises";
 import path from "path";
 import {
@@ -17,7 +16,12 @@ import {
   getCachedDiffStats,
   getCachedDiffStatsRevalidating,
 } from "@/lib/git/worktree-diff-stats-cache";
-import { spawnCli } from "@/lib/cli/spawn-cli";
+import {
+  createGitRunner,
+  createGitShellRunner,
+  GitCommandError,
+  looksLikeFilesystemPath,
+} from "@/lib/worktrees/git-runner";
 import {
   resolveGitEnvironment,
   type GitEnvironmentSource,
@@ -70,83 +74,68 @@ export class GitPanelError extends Error {
     | "command_failed"
     | "command_timeout";
   readonly status: number;
+  /**
+   * The runner failure this was translated from, when there was one. ADR 0005
+   * requires the execution layer to keep the classified kind, the exit code and
+   * the raw stderr rather than flatten them into a message string, so the
+   * translation to an HTTP-shaped error must not be where they are lost.
+   */
+  readonly gitError?: GitCommandError;
 
-  constructor(code: GitPanelError["code"], message: string, status = 500) {
+  constructor(
+    code: GitPanelError["code"],
+    message: string,
+    status = 500,
+    gitError?: GitCommandError,
+  ) {
     super(message);
     this.code = code;
     this.status = status;
+    if (gitError) this.gitError = gitError;
   }
 }
 
-async function runCommand(
-  command: string,
-  args: string[],
-  cwd: string,
-  agentEnvironment: AgentEnvironment,
-  maxBuffer = COMMAND_MAX_BUFFER,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const options: SpawnOptions = {
-      cwd,
-      // stdin is ignored, so a credential prompt would block the child
-      // forever; tell git to fail instead of prompting.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    };
-    const child = spawnCli(command, args, options, agentEnvironment, { loginShell: false });
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let stdoutLength = 0;
-    let stderrLength = 0;
-
-    // Reject on our own timer instead of spawn's `timeout` option: waiting
-    // for "close" is not enough, because a wedged grandchild (hook,
-    // credential helper, fsmonitor) inherits the stdio pipes and keeps
-    // "close" from firing even after the command itself is killed.
-    const killTimer = setTimeout(() => {
-      reject(new GitPanelError(
+/**
+ * Every Git command in this file goes through the one runner
+ * (`docs/design/git-delivery.md` §10). What the panel adds on top is its own
+ * error type: routes answer from `GitPanelError.status`, so a runner failure is
+ * translated here rather than escaping as-is.
+ */
+function toGitPanelError(error: unknown, command: string): GitPanelError {
+  if (error instanceof GitPanelError) return error;
+  if (error instanceof GitCommandError) {
+    if (error.kind === "timeout") {
+      return new GitPanelError(
         "command_timeout",
         `${command} did not respond within ${COMMAND_TIMEOUT_MS / 1000}s and was terminated`,
         504,
-      ));
-      try {
-        // detached spawn makes the command a group leader on POSIX; kill the
-        // whole group so wedged grandchildren die with it.
-        if (child.pid) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    }, COMMAND_TIMEOUT_MS);
+        error,
+      );
+    }
+    // The runner already put stderr in the message; the exit code and the
+    // classified kind ride along on `gitError` for a caller that wants them.
+    return new GitPanelError("command_failed", error.message, 500, error);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return new GitPanelError("command_failed", message || `Failed to run ${command}`, 500);
+}
 
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdoutLength += chunk.length;
-      if (stdoutLength <= maxBuffer) stdoutChunks.push(chunk);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderrLength += chunk.length;
-      if (stderrLength <= maxBuffer) stderrChunks.push(chunk);
-    });
-
-    child.on("close", (code) => {
-      clearTimeout(killTimer);
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8").trimEnd();
-      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
-
-      if (code === 0) {
-        resolve(stdout);
-        return;
-      }
-
-      reject(new GitPanelError("command_failed", stderr || `Failed to run ${command}`, 500));
-    });
-
-    child.on("error", (error) => {
-      clearTimeout(killTimer);
-      reject(new GitPanelError("command_failed", error.message || `Failed to run ${command}`, 500));
-    });
+async function runGitCommand(
+  args: string[],
+  cwd: string,
+  agentEnvironment: AgentEnvironment,
+  maxOutputBytes = COMMAND_MAX_BUFFER,
+): Promise<string> {
+  const runGit = createGitRunner(agentEnvironment, {
+    timeoutMs: COMMAND_TIMEOUT_MS,
+    maxOutputBytes,
   });
+  try {
+    const { stdout } = await runGit(args, { cwd });
+    return stdout;
+  } catch (error) {
+    throw toGitPanelError(error, "git");
+  }
 }
 
 export interface GitBatchCommand {
@@ -166,6 +155,14 @@ export function buildGitBatchScript(commands: GitBatchCommand[]): string {
   for (const command of commands) {
     if (!/^[a-z][a-zA-Z0-9]*$/.test(command.key)) {
       throw new Error(`Invalid git batch key: ${command.key}`);
+    }
+    // The runner translates path arguments per argument; it cannot reach inside
+    // this script. Batching is only ever used on a bridged setup, so a path
+    // smuggled in here would break in the one configuration that is hardest to
+    // notice. Keep the batch path-free and let the caller run it unbatched.
+    const pathArg = command.args.find(looksLikeFilesystemPath);
+    if (pathArg) {
+      throw new Error(`Batched git commands cannot carry a path argument: ${pathArg}`);
     }
   }
 
@@ -226,13 +223,16 @@ async function runGitBatch(
   cwd: string,
   agentEnvironment: AgentEnvironment,
 ): Promise<Map<string, GitBatchResult>> {
-  const raw = await runCommand(
-    "sh",
-    ["-c", buildGitBatchScript(commands)],
-    cwd,
-    agentEnvironment,
-    BATCH_COMMAND_MAX_BUFFER,
-  );
+  const runGitShell = createGitShellRunner(agentEnvironment, {
+    timeoutMs: COMMAND_TIMEOUT_MS,
+    maxOutputBytes: BATCH_COMMAND_MAX_BUFFER,
+  });
+  let raw: string;
+  try {
+    raw = (await runGitShell(buildGitBatchScript(commands), { cwd })).stdout;
+  } catch (error) {
+    throw toGitPanelError(error, "git");
+  }
   return parseGitBatchOutput(raw, commands);
 }
 
@@ -248,14 +248,13 @@ function shouldBatchGitCommands(agentEnvironment: AgentEnvironment): boolean {
   return agentEnvironment === "wsl" && getRuntimePlatform() === "win32";
 }
 
-async function runOptionalCommand(
-  command: string,
+async function runOptionalGitCommand(
   args: string[],
   cwd: string,
   agentEnvironment: AgentEnvironment,
 ): Promise<string | null> {
   try {
-    return await runCommand(command, args, cwd, agentEnvironment);
+    return await runGitCommand(args, cwd, agentEnvironment);
   } catch (error) {
     // An expected failure (no upstream, not a repo, ...) degrades to null,
     // but a timed-out command must surface as 504 — swallowing it would
@@ -267,11 +266,12 @@ async function runOptionalCommand(
 
 interface StreamedStatus {
   stdout: string;
+  /** True when we stopped git early, or when its output passed the runner's cap. */
   stoppedEarly: boolean;
 }
 
 // Stream `git status -z`, counting NUL delimiters as they arrive. Once we pass
-// `nulLimit` we kill the git process group instead of letting it enumerate a
+// `nulLimit` we ask the runner to stop instead of letting git enumerate a
 // massive untracked tree and buffer megabytes we'd only throw away. Returns
 // whatever was collected plus whether we stopped it early.
 async function runStatusStreaming(
@@ -279,115 +279,35 @@ async function runStatusStreaming(
   agentEnvironment: AgentEnvironment,
   nulLimit: number,
 ): Promise<StreamedStatus> {
-  return new Promise((resolve, reject) => {
-    const options: SpawnOptions = {
-      cwd: workDir,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    };
-    const child = spawnCli(
-      "git",
-      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-      options,
-      agentEnvironment,
-    );
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let nulCount = 0;
-    let stoppedEarly = false;
-    let settled = false;
-
-    const killGroup = () => {
-      try {
-        // detached spawn makes the command a group leader on POSIX; kill the
-        // whole group so wedged grandchildren die with it.
-        if (child.pid) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    };
-
-    const finish = (result: StreamedStatus) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(killTimer);
-      resolve(result);
-    };
-
-    const killTimer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      killGroup();
-      reject(
-        new GitPanelError(
-          "command_timeout",
-          `git status did not respond within ${COMMAND_TIMEOUT_MS / 1000}s and was terminated`,
-          504,
-        ),
-      );
-    }, COMMAND_TIMEOUT_MS);
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-      if (stoppedEarly) return;
-      for (let i = 0; i < chunk.length; i++) {
-        if (chunk[i] === 0) nulCount++;
-      }
-      if (nulCount > nulLimit) {
-        stoppedEarly = true;
-        killGroup();
-        // Grandchildren holding the stdout pipe can delay "close"; resolve with
-        // what we have shortly after killing rather than waiting out the timeout.
-        setTimeout(() => {
-          finish({
-            stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-            stoppedEarly: true,
-          });
-        }, 500);
-      }
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      if (stderrChunks.length < 64) stderrChunks.push(chunk);
-    });
-
-    child.on("close", (code) => {
-      if (stoppedEarly) {
-        finish({
-          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-          stoppedEarly: true,
-        });
-        return;
-      }
-      if (settled) return;
-      settled = true;
-      clearTimeout(killTimer);
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      if (code === 0) {
-        resolve({ stdout, stoppedEarly: false });
-        return;
-      }
-      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
-      reject(
-        new GitPanelError("command_failed", stderr || "Failed to run git status", 500),
-      );
-    });
-
-    child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(killTimer);
-      reject(
-        new GitPanelError(
-          "command_failed",
-          error.message || "Failed to run git status",
-          500,
-        ),
-      );
-    });
+  const runGit = createGitRunner(agentEnvironment, {
+    timeoutMs: COMMAND_TIMEOUT_MS,
+    maxOutputBytes: BATCH_COMMAND_MAX_BUFFER,
   });
+  let nulCount = 0;
+
+  try {
+    const result = await runGit(
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      {
+        cwd: workDir,
+        onStdout: (chunk) => {
+          for (let i = 0; i < chunk.length; i++) {
+            if (chunk[i] === 0) nulCount++;
+          }
+          return nulCount > nulLimit ? "stop" : undefined;
+        },
+      },
+    );
+    // A capped read is the same situation as a stopped one: a partial list and
+    // no honest total. Reporting only `stoppedEarly` would let a cut-off status
+    // read look like a genuinely small change set.
+    return {
+      stdout: result.stdout,
+      stoppedEarly: result.stoppedEarly || result.truncated,
+    };
+  } catch (error) {
+    throw toGitPanelError(error, "git status");
+  }
 }
 
 interface GitSessionContext {
@@ -422,8 +342,7 @@ async function resolveRepoRoot(
   workDir: string,
   agentEnvironment: AgentEnvironment,
 ): Promise<string> {
-  const isRepo = await runOptionalCommand(
-    "git",
+  const isRepo = await runOptionalGitCommand(
     ["rev-parse", "--is-inside-work-tree"],
     workDir,
     agentEnvironment,
@@ -435,7 +354,7 @@ async function resolveRepoRoot(
       422,
     );
   }
-  return runCommand("git", ["rev-parse", "--show-toplevel"], workDir, agentEnvironment);
+  return runGitCommand(["rev-parse", "--show-toplevel"], workDir, agentEnvironment);
 }
 
 export function getWorktreeDisplayName(workDir: string): string {
@@ -802,15 +721,13 @@ async function getSeparateGitPanelSnapshot(
   agentEnvironment: AgentEnvironment,
 ): Promise<GitPanelSnapshot> {
   const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
-  const upstreamPromise = runOptionalCommand(
-    "git",
+  const upstreamPromise = runOptionalGitCommand(
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
     workDir,
     agentEnvironment,
   );
   const recentCommitsPromise = upstreamPromise.then((currentUpstream) =>
-    runOptionalCommand(
-      "git",
+    runOptionalGitCommand(
       getRecentCommitArgs(Boolean(currentUpstream)),
       workDir,
       agentEnvironment,
@@ -827,23 +744,20 @@ async function getSeparateGitPanelSnapshot(
     changedFiles,
     recentCommitsRaw,
   ] = await Promise.all([
-    runOptionalCommand("git", ["branch", "--show-current"], workDir, agentEnvironment),
+    runOptionalGitCommand(["branch", "--show-current"], workDir, agentEnvironment),
     upstreamPromise,
-    runOptionalCommand(
-      "git",
+    runOptionalGitCommand(
       ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
       workDir,
       agentEnvironment,
     ),
-    runOptionalCommand("git", ["remote", "get-url", "origin"], workDir, agentEnvironment),
-    runOptionalCommand(
-      "git",
+    runOptionalGitCommand(["remote", "get-url", "origin"], workDir, agentEnvironment),
+    runOptionalGitCommand(
       ["symbolic-ref", "refs/remotes/origin/HEAD"],
       workDir,
       agentEnvironment,
     ),
-    runOptionalCommand(
-      "git",
+    runOptionalGitCommand(
       ["branch", "-a", "--format=%(refname:short)"],
       workDir,
       agentEnvironment,
@@ -853,8 +767,8 @@ async function getSeparateGitPanelSnapshot(
   ]);
 
   const [detachedHead, headShaRaw] = await Promise.all([
-    runOptionalCommand("git", ["rev-parse", "--short", "HEAD"], workDir, agentEnvironment),
-    runOptionalCommand("git", ["rev-parse", "HEAD"], workDir, agentEnvironment),
+    runOptionalGitCommand(["rev-parse", "--short", "HEAD"], workDir, agentEnvironment),
+    runOptionalGitCommand(["rev-parse", "HEAD"], workDir, agentEnvironment),
   ]);
 
   return {
@@ -1045,14 +959,13 @@ export async function fetchGitPanelData(
   const { workDir } = sessionContext;
   const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   await resolveRepoRoot(workDir, agentEnvironment);
-  const upstream = await runOptionalCommand(
-    "git",
+  const upstream = await runOptionalGitCommand(
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
     workDir,
     agentEnvironment,
   );
   const remoteName = getFetchRemoteName(upstream);
-  await runCommand("git", ["fetch", "--prune", remoteName], workDir, agentEnvironment);
+  await runGitCommand(["fetch", "--prune", remoteName], workDir, agentEnvironment);
   return getGitPanelData(sessionId, userId);
 }
 
@@ -1086,8 +999,7 @@ export async function getGitDiffData(
     };
   }
 
-  const diff = await runOptionalCommand(
-    "git",
+  const diff = await runOptionalGitCommand(
     [
       "diff",
       "--no-ext-diff",

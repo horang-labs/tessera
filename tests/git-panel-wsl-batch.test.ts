@@ -6,6 +6,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { buildGitBatchScript } from '../src/lib/git/git-panel';
+import { createGitShellRunner } from '../src/lib/worktrees/git-runner';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,10 +25,12 @@ test('batched git probe preserves empty and NUL-delimited command output', async
       },
       { key: 'missingRemote', args: ['remote', 'get-url', "doesn't-exist"] },
     ]);
-    const { stdout } = await execFileAsync('sh', ['-c', script], {
-      cwd: repoDir,
-      encoding: 'utf8',
-    });
+    // Through the shell runner, which is how the panel runs the batch: only the
+    // wsl.exe hop differs on a bridged setup, and that hop is `spawnCli`'s.
+    const { stdout } = await createGitShellRunner('wsl', { timeoutMs: 10_000 })(
+      script,
+      { cwd: repoDir },
+    );
 
     const results = new Map(
       stdout.trimEnd().split('\n').map((line) => {
@@ -52,5 +55,22 @@ test('batched git probe rejects keys that cannot be used as frame names', () => 
   assert.throws(
     () => buildGitBatchScript([{ key: '../escape', args: ['status'] }]),
     /Invalid git batch key/,
+  );
+});
+
+test('batched git probe rejects a path argument the runner could not translate', () => {
+  // Batching only runs on a bridged setup, so an untranslated path here would
+  // fail in the one configuration that is hardest to notice.
+  assert.throws(
+    () => buildGitBatchScript([
+      { key: 'status', args: ['-C', '/home/work/repo', 'status'] },
+    ]),
+    /cannot carry a path argument/,
+  );
+  assert.throws(
+    () => buildGitBatchScript([
+      { key: 'status', args: ['-C', 'C:\\Users\\work\\repo', 'status'] },
+    ]),
+    /cannot carry a path argument/,
   );
 });
