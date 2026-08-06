@@ -118,30 +118,43 @@ export function useGitPanelController(sessionId: string | null) {
     () => new Set<string>(),
   );
   /**
-   * The Git action each session has in flight, if any.
+   * The Git action in flight against each working directory, if any.
    *
-   * Keyed by session because the panel is a single component pointed at
-   * whichever session is active, while this state outlives a switch. One slot
-   * for the whole panel gets it wrong whichever way it is read: shared, a commit
-   * still running when the user moves on spins a pending label on a session that
-   * ran nothing; cleared on switch, moving away and back re-enables the button
-   * over the action already running.
+   * Not one slot for the whole panel: the panel is a single component pointed at
+   * whichever session is active, while this state outlives a switch, so a shared
+   * slot gets it wrong whichever way it is read — shared, a commit still running
+   * when the user moves on spins a pending label on a session that ran nothing;
+   * cleared on switch, moving away and back re-enables the button over the
+   * action already running.
    *
-   * Sessions do not queue behind each other. They are separate working
-   * directories reached through separate routes, nothing on the server
-   * serializes them, and two browser tabs could always run them at once anyway.
+   * Keyed by working directory rather than by session because that is what
+   * actually contends. Several sessions can share one (`docs/design/git-delivery.md`
+   * §5, and §11 refreshes all of them after an action), and `git commit` holds
+   * `index.lock` for the whole of a pre-commit hook — so a second commit into
+   * the same tree fails on the lock rather than doing anything useful. Sessions
+   * on genuinely separate worktrees stay parallel, which is what they are.
+   *
+   * This is a courtesy, not a mutex: another browser tab or the user's own
+   * terminal was always free to run Git underneath us, and ADR 0007 declines
+   * orchestration. It stops the panel from being the thing that causes it.
    */
   const [pendingActions, setPendingActions] = useState<
     Readonly<Record<string, GitActionVerb>>
   >(() => ({}));
-  const pendingHere = (sessionId ? pendingActions[sessionId] : null) ?? null;
+  /**
+   * Null while Git state is unknown — no action can be started from that frame.
+   * Read off the store rather than `panelData`, which is assembled further down;
+   * the merge there leaves the working directory alone.
+   */
+  const pendingWorkDir = data?.workDir ?? null;
+  const pendingHere = (pendingWorkDir ? pendingActions[pendingWorkDir] : null) ?? null;
 
   const markPending = useCallback(
-    (id: string, verb: GitActionVerb | null): void => {
+    (workDir: string, verb: GitActionVerb | null): void => {
       setPendingActions((current) => {
         const next = { ...current };
-        if (verb) next[id] = verb;
-        else delete next[id];
+        if (verb) next[workDir] = verb;
+        else delete next[workDir];
         return next;
       });
     },
@@ -657,12 +670,21 @@ export function useGitPanelController(sessionId: string | null) {
     // The button is disabled without these. This is the second guard the design
     // asks for, and it also catches a click that lands after the selection
     // emptied underneath it.
-    if (!sessionId || !message || commitFiles.length === 0 || pendingHere) return;
+    if (
+      !sessionId
+      || !pendingWorkDir
+      || !message
+      || commitFiles.length === 0
+      || pendingHere
+    ) return;
 
     const files = commitFiles.map((file) => file.path);
     const report = reportAction;
+    // Captured, so the entry cleared below is the one this action opened even if
+    // the panel has moved to another session by then.
+    const workDir = pendingWorkDir;
 
-    markPending(sessionId, "commit");
+    markPending(workDir, "commit");
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
@@ -701,8 +723,7 @@ export function useGitPanelController(sessionId: string | null) {
         ),
       );
     } finally {
-      // The id this action started under, not whichever session is active now.
-      markPending(sessionId, null);
+      markPending(workDir, null);
     }
   }, [
     commitFiles,
@@ -710,6 +731,7 @@ export function useGitPanelController(sessionId: string | null) {
     commitOrigin,
     markPending,
     pendingHere,
+    pendingWorkDir,
     reportAction,
     sessionId,
   ]);
@@ -720,9 +742,10 @@ export function useGitPanelController(sessionId: string | null) {
    * the result rather than assumed from the label (§7).
    */
   const pushBranch = useCallback(async () => {
-    if (!sessionId || pendingHere) return;
+    if (!sessionId || !pendingWorkDir || pendingHere) return;
 
-    markPending(sessionId, "push");
+    const workDir = pendingWorkDir;
+    markPending(workDir, "push");
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
@@ -756,9 +779,16 @@ export function useGitPanelController(sessionId: string | null) {
         ),
       );
     } finally {
-      markPending(sessionId, null);
+      markPending(workDir, null);
     }
-  }, [commitOrigin, markPending, pendingHere, reportAction, sessionId]);
+  }, [
+    commitOrigin,
+    markPending,
+    pendingHere,
+    pendingWorkDir,
+    reportAction,
+    sessionId,
+  ]);
 
   /** The one button. Which verb it runs is the ladder's answer, not the user's. */
   const runPrimaryAction = useCallback(() => {
