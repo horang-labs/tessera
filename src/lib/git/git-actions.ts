@@ -17,6 +17,7 @@
 import {
   createGitRunner,
   GitCommandError,
+  hasGitDiagnosticLine,
   type GitFailureKind,
   type GitRunner,
 } from "@/lib/worktrees/git-runner";
@@ -254,8 +255,17 @@ async function describeFailure(
   };
 }
 
-/** How Git prefixes a line it wrote itself, in any of its own diagnostics. */
-const GIT_DIAGNOSTIC_PREFIXES = ['fatal:', 'error:', 'warning:', 'hint:'];
+/**
+ * What `git commit` exits with when a hook refuses. Anything else came from
+ * somewhere other than Git declining the commit, which matters because a
+ * bridged agent environment wraps the command in
+ * `sh -c "cd -- '<path>' && exec git …"` (`spawn-cli-runtime.ts`): a wrapper
+ * that fails reports sh's stderr and sh's exit code — 2 for an unreachable
+ * working directory, 127 for a missing binary — and `null` means the process
+ * was killed from outside and never reported at all. `exec` passes Git's own
+ * code through untouched, so a real hook rejection still arrives as 1.
+ */
+const GIT_COMMIT_REJECTED_EXIT_CODE = 1;
 
 /**
  * The runner classifies by what the output says, which catches a hook that
@@ -268,18 +278,17 @@ const GIT_DIAGNOSTIC_PREFIXES = ['fatal:', 'error:', 'warning:', 'hint:'];
  *
  * `stdout` guards the one case where Git reports without a diagnostic prefix:
  * "nothing added to commit" goes there, and it is Git speaking, not a hook.
+ *
+ * Exported for the tests that pin the exit codes this must not promote; nothing
+ * else calls it.
  */
-function promoteHookRejection(error: GitCommandError): GitFailureKind {
+export function promoteHookRejection(error: GitCommandError): GitFailureKind {
   if (error.kind !== 'command_failed') return error.kind;
+  if (error.exitCode !== GIT_COMMIT_REJECTED_EXIT_CODE) return error.kind;
   if (error.stdout.trim()) return error.kind;
+  if (hasGitDiagnosticLine(error.stderr)) return error.kind;
 
-  const spokeAsGit = error.stderr
-    .split('\n')
-    .some((line) => GIT_DIAGNOSTIC_PREFIXES.some(
-      (prefix) => line.trimStart().toLowerCase().startsWith(prefix),
-    ));
-
-  return spokeAsGit ? error.kind : 'hook_rejected';
+  return 'hook_rejected';
 }
 
 /**

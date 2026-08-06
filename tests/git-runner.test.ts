@@ -118,6 +118,18 @@ test('a hook saying no is promoted out of a generic command failure', async (t) 
     (await kindOf('error: gpg failed to sign the data\nfatal: failed to write commit object')).kind,
     'command_failed',
   );
+
+  // Git speaking in its own voice outranks a hook name that happens to appear
+  // in the text — a hook file is also just a path Git can fail to read.
+  assert.equal(
+    (await kindOf("fatal: cannot open '.husky/pre-commit': Permission denied")).kind,
+    'command_failed',
+  );
+  // `remote:` is the server echoing its hook, not a Git diagnostic prefix.
+  assert.equal(
+    (await kindOf('remote: error: hook declined to update refs/heads/main')).kind,
+    'hook_rejected',
+  );
 });
 
 test('the default timeout clears the slowest legitimate command by a wide margin', () => {

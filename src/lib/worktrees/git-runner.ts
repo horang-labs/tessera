@@ -331,11 +331,32 @@ const NOT_FOUND_PATTERNS = [
 ];
 
 /**
+ * How Git prefixes a line it wrote itself. `remote:` output is excluded on
+ * purpose: `remote: error: hook declined` is a server echoing its own hook, not
+ * this Git explaining a failure.
+ */
+const GIT_DIAGNOSTIC_PREFIXES = ['fatal:', 'error:', 'warning:', 'hint:'];
+
+/** True when any line reads as Git's own diagnostic rather than a child's output. */
+export function hasGitDiagnosticLine(text: string): boolean {
+  return text
+    .split('\n')
+    .some((line) => {
+      const normalized = line.trimStart().toLowerCase();
+      return GIT_DIAGNOSTIC_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+    });
+}
+
+/**
  * Git sends hook output to stderr along with its own, and says nothing itself
  * about which hook refused, so the signal is whatever the hook printed. Named
  * runners identify themselves; a hand-written hook may not, and one that also
  * stays silent is caught in the commit path instead
  * (`src/lib/git/git-actions.ts`), where the command being `git commit` is known.
+ *
+ * These are substring matches, so a hook's *filename* can trip them —
+ * `fatal: cannot open '.husky/pre-commit'` is Git failing to read a file, not a
+ * hook refusing anything. `hasGitDiagnosticLine` is what tells the two apart.
  */
 const HOOK_REJECTION_PATTERNS = [
   'pre-commit',
@@ -365,7 +386,10 @@ function classifyGitFailure(stderr: string): GitFailureKind {
   }
   // After both, so a hook that fails on a credential or a missing ref is still
   // reported as the thing the user can act on.
-  if (HOOK_REJECTION_PATTERNS.some((pattern) => haystack.includes(pattern))) {
+  if (
+    HOOK_REJECTION_PATTERNS.some((pattern) => haystack.includes(pattern))
+    && !hasGitDiagnosticLine(stderr)
+  ) {
     return 'hook_rejected';
   }
   return 'command_failed';
