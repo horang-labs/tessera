@@ -9,7 +9,7 @@
  * control). The controller only renders what this returns.
  */
 import type { GitActionResult } from "@/types/git";
-import { summarizeGitFailure } from "./git-panel-shared";
+import { summarizeGitFailure, summarizeHookRejection } from "./git-panel-shared";
 
 export type GitActionToastKey =
   | "gitPanel.commit.successToast"
@@ -65,7 +65,7 @@ export function describeGitActionToast(
       ? {
         tone: "error",
         messageKey: "gitPanel.commit.hookRejectedToast",
-        params: { origin, reason: summarizeGitFailure(message) },
+        params: { origin, reason: summarizeHookRejection(message) },
         clearsDraft: false,
       }
       : {

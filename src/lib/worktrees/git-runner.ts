@@ -191,7 +191,14 @@ function runCommand(
       ...(options.cwd ? { cwd: options.cwd } : {}),
       // stdin is ignored, so a credential prompt would block the child
       // forever; tell git to fail instead of prompting.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      //
+      // `LC_ALL=C` keeps Git's diagnostics in the language every pattern below
+      // is written in. Git translates them, so on a localized machine
+      // `classifyGitFailure` would stop recognising an authentication failure
+      // or a missing ref, and `hasGitDiagnosticLine` would stop telling Git's
+      // own voice from a hook's. This is display text the user rarely sees and
+      // never a value the product branches on afterwards.
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     };

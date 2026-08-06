@@ -81,6 +81,23 @@ test('a hook rejection is reported as one, not as a generic failure', () => {
   assert.notEqual(generic.messageKey, rejected.messageKey);
 });
 
+test('a hook rejection quotes its verdict, not the progress line above it', () => {
+  // Git relays the whole of a hook's output, and a hook runner narrates before
+  // it fails. The first line is "starting"; the reason is at the bottom.
+  const stderr = [
+    '✔ Preparing lint-staged...',
+    '✖ eslint --fix failed: 2 problems',
+    'husky - pre-commit script failed (code 1)',
+  ].join('\n');
+
+  const toast = describeGitActionToast(
+    failedWith({ kind: 'hook_rejected', message: stderr, stderr }),
+    'main',
+  );
+
+  assert.equal(toast.params.reason, 'husky - pre-commit script failed (code 1)');
+});
+
 test('a hook that refused in silence is not given Git plumbing as its reason', () => {
   // With no stderr the runner's message is "git exited with code 1", which
   // tells the user nothing about their code being refused.
