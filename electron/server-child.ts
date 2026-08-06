@@ -207,9 +207,12 @@ initDatabase().then(() => {
         process.send({ type: 'ready', port });
       }
     })().catch((error) => {
-      // The descriptor path is private; keep startup reporting opaque.
-      void error;
-      logStartup('fatal', 'Failed to initialize the Control runtime');
+      // The IPC message still reaches the user-facing dialog, so it stays opaque. The
+      // startup log is local to the user and the only place this failure can be read
+      // from: the app exits without a window, so dropping the cause here leaves nothing
+      // to go on. A Windows ACL regression hid behind the bare line for hours.
+      const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      logStartup('fatal', `Failed to initialize the Control runtime: ${detail}`);
       process.send?.({ type: 'error', message: 'Failed to initialize the Control runtime' });
       void Promise.resolve(controlRuntime?.close())
         .catch(() => undefined)
