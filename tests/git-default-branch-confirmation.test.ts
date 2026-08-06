@@ -27,21 +27,26 @@ test('pushing the default branch asks first, and names the branch', () => {
   assert.equal(confirmation?.branch, 'main');
 });
 
-test('a branch tracking the default branch is asked about under its own name', () => {
+test('a worktree branched off the default branch still pushes uninterrupted', () => {
+  // What `git worktree add -b feature/x <path> origin/main` leaves behind: the
+  // branch tracks `origin/main` under its own name. This is how every Tessera
+  // worktree starts, so reading the push target off the upstream would stop
+  // every ordinary push to ask about `main` — and name a branch nothing
+  // writes, since `push.default=simple` refuses a bare push when the two names
+  // disagree.
   const snapshot: GitStateSnapshot = {
     ...ON_DEFAULT_BRANCH,
-    branch: 'hotfix',
+    branch: 'feature/0807-t234',
     upstream: 'origin/main',
   };
 
-  const confirmation = describeDefaultBranchPushConfirmation(
-    derivePrimaryGitAction(snapshot),
-    snapshot,
+  assert.equal(
+    describeDefaultBranchPushConfirmation(
+      derivePrimaryGitAction(snapshot),
+      snapshot,
+    ),
+    null,
   );
-
-  // What the push writes is what the upstream says, not what the local branch
-  // happens to be called.
-  assert.equal(confirmation?.branch, 'main');
 });
 
 test('the copy is assembled per action, so publishing does not read as pushing', () => {

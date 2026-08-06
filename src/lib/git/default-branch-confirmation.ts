@@ -26,7 +26,17 @@ export type GitDefaultBranchConfirmLabelKey =
   | 'gitPanel.push.defaultBranchConfirm.publishConfirm';
 
 export interface GitDefaultBranchConfirmation {
-  /** The branch the push would write to, which the copy names. */
+  /**
+   * The branch the push would write to, which the copy names — the branch the
+   * user is standing on.
+   *
+   * Not the upstream's branch, even though `git push` follows the upstream: a
+   * Tessera worktree branched from `origin/dev` tracks `origin/dev` under a
+   * feature-branch name, and reading the target off the upstream there would
+   * stop every ordinary push to ask about `dev`. It would also be naming a
+   * branch nothing writes — `push.default=simple`, Git's default, refuses a
+   * bare `git push` outright when the two names disagree.
+   */
   branch: string;
   titleKey: GitDefaultBranchConfirmTitleKey;
   bodyKey: GitDefaultBranchConfirmBodyKey;
@@ -45,9 +55,10 @@ export function describeDefaultBranchPushConfirmation(
   if (!snapshot) return null;
   if (action.action !== 'push') return null;
 
-  const target = resolvePushTargetBranch(snapshot);
-  // `null` default branch is a repository Git was never told the answer for,
-  // and `target` is null on a detached HEAD. Neither is a match for the other.
+  // `null` branch is a detached HEAD, where there is nothing to push and no
+  // name to say; `null` default branch is a repository Git was never told the
+  // answer for. Neither is a match for the other.
+  const target = snapshot.branch;
   if (!target || target !== snapshot.defaultBranch) return null;
 
   return action.kind === 'publish'
@@ -63,21 +74,4 @@ export function describeDefaultBranchPushConfirmation(
       bodyKey: 'gitPanel.push.defaultBranchConfirm.body',
       confirmLabelKey: 'gitPanel.push.defaultBranchConfirm.confirm',
     };
-}
-
-/**
- * Which remote branch this push would write, which is not always the branch the
- * user is standing on: an upstream is what `git push` follows, and the local
- * name only decides the answer when there is no upstream to follow — the first
- * push, which creates the remote branch under the local name.
- *
- * Null on a detached HEAD, where there is nothing to push and no name to say.
- */
-function resolvePushTargetBranch(snapshot: GitStateSnapshot): string | null {
-  if (!snapshot.upstream) return snapshot.branch;
-
-  // `<remote>/<branch>`, and the branch half can hold slashes of its own.
-  const separator = snapshot.upstream.indexOf('/');
-  if (separator < 0) return snapshot.upstream;
-  return snapshot.upstream.slice(separator + 1) || null;
 }
