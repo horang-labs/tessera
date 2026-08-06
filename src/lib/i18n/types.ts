@@ -441,22 +441,6 @@ export interface I18nMessages {
       branchPrefix: string;
       branchPrefixPlaceholder: string;
       branchPrefixDesc: string;
-      globalGuidelines: string;
-      globalGuidelinesDesc: string;
-      globalGuidelinesPlaceholder: string;
-      actionPromptsHeading: string;
-      actionPromptsDesc: string;
-      actionBadgeDefault: string;
-      actionBadgeCustomized: string;
-      actionResetTitle: string;
-      availableVariables: string;
-      acceptsHintNote: string;
-      actionLabelCommit: string;
-      actionLabelPush: string;
-      actionLabelPull: string;
-      actionLabelMerge: string;
-      actionLabelCreatePr: string;
-      actionLabelMergePr: string;
     };
   };
   electronClose: {

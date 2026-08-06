@@ -1,6 +1,5 @@
 import type { PermissionMode } from '@/lib/ws/message-types';
 import type { ShortcutId } from '@/lib/keyboard/registry';
-import type { GitActionId } from '@/lib/git/action-templates';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
@@ -30,10 +29,6 @@ export interface SetupState {
 
 export interface GitConfig {
   branchPrefix: string;
-  /** Prepended to every git action prompt. Single shared "tone/policy" layer. */
-  globalGuidelines: string;
-  /** Per-action prompt overrides. Missing or empty entry → default template. */
-  actionTemplates: Partial<Record<GitActionId, string>>;
 }
 
 export interface ProviderSessionDefaults {
