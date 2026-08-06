@@ -137,6 +137,23 @@ test('aborting a cherry-pick runs the cherry-pick abort', { skip: SKIP_ON_WINDOW
   });
 });
 
+test('a session working inside a subdirectory can still abort', { skip: SKIP_ON_WINDOWS }, async () => {
+  await withConflictedRepo('merge', async ({ target, repoDir, before }) => {
+    // A working directory is allowed to sit below the repository root, and the
+    // markers only ever live beside the root. Probing the subdirectory finds no
+    // `.git` at all, so the panel would draw an abort that always refused.
+    const subDir = path.join(repoDir, 'nested');
+    fs.mkdirSync(subDir, { recursive: true });
+
+    const result = await executeGitAction({ ...target, workDir: subDir }, { action: 'abort' });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.ok && result.outcome.action === 'abort' && result.outcome.operation, 'merge');
+    assert.equal(fs.readFileSync(path.join(repoDir, 'file.txt'), 'utf8'), before.contents);
+    assert.equal(await readHead(repoDir), before.head);
+  });
+});
+
 test('a worktree with nothing in progress refuses the abort before Git runs', { skip: SKIP_ON_WINDOWS }, async () => {
   await withConflictedRepo('merge', async ({ target, repoDir, before }) => {
     await execFileAsync('git', ['merge', '--abort'], { cwd: repoDir });

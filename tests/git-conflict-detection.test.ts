@@ -5,12 +5,22 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
+import { isBridgedAgentEnvironment } from '@/lib/filesystem/path-environment';
 import {
   detectGitConflictOperation,
   resolveWorktreeGitDir,
 } from '@/lib/git/git-conflict-state';
+import type { AgentEnvironment } from '@/lib/settings/types';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * The environment that is *not* bridged on a Linux/WSL host, so a distro-local
+ * temp repository is read exactly where it sits. `native` here means Windows,
+ * which cannot see one.
+ */
+const LOCAL_ENVIRONMENT: AgentEnvironment = 'wsl';
+const SKIP_ON_WINDOWS = process.platform === 'win32';
 
 async function configureIdentity(cwd: string): Promise<void> {
   await execFileAsync('git', ['config', 'user.email', 'tessera@tessera.local'], { cwd });
@@ -61,7 +71,7 @@ test('a worktree stopped mid-merge reports a merge', async () => {
   await withDivergedRepo(async (repoDir) => {
     await runExpectingConflict(['merge', 'other'], repoDir);
 
-    assert.equal(await detectGitConflictOperation(repoDir), 'merge');
+    assert.equal(await detectGitConflictOperation(repoDir, LOCAL_ENVIRONMENT), 'merge');
   });
 });
 
@@ -71,7 +81,7 @@ test('a worktree stopped mid-rebase reports a rebase', async () => {
 
     // A rebase replays commits the way a cherry-pick does, so the answer that
     // matters is the one that names the abort which puts this worktree back.
-    assert.equal(await detectGitConflictOperation(repoDir), 'rebase');
+    assert.equal(await detectGitConflictOperation(repoDir, LOCAL_ENVIRONMENT), 'rebase');
   });
 });
 
@@ -79,13 +89,13 @@ test('a worktree stopped mid-cherry-pick reports a cherry-pick', async () => {
   await withDivergedRepo(async (repoDir) => {
     await runExpectingConflict(['cherry-pick', 'other'], repoDir);
 
-    assert.equal(await detectGitConflictOperation(repoDir), 'cherry_pick');
+    assert.equal(await detectGitConflictOperation(repoDir, LOCAL_ENVIRONMENT), 'cherry_pick');
   });
 });
 
 test('a worktree with nothing in progress reports no conflict', async () => {
   await withDivergedRepo(async (repoDir) => {
-    assert.equal(await detectGitConflictOperation(repoDir), null);
+    assert.equal(await detectGitConflictOperation(repoDir, LOCAL_ENVIRONMENT), null);
   });
 });
 
@@ -97,7 +107,7 @@ test('a finished operation stops being reported', async () => {
     // `REBASE_HEAD` survives the abort, which is why it is not what the probe
     // reads: a worktree that reported a rebase forever could never be committed
     // in again.
-    assert.equal(await detectGitConflictOperation(repoDir), null);
+    assert.equal(await detectGitConflictOperation(repoDir, LOCAL_ENVIRONMENT), null);
   });
 });
 
@@ -113,9 +123,9 @@ test('a linked worktree reports its own operation, not the main checkout one', a
     // `.git` in a linked worktree is a file pointing at a directory under the
     // main repository's `worktrees/`; that directory is where this merge's
     // `MERGE_HEAD` lives. Most Tessera sessions run in one of these.
-    assert.equal(await detectGitConflictOperation(linkedDir), 'merge');
+    assert.equal(await detectGitConflictOperation(linkedDir, LOCAL_ENVIRONMENT), 'merge');
     // And the main checkout, which merged nothing, still says so.
-    assert.equal(await detectGitConflictOperation(repoDir), null);
+    assert.equal(await detectGitConflictOperation(repoDir, LOCAL_ENVIRONMENT), null);
   });
 });
 
@@ -129,7 +139,7 @@ test('detection runs no git command, so a panel read costs no extra process', as
     process.env.PATH = '';
 
     try {
-      assert.equal(await detectGitConflictOperation(repoDir), 'merge');
+      assert.equal(await detectGitConflictOperation(repoDir, LOCAL_ENVIRONMENT), 'merge');
     } finally {
       process.env.PATH = originalPath;
     }
@@ -137,56 +147,82 @@ test('detection runs no git command, so a panel read costs no extra process', as
 });
 
 /**
- * The bridged setup CLAUDE.md warns about: the server and the CLI are on
- * different filesystems, so the path Git wrote into a linked worktree's `.git`
- * file is not a path this process can open. A plain `path.resolve` against the
- * already-translated worktree happens to look right for a distro path and is
- * silently wrong for a `/mnt/<drive>` one — which is the whole reason the
- * translation goes through the same helper the worktree itself did.
+ * The bridge CLAUDE.md warns about, in the direction this host can actually
+ * stand up: a server inside WSL with a native (Windows) agent, which
+ * `isBridgedAgentEnvironment('native')` reports true for here. Git then names
+ * the repository `C:\...`, and nothing under that path is openable from this
+ * process until it is translated.
+ *
+ * Skipped rather than faked anywhere the bridge does not exist — a translation
+ * asserted against a stub is the code's own answer read back.
  */
-async function withPointerWorktree(
-  gitdirValue: string,
-  run: (worktreeDir: string) => Promise<void>,
-): Promise<void> {
+const WINDOWS_DRIVE_ROOT = '/mnt/c/Users/work';
+const BRIDGED_NATIVE = !SKIP_ON_WINDOWS
+  && isBridgedAgentEnvironment('native')
+  && fs.existsSync(WINDOWS_DRIVE_ROOT);
+
+test(
+  'a repository the agent names by drive letter is probed where the server can reach it',
+  { skip: !BRIDGED_NATIVE },
+  async () => {
+    const repoDir = fs.mkdtempSync(path.join(WINDOWS_DRIVE_ROOT, 'tessera-t238-'));
+    // What a Windows Git reports for that same directory — the form the panel
+    // and the abort both hand this module on a native bridge.
+    const agentReportedPath = `C:\\${path.relative('/mnt/c', repoDir).replace(/\//g, '\\')}`;
+
+    try {
+      await execFileAsync('git', ['init', '-q', '--initial-branch=main', repoDir]);
+      await configureIdentity(repoDir);
+      fs.writeFileSync(path.join(repoDir, 'file.txt'), 'base\n');
+      await execFileAsync('git', ['add', '.'], { cwd: repoDir });
+      await execFileAsync('git', ['commit', '-m', 'base'], { cwd: repoDir });
+      await execFileAsync('git', ['checkout', '-qb', 'other'], { cwd: repoDir });
+      fs.writeFileSync(path.join(repoDir, 'file.txt'), 'other\n');
+      await execFileAsync('git', ['commit', '-qam', 'other'], { cwd: repoDir });
+      await execFileAsync('git', ['checkout', '-q', 'main'], { cwd: repoDir });
+      fs.writeFileSync(path.join(repoDir, 'file.txt'), 'main\n');
+      await execFileAsync('git', ['commit', '-qam', 'main'], { cwd: repoDir });
+      await runExpectingConflict(['merge', 'other'], repoDir);
+
+      assert.equal(
+        await detectGitConflictOperation(agentReportedPath, 'native'),
+        'merge',
+      );
+      // And the setting is what decides, not the shape of the path: read as a
+      // path on this filesystem, `C:\...` is nowhere.
+      assert.equal(await detectGitConflictOperation(agentReportedPath, 'wsl'), null);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test('a gitdir written relative to the worktree is resolved against it', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-git-gitdir-'));
 
   try {
-    fs.writeFileSync(path.join(root, '.git'), `gitdir: ${gitdirValue}\n`);
-    await run(root);
+    fs.writeFileSync(
+      path.join(root, '.git'),
+      'gitdir: ../repo/.git/worktrees/feature\n',
+    );
+    const gitDir = await resolveWorktreeGitDir(root, LOCAL_ENVIRONMENT);
+
+    assert.equal(gitDir, path.resolve(root, '../repo/.git/worktrees/feature'));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-}
-
-test('a worktree pointing at a Windows-mounted git directory resolves to the drive', async () => {
-  await withPointerWorktree('/mnt/c/repo/.git/worktrees/feature', async (worktreeDir) => {
-    // The reference is a Windows-hosted path, as it is when the server runs on
-    // Windows and the agent in WSL. Resolved against the worktree instead, this
-    // would come back under the distro root, where `C:\repo` is not.
-    const gitDir = await resolveWorktreeGitDir(
-      worktreeDir,
-      '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\wt',
-    );
-
-    assert.equal(gitDir, 'C:\\repo\\.git\\worktrees\\feature');
-  });
-});
-
-test('a gitdir written relative to the worktree is resolved against it', async () => {
-  await withPointerWorktree('../repo/.git/worktrees/feature', async (worktreeDir) => {
-    const gitDir = await resolveWorktreeGitDir(worktreeDir, worktreeDir);
-
-    assert.equal(gitDir, path.resolve(worktreeDir, '../repo/.git/worktrees/feature'));
-  });
 });
 
 test('a directory that is not a repository reports no conflict rather than throwing', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-git-conflict-none-'));
 
   try {
-    assert.equal(await detectGitConflictOperation(root), null);
+    assert.equal(await detectGitConflictOperation(root, LOCAL_ENVIRONMENT), null);
     assert.equal(
-      await detectGitConflictOperation(path.join(root, 'does-not-exist')),
+      await detectGitConflictOperation(
+        path.join(root, 'does-not-exist'),
+        LOCAL_ENVIRONMENT,
+      ),
       null,
     );
   } finally {

@@ -12,18 +12,20 @@ import { readFile, stat } from "fs/promises";
 import {
   getFilesystemPathModule,
   isAbsoluteFilesystemPath,
-  resolvePathForHostFilesystem,
 } from "@/lib/filesystem/host-path";
-import { resolveWslDisplayPathAgainstWindowsHostedPath } from "@/lib/filesystem/path-environment";
+import { resolveAgentReportedPath } from "@/lib/filesystem/path-environment";
 import logger from "@/lib/logger";
+import type { AgentEnvironment } from "@/lib/settings/types";
 import type { GitConflictOperation } from "@/types/git";
 
 /**
- * `worktreePath` is a path in whatever form this server knows Git's world in,
- * which on a bridged setup is not a path this process can open. It is translated
- * the same way the panel translates a repository root before reading a file out
- * of it; `referenceFilesystemPath` is a path known to live on the same
- * filesystem, and defaults to the worktree itself.
+ * `worktreePath` is a path Git reported, so it names a file in the environment
+ * the CLI runs in — which on a bridged setup this process cannot open. It is
+ * translated through `resolveAgentReportedPath`, which CLAUDE.md names as the
+ * helper for exactly this and which is a no-op on the setups that share one
+ * filesystem. `agentEnvironment` is the authority for which side that is (ADR
+ * 0006); inferring it from the shape of the path would be a second source of
+ * truth for a fact the setting already fixes.
  *
  * Null means "nothing in progress", and it is also what an unreadable git
  * directory answers. Failing open is deliberate: the cost of missing a conflict
@@ -32,12 +34,12 @@ import type { GitConflictOperation } from "@/types/git";
  */
 export async function detectGitConflictOperation(
   worktreePath: string,
-  referenceFilesystemPath: string = worktreePath,
+  agentEnvironment: AgentEnvironment,
 ): Promise<GitConflictOperation | null> {
   try {
     const gitDir = await resolveWorktreeGitDir(
-      await resolveNodeFilesystemPath(worktreePath, referenceFilesystemPath),
-      referenceFilesystemPath,
+      await resolveAgentReportedPath(worktreePath, agentEnvironment),
+      agentEnvironment,
     );
     const pathModule = getFilesystemPathModule(gitDir);
     const [merge, rebaseMerge, rebaseApply, cherryPick] = await Promise.all([
@@ -102,7 +104,7 @@ function isExpectedProbeError(error: unknown): boolean {
  */
 export async function resolveWorktreeGitDir(
   worktreeFilesystemPath: string,
-  referenceFilesystemPath: string,
+  agentEnvironment: AgentEnvironment,
 ): Promise<string> {
   const pathModule = getFilesystemPathModule(worktreeFilesystemPath);
   const dotGit = pathModule.join(worktreeFilesystemPath, ".git");
@@ -114,17 +116,16 @@ export async function resolveWorktreeGitDir(
   const gitdir = contents.match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
   if (!gitdir) return dotGit;
 
-  // Git wrote this path in the world it ran in, so on a bridged setup it names
-  // a place this process cannot open — it goes through the same translation the
-  // worktree path did. Resolving it against the already-translated worktree
-  // instead would only be right by coincidence: `/mnt/c/...` is `C:\...`, not a
-  // path under the distro's UNC root, and joining it there points at nothing.
+  // Git wrote this pointer in the world it ran in, so it needs the same
+  // translation the worktree path did. Resolving it against the *already
+  // translated* worktree instead would only be right by coincidence — the two
+  // are then in different path styles, and joining them lands nowhere.
   //
   // It is allowed to be relative to the worktree, and a repository moved by hand
   // can leave it that way; then the worktree is the right thing to resolve it
   // against, and both sides of the join are already on this filesystem.
   return isAbsoluteFilesystemPath(gitdir)
-    ? resolveNodeFilesystemPath(gitdir, referenceFilesystemPath)
+    ? resolveAgentReportedPath(gitdir, agentEnvironment)
     : pathModule.resolve(worktreeFilesystemPath, gitdir);
 }
 
@@ -132,15 +133,5 @@ async function exists(filesystemPath: string): Promise<boolean> {
   return stat(filesystemPath).then(
     () => true,
     () => false,
-  );
-}
-
-async function resolveNodeFilesystemPath(
-  gitPath: string,
-  referenceFilesystemPath: string,
-): Promise<string> {
-  return (
-    resolveWslDisplayPathAgainstWindowsHostedPath(gitPath, referenceFilesystemPath)
-    ?? resolvePathForHostFilesystem(gitPath)
   );
 }

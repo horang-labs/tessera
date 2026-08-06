@@ -847,9 +847,12 @@ export async function getGitPanelData(
   // §9: a filesystem probe rather than a Git command, so it adds no process to
   // this read. `repoRoot` rather than `workDir` because the marker files live
   // beside the worktree's own git directory, and `workDir` is allowed to be a
-  // directory inside it; `workDir` rides along as the reference this server can
-  // translate the repository root against on a bridged setup.
-  const conflictOperation = await detectGitConflictOperation(repoRoot, workDir);
+  // directory inside it. `agentEnvironment` is what says which filesystem that
+  // root is on, and it is already resolved above (ADR 0006).
+  const conflictOperation = await detectGitConflictOperation(
+    repoRoot,
+    agentEnvironment,
+  );
   const { ahead, behind } = parseAheadBehind(aheadBehindRaw);
   const prSummary = prContext
     ? { wasUnsupported: prContext.wasUnsupported, prStatus: prContext.prStatus }

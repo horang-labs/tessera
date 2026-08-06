@@ -499,7 +499,20 @@ async function runAbort(
   target: GitActionTarget,
   runGit: GitRunner,
 ): Promise<GitActionResult> {
-  const operation = await detectGitConflictOperation(target.workDir);
+  // The repository root, not the working directory: the markers live beside the
+  // worktree's own git directory, and a session's working directory is allowed
+  // to be a directory inside it. Probing the working directory would find no
+  // `.git` there and refuse an abort the panel had just offered — the one thing
+  // §9 promises is that the user can always get out.
+  //
+  // `--show-toplevel` costs a Git process, which the panel's detection is not
+  // allowed to spend but this one is: an abort is already running Git, and the
+  // panel is the read that has to stay cheap.
+  const repoRoot = await readRepoRoot(target.workDir, runGit);
+  const operation = await detectGitConflictOperation(
+    repoRoot,
+    target.agentEnvironment,
+  );
   if (!operation) {
     // The menu lists this entry only while an operation is detected; this is the
     // handler-side guard for a press that raced the state it was drawn from.
@@ -606,6 +619,19 @@ async function readCurrentBranch(
     timeoutMs: PROBE_TIMEOUT_MS,
   });
   return stdout.trim() || null;
+}
+
+/**
+ * Where the worktree actually starts. Falls back to the working directory when
+ * Git will not say, which leaves the caller exactly where it would have been.
+ */
+async function readRepoRoot(workDir: string, runGit: GitRunner): Promise<string> {
+  const result = await runGit(["rev-parse", "--show-toplevel"], {
+    cwd: workDir,
+    timeoutMs: PROBE_TIMEOUT_MS,
+  }).catch(() => null);
+
+  return result?.stdout.trim() || workDir;
 }
 
 /** Null both when there is no upstream and when Git could not be asked. */
