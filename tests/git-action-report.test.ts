@@ -26,6 +26,7 @@ function failedWith(failure: Partial<GitActionFailure>): GitActionResult {
       kind: 'command_failed',
       message: 'fatal: something broke',
       stderr: 'fatal: something broke',
+      stdout: '',
       exitCode: 1,
       changedFiles: [],
       ...failure,
@@ -267,35 +268,27 @@ test('a completed pull says where the commits came from', () => {
 
 test('a failed pull says the pull failed, not the commit', () => {
   const failed = describeGitActionToast(failedWith({}), 'main', 'pull');
-  const conflicted = describeGitActionToast(
-    failedWith({
-      message: 'CONFLICT (content): Merge conflict in seed.txt',
-      stderr: 'CONFLICT (content): Merge conflict in seed.txt',
-    }),
-    'main',
-    'pull',
-  );
 
   assert.equal(failed.messageKey, 'gitPanel.pull.failureToast');
-  // What Git said, so the same button is a retry the user can act on (AC 5).
-  assert.equal(conflicted.params.reason, 'CONFLICT (content): Merge conflict in seed.txt');
   assert.equal(
     describeGitRequestFailureToast('Session is no longer available', 'main', 'pull').messageKey,
     'gitPanel.pull.failureToast',
   );
 });
 
-test('a conflicted pull quotes the verdict, not the merge narrating its way there', () => {
-  // What `git pull` writes on stdout when a merge cannot be resolved. The first
-  // line is progress; the reason is at the bottom.
-  const detail = [
+test('a conflicted pull quotes the merge verdict, not the fetch that succeeded', () => {
+  // Exactly how a real `git pull` splits itself: the fetch reports the refs it
+  // moved on stderr, and the merge narrates to its verdict on stdout. Quoting
+  // stderr would tell the user a ref advanced and never that it conflicted.
+  const stderr = ['From ../remote', '   08987e7..0bef747  main       -> origin/main'].join('\n');
+  const stdout = [
     'Auto-merging seed.txt',
     'CONFLICT (content): Merge conflict in seed.txt',
     'Automatic merge failed; fix conflicts and then commit the result.',
   ].join('\n');
 
   const toast = describeGitActionToast(
-    failedWith({ message: detail, stderr: detail }),
+    failedWith({ message: stderr, stderr, stdout }),
     'main',
     'pull',
   );
@@ -308,17 +301,30 @@ test('a conflicted pull quotes the verdict, not the merge narrating its way ther
 
 test('a pull that Git refused in its own voice is quoted from the top', () => {
   // Git leads with the diagnostic and trails hints, so the last line would be
-  // advice rather than the reason.
-  const detail = [
+  // advice rather than the reason — and there is no merge to read instead.
+  const stderr = [
     "fatal: couldn't find remote ref topic",
     'hint: check the branch name and try again',
   ].join('\n');
 
   const toast = describeGitActionToast(
-    failedWith({ kind: 'not_found', message: detail, stderr: detail }),
+    failedWith({ kind: 'not_found', message: stderr, stderr, stdout: '' }),
     'main',
     'pull',
   );
 
   assert.equal(toast.params.reason, "fatal: couldn't find remote ref topic");
+});
+
+test('Git refusing mid-pull outranks whatever the merge had printed by then', () => {
+  // A merge that starts and is then stopped by Git itself: the narration is on
+  // stdout, but Git's diagnostic is the reason and it is on stderr.
+  const stderr = 'error: Your local changes to the following files would be overwritten by merge:';
+  const toast = describeGitActionToast(
+    failedWith({ message: stderr, stderr, stdout: 'Updating 08987e7..0bef747' }),
+    'main',
+    'pull',
+  );
+
+  assert.equal(toast.params.reason, stderr);
 });

@@ -120,7 +120,7 @@ export function describeGitActionToast(
   }
 
   const keys = FAILURE_KEYS[attempted];
-  const { kind, message, stderr } = result.failure;
+  const { kind, message, stderr, stdout } = result.failure;
   if (kind === "hook_rejected") {
     // A hook can refuse without printing anything, and then the only message
     // there is comes from the runner ("git exited with code 1"). Quoting that
@@ -146,9 +146,9 @@ export function describeGitActionToast(
     params: {
       origin,
       // A pull is the one verb that can fail mid-merge, and a merge says what
-      // it did before it says that it could not finish.
+      // it did before it says that it could not finish — on the other stream.
       reason: attempted === "pull"
-        ? summarizeMergeFailure(message)
+        ? summarizeMergeFailure(stdout, message)
         : summarizeGitFailure(message),
     },
     clearsDraft: false,

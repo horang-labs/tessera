@@ -155,9 +155,7 @@ async function runCommit(
     await unstageAddedPaths(added, target, runGit);
     return {
       ok: false,
-      failure: await describeFailure(error, target, runGit, {
-        classify: promoteHookRejection,
-      }),
+      failure: await describeFailure(error, target, runGit, promoteHookRejection),
     };
   }
 
@@ -198,9 +196,7 @@ async function runPush(
     // runner already recognizes a `pre-push` hook that says anything at all.
     return {
       ok: false,
-      failure: await describeFailure(error, target, runGit, {
-        classify: (failed) => failed.kind,
-      }),
+      failure: await describeFailure(error, target, runGit, (failed) => failed.kind),
     };
   }
 
@@ -252,16 +248,11 @@ async function runPull(
     // half of a pull is as slow as the network and a merge can run hooks.
     await pullWithDivergenceFallback(target, runGit);
   } catch (error) {
+    // No commit-specific promotion: a pull's merge hooks name themselves, and
+    // the runner already recognizes those.
     return {
       ok: false,
-      failure: await describeFailure(error, target, runGit, {
-        classify: (failed) => failed.kind,
-        // `git pull` reports a conflict on *stdout* — "CONFLICT (content): …"
-        // and "Automatic merge failed; fix conflicts…" — and exits 1 having
-        // said nothing on stderr. That is the commonest way a pull fails, and
-        // without this the user is told only that Git exited with code 1.
-        detail: (failed) => failed.stdout,
-      }),
+      failure: await describeFailure(error, target, runGit, (failed) => failed.kind),
     };
   }
 
@@ -449,38 +440,29 @@ export async function readChangeSet(
   return parseGitStatus(stdout);
 }
 
-/** What each action knows about its own failures that the runner cannot. */
-interface FailureNarration {
-  /** The commit path can read silence as a hook refusing; a push cannot. */
-  classify: (error: GitCommandError) => GitFailureKind;
-  /**
-   * Where this command wrote its account of the failure, when that is not
-   * stderr. Consulted only when stderr is empty, so it never overrides Git
-   * speaking in the usual place.
-   */
-  detail?: (error: GitCommandError) => string;
-}
-
+/**
+ * `classify` is where the caller adds what it knows and the runner cannot: the
+ * commit path can read silence as a hook refusing, a push cannot.
+ *
+ * Both output streams are kept. Which of them carries the reason is the
+ * command's business, not this function's — `git commit` explains itself on
+ * stderr, `git pull` reports its merge on stdout — and ADR 0005 asks for the
+ * detail to survive rather than for a choice to be made here.
+ */
 async function describeFailure(
   error: unknown,
   target: GitActionTarget,
   runGit: GitRunner,
-  narrate: FailureNarration,
+  classify: (error: GitCommandError) => GitFailureKind,
 ): Promise<GitActionFailure> {
   const changedFiles = await readChangeSet(target, runGit).catch(() => []);
 
   if (error instanceof GitCommandError) {
-    // Git's own account of what went wrong, wherever this command wrote it. The
-    // runner's message falls back to "git exited with code 1", which is the one
-    // thing ADR 0005 must not let reach the user in place of the real reason.
-    const detail = error.stderr.trim()
-      ? error.stderr
-      : (narrate.detail?.(error).trim() ?? "");
-
     return {
-      kind: narrate.classify(error),
-      message: truncateStderr(detail || error.message),
-      stderr: truncateStderr(detail),
+      kind: classify(error),
+      message: truncateStderr(error.message),
+      stderr: truncateStderr(error.stderr),
+      stdout: truncateStderr(error.stdout),
       exitCode: error.exitCode,
       changedFiles,
     };
@@ -490,6 +472,7 @@ async function describeFailure(
     kind: "command_failed",
     message: error instanceof Error ? error.message : String(error),
     stderr: "",
+    stdout: "",
     exitCode: null,
     changedFiles,
   };

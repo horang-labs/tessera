@@ -133,25 +133,35 @@ export function summarizeHookRejection(message: string): string {
 const GIT_DIAGNOSTIC_PREFIXES = ["fatal:", "error:", "warning:", "hint:"];
 
 /**
- * A merge can fail either way round, so which end to read is decided by whether
- * Git spoke in its own voice at all.
+ * A pull is two commands wearing one name, and each writes somewhere else: the
+ * fetch reports on stderr ("From origin", then the refs it moved) and the merge
+ * on stdout ("Auto-merging f.txt", the CONFLICT lines, "Automatic merge failed…"
+ * last). Reading only `gitSaid` therefore quotes a ref that moved successfully
+ * as though it were the reason the pull failed.
  *
- * `git pull` narrates a merge on stdout — "Auto-merging seed.txt" first, then
- * the CONFLICT lines, and "Automatic merge failed…" last — with no prefix on any
- * of it. There the first line is progress and the verdict is at the bottom. When
- * Git refuses in its own voice instead it leads with `fatal:` and trails hints,
- * and the top is what happened.
+ * So: Git's own voice wins wherever it appears — it leads with `fatal:` and
+ * trails hints, and the top of that is what happened. Failing that, the merge
+ * narrated its way to a verdict and the bottom of `stdout` is it.
  */
-export function summarizeMergeFailure(message: string): string {
-  const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
-  const diagnostic = lines.find((line) => {
-    const normalized = line.toLowerCase();
+export function summarizeMergeFailure(stdout: string, gitSaid: string): string {
+  if (!hasGitDiagnosticLine(gitSaid)) {
+    const merge = lastMeaningfulLine(stdout);
+    if (merge) return truncateForToast(merge);
+  }
+
+  return summarizeGitFailure(gitSaid);
+}
+
+function hasGitDiagnosticLine(text: string): boolean {
+  return text.split("\n").some((line) => {
+    const normalized = line.trim().toLowerCase();
     return GIT_DIAGNOSTIC_PREFIXES.some((prefix) => normalized.startsWith(prefix));
   });
+}
 
-  return truncateForToast(
-    diagnostic ?? lines[lines.length - 1] ?? message.trim(),
-  );
+function lastMeaningfulLine(text: string): string | null {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines[lines.length - 1] ?? null;
 }
 
 function truncateForToast(line: string): string {

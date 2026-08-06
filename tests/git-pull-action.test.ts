@@ -46,7 +46,7 @@ async function configureIdentity(cwd: string, name: string): Promise<void> {
  */
 async function withTrackingRepo(
   run: (fixture: PullFixture) => Promise<void>,
-  options: { setUpstream?: boolean } = {},
+  options: { setUpstream?: boolean; pullRebase?: 'false' | 'true' } = {},
 ): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-git-pull-'));
   const repoDir = path.join(root, 'work');
@@ -57,6 +57,9 @@ async function withTrackingRepo(
     await execFileAsync('git', ['init', '--bare', '--initial-branch=main', remoteDir]);
     await execFileAsync('git', ['init', '--initial-branch=main', repoDir]);
     await configureIdentity(repoDir, 'Tessera');
+    if (options.pullRebase) {
+      await execFileAsync('git', ['config', 'pull.rebase', options.pullRebase], { cwd: repoDir });
+    }
     await execFileAsync('git', ['remote', 'add', 'origin', remoteDir], { cwd: repoDir });
     fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'seed\n');
     await execFileAsync('git', ['add', '.'], { cwd: repoDir });
@@ -181,15 +184,40 @@ test('a pull that conflicts reports the Git error and leaves the tree to retry f
 
     assert.equal(result.ok, false, 'expected the pull to fail');
     if (result.ok) return;
-    // ADR 0005: Git's own account of the failure survives to the client.
-    assert.match(
-      `${result.failure.message}\n${result.failure.stderr}`,
-      /conflict|merge failed/i,
-    );
+    // `git pull` splits its account across both streams: the fetch summary goes
+    // to stderr and the merge verdict to stdout. A failure that kept only one of
+    // them would tell the user a ref moved and never that it conflicted.
+    assert.match(result.failure.stdout, /conflict|merge failed/i);
     // And the change set it left behind, which is what the user retries from.
     assert.ok(
       result.failure.changedFiles.some((file) => file.path === 'seed.txt'),
       'expected the conflicted file to be reported',
     );
-  });
+  }, { pullRebase: 'false' });
+});
+
+test('the fetch half of a failed pull is kept, and does not stand in for the merge', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  // The fixture that made this look right for the wrong reason: with no
+  // reconciliation policy the first pull is refused, and the fallback's second
+  // pull fetches nothing — so stderr comes back empty and any code that reads
+  // only one stream still finds the merge. A machine whose user has answered
+  // Git's prompt takes the single-pull path, where stderr is not empty.
+  await withTrackingRepo(async ({ target, otherDir, repoDir }) => {
+    fs.writeFileSync(path.join(otherDir, 'seed.txt'), 'their line\n');
+    await execFileAsync('git', ['commit', '--all', '-m', 'their edit'], { cwd: otherDir });
+    await execFileAsync('git', ['push'], { cwd: otherDir });
+    fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'our line\n');
+    await execFileAsync('git', ['commit', '--all', '-m', 'our edit'], { cwd: repoDir });
+
+    const result = await executeGitAction(target, { action: 'pull' });
+
+    assert.equal(result.ok, false, 'expected the pull to fail');
+    if (result.ok) return;
+    // ADR 0005: both halves of Git's account survive to the client, each in the
+    // field it was written to.
+    assert.match(result.failure.stderr, /^From /m, 'expected the fetch summary');
+    assert.match(result.failure.stdout, /conflict|merge failed/i);
+  }, { pullRebase: 'false' });
 });

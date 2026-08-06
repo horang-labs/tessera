@@ -122,6 +122,14 @@ export interface GitActionFailure {
   kind: GitFailureKind;
   message: string;
   stderr: string;
+  /**
+   * What the command wrote on stdout. Kept alongside stderr because a Git
+   * command can split its account across both: `git pull` reports the fetch on
+   * stderr and the merge — "CONFLICT (content): …", "Automatic merge failed" —
+   * on stdout, so a failure holding only stderr says a ref moved and never that
+   * the merge could not be finished.
+   */
+  stdout: string;
   exitCode: number | null;
   changedFiles: GitChangedFile[];
 }
