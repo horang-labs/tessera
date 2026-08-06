@@ -22,6 +22,10 @@ import {
   type GitStateSnapshot,
 } from "@/lib/git/primary-git-action";
 import {
+  describeDefaultBranchPushConfirmation,
+  type GitDefaultBranchConfirmation,
+} from "@/lib/git/default-branch-confirmation";
+import {
   describeGitActionOrigin,
   describeGitActionToast,
   describeGitRequestFailureToast,
@@ -160,6 +164,13 @@ export function useGitPanelController(sessionId: string | null) {
     },
     [],
   );
+  /**
+   * The question standing between the button and a push to the default branch,
+   * or null when there is nothing to ask (§8). It is also the dialog's open
+   * state: there is only ever one push to confirm, the one just pressed.
+   */
+  const [pushConfirmation, setPushConfirmation] =
+    useState<GitDefaultBranchConfirmation | null>(null);
   const [generatingMessage, setGeneratingMessage] = useState(false);
   // A generation failure stays here rather than in a toast: it belongs to the
   // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
@@ -277,6 +288,9 @@ export function useGitPanelController(sessionId: string | null) {
     setCommitMessage("");
     setDeselectedPaths(new Set<string>());
     setGenerateMessageError(null);
+    // The question was asked about the branch the panel was showing a moment
+    // ago; answering it here would push a different session's branch.
+    setPushConfirmation(null);
 
     if (!sessionId || isTransientSessionId(sessionId)) {
       setLoading(false);
@@ -793,9 +807,31 @@ export function useGitPanelController(sessionId: string | null) {
   /** The one button. Which verb it runs is the ladder's answer, not the user's. */
   const runPrimaryAction = useCallback(() => {
     if (!primaryAction.enabled) return;
-    if (primaryAction.action === "push") return pushBranch();
+    if (primaryAction.action === "push") {
+      // §8: a push at the default branch is asked about before anything runs,
+      // and the panel is left exactly as it was until the answer comes back.
+      const confirmation = describeDefaultBranchPushConfirmation(
+        primaryAction,
+        stateSnapshot,
+      );
+      if (confirmation) {
+        setPushConfirmation(confirmation);
+        return;
+      }
+      return pushBranch();
+    }
     return commitSelectedFiles();
-  }, [commitSelectedFiles, primaryAction, pushBranch]);
+  }, [commitSelectedFiles, primaryAction, pushBranch, stateSnapshot]);
+
+  /** Answering yes runs the push the confirmation was raised for, and nothing else. */
+  const confirmPrimaryAction = useCallback(() => {
+    setPushConfirmation(null);
+    // The dialog closes rather than holding a spinner of its own: progress
+    // belongs at the button (§7), which is where the pending label already is.
+    return pushBranch();
+  }, [pushBranch]);
+
+  const cancelPrimaryAction = useCallback(() => setPushConfirmation(null), []);
 
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;
@@ -926,6 +962,9 @@ export function useGitPanelController(sessionId: string | null) {
     primaryAction,
     actionPending: pendingHere !== null,
     runPrimaryAction,
+    pushConfirmation,
+    confirmPrimaryAction,
+    cancelPrimaryAction,
     selectedFile,
     selectedFileIndex,
     selectedPath,

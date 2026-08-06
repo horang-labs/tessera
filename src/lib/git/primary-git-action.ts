@@ -27,6 +27,15 @@ export interface GitStateSnapshot {
   changedFileCount: number;
   /** False when the repository has no remote to push to at all. */
   hasRemote: boolean;
+  /**
+   * The repository's default branch, as `origin/HEAD` points at it. Null when
+   * that ref is not set — a repository Git was never told the answer for.
+   *
+   * The ladder never reads it: it is here because the confirmation in §8 asks
+   * its question of the same state snapshot, and a second snapshot type would
+   * mean translating the panel payload twice.
+   */
+  defaultBranch: string | null;
 }
 
 export type GitPrimaryActionLabelKey =
@@ -85,6 +94,7 @@ export function gitStateSnapshotFromPanel(
     // show.
     changedFileCount: panel.changedFilesTotal ?? panel.changedFiles.length,
     hasRemote: panel.hasRemote,
+    defaultBranch: panel.defaultBranch,
   };
 }
 

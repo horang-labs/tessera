@@ -1100,6 +1100,14 @@ export const zh: I18nMessages = {
       failureToast: '推送失败 · {{origin}} — {{reason}}',
       hookRejectedToast: 'git 钩子拒绝了此次推送 · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git 钩子拒绝了此次推送 · {{origin}}',
+      defaultBranchConfirm: {
+        title: '推送到默认分支?',
+        body: '此操作会推送 "{{branch}}" 上的本地提交。',
+        publishTitle: '发布默认分支?',
+        publishBody: '此操作会将 "{{branch}}" 发布到远程并推送其本地提交。',
+        confirm: '推送到 {{branch}}',
+        publishConfirm: '发布 {{branch}}',
+      },
     },
     primary: {
       stateUnknown: '正在读取 git 状态…',
