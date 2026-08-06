@@ -34,6 +34,7 @@ const SYNCED: GitStateSnapshot = {
   branch: 'feature/0807-t233',
   upstream: 'origin/feature/0807-t233',
   ahead: 0,
+  behind: 0,
   changedFileCount: 0,
   hasRemote: true,
 };
@@ -77,6 +78,40 @@ test('a branch with no upstream is offered as Publish Branch, not as Push', () =
   assert.equal(action.action, 'push');
   assert.equal(action.enabled, true);
   assert.equal(action.labelKey, 'gitPanel.push.publishButton');
+});
+
+test('a clean branch that is behind offers Pull, and says how many commits', () => {
+  const action = derivePrimaryGitAction({ ...SYNCED, behind: 2 });
+
+  assert.equal(action.kind, 'pull');
+  assert.equal(action.action, 'pull');
+  assert.equal(action.enabled, true);
+  assert.equal(action.labelKey, 'gitPanel.pull.button');
+  // The size of the operation is visible before pressing (§4).
+  assert.deepEqual(action.labelParams, { count: 2 });
+});
+
+test('a branch that is both ahead and behind is told to pull, not to push', () => {
+  // The push would be refused as a non-fast-forward, so offering it would send
+  // the user to a failure the ladder could see coming (§3).
+  const action = derivePrimaryGitAction({ ...SYNCED, ahead: 4, behind: 1 });
+
+  assert.equal(action.kind, 'pull');
+  assert.deepEqual(action.labelParams, { count: 1 });
+});
+
+test('a branch with no upstream is not offered a pull it cannot run', () => {
+  // `behind` cannot outlive the upstream it was counted against, but the panel
+  // is polled and the two fields arrive together — so the rung asks for the
+  // upstream itself rather than trusting a count that implies one.
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    upstream: null,
+    behind: 3,
+  });
+
+  assert.notEqual(action.kind, 'pull');
+  assert.equal(action.kind, 'publish');
 });
 
 test('a clean branch with nothing ahead offers a Push it says is empty', () => {
@@ -184,6 +219,7 @@ test('every label and reason the ladder can name resolves in every locale', asyn
     null,
     { ...SYNCED, changedFileCount: 2 },
     { ...SYNCED, ahead: 3 },
+    { ...SYNCED, behind: 2 },
     SYNCED,
     { ...SYNCED, upstream: null },
     { ...SYNCED, upstream: null, hasRemote: false },
@@ -209,4 +245,22 @@ test('every label and reason the ladder can name resolves in every locale', asyn
       assert.equal(typeof value, 'string', `${language} is missing ${key}`);
     }
   }
+});
+
+test('the pull label spends the count it is given, in every locale', async () => {
+  // The ladder handing over `labelParams` is only half of it. Rendered through
+  // i18next rather than pattern-matched on the bundle, because that is where the
+  // count can still go missing — `count` is i18next's plural selector, so a key
+  // that resolves as a bare string in one locale can resolve through a plural
+  // form in another.
+  const behind = derivePrimaryGitAction({ ...SYNCED, behind: 5 });
+  assert.deepEqual(behind.labelParams, { count: 5 });
+
+  const { i18n } = await import('@/lib/i18n');
+  for (const language of ['en', 'ko', 'ja', 'zh']) {
+    await i18n.changeLanguage(language);
+    const rendered = i18n.t(behind.labelKey, behind.labelParams);
+    assert.match(rendered, /5/, `${language} drops the pull count: ${rendered}`);
+  }
+  await i18n.changeLanguage('en');
 });

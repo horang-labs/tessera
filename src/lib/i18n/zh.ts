@@ -1101,6 +1101,14 @@ export const zh: I18nMessages = {
       hookRejectedToast: 'git 钩子拒绝了此次推送 · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git 钩子拒绝了此次推送 · {{origin}}',
     },
+    pull: {
+      button: '拉取 ({{count}})',
+      buttonPending: '拉取中…',
+      successToast: '已从 {{remoteBranch}} 拉取 · {{origin}}',
+      failureToast: '拉取失败 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git 钩子拒绝了此次拉取 · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git 钩子拒绝了此次拉取 · {{origin}}',
+    },
     primary: {
       stateUnknown: '正在读取 git 状态…',
       detachedHead: 'HEAD 处于分离状态 — 请先检出分支再推送',

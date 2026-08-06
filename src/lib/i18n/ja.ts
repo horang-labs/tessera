@@ -1101,6 +1101,14 @@ export const ja: I18nMessages = {
       hookRejectedToast: 'git フックがプッシュを拒否しました · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git フックがプッシュを拒否しました · {{origin}}',
     },
+    pull: {
+      button: 'プル ({{count}})',
+      buttonPending: 'プル中…',
+      successToast: '{{remoteBranch}} からプルしました · {{origin}}',
+      failureToast: 'プル失敗 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git フックがプルを拒否しました · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git フックがプルを拒否しました · {{origin}}',
+    },
     primary: {
       stateUnknown: 'git の状態を読み込み中…',
       detachedHead: 'HEAD が分離されています — プッシュするにはブランチをチェックアウトしてください',

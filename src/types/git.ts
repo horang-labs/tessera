@@ -147,7 +147,17 @@ export interface GitPushOutcome {
   setUpstream: boolean;
 }
 
-export type GitActionOutcome = GitCommitOutcome | GitPushOutcome;
+export interface GitPullOutcome {
+  action: "pull";
+  branch: string;
+  /** The tracking branch the commits came from, e.g. `origin/main`. */
+  upstream: string;
+}
+
+export type GitActionOutcome =
+  | GitCommitOutcome
+  | GitPushOutcome
+  | GitPullOutcome;
 
 export type GitActionResult =
   | { ok: true; outcome: GitActionOutcome }

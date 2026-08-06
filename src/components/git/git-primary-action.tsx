@@ -49,7 +49,9 @@ export function GitPrimaryActionButton({
           {t(action.pendingLabelKey)}
         </>
       ) : (
-        t(action.labelKey)
+        // The count rides on the label where the size of the operation is worth
+        // seeing before pressing — `Pull (2)` (§4).
+        t(action.labelKey, action.labelParams)
       )}
     </Button>
   );

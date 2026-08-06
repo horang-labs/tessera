@@ -141,6 +141,10 @@ test('every key a report can name resolves to a real string in every locale', as
     'gitPanel.push.failureToast',
     'gitPanel.push.hookRejectedToast',
     'gitPanel.push.hookRejectedNoDetailToast',
+    'gitPanel.pull.successToast',
+    'gitPanel.pull.failureToast',
+    'gitPanel.pull.hookRejectedToast',
+    'gitPanel.pull.hookRejectedNoDetailToast',
   ];
 
   for (const [language, bundle] of locales) {
@@ -242,4 +246,79 @@ test('a request that never reached Git still reports with provenance', () => {
   assert.equal(toast.messageKey, 'gitPanel.commit.failureToast');
   assert.equal(toast.params.origin, 'main');
   assert.equal(toast.params.reason, 'Session is no longer available');
+});
+
+test('a completed pull says where the commits came from', () => {
+  const toast = describeGitActionToast(
+    {
+      ok: true,
+      outcome: { action: 'pull', branch: 'main', upstream: 'origin/main' },
+    },
+    'main',
+    'pull',
+  );
+
+  assert.equal(toast.tone, 'success');
+  assert.equal(toast.messageKey, 'gitPanel.pull.successToast');
+  assert.equal(toast.params.remoteBranch, 'origin/main');
+  // Nothing about a pull belongs to the commit draft.
+  assert.equal(toast.clearsDraft, false);
+});
+
+test('a failed pull says the pull failed, not the commit', () => {
+  const failed = describeGitActionToast(failedWith({}), 'main', 'pull');
+  const conflicted = describeGitActionToast(
+    failedWith({
+      message: 'CONFLICT (content): Merge conflict in seed.txt',
+      stderr: 'CONFLICT (content): Merge conflict in seed.txt',
+    }),
+    'main',
+    'pull',
+  );
+
+  assert.equal(failed.messageKey, 'gitPanel.pull.failureToast');
+  // What Git said, so the same button is a retry the user can act on (AC 5).
+  assert.equal(conflicted.params.reason, 'CONFLICT (content): Merge conflict in seed.txt');
+  assert.equal(
+    describeGitRequestFailureToast('Session is no longer available', 'main', 'pull').messageKey,
+    'gitPanel.pull.failureToast',
+  );
+});
+
+test('a conflicted pull quotes the verdict, not the merge narrating its way there', () => {
+  // What `git pull` writes on stdout when a merge cannot be resolved. The first
+  // line is progress; the reason is at the bottom.
+  const detail = [
+    'Auto-merging seed.txt',
+    'CONFLICT (content): Merge conflict in seed.txt',
+    'Automatic merge failed; fix conflicts and then commit the result.',
+  ].join('\n');
+
+  const toast = describeGitActionToast(
+    failedWith({ message: detail, stderr: detail }),
+    'main',
+    'pull',
+  );
+
+  assert.equal(
+    toast.params.reason,
+    'Automatic merge failed; fix conflicts and then commit the result.',
+  );
+});
+
+test('a pull that Git refused in its own voice is quoted from the top', () => {
+  // Git leads with the diagnostic and trails hints, so the last line would be
+  // advice rather than the reason.
+  const detail = [
+    "fatal: couldn't find remote ref topic",
+    'hint: check the branch name and try again',
+  ].join('\n');
+
+  const toast = describeGitActionToast(
+    failedWith({ kind: 'not_found', message: detail, stderr: detail }),
+    'main',
+    'pull',
+  );
+
+  assert.equal(toast.params.reason, "fatal: couldn't find remote ref topic");
 });

@@ -45,6 +45,15 @@ interface GitPanelSessionCacheEntry {
   selectedPath: string | null;
 }
 
+/**
+ * What a branch action says when the request never came back with anything of
+ * its own — a network that dropped, a route that answered nothing readable.
+ */
+const BRANCH_ACTION_FALLBACK = {
+  push: "Failed to push.",
+  pull: "Failed to pull.",
+} as const;
+
 const PANEL_CACHE_LIMIT = 20;
 const GIT_PANEL_POLL_INTERVAL_MS = 5000;
 // Upper bound and slow-scan multiplier for adaptive polling: after a slow scan
@@ -737,35 +746,39 @@ export function useGitPanelController(sessionId: string | null) {
   ]);
 
   /**
-   * Push, and Publish Branch, which is the same request — what the button said
-   * before is the only difference, and what actually happened is read back off
-   * the result rather than assumed from the label (§7).
+   * The actions whose whole request is the verb: Push, Publish Branch — the same
+   * request, differing only in what the button said before it — and Pull. None
+   * of them takes a parameter, because which branch moves to or from where is
+   * read from the repository, and what actually happened is read back off the
+   * result rather than assumed from the label (§7).
    */
-  const pushBranch = useCallback(async () => {
+  const runBranchAction = useCallback(async (verb: "push" | "pull") => {
     if (!sessionId || !pendingWorkDir || pendingHere) return;
 
     const workDir = pendingWorkDir;
-    markPending(workDir, "push");
+    markPending(workDir, verb);
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "push" }),
+          body: JSON.stringify({ action: verb }),
         },
       );
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(extractGitPanelErrorMessage(payload, "Failed to push."));
+        throw new Error(
+          extractGitPanelErrorMessage(payload, BRANCH_ACTION_FALLBACK[verb]),
+        );
       }
 
       const result = payload as GitActionResult;
-      reportAction(describeGitActionToast(result, commitOrigin, "push"));
+      reportAction(describeGitActionToast(result, commitOrigin, verb));
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
-        action: "push",
+        action: verb,
         target: "branch",
         result: result.ok ? "success" : "failed",
         ...(result.ok ? {} : { failure_kind: result.failure.kind }),
@@ -773,9 +786,11 @@ export function useGitPanelController(sessionId: string | null) {
     } catch (nextError) {
       reportAction(
         describeGitRequestFailureToast(
-          nextError instanceof Error ? nextError.message : "Failed to push.",
+          nextError instanceof Error
+            ? nextError.message
+            : BRANCH_ACTION_FALLBACK[verb],
           commitOrigin,
-          "push",
+          verb,
         ),
       );
     } finally {
@@ -793,9 +808,9 @@ export function useGitPanelController(sessionId: string | null) {
   /** The one button. Which verb it runs is the ladder's answer, not the user's. */
   const runPrimaryAction = useCallback(() => {
     if (!primaryAction.enabled) return;
-    if (primaryAction.action === "push") return pushBranch();
-    return commitSelectedFiles();
-  }, [commitSelectedFiles, primaryAction, pushBranch]);
+    if (primaryAction.action === "commit") return commitSelectedFiles();
+    return runBranchAction(primaryAction.action);
+  }, [commitSelectedFiles, primaryAction, runBranchAction]);
 
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;

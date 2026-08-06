@@ -125,6 +125,35 @@ export function summarizeHookRejection(message: string): string {
   return truncateForToast(lines[lines.length - 1] ?? message.trim());
 }
 
+/**
+ * How Git prefixes a line it wrote as a diagnostic. Restated here rather than
+ * imported from the runner, which is a server module and would drag `spawn-cli`
+ * into the renderer bundle.
+ */
+const GIT_DIAGNOSTIC_PREFIXES = ["fatal:", "error:", "warning:", "hint:"];
+
+/**
+ * A merge can fail either way round, so which end to read is decided by whether
+ * Git spoke in its own voice at all.
+ *
+ * `git pull` narrates a merge on stdout — "Auto-merging seed.txt" first, then
+ * the CONFLICT lines, and "Automatic merge failed…" last — with no prefix on any
+ * of it. There the first line is progress and the verdict is at the bottom. When
+ * Git refuses in its own voice instead it leads with `fatal:` and trails hints,
+ * and the top is what happened.
+ */
+export function summarizeMergeFailure(message: string): string {
+  const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+  const diagnostic = lines.find((line) => {
+    const normalized = line.toLowerCase();
+    return GIT_DIAGNOSTIC_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+  });
+
+  return truncateForToast(
+    diagnostic ?? lines[lines.length - 1] ?? message.trim(),
+  );
+}
+
 function truncateForToast(line: string): string {
   return line.length > FAILURE_TOAST_LIMIT
     ? `${line.slice(0, FAILURE_TOAST_LIMIT)}…`
