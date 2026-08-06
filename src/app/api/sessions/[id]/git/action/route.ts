@@ -67,7 +67,12 @@ function describeRejection(
   // The request was well formed and the repository is what refuses it — the
   // ladder already declines to offer these, so this only catches a click that
   // raced the state it was derived from.
-  if (code === "detached_head" || code === "no_remote" || code === "no_upstream") {
+  if (
+    code === "detached_head"
+    || code === "no_remote"
+    || code === "no_upstream"
+    || code === "not_github_remote"
+  ) {
     return { code, status: 409 };
   }
   return { code: "invalid_request", status: 400 };
@@ -91,13 +96,11 @@ function parseGitActionBody(
     files?: unknown;
   };
 
-  // Push and pull take no parameters at all: which branch moves, to or from
-  // where, is read from the repository and never asked for by the client.
-  if (action === "push") {
-    return { action: { action: "push" } };
-  }
-  if (action === "pull") {
-    return { action: { action: "pull" } };
+  // Push, pull and create_pr take no parameters at all: which branch moves, to
+  // or from where — and for a pull request, which repository and which base —
+  // is read from the repository and from GitHub, never asked for by the client.
+  if (action === "push" || action === "pull" || action === "create_pr") {
+    return { action: { action } };
   }
   if (action !== "commit") {
     return { message: `Unsupported git action: ${String(action)}` };

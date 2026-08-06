@@ -1098,6 +1098,16 @@ export interface I18nMessages {
       hookRejectedToast: string;
       hookRejectedNoDetailToast: string;
     };
+    pr: {
+      createdToast: string;
+      createdNoDetailToast: string;
+      failureToast: string;
+      createButton: string;
+      createButtonPending: string;
+      defaultBranch: string;
+      statusUnknown: string;
+      unavailable: string;
+    };
     primary: {
       stateUnknown: string;
       detachedHead: string;

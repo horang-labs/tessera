@@ -113,7 +113,11 @@ export async function resolveCurrentBranch(
   return head && head !== 'HEAD' ? head : null;
 }
 
-function normalizeGithubOwnerRepo(remoteUrl: string | null): string | null {
+/**
+ * `owner/repo` for a GitHub remote, null for anything else — which is also how
+ * a caller asks "is this a GitHub repository at all".
+ */
+export function normalizeGithubOwnerRepo(remoteUrl: string | null): string | null {
   if (!remoteUrl) return null;
   const trimmed = remoteUrl.trim();
   const sshMatch = trimmed.match(/^git@github\.com:(.+?)(?:\.git)?$/);

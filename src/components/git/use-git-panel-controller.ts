@@ -49,14 +49,28 @@ interface GitPanelSessionCacheEntry {
   selectedPath: string | null;
 }
 
+/** Every verb whose whole request is the verb — no parameters, no draft. */
+type GitBranchActionVerb = "push" | "pull" | "create_pr";
+
 /**
  * What a branch action says when the request never came back with anything of
  * its own — a network that dropped, a route that answered nothing readable.
  */
-const BRANCH_ACTION_FALLBACK = {
+const BRANCH_ACTION_FALLBACK: Record<GitBranchActionVerb, string> = {
   push: "Failed to push.",
   pull: "Failed to pull.",
-} as const;
+  create_pr: "Failed to create the pull request.",
+};
+
+/**
+ * What each of them acts on, for telemetry. A pull request is not the branch —
+ * it is a thing opened about the branch — and the registered target says so.
+ */
+const BRANCH_ACTION_TELEMETRY_TARGET: Record<GitBranchActionVerb, string> = {
+  push: "branch",
+  pull: "branch",
+  create_pr: "pull_request",
+};
 
 const PANEL_CACHE_LIMIT = 20;
 const GIT_PANEL_POLL_INTERVAL_MS = 5000;
@@ -761,12 +775,13 @@ export function useGitPanelController(sessionId: string | null) {
 
   /**
    * The actions whose whole request is the verb: Push, Publish Branch — the same
-   * request, differing only in what the button said before it — and Pull. None
-   * of them takes a parameter, because which branch moves to or from where is
-   * read from the repository, and what actually happened is read back off the
+   * request, differing only in what the button said before it — Pull, and Create
+   * PR. None of them takes a parameter, because which branch moves to or from
+   * where — and for a pull request, which repository and which base — is read
+   * where the action runs, and what actually happened is read back off the
    * result rather than assumed from the label (§7).
    */
-  const runBranchAction = useCallback(async (verb: "push" | "pull") => {
+  const runBranchAction = useCallback(async (verb: GitBranchActionVerb) => {
     if (!sessionId || !pendingWorkDir || pendingHere) return;
 
     const workDir = pendingWorkDir;
@@ -793,7 +808,7 @@ export function useGitPanelController(sessionId: string | null) {
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
         action: verb,
-        target: "branch",
+        target: BRANCH_ACTION_TELEMETRY_TARGET[verb],
         result: result.ok ? "success" : "failed",
         ...(result.ok ? {} : { failure_kind: result.failure.kind }),
       });
@@ -825,8 +840,8 @@ export function useGitPanelController(sessionId: string | null) {
     if (primaryAction.action === "commit") return commitSelectedFiles();
     // §8: a push at the default branch is asked about before anything runs,
     // and the panel is left exactly as it was until the answer comes back.
-    // Returns null for anything that is not a push, so pull passes straight
-    // through.
+    // Returns null for anything that is not a push, so pull and create_pr pass
+    // straight through.
     const confirmation = describeDefaultBranchPushConfirmation(
       primaryAction,
       stateSnapshot,

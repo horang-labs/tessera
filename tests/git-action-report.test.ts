@@ -132,6 +132,9 @@ test('every key a report can name resolves to a real string in every locale', as
   });
 
   const keys: GitActionToastKey[] = [
+    'gitPanel.pr.createdToast',
+    'gitPanel.pr.createdNoDetailToast',
+    'gitPanel.pr.failureToast',
     'gitPanel.commit.successToast',
     'gitPanel.commit.failureToast',
     'gitPanel.commit.hookRejectedToast',
@@ -247,6 +250,80 @@ test('a request that never reached Git still reports with provenance', () => {
   assert.equal(toast.messageKey, 'gitPanel.commit.failureToast');
   assert.equal(toast.params.origin, 'main');
   assert.equal(toast.params.reason, 'Session is no longer available');
+});
+
+const OPENED: GitActionResult = {
+  ok: true,
+  outcome: {
+    action: 'create_pr',
+    branch: 'feature/0807-t236',
+    url: 'https://github.com/horang-labs/tessera/pull/236',
+    number: 236,
+    baseBranch: 'dev',
+  },
+};
+
+test('an opened pull request reports its number and the base it went into', () => {
+  const toast = describeGitActionToast(OPENED, 'feature/0807-t236', 'create_pr');
+
+  assert.equal(toast.tone, 'success');
+  assert.equal(toast.messageKey, 'gitPanel.pr.createdToast');
+  assert.equal(toast.params.number, 236);
+  assert.equal(toast.params.baseBranch, 'dev');
+  assert.equal(toast.params.origin, 'feature/0807-t236');
+  // Nothing about a pull request belongs to the commit draft.
+  assert.equal(toast.clearsDraft, false);
+});
+
+test('a pull request that could not be read back is still reported as opened', () => {
+  // The read-back is what carries the number and the base. Losing it must not
+  // cost the user the one fact that matters: the pull request exists.
+  const toast = describeGitActionToast(
+    {
+      ok: true,
+      outcome: {
+        action: 'create_pr',
+        branch: 'feature/0807-t236',
+        url: null,
+        number: null,
+        baseBranch: null,
+      },
+    },
+    'feature/0807-t236',
+    'create_pr',
+  );
+
+  assert.equal(toast.tone, 'success');
+  assert.equal(toast.messageKey, 'gitPanel.pr.createdNoDetailToast');
+  assert.equal(toast.params.number, undefined);
+});
+
+test('a pull request that was refused is reported against its own verb', () => {
+  const toast = describeGitActionToast(
+    failedWith({
+      kind: 'authentication',
+      message: 'To get started with GitHub CLI, please run: gh auth login',
+      stderr: 'To get started with GitHub CLI, please run: gh auth login',
+    }),
+    'feature/0807-t236',
+    'create_pr',
+  );
+
+  assert.equal(toast.tone, 'error');
+  assert.equal(toast.messageKey, 'gitPanel.pr.failureToast');
+  assert.match(toast.params.reason ?? '', /gh auth login/);
+  assert.equal(toast.clearsDraft, false);
+});
+
+test('a request that never reached gh is reported against the same verb', () => {
+  const toast = describeGitRequestFailureToast(
+    'Publish the branch before opening a pull request',
+    'feature/0807-t236',
+    'create_pr',
+  );
+
+  assert.equal(toast.messageKey, 'gitPanel.pr.failureToast');
+  assert.equal(toast.params.reason, 'Publish the branch before opening a pull request');
 });
 
 test('a completed pull says where the commits came from', () => {

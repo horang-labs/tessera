@@ -21,6 +21,12 @@ import {
   type GitFailureKind,
   type GitRunner,
 } from "@/lib/worktrees/git-runner";
+import {
+  createGhRunner,
+  type GhCommandResult,
+  type GhRunner,
+} from "@/lib/github/gh-cli";
+import { normalizeGithubOwnerRepo } from "@/lib/github/pr-status-provider";
 import logger from "@/lib/logger";
 import type { AgentEnvironment } from "@/lib/settings/types";
 import type {
@@ -79,8 +85,21 @@ export interface GitPullAction {
   action: "pull";
 }
 
+/**
+ * Opening the pull request. Like push it takes no parameters: the branch, the
+ * repository and the base all come from the repository and from GitHub, so the
+ * client cannot direct a pull request anywhere it has not been shown.
+ */
+export interface GitCreatePullRequestAction {
+  action: "create_pr";
+}
+
 /** Widens as `docs/design/git-delivery.md` §2 lands the remaining actions. */
-export type GitAction = GitCommitAction | GitPushAction | GitPullAction;
+export type GitAction =
+  | GitCommitAction
+  | GitPushAction
+  | GitPullAction
+  | GitCreatePullRequestAction;
 
 export type GitActionRejectionCode =
   | "empty_message"
@@ -88,7 +107,8 @@ export type GitActionRejectionCode =
   | "file_not_in_change_set"
   | "detached_head"
   | "no_remote"
-  | "no_upstream";
+  | "no_upstream"
+  | "not_github_remote";
 
 /**
  * The request was refused before Git ran. Distinct from a `GitActionFailure`,
@@ -111,6 +131,17 @@ export async function executeGitAction(
   const runGit = createGitRunner(target.agentEnvironment);
   if (action.action === "push") return runPush(target, runGit);
   if (action.action === "pull") return runPull(target, runGit);
+  if (action.action === "create_pr") {
+    // The GitHub CLI runs where the agent does, for the same reason Git does
+    // (ADR 0006). It is passed in rather than reached for inside, so the one
+    // part of this action that cannot be stood up in a test is the one part a
+    // test replaces.
+    return runCreatePullRequest(
+      target.workDir,
+      runGit,
+      createGhRunner(target.agentEnvironment),
+    );
+  }
   return runCommit(target, action, runGit);
 }
 
@@ -172,7 +203,7 @@ async function runPush(
   target: GitActionTarget,
   runGit: GitRunner,
 ): Promise<GitActionResult> {
-  const branch = await readCurrentBranch(target, runGit);
+  const branch = await readCurrentBranch(target.workDir, runGit);
   if (!branch) {
     // The button is disabled on a detached HEAD; this is the handler-side guard.
     throw new GitActionRejection(
@@ -181,7 +212,7 @@ async function runPush(
     );
   }
 
-  const upstream = await readUpstream(target, runGit);
+  const upstream = await readUpstream(target.workDir, runGit);
   const args = upstream
     ? ["push"]
     : ["push", "--set-upstream", await resolvePushRemote(target, runGit), branch];
@@ -207,10 +238,182 @@ async function runPush(
       branch,
       // Read back rather than assembled: after `--set-upstream` this is Git's
       // own answer about which remote branch now exists.
-      remoteBranch: (await readUpstream(target, runGit)) ?? upstream,
+      remoteBranch: (await readUpstream(target.workDir, runGit)) ?? upstream,
       setUpstream: !upstream,
     },
   };
+}
+
+/**
+ * The last step of delivery (`docs/design/git-delivery.md` §2, §3). The branch,
+ * the repository and the base are all read from the repository or from GitHub —
+ * nothing about the pull request is chosen here, and nothing is taken from the
+ * client, so there is no ref for a caller to point somewhere else.
+ *
+ * Exported so a test can drive it with a fake `gh`; `executeGitAction` is the
+ * only production caller.
+ */
+export async function runCreatePullRequest(
+  workDir: string,
+  runGit: GitRunner,
+  runGh: GhRunner,
+): Promise<GitActionResult> {
+  const branch = await readCurrentBranch(workDir, runGit);
+  if (!branch) {
+    throw new GitActionRejection(
+      "detached_head",
+      "HEAD is detached, so there is no branch to open a pull request from",
+    );
+  }
+
+  const upstream = await readUpstream(workDir, runGit);
+  if (!upstream) {
+    // The ladder only offers this rung to a branch that tracks; a click that
+    // raced the state lands here rather than in gh's own prompt.
+    throw new GitActionRejection(
+      "no_upstream",
+      "Publish the branch before opening a pull request",
+    );
+  }
+
+  const repository = await readGitHubRepository(workDir, upstream, runGit);
+
+  // `--fill` takes the title and body from the commits, which is the only
+  // source there is: §3 gives this action one button and no form. No `--base`:
+  // GitHub's own default for the repository is the base asked for, and what it
+  // chose is read back below rather than assumed here.
+  const created = await runGh(
+    ["pr", "create", "--repo", repository, "--head", branch, "--fill"],
+    { cwd: workDir },
+  );
+  if (created.exitCode !== 0) {
+    return { ok: false, failure: describeGhFailure(created) };
+  }
+
+  const opened = await readOpenedPullRequest(workDir, repository, branch, runGh);
+  return {
+    ok: true,
+    outcome: {
+      action: "create_pr",
+      branch,
+      // The read-back first, then what `gh pr create` printed. Both can be
+      // missing without the pull request being missing — it exists the moment
+      // gh exits zero, and a report that stumbled afterwards must not turn that
+      // into a failure.
+      url: opened?.url ?? readPullRequestUrl(created.stdout),
+      number: opened?.number ?? null,
+      baseBranch: opened?.baseRefName ?? null,
+    },
+  };
+}
+
+/**
+ * Which GitHub repository this branch pushes to. Read from the remote the
+ * branch actually tracks rather than from `origin` by name, because the two are
+ * only the same by convention.
+ */
+async function readGitHubRepository(
+  workDir: string,
+  upstream: string,
+  runGit: GitRunner,
+): Promise<string> {
+  const remote = upstream.split("/", 1)[0]?.trim() || "origin";
+  const result = await runGit(["remote", "get-url", remote], {
+    cwd: workDir,
+    timeoutMs: PROBE_TIMEOUT_MS,
+  }).catch(() => null);
+
+  const repository = normalizeGithubOwnerRepo(result?.stdout.trim() ?? null);
+  if (!repository) {
+    // §4's rule for an action that cannot run: say why, and say it in terms of
+    // what the repository is missing rather than what gh would have printed.
+    throw new GitActionRejection(
+      "not_github_remote",
+      `The remote "${remote}" is not a GitHub repository, so there is no pull request to open`,
+    );
+  }
+
+  return repository;
+}
+
+interface OpenedPullRequest {
+  number: number | null;
+  url: string | null;
+  baseRefName: string | null;
+}
+
+/**
+ * What GitHub made of the request. Null when the read stumbled: the pull request
+ * is already open at that point, so the caller reports what it still knows
+ * rather than reporting a failure that did not happen.
+ */
+async function readOpenedPullRequest(
+  workDir: string,
+  repository: string,
+  branch: string,
+  runGh: GhRunner,
+): Promise<OpenedPullRequest | null> {
+  const viewed = await runGh(
+    ["pr", "view", branch, "--repo", repository, "--json", "number,url,baseRefName"],
+    { cwd: workDir },
+  ).catch(() => null);
+  if (!viewed || viewed.exitCode !== 0) return null;
+
+  try {
+    const payload = JSON.parse(viewed.stdout) as Record<string, unknown>;
+    return {
+      number: typeof payload.number === "number" ? payload.number : null,
+      url: typeof payload.url === "string" ? payload.url : null,
+      baseRefName:
+        typeof payload.baseRefName === "string" ? payload.baseRefName : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** What `gh pr create` prints when it succeeds: the URL, on a line of its own. */
+function readPullRequestUrl(stdout: string): string | null {
+  const match = stdout.match(/https?:\/\/\S+\/pull\/\d+/);
+  return match?.[0] ?? null;
+}
+
+/**
+ * gh is not Git, so `GitCommandError`'s classification does not reach it. The
+ * two kinds worth promoting out of a generic failure are the ones the user can
+ * act on: gh is not installed here, and gh is not signed in.
+ */
+function describeGhFailure(result: GhCommandResult): GitActionFailure {
+  const stderr = result.stderr.trim();
+
+  return {
+    kind: classifyGhFailure(result),
+    message: truncateStderr(stderr || "The GitHub CLI (gh) failed"),
+    stderr: truncateStderr(result.stderr),
+    // gh splits its account the way `git pull` does: `gh pr create` prints the
+    // URL it made on stdout and its complaint on stderr, so a failure that kept
+    // only one of the two could drop the half that says what happened.
+    stdout: truncateStderr(result.stdout),
+    exitCode: result.exitCode,
+    // Empty rather than read: opening a pull request runs no command that can
+    // touch the working tree, so there is no change set this failure moved. The
+    // detail ADR 0005 asks to keep is the kind and the stderr, and both are here.
+    changedFiles: [],
+  };
+}
+
+function classifyGhFailure(result: GhCommandResult): GitFailureKind {
+  // Killed by the runner rather than answered by GitHub — the network, not the
+  // request, and pressing the button again is the right response.
+  if (result.timedOut) return "timeout";
+  // A null exit code is otherwise a process that never started. In practice that
+  // is gh missing from the agent environment, which is a different thing to fix
+  // from anything gh could have told us.
+  if (result.exitCode === null) return "spawn_failed";
+  if (/gh auth login|authentication token|not logged in/i.test(result.stderr)) {
+    return "authentication";
+  }
+  return "command_failed";
 }
 
 /**
@@ -224,7 +427,7 @@ async function runPull(
   target: GitActionTarget,
   runGit: GitRunner,
 ): Promise<GitActionResult> {
-  const branch = await readCurrentBranch(target, runGit);
+  const branch = await readCurrentBranch(target.workDir, runGit);
   if (!branch) {
     throw new GitActionRejection(
       "detached_head",
@@ -232,7 +435,7 @@ async function runPull(
     );
   }
 
-  const upstream = await readUpstream(target, runGit);
+  const upstream = await readUpstream(target.workDir, runGit);
   if (!upstream) {
     // The ladder only offers Pull on a branch that is behind something, which
     // takes an upstream; this is the handler-side guard for a click that raced
@@ -324,11 +527,11 @@ async function resolvePushRemote(
 
 /** Empty on a detached HEAD, which is the caller's cue that there is no branch. */
 async function readCurrentBranch(
-  target: GitActionTarget,
+  workDir: string,
   runGit: GitRunner,
 ): Promise<string | null> {
   const { stdout } = await runGit(["branch", "--show-current"], {
-    cwd: target.workDir,
+    cwd: workDir,
     timeoutMs: PROBE_TIMEOUT_MS,
   });
   return stdout.trim() || null;
@@ -336,12 +539,12 @@ async function readCurrentBranch(
 
 /** Null both when there is no upstream and when Git could not be asked. */
 async function readUpstream(
-  target: GitActionTarget,
+  workDir: string,
   runGit: GitRunner,
 ): Promise<string | null> {
   const result = await runGit(
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-    { cwd: target.workDir, timeoutMs: PROBE_TIMEOUT_MS },
+    { cwd: workDir, timeoutMs: PROBE_TIMEOUT_MS },
   ).catch(() => null);
 
   return result?.stdout.trim() || null;

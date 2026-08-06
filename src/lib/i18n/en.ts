@@ -1117,6 +1117,16 @@ export const en: I18nMessages = {
       hookRejectedToast: 'A git hook rejected the pull · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'A git hook rejected the pull · {{origin}}',
     },
+    pr: {
+      createdToast: 'Opened PR #{{number}} into {{baseBranch}} · {{origin}}',
+      createdNoDetailToast: 'Opened a pull request · {{origin}}',
+      failureToast: 'Creating the pull request failed · {{origin}} — {{reason}}',
+      createButton: 'Create PR',
+      createButtonPending: 'Creating PR…',
+      defaultBranch: 'A pull request needs a branch other than the default one',
+      statusUnknown: 'Checking GitHub for a pull request…',
+      unavailable: 'A pull request needs a GitHub remote and a signed-in gh CLI',
+    },
     primary: {
       stateUnknown: 'Reading git state…',
       detachedHead: 'HEAD is detached — check out a branch to push',

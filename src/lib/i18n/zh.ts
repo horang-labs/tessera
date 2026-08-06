@@ -1117,6 +1117,16 @@ export const zh: I18nMessages = {
       hookRejectedToast: 'git 钩子拒绝了此次拉取 · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git 钩子拒绝了此次拉取 · {{origin}}',
     },
+    pr: {
+      createdToast: '已创建 PR #{{number}} 到 {{baseBranch}} · {{origin}}',
+      createdNoDetailToast: '已创建拉取请求 · {{origin}}',
+      failureToast: '创建拉取请求失败 · {{origin}} — {{reason}}',
+      createButton: '创建 PR',
+      createButtonPending: '正在创建 PR…',
+      defaultBranch: '拉取请求需要在非默认分支上创建',
+      statusUnknown: '正在向 GitHub 确认拉取请求…',
+      unavailable: '创建拉取请求需要 GitHub 远程仓库和已登录的 gh CLI',
+    },
     primary: {
       stateUnknown: '正在读取 git 状态…',
       detachedHead: 'HEAD 处于分离状态 — 请先检出分支再推送',

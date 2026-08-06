@@ -1124,6 +1124,16 @@ export const ko: I18nMessages = {
       hookRejectedToast: 'git 훅이 풀을 거부함 · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git 훅이 풀을 거부함 · {{origin}}',
     },
+    pr: {
+      createdToast: 'PR #{{number}}을(를) {{baseBranch}}(으)로 열었습니다 · {{origin}}',
+      createdNoDetailToast: '풀 리퀘스트를 열었습니다 · {{origin}}',
+      failureToast: '풀 리퀘스트 생성 실패 · {{origin}} — {{reason}}',
+      createButton: 'PR 생성',
+      createButtonPending: 'PR 생성 중…',
+      defaultBranch: '풀 리퀘스트는 기본 브랜치가 아닌 브랜치에서 만들 수 있습니다',
+      statusUnknown: 'GitHub에서 풀 리퀘스트를 확인하는 중…',
+      unavailable: '풀 리퀘스트를 만들려면 GitHub 리모트와 로그인된 gh CLI가 필요합니다',
+    },
     primary: {
       stateUnknown: 'git 상태를 읽는 중…',
       detachedHead: 'HEAD가 분리되어 있습니다 — 푸시하려면 브랜치를 체크아웃하세요',

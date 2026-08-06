@@ -162,10 +162,30 @@ export interface GitPullOutcome {
   upstream: string;
 }
 
+export interface GitCreatePullRequestOutcome {
+  action: "create_pr";
+  /** The branch the pull request was opened from. */
+  branch: string;
+  /**
+   * Null when neither `gh pr create` nor the read-back after it named the pull
+   * request — which does not make the pull request any less created.
+   */
+  url: string | null;
+  /** Null when the pull request was created but could not be read back. */
+  number: number | null;
+  /**
+   * What GitHub actually opened it against. Read back rather than assembled —
+   * the repository's default base is GitHub's answer, not ours — and null when
+   * that read stumbled after the pull request already existed.
+   */
+  baseBranch: string | null;
+}
+
 export type GitActionOutcome =
   | GitCommitOutcome
   | GitPushOutcome
-  | GitPullOutcome;
+  | GitPullOutcome
+  | GitCreatePullRequestOutcome;
 
 export type GitActionResult =
   | { ok: true; outcome: GitActionOutcome }
