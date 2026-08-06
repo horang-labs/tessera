@@ -955,11 +955,9 @@ export async function getGitChangedFilesData(
  */
 export async function getGitCommonDir(
   workDir: string,
-  userId?: string,
+  environmentSource: GitEnvironmentSource,
 ): Promise<string | null> {
-  const agentEnvironment = await resolveGitEnvironment(
-    gitEnvironmentSourceFor(workDir, userId),
-  );
+  const agentEnvironment = await resolveGitEnvironment(environmentSource);
   const commonDir = await runOptionalGitCommand(
     ["rev-parse", "--path-format=absolute", "--git-common-dir"],
     workDir,
@@ -970,11 +968,9 @@ export async function getGitCommonDir(
 
 export async function fetchGitRemote(
   workDir: string,
-  userId?: string,
+  environmentSource: GitEnvironmentSource,
 ): Promise<void> {
-  const agentEnvironment = await resolveGitEnvironment(
-    gitEnvironmentSourceFor(workDir, userId),
-  );
+  const agentEnvironment = await resolveGitEnvironment(environmentSource);
   await resolveRepoRoot(workDir, agentEnvironment);
   const upstream = await runOptionalGitCommand(
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
@@ -990,7 +986,10 @@ export async function fetchGitPanelData(
   userId?: string,
 ): Promise<GitPanelData> {
   const { workDir } = await resolveSessionContext(sessionId);
-  await fetchGitRemote(workDir, userId);
+  // The fallback is stated here rather than defaulted inside `fetchGitRemote`
+  // (ADR 0006): this function's own `userId` is optional, so the call site is
+  // where "no user, infer from the path" has to be visible.
+  await fetchGitRemote(workDir, gitEnvironmentSourceFor(workDir, userId));
   return getGitPanelData(sessionId, userId);
 }
 

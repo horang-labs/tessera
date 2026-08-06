@@ -119,10 +119,27 @@ async function resolveRefsKeyCached(
   const cached = state.refsKeyByWorkDir.get(workDir);
   if (cached !== undefined) return cached;
 
-  const resolved = await deps.resolveRefsKey(workDir, userId);
+  let resolved: string | null = null;
+  try {
+    resolved = await deps.resolveRefsKey(workDir, userId);
+  } catch (error) {
+    // Naming the refs is itself a Git command, and `runOptionalGitCommand`
+    // deliberately rethrows a timeout rather than degrading it to null — a
+    // stalled mount or a cold bridge throws here. Answering with the working
+    // directory keeps this function total, which is what lets the caller reach
+    // the block that consumes the interval: a throw from here would escape
+    // before anything was recorded, and the next poll five seconds later would
+    // spawn the same hanging command.
+    logger.debug(
+      { error, workDir },
+      "Could not name the Git directory for the panel's remote refresh",
+    );
+  }
+
   // Falling back to the working directory costs an extra fetch per worktree of
   // the repository, which the interval already bounds. It is never a wrong
-  // answer, only a less shared one.
+  // answer, only a less shared one. Not cached, so a momentary failure does not
+  // decide the key for the rest of the process's life.
   if (resolved === null) return workDir;
 
   state.refsKeyByWorkDir.set(workDir, resolved);
@@ -130,8 +147,10 @@ async function resolveRefsKeyCached(
 }
 
 const defaultDeps: GitRemoteRefreshDeps = {
-  resolveRefsKey: (workDir, userId) => getGitCommonDir(workDir, userId),
-  runFetch: (workDir, userId) => fetchGitRemote(workDir, userId),
+  // `{ userId }` rather than an omitted argument: a panel read always has a
+  // user, and ADR 0006 wants that said here rather than defaulted out of sight.
+  resolveRefsKey: (workDir, userId) => getGitCommonDir(workDir, { userId }),
+  runFetch: (workDir, userId) => fetchGitRemote(workDir, { userId }),
   onFetched: (sessionId, userId) => scheduleGitPanelRecompute(sessionId, userId),
   now: () => Date.now(),
 };

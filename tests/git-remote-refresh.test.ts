@@ -203,3 +203,26 @@ test('separate clones of the same upstream each keep their own refs warm', async
 
   assert.deepEqual(h.fetched, [first, second]);
 });
+
+test('a Git command that hangs while naming the refs neither rejects nor retries every poll', async () => {
+  // `getGitCommonDir` goes through `runOptionalGitCommand`, which deliberately
+  // rethrows a timeout rather than degrading it to null. A stalled mount or a
+  // cold bridge therefore throws here — and a panel read must survive it, both
+  // times: no rejection to escape into the route, and the interval consumed so
+  // the next poll five seconds later does not spawn the same hanging command.
+  const workDir = freshWorkDir();
+  const h = harness();
+  h.deps.resolveRefsKey = async () => {
+    throw new Error('git rev-parse timed out after 10000ms');
+  };
+  const request = { sessionId: 'session-1', workDir, userId: 'user-1' };
+
+  await scheduleGitRemoteRefresh(request, h.deps);
+
+  h.setNow(1_000_000 + GIT_REMOTE_REFRESH_INTERVAL_MS - 1);
+  await scheduleGitRemoteRefresh(request, h.deps);
+  await scheduleGitRemoteRefresh(request, h.deps);
+
+  // One attempt, not one per call.
+  assert.equal(h.fetched.length, 1);
+});
