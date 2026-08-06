@@ -61,13 +61,24 @@ export interface GitCommitAction {
   files: string[];
 }
 
+/**
+ * Publishing a branch is this same action; only the label differs (§2). What
+ * the push does about an upstream is read from the repository, not from the
+ * request, so the client cannot ask for a tracking branch it has not seen.
+ */
+export interface GitPushAction {
+  action: "push";
+}
+
 /** Widens as `docs/design/git-delivery.md` §2 lands the remaining actions. */
-export type GitAction = GitCommitAction;
+export type GitAction = GitCommitAction | GitPushAction;
 
 export type GitActionRejectionCode =
   | "empty_message"
   | "no_files_selected"
-  | "file_not_in_change_set";
+  | "file_not_in_change_set"
+  | "detached_head"
+  | "no_remote";
 
 /**
  * The request was refused before Git ran. Distinct from a `GitActionFailure`,
@@ -88,6 +99,7 @@ export async function executeGitAction(
   action: GitAction,
 ): Promise<GitActionResult> {
   const runGit = createGitRunner(target.agentEnvironment);
+  if (action.action === "push") return runPush(target, runGit);
   return runCommit(target, action, runGit);
 }
 
@@ -130,10 +142,115 @@ async function runCommit(
     });
   } catch (error) {
     await unstageAddedPaths(added, target, runGit);
-    return { ok: false, failure: await describeFailure(error, target, runGit) };
+    return {
+      ok: false,
+      failure: await describeFailure(error, target, runGit, promoteHookRejection),
+    };
   }
 
   return { ok: true, outcome: await describeCommit(action, pathspec, target, runGit) };
+}
+
+/**
+ * Push, and Publish Branch, which is the same command with the upstream it is
+ * missing. Which of the two ran is read back from the repository afterwards and
+ * reported, so a first push is explained after the fact as well as before it
+ * (`docs/design/git-delivery.md` §7).
+ */
+async function runPush(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<GitActionResult> {
+  const branch = await readCurrentBranch(target, runGit);
+  if (!branch) {
+    // The button is disabled on a detached HEAD; this is the handler-side guard.
+    throw new GitActionRejection(
+      "detached_head",
+      "HEAD is detached, so there is no branch to push",
+    );
+  }
+
+  const upstream = await readUpstream(target, runGit);
+  const args = upstream
+    ? ["push"]
+    : ["push", "--set-upstream", await resolvePushRemote(target, runGit), branch];
+
+  try {
+    // No `timeoutMs`: the runner's own generous default stands, because a
+    // pre-push hook — or a large first push — legitimately runs for minutes.
+    await runGit(args, { cwd: target.workDir });
+  } catch (error) {
+    // No commit-specific promotion here. `git push` failing in silence is a
+    // network or a permission problem far more often than a hook, and the
+    // runner already recognizes a `pre-push` hook that says anything at all.
+    return {
+      ok: false,
+      failure: await describeFailure(error, target, runGit, (failed) => failed.kind),
+    };
+  }
+
+  return {
+    ok: true,
+    outcome: {
+      action: "push",
+      branch,
+      // Read back rather than assembled: after `--set-upstream` this is Git's
+      // own answer about which remote branch now exists.
+      remoteBranch: (await readUpstream(target, runGit)) ?? upstream,
+      setUpstream: !upstream,
+    },
+  };
+}
+
+/**
+ * Which remote a branch that has never been published goes to. `origin` is the
+ * name Git itself defaults to and the only one the panel reads elsewhere; a
+ * repository that named its single remote something else still gets a push
+ * rather than a "no such remote".
+ */
+async function resolvePushRemote(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<string> {
+  const { stdout } = await runGit(["remote"], {
+    cwd: target.workDir,
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  const remotes = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+
+  if (remotes.length === 0) {
+    throw new GitActionRejection(
+      "no_remote",
+      "This repository has no remote to push to",
+    );
+  }
+
+  return remotes.includes("origin") ? "origin" : remotes[0]!;
+}
+
+/** Empty on a detached HEAD, which is the caller's cue that there is no branch. */
+async function readCurrentBranch(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<string | null> {
+  const { stdout } = await runGit(["branch", "--show-current"], {
+    cwd: target.workDir,
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  return stdout.trim() || null;
+}
+
+/** Null both when there is no upstream and when Git could not be asked. */
+async function readUpstream(
+  target: GitActionTarget,
+  runGit: GitRunner,
+): Promise<string | null> {
+  const result = await runGit(
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    { cwd: target.workDir, timeoutMs: PROBE_TIMEOUT_MS },
+  ).catch(() => null);
+
+  return result?.stdout.trim() || null;
 }
 
 interface CommitPathspec {
@@ -229,16 +346,21 @@ export async function readChangeSet(
   return parseGitStatus(stdout);
 }
 
+/**
+ * `classify` is where the caller adds what it knows and the runner cannot: the
+ * commit path can read silence as a hook refusing, a push cannot.
+ */
 async function describeFailure(
   error: unknown,
   target: GitActionTarget,
   runGit: GitRunner,
+  classify: (error: GitCommandError) => GitFailureKind,
 ): Promise<GitActionFailure> {
   const changedFiles = await readChangeSet(target, runGit).catch(() => []);
 
   if (error instanceof GitCommandError) {
     return {
-      kind: promoteHookRejection(error),
+      kind: classify(error),
       message: truncateStderr(error.message),
       stderr: truncateStderr(error.stderr),
       exitCode: error.exitCode,

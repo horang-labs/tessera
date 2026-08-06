@@ -76,11 +76,17 @@ export interface GitPanelData {
   repoName: string;
   worktreeName: string;
   worktreePath: string;
+  /** For display. A detached HEAD is spelled `detached@<sha>`; see `detached`. */
   branch: string;
+  /** True when HEAD is detached, so `branch` names no branch Git would push. */
+  detached: boolean;
   upstream: string | null;
   ahead: number;
   behind: number;
+  /** `origin` only. A repository can have a remote without this being set. */
   remoteUrl: string | null;
+  /** True when the repository has any remote at all, whatever it is named. */
+  hasRemote: boolean;
   repoUrl: string | null;
   defaultBranch: string | null;
   branches: string[];
@@ -129,7 +135,19 @@ export interface GitCommitOutcome {
   files: string[];
 }
 
-export type GitActionOutcome = GitCommitOutcome;
+export interface GitPushOutcome {
+  action: "push";
+  branch: string;
+  /**
+   * Where the branch tracks now that the push has landed, e.g. `origin/main`.
+   * Null when Git would not say — the push still happened.
+   */
+  remoteBranch: string | null;
+  /** True when this push is what created the tracking link. */
+  setUpstream: boolean;
+}
+
+export type GitActionOutcome = GitCommitOutcome | GitPushOutcome;
 
 export type GitActionResult =
   | { ok: true; outcome: GitActionOutcome }

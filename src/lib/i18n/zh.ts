@@ -1088,6 +1088,24 @@ export const zh: I18nMessages = {
       hookRejectedToast: 'git 钩子拒绝了此次提交 · {{origin}} — {{reason}}',
       hookRejectedNoDetailToast: 'git 钩子拒绝了此次提交 · {{origin}}',
     },
+    push: {
+      button: '推送',
+      buttonPending: '推送中…',
+      publishButton: '发布分支',
+      publishButtonPending: '发布中…',
+      nothingToPush: '没有可推送的提交',
+      successToast: '已推送到 {{remoteBranch}} · {{origin}}',
+      successNoUpstreamToast: '已推送 · {{origin}}',
+      publishedToast: '已创建 {{remoteBranch}} · {{origin}}',
+      failureToast: '推送失败 · {{origin}} — {{reason}}',
+      hookRejectedToast: 'git 钩子拒绝了此次推送 · {{origin}} — {{reason}}',
+      hookRejectedNoDetailToast: 'git 钩子拒绝了此次推送 · {{origin}}',
+    },
+    primary: {
+      stateUnknown: '正在读取 git 状态…',
+      detachedHead: 'HEAD 处于分离状态 — 请先检出分支再推送',
+      noRemote: '此仓库没有可推送的远程',
+    },
   },
   memoryPanel: {
     sections: {
