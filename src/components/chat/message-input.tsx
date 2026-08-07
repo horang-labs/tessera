@@ -1644,7 +1644,7 @@ export function MessageInput({
         />
 
         {/* Textarea row with controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" data-testid="message-input-row">
         {/* Attachment button */}
         {!isVoiceActive && (
           <button
@@ -1673,7 +1673,11 @@ export function MessageInput({
             onStop={stopVoiceRecording}
           />
         ) : (
-          <div className="flex-1 flex items-center min-h-[2.75rem]">
+          // `min-w-0` because a flex item's default minimum width is its content's
+          // intrinsic width, and a textarea's is its default 20 columns — which the
+          // wrapper would otherwise refuse to shrink below, pushing the controls to
+          // the right of it off screen. It has nothing to do where width is ample.
+          <div className="flex-1 flex items-center min-h-[2.75rem] min-w-0">
             {/* Skill chip */}
             {skillPicker.selectedSkill && (
               <MessageInputSkillChip
@@ -1723,7 +1727,9 @@ export function MessageInput({
               disabled={isInputUnavailable || !!activePrompt}
               readOnly={isWebSpeechActive && voicePendingInterim !== ''}
               className={cn(
-                'flex-1 px-3 py-3 bg-transparent text-sm text-(--input-text) resize-none overflow-y-auto',
+                // `min-w-0` for the same reason as the wrapper: the textarea is itself
+                // a flex item, and its own intrinsic width would hold the wrapper open.
+                'flex-1 min-w-0 px-3 py-3 bg-transparent text-sm text-(--input-text) resize-none overflow-y-auto',
                 'placeholder:text-(--input-placeholder) placeholder:whitespace-nowrap placeholder:overflow-hidden placeholder:text-ellipsis',
                 'focus:outline-none',
                 'disabled:cursor-not-allowed',
@@ -1735,10 +1741,13 @@ export function MessageInput({
           </div>
         )}
 
-        {/* Right side controls */}
-        <div className="flex items-center gap-1 pr-2">
+        {/* Right side controls — `shrink-0` so the width the textarea gives up is not
+            taken out of the send button instead. */}
+        <div className="flex items-center gap-1 pr-2 shrink-0">
           {!isVoiceActive && remainingChars < 1000 && (
-            <span className={cn(
+            <span
+              data-testid="message-input-char-count"
+              className={cn(
               'text-xs px-1',
               isOverLimit ? 'text-(--error)' : 'text-(--text-muted)'
             )}>
@@ -1791,6 +1800,7 @@ export function MessageInput({
           ) : !isVoiceActive ? (
             <button
               onClick={() => handleSend()}
+              data-testid="message-send-btn"
               disabled={isInputUnavailable || !!activePrompt || !canSubmit || isOverLimit}
               title={`${t('chat.send')}\n${t('chat.translateAndSend')} (${formatShortcut(translateSendShortcut)})`}
               className={cn(
