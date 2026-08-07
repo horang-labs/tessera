@@ -5,14 +5,48 @@ import { useGitPanelStore } from "@/stores/git-panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
+import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
+import { toast } from "@/stores/notification-store";
 import type {
+  GitActionResult,
+  GitChangedFile,
   GitChangedFilesData,
   GitDiffData,
   GitPanelData,
 } from "@/types/git";
-import { extractGitPanelErrorMessage } from "./git-panel-shared";
+import {
+  derivePrimaryGitAction,
+  gitStateSnapshotFromPanel,
+  type GitStateSnapshot,
+} from "@/lib/git/primary-git-action";
+import {
+  describeDefaultBranchPushConfirmation,
+  type GitDefaultBranchConfirmation,
+} from "@/lib/git/default-branch-confirmation";
+import {
+  deriveGitActionMenu,
+  type GitDeliveryMenuActionId,
+  type GitMenuActionId,
+} from "@/lib/git/git-action-menu";
+import {
+  readRememberedGitAction,
+  rememberGitAction,
+} from "@/lib/git/git-action-memory";
+import { startGitPanelPolling } from "@/lib/git/git-panel-poll";
+import { readGitPanelState } from "@/lib/git/git-panel-read";
+import {
+  describeGitActionOrigin,
+  describeGitActionToast,
+  describeGitRequestFailureToast,
+  type GitActionToast,
+  type GitActionVerb,
+} from "./git-action-report";
+import {
+  extractGitPanelErrorMessage,
+  summarizeGitFailure,
+} from "./git-panel-shared";
 
 // Optimistic session IDs created by use-session-crud.ts before the server
 // responds with the real id. These never exist in the server DB, so any
@@ -26,13 +60,41 @@ interface GitPanelSessionCacheEntry {
   selectedPath: string | null;
 }
 
+/** Every verb whose whole request is the verb — no parameters, no draft. */
+type GitBranchActionVerb = "push" | "pull" | "create_pr" | "abort";
+
+/**
+ * What is running in a working directory. The menu's compound is one entry
+ * rather than the two requests it makes, because what the panel has to disable
+ * is the whole press, not each half as it goes by.
+ */
+export type GitPendingVerb = GitActionVerb | "commit_push";
+
+/**
+ * What a branch action says when the request never came back with anything of
+ * its own — a network that dropped, a route that answered nothing readable.
+ */
+const BRANCH_ACTION_FALLBACK: Record<GitBranchActionVerb, string> = {
+  push: "Failed to push.",
+  pull: "Failed to pull.",
+  create_pr: "Failed to create the pull request.",
+  abort: "Failed to abort.",
+};
+
+/**
+ * What each of them acts on, for telemetry. A pull request is not the branch —
+ * it is a thing opened about the branch — and the registered target says so.
+ */
+const BRANCH_ACTION_TELEMETRY_TARGET: Record<GitBranchActionVerb, string> = {
+  push: "branch",
+  pull: "branch",
+  create_pr: "pull_request",
+  // Not the branch: what an abort unwinds is the operation the worktree is in,
+  // and the branch is only where it lands afterwards.
+  abort: "conflict",
+};
+
 const PANEL_CACHE_LIMIT = 20;
-const GIT_PANEL_POLL_INTERVAL_MS = 5000;
-// Upper bound and slow-scan multiplier for adaptive polling: after a slow scan
-// (e.g. a huge repo) we wait roughly `elapsed * BACKOFF` before the next tick so
-// we never re-poll on top of an unfinished scan, capped at MAX.
-const GIT_PANEL_POLL_MAX_INTERVAL_MS = 60_000;
-const GIT_PANEL_POLL_SLOW_BACKOFF = 3;
 const gitPanelSessionCache = new Map<string, GitPanelSessionCacheEntry>();
 
 async function writeClipboardText(value: string | null | undefined) {
@@ -72,6 +134,7 @@ function rememberPanelSessionCache(
 }
 
 export function useGitPanelController(sessionId: string | null) {
+  const { t } = useI18n();
   const initialCache = getPanelSessionCache(sessionId);
   const data = useGitPanelStore((state) =>
     sessionId ? state.dataBySessionId[sessionId] ?? null : null,
@@ -90,6 +153,86 @@ export function useGitPanelController(sessionId: string | null) {
   );
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [commitMessage, setCommitMessage] = useState("");
+  // Checkboxes start selected, so it is the *de*selection that has to persist.
+  // The changed-file list is re-polled every few seconds; holding the selection
+  // instead would make every poll fight over files that had just appeared.
+  const [deselectedPaths, setDeselectedPaths] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  /**
+   * The Git action in flight against each working directory, if any.
+   *
+   * Not one slot for the whole panel: the panel is a single component pointed at
+   * whichever session is active, while this state outlives a switch, so a shared
+   * slot gets it wrong whichever way it is read — shared, a commit still running
+   * when the user moves on spins a pending label on a session that ran nothing;
+   * cleared on switch, moving away and back re-enables the button over the
+   * action already running.
+   *
+   * Keyed by working directory rather than by session because that is what
+   * actually contends. Several sessions can share one (`docs/design/git-delivery.md`
+   * §5, and §11 refreshes all of them after an action), and `git commit` holds
+   * `index.lock` for the whole of a pre-commit hook — so a second commit into
+   * the same tree fails on the lock rather than doing anything useful. Sessions
+   * on genuinely separate worktrees stay parallel, which is what they are.
+   *
+   * This is a courtesy, not a mutex: another browser tab or the user's own
+   * terminal was always free to run Git underneath us, and ADR 0007 declines
+   * orchestration. It stops the panel from being the thing that causes it.
+   */
+  const [pendingActions, setPendingActions] = useState<
+    Readonly<Record<string, GitPendingVerb>>
+  >(() => ({}));
+  /**
+   * Null while Git state is unknown — no action can be started from that frame.
+   * Read off the store rather than `panelData`, which is assembled further down;
+   * the merge there leaves the working directory alone.
+   */
+  const pendingWorkDir = data?.workDir ?? null;
+  const pendingHere = (pendingWorkDir ? pendingActions[pendingWorkDir] : null) ?? null;
+
+  const markPending = useCallback(
+    (workDir: string, verb: GitPendingVerb | null): void => {
+      setPendingActions((current) => {
+        const next = { ...current };
+        if (verb) next[workDir] = verb;
+        else delete next[workDir];
+        return next;
+      });
+    },
+    [],
+  );
+  /**
+   * The question standing between a press and a push to the default branch, or
+   * null when there is nothing to ask (§8). It is also the dialog's open state:
+   * there is only ever one push to confirm, the one just pressed.
+   *
+   * `intent` rides along because the menu can raise this too, and the compound
+   * it raises it for has to run both of its halves on the way back — the copy
+   * alone would not say which.
+   */
+  const [pushConfirmation, setPushConfirmation] = useState<
+    (GitDefaultBranchConfirmation & { intent: "push" | "commit_push" }) | null
+  >(null);
+  /**
+   * The menu entry chosen last, lifted to the top of the menu on later visits
+   * (§4). Read after mount rather than while rendering: the panel is rendered on
+   * the server too, where there is no storage to read and the answer would
+   * differ from the client's.
+   */
+  const [rememberedAction, setRememberedAction] =
+    useState<GitDeliveryMenuActionId | null>(null);
+
+  useEffect(() => {
+    setRememberedAction(readRememberedGitAction());
+  }, []);
+  const [generatingMessage, setGeneratingMessage] = useState(false);
+  // A generation failure stays here rather than in a toast: it belongs to the
+  // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
+  const [generateMessageError, setGenerateMessageError] = useState<string | null>(
+    null,
+  );
   const lastDiffStatsTokenRef = useRef<string | null>(null);
 
   const sessionSnapshot = useSessionStore((state) =>
@@ -120,35 +263,22 @@ export function useGitPanelController(sessionId: string | null) {
     }
 
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/git`);
-      const payload = await response.json().catch(() => ({}));
+      // The same read the poll makes (#239). Anything the panel can show on
+      // mount, it can therefore show without one.
+      const result = await readGitPanelState(sessionId);
 
-      if (!response.ok) {
-        // Race: optimistic session id resolved on the client before the DB
-        // row is visible. Stay quiet — the next sessionId change (or a retry
-        // via visibilitychange) will pick up the real state.
-        if (
-          response.status === 404 &&
-          (payload as { error?: { code?: string } } | null)?.error?.code ===
-            "session_not_found"
-        ) {
-          return;
-        }
-        throw new Error(
-          extractGitPanelErrorMessage(payload, "Failed to load git summary."),
-        );
+      // Race: optimistic session id resolved on the client before the DB row is
+      // visible. Stay quiet — the next sessionId change (or a retry via
+      // visibilitychange) will pick up the real state.
+      if (result.kind === "session_missing") return;
+
+      if (result.kind === "failed") {
+        if (!silent) setError(result.message);
+        return;
       }
 
-      applyGitPanelData(sessionId, payload as GitPanelData);
+      applyGitPanelData(sessionId, result.data);
       setError(null);
-    } catch (nextError) {
-      if (!silent) {
-        setError(
-          nextError instanceof Error
-            ? nextError.message
-            : "Failed to load git summary.",
-        );
-      }
     } finally {
       setLoading(false);
     }
@@ -196,6 +326,14 @@ export function useGitPanelController(sessionId: string | null) {
     setSelectedPath(cached?.selectedPath ?? null);
     setDiffCache(cached?.diffCache ?? {});
     setDiffError(null);
+    // A commit draft belongs to the session it was typed in, and so does the
+    // selection under it — neither survives a switch.
+    setCommitMessage("");
+    setDeselectedPaths(new Set<string>());
+    setGenerateMessageError(null);
+    // The question was asked about the branch the panel was showing a moment
+    // ago; answering it here would push a different session's branch.
+    setPushConfirmation(null);
 
     if (!sessionId || isTransientSessionId(sessionId)) {
       setLoading(false);
@@ -246,50 +384,23 @@ export function useGitPanelController(sessionId: string | null) {
     };
   }, [loadPanel, sessionId]);
 
+  /**
+   * The background refresh (#239). It reads the whole panel state rather than
+   * the change set alone: the branch and the ahead/behind counts are what the
+   * primary-action ladder is derived from (§3), and a poll that left them at
+   * their mount values made the panel look alive while silently mis-deciding
+   * the push confirmation (§8), the pull rung and the pull-request rung.
+   */
   useEffect(() => {
     if (!sessionId || isTransientSessionId(sessionId)) return;
     if (typeof document === "undefined" || typeof window === "undefined") return;
 
-    let cancelled = false;
-    let timer: number | undefined;
-    let inFlight = false;
-
-    const schedule = (delayMs: number) => {
-      if (cancelled) return;
-      timer = window.setTimeout(runTick, delayMs);
-    };
-
-    const runTick = async () => {
-      if (cancelled) return;
-      if (document.visibilityState !== "visible" || inFlight) {
-        schedule(GIT_PANEL_POLL_INTERVAL_MS);
-        return;
-      }
-      inFlight = true;
-      const startedAt = performance.now();
-      try {
-        await loadChangedFiles();
-      } finally {
-        inFlight = false;
-        const elapsed = performance.now() - startedAt;
-        const nextDelay = Math.min(
-          GIT_PANEL_POLL_MAX_INTERVAL_MS,
-          Math.max(
-            GIT_PANEL_POLL_INTERVAL_MS,
-            Math.round(elapsed * GIT_PANEL_POLL_SLOW_BACKOFF),
-          ),
-        );
-        schedule(nextDelay);
-      }
-    };
-
-    schedule(GIT_PANEL_POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [loadChangedFiles, sessionId]);
+    return startGitPanelPolling({
+      sessionId,
+      apply: (data) => applyGitPanelData(sessionId, data),
+      isVisible: () => document.visibilityState === "visible",
+    });
+  }, [applyGitPanelData, sessionId]);
 
   const panelData = useMemo<GitPanelData | null>(() => {
     if (!data) return null;
@@ -424,6 +535,427 @@ export function useGitPanelController(sessionId: string | null) {
     [panelData, selectedPath],
   );
 
+  // A path that left the change set must not stay deselected: if the same file
+  // changes again it is a new choice, and it should arrive checked like the
+  // rest.
+  useEffect(() => {
+    const files = panelData?.changedFiles;
+    if (!files) return;
+
+    setDeselectedPaths((current) => {
+      if (current.size === 0) return current;
+      const live = new Set(files.map((file) => file.path));
+      const next = new Set([...current].filter((path) => live.has(path)));
+      return next.size === current.size ? current : next;
+    });
+  }, [panelData]);
+
+  const commitFiles = useMemo<GitChangedFile[]>(
+    () =>
+      (panelData?.changedFiles ?? []).filter(
+        (file) => !deselectedPaths.has(file.path),
+      ),
+    [deselectedPaths, panelData],
+  );
+
+  // Counts the commit itself would produce, not the worktree's — the summary
+  // above still reports the whole tree.
+  const commitTotals = useMemo(() => {
+    let added = 0;
+    let removed = 0;
+    for (const file of commitFiles) {
+      added += file.diffStats?.added ?? 0;
+      removed += file.diffStats?.removed ?? 0;
+    }
+    return { files: commitFiles.length, added, removed };
+  }, [commitFiles]);
+
+  const isSelectedForCommit = useCallback(
+    (path: string) => !deselectedPaths.has(path),
+    [deselectedPaths],
+  );
+
+  const toggleCommitFile = useCallback((path: string) => {
+    setDeselectedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const changeCommitMessage = useCallback((value: string) => {
+    setCommitMessage(value);
+    // Typing over the field answers the failure; keeping it visible would leave
+    // a complaint about text the user has already replaced.
+    setGenerateMessageError(null);
+  }, []);
+
+  const generateCommitMessage = useCallback(async () => {
+    // The button is disabled without a selection, and a poll can empty one out
+    // from under a click that is already on its way.
+    if (!sessionId || commitFiles.length === 0 || generatingMessage || pendingHere) {
+      return;
+    }
+
+    const files = commitFiles.map((file) => file.path);
+    setGeneratingMessage(true);
+    setGenerateMessageError(null);
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/git/commit-message`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files }),
+        },
+      );
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          extractGitPanelErrorMessage(
+            payload,
+            t("gitPanel.commit.generateFailed"),
+          ),
+        );
+      }
+
+      const message = (payload as { message?: unknown }).message;
+      if (typeof message !== "string" || !message.trim()) {
+        throw new Error(t("gitPanel.commit.generateFailed"));
+      }
+
+      setCommitMessage(message);
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "generate_commit_message",
+        target: "commit_message",
+        result: "success",
+        // `changed_file_count` rather than the commit path's `file_count`:
+        // `sanitizeTelemetryProperties` only forwards registered keys, and this
+        // is the registered one for a count of changed files.
+        changed_file_count: files.length,
+      });
+    } catch (nextError) {
+      // Stays on the button. A failure here must not disturb the commit path.
+      setGenerateMessageError(
+        summarizeGitFailure(
+          nextError instanceof Error
+            ? nextError.message
+            : t("gitPanel.commit.generateFailed"),
+        ),
+      );
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "generate_commit_message",
+        target: "commit_message",
+        result: "failed",
+        changed_file_count: files.length,
+      });
+    } finally {
+      setGeneratingMessage(false);
+    }
+  }, [commitFiles, generatingMessage, pendingHere, sessionId, t]);
+
+  // Which of the parallel sessions a toast is about. Held here rather than
+  // inside the action so the callback depends on the name, not on every panel
+  // refresh that leaves the name unchanged.
+  const commitOrigin = describeGitActionOrigin(panelData);
+
+  /**
+   * `null` while this session's Git state is not known — which is a rung of the
+   * ladder, not an absence of one. Anything short of loaded state counts:
+   * a panel still loading, a panel that failed to load, a session with no data
+   * yet. Folding those into "clean tree" is what would make the button flash
+   * through Publish Branch on every session switch (ADR 0007).
+   */
+  const stateSnapshot = useMemo<GitStateSnapshot | null>(
+    () => (loading || error ? null : gitStateSnapshotFromPanel(panelData)),
+    [error, loading, panelData],
+  );
+
+  const primaryAction = useMemo(
+    () => derivePrimaryGitAction(stateSnapshot),
+    [stateSnapshot],
+  );
+
+  // A toast is raised the same way whichever layer refused, and the draft
+  // survives every failure so the same button is itself the retry.
+  const reportAction = useCallback((toastReport: GitActionToast): void => {
+    const rendered = t(toastReport.messageKey, toastReport.params);
+    if (toastReport.tone === "success") toast.success(rendered);
+    else toast.error(rendered);
+
+    if (!toastReport.clearsDraft) return;
+    setCommitMessage("");
+    setDeselectedPaths(new Set<string>());
+    // The draft is gone, so a stale generation failure would be complaining
+    // about text that no longer exists (#232).
+    setGenerateMessageError(null);
+  }, [t]);
+
+  /**
+   * One commit request, reported. It owns no pending slot, because the compound
+   * in the menu runs this and then a push under a single one — a slot released
+   * between the two halves would re-enable the button over an action that is
+   * still going.
+   *
+   * Answers whether the commit landed, which is what tells the compound whether
+   * there is anything to push.
+   */
+  const requestCommit = useCallback(async (): Promise<boolean> => {
+    const message = commitMessage.trim();
+    // The button is disabled without these. This is the second guard the design
+    // asks for, and it also catches a click that lands after the selection
+    // emptied underneath it.
+    if (!sessionId || !message || commitFiles.length === 0) return false;
+
+    const files = commitFiles.map((file) => file.path);
+
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "commit", message, files }),
+        },
+      );
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          extractGitPanelErrorMessage(payload, "Failed to commit."),
+        );
+      }
+
+      const result = payload as GitActionResult;
+      reportAction(describeGitActionToast(result, commitOrigin, "commit"));
+      void captureTelemetryEvent("git_action_triggered", {
+        source: "git_panel",
+        action: "commit",
+        target: "commit",
+        result: result.ok ? "success" : "failed",
+        ...(result.ok ? {} : { failure_kind: result.failure.kind }),
+        file_count: files.length,
+      });
+      // The route triggers the state refresh and broadcasts it; the client
+      // never asks for one (docs/design/git-delivery.md §11).
+      return result.ok;
+    } catch (nextError) {
+      reportAction(
+        describeGitRequestFailureToast(
+          nextError instanceof Error ? nextError.message : "Failed to commit.",
+          commitOrigin,
+          "commit",
+        ),
+      );
+      return false;
+    }
+  }, [commitFiles, commitMessage, commitOrigin, reportAction, sessionId]);
+
+  const commitSelectedFiles = useCallback(async () => {
+    if (!pendingWorkDir || pendingHere) return;
+    // Captured, so the entry cleared below is the one this action opened even if
+    // the panel has moved to another session by then.
+    const workDir = pendingWorkDir;
+
+    markPending(workDir, "commit");
+    try {
+      await requestCommit();
+    } finally {
+      markPending(workDir, null);
+    }
+  }, [markPending, pendingHere, pendingWorkDir, requestCommit]);
+
+  /**
+   * The actions whose whole request is the verb: Push, Publish Branch — the same
+   * request, differing only in what the button said before it — Pull, and Create
+   * PR. None of them takes a parameter, because which branch moves to or from
+   * where — and for a pull request, which repository and which base — is read
+   * where the action runs, and what actually happened is read back off the
+   * result rather than assumed from the label (§7).
+   */
+  const requestBranchAction = useCallback(
+    async (verb: GitBranchActionVerb): Promise<void> => {
+      if (!sessionId) return;
+
+      try {
+        const response = await fetch(
+          `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: verb }),
+          },
+        );
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            extractGitPanelErrorMessage(payload, BRANCH_ACTION_FALLBACK[verb]),
+          );
+        }
+
+        const result = payload as GitActionResult;
+        reportAction(describeGitActionToast(result, commitOrigin, verb));
+        void captureTelemetryEvent("git_action_triggered", {
+          source: "git_panel",
+          action: verb,
+          target: BRANCH_ACTION_TELEMETRY_TARGET[verb],
+          result: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { failure_kind: result.failure.kind }),
+        });
+      } catch (nextError) {
+        reportAction(
+          describeGitRequestFailureToast(
+            nextError instanceof Error
+              ? nextError.message
+              : BRANCH_ACTION_FALLBACK[verb],
+            commitOrigin,
+            verb,
+          ),
+        );
+      }
+    },
+    [commitOrigin, reportAction, sessionId],
+  );
+
+  const runBranchAction = useCallback(async (verb: GitBranchActionVerb) => {
+    if (!pendingWorkDir || pendingHere) return;
+
+    const workDir = pendingWorkDir;
+    markPending(workDir, verb);
+    try {
+      await requestBranchAction(verb);
+    } finally {
+      markPending(workDir, null);
+    }
+  }, [markPending, pendingHere, pendingWorkDir, requestBranchAction]);
+
+  /**
+   * The menu's one compound (§2): the commit selection goes in, and the branch
+   * is pushed, on one press.
+   *
+   * Sequenced here rather than in the execution layer, and deliberately: ADR
+   * 0007 declines the phase contract a server-side compound would need to say
+   * which half died. Two ordinary requests report two ordinary toasts, so a
+   * commit that landed and a push that did not are both said out loud — and the
+   * push is skipped outright when the commit was refused, since there would be
+   * nothing new to send.
+   */
+  const runCommitAndPush = useCallback(async () => {
+    if (!pendingWorkDir || pendingHere) return;
+
+    const workDir = pendingWorkDir;
+    markPending(workDir, "commit_push");
+    try {
+      if (await requestCommit()) await requestBranchAction("push");
+    } finally {
+      markPending(workDir, null);
+    }
+  }, [
+    markPending,
+    pendingHere,
+    pendingWorkDir,
+    requestBranchAction,
+    requestCommit,
+  ]);
+
+  /** The one button. Which verb it runs is the ladder's answer, not the user's. */
+  const runPrimaryAction = useCallback(() => {
+    if (!primaryAction.enabled) return;
+    if (primaryAction.action === "commit") return commitSelectedFiles();
+    // §8: a push at the default branch is asked about before anything runs,
+    // and the panel is left exactly as it was until the answer comes back.
+    // Returns null for anything that is not a push, so pull and create_pr pass
+    // straight through.
+    const confirmation = describeDefaultBranchPushConfirmation(
+      primaryAction,
+      stateSnapshot,
+    );
+    if (confirmation) {
+      setPushConfirmation({ ...confirmation, intent: "push" });
+      return;
+    }
+    return runBranchAction(primaryAction.action);
+  }, [commitSelectedFiles, primaryAction, runBranchAction, stateSnapshot]);
+
+  /**
+   * The menu, derived independently of the ladder over the same snapshot (§4).
+   * Every action is listed on every rung; what changes is which of them can run
+   * and what the rest say about why they cannot.
+   */
+  const menuActions = useMemo(
+    () => deriveGitActionMenu(stateSnapshot, { promoted: rememberedAction }),
+    [rememberedAction, stateSnapshot],
+  );
+
+  /**
+   * What the ladder cannot see, and neither can the menu: a message still to be
+   * written, a selection the user emptied. It refuses the two entries that
+   * commit, the same way the commit button's own guard refuses it (§5).
+   */
+  const commitDraftBlocked =
+    commitMessage.trim().length === 0 || commitFiles.length === 0;
+
+  const runMenuAction = useCallback((id: GitMenuActionId) => {
+    const chosen = menuActions.find((action) => action.id === id);
+    if (!chosen?.enabled) return;
+    if ((id === "commit" || id === "commit_push") && commitDraftBlocked) return;
+
+    // §9's escape runs without being remembered. It is not a workflow the user
+    // repeats, and promoting it would put a destructive entry at the top of the
+    // menu the next time a worktree got stuck.
+    if (id === "abort") return runBranchAction("abort");
+
+    // Remembered on the press rather than on the outcome: what §4 promotes is
+    // the workflow the user reaches for, and a push that failed is still the
+    // one they will reach for next.
+    rememberGitAction(id);
+    setRememberedAction(id);
+
+    if (id === "commit") return commitSelectedFiles();
+
+    // §8 stands in front of the menu exactly as it stands in front of the
+    // button. Null for everything that does not push.
+    const confirmation = describeDefaultBranchPushConfirmation(
+      chosen,
+      stateSnapshot,
+    );
+    if (confirmation) {
+      setPushConfirmation({
+        ...confirmation,
+        intent: id === "commit_push" ? "commit_push" : "push",
+      });
+      return;
+    }
+
+    if (id === "commit_push") return runCommitAndPush();
+    return runBranchAction(id);
+  }, [
+    commitDraftBlocked,
+    commitSelectedFiles,
+    menuActions,
+    runBranchAction,
+    runCommitAndPush,
+    stateSnapshot,
+  ]);
+
+  /** Answering yes runs the action the confirmation was raised for, and nothing else. */
+  const confirmPrimaryAction = useCallback(() => {
+    const intent = pushConfirmation?.intent ?? "push";
+    setPushConfirmation(null);
+    // The dialog closes rather than holding a spinner of its own: progress
+    // belongs at the button (§7), which is where the pending label already is.
+    // The intent is read off the confirmation rather than off the ladder or the
+    // menu, both of which may have moved while the dialog was open.
+    return intent === "commit_push" ? runCommitAndPush() : runBranchAction("push");
+  }, [pushConfirmation, runBranchAction, runCommitAndPush]);
+
+  const cancelPrimaryAction = useCallback(() => setPushConfirmation(null), []);
+
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;
   const checksUrl = panelData?.prStatus?.url
@@ -530,6 +1062,17 @@ export function useGitPanelController(sessionId: string | null) {
 
   return {
     changedFileCount,
+    commitMessage,
+    commitTotals,
+    /**
+     * Whatever is running against this working directory, or null. Every
+     * surface that has to say what is happening reads this one value rather
+     * than a boolean of its own: the menu can start an action the button did
+     * not, so "something is running" and "this is what is running" are
+     * different questions and §7 needs the second one answered.
+     */
+    pendingVerb: pendingHere,
+    commitDraftBlocked,
     copyBranch,
     copyFilePath,
     copyWorktreePath,
@@ -538,13 +1081,26 @@ export function useGitPanelController(sessionId: string | null) {
     diffError,
     diffLoading,
     error,
+    generateCommitMessage,
+    generateMessageError,
+    generatingMessage,
+    isSelectedForCommit,
     loading,
     moveSelection,
     openExternal,
+    primaryAction,
+    menuActions,
+    runMenuAction,
+    runPrimaryAction,
+    pushConfirmation,
+    confirmPrimaryAction,
+    cancelPrimaryAction,
     selectedFile,
     selectedFileIndex,
     selectedPath,
+    setCommitMessage: changeCommitMessage,
     setSelectedPath,
+    toggleCommitFile,
   };
 }
 

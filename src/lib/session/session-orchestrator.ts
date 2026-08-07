@@ -20,7 +20,7 @@ import {
 } from './session-orchestrator-lifecycle';
 import logger from '../logger';
 import { sessionHistory } from '../session-history';
-import { getAgentEnvironment } from '../cli/spawn-cli';
+import { resolveGitEnvironment } from '../git/git-environment';
 import { createGitRunner } from '../worktrees/git-runner';
 import { isManagedWorktreePath, removeManagedWorktree } from '../worktrees/managed';
 import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
@@ -199,7 +199,7 @@ export class SessionOrchestrator {
           // Only remove the physical worktree if no other sessions share the same work_dir
           const otherCount = dbSessions.countOtherSessionsByWorkDir(session.work_dir, sessionId);
           if (otherCount === 0) {
-            const runGit = createGitRunner(await getAgentEnvironment(userId));
+            const runGit = createGitRunner(await resolveGitEnvironment({ userId }));
             try {
               await removeManagedWorktree(sourceProjectDir, session.work_dir, runGit);
               logger.info({ userId, sessionId, worktreePath: session.work_dir }, 'Managed worktree removed');

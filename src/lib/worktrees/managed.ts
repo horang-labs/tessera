@@ -1,6 +1,5 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { spawn } from 'child_process';
 import {
   buildManagedWorktreeName,
   buildManagedWorktreeRelativePath,
@@ -12,11 +11,10 @@ import { getTesseraDataPath } from '../tessera-data-dir';
 import {
   getWslHostedWindowsHomeMountPath,
   getWindowsHostedWslRootFilesystemPath,
-  isWslFilesystemPath,
 } from '../filesystem/path-environment';
 import { resolvePathForHostFilesystem } from '../filesystem/host-path';
 import type { AgentEnvironment } from '../settings/types';
-import { createGitRunner, type GitRunner } from './git-runner';
+import type { GitRunner } from './git-runner';
 import { getRuntimePlatform } from '../system/runtime-platform';
 import { isRunningInWsl } from '../cli/cli-exec';
 
@@ -52,15 +50,16 @@ export class ManagedWorktreeAllocationError extends Error {
 
 export async function allocateManagedWorktree(
   projectDir: string,
-  branchPrefix?: string | null,
-  branchSlug?: string | null,
+  branchPrefix: string | null | undefined,
+  branchSlug: string | null | undefined,
   options: {
     allowCollisionSuffix?: boolean;
     rootDir?: string;
-    runGit?: GitRunner;
+    /** Required: Git only ever runs through the one runner (ADR 0006). */
+    runGit: GitRunner;
     pathTemplate?: string | null;
     agentEnvironment?: AgentEnvironment;
-  } = {}
+  }
 ): Promise<ManagedWorktreeAllocation> {
   const rootDir = options.rootDir ?? MANAGED_WORKTREE_ROOT;
   const pathTemplate = options.pathTemplate?.trim() ?? '';
@@ -181,7 +180,7 @@ async function findAllocationCollision(
   projectDir: string,
   branchName: string,
   worktreePath: string,
-  runGit?: GitRunner,
+  runGit: GitRunner,
 ): Promise<{ branchExists: boolean; worktreePathExists: boolean }> {
   const [branchExists, worktreePathExists] = await Promise.all([
     localBranchExists(projectDir, branchName, runGit),
@@ -257,10 +256,11 @@ export async function resolveManagedWorktreeRoot(
   return MANAGED_WORKTREE_ROOT;
 }
 
+/** `runGit` is required: callers name their environment via ADR 0006. */
 export async function removeManagedWorktree(
   projectDir: string,
   worktreePath: string,
-  runGit: GitRunner = createGitRunner(inferManagedGitEnvironment(projectDir, worktreePath)),
+  runGit: GitRunner,
 ): Promise<void> {
   await runGit(
     ['-C', projectDir, 'worktree', 'remove', '--force', worktreePath],
@@ -275,7 +275,7 @@ export async function removeManagedWorktree(
 async function localBranchExists(
   projectDir: string,
   branchName: string,
-  runGit: GitRunner = runGitCommand,
+  runGit: GitRunner,
 ): Promise<boolean> {
   try {
     await runGit(['-C', projectDir, 'show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
@@ -292,36 +292,6 @@ async function pathExists(candidate: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function runGitCommand(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-
-    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-
-    child.on('close', (code) => {
-      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trim();
-      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-
-      if (code === 0) {
-        resolve({ stdout, stderr });
-        return;
-      }
-
-      reject(new Error(stderr || `git exited with code ${code}`));
-    });
-
-    child.on('error', (error) => {
-      reject(error);
-    });
-  });
 }
 
 function resolveWslHomeManagedWorktreeRoot(candidate: string): string | null {
@@ -358,15 +328,6 @@ function resolveWslPosixFallbackManagedWorktreeRoot(candidate: string): string |
   return normalized.startsWith('/var/tmp/tessera-worktrees')
     ? '/var/tmp/tessera-worktrees'
     : null;
-}
-
-function inferManagedGitEnvironment(
-  projectDir: string,
-  worktreePath: string,
-): AgentEnvironment {
-  return isWslFilesystemPath(projectDir) || isWslFilesystemPath(worktreePath)
-    ? 'wsl'
-    : 'native';
 }
 
 function getRelativePathIfInside(rootDir: string, candidate: string): string | null {

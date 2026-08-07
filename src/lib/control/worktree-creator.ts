@@ -6,6 +6,7 @@ import { waitForPreparationBeforeAgent } from '@/lib/projects/preparation-gate';
 import { broadcastTaskMutation } from '@/lib/ws/mutation-broadcast';
 import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
+import { recordWorktreeBaseRef } from '@/lib/worktrees/base-refs';
 import {
   allocateExplicitManagedWorktree,
   ExplicitManagedWorktreeAllocationError,
@@ -139,6 +140,8 @@ export function createDatabaseControlWorktreeCreator(options: {
           { branch: request.branch, startPoint: request.startPoint },
         );
       }
+
+      await recordWorktreeBaseRef(projectDir, request.branch, request.startPoint, runGit);
 
       let persisted: { taskId: string; worktree: ControlWorktreeRecord };
       try {

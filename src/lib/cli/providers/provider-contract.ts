@@ -5,7 +5,13 @@ import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { CliEnvironment } from '../cli-exec';
 import type { ParsedMessage } from './message-types';
-import type { GeneratedTitle, SpawnOptions, SpawnResult, TranslatedText } from './session-types';
+import type {
+  GeneratedText,
+  GeneratedTitle,
+  SpawnOptions,
+  SpawnResult,
+  TranslatedText,
+} from './session-types';
 import type { SkillSource } from './skill-types';
 
 /**
@@ -266,8 +272,22 @@ export interface CliProvider {
 
   /**
    * Generates a semantic title for a session from the initial prompt text.
+   *
+   * This carries the *title* contract — providers may add a title-shaped system
+   * prompt and clamp the reply to a title's length. Callers that want a
+   * general-purpose one-shot answer want `generateText`.
    */
   generateTitle(prompt: string, userId?: string): Promise<GeneratedTitle | null>;
+
+  /**
+   * Runs a caller-built prompt through the provider's one-shot headless path
+   * and returns the model's raw reply, with no system prompt of the provider's
+   * own and no length clamp. The same spawn primitive `generateTitle` uses, so
+   * a session's running agent is neither consulted nor delayed.
+   * Optional — providers without a headless path may omit it; callers must
+   * handle its absence.
+   */
+  generateText?(prompt: string, userId?: string): Promise<GeneratedText | null>;
 
   /**
    * Translates the given (pre-built) prompt's text via a one-shot CLI call.

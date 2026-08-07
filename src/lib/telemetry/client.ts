@@ -118,6 +118,7 @@ const allowedGitActions = new Set([
   'preview_diff',
   'open_diff_tab',
   'open_file_tab',
+  'generate_commit_message',
 ]);
 const allowedGitTargets = new Set([
   'repository',
@@ -127,6 +128,7 @@ const allowedGitTargets = new Set([
   'worktree_path',
   'diff',
   'file',
+  'commit_message',
   'unknown',
 ]);
 const allowedGitFileStates = new Set([

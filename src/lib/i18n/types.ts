@@ -441,22 +441,6 @@ export interface I18nMessages {
       branchPrefix: string;
       branchPrefixPlaceholder: string;
       branchPrefixDesc: string;
-      globalGuidelines: string;
-      globalGuidelinesDesc: string;
-      globalGuidelinesPlaceholder: string;
-      actionPromptsHeading: string;
-      actionPromptsDesc: string;
-      actionBadgeDefault: string;
-      actionBadgeCustomized: string;
-      actionResetTitle: string;
-      availableVariables: string;
-      acceptsHintNote: string;
-      actionLabelCommit: string;
-      actionLabelPush: string;
-      actionLabelPull: string;
-      actionLabelMerge: string;
-      actionLabelCreatePr: string;
-      actionLabelMergePr: string;
     };
   };
   electronClose: {
@@ -1069,6 +1053,99 @@ export interface I18nMessages {
       diffUnavailableTitle: string;
       selectFileTitle: string;
       selectFileBody: string;
+    };
+    commit: {
+      messageLabel: string;
+      messagePlaceholder: string;
+      selectionSummary: string;
+      includeFile: string;
+      button: string;
+      buttonPending: string;
+      menuButtonCount: string;
+      nothingToCommit: string;
+      draftRequired: string;
+      generateLabel: string;
+      generateFailed: string;
+      generateFailedPrefix: string;
+      successToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
+    };
+    commitPush: {
+      button: string;
+      buttonCount: string;
+      buttonPending: string;
+    };
+    push: {
+      button: string;
+      buttonCount: string;
+      buttonPending: string;
+      publishButton: string;
+      publishButtonPending: string;
+      nothingToPush: string;
+      successToast: string;
+      successNoUpstreamToast: string;
+      publishedToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
+      defaultBranchConfirm: {
+        title: string;
+        body: string;
+        publishTitle: string;
+        publishBody: string;
+        confirm: string;
+        publishConfirm: string;
+        commitPushTitle: string;
+        commitPushBody: string;
+        commitPushConfirm: string;
+      };
+    };
+    pull: {
+      button: string;
+      menuButton: string;
+      nothingToPull: string;
+      noUpstream: string;
+      buttonPending: string;
+      successToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
+    };
+    pr: {
+      createdToast: string;
+      createdNoDetailToast: string;
+      failureToast: string;
+      createButton: string;
+      createButtonPending: string;
+      defaultBranch: string;
+      statusUnknown: string;
+      unavailable: string;
+      noUpstream: string;
+      alreadyOpen: string;
+    };
+    conflict: {
+      mergeInProgress: string;
+      rebaseInProgress: string;
+      cherryPickInProgress: string;
+      abortMerge: string;
+      abortRebase: string;
+      abortCherryPick: string;
+      abortPending: string;
+      mergeAbortedToast: string;
+      rebaseAbortedToast: string;
+      cherryPickAbortedToast: string;
+      abortFailureToast: string;
+    };
+    primary: {
+      stateUnknown: string;
+      detachedHead: string;
+      noRemote: string;
+    };
+    menu: {
+      label: string;
+      pending: string;
     };
   };
   memoryPanel: {

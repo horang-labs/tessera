@@ -1,5 +1,4 @@
-import { spawn } from 'child_process';
-import type { GitRunner, GitRunResult } from './git-runner';
+import type { GitRunner } from './git-runner';
 
 export type ManagedWorktreePreflightCode =
   | 'GIT_NOT_INSTALLED'
@@ -23,9 +22,10 @@ export type ManagedWorktreePreflightResult =
 
 export const GIT_INSTALL_URL = 'https://git-scm.com/downloads';
 
+/** `runGit` is required: Git only ever runs through the one runner (ADR 0006). */
 export async function checkManagedWorktreePreflight(
   projectDir: string,
-  runGit: GitRunner = runGitCommand,
+  runGit: GitRunner,
 ): Promise<ManagedWorktreePreflightResult> {
   const version = await runSafely(runGit, ['--version']);
   if (!version.ok && isGitMissingError(version.error)) {
@@ -75,34 +75,4 @@ function isGitMissingError(error: unknown): boolean {
   }
   const message = error instanceof Error ? error.message : String(error);
   return message.includes('ENOENT') || message.includes('spawn git');
-}
-
-function runGitCommand(args: string[]): Promise<GitRunResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-
-    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-
-    child.on('close', (code) => {
-      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trim();
-      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-
-      if (code === 0) {
-        resolve({ stdout, stderr });
-        return;
-      }
-
-      reject(new Error(stderr || `git exited with code ${code}`));
-    });
-
-    child.on('error', (error) => {
-      reject(error);
-    });
-  });
 }

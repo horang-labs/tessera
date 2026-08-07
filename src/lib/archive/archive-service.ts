@@ -7,7 +7,7 @@ import {
   closeSessionRuntimes,
   getActiveSessionIds,
 } from '@/lib/session/active-session-runtime';
-import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { isManagedWorktreePath, removeManagedWorktree } from '@/lib/worktrees/managed';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
@@ -476,11 +476,16 @@ async function removeArchivedWorktree(
         throw new Error('Failed to resolve source project for managed worktree cleanup');
       }
       try {
-        if (runGit) {
-          await removeManagedWorktree(sourceProjectDir, item.workDir, runGit);
-        } else {
-          await removeManagedWorktree(sourceProjectDir, item.workDir);
-        }
+        // Retention runs on a timer with no user attached, so the environment
+        // comes off the paths: asking the setting would answer 'native' for
+        // everyone, which cannot remove a WSL worktree.
+        await removeManagedWorktree(
+          sourceProjectDir,
+          item.workDir,
+          runGit ?? createGitRunner(await resolveGitEnvironment({
+            inferFromPaths: [sourceProjectDir, item.workDir],
+          })),
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const worktreeStillExists = await pathExists(item.workDir);
@@ -540,5 +545,5 @@ export async function pruneExpiredArchivedWorktrees(
 
 async function createArchiveGitRunner(userId?: string): Promise<GitRunner | undefined> {
   if (!userId) return undefined;
-  return createGitRunner(await getAgentEnvironment(userId));
+  return createGitRunner(await resolveGitEnvironment({ userId }));
 }

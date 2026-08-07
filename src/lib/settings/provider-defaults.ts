@@ -1,4 +1,3 @@
-import type { GitActionId } from '@/lib/git/action-templates';
 import type { PermissionMode } from '@/lib/ws/message-types';
 import type {
   CodexApprovalPolicy,
@@ -68,8 +67,6 @@ export function normalizeFontScale(raw: unknown): number {
   }
   return best;
 }
-
-export const DEFAULT_GLOBAL_GIT_GUIDELINES = '';
 
 export function normalizeClaudeModel(model?: string): string | undefined {
   if (!model) {
@@ -617,8 +614,6 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     shortcutOverrides: {},
     gitConfig: {
       branchPrefix: '',
-      globalGuidelines: DEFAULT_GLOBAL_GIT_GUIDELINES,
-      actionTemplates: {},
     },
     version: '1.0.0',
     lastModified: new Date().toISOString(),
@@ -656,16 +651,6 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
         ?? defaults.providerDefaults.opencode.sessionMode,
     },
   };
-  const rawGitConfig = raw?.gitConfig as
-    | (Partial<UserSettings['gitConfig']> & {
-        commitGuidelines?: unknown;
-        prGuidelines?: unknown;
-        prMergeMethod?: unknown;
-        showSidebarPrIcon?: unknown;
-        alwaysForceWithLease?: unknown;
-        createDraftPr?: unknown;
-      })
-    | undefined;
 
   return {
     ...defaults,
@@ -721,7 +706,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       enabled: raw?.telemetry?.enabled !== false,
     },
     shortcutOverrides: raw?.shortcutOverrides ?? {},
-    gitConfig: normalizeGitConfig(rawGitConfig, defaults.gitConfig),
+    gitConfig: normalizeGitConfig(raw?.gitConfig, defaults.gitConfig),
     lastModified: raw?.lastModified || defaults.lastModified,
   };
 }
@@ -754,102 +739,19 @@ function normalizeProfileSettings(
   };
 }
 
+/**
+ * Git settings are built field by field rather than spread, so the prompt
+ * templates and guidelines that older records still carry are dropped instead
+ * of leaking into the typed result. Nothing reads them any more.
+ */
 function normalizeGitConfig(
-  rawGitConfig:
-    | (Partial<UserSettings['gitConfig']> & {
-        commitGuidelines?: unknown;
-        prGuidelines?: unknown;
-        prMergeMethod?: unknown;
-        showSidebarPrIcon?: unknown;
-        alwaysForceWithLease?: unknown;
-        createDraftPr?: unknown;
-      })
-    | undefined,
+  rawGitConfig: Partial<UserSettings['gitConfig']> | undefined,
   defaults: UserSettings['gitConfig'],
 ): UserSettings['gitConfig'] {
-  // Strip legacy fields that are no longer part of GitConfig before spreading,
-  // otherwise old settings.json values leak into the typed result at runtime.
-  const cleaned: Partial<UserSettings['gitConfig']> = {};
-  if (rawGitConfig) {
-    for (const [key, value] of Object.entries(rawGitConfig)) {
-      if (
-        key === 'commitGuidelines'
-        || key === 'prGuidelines'
-        || key === 'prMergeMethod'
-        || key === 'showSidebarPrIcon'
-        || key === 'alwaysForceWithLease'
-        || key === 'createDraftPr'
-      ) {
-        continue;
-      }
-      (cleaned as Record<string, unknown>)[key] = value;
-    }
-  }
-
-  const merged: UserSettings['gitConfig'] = {
-    ...defaults,
-    ...cleaned,
-    globalGuidelines:
-      typeof rawGitConfig?.globalGuidelines === 'string'
-        ? rawGitConfig.globalGuidelines
-        : defaults.globalGuidelines,
-    actionTemplates: {
-      ...defaults.actionTemplates,
-      ...(rawGitConfig?.actionTemplates ?? {}),
-    },
-  };
-
-  // Migrate legacy commitGuidelines / prGuidelines fields. Only legacy values
-  // that diverge from the prior default are kept — old defaults are dropped so
-  // the user picks up the new templates automatically.
-  const legacyCommit =
-    typeof rawGitConfig?.commitGuidelines === 'string'
-      ? rawGitConfig.commitGuidelines.trim()
-      : '';
-  const legacyPr =
-    typeof rawGitConfig?.prGuidelines === 'string'
-      ? rawGitConfig.prGuidelines.trim()
-      : '';
-  const LEGACY_DEFAULT_COMMIT =
-    'Review the current git diff and create an appropriate commit message, then commit all changes. Run `git add -A` first if needed.';
-  const LEGACY_DEFAULT_PR = [
-    'Create a GitHub Pull Request for the current branch targeting the selected base branch.',
-    'If there are uncommitted changes, commit them first with an appropriate message.',
-    'If the branch has not been pushed yet, push it with `git push -u origin HEAD`.',
-    'Generate a good title and description based on the commits.',
-  ].join(' ');
-
-  const actionTemplates: Partial<Record<GitActionId, string>> = {
-    ...merged.actionTemplates,
-  };
-
-  if (
-    legacyCommit
-    && legacyCommit !== LEGACY_DEFAULT_COMMIT
-    && actionTemplates.commit === undefined
-  ) {
-    actionTemplates.commit = legacyCommit;
-  }
-  if (
-    legacyPr
-    && legacyPr !== LEGACY_DEFAULT_PR
-    && actionTemplates.createPr === undefined
-  ) {
-    actionTemplates.createPr = legacyPr;
-  }
-  if (typeof actionTemplates.createPr === 'string') {
-    const normalizedCreatePrTemplate = actionTemplates.createPr
-      .replace(/[ \t]*\{\{draftFlag\}\}/g, '')
-      .replace(/[ \t]+$/gm, '');
-    if (normalizedCreatePrTemplate.trim()) {
-      actionTemplates.createPr = normalizedCreatePrTemplate;
-    } else {
-      delete actionTemplates.createPr;
-    }
-  }
-
   return {
-    ...merged,
-    actionTemplates,
+    branchPrefix:
+      typeof rawGitConfig?.branchPrefix === 'string'
+        ? rawGitConfig.branchPrefix
+        : defaults.branchPrefix,
   };
 }

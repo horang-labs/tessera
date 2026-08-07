@@ -97,6 +97,79 @@ export function extractGitPanelErrorMessage(
   return fallback;
 }
 
+/** How much of a Git failure a toast carries before it stops being readable. */
+const FAILURE_TOAST_LIMIT = 180;
+
+/**
+ * Git failures arrive as raw stderr, which for a rejecting hook can be pages of
+ * it. A toast gets the first line that says something, truncated.
+ */
+export function summarizeGitFailure(message: string): string {
+  const firstMeaningfulLine =
+    message
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean) ?? message.trim();
+
+  return truncateForToast(firstMeaningfulLine);
+}
+
+/**
+ * A hook reads the other way round. Git leads with what went wrong, but a hook
+ * runner narrates its way there — "Preparing lint-staged…" first, the verdict
+ * last — and Git relays the whole of it. Taking the first line would quote the
+ * hook starting up rather than the hook refusing.
+ */
+export function summarizeHookRejection(message: string): string {
+  const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+  return truncateForToast(lines[lines.length - 1] ?? message.trim());
+}
+
+/**
+ * How Git prefixes a line it wrote as a diagnostic. Restated here rather than
+ * imported from the runner, which is a server module and would drag `spawn-cli`
+ * into the renderer bundle.
+ */
+const GIT_DIAGNOSTIC_PREFIXES = ["fatal:", "error:", "warning:", "hint:"];
+
+/**
+ * A pull is two commands wearing one name, and each writes somewhere else: the
+ * fetch reports on stderr ("From origin", then the refs it moved) and the merge
+ * on stdout ("Auto-merging f.txt", the CONFLICT lines, "Automatic merge failed…"
+ * last). Reading only `gitSaid` therefore quotes a ref that moved successfully
+ * as though it were the reason the pull failed.
+ *
+ * So: Git's own voice wins wherever it appears — it leads with `fatal:` and
+ * trails hints, and the top of that is what happened. Failing that, the merge
+ * narrated its way to a verdict and the bottom of `stdout` is it.
+ */
+export function summarizeMergeFailure(stdout: string, gitSaid: string): string {
+  if (!hasGitDiagnosticLine(gitSaid)) {
+    const merge = lastMeaningfulLine(stdout);
+    if (merge) return truncateForToast(merge);
+  }
+
+  return summarizeGitFailure(gitSaid);
+}
+
+function hasGitDiagnosticLine(text: string): boolean {
+  return text.split("\n").some((line) => {
+    const normalized = line.trim().toLowerCase();
+    return GIT_DIAGNOSTIC_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+  });
+}
+
+function lastMeaningfulLine(text: string): string | null {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines[lines.length - 1] ?? null;
+}
+
+function truncateForToast(line: string): string {
+  return line.length > FAILURE_TOAST_LIMIT
+    ? `${line.slice(0, FAILURE_TOAST_LIMIT)}…`
+    : line;
+}
+
 export function getFileScopeLabel(file: GitChangedFile | null): string | null {
   if (!file) return null;
   if (file.state === "untracked") return "Working tree";

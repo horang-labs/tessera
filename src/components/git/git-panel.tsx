@@ -20,6 +20,7 @@ import {
   GitPanelSummarySection,
 } from "./git-panel-sections";
 import { useGitPanelController } from "./use-git-panel-controller";
+import { GitDefaultBranchConfirmDialog } from "./git-default-branch-confirm-dialog";
 import {
   openWorkspaceFileTab,
   previewWorkspaceFileTab,
@@ -312,6 +313,26 @@ export function GitPanel({
             loading={controller.loading}
             error={controller.error}
             changedFileCount={controller.changedFileCount}
+            commit={{
+              draftBlocked: controller.commitDraftBlocked,
+              generateError: controller.generateMessageError,
+              generating: controller.generatingMessage,
+              isSelected: controller.isSelectedForCommit,
+              message: controller.commitMessage,
+              onGenerate: () => void controller.generateCommitMessage(),
+              onMessageChange: controller.setCommitMessage,
+              onToggleFile: controller.toggleCommitFile,
+              totals: controller.commitTotals,
+            }}
+            primary={{
+              action: controller.primaryAction,
+              pendingVerb: controller.pendingVerb,
+              onRun: () => void controller.runPrimaryAction(),
+            }}
+            menu={{
+              actions: controller.menuActions,
+              onRun: (id) => void controller.runMenuAction(id),
+            }}
             selectedPath={controller.selectedPath}
             setSelectedPath={controller.setSelectedPath}
             onCopyFilePath={controller.copyFilePath}
@@ -327,6 +348,16 @@ export function GitPanel({
           />
         </>
       )}
+
+      {/*
+        Outside the tab switch: the confirmation belongs to the push that is
+        being asked about, not to whichever tab happens to be open behind it.
+      */}
+      <GitDefaultBranchConfirmDialog
+        confirmation={controller.pushConfirmation}
+        onCancel={controller.cancelPrimaryAction}
+        onConfirm={() => void controller.confirmPrimaryAction()}
+      />
     </aside>
   );
 }

@@ -11,6 +11,7 @@
  */
 
 import * as dbTasks from '@/lib/db/tasks';
+import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import logger from '@/lib/logger';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type { TaskPrStatus } from '@/types/task-pr-status';
@@ -101,7 +102,10 @@ export function syncTaskPr(
       const probe = await probeTaskPrStatus({
         workDir: row.workDir,
         branch: row.branch,
-        agentEnvironment: options.agentEnvironment,
+        // Same rule as session sync: no configured environment means falling
+        // back to the worktree path, said here rather than defaulted below.
+        agentEnvironment: options.agentEnvironment
+          ?? await resolveGitEnvironment({ inferFromPaths: [row.workDir] }),
       });
 
       if (probe.kind === 'unsupported') {

@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import { computeWorktreeDiffStats } from './worktree-diff-stats';
 import { isDiffStatsEntryStale } from './worktree-diff-stats-staleness';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
@@ -165,9 +165,13 @@ async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeD
       // request remains so the final broadcast cannot expose stale counts.
       while (true) {
         stats = await runWithComputeLimit(async () => {
-          const agentEnvironment = nextUserIds[0]
-            ? await getAgentEnvironment(nextUserIds[0])
-            : undefined;
+          // A recompute can be triggered by a filesystem event with no user
+          // attached, so the fallback to the worktree path is named here.
+          const agentEnvironment = await resolveGitEnvironment(
+            nextUserIds[0]
+              ? { userId: nextUserIds[0] }
+              : { inferFromPaths: [workDir] },
+          );
           return computeWorktreeDiffStats(workDir, agentEnvironment);
         });
         const previousStats = state.entries.get(workDir)?.stats;
