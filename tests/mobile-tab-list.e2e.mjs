@@ -140,6 +140,27 @@ async function testPhoneReplacesTheStripWithOneControl(browserInstance, origin) 
       TAB_TITLES[ACTIVE_INDEX],
       'the control must name the tab that is currently active',
     );
+
+    // Naming the tab in the DOM is not the criterion — being readable on the device is.
+    // The strip's width was the whole defect, so the control has to inherit the ~204px the
+    // ticket's arithmetic left beside the chrome, rather than share it with a spacer.
+    const addBox = await page.getByTestId('tab-bar-add').boundingBox();
+    assert.ok(addBox, 'the + button should be measurable');
+    assert.ok(
+      Math.abs(box.x + box.width - addBox.x) <= 1,
+      'dead space between the tab name and the + button is width the name should have had'
+        + ` (control ends at ${box.x + box.width}px, + starts at ${addBox.x}px)`,
+    );
+
+    const label = await trigger.evaluate((element) => {
+      const span = element.querySelector('span');
+      return span ? { clientWidth: span.clientWidth, scrollWidth: span.scrollWidth } : null;
+    });
+    assert.ok(label, 'the control should carry a label element');
+    assert.ok(
+      label.clientWidth >= 140,
+      `the tab name got ${label.clientWidth}px, which cuts it to a few characters`,
+    );
   } finally {
     await context.close();
   }
@@ -186,6 +207,11 @@ async function testTheListHoldsEveryOpenTab(browserInstance, origin) {
       true,
       'the list closed on its own after opening — the sheet symptom, in this family again',
     );
+
+    // The other half of the same criterion: it must close when dismissed, or a phone is left
+    // with a list it cannot put away without choosing a tab it did not want.
+    await page.touchscreen.tap(180, PHONE_VIEWPORT.height - 80);
+    await popover.waitFor({ state: 'detached', timeout: 5_000 });
   } finally {
     await context.close();
   }

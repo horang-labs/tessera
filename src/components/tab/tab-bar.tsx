@@ -636,10 +636,18 @@ export const TabBar = memo(function TabBar() {
 
       {/* Spacer — keep this area draggable for frameless Electron windows.
           Shares the end zone's handlers so a tab dragged here still lands last,
-          which keeps that drop reachable once the end zone collapses to zero. */}
+          which keeps that drop reachable once the end zone collapses to zero.
+          It claims no width on a phone: it and the tab list control are both
+          flex-1, so leaving it there would split the ~204px the control was
+          given in two and cut the tab name to about six characters — against a
+          spacer a browser on a phone can neither drag a window by nor drop onto.
+          An Electron window keeps it at every width, narrow ones included, since
+          a frameless titlebar with no drag region is a window that cannot be
+          moved. */}
       <div
         className={cn(
-          'electron-drag flex-1 transition-colors',
+          'electron-drag transition-colors',
+          isPhoneViewport && !electronPlatform ? 'w-0 shrink-0' : 'flex-1',
           (isCreateTabDragOver || isEndZoneDragOver) && 'bg-(--accent)/10',
         )}
         onDragOver={handleEndZoneDragOver}
