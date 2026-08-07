@@ -13,6 +13,7 @@ import {
 import { AsyncConfirmDialog } from '@/components/ui/async-confirm-dialog';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
 import { useWorktreeRetentionSettingsUpdate } from '@/hooks/use-worktree-retention-settings-update';
 import { useSessionStore } from '@/stores/session-store';
@@ -662,11 +663,183 @@ function EmptyTableRow({ colSpan, t }: { colSpan: number; t: TranslateFn }) {
   );
 }
 
-function RowActions({ children }: { children: React.ReactNode }) {
+function RowActions({ children, stacked = false }: { children: React.ReactNode; stacked?: boolean }) {
   return (
-    <div className="flex items-center justify-end gap-1.5">
+    <div
+      className={cn(
+        'flex items-center gap-1.5',
+        // In a stacked row the actions own a line of their own, so they read
+        // from the left like everything above them and wrap rather than
+        // pushing each other off the screen.
+        stacked ? 'mt-2 flex-wrap justify-start' : 'justify-end',
+      )}
+    >
       {children}
     </div>
+  );
+}
+
+/**
+ * One labelled value in a stacked row.
+ *
+ * A stacked row has no header above it, so a bare project name, path and
+ * timestamp would read as three anonymous strings. The label is the column
+ * header the desktop shows, in the same style, moved inline.
+ */
+function StackedField({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="mt-1 flex gap-1.5 text-[0.6875rem] leading-4">
+      <span className="shrink-0 uppercase tracking-wide text-(--text-muted)">{label}</span>
+      <span className={cn('min-w-0 flex-1 break-words text-(--text-secondary)', valueClassName)} title={value}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The archive actions for a chat row. Shared by both presentations so the
+ * phone can never end up offering a different set of actions, or the same
+ * actions under different labels, from the desktop.
+ */
+function ChatRowActions({
+  item,
+  onRestore,
+  onDelete,
+  t,
+  stacked = false,
+}: {
+  item: ArchiveItem;
+  onRestore: (item: ArchiveItem) => void;
+  onDelete: (item: ArchiveItem) => void;
+  t: TranslateFn;
+  stacked?: boolean;
+}) {
+  return (
+    <RowActions stacked={stacked}>
+      {item.canRestore && (
+        <ActionButton tone="primary" onClick={() => onRestore(item)}>
+          <RotateCcw className="h-3 w-3" />
+          {t('archive.actions.restore')}
+        </ActionButton>
+      )}
+      <ActionButton tone="dangerOutline" onClick={() => onDelete(item)}>
+        <Trash2 className="h-3 w-3" />
+        {t('archive.actions.delete')}
+      </ActionButton>
+    </RowActions>
+  );
+}
+
+/**
+ * The archive actions for a task row. Shared for the same reason as the chat
+ * ones, and more sharply: "delete worktree" and "delete" are two irreversible
+ * actions a phone user tells apart by their labels.
+ */
+function TaskRowActions({
+  item,
+  onRestore,
+  onDelete,
+  onDeleteWorktree,
+  t,
+  stacked = false,
+}: {
+  item: ArchiveItem;
+  onRestore: (item: ArchiveItem) => void;
+  onDelete: (item: ArchiveItem) => void;
+  onDeleteWorktree: (item: ArchiveItem) => void;
+  t: TranslateFn;
+  stacked?: boolean;
+}) {
+  return (
+    <RowActions stacked={stacked}>
+      {item.canRestore && (
+        <ActionButton tone="primary" onClick={() => onRestore(item)}>
+          <RotateCcw className="h-3 w-3" />
+          {t('archive.actions.restore')}
+        </ActionButton>
+      )}
+      {item.worktreeStatus === 'present' && item.worktreeManaged && !item.sharedWorktree && (
+        <ActionButton tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')}>
+          <FolderX className="h-3 w-3" />
+          {t('archive.actions.deleteWorktree')}
+        </ActionButton>
+      )}
+      <ActionButton tone="dangerOutline" onClick={() => onDelete(item)}>
+        <Trash2 className="h-3 w-3" />
+        {t('archive.actions.delete')}
+      </ActionButton>
+    </RowActions>
+  );
+}
+
+/**
+ * A task's title, or its title above the list of sessions archived with it.
+ * Shared by both presentations so every session stays reachable on a phone.
+ *
+ * A desktop truncates what will not fit and puts the rest in a `title`
+ * tooltip. A phone has no pointer to hover with, so a truncated title is
+ * simply gone — and it is the one value that says which archived task this
+ * is. In a stacked row the text wraps instead, which the extra height a
+ * stacked row already costs makes free.
+ */
+function TaskTitleBlock({
+  item,
+  onOpenSession,
+  stacked = false,
+}: {
+  item: ArchiveItem;
+  onOpenSession: (item: ArchiveItem, sessionId: string) => void;
+  stacked?: boolean;
+}) {
+  const fit = stacked ? 'break-words' : 'truncate';
+  const singleSession = item.sessions.length === 1 ? item.sessions[0] : null;
+
+  if (singleSession) {
+    return (
+      <button
+        onClick={() => onOpenSession(item, singleSession.id)}
+        className={cn('block max-w-full text-left font-medium text-(--text-primary) hover:underline', fit)}
+        title={item.title}
+      >
+        {item.title}
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <div
+        className={cn('max-w-full font-medium text-(--text-primary)', fit)}
+        title={item.title}
+      >
+        {item.title}
+      </div>
+      <ul className="mt-1.5 space-y-0.5 border-l border-(--divider) pl-2.5">
+        {item.sessions.map((session) => (
+          <li key={session.id} data-testid={`archive-task-session-row-${session.id}`}>
+            <button
+              onClick={() => onOpenSession(item, session.id)}
+              className={cn(
+                'block w-full max-w-full text-left text-[0.6875rem] text-(--text-secondary) hover:text-(--text-primary) hover:underline',
+                fit,
+              )}
+              title={session.title}
+            >
+              {session.title}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -714,6 +887,47 @@ function ChatArchiveTable({
   onDelete: (item: ArchiveItem) => void;
   t: TranslateFn;
 }) {
+  const isPhone = usePhoneViewport();
+
+  // 820px of fixed columns cannot be read on a 360px screen, so below the
+  // breakpoint each row stacks into a block instead. Same rows, same values,
+  // same actions under the same labels — only the arrangement differs.
+  if (isPhone) {
+    return (
+      <TableShell>
+        <table className="w-full table-fixed border-collapse text-xs">
+          <tbody>
+            {items.length === 0 ? (
+              <EmptyTableRow colSpan={1} t={t} />
+            ) : items.map((item) => (
+              <tr
+                key={item.id}
+                className="border-b border-(--divider) last:border-b-0"
+                data-testid={`archive-chat-row-${item.id}`}
+              >
+                <td className="px-3 py-2.5">
+                  <button
+                    onClick={() => onOpen(item)}
+                    className="block w-full break-words text-left font-medium text-(--text-primary)"
+                    title={item.title}
+                  >
+                    {item.title}
+                  </button>
+                  <StackedField label={t('archive.columns.project')} value={item.projectName} />
+                  <StackedField
+                    label={t('archive.columns.archived')}
+                    value={formatRelativeTime(item.archivedAt, t)}
+                  />
+                  <ChatRowActions item={item} onRestore={onRestore} onDelete={onDelete} t={t} stacked />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableShell>
+    );
+  }
+
   return (
     <TableShell>
       <table className="min-w-[820px] w-full table-fixed border-collapse text-xs">
@@ -756,18 +970,7 @@ function ChatArchiveTable({
                 {formatRelativeTime(item.archivedAt, t)}
               </td>
               <td className="h-10 px-3">
-                <RowActions>
-                  {item.canRestore && (
-                    <ActionButton tone="primary" onClick={() => onRestore(item)}>
-                      <RotateCcw className="h-3 w-3" />
-                      {t('archive.actions.restore')}
-                    </ActionButton>
-                  )}
-                  <ActionButton tone="dangerOutline" onClick={() => onDelete(item)}>
-                    <Trash2 className="h-3 w-3" />
-                    {t('archive.actions.delete')}
-                  </ActionButton>
-                </RowActions>
+                <ChatRowActions item={item} onRestore={onRestore} onDelete={onDelete} t={t} />
               </td>
             </tr>
           ))}
@@ -792,6 +995,53 @@ function TaskArchiveTable({
   onDeleteWorktree: (item: ArchiveItem) => void;
   t: TranslateFn;
 }) {
+  const isPhone = usePhoneViewport();
+
+  // Same treatment as the chat table, and 930px of fixed columns rather than
+  // 820. The worktree path is the one value long enough to need breaking
+  // anywhere, so it is the one field that wraps mid-token.
+  if (isPhone) {
+    return (
+      <TableShell>
+        <table className="w-full table-fixed border-collapse text-xs">
+          <tbody>
+            {items.length === 0 ? (
+              <EmptyTableRow colSpan={1} t={t} />
+            ) : items.map((item) => (
+              <tr
+                key={item.id}
+                className="border-b border-(--divider) last:border-b-0"
+                data-testid={`archive-task-row-${item.id}`}
+              >
+                <td className="px-3 py-2.5">
+                  <TaskTitleBlock item={item} onOpenSession={onOpenSession} stacked />
+                  <StackedField
+                    label={t('archive.columns.worktree')}
+                    value={getWorktreeText(item, t)}
+                    valueClassName={cn('break-all font-mono', getWorktreeTone(item))}
+                  />
+                  <StackedField label={t('archive.columns.project')} value={item.projectName} />
+                  <StackedField
+                    label={t('archive.columns.archived')}
+                    value={formatRelativeTime(item.archivedAt, t)}
+                  />
+                  <TaskRowActions
+                    item={item}
+                    onRestore={onRestore}
+                    onDelete={onDelete}
+                    onDeleteWorktree={onDeleteWorktree}
+                    t={t}
+                    stacked
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableShell>
+    );
+  }
+
   return (
     <TableShell>
       <table className="min-w-[930px] w-full table-fixed border-collapse text-xs">
@@ -814,80 +1064,35 @@ function TaskArchiveTable({
         <tbody>
           {items.length === 0 ? (
             <EmptyTableRow colSpan={5} t={t} />
-          ) : items.map((item) => {
-            const hasMultipleSessions = item.sessions.length > 1;
-            const singleSession = !hasMultipleSessions ? item.sessions[0] : null;
-            return (
-              <tr
-                key={item.id}
-                className="border-b border-(--divider) last:border-b-0 hover:bg-(--sidebar-hover)"
-                data-testid={`archive-task-row-${item.id}`}
-              >
-                <td className="min-w-0 px-3 py-2 align-top">
-                  {singleSession ? (
-                    <button
-                      onClick={() => onOpenSession(item, singleSession.id)}
-                      className="block max-w-full truncate text-left font-medium text-(--text-primary) hover:underline"
-                      title={item.title}
-                    >
-                      {item.title}
-                    </button>
-                  ) : (
-                    <>
-                      <div
-                        className="max-w-full truncate font-medium text-(--text-primary)"
-                        title={item.title}
-                      >
-                        {item.title}
-                      </div>
-                      <ul className="mt-1.5 space-y-0.5 border-l border-(--divider) pl-2.5">
-                        {item.sessions.map((session) => (
-                          <li key={session.id} data-testid={`archive-task-session-row-${session.id}`}>
-                            <button
-                              onClick={() => onOpenSession(item, session.id)}
-                              className="block w-full max-w-full truncate text-left text-[0.6875rem] text-(--text-secondary) hover:text-(--text-primary) hover:underline"
-                              title={session.title}
-                            >
-                              {session.title}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                </td>
-                <td className={cn('min-w-0 px-3 py-2 align-top font-mono text-[0.6875rem]', getWorktreeTone(item))}>
-                  <span className="block truncate" title={getWorktreeText(item, t)}>{getWorktreeText(item, t)}</span>
-                </td>
-                <td className="min-w-0 px-3 py-2 align-top text-(--text-muted)">
-                  <span className="block truncate">{item.projectName}</span>
-                </td>
-                <td className="px-3 py-2 align-top text-(--text-muted)">
-                  {formatRelativeTime(item.archivedAt, t)}
-                </td>
-                <td className="px-3 py-2 align-top">
-                  <RowActions>
-                    {item.canRestore && (
-                      <ActionButton tone="primary" onClick={() => onRestore(item)}>
-                        <RotateCcw className="h-3 w-3" />
-                        {t('archive.actions.restore')}
-                      </ActionButton>
-                    )}
-                    {item.worktreeStatus === 'present' && item.worktreeManaged && !item.sharedWorktree && (
-                      <ActionButton tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')}>
-                        <FolderX className="h-3 w-3" />
-                        {t('archive.actions.deleteWorktree')}
-                      </ActionButton>
-                    )}
-                    <ActionButton tone="dangerOutline" onClick={() => onDelete(item)}>
-                      <Trash2 className="h-3 w-3" />
-                      {t('archive.actions.delete')}
-                    </ActionButton>
-                  </RowActions>
-                </td>
-              </tr>
-            );
-          })}
+          ) : items.map((item) => (
+            <tr
+              key={item.id}
+              className="border-b border-(--divider) last:border-b-0 hover:bg-(--sidebar-hover)"
+              data-testid={`archive-task-row-${item.id}`}
+            >
+              <td className="min-w-0 px-3 py-2 align-top">
+                <TaskTitleBlock item={item} onOpenSession={onOpenSession} />
+              </td>
+              <td className={cn('min-w-0 px-3 py-2 align-top font-mono text-[0.6875rem]', getWorktreeTone(item))}>
+                <span className="block truncate" title={getWorktreeText(item, t)}>{getWorktreeText(item, t)}</span>
+              </td>
+              <td className="min-w-0 px-3 py-2 align-top text-(--text-muted)">
+                <span className="block truncate">{item.projectName}</span>
+              </td>
+              <td className="px-3 py-2 align-top text-(--text-muted)">
+                {formatRelativeTime(item.archivedAt, t)}
+              </td>
+              <td className="px-3 py-2 align-top">
+                <TaskRowActions
+                  item={item}
+                  onRestore={onRestore}
+                  onDelete={onDelete}
+                  onDeleteWorktree={onDeleteWorktree}
+                  t={t}
+                />
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </TableShell>
