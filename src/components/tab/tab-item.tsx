@@ -12,7 +12,8 @@ import { useTabStore } from '@/stores/tab-store';
 import type { Tab } from '@/types/tab';
 import type { Panel, TabPanelData } from '@/types/panel';
 import { SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
-import { getSpecialSessionTitle, getSpecialSessionTitleKey, isSpecialSession } from '@/lib/constants/special-sessions';
+import { isSpecialSession } from '@/lib/constants/special-sessions';
+import { resolveTabDisplayTitle } from '@/lib/tab/tab-display-title';
 import { requestSessionRename } from '@/lib/session/rename-session-request';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
@@ -227,9 +228,6 @@ export const TabItem = memo(function TabItem({
   const activePanelSessionId = isActive ? liveSessionId : snapshotSessionId;
   const activePanelTerminalId = isActive ? liveTerminalId : snapshotTerminalId;
 
-  // Special session handling (e.g., Skills Dashboard)
-  const specialTitleKey = activePanelSessionId ? getSpecialSessionTitleKey(activePanelSessionId) : null;
-
   // Targeted session-store subscription — re-renders only when the specific
   // session's title changes, not on unrelated session updates.
   const session = useSessionStore(
@@ -244,18 +242,13 @@ export const TabItem = memo(function TabItem({
 
   // Derive display values
   // Active tab: use live panel-store data; inactive tab: use snapshot
-  let displayTitle = t('chat.newTabDefault');
-  if (tab.title !== null) {
-    displayTitle = tab.title;
-  } else if (specialTitleKey) {
-    displayTitle = t(specialTitleKey);
-  } else if (activePanelSessionId && isSpecialSession(activePanelSessionId)) {
-    displayTitle = getSpecialSessionTitle(activePanelSessionId, t) ?? displayTitle;
-  } else if (activePanelTerminalId) {
-    displayTitle = 'Terminal';
-  } else if (activePanelSessionId && session) {
-    displayTitle = session.title ?? session.id;
-  }
+  const displayTitle = resolveTabDisplayTitle({
+    tabTitle: tab.title,
+    activePanelSessionId,
+    activePanelTerminalId,
+    session,
+    t,
+  });
 
   // 특수 세션(Skills Dashboard 등)은 rename 대상이 아니다 — 탭 로컬 제목으로 남긴다.
   const renameTargetSessionId =

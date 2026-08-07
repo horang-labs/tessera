@@ -11,8 +11,10 @@ import { useI18n } from '@/lib/i18n';
 import { TAB_MIN_WIDTH, TAB_MAX_WIDTH } from '@/types/tab';
 import { PANEL_NODE_DRAG_MIME, PANEL_SESSION_DRAG_MIME } from '@/types/panel';
 import { useGitStore } from '@/stores/git-store';
+import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { TabItem } from './tab-item';
 import { TabContextMenu } from './tab-context-menu';
+import { TabListControl } from './tab-list-control';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
@@ -46,6 +48,7 @@ export const TabBar = memo(function TabBar() {
   const toggleSidebar = useSettingsStore((state) => state.toggleSidebar);
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const toggleGitPanel = useGitStore((state) => state.toggle);
+  const isPhoneViewport = usePhoneViewport();
 
   // Scrollable container ref
   const containerRef = useRef<HTMLDivElement>(null);
@@ -505,101 +508,110 @@ export const TabBar = memo(function TabBar() {
         </button>
       )}
 
-      {/* Scrollable tab items container */}
-      <div className="relative flex min-w-0 items-stretch">
-        {/*
-          The scroll arrows are absolutely positioned over the strip (left-1/right-1,
-          w-6), so a tab parked flush against an edge has its close button covered
-          (BR-UI-024). revealTab keeps the active tab clear of both gutters;
-          scroll-px-8 makes browser-initiated scrolls (focusing the rename input,
-          say) respect the same margin.
-        */}
-        <div
-          ref={containerRef}
-          className="flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"
-          data-testid="tab-bar-items"
-        >
-          {tabs.map((tab) => (
-            <TabItem
-              key={tab.id}
-              tab={tab}
-              isActive={tab.id === activeTabId}
-              isPreview={tab.isPreview}
-              isDragOver={tab.id === dragOverTabId}
-              isDragging={tab.id === draggingTabId}
-              style={{ minWidth: TAB_MIN_WIDTH, maxWidth: TAB_MAX_WIDTH }}
-              onActivate={handleTabActivate}
-              onClose={handleTabClose}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onClearDragOver={handleClearDragOver}
-              onDrop={handleDrop}
-              onDragEnd={handleDragEnd}
-              onContextMenu={handleContextMenu}
-            />
-          ))}
-          {/* End drop zone — gives the last tab enough trailing scroll room to
-              satisfy scroll-px-8, and doubles as a "move to last position" target.
-              Only earns its width while the tabs overflow: otherwise it would push
-              the "+" button away from the last tab for no reason. When collapsed,
-              the trailing spacer past "+" takes over the drop target. */}
+      {/* Scrollable tab items container.
+          Below the Phone viewport step it is replaced — not hidden — by the tab
+          list control: at 360px the strip has room for about one tab, so the
+          other tabs are reachable only by scrubbing it blind (#247). Conditional
+          render, so a desktop tree never contains the phone control and vice
+          versa. */}
+      {isPhoneViewport ? (
+        <TabListControl tabs={tabs} activeTabId={activeTabId} onActivate={handleTabActivate} />
+      ) : (
+        <div className="relative flex min-w-0 items-stretch">
+          {/*
+            The scroll arrows are absolutely positioned over the strip (left-1/right-1,
+            w-6), so a tab parked flush against an edge has its close button covered
+            (BR-UI-024). revealTab keeps the active tab clear of both gutters;
+            scroll-px-8 makes browser-initiated scrolls (focusing the rename input,
+            say) respect the same margin.
+          */}
           <div
-            ref={endZoneRef}
+            ref={containerRef}
+            className="flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"
+            data-testid="tab-bar-items"
+          >
+            {tabs.map((tab) => (
+              <TabItem
+                key={tab.id}
+                tab={tab}
+                isActive={tab.id === activeTabId}
+                isPreview={tab.isPreview}
+                isDragOver={tab.id === dragOverTabId}
+                isDragging={tab.id === draggingTabId}
+                style={{ minWidth: TAB_MIN_WIDTH, maxWidth: TAB_MAX_WIDTH }}
+                onActivate={handleTabActivate}
+                onClose={handleTabClose}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onClearDragOver={handleClearDragOver}
+                onDrop={handleDrop}
+                onDragEnd={handleDragEnd}
+                onContextMenu={handleContextMenu}
+              />
+            ))}
+            {/* End drop zone — gives the last tab enough trailing scroll room to
+                satisfy scroll-px-8, and doubles as a "move to last position" target.
+                Only earns its width while the tabs overflow: otherwise it would push
+                the "+" button away from the last tab for no reason. When collapsed,
+                the trailing spacer past "+" takes over the drop target. */}
+            <div
+              ref={endZoneRef}
+              className={cn(
+                'electron-no-drag shrink-0 transition-colors',
+                scrollState.hasOverflow ? 'w-8' : 'w-0',
+                isWindowsElectron && 'h-[39px]',
+                isLinuxElectron && 'h-[39px]',
+                isEndZoneDragOver && 'border-l-2 border-l-(--accent)',
+              )}
+              onDragOver={handleEndZoneDragOver}
+              onDragLeave={handleEndZoneDragLeave}
+              onDrop={handleEndZoneDrop}
+              data-testid="tab-bar-end-zone"
+            />
+          </div>
+
+          <div
+            aria-hidden
             className={cn(
-              'electron-no-drag shrink-0 transition-colors',
-              scrollState.hasOverflow ? 'w-8' : 'w-0',
-              isWindowsElectron && 'h-[39px]',
-              isLinuxElectron && 'h-[39px]',
-              isEndZoneDragOver && 'border-l-2 border-l-(--accent)',
+              'pointer-events-none absolute inset-y-0 left-0 z-10 w-8 transition-opacity duration-150',
+              scrollState.canScrollLeft ? 'opacity-100' : 'opacity-0',
             )}
-            onDragOver={handleEndZoneDragOver}
-            onDragLeave={handleEndZoneDragLeave}
-            onDrop={handleEndZoneDrop}
-            data-testid="tab-bar-end-zone"
+            style={{ background: 'linear-gradient(to right, var(--chat-header-bg), transparent)' }}
           />
+          <div
+            aria-hidden
+            className={cn(
+              'pointer-events-none absolute inset-y-0 right-0 z-10 w-8 transition-opacity duration-150',
+              scrollState.canScrollRight ? 'opacity-100' : 'opacity-0',
+            )}
+            style={{ background: 'linear-gradient(to left, var(--chat-header-bg), transparent)' }}
+          />
+
+          {scrollState.canScrollLeft && (
+            <button
+              type="button"
+              className="electron-no-drag absolute left-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              onClick={() => handleScrollTabs('left')}
+              aria-label="Scroll tabs left"
+              data-testid="tab-bar-scroll-left"
+            >
+              <ChevronLeft size={14} strokeWidth={1.75} />
+            </button>
+          )}
+
+          {scrollState.canScrollRight && (
+            <button
+              type="button"
+              className="electron-no-drag absolute right-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              onClick={() => handleScrollTabs('right')}
+              aria-label="Scroll tabs right"
+              data-testid="tab-bar-scroll-right"
+            >
+              <ChevronRight size={14} strokeWidth={1.75} />
+            </button>
+          )}
         </div>
-
-        <div
-          aria-hidden
-          className={cn(
-            'pointer-events-none absolute inset-y-0 left-0 z-10 w-8 transition-opacity duration-150',
-            scrollState.canScrollLeft ? 'opacity-100' : 'opacity-0',
-          )}
-          style={{ background: 'linear-gradient(to right, var(--chat-header-bg), transparent)' }}
-        />
-        <div
-          aria-hidden
-          className={cn(
-            'pointer-events-none absolute inset-y-0 right-0 z-10 w-8 transition-opacity duration-150',
-            scrollState.canScrollRight ? 'opacity-100' : 'opacity-0',
-          )}
-          style={{ background: 'linear-gradient(to left, var(--chat-header-bg), transparent)' }}
-        />
-
-        {scrollState.canScrollLeft && (
-          <button
-            type="button"
-            className="electron-no-drag absolute left-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-            onClick={() => handleScrollTabs('left')}
-            aria-label="Scroll tabs left"
-            data-testid="tab-bar-scroll-left"
-          >
-            <ChevronLeft size={14} strokeWidth={1.75} />
-          </button>
-        )}
-
-        {scrollState.canScrollRight && (
-          <button
-            type="button"
-            className="electron-no-drag absolute right-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-            onClick={() => handleScrollTabs('right')}
-            aria-label="Scroll tabs right"
-            data-testid="tab-bar-scroll-right"
-          >
-            <ChevronRight size={14} strokeWidth={1.75} />
-          </button>
-        )}
-      </div>
+      )}
 
       {/* "+" button — always visible */}
       <ShortcutTooltip id="new-tab" label={t('shortcut.newTab')}>
