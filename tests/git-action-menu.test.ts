@@ -176,6 +176,23 @@ test('a conflict closes the commit path in the menu as well as on the button', (
   assert.equal(commitPush.disabledReasonKey, 'gitPanel.conflict.mergeInProgress');
 });
 
+test('a conflict closes the pull too, and leaves the push where it was', () => {
+  // The state an unfinished merge actually leaves: the remote is ahead, so the
+  // entry carried a count and read as runnable, and Git refused it after the
+  // press with "Pulling is not possible because you have unmerged files".
+  const behind: GitStateSnapshot = { ...CONFLICTED, behind: 1 };
+
+  const pull = entry(behind, 'pull');
+  assert.equal(pull.enabled, false);
+  assert.equal(pull.disabledReasonKey, 'gitPanel.conflict.mergeInProgress');
+
+  // Push keeps its own answer: commits made before the merge began still reach
+  // the remote, so a conflict is no reason to withhold it.
+  const push = entry({ ...behind, ahead: 2 }, 'push');
+  assert.equal(push.enabled, true);
+  assert.equal(push.disabledReasonKey, null);
+});
+
 test('the way out is in the menu, labelled from the operation that was detected', () => {
   const merge = entry(CONFLICTED, 'abort');
   assert.equal(merge.enabled, true);

@@ -210,8 +210,10 @@ function describeCommit(snapshot: GitStateSnapshot): GitMenuAction {
  * it is the one the user has to clear first: a tree full of conflict markers is
  * not a change set, and Git refuses the commit whatever else is true of it.
  *
- * Only the commit path asks. §9 blocks that and offers the escape; what a push
- * or a pull says for itself is unchanged.
+ * The commit path and the pull ask. Both are refused by Git outright while the
+ * operation is unfinished, so both would otherwise be offered against §9. Push
+ * does not ask: commits made before the conflict began still reach the remote,
+ * so what it says for itself is unchanged.
  */
 function describeConflictObstacle(
   snapshot: GitStateSnapshot,
@@ -289,10 +291,16 @@ function describePush(snapshot: GitStateSnapshot): GitMenuAction {
  * Pull. A branch with no upstream has nothing to be behind, and its reason says
  * what would give it one — "why + what to do" is the form §4 asks reasons to
  * take, and the alternative here ("Nothing to pull") would be true and useless.
+ *
+ * The conflict comes first, and above the count: Git refuses to pull into a tree
+ * with unmerged files whatever the count says, so an entry that stayed enabled
+ * would be one §9 promised not to offer — the user presses it, waits, and is
+ * told afterwards what the menu already knew.
  */
 function describePull(snapshot: GitStateSnapshot): GitMenuAction {
   const behind = snapshot.behind > 0;
-  const blocked = describeRemoteObstacle(snapshot)
+  const blocked = describeConflictObstacle(snapshot)
+    ?? describeRemoteObstacle(snapshot)
     ?? (snapshot.upstream ? null : 'gitPanel.pull.noUpstream');
 
   return {
