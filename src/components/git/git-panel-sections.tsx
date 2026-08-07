@@ -80,6 +80,19 @@ function getGitPanelWorktreeName(data: GitPanelData): string {
     : data.worktreeName;
 }
 
+/**
+ * The recorded base, shortened for a row that is 4.5rem of label and whatever
+ * is left. The remote stays (`origin/dev`, not `dev`) because a base on a
+ * remote and one on a local branch of the same name are different answers, and
+ * this row exists to tell them apart.
+ */
+export function formatGitBaseRefLabel(baseRef: string): string {
+  return baseRef
+    .replace(/^refs\/remotes\//, "")
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/tags\//, "");
+}
+
 function GitSummaryCopyButton({
   ariaLabel,
   disabled,
@@ -470,6 +483,28 @@ export function GitPanelSummarySection({
                 ) : null}
               </div>
             </div>
+            {/*
+              Only when there is one. Git records no lineage of its own, so a
+              branch made outside Tessera has no answer here, and an empty row
+              would read as "no base" rather than "not known".
+            */}
+            {data?.baseRef ? (
+              <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2">
+                <span className="text-(--text-muted)">Base</span>
+                <Tooltip
+                  content={`Branched from ${data.baseRef}`}
+                  side="bottom"
+                  wrapperClassName="min-w-0 max-w-full"
+                >
+                  <span
+                    className="block min-w-0 truncate font-mono text-(--text-muted)"
+                    data-testid="git-panel-base-ref"
+                  >
+                    {formatGitBaseRefLabel(data.baseRef)}
+                  </span>
+                </Tooltip>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

@@ -549,6 +549,34 @@ export function getDefaultBranchName(
   return null;
 }
 
+/**
+ * The ref this branch was cut from, as recorded at creation.
+ *
+ * Git keeps no lineage of its own — a branch knows its commits and its upstream
+ * and nothing about where it started — so this reads back what the worktree
+ * creator wrote (`branch.<name>.base`). Orca writes the same key in the same
+ * form, which is why a worktree it created answers here too.
+ *
+ * Distinct from `defaultBranch`: that is where the repository points, this is
+ * where this branch actually came from, and a branch cut from another feature
+ * branch is exactly the case where the two disagree.
+ */
+export function getWorktreeBaseRef(
+  raw: string | null,
+  branch: string | null,
+): string | null {
+  if (!raw || !branch) return null;
+  // `--get-regexp` prints `<key> <value>`; the key is matched whole rather than
+  // parsed, so a branch name carrying dots stays one name.
+  const prefix = `branch.${branch}.base `;
+  for (const line of raw.split("\n")) {
+    if (!line.startsWith(prefix)) continue;
+    const value = line.slice(prefix.length).trim();
+    return value || null;
+  }
+  return null;
+}
+
 function getRecentCommitArgs(hasUpstream: boolean): string[] {
   const baseArgs = ["log", "--format=%h%x09%s%x09%cr", "--date-order", "-n", "5"];
   return hasUpstream ? [...baseArgs, "HEAD", "@{upstream}"] : baseArgs;
@@ -597,6 +625,12 @@ interface GitPanelSnapshot {
   /** `git remote`, one name per line. Null when the command could not run. */
   remoteListRaw: string | null;
   defaultBranchRaw: string | null;
+  /**
+   * Every `branch.<name>.base` in this repository, one per line. Read for all
+   * branches rather than for the current one because the batch is built before
+   * the branch is known — the same reason `defaultBranch` reads every remote.
+   */
+  branchBasesRaw: string | null;
   branchListRaw: string | null;
   changedFiles: ChangedFilesResult;
   recentCommitsRaw: string | null;
@@ -643,6 +677,10 @@ function getGitPanelBatchCommands(): GitBatchCommand[] {
         "--format=%(refname) %(symref)",
         "refs/remotes/*/HEAD",
       ],
+    },
+    {
+      key: "branchBases",
+      args: ["config", "--local", "--get-regexp", "^branch\\..*\\.base$"],
     },
     {
       key: "branchList",
@@ -708,6 +746,7 @@ async function getBatchedGitPanelSnapshot(
     remoteUrl: getOptionalBatchOutput(results, "remoteUrl"),
     remoteListRaw: getOptionalBatchOutput(results, "remotes"),
     defaultBranchRaw: getOptionalBatchOutput(results, "defaultBranch"),
+    branchBasesRaw: getOptionalBatchOutput(results, "branchBases"),
     branchListRaw: getOptionalBatchOutput(results, "branchList"),
     changedFiles: attachFileDiffStats(
       getOptionalBatchOutput(results, "status"),
@@ -747,6 +786,7 @@ async function getSeparateGitPanelSnapshot(
     remoteUrl,
     remoteListRaw,
     defaultBranchRaw,
+    branchBasesRaw,
     branchListRaw,
     changedFiles,
     recentCommitsRaw,
@@ -762,6 +802,11 @@ async function getSeparateGitPanelSnapshot(
     runOptionalGitCommand(["remote"], workDir, agentEnvironment),
     runOptionalGitCommand(
       ["for-each-ref", "--format=%(refname) %(symref)", "refs/remotes/*/HEAD"],
+      workDir,
+      agentEnvironment,
+    ),
+    runOptionalGitCommand(
+      ["config", "--local", "--get-regexp", "^branch\\..*\\.base$"],
       workDir,
       agentEnvironment,
     ),
@@ -787,6 +832,7 @@ async function getSeparateGitPanelSnapshot(
     remoteUrl,
     remoteListRaw,
     defaultBranchRaw,
+    branchBasesRaw,
     branchListRaw,
     changedFiles,
     recentCommitsRaw,
@@ -873,6 +919,7 @@ export async function getGitPanelData(
     remoteUrl,
     remoteListRaw,
     defaultBranchRaw,
+    branchBasesRaw,
     branchListRaw,
     changedFiles,
     recentCommitsRaw,
@@ -925,6 +972,7 @@ export async function getGitPanelData(
     hasRemote: Boolean(remoteListRaw?.trim()),
     repoUrl: normalizeGithubUrl(remoteUrl),
     defaultBranch: getDefaultBranchName(defaultBranchRaw, remoteListRaw),
+    baseRef: getWorktreeBaseRef(branchBasesRaw, branchRaw),
     branches: (branchListRaw ?? "")
       .split("\n")
       .map((b) => b.trim())

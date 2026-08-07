@@ -96,6 +96,12 @@ export interface GitPanelData {
   hasRemote: boolean;
   repoUrl: string | null;
   defaultBranch: string | null;
+  /**
+   * The fully-qualified ref this branch was cut from, recorded when the
+   * worktree was created. Null for a branch created outside Tessera, or one
+   * cut from a bare commit — Git itself remembers neither.
+   */
+  baseRef: string | null;
   branches: string[];
   changedFiles: GitChangedFile[];
   /** Total number of changed files before capping to `changedFiles`. */
