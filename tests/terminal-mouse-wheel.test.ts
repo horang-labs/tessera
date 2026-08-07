@@ -184,3 +184,87 @@ test('replayed wheel-report clones must never re-enter scroll-intent tracking', 
     }
   }
 });
+
+// Ticket #257. A mouse report is a position, and the multiplier copies `clientX`/`clientY`
+// into every clone it dispatches — so a source event that cannot say where it happened
+// becomes several reports that cannot say where they happened. xterm encodes them as
+// `ESC [ < 65 ; NaN ; NaN M`, which no TUI can parse, and the tail prints as literal text.
+// Dropping the event costs nothing: under mouse reporting a wheel is a report, never a
+// scroll, so there is no second thing for xterm to do with it.
+test('a wheel event with no position is dropped instead of multiplied into mouse reports', async () => {
+  const originalWheelEvent = globalThis.WheelEvent;
+  Object.defineProperty(globalThis, 'WheelEvent', {
+    configurable: true,
+    value: TestWheelEvent,
+  });
+
+  try {
+    const handlers: Array<(event: WheelEvent) => boolean> = [];
+    const target = Object.assign(new EventTarget(), {
+      classList: {
+        contains: (className: string) => className === 'enable-mouse-events',
+      },
+      querySelector: () => ({
+        getBoundingClientRect: () => ({ height: 384 }),
+      }),
+    }) as unknown as EventTarget & HTMLElement;
+    const replayed: WheelEvent[] = [];
+    target.addEventListener('wheel', (event) => replayed.push(event as WheelEvent));
+
+    attachTerminalMouseWheelMultiplier({
+      attachCustomWheelEventHandler: (handler) => handlers.push(handler),
+      element: target,
+      rows: 24,
+    });
+
+    for (const [label, coordinates] of [
+      ['NaN', { clientX: Number.NaN, clientY: Number.NaN }],
+      ['half-NaN', { clientX: 200, clientY: Number.NaN }],
+      ['infinite', { clientX: Number.POSITIVE_INFINITY, clientY: 20 }],
+    ] as const) {
+      const event = new TestWheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaMode: DOM_DELTA_PIXEL,
+        deltaY: -16 * 12,
+        ...coordinates,
+      }) as WheelEvent;
+
+      assert.equal(
+        handlers[0]?.(event),
+        false,
+        `a ${label}-coordinate wheel event must be consumed, not handed on to xterm`,
+      );
+      await Promise.resolve();
+
+      assert.deepEqual(
+        replayed,
+        [],
+        `a ${label}-coordinate wheel event must produce no report clones`,
+      );
+    }
+
+    // The same multiplier must still work for the events that do carry a position, or the
+    // guard has bought the fix by disabling the feature.
+    const located = new TestWheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 200,
+      clientY: 300,
+      deltaMode: DOM_DELTA_PIXEL,
+      deltaY: -16 * 12,
+    }) as WheelEvent;
+    assert.equal(handlers[0]?.(located), false);
+    await Promise.resolve();
+    assert.equal(replayed.length, 12, 'a located wheel event must still be multiplied');
+  } finally {
+    if (originalWheelEvent) {
+      Object.defineProperty(globalThis, 'WheelEvent', {
+        configurable: true,
+        value: originalWheelEvent,
+      });
+    } else {
+      Reflect.deleteProperty(globalThis, 'WheelEvent');
+    }
+  }
+});
