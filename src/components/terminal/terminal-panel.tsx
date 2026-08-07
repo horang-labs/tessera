@@ -25,7 +25,9 @@ import {
   getTerminalSurface,
 } from '@/lib/terminal/terminal-surface-registry';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
+import { TerminalInputBar } from '@/components/terminal/terminal-input-bar';
 import { useIsDark } from '@/hooks/use-is-dark';
+import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
 import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
@@ -93,6 +95,7 @@ export function TerminalPanel({
   const tabId = useContext(TabIdContext);
   const { t } = useTranslation();
   const isDark = useIsDark();
+  const isPhoneViewport = usePhoneViewport();
   const fontScale = useSettingsStore((state) => state.settings.fontSize);
   const lightThemePreset = useSettingsStore((state) => state.settings.terminalThemeLightPreset);
   const darkThemePreset = useSettingsStore((state) => state.settings.terminalThemeDarkPreset);
@@ -352,6 +355,10 @@ export function TerminalPanel({
           </div>
         )}
       </div>
+      {/* Conditional render, never `display: none`: a desktop tree must not contain the
+          bar at all. The terminal above is not told about it — the bar writes to the PTY
+          through the registry, and the surface stays exactly as it was. */}
+      {isPhoneViewport && <TerminalInputBar terminalId={terminalId} />}
     </div>
   );
 }
