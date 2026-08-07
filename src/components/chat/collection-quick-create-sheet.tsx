@@ -26,6 +26,11 @@ import {
 } from './cli-provider-chip-selector';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
+import {
+  ANCHORED_VIEWPORT_MARGIN,
+  resolveAnchoredAlignedLeft,
+  resolveAnchoredSideLeft,
+} from '@/lib/ui/anchored-viewport';
 
 type QuickCreateMode = 'chat' | 'task';
 type QuickCreatePlacement = 'side' | 'top';
@@ -54,7 +59,6 @@ interface CollectionQuickCreateSheetProps {
 
 const ANCHORED_SHEET_WIDTH = 272;
 const ANCHORED_SHEET_GAP = 8;
-const ANCHORED_VIEWPORT_MARGIN = 12;
 
 interface CollectionQuickCreateModeShortcutInput {
   key: string;
@@ -224,24 +228,24 @@ export function CollectionQuickCreateSheet({
     let top: number;
 
     if (anchorPlacement === 'top') {
-      const maxLeft = Math.max(ANCHORED_VIEWPORT_MARGIN, viewportWidth - sheetWidth - ANCHORED_VIEWPORT_MARGIN);
       const maxTop = Math.max(ANCHORED_VIEWPORT_MARGIN, viewportHeight - sheetHeight - ANCHORED_VIEWPORT_MARGIN);
-      left = Math.min(
-        Math.max(ANCHORED_VIEWPORT_MARGIN, rect.right - sheetWidth),
-        maxLeft,
-      );
+      left = resolveAnchoredAlignedLeft({
+        anchorRight: rect.right,
+        elementWidth: sheetWidth,
+        viewportWidth,
+      });
       top = rect.top - sheetHeight - ANCHORED_SHEET_GAP;
       if (top < ANCHORED_VIEWPORT_MARGIN) {
         top = Math.min(rect.bottom + ANCHORED_SHEET_GAP, maxTop);
       }
     } else {
-      left = rect.right + ANCHORED_SHEET_GAP;
-      if (left + sheetWidth > viewportWidth - ANCHORED_VIEWPORT_MARGIN) {
-        const fallbackLeft = rect.left - sheetWidth - ANCHORED_SHEET_GAP;
-        left = fallbackLeft >= ANCHORED_VIEWPORT_MARGIN
-          ? fallbackLeft
-          : Math.max(ANCHORED_VIEWPORT_MARGIN, viewportWidth - sheetWidth - ANCHORED_VIEWPORT_MARGIN);
-      }
+      left = resolveAnchoredSideLeft({
+        anchorLeft: rect.left,
+        anchorRight: rect.right,
+        elementWidth: sheetWidth,
+        viewportWidth,
+        gap: ANCHORED_SHEET_GAP,
+      });
 
       top = rect.top;
       if (top + sheetHeight > viewportHeight - ANCHORED_VIEWPORT_MARGIN) {
