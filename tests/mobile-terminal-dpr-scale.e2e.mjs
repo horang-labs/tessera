@@ -95,6 +95,7 @@ try {
   await testBackingStoreFollowsDevicePixelRatio(browser, appOrigin, 1);
   await testBackingStoreFollowsDevicePixelRatio(browser, appOrigin, 2);
   await testBackingStoreFollowsDevicePixelRatio(browser, appOrigin, 3);
+  await testGlyphsKeepTheirCssSizeAcrossDevicePixelRatios(browser, appOrigin);
 } catch (error) {
   if (serverOutput) process.stderr.write(`\n--- isolated server output ---\n${serverOutput}\n`);
   throw error;
@@ -161,6 +162,115 @@ async function testBackingStoreFollowsDevicePixelRatio(browserInstance, origin, 
   } finally {
     await context.close();
   }
+}
+
+// The other half of the acceptance criterion: glyphs render at the same CSS size at DPR 3
+// as at DPR 1, so a full line of TUI output is legible instead of running off the right
+// edge. The measurement is taken from the painted pixels rather than from the dimensions
+// above, and it is the distance between two rows of text — a spacing, not a shape, so it
+// survives whatever a software rasteriser does to the edges of a glyph. What is compared
+// across ratios is the CSS distance, which is a device-independent number.
+async function testGlyphsKeepTheirCssSizeAcrossDevicePixelRatios(browserInstance, origin) {
+  const spacings = new Map();
+
+  for (const dpr of [1, 3]) {
+    const { context, page } = await createPhonePage(browserInstance, dpr);
+    try {
+      await openRepro(page, origin);
+      // Two marks one blank row apart. Any magnification of the glyph grid moves them
+      // apart by the same factor; keeping them adjacent means even a magnified pair still
+      // lands inside the canvas, so the failure reports the spacing rather than a row that
+      // has already been pushed off the screen.
+      await writeOutput(page, 'M\r\n\r\nM');
+      await page.waitForTimeout(1_000);
+      spacings.set(dpr, await measureRowSpacingInCssPixels(page, dpr));
+    } finally {
+      await context.close();
+    }
+  }
+
+  const baseline = spacings.get(1);
+  const scaled = spacings.get(3);
+  assert.ok(
+    baseline > 0 && scaled > 0,
+    `both runs must find two rows of painted text, got ${baseline} and ${scaled}`,
+  );
+  // A row of 13px text sits well inside this; three times that does not.
+  assert.ok(
+    Math.abs(scaled - baseline) <= 2,
+    'text rows must sit the same CSS distance apart at DPR 3 as at DPR 1, or the glyphs'
+      + ` are magnified: ${baseline.toFixed(1)}px at DPR 1 and ${scaled.toFixed(1)}px at DPR 3`,
+  );
+}
+
+// Screenshots the WebGL canvas and returns the CSS distance between the first two bands of
+// painted rows. The PNG is decoded by handing it back to the page: the browser is already
+// a decoder, and pulling in an image library for one measurement is not worth a dependency.
+async function measureRowSpacingInCssPixels(page, dpr) {
+  // The screen element is sized to the canvas by the same handleResize, and both canvases
+  // inside it share that CSS box, so clipping to it captures the glyphs and nothing else.
+  const box = await page.locator('.xterm-screen').boundingBox();
+  assert.ok(box, 'the terminal screen element should be measurable');
+
+  const shot = (await page.screenshot({ clip: box })).toString('base64');
+  const bands = await page.evaluate(async (encoded) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${encoded}`;
+    await image.decode();
+    const surface = document.createElement('canvas');
+    surface.width = image.width;
+    surface.height = image.height;
+    const context = surface.getContext('2d', { willReadFrequently: true });
+    context.drawImage(image, 0, 0);
+    const { data } = context.getImageData(0, 0, image.width, image.height);
+
+    // The top-left pixel is background: the terminal's first cell starts a glyph's width
+    // in, and a blank row would look the same anyway.
+    const background = [data[0], data[1], data[2]];
+    const isInk = (offset) => (
+      Math.abs(data[offset] - background[0])
+      + Math.abs(data[offset + 1] - background[1])
+      + Math.abs(data[offset + 2] - background[2])
+    ) > 60;
+
+    const inkedRows = [];
+    for (let y = 0; y < image.height; y += 1) {
+      let inked = false;
+      for (let x = 0; x < image.width && !inked; x += 1) {
+        inked = isInk((y * image.width + x) * 4);
+      }
+      inkedRows.push(inked);
+    }
+
+    const found = [];
+    let start = -1;
+    for (let y = 0; y <= inkedRows.length; y += 1) {
+      if (inkedRows[y]) {
+        if (start === -1) start = y;
+      } else if (start !== -1) {
+        found.push((start + y - 1) / 2);
+        start = -1;
+      }
+    }
+    return { centres: found };
+  }, shot);
+
+  assert.ok(
+    bands.centres.length >= 2,
+    `expected two bands of painted text in the canvas at DPR ${dpr},`
+      + ` found ${bands.centres.length} — a magnified glyph grid can push the second row`
+      + ' out of the canvas entirely, which is the clipping this ticket is about',
+  );
+  // The screenshot is in device pixels; the assertion compares CSS distances.
+  return (bands.centres[1] - bands.centres[0]) / dpr;
+}
+
+async function writeOutput(page, data) {
+  const written = await page.evaluate(
+    (value) => window.__tesseraTerminalScrollRepro?.writeOutput(value) ?? false,
+    data,
+  );
+  assert.equal(written, true, 'the repro page should accept terminal output');
 }
 
 function assertScaledBy(canvas, dpr, layer) {
