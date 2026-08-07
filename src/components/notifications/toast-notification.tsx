@@ -22,6 +22,16 @@ interface ToastNotificationProps {
 const COMPLETED_TOAST_DURATION_MS = 5000;
 const INTERACTIVE_TOAST_DURATION_MS = 10000;
 
+/**
+ * The toast that blocks a phone's input area is also the one the reporter could not
+ * dismiss: a 12px icon in 2px of padding is a 16px target. `max-sm` is Phone viewport —
+ * Tailwind's `sm` is 640px, and a media-query `rem` resolves against the browser's initial
+ * font size, so the boundary does not move with the user's font-scale setting. Desktop
+ * non-regression is structural: the rule does not exist above 640px.
+ */
+export const TOAST_DISMISS_TOUCH_TARGET =
+  'max-sm:flex max-sm:items-center max-sm:justify-center max-sm:min-w-11 max-sm:min-h-11';
+
 export function ToastNotification({ notification, onDismiss, onClick }: ToastNotificationProps) {
   const { t, language } = useI18n();
   const getSession = useSessionStore((s) => s.getSession);
@@ -100,7 +110,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
       onClick={onClick}
       data-testid="toast-notification"
       className={cn(
-        'w-[17rem] rounded-lg border border-(--toast-border) cursor-pointer',
+        'w-[17rem] max-w-full rounded-lg border border-(--toast-border) cursor-pointer',
         'bg-(--toast-bg)',
         'hover:bg-(--toast-bg-hover) transition-colors'
       )}
@@ -123,7 +133,12 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
               <span className="text-[0.625rem] text-(--toast-muted) shrink-0 ml-auto">{relativeTime}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); onDismissRef.current(); }}
-                className="p-0.5 rounded text-(--toast-muted) hover:text-(--text-primary) hover:bg-(--toast-icon-bg) transition-colors shrink-0"
+                data-testid="toast-dismiss"
+                className={cn(
+                  'p-0.5 rounded text-(--toast-muted) hover:text-(--text-primary)',
+                  'hover:bg-(--toast-icon-bg) transition-colors shrink-0',
+                  TOAST_DISMISS_TOUCH_TARGET,
+                )}
                 aria-label="Dismiss notification"
               >
                 <X className="w-3 h-3" />

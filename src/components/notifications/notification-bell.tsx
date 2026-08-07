@@ -30,6 +30,7 @@ export function NotificationBell({ direction = 'down' }: NotificationBellProps) 
     <div className="relative">
       <Button
         ref={buttonRef}
+        data-testid="notification-bell"
         variant="ghost"
         size={direction === 'right' ? 'icon-lg' : 'icon'}
         onClick={handleToggle}
