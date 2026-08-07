@@ -121,6 +121,18 @@ test('discarding attachments leaves markers that belong to something else alone'
   assert.equal(draft, 'keep [📷 9] drop');
 });
 
+test('discarding a marker leaves the rest of the draft spaced as it was', () => {
+  // Only the gap the marker left is the builder's business. A draft can hold a
+  // pasted code block, and re-flowing its indentation would be a change the user
+  // never asked for.
+  const draft = dropAttachmentPlaceholders(
+    'see [📷 1] this:\n    indented = 1\n        deeper = 2',
+    [imageAttachment(1)],
+  );
+
+  assert.equal(draft, 'see this:\n    indented = 1\n        deeper = 2');
+});
+
 test('a draft with nothing to discard is returned untouched', () => {
   assert.equal(dropAttachmentPlaceholders('  spacing  matters  ', []), '  spacing  matters  ');
 });

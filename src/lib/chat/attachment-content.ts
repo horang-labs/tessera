@@ -57,6 +57,10 @@ export function collectAttachmentIds(text: string): Set<number> {
  * Used when attachments are dropped without the draft being cleared, so the
  * draft is never left naming an attachment that no longer exists: the CLI would
  * be handed `[📷 1]` as literal text.
+ *
+ * Only the gap a marker leaves is closed — the single space in front of it goes
+ * with it. The rest of the draft is left spaced exactly as it was, because it
+ * may hold a pasted code block whose indentation is the point.
  */
 export function dropAttachmentPlaceholders(
   text: string,
@@ -71,10 +75,19 @@ export function dropAttachmentPlaceholders(
     const placeholder = attachment.kind === 'image'
       ? createImageAttachmentPlaceholder(attachment.id)
       : createFileAttachmentPlaceholder(attachment.id);
-    remaining = remaining.split(placeholder).join('');
+    // `[^\S\n]` is horizontal whitespace only: a marker on its own line must not
+    // swallow the newline above it.
+    remaining = remaining.replace(
+      new RegExp(`[^\\S\\n]?${escapeForRegExp(placeholder)}`, 'g'),
+      '',
+    );
   }
 
-  return remaining.replace(/[^\S\n]{2,}/g, ' ').trim();
+  return remaining.trim();
+}
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function splitAttachments(attachments: AttachmentContentItem[]) {

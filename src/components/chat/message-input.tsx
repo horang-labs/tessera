@@ -1646,11 +1646,17 @@ export function MessageInput({
 
         {/* Hidden file input.
 
-            `accept` names the image types the composer inlines, which is what a
-            phone picker reads to offer the gallery and the camera. The wildcard
-            entry keeps every other file attachable — this control uploads
-            arbitrary files too, and narrowing it to images would take that away.
-            No `capture`: forcing the camera would cost the gallery. */}
+            `accept` declares the image types the composer inlines. The wildcard
+            entry is what keeps every other file attachable: this one control
+            also uploads arbitrary files, and an image-only list would take that
+            away — the affordance is not worth removing half the control.
+
+            Be aware of what that costs: a list containing a wildcard accepts
+            everything, so a picker that would surface the gallery and camera for
+            an image-only input most likely will not here. Giving a phone that
+            affordance without narrowing this control needs a second, image-typed
+            entry point, which #254 did not open. No `capture` either — forcing
+            the camera would cost the gallery. */}
         <input
           ref={fileInputRef}
           type="file"
