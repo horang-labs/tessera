@@ -17,6 +17,7 @@ import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
 import {
   buildGitWorktreeAddArgs,
   listWorktreeBaseRefs,
+  recordWorktreeBaseRef,
   validateWorktreeBaseRef,
 } from '@/lib/worktrees/base-refs';
 
@@ -225,6 +226,11 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+
+  // `HEAD` where the caller named no base: that is the start point git just
+  // used, and it resolves to the branch the project has checked out rather
+  // than to a bare commit.
+  await recordWorktreeBaseRef(projectDir, branchName, selectedBaseRef ?? 'HEAD', runGit);
 
   if (taskId) {
     // Recorded here rather than by a follow-up call from the client, so the
