@@ -600,7 +600,13 @@ export const CollectionGroup = memo(function CollectionGroup({
             <div
               className={cn(
                 'flex items-center gap-0.5 transition-opacity duration-150',
-                isQuickCreateOpen ? 'opacity-100' : 'opacity-0 group-hover/collection:opacity-100',
+                // Below the Phone viewport step these stay visible: a phone has
+                // no hover, so a hover-revealed control is one it can never
+                // find. The reveal is kept from `sm` up, where a pointer is
+                // what actually drives the UI.
+                isQuickCreateOpen
+                  ? 'opacity-100'
+                  : 'opacity-100 sm:opacity-0 sm:group-hover/collection:opacity-100',
               )}
               onClick={(event) => event.stopPropagation()}
             >
