@@ -522,7 +522,7 @@ export function ChatLayout() {
   return (
     <KeyboardShortcutProvider>
       <ElectronTitlebarThemeSync />
-      <div className="flex h-screen flex-col overflow-hidden" data-testid="chat-layout">
+      <div className="flex h-dvh flex-col overflow-hidden" data-testid="chat-layout">
         <div className="flex flex-1 overflow-hidden">
           {/* Left panel — project strip + header + content (list/kanban) */}
           <LeftPanel

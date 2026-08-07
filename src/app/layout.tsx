@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import ThemeInitializer from '@/components/theme-initializer';
 import '@xterm/xterm/css/xterm.css';
 import 'monaco-editor/min/vs/editor/editor.main.css';
@@ -18,6 +18,18 @@ import {
 export const metadata: Metadata = {
   title: 'Tessera',
   description: 'Multi-provider chat development tool',
+};
+
+// `width` and `initialScale` restate Next's default; declaring `viewport` replaces it.
+// `interactiveWidget` is the part that matters: the browser default, `resizes-visual`,
+// lets the soft keyboard shrink only the visual viewport, so `dvh` never changes, the
+// terminal's ResizeObserver stays silent, and the input area ends up behind the keyboard.
+// `resizes-content` shrinks the layout viewport instead, at the cost of one PTY resize
+// per keyboard open.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  interactiveWidget: 'resizes-content',
 };
 
 // Inline script to prevent FOUC (Flash of Unstyled Content)
