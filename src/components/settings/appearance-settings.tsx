@@ -102,7 +102,9 @@ function TerminalThemePresetPicker({
       <div className="text-xs font-medium text-(--text-muted)">
         {mode === 'light' ? t('settings.terminalTheme.light') : t('settings.terminalTheme.dark')}
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      {/* The settings dialog is `w-full` below its cap, so two columns are 122px
+          each at 360px. Stacked below `sm`; unchanged from `sm` up. */}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {presets.map(({ id, nameKey, theme }) => {
           const selected = id === selectedId;
           const name = t(nameKey);

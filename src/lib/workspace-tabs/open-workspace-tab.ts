@@ -4,6 +4,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useBoardStore } from "@/stores/board-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { getRenderedViewMode } from "@/lib/viewport/rendered-view-mode";
 import {
   buildMemoryFileSessionId,
   buildWorkspaceFileSessionId,
@@ -17,10 +18,11 @@ interface FileOpenOptions {
 
 function canOpenFileInKanbanPeek(): boolean {
   const settingsState = useSettingsStore.getState();
-  const boardState = useBoardStore.getState();
+  // The rendered mode, not the stored one: a phone shows the list, so a peek
+  // opened here would have nothing rendering it and the tap would do nothing.
   return settingsState.settings.kanbanSessionOpenMode === "peek"
     && !settingsState.sidebarCollapsed
-    && boardState.viewMode === "board";
+    && getRenderedViewMode() === "board";
 }
 
 function tryOpenWorkspaceFileInKanbanPeek(
