@@ -19,6 +19,7 @@ import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/st
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useIsSessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
 import { TaskContextMenu } from './task-context-menu';
 import { wsClient } from '@/lib/ws/client';
@@ -239,13 +240,23 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const runtimePresentation = resolveSessionRuntimePresentation(session);
   return (
     <div
-      className="h-9 border-b border-(--chat-header-border) bg-(--chat-header-bg)"
+      className={cn(
+        'h-9 border-b border-(--chat-header-border) bg-(--chat-header-bg)',
+        // At Phone viewport the row's four controls are 44px tall, which a
+        // 36px row would clip. The height follows the targets instead of
+        // being restated, so it stays right if the floor ever moves (#259).
+        'max-sm:h-auto',
+      )}
       onContextMenu={handleContextMenu}
     >
       <div
         className={cn(
           'group/header flex h-full w-full items-center justify-between gap-2.5',
-          isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-2.5'
+          isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-2.5',
+          // 44px targets take 176px of the 283px this row has at 360px. The
+          // slack is taken back from the padding and the gap rather than from
+          // the four controls, because the title is what is left to lose (#259).
+          'max-sm:gap-1 max-sm:px-2',
         )}
       >
         {/* Left: Channel-style title */}
@@ -312,6 +323,11 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
               <ProviderBadge
                 providerId={session.provider}
                 className="h-5 rounded-md px-2 text-[10px] leading-none"
+                // "Claude Code" is 71px of a row that has 107px left once the
+                // four 44px targets are placed. The mark alone still says
+                // which provider this is, and what it gives back is the only
+                // room the session title has (#259).
+                labelClassName="max-sm:hidden"
                 fullLabel={!session.provider || session.provider === 'claude-code'}
               />
 
@@ -356,7 +372,11 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                 </>
               )}
 
-              <span className="min-w-4 flex-1" aria-hidden="true" />
+              {/* Inert grab area, so the title button is draggable past the end
+                  of its text. At Phone viewport there is no free space for it
+                  to absorb and no panel to drag a session onto, and its 16px
+                  minimum comes straight out of the title (#259). */}
+              <span className="min-w-4 flex-1 max-sm:hidden" aria-hidden="true" />
             </button>
           </div>
         )}
@@ -364,7 +384,16 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
         </div>
 
         {/* Right: actions */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div
+          className={cn(
+            'flex shrink-0 items-center gap-2',
+            // Dropping the gap at Phone viewport does not bring the glyphs
+            // closer together: each sits centred in 44px, so two neighbours
+            // are ~26px apart where the 18px boxes used to be 8px apart. The
+            // 24px it returns goes to the title.
+            'max-sm:gap-0',
+          )}
+        >
           {search?.isOpen ? (
             <MessageSearchBar
               query={search.query}
@@ -389,6 +418,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                   'rounded p-0.5 transition-all duration-150',
                   'text-(--text-muted) hover:text-(--sidebar-text-active)',
                   'hover:bg-(--sidebar-hover)',
+                  PHONE_TOUCH_TARGET,
                   isTerminalChatView && 'text-(--sidebar-text-active)',
                 )}
                 data-testid="terminal-view-toggle"
@@ -407,6 +437,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                 'rounded p-0.5 transition-all duration-150',
                 'text-(--text-muted) hover:text-(--sidebar-text-active)',
                 'hover:bg-(--sidebar-hover)',
+                PHONE_TOUCH_TARGET,
                 !search && 'pointer-events-none opacity-40',
               )}
               data-testid="message-search-open-button"
@@ -424,6 +455,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
               'rounded p-0.5 transition-all duration-150',
               'text-(--text-muted) hover:text-(--sidebar-text-active)',
               'hover:bg-(--sidebar-hover)',
+              PHONE_TOUCH_TARGET,
               'opacity-100'
             )}
             data-testid="header-more-button"
@@ -448,7 +480,10 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
               title={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
               aria-label={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
               data-testid="panel-close-button"
-              className="rounded p-0.5 transition-colors hover:bg-(--sidebar-hover)"
+              className={cn(
+                'rounded p-0.5 transition-colors hover:bg-(--sidebar-hover)',
+                PHONE_TOUCH_TARGET,
+              )}
             >
               <XIcon className="h-3.5 w-3.5 text-(--text-muted)" />
             </button>

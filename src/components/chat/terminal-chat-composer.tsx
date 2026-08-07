@@ -3,6 +3,7 @@
 import { memo, useCallback, useRef, useState } from 'react';
 import { ArrowUp, Loader2, Lock, SquareTerminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/stores/notification-store';
 import {
@@ -156,6 +157,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 aria-label={t('chat.send')}
                 className={cn(
                   'mb-0.5 shrink-0 rounded-md p-1.5 transition-colors',
+                  PHONE_TOUCH_TARGET,
                   canSubmit
                     ? 'bg-(--accent) text-white hover:opacity-90'
                     : 'text-(--text-muted) opacity-40',
@@ -179,7 +181,12 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 type="button"
                 onClick={() => setMode(sessionId, 'terminal')}
                 title={t('chat.viewAsTerminal')}
-                className="ml-auto flex items-center gap-1.5 text-(--text-muted) transition-colors hover:text-(--accent)"
+                className={cn(
+                  'ml-auto flex items-center gap-1.5 text-(--text-muted) transition-colors hover:text-(--accent)',
+                  // The label is hidden below `sm`, which left a bare 14px
+                  // glyph as the only way back to the terminal (#259).
+                  PHONE_TOUCH_TARGET,
+                )}
                 data-testid="terminal-chat-back-to-terminal"
               >
                 <SquareTerminal className="h-3.5 w-3.5 shrink-0" />

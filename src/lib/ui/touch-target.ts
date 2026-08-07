@@ -1,0 +1,41 @@
+/**
+ * The minimum hit area a control is given at Phone viewport (#259).
+ *
+ * `max-sm` is the Phone viewport step: 640px is Tailwind's `sm`, which is the
+ * boundary `phone-viewport.ts` defines, so CSS-side work lands on exactly it.
+ * Desktop non-regression is structural — above 640px these declarations do not
+ * exist at all, so a pointer keeps the small chrome it always had.
+ *
+ * ## Why px and not `min-h-11`
+ *
+ * The root font is `calc(16px * var(--font-scale))` and the user picks the
+ * scale from four options (`FONT_SCALE_OPTIONS`, 0.8125 to 1.375). So a `rem`
+ * hit area is a *different number of pixels per user*: Tailwind's `-11` step
+ * (2.75rem) is 44px at the default scale and 35.75px at 0.8125 — which is the
+ * scale QA was on when it measured #243's keys at 36px against a 44px cost
+ * (#262). A fingertip does not change size with a typography setting, so the
+ * floor is stated in the unit it is claimed in. Being a *minimum*, a control
+ * whose content outgrows it still grows.
+ *
+ * ## Only the box grows
+ *
+ * The glyph inside keeps the size the design gave it — the header has little
+ * width to spare and the ticket's scope leaves icon sizing alone. That is why
+ * this centres its content rather than stretching it: padding and hit area
+ * grow, the icon does not.
+ *
+ * A control this is applied to needs a container that can accommodate it. A
+ * row with a fixed `h-*` clips or overflows instead, so those rows carry
+ * `max-sm:h-auto` and let the target decide the height.
+ */
+export const PHONE_TOUCH_TARGET_PX = 44;
+
+/** Both axes — the default, for an icon-sized control. */
+export const PHONE_TOUCH_TARGET =
+  'max-sm:flex max-sm:items-center max-sm:justify-center max-sm:min-h-[44px] max-sm:min-w-[44px]';
+
+/**
+ * Height only, for a control that already spans its row. Forcing a minimum
+ * width on one of those would fight the layout that already gives it more.
+ */
+export const PHONE_TOUCH_TARGET_HEIGHT = 'max-sm:min-h-[44px]';
