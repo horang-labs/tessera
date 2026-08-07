@@ -51,6 +51,10 @@ const panelWrapperSource = fs.readFileSync(new URL('../src/components/panel/pane
 const panelStoreSource = fs.readFileSync(new URL('../src/stores/panel-store.ts', import.meta.url), 'utf8');
 const tabItemSource = fs.readFileSync(new URL('../src/components/tab/tab-item.tsx', import.meta.url), 'utf8');
 const tabBarSource = fs.readFileSync(new URL('../src/components/tab/tab-bar.tsx', import.meta.url), 'utf8');
+// The tab title derivation moved out of tab-item when the Phone viewport tab list needed the
+// same names (#247); the rule is unchanged, and tests/tab-display-title.test.ts asserts it
+// directly rather than through source text.
+const tabDisplayTitleSource = fs.readFileSync(new URL('../src/lib/tab/tab-display-title.ts', import.meta.url), 'utf8');
 const panelTypesSource = fs.readFileSync(new URL('../src/types/panel.ts', import.meta.url), 'utf8');
 const prepareElectronRuntimeSource = fs.readFileSync(new URL('../scripts/prepare-electron-runtime.mjs', import.meta.url), 'utf8');
 const serverChildSource = fs.readFileSync(new URL('../electron/server-child.ts', import.meta.url), 'utf8');
@@ -552,7 +556,7 @@ test('terminal panels offer only safe restarts for unsupported live theme change
 
 test('terminal-only tabs can be dragged into another panel tree', () => {
   assert.match(tabItemSource, /Object\.values\(panels\)\.some\(\(panel\) => panel\.terminalId\)/);
-  assert.match(tabItemSource, /displayTitle = 'Terminal'/);
+  assert.match(tabDisplayTitleSource, /activePanelTerminalId\) return 'Terminal'/);
   assert.doesNotMatch(panelWrapperSource, /droppedTabTreeId && sourceTabData && Object\.keys\(sourceTabData\.panels\)\.length > 1/);
 });
 
