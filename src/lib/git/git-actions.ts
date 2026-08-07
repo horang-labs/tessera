@@ -38,6 +38,10 @@ import type {
 } from "@/types/git";
 import { detectGitConflictOperation } from "./git-conflict-state";
 import { parseGitStatus } from "./git-status";
+import {
+  resolveConfiguredUpstream,
+  type ConfiguredUpstream,
+} from "./upstream-config";
 
 /**
  * Reads around the action — status before, commit identity after. These are
@@ -213,8 +217,13 @@ async function runCommit(
  * missing. Which of the two ran is read back from the repository afterwards and
  * reported, so a first push is explained after the fact as well as before it
  * (`docs/design/git-delivery.md` §7).
+ *
+ * Exported for the same reason `runCreatePullRequest` is: the state it has to
+ * refuse — a push that succeeds and leaves the branch tracking nothing — is one
+ * no real repository can be asked to produce on demand, so a test supplies the
+ * runner instead. `executeGitAction` is the only production caller.
  */
-async function runPush(
+export async function runPush(
   target: GitActionTarget,
   runGit: GitRunner,
 ): Promise<GitActionResult> {
@@ -227,10 +236,13 @@ async function runPush(
     );
   }
 
-  const upstream = await readUpstream(target.workDir, runGit);
-  const args = upstream
-    ? ["push"]
-    : ["push", "--set-upstream", await resolvePushRemote(target, runGit), branch];
+  const upstream = await readUpstream(target.workDir, runGit, branch);
+  // Kept in a variable rather than inlined: the failure below names the remote
+  // the push went to, and by then the arguments have been forgotten.
+  const remote = upstream ? null : await resolvePushRemote(target, runGit);
+  const args = remote
+    ? ["push", "--set-upstream", remote, branch]
+    : ["push"];
 
   try {
     // No `timeoutMs`: the runner's own generous default stands, because a
@@ -246,16 +258,69 @@ async function runPush(
     };
   }
 
+  // Read back rather than assembled: after `--set-upstream` this is Git's own
+  // answer about which remote branch now exists.
+  const remoteBranch = (await readUpstream(target.workDir, runGit, branch)) ?? upstream;
+  if (!remoteBranch) {
+    // We pushed *with* `--set-upstream` and still cannot see an upstream. That
+    // is a contradiction, not a success: the two facts cannot both hold unless
+    // something outside the push is swallowing the tracking link.
+    return {
+      ok: false,
+      failure: await describeMissingTrackingRef(target, branch, remote, runGit),
+    };
+  }
+
   return {
     ok: true,
     outcome: {
       action: "push",
       branch,
-      // Read back rather than assembled: after `--set-upstream` this is Git's
-      // own answer about which remote branch now exists.
-      remoteBranch: (await readUpstream(target.workDir, runGit)) ?? upstream,
+      remoteBranch,
       setUpstream: !upstream,
     },
+  };
+}
+
+/**
+ * The push landed and the branch still tracks nothing.
+ *
+ * In practice this is one repository shape: a clone whose `remote.origin.fetch`
+ * covers only some branches. `--set-upstream` writes the config, but Git
+ * resolves an upstream through the refspec, so the link it just wrote is one it
+ * will not read back — and `git push` exits 0 saying "Everything up-to-date"
+ * because the commit really is on the remote. Left as a success this is the
+ * worst failure the panel can have: the button reports done, nothing changes,
+ * and the next refresh offers the same button again.
+ *
+ * The message carries the fetch that repairs it. Tessera does not run it: a
+ * refspec is the user's decision about what their clone holds, and widening it
+ * behind their back would fetch refs they narrowed it to avoid.
+ */
+async function describeMissingTrackingRef(
+  target: GitActionTarget,
+  branch: string,
+  remote: string | null,
+  runGit: GitRunner,
+): Promise<GitActionFailure> {
+  const remoteName = remote ?? "origin";
+  const repoRoot = await readRepoRoot(target.workDir, runGit);
+  const message = [
+    `Pushed ${branch} to ${remoteName}, but this repository still has no remote-tracking`,
+    ` ref for it: its fetch refspec does not cover ${branch}, so Git cannot tell whether the`,
+    ` branch is published or how far ahead it is. Create the ref with:\n`,
+    `  git -C ${repoRoot} fetch ${remoteName} ${branch}:refs/remotes/${remoteName}/${branch}`,
+  ].join("");
+
+  return {
+    kind: "no_tracking_ref",
+    message,
+    // Nothing failed on either stream — the push itself succeeded, and saying so
+    // with an empty stderr is more honest than inventing one.
+    stderr: "",
+    stdout: "",
+    exitCode: 0,
+    changedFiles: await readChangeSet(target, runGit).catch(() => []),
   };
 }
 
@@ -281,7 +346,7 @@ export async function runCreatePullRequest(
     );
   }
 
-  const upstream = await readUpstream(workDir, runGit);
+  const upstream = await readUpstream(workDir, runGit, branch);
   if (!upstream) {
     // The ladder only offers this rung to a branch that tracks; a click that
     // raced the state lands here rather than in gh's own prompt.
@@ -455,11 +520,17 @@ async function runPull(
     );
   }
 
-  const upstream = await readUpstream(target.workDir, runGit);
+  const upstream = await readUpstream(target.workDir, runGit, branch);
   if (!upstream) {
     // The ladder only offers Pull on a branch that is behind something, which
     // takes an upstream; this is the handler-side guard for a click that raced
     // the state it was derived from.
+    //
+    // It stays a rejection rather than becoming "nothing to pull": a pull that
+    // cannot name where it would pull from has not established that there is
+    // nothing to bring in, and reporting it as a no-op would leave the branch
+    // silently behind. The panel now resolves an upstream from config too, so
+    // reaching here means the branch genuinely tracks nothing.
     throw new GitActionRejection(
       "no_upstream",
       "This branch has no upstream to pull from",
@@ -639,7 +710,6 @@ async function readRepoRoot(workDir: string, runGit: GitRunner): Promise<string>
   return result?.stdout.trim() || workDir;
 }
 
-/** Null both when there is no upstream and when Git could not be asked. */
 /**
  * A ref as `gh` wants it: the branch name, with whatever qualified it removed.
  * Matches Orca's `normalizeHostedReviewBaseRef`, which the values written into
@@ -692,16 +762,49 @@ async function readRecordedPullRequestBase(
   return onRemote ? base : null;
 }
 
+/**
+ * The branch this one tracks, or null when it tracks nothing.
+ *
+ * `@{upstream}` is asked first because it is the one answer Git itself vouches
+ * for, and the config pair second because `@{upstream}` is resolved through the
+ * fetch refspec: a clone narrowed to a couple of branches refuses it for every
+ * other branch, published or not (`upstream-config.ts`). Reading that refusal as
+ * "no upstream" is what made `runPush` pass `--set-upstream` to a branch that
+ * already had one, forever.
+ *
+ * `branch` comes from the caller because every caller has already read it, and
+ * this is a fallback path that should not spend a process re-reading it.
+ */
 async function readUpstream(
   workDir: string,
   runGit: GitRunner,
+  branch: string | null,
 ): Promise<string | null> {
   const result = await runGit(
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
     { cwd: workDir, timeoutMs: PROBE_TIMEOUT_MS },
   ).catch(() => null);
 
-  return result?.stdout.trim() || null;
+  const resolved = result?.stdout.trim();
+  if (resolved) return resolved;
+
+  return (await readConfiguredUpstream(workDir, runGit, branch))?.name ?? null;
+}
+
+/** What `branch.<name>.remote` and `branch.<name>.merge` say, or null. */
+async function readConfiguredUpstream(
+  workDir: string,
+  runGit: GitRunner,
+  branch: string | null,
+): Promise<ConfiguredUpstream | null> {
+  if (!branch) return null;
+
+  const result = await runGit(
+    ["config", "--get-regexp", "^branch\\..*\\.(remote|merge)$"],
+    { cwd: workDir, timeoutMs: PROBE_TIMEOUT_MS },
+  ).catch(() => null);
+
+  return resolveConfiguredUpstream(result?.stdout ?? null, branch);
 }
 
 interface CommitPathspec {

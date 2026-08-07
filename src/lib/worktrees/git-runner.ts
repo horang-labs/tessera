@@ -39,11 +39,17 @@ export const DEFAULT_GIT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
  *
  * `hook_rejected` earns its place by answering a different question from the
  * others: the tool worked and the user's own code was refused.
+ *
+ * `no_tracking_ref` answers a third: the command *succeeded* and left the
+ * repository in a state the panel cannot read. Nothing here produces it —
+ * classification works from stderr and there is none — but it is a Git failure
+ * kind because it travels the same way to the same UI (`runPush`).
  */
 export type GitFailureKind =
   | 'authentication'
   | 'not_found'
   | 'hook_rejected'
+  | 'no_tracking_ref'
   | 'timeout'
   | 'spawn_failed'
   | 'command_failed';

@@ -48,10 +48,14 @@ export interface GitStateSnapshot {
   branch: string | null;
   /** The tracking branch, or null when this branch has never been published. */
   upstream: string | null;
-  /** Commits this branch has that its upstream does not. */
-  ahead: number;
-  /** Commits the upstream has that this branch does not. */
-  behind: number;
+  /**
+   * Commits this branch has that its upstream does not, and `null` when Git
+   * cannot count — the branch tracks, but no remote-tracking ref exists to
+   * compare against (`@/types/git`). `null` is not zero anywhere below.
+   */
+  ahead: number | null;
+  /** Commits the upstream has that this branch does not; `null` as above. */
+  behind: number | null;
   /** Uncommitted entries in the working tree. */
   changedFileCount: number;
   /** False when the repository has no remote to push to at all. */
@@ -201,13 +205,18 @@ export function derivePrimaryGitAction(
   // Above the ahead rung, and only ever with an upstream to pull from: a branch
   // that is behind cannot fast-forward its own push anyway, and one that has
   // never been published has nothing to be behind (§3).
-  if (!blocked && snapshot.upstream && snapshot.behind > 0) {
+  if (!blocked && snapshot.upstream && snapshot.behind !== null && snapshot.behind > 0) {
     return pullAction(snapshot.behind);
   }
 
   if (!snapshot.upstream) return publishAction(!blocked, blocked);
   if (blocked) return pushAction(false, blocked);
-  if (snapshot.ahead > 0) return pushAction(true, null);
+  // An uncounted branch gets the push rung rather than dropping through it. The
+  // rung below says "there is nothing left to push", and this is precisely the
+  // state where that cannot be established: pushing is idempotent, so offering
+  // it costs a branch that was already in sync nothing, while skipping it would
+  // hide commits that never reached the remote.
+  if (snapshot.ahead === null || snapshot.ahead > 0) return pushAction(true, null);
 
   // Committed, pushed and tracking: the only step of delivery left is the pull
   // request (§3). A branch that already has one drops through to the push rung,

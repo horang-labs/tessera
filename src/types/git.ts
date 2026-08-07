@@ -87,9 +87,22 @@ export interface GitPanelData {
   branch: string;
   /** True when HEAD is detached, so `branch` names no branch Git would push. */
   detached: boolean;
+  /**
+   * The branch this one tracks. Resolved from `branch.<name>.remote` +
+   * `branch.<name>.merge` when `@{upstream}` will not answer, which it refuses
+   * to do for any branch this clone's fetch refspec does not map — published or
+   * not (`src/lib/git/upstream-config.ts`).
+   */
   upstream: string | null;
-  ahead: number;
-  behind: number;
+  /**
+   * Commits on each side of the upstream, and `null` when there is no local way
+   * to count them: no remote-tracking ref exists, so there is nothing here to
+   * compare HEAD against. Distinct from `0`, which is a branch known to be in
+   * sync — reporting the two the same way is what made every divergence look
+   * like "nothing to do".
+   */
+  ahead: number | null;
+  behind: number | null;
   /** `origin` only. A repository can have a remote without this being set. */
   remoteUrl: string | null;
   /** True when the repository has any remote at all, whatever it is named. */
