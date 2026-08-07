@@ -72,6 +72,7 @@ import {
 import { toast } from '@/stores/notification-store';
 import { useVoiceInput } from '@/hooks/use-voice-input';
 import { useMessageInputAttachments } from '@/hooks/use-message-input-attachments';
+import { dropAttachmentPlaceholders } from '@/lib/chat/attachment-content';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { VoiceRecordingOverlay } from './voice-recording-overlay';
 import { tinykeys } from 'tinykeys';
@@ -204,7 +205,15 @@ export function MessageInput({
   const prevSessionIdRef = useRef(sessionId);
   useEffect(() => {
     if (prevSessionIdRef.current !== sessionId) {
-      setDraftInput(prevSessionIdRef.current, inputValue);
+      // One composer serves whichever session is open, but attachments are held
+      // by the composer rather than by a session. Carrying them across would
+      // send one session's image from another (#254), so they are dropped here —
+      // and their markers go out of the draft being left behind with them.
+      setDraftInput(
+        prevSessionIdRef.current,
+        dropAttachmentPlaceholders(inputValue, attachments),
+      );
+      clearAttachments();
       const draft = useChatStore.getState().getDraftInput(sessionId);
       setInputValue(draft);
       prevSessionIdRef.current = sessionId;
@@ -310,7 +319,6 @@ export function MessageInput({
     handleFileSelect,
     handlePaste,
     handleRemoveAttachment,
-    syncAttachmentsWithText,
   } = useMessageInputAttachments({
     textareaRef,
     setInputValue: setInputValueFromProgrammaticEdit,
@@ -555,10 +563,13 @@ export function MessageInput({
       skillPicker.onInputChange(value);
       const cursor = textareaRef.current?.selectionStart ?? value.length;
       filePicker.onInputChange(value, cursor);
-      syncAttachmentsWithText(value);
+      // Editing the text deliberately does not drop attachments. The marker is
+      // ordinary editable text, and losing an image because the message around
+      // it was rewritten is what #254 was; the strip's remove control is how an
+      // attachment is taken back.
       syncSessionRefsWithText(value);
     },
-    [sessionId, setDraftInput, skillPicker, filePicker, syncAttachmentsWithText, syncSessionRefsWithText],
+    [sessionId, setDraftInput, skillPicker, filePicker, syncSessionRefsWithText],
   );
 
   // --- File drop handlers (OS file explorer → textarea) ---
@@ -1633,11 +1644,18 @@ export function MessageInput({
           />
         )}
 
-        {/* Hidden file input */}
+        {/* Hidden file input.
+
+            `accept` names the image types the composer inlines, which is what a
+            phone picker reads to offer the gallery and the camera. The wildcard
+            entry keeps every other file attachable — this control uploads
+            arbitrary files too, and narrowing it to images would take that away.
+            No `capture`: forcing the camera would cost the gallery. */}
         <input
           ref={fileInputRef}
           type="file"
           multiple
+          accept="image/png,image/jpeg,image/gif,image/webp,*/*"
           className="hidden"
           onChange={handleFileSelect}
           tabIndex={-1}
