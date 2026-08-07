@@ -314,11 +314,39 @@ function sendButton(page) {
   return composerRow(page).getByTestId('message-send-btn');
 }
 
+/**
+ * How far past its own box each container the composer sits in is pushed.
+ *
+ * The document scroller alone would prove nothing: the chat view's root clips
+ * (`overflow-hidden`), so a composer wide enough to push the send button off the
+ * screen still leaves `document.scrollingElement` exactly the viewport's width.
+ * The clipping is why the button becomes unreachable rather than scrollable-to,
+ * so the containers that do the clipping have to be measured themselves.
+ */
 function horizontalOverflow(page) {
   return page.evaluate(() => {
     const scroller = document.scrollingElement ?? document.documentElement;
-    return { scrollWidth: scroller.scrollWidth, clientWidth: scroller.clientWidth };
+    const measure = (element) => (element ? {
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+    } : null);
+    return {
+      document: measure(scroller),
+      chatView: measure(document.querySelector('[data-testid="chat-layout"]')),
+      composerRow: measure(document.querySelector('[data-testid="message-input-row"]')),
+    };
   });
+}
+
+function assertNoHorizontalOverflow(overflow, where) {
+  for (const [name, box] of Object.entries(overflow)) {
+    assert.ok(box, `${name} was not measurable`);
+    assert.ok(
+      box.scrollWidth <= box.clientWidth + 1,
+      `${name} was pushed wider than its own box ${where}`
+        + ` (content ${box.scrollWidth}px in ${box.clientWidth}px)`,
+    );
+  }
 }
 
 async function capture(page, name) {
@@ -343,6 +371,10 @@ async function capture(page, name) {
  * and the send button, being last, goes first. Filling past the counter's
  * threshold is the cheapest way to ask for that pixel using only the composer's
  * own UI, and it is an ordinary thing to do on a phone: paste a long log.
+ *
+ * Both assertions were watched failing on the unfixed build in this state: the
+ * send button's box ended at x=364.18 in a 360px viewport, and the composer row
+ * demanded 355px inside its 324px box.
  */
 async function phase1() {
   const { context, page } = await openPhonePage();
@@ -361,12 +393,9 @@ async function phase1() {
       `the send button was outside the ${PHONE_VIEWPORT.width}px viewport: ${JSON.stringify(box)}`,
     );
 
+    // Measured in the filled state, which is the state the slack disappears in.
     const overflow = await horizontalOverflow(page);
-    assert.ok(
-      overflow.scrollWidth <= overflow.clientWidth + 1,
-      `the chat view scrolled horizontally at ${PHONE_VIEWPORT.width}px`
-        + ` (content ${overflow.scrollWidth}px in ${overflow.clientWidth}px)`,
-    );
+    assertNoHorizontalOverflow(overflow, `at ${PHONE_VIEWPORT.width}px`);
 
     // Shrinking is only a fix if what shrank is still usable.
     const textareaBox = await textarea.boundingBox();
@@ -387,19 +416,7 @@ async function phase1() {
       'the composer textarea did not accept typing',
     );
 
-    // The mechanism behind both assertions above: the row must not demand more
-    // width than it has.
-    const row = await composerRow(page).evaluate((element) => ({
-      scrollWidth: element.scrollWidth,
-      clientWidth: element.clientWidth,
-    }));
-    assert.ok(
-      row.scrollWidth <= row.clientWidth + 1,
-      `the composer row demanded more width than it had`
-        + ` (content ${row.scrollWidth}px in ${row.clientWidth}px)`,
-    );
-
-    results.push({ phase: 1, sendButton: box, textarea: textareaBox, row });
+    results.push({ phase: 1, sendButton: box, textarea: textareaBox, overflow });
   } finally {
     await context.close().catch(() => {});
   }
@@ -407,56 +424,75 @@ async function phase1() {
 
 /**
  * Phase 2 — the overriding constraint for this wave: the desktop composer must
- * not regress. `min-w-0` has nothing to shrink where width is ample, so the row
- * must lay out exactly as it did: the textarea takes the space the fixed-size
- * controls leave, and the send button sits at the right-hand end of the row.
+ * not regress, and "pixel-identical to before" is asserted rather than argued.
  *
- * Measured either side of the change at 1280x900, which is the evidence these
- * assertions stand on rather than an argument from the CSS: row 722px wide,
- * textarea 596px at x=459.5, send button 32.3px at x=1100.35 — identical before
- * and after.
+ * Both sides of "before and after" are measured in the same page, by taking the
+ * three utilities this ticket added off the live elements, measuring, putting
+ * them back and measuring again. A recorded baseline would compare across
+ * machines and fonts; this compares the only two things the criterion is about,
+ * under identical conditions. It is the one place in this file that names the
+ * utilities, and it names them because they are what is being switched off.
  */
 async function phase2() {
   const { context, page } = await openDesktopPage();
   try {
-    const textarea = await openComposer(page);
-    const row = composerRow(page);
+    await openComposer(page);
 
-    const rowBox = await row.boundingBox();
-    const textareaBox = await textarea.boundingBox();
-    const buttonBox = await sendButton(page).boundingBox();
-    assert.ok(rowBox && textareaBox && buttonBox, 'the desktop composer was not measurable');
+    const before = await measureComposer(page, { withFix: false });
+    const after = await measureComposer(page, { withFix: true });
 
-    // The textarea takes everything the fixed-size controls leave, exactly as
-    // before: `min-w-0` lowers a floor, and there is nothing here pressing on it.
-    const takenByControls = rowBox.width - textareaBox.width;
+    for (const part of ['row', 'textarea', 'sendButton']) {
+      for (const edge of ['x', 'y', 'width', 'height']) {
+        assert.equal(
+          after[part][edge].toFixed(2),
+          before[part][edge].toFixed(2),
+          `the desktop composer moved when the fix was applied:`
+            + ` ${part}.${edge} ${before[part][edge]} -> ${after[part][edge]}`,
+        );
+      }
+    }
+
+    // And it is laid out the way it is supposed to be, not identically broken.
     assert.ok(
-      takenByControls <= 160,
+      after.textarea.width > after.row.width / 2,
       `the desktop textarea stopped filling the row:`
-        + ` ${textareaBox.width}px of ${rowBox.width}px, ${takenByControls}px elsewhere`,
-    );
-    const gapToRowEnd = (rowBox.x + rowBox.width) - (buttonBox.x + buttonBox.width);
-    assert.ok(
-      gapToRowEnd >= 0 && gapToRowEnd <= 10,
-      `the desktop send button left its place at the end of the row:`
-        + ` ${gapToRowEnd}px short of the row's right edge`,
+        + ` ${after.textarea.width}px of ${after.row.width}px`,
     );
     assert.ok(
-      buttonBox.width >= 32 && buttonBox.height >= 32,
-      `the desktop send button changed size: ${JSON.stringify(buttonBox)}`,
+      after.sendButton.x + after.sendButton.width <= after.row.x + after.row.width + 1,
+      `the desktop send button left the row: ${JSON.stringify(after.sendButton)}`,
     );
 
-    const overflow = await horizontalOverflow(page);
-    assert.ok(
-      overflow.scrollWidth <= overflow.clientWidth + 1,
-      `the desktop chat view scrolled horizontally`
-        + ` (content ${overflow.scrollWidth}px in ${overflow.clientWidth}px)`,
-    );
+    assertNoHorizontalOverflow(await horizontalOverflow(page), 'at desktop width');
 
-    results.push({ phase: 2, row: rowBox, textarea: textareaBox, sendButton: buttonBox });
+    results.push({ phase: 2, before, after });
   } finally {
     await context.close().catch(() => {});
   }
+}
+
+/**
+ * Measures the composer with this ticket's three utilities either off or on.
+ *
+ * The wrapper and the controls container are reached through the textarea and
+ * the send button rather than by class, so only the utilities under test are
+ * named here.
+ */
+function measureComposer(page, { withFix }) {
+  return page.evaluate((applyFix) => {
+    const row = document.querySelector('[data-testid="message-input-row"]');
+    const textarea = row.querySelector('textarea[data-session-input]');
+    const sendButton = row.querySelector('[data-testid="message-send-btn"]');
+    textarea.parentElement.classList.toggle('min-w-0', applyFix);
+    textarea.classList.toggle('min-w-0', applyFix);
+    sendButton.parentElement.classList.toggle('shrink-0', applyFix);
+
+    const box = (element) => {
+      const rect = element.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    };
+    return { row: box(row), textarea: box(textarea), sendButton: box(sendButton) };
+  }, withFix);
 }
 
 // ------------------------------------------------------------------- main ---
