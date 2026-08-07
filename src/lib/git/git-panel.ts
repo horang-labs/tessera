@@ -503,10 +503,50 @@ function resolveGitHubPanelState(
   };
 }
 
-function getDefaultBranchName(raw: string | null): string | null {
+/**
+ * The default branch, read from whichever remote this clone actually has.
+ *
+ * `origin` is a convention rather than a guarantee — `git clone -o upstream`
+ * names it otherwise — and the name is not needed to ask the question, only to
+ * pick among the answers. `for-each-ref` over every remote's HEAD therefore
+ * keeps this a single batched command, where `symbolic-ref` against a fixed
+ * `origin` simply failed.
+ *
+ * A null answer here is not harmless: §8's confirmation compares the branch
+ * about to be pushed against this name, so a clone whose remote is called
+ * anything else pushed to its own default branch without ever being asked.
+ */
+export function getDefaultBranchName(
+  raw: string | null,
+  remoteListRaw: string | null,
+): string | null {
   if (!raw) return null;
-  const match = raw.trim().match(/refs\/remotes\/origin\/(.+)$/);
-  return match?.[1] ?? null;
+
+  const headsByRemote = new Map<string, string>();
+  for (const line of raw.split("\n")) {
+    // `<refname> <symref>`. A remote HEAD left as a plain commit rather than a
+    // symbolic ref has an empty second field and names no branch.
+    const [refName, symRef] = line.trim().split(/\s+/);
+    if (!refName || !symRef) continue;
+    const remote = refName.match(/^refs\/remotes\/(.+)\/HEAD$/)?.[1];
+    if (!remote) continue;
+    const prefix = `refs/remotes/${remote}/`;
+    if (!symRef.startsWith(prefix)) continue;
+    headsByRemote.set(remote, symRef.slice(prefix.length));
+  }
+
+  // `origin` first where it exists, then Git's own order, then whatever is left
+  // — a single-remote clone answers on the first hit whatever it named that
+  // remote, and the fallback covers a remote list that failed to read.
+  const remotes = (remoteListRaw ?? "")
+    .split("\n")
+    .map((remote) => remote.trim())
+    .filter(Boolean);
+  for (const remote of ["origin", ...remotes, ...headsByRemote.keys()]) {
+    const branch = headsByRemote.get(remote);
+    if (branch) return branch;
+  }
+  return null;
 }
 
 function getRecentCommitArgs(hasUpstream: boolean): string[] {
@@ -598,7 +638,11 @@ function getGitPanelBatchCommands(): GitBatchCommand[] {
     { key: "remotes", args: ["remote"] },
     {
       key: "defaultBranch",
-      args: ["symbolic-ref", "refs/remotes/origin/HEAD"],
+      args: [
+        "for-each-ref",
+        "--format=%(refname) %(symref)",
+        "refs/remotes/*/HEAD",
+      ],
     },
     {
       key: "branchList",
@@ -717,7 +761,7 @@ async function getSeparateGitPanelSnapshot(
     runOptionalGitCommand(["remote", "get-url", "origin"], workDir, agentEnvironment),
     runOptionalGitCommand(["remote"], workDir, agentEnvironment),
     runOptionalGitCommand(
-      ["symbolic-ref", "refs/remotes/origin/HEAD"],
+      ["for-each-ref", "--format=%(refname) %(symref)", "refs/remotes/*/HEAD"],
       workDir,
       agentEnvironment,
     ),
@@ -880,7 +924,7 @@ export async function getGitPanelData(
     // is whether a push has anywhere to go.
     hasRemote: Boolean(remoteListRaw?.trim()),
     repoUrl: normalizeGithubUrl(remoteUrl),
-    defaultBranch: getDefaultBranchName(defaultBranchRaw),
+    defaultBranch: getDefaultBranchName(defaultBranchRaw, remoteListRaw),
     branches: (branchListRaw ?? "")
       .split("\n")
       .map((b) => b.trim())
