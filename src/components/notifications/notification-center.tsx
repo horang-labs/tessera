@@ -12,6 +12,7 @@ import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { switchToSessionProject } from '@/lib/session/switch-session-project';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 
@@ -97,7 +98,9 @@ function NotificationCenterContent({
     // Kanban peek mode: open the session in the board peek panel instead of a tab
     const boardStore = useBoardStore.getState();
     const peekMode = useSettingsStore.getState().settings.kanbanSessionOpenMode === 'peek';
-    if (boardStore.viewMode === 'board' && peekMode) {
+    // The rendered mode, not the stored one: a phone shows the list, so a peek
+    // opened here would have nothing rendering it and the tap would do nothing.
+    if (getRenderedViewMode() === 'board' && peekMode) {
       boardStore.openSessionPeek(sessionId);
       onClose();
       return;
