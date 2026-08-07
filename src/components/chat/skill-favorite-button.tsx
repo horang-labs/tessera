@@ -188,7 +188,9 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                       onClick={() => handleRemoveFavorite(skillName)}
                       className={cn(
                         'shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full',
-                        'text-(--text-muted) opacity-0 group-hover:opacity-100',
+                        // Visible below the Phone viewport step, hover-revealed from `sm`
+                        // up: a phone has no hover for the reveal to run on (#250).
+                        'text-(--text-muted) opacity-100 sm:opacity-0 sm:group-hover:opacity-100',
                         'hover:bg-(--error)/15 hover:text-(--error)',
                         'transition-all duration-150',
                       )}

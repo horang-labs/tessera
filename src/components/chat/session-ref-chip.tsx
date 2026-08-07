@@ -69,7 +69,9 @@ export function SessionRefChip({ item, onRemove, onRetry }: SessionRefChipProps)
         className={cn(
           'w-4 h-4 flex items-center justify-center rounded-full',
           'text-(--text-muted) text-[10px] leading-none',
-          'opacity-0 group-hover:opacity-100 transition-opacity',
+          // Visible below the Phone viewport step, hover-revealed from `sm` up: a phone
+          // has no hover for the reveal to run on (#250).
+          'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity',
           'hover:bg-(--error)/20 hover:text-(--error)',
         )}
         aria-label={`Remove session reference: ${item.title}`}

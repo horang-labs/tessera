@@ -42,8 +42,11 @@ interface TimestampFormatterProps {
   formatFullTime: (timestamp: string) => string;
 }
 
+// Below the Phone viewport step these actions are simply present: `hover:` compiles to
+// `@media (hover: hover)`, so on a phone no rule exists to reveal them. The reveal is kept
+// from `sm` up, where a pointer is what drives the UI (#250).
 const MESSAGE_ACTIONS_CLASS =
-  'ml-auto inline-flex shrink-0 items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
+  'ml-auto inline-flex shrink-0 items-center gap-1 opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none transition-opacity sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
 
 const MESSAGE_ACTION_BUTTON_CLASS =
   'inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
@@ -342,7 +345,7 @@ const UserMessage = memo(function UserMessage({
         <div className="flex items-baseline gap-2 mb-1 max-w-2xl">
           <span className="text-sm font-medium text-(--accent)">{displayName}</span>
           <Tooltip content={formatFullTime(message.timestamp)}>
-            <span className="text-[10px] text-(--text-muted) opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity cursor-default">
+            <span className="text-[10px] text-(--text-muted) opacity-100 sm:opacity-0 sm:group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity cursor-default">
               {formatTime(message.timestamp)}
             </span>
           </Tooltip>
@@ -538,7 +541,7 @@ const AssistantMessage = memo(function AssistantMessage({
             {providerBrand.label}
           </span>
           <Tooltip content={formatFullTime(message.timestamp)}>
-            <span className="text-[10px] text-(--text-muted) opacity-0 group-hover:opacity-100 transition-opacity cursor-default">
+            <span className="text-[10px] text-(--text-muted) opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity cursor-default">
               {formatTime(message.timestamp)}
             </span>
           </Tooltip>

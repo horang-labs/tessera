@@ -110,7 +110,10 @@ function GitSummaryCopyButton({
         type="button"
         variant="ghost"
         size="icon"
-        className="pointer-events-none h-6 w-6 shrink-0 rounded text-(--text-muted) opacity-0 transition-opacity hover:text-(--text-primary) group-hover/summary-copy:pointer-events-auto group-hover/summary-copy:opacity-100 group-focus-within/summary-copy:pointer-events-auto group-focus-within/summary-copy:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+        // Below the Phone viewport step the button is simply present: `hover:` compiles
+        // to `@media (hover: hover)`, so on a phone no rule exists to reveal it. The
+        // reveal is kept from `sm` up (#250).
+        className="pointer-events-auto h-6 w-6 shrink-0 rounded text-(--text-muted) opacity-100 sm:pointer-events-none sm:opacity-0 transition-opacity hover:text-(--text-primary) sm:group-hover/summary-copy:pointer-events-auto sm:group-hover/summary-copy:opacity-100 group-focus-within/summary-copy:pointer-events-auto group-focus-within/summary-copy:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
         onClick={onClick}
         disabled={disabled}
         aria-label={ariaLabel}
@@ -784,12 +787,18 @@ export function GitPanelContentSection({
                               <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
                                 {file.path}
                               </span>
-                              <span className="transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+                              {/* The inversion of the rule below: the diff stats give way
+                                  to the action overlay. Below the Phone viewport step that
+                                  overlay is always up, so these always give way (#250). */}
+                              <span className="opacity-0 sm:opacity-100 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
                                 <FileDiffStats stats={file.diffStats} />
                               </span>
                             </button>
                           </div>
-                          <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                          {/* Below the Phone viewport step the actions are simply present:
+                              `hover:` compiles to `@media (hover: hover)`, so on a phone no
+                              rule exists to reveal them. Kept hover-revealed from `sm` up. */}
+                          <div className="pointer-events-auto absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-100 sm:pointer-events-none sm:opacity-0 shadow-sm transition-opacity sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                             <Tooltip content="Open diff">
                               <button
                                 type="button"

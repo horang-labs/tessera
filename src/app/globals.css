@@ -876,3 +876,79 @@ body {
     --task-stripe-intensity: 78%;
   }
 }
+
+/* ============================================
+   Touch feedback — the counterpart to `hover:`, not a duplicate of it
+   ============================================ */
+
+/*
+ * Tailwind compiles every `hover:` variant to `@media (hover: hover)`. On a touch device
+ * those rules do not exist, so a row carrying `hover:bg-…` and nothing else gives a finger
+ * no answer: the tap is not failing to change the row, there is no rule for it to run.
+ * This block is that missing half. It does not duplicate the hover styles — it is the only
+ * pressed-state feedback a phone ever gets, and deleting it as dead CSS takes the feedback
+ * with it. (#250, spec #241.)
+ *
+ * Desktop non-regression is structural rather than promised: inside `@media (hover: none)`
+ * these rules do not exist on a pointer-driven machine to be got wrong.
+ *
+ * The selector list is deliberate. It names what already declares a hover affordance —
+ * links, buttons, and the ARIA roles this app gives tappable rows and menu entries.
+ *
+ * Deliberately excluded, because a blanket `:active` rule misfires on every one of these
+ * and nobody would notice, the block never running on a desktop:
+ *
+ *   - drag handles        `.cursor-grab` is how this repo marks them, and it does the
+ *                         work: the handles that are buttons carry it. Lighting up under
+ *                         a drag reads as a press that committed something, which it did
+ *                         not. `role="separator"` is belt and braces — the drawer's
+ *                         resize bar is a plain div and is not named below anyway.
+ *   - disabled controls   `:disabled` and `aria-disabled`. Acknowledging a press that will
+ *                         then be ignored is worse than not acknowledging it.
+ *   - text being selected only interactive elements are named, so a long press on a
+ *                         paragraph selects text without lighting anything up.
+ *   - scroll containers   likewise never matched — they are plain elements, and a flash
+ *                         under every scroll gesture would be near-constant.
+ *   - existing `active:`  `[class*="active:bg-"]` steps aside for any control that already
+ *     sites               states its own pressed background, so such a control darkens
+ *                         once rather than twice — and none of them are rewritten here.
+ *
+ * `@layer components` keeps this rule underneath Tailwind's utilities, because an unlayered
+ * rule beats every layer regardless of specificity. That is insurance rather than a fight
+ * already happening: this rule writes `background-image` and the `active:bg-…` utilities
+ * write `background-color`, so they do not collide today, and nothing in the repo uses a
+ * gradient utility. What actually keeps a control that states its own pressed background
+ * from darkening twice is the exclusion above, not the layer.
+ */
+@layer components {
+  @media (hover: none) {
+    :root {
+      --tap-feedback: rgb(0 0 0 / 0.09);
+    }
+
+    .dark {
+      --tap-feedback: rgb(255 255 255 / 0.11);
+    }
+
+    :where(
+      a[href],
+      button,
+      [role="button"],
+      [role="menuitem"],
+      [role="option"],
+      [role="tab"],
+      [role="switch"]
+    ):not(
+      :disabled,
+      [aria-disabled="true"],
+      [role="separator"],
+      .cursor-grab,
+      [class*="active:bg-"]
+    ):active {
+      /* A background *image*, not a colour: it lies over whatever background the element
+         already has rather than replacing it, so a selected row keeps its tint and a
+         coloured button keeps its colour. No transition — a tap has to answer at once. */
+      background-image: linear-gradient(var(--tap-feedback), var(--tap-feedback));
+    }
+  }
+}

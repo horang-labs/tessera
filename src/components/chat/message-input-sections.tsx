@@ -66,10 +66,12 @@ export function MessageInputAttachmentStrip({
               <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 text-white px-1 rounded">
                 📷 {attachment.id}
               </span>
+              {/* Visible below the Phone viewport step, hover-revealed from `sm` up: a
+                  phone has no hover for the reveal to run on (#250). */}
               <button
                 type="button"
                 onClick={() => onRemoveAttachment(attachment.id)}
-                className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full bg-black/60 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full bg-black/60 text-white text-xs opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
                 aria-label={renderRemoveLabel(attachment.id)}
               >
                 &times;
@@ -90,10 +92,11 @@ export function MessageInputAttachmentStrip({
             >
               {attachment.fileName}
             </span>
+            {/* Visible below the Phone viewport step, for the same reason as above (#250). */}
             <button
               type="button"
               onClick={() => onRemoveAttachment(attachment.id)}
-              className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-(--text-muted) hover:text-(--text-primary) text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+              className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-(--text-muted) hover:text-(--text-primary) text-xs opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
               aria-label={renderRemoveLabel(attachment.id)}
             >
               &times;
