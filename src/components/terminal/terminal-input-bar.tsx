@@ -1,0 +1,125 @@
+'use client';
+
+import { useCallback, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { SendHorizontal } from 'lucide-react';
+import {
+  TERMINAL_INPUT_BAR_KEYS,
+  terminalInputBarKeySequence,
+  terminalInputBarTextPayload,
+} from '@/lib/terminal/terminal-input-bar-input';
+import { sendInputToTerminal } from '@/lib/terminal/terminal-surface-registry';
+import type { TerminalNamedKey } from '@/lib/terminal/session-control-input';
+
+interface TerminalInputBarProps {
+  terminalId: string;
+}
+
+/**
+ * The Terminal input bar: how a phone types into a PTY session.
+ *
+ * It exists because the terminal surface carries no input element a phone can focus.
+ * xterm's own `.xterm-helper-textarea` is parked off-screen at zero size with zero
+ * opacity, so there is nothing to tap, and Android Chrome will not raise the soft
+ * keyboard for a programmatic `focus()` on it. A real, visible field is the whole point:
+ * the browser raises the keyboard for a tap on a real textarea and for nothing else.
+ *
+ * The bar sits below the terminal and the terminal knows nothing about it. It writes to
+ * the PTY through the same registry send path the chat overlay and the file-path insert
+ * already use, and it touches no xterm option.
+ *
+ * It is **buffered**: what is typed goes out on submit, not per keystroke. That is also
+ * what makes Hangul and every other composed script work without help — a composition
+ * has finished by the time the user taps send, so the browser's own
+ * composition handling is all that is needed.
+ */
+export function TerminalInputBar({ terminalId }: TerminalInputBarProps) {
+  const { t } = useTranslation();
+  const [text, setText] = useState('');
+  const [didFail, setDidFail] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const send = useCallback((data: string) => {
+    const delivered = sendInputToTerminal(terminalId, data);
+    setDidFail(!delivered);
+    return delivered;
+  }, [terminalId]);
+
+  const handleSubmit = useCallback(() => {
+    const payload = terminalInputBarTextPayload(text);
+    if (payload === null) return;
+    // The text is cleared only once it is on the wire. A send that found no live
+    // terminal must not also lose what the user typed — retyping it on a phone is the
+    // expensive part.
+    if (send(payload)) setText('');
+    textareaRef.current?.focus();
+  }, [send, text]);
+
+  const handleKey = useCallback((key: TerminalNamedKey) => {
+    // Ctrl+C included, deliberately without a confirmation step: its purpose is stopping
+    // something already going wrong, and a dialog in front of it defeats that. A misfire
+    // costs one interrupted turn; an unreachable Ctrl+C costs the session.
+    send(terminalInputBarKeySequence(key));
+  }, [send]);
+
+  return (
+    <div
+      className="shrink-0 border-t border-black/10 bg-(--chat-bg) p-2 dark:border-white/10"
+      data-testid="terminal-input-bar"
+      role="group"
+      aria-label={t('chat.terminalInputBar.label')}
+    >
+      {/* The keys sit against the terminal, so pressing one lands next to the prompt it
+          answers. 44px targets with 4px gaps take 284px of the 344px a 360px screen
+          leaves inside this padding. */}
+      <div className="flex gap-1">
+        {TERMINAL_INPUT_BAR_KEYS.map((key) => (
+          <button
+            key={key.namedKey}
+            type="button"
+            onClick={() => handleKey(key.namedKey)}
+            aria-label={t(key.labelKey)}
+            title={t(key.labelKey)}
+            data-testid={`terminal-input-bar-key-${key.namedKey}`}
+            className="h-11 min-w-11 flex-1 rounded border border-(--divider) bg-(--chat-header-bg) text-xs font-medium text-(--text-primary) active:bg-black/10 dark:active:bg-white/15"
+          >
+            {key.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex items-end gap-1">
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          rows={1}
+          placeholder={t('chat.terminalInputBar.placeholder')}
+          aria-label={t('chat.terminalInputBar.placeholder')}
+          data-testid="terminal-input-bar-textarea"
+          // min-w-0 so the textarea yields instead of pushing send off the screen.
+          className="min-h-11 min-w-0 flex-1 resize-none rounded border border-(--divider) bg-(--chat-bg) px-2 py-2.5 text-sm text-(--text-primary) outline-none focus:border-(--accent)"
+        />
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={terminalInputBarTextPayload(text) === null}
+          aria-label={t('chat.terminalInputBar.send')}
+          title={t('chat.terminalInputBar.send')}
+          data-testid="terminal-input-bar-send"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded border border-(--divider) bg-(--chat-header-bg) text-(--text-primary) disabled:opacity-40 active:bg-black/10 dark:active:bg-white/15"
+        >
+          <SendHorizontal className="h-4 w-4" />
+        </button>
+      </div>
+      {didFail && (
+        <p
+          role="status"
+          data-testid="terminal-input-bar-error"
+          className="mt-1 text-xs text-(--text-secondary)"
+        >
+          {t('chat.terminalSendFailed')}
+        </p>
+      )}
+    </div>
+  );
+}

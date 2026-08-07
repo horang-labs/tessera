@@ -628,6 +628,17 @@ export interface I18nMessages {
     terminalComposerPlaceholder: string;
     terminalComposerBlocked: string;
     terminalSendFailed: string;
+    terminalInputBar: {
+      label: string;
+      placeholder: string;
+      send: string;
+      keyEscape: string;
+      keyShiftTab: string;
+      keyUp: string;
+      keyDown: string;
+      keyEnter: string;
+      keyCtrlC: string;
+    };
     viewAsChat: string;
     viewAsTerminal: string;
     imageOriginalView: string;
