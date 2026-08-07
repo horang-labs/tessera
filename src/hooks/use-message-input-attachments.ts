@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 import { useNotificationStore } from '@/stores/notification-store';
-import type { ContentBlock } from '@/lib/ws/message-types';
+import {
+  buildMessageInputDisplayContent,
+  buildMessageInputSendContent,
+  createFileAttachmentPlaceholder,
+  createImageAttachmentPlaceholder,
+} from '@/lib/chat/attachment-content';
+
+export {
+  buildMessageInputDisplayContent,
+  buildMessageInputSendContent,
+} from '@/lib/chat/attachment-content';
 
 const MAX_IMAGES = 5;
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
@@ -44,14 +54,6 @@ interface UseMessageInputAttachmentsOptions {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   setInputValue: React.Dispatch<React.SetStateAction<string>>;
   t: TranslateFn;
-}
-
-function createImageAttachmentPlaceholder(id: number): string {
-  return `[📷 ${id}]`;
-}
-
-function createFileAttachmentPlaceholder(id: number): string {
-  return `[📎 ${id}]`;
 }
 
 function getSupportedImageMimeType(file: File | Blob): SupportedMimeType | null {
@@ -112,121 +114,6 @@ function revokeAttachmentPreview(attachment: AttachmentItem) {
 
 function revokeAttachmentPreviews(attachments: AttachmentItem[]) {
   attachments.forEach(revokeAttachmentPreview);
-}
-
-function collectAttachmentIds(text: string): Set<number> {
-  const attachmentIds = new Set<number>();
-  const regex = /\[(?:📷|📎)\s*(\d+)\]/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(text)) !== null) {
-    attachmentIds.add(Number(match[1]));
-  }
-
-  return attachmentIds;
-}
-
-function splitAttachments(attachments: AttachmentItem[]) {
-  const imageAttachments: ImageAttachment[] = [];
-  const fileAttachments: FileAttachment[] = [];
-
-  for (const attachment of attachments) {
-    if (attachment.kind === 'image') {
-      imageAttachments.push(attachment);
-      continue;
-    }
-
-    fileAttachments.push(attachment);
-  }
-
-  return { fileAttachments, imageAttachments };
-}
-
-function buildImageAttachmentContent(
-  text: string,
-  imageAttachments: ImageAttachment[],
-): string | ContentBlock[] {
-  if (imageAttachments.length === 0) {
-    return text;
-  }
-
-  const regex = /\[📷\s*(\d+)\]/g;
-  const blocks: ContentBlock[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      const segment = text.slice(lastIndex, match.index).trim();
-      if (segment) {
-        blocks.push({ type: 'text', text: segment });
-      }
-    }
-
-    const imageId = Number(match[1]);
-    const attachment = imageAttachments.find((item) => item.id === imageId);
-    if (attachment) {
-      blocks.push({
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: attachment.mediaType,
-          data: attachment.base64,
-        },
-      });
-    }
-
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    const segment = text.slice(lastIndex).trim();
-    if (segment) {
-      blocks.push({ type: 'text', text: segment });
-    }
-  }
-
-  return blocks.length > 0 ? blocks : text;
-}
-
-export function buildMessageInputSendContent(
-  text: string,
-  attachments: AttachmentItem[],
-): string | ContentBlock[] {
-  if (attachments.length === 0) {
-    return text;
-  }
-
-  const { fileAttachments, imageAttachments } = splitAttachments(attachments);
-  let resolvedText = text;
-
-  for (const attachment of fileAttachments) {
-    resolvedText = resolvedText
-      .split(createFileAttachmentPlaceholder(attachment.id))
-      .join(attachment.serverPath);
-  }
-
-  return buildImageAttachmentContent(resolvedText, imageAttachments);
-}
-
-export function buildMessageInputDisplayContent(
-  text: string,
-  attachments: AttachmentItem[],
-): string | ContentBlock[] {
-  if (attachments.length === 0) {
-    return text;
-  }
-
-  const { fileAttachments, imageAttachments } = splitAttachments(attachments);
-  let resolvedText = text;
-
-  for (const attachment of fileAttachments) {
-    resolvedText = resolvedText
-      .split(createFileAttachmentPlaceholder(attachment.id))
-      .join(`📎 ${attachment.fileName}`);
-  }
-
-  return buildImageAttachmentContent(resolvedText, imageAttachments);
 }
 
 export function useMessageInputAttachments({
@@ -424,23 +311,13 @@ export function useMessageInputAttachments({
     );
   }, [setInputValue]);
 
-  const syncAttachmentsWithText = useCallback((text: string) => {
-    const attachmentIds = collectAttachmentIds(text);
-
-    setAttachments((currentAttachments) => {
-      const removedAttachments = currentAttachments.filter(
-        (attachment) => !attachmentIds.has(attachment.id),
-      );
-
-      if (removedAttachments.length === 0) {
-        return currentAttachments;
-      }
-
-      revokeAttachmentPreviews(removedAttachments);
-      return currentAttachments.filter((attachment) => attachmentIds.has(attachment.id));
-    });
-  }, []);
-
+  /**
+   * Drop every attachment the composer is holding.
+   *
+   * Called when the composer stops belonging to the message it collected them
+   * for: a completed send, or a move to another session. Callers are responsible
+   * for the draft text, since only they know whether it is being cleared too.
+   */
   const clearAttachments = useCallback(() => {
     setAttachments((currentAttachments) => {
       revokeAttachmentPreviews(currentAttachments);
@@ -457,6 +334,5 @@ export function useMessageInputAttachments({
     handleFileSelect,
     handlePaste,
     handleRemoveAttachment,
-    syncAttachmentsWithText,
   };
 }
