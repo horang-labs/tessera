@@ -12,8 +12,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
+import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs';
 
-const PHONE_VIEWPORT = { width: 360, height: 880 };
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 const repoRoot = path.resolve(new URL('..', import.meta.url).pathname);
@@ -222,9 +222,7 @@ async function documentLayout(page) {
 }
 
 async function createPhonePage(browserInstance) {
-  const context = await browserInstance.newContext({
-    viewport: PHONE_VIEWPORT,
-    hasTouch: true,
+  const context = await createPhoneContext(browserInstance, {
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
   });
   const page = await context.newPage();
