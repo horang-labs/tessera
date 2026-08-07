@@ -1166,6 +1166,22 @@ export const ja: I18nMessages = {
       label: 'すべての git 操作',
       pending: '実行中の git 操作があります',
     },
+    failure: {
+      commitTitle: 'コミットに失敗しました',
+      pushTitle: 'プッシュに失敗しました',
+      pullTitle: 'プルに失敗しました',
+      createPrTitle: 'プルリクエストの作成に失敗しました',
+      abortTitle: '中止に失敗しました',
+      showDetails: 'git の出力を表示',
+      hideDetails: 'git の出力を隠す',
+      dismiss: 'このエラーを閉じる',
+      copyOutput: 'git の出力をコピー',
+      exitCode: '終了コード {{code}}',
+      exitCodeUnknown: 'コマンドは終了コードを返しませんでした',
+      stderrLabel: 'stderr',
+      stdoutLabel: 'stdout',
+      noOutput: 'git は何も出力しませんでした。',
+    },
   },
   memoryPanel: {
     sections: {

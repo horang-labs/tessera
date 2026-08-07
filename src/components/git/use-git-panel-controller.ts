@@ -37,9 +37,12 @@ import {
 import { startGitPanelPolling } from "@/lib/git/git-panel-poll";
 import { readGitPanelState } from "@/lib/git/git-panel-read";
 import {
+  describeGitActionFailure,
   describeGitActionOrigin,
   describeGitActionToast,
+  describeGitRequestFailure,
   describeGitRequestFailureToast,
+  type GitActionFailureReport,
   type GitActionToast,
   type GitActionVerb,
 } from "./git-action-report";
@@ -194,6 +197,10 @@ export function useGitPanelController(sessionId: string | null) {
 
   const markPending = useCallback(
     (workDir: string, verb: GitPendingVerb | null): void => {
+      // Every action that runs from this panel opens a slot here, so this is
+      // the one place that knows a new one has started — and a banner about the
+      // last run must not sit under a button that is running again (#248).
+      if (verb) setActionFailure(null);
       setPendingActions((current) => {
         const next = { ...current };
         if (verb) next[workDir] = verb;
@@ -233,6 +240,16 @@ export function useGitPanelController(sessionId: string | null) {
   const [generateMessageError, setGenerateMessageError] = useState<string | null>(
     null,
   );
+  /**
+   * The last Git action that failed here, for the same reason a generation
+   * failure stays above: it belongs to the button that was pressed, and the
+   * toast it also raises is one truncated line that leaves on a timer (#248).
+   *
+   * Separate from `error`, which says the panel could not be read at all — a
+   * push that Git refused leaves the panel perfectly readable.
+   */
+  const [actionFailure, setActionFailure] =
+    useState<GitActionFailureReport | null>(null);
   const lastDiffStatsTokenRef = useRef<string | null>(null);
 
   const sessionSnapshot = useSessionStore((state) =>
@@ -331,6 +348,9 @@ export function useGitPanelController(sessionId: string | null) {
     setCommitMessage("");
     setDeselectedPaths(new Set<string>());
     setGenerateMessageError(null);
+    // The failure was another session's, and the branch it names is not the one
+    // on screen any more.
+    setActionFailure(null);
     // The question was asked about the branch the panel was showing a moment
     // ago; answering it here would push a different session's branch.
     setPushConfirmation(null);
@@ -732,6 +752,13 @@ export function useGitPanelController(sessionId: string | null) {
 
       const result = payload as GitActionResult;
       reportAction(describeGitActionToast(result, commitOrigin, "commit"));
+      // The toast says the first line and then leaves; the banner keeps the
+      // whole of what Git said until the user is done with it (#248).
+      if (!result.ok) {
+        setActionFailure(
+          describeGitActionFailure(result.failure, commitOrigin, "commit"),
+        );
+      }
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
         action: "commit",
@@ -744,13 +771,12 @@ export function useGitPanelController(sessionId: string | null) {
       // never asks for one (docs/design/git-delivery.md §11).
       return result.ok;
     } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : "Failed to commit.";
       reportAction(
-        describeGitRequestFailureToast(
-          nextError instanceof Error ? nextError.message : "Failed to commit.",
-          commitOrigin,
-          "commit",
-        ),
+        describeGitRequestFailureToast(message, commitOrigin, "commit"),
       );
+      setActionFailure(describeGitRequestFailure(message, commitOrigin, "commit"));
       return false;
     }
   }, [commitFiles, commitMessage, commitOrigin, reportAction, sessionId]);
@@ -800,6 +826,11 @@ export function useGitPanelController(sessionId: string | null) {
 
         const result = payload as GitActionResult;
         reportAction(describeGitActionToast(result, commitOrigin, verb));
+        if (!result.ok) {
+          setActionFailure(
+            describeGitActionFailure(result.failure, commitOrigin, verb),
+          );
+        }
         void captureTelemetryEvent("git_action_triggered", {
           source: "git_panel",
           action: verb,
@@ -808,15 +839,12 @@ export function useGitPanelController(sessionId: string | null) {
           ...(result.ok ? {} : { failure_kind: result.failure.kind }),
         });
       } catch (nextError) {
-        reportAction(
-          describeGitRequestFailureToast(
-            nextError instanceof Error
-              ? nextError.message
-              : BRANCH_ACTION_FALLBACK[verb],
-            commitOrigin,
-            verb,
-          ),
-        );
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : BRANCH_ACTION_FALLBACK[verb];
+        reportAction(describeGitRequestFailureToast(message, commitOrigin, verb));
+        setActionFailure(describeGitRequestFailure(message, commitOrigin, verb));
       }
     },
     [commitOrigin, reportAction, sessionId],
@@ -956,6 +984,8 @@ export function useGitPanelController(sessionId: string | null) {
 
   const cancelPrimaryAction = useCallback(() => setPushConfirmation(null), []);
 
+  const dismissActionFailure = useCallback(() => setActionFailure(null), []);
+
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;
   const checksUrl = panelData?.prStatus?.url
@@ -1072,6 +1102,12 @@ export function useGitPanelController(sessionId: string | null) {
      * different questions and §7 needs the second one answered.
      */
     pendingVerb: pendingHere,
+    /**
+     * The last Git action that failed here, still on screen. Null once it is
+     * dismissed, once another action starts, or on a session switch.
+     */
+    actionFailure,
+    dismissActionFailure,
     commitDraftBlocked,
     copyBranch,
     copyFilePath,

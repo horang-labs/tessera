@@ -313,6 +313,10 @@ export function GitPanel({
             loading={controller.loading}
             error={controller.error}
             changedFileCount={controller.changedFileCount}
+            failure={{
+              report: controller.actionFailure,
+              onDismiss: controller.dismissActionFailure,
+            }}
             commit={{
               draftBlocked: controller.commitDraftBlocked,
               generateError: controller.generateMessageError,

@@ -1147,6 +1147,22 @@ export interface I18nMessages {
       label: string;
       pending: string;
     };
+    failure: {
+      commitTitle: string;
+      pushTitle: string;
+      pullTitle: string;
+      createPrTitle: string;
+      abortTitle: string;
+      showDetails: string;
+      hideDetails: string;
+      dismiss: string;
+      copyOutput: string;
+      exitCode: string;
+      exitCodeUnknown: string;
+      stderrLabel: string;
+      stdoutLabel: string;
+      noOutput: string;
+    };
   };
   memoryPanel: {
     sections: {

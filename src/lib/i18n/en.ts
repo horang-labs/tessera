@@ -1169,6 +1169,22 @@ export const en: I18nMessages = {
       label: 'All git actions',
       pending: 'A git action is already running',
     },
+    failure: {
+      commitTitle: 'Commit failed',
+      pushTitle: 'Push failed',
+      pullTitle: 'Pull failed',
+      createPrTitle: 'Creating the pull request failed',
+      abortTitle: 'Abort failed',
+      showDetails: 'What git said',
+      hideDetails: 'Hide what git said',
+      dismiss: 'Dismiss this failure',
+      copyOutput: 'Copy git output',
+      exitCode: 'Exit code {{code}}',
+      exitCodeUnknown: 'The command never reported an exit code',
+      stderrLabel: 'stderr',
+      stdoutLabel: 'stdout',
+      noOutput: 'git printed nothing.',
+    },
   },
   memoryPanel: {
     sections: {

@@ -9,6 +9,7 @@
  * control). The controller only renders what this returns.
  */
 import type {
+  GitActionFailure,
   GitActionResult,
   GitConflictOperation,
   GitCreatePullRequestOutcome,
@@ -296,5 +297,105 @@ export function describeGitRequestFailureToast(
     messageKey: FAILURE_KEYS[attempted].failure,
     params: { origin, reason: summarizeGitFailure(message) },
     clearsDraft: false,
+  };
+}
+
+/**
+ * The same failure, kept where it can be read (#248).
+ *
+ * A toast is one truncated line that leaves on a timer, and the reason a Git
+ * action failed is regularly neither — an upstream Git will not resolve, a hook
+ * that printed pages. So the panel keeps the failure until the user is done with
+ * it, and carries the raw output the summary was cut from.
+ */
+export interface GitActionFailureReport {
+  /** Which action failed. A failure carries no verb, so the caller says. */
+  verb: GitActionVerb;
+  /**
+   * The house one-liner — the same text the toast shows — or null when the kind
+   * is one this build has no wording for, in which case `message` is what the
+   * banner shows instead.
+   */
+  summary: GitActionToast | null;
+  /** What the server said, verbatim and untruncated. */
+  message: string;
+  /** What Git wrote. Both empty when the request never reached it. */
+  stderr: string;
+  stdout: string;
+  /** Null when the process never ran, or was killed before it could exit. */
+  exitCode: number | null;
+}
+
+export type GitActionFailureTitleKey =
+  | "gitPanel.failure.commitTitle"
+  | "gitPanel.failure.pushTitle"
+  | "gitPanel.failure.pullTitle"
+  | "gitPanel.failure.createPrTitle"
+  | "gitPanel.failure.abortTitle";
+
+/**
+ * Which action failed, for the banner's heading. The summary under it leads
+ * with the same verb, but it is the thing that can be replaced by a verbatim
+ * server message — so the heading is what always names what was pressed.
+ */
+export const GIT_FAILURE_TITLE_KEY: Record<GitActionVerb, GitActionFailureTitleKey> = {
+  commit: "gitPanel.failure.commitTitle",
+  push: "gitPanel.failure.pushTitle",
+  pull: "gitPanel.failure.pullTitle",
+  create_pr: "gitPanel.failure.createPrTitle",
+  abort: "gitPanel.failure.abortTitle",
+};
+
+/**
+ * The kinds this build knows how to word, listed rather than derived from
+ * `GitFailureKind`: the point is to notice a kind the server started sending
+ * that the renderer was never taught, and a compile-time union cannot notice
+ * that at runtime. An unrecognised kind is reported by quoting the server
+ * verbatim — wording it as a plain `command_failed` would put the panel's own
+ * sentence in front of the one fact it does not have.
+ */
+const REPORTABLE_FAILURE_KINDS: ReadonlySet<string> = new Set([
+  "authentication",
+  "not_found",
+  "hook_rejected",
+  "timeout",
+  "spawn_failed",
+  "command_failed",
+]);
+
+export function describeGitActionFailure(
+  failure: GitActionFailure,
+  origin: string,
+  attempted: GitActionVerb = "commit",
+): GitActionFailureReport {
+  return {
+    verb: attempted,
+    summary: REPORTABLE_FAILURE_KINDS.has(failure.kind)
+      ? describeGitActionToast({ ok: false, failure }, origin, attempted)
+      : null,
+    message: failure.message,
+    stderr: failure.stderr,
+    stdout: failure.stdout,
+    exitCode: failure.exitCode,
+  };
+}
+
+/**
+ * A failure that never reached Git, banner-side. There is no command output to
+ * expand — the request itself is the whole account — but the panel still holds
+ * it, because a dropped request is exactly the case a vanishing toast loses.
+ */
+export function describeGitRequestFailure(
+  message: string,
+  origin: string,
+  attempted: GitActionVerb = "commit",
+): GitActionFailureReport {
+  return {
+    verb: attempted,
+    summary: describeGitRequestFailureToast(message, origin, attempted),
+    message,
+    stderr: "",
+    stdout: "",
+    exitCode: null,
   };
 }
