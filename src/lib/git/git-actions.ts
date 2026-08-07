@@ -294,11 +294,16 @@ export async function runCreatePullRequest(
   const repository = await readGitHubRepository(workDir, upstream, runGit);
 
   // `--fill` takes the title and body from the commits, which is the only
-  // source there is: §3 gives this action one button and no form. No `--base`:
-  // GitHub's own default for the repository is the base asked for, and what it
-  // chose is read back below rather than assumed here.
+  // source there is: §3 gives this action one button and no form. `--base` is
+  // passed only when this worktree recorded one; without it GitHub's own
+  // default for the repository stands, and what it chose is read back below.
+  const base = await readRecordedPullRequestBase(workDir, branch, upstream, runGit);
   const created = await runGh(
-    ["pr", "create", "--repo", repository, "--head", branch, "--fill"],
+    [
+      "pr", "create", "--repo", repository, "--head", branch,
+      ...(base ? ["--base", base] : []),
+      "--fill",
+    ],
     { cwd: workDir },
   );
   if (created.exitCode !== 0) {
@@ -635,6 +640,58 @@ async function readRepoRoot(workDir: string, runGit: GitRunner): Promise<string>
 }
 
 /** Null both when there is no upstream and when Git could not be asked. */
+/**
+ * A ref as `gh` wants it: the branch name, with whatever qualified it removed.
+ * Matches Orca's `normalizeHostedReviewBaseRef`, which the values written into
+ * this key are already shaped by.
+ */
+function normalizeBaseRefName(ref: string): string {
+  return ref
+    .trim()
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/remotes\/[^/]+\//, "")
+    .replace(/^(origin|upstream)\//, "");
+}
+
+/**
+ * The base this worktree was cut from, or null when there is none worth passing.
+ *
+ * Orca and t3code both hand the pull request the worktree's own base rather
+ * than letting the host choose (`--base` in `github/client.ts`, `baseRefName`
+ * from `prepareWorktree.baseBranch`). The case it decides is a branch cut from
+ * another branch: left to GitHub it opens against the repository default, and
+ * the diff carries every commit of the parent along with its own.
+ *
+ * Three things have to hold. There has to be a recorded base — a branch made
+ * outside Tessera has none, and Git remembers nothing by itself. It has to name
+ * something other than this branch, which GitHub would refuse. And it has to
+ * exist on the remote, because `gh` resolves the base there: a parent that
+ * never left this machine fails the whole call, where falling back to the
+ * default merely opens a wider pull request.
+ */
+async function readRecordedPullRequestBase(
+  workDir: string,
+  branch: string,
+  upstream: string,
+  runGit: GitRunner,
+): Promise<string | null> {
+  const recorded = await runGit(
+    ["config", "--get", `branch.${branch}.base`],
+    { cwd: workDir, timeoutMs: PROBE_TIMEOUT_MS },
+  ).catch(() => null);
+
+  const base = normalizeBaseRefName(recorded?.stdout ?? "");
+  if (!base || base === branch) return null;
+
+  const remote = upstream.split("/", 1)[0]?.trim() || "origin";
+  const onRemote = await runGit(
+    ["show-ref", "--verify", "--quiet", `refs/remotes/${remote}/${base}`],
+    { cwd: workDir, timeoutMs: PROBE_TIMEOUT_MS },
+  ).catch(() => null);
+
+  return onRemote ? base : null;
+}
+
 async function readUpstream(
   workDir: string,
   runGit: GitRunner,

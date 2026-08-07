@@ -65,7 +65,11 @@ interface PrFixture {
  */
 async function withSyncedRepo(
   run: (fixture: PrFixture) => Promise<void>,
-  options: { remoteUrl?: string | null } = {},
+  options: {
+    remoteUrl?: string | null;
+    /** Runs while `origin` is still pushable, before it becomes a GitHub URL. */
+    beforeRename?: (workDir: string) => Promise<void>;
+  } = {},
 ): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-git-pr-'));
   const workDir = path.join(root, 'work');
@@ -83,6 +87,7 @@ async function withSyncedRepo(
     await execFileAsync('git', ['add', '.'], { cwd: workDir });
     await execFileAsync('git', ['commit', '-m', 'seed'], { cwd: workDir });
     await execFileAsync('git', ['push', '--set-upstream', 'origin', 'main'], { cwd: workDir });
+    await options.beforeRename?.(workDir);
 
     const remoteUrl =
       options.remoteUrl === undefined
@@ -132,6 +137,103 @@ test('a synced branch gets a pull request, reported with the base GitHub used', 
       'horang-labs/tessera',
     );
   });
+});
+
+/** The stacked case: a branch cut from another branch, both on the remote. */
+async function pushStackedBranches(workDir: string): Promise<void> {
+  const git = (args: string[]) => execFileAsync('git', args, { cwd: workDir });
+  await git(['checkout', '-q', '-b', 'feature/parent']);
+  await git(['commit', '--allow-empty', '-m', 'parent work']);
+  await git(['push', '--set-upstream', 'origin', 'feature/parent']);
+  await git(['checkout', '-q', '-b', 'feature/child']);
+  await git(['commit', '--allow-empty', '-m', 'child work']);
+  await git(['push', '--set-upstream', 'origin', 'feature/child']);
+}
+
+test('a branch cut from another branch opens against that branch', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withSyncedRepo(
+    async ({ workDir, runGit }) => {
+      const gh = fakeGh((args) =>
+        args[1] === 'create'
+          ? ghCreated()
+          : ghViewed({ number: 236, url: PR_URL, baseRefName: 'feature/parent' }),
+      );
+
+      const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
+      assert.equal(result.ok, true, 'expected the pull request to be created');
+
+      // Left to GitHub this would open against the repository default and carry
+      // the parent's commits in its diff.
+      const create = gh.calls[0]!;
+      assert.equal(create.args[create.args.indexOf('--base') + 1], 'feature/parent');
+      assert.equal(create.args[create.args.indexOf('--head') + 1], 'feature/child');
+    },
+    {
+      beforeRename: async (workDir) => {
+        await pushStackedBranches(workDir);
+        // The full ref, as the worktree creator writes it.
+        await execFileAsync(
+          'git',
+          ['config', 'branch.feature/child.base', 'refs/remotes/origin/feature/parent'],
+          { cwd: workDir },
+        );
+      },
+    },
+  );
+});
+
+test('a branch with no recorded base leaves the base to GitHub', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withSyncedRepo(async ({ workDir, runGit }) => {
+    const gh = fakeGh((args) =>
+      args[1] === 'create'
+        ? ghCreated()
+        : ghViewed({ number: 236, url: PR_URL, baseRefName: 'dev' }),
+    );
+
+    const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
+    assert.equal(result.ok, true, 'expected the pull request to be created');
+
+    // A branch made outside Tessera records nothing, and Git remembers nothing
+    // by itself: the host's default is still the right answer to fall back to.
+    assert.equal(gh.calls[0]!.args.includes('--base'), false);
+  });
+});
+
+test('a base that never reached the remote is left to GitHub', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withSyncedRepo(
+    async ({ workDir, runGit }) => {
+      const gh = fakeGh((args) =>
+        args[1] === 'create'
+          ? ghCreated()
+          : ghViewed({ number: 236, url: PR_URL, baseRefName: 'dev' }),
+      );
+
+      const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
+      assert.equal(result.ok, true, 'expected the pull request to be created');
+
+      // `gh` resolves the base on the remote, so passing a local-only parent
+      // would fail the create outright. A wider pull request still opens.
+      assert.equal(gh.calls[0]!.args.includes('--base'), false);
+    },
+    {
+      beforeRename: async (workDir) => {
+        const git = (args: string[]) => execFileAsync('git', args, { cwd: workDir });
+        await git(['branch', 'feature/local-only']);
+        await git(['checkout', '-q', '-b', 'feature/child']);
+        await git(['commit', '--allow-empty', '-m', 'child work']);
+        await git(['push', '--set-upstream', 'origin', 'feature/child']);
+        await git([
+          'config', 'branch.feature/child.base', 'refs/heads/feature/local-only',
+        ]);
+      },
+    },
+  );
 });
 
 test('a repository whose remote is not GitHub says so instead of asking gh', async (t) => {
