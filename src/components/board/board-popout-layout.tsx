@@ -109,7 +109,7 @@ export function BoardPopoutLayout() {
   return (
     <KeyboardShortcutProvider>
       <ElectronTitlebarThemeSync />
-      <div className="flex h-screen flex-col overflow-hidden bg-(--board-bg)" data-testid="board-popout-layout">
+      <div className="flex h-dvh flex-col overflow-hidden bg-(--board-bg)" data-testid="board-popout-layout">
         {isElectronTitlebar && (
           <div
             className={cn(

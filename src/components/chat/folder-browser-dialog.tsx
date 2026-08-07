@@ -329,7 +329,7 @@ export function FolderBrowserDialog({
           width: '42rem',
           height: '46rem',
           maxWidth: 'calc(100vw - 2rem)',
-          maxHeight: 'calc(100vh - 2rem)',
+          maxHeight: 'calc(100dvh - 2rem)',
         }}
         data-testid="folder-browser-dialog"
       >
