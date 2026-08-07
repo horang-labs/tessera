@@ -34,6 +34,8 @@ const TAB_TITLES = [
 const ACTIVE_INDEX = 0;
 /** The tab picked from the list — not the one already active, or selecting proves nothing. */
 const TARGET_INDEX = 3;
+/** The tab closed from the list — again not the active one, so closing is all that is tested. */
+const CLOSE_INDEX = 2;
 
 /** Phases can be narrowed with TESSERA_E2E_PHASES=4 while iterating, as the sheet suite does. */
 const selectedPhases = (process.env.TESSERA_E2E_PHASES ?? '')
@@ -91,7 +93,8 @@ try {
   if (shouldRun(1)) await testPhoneReplacesTheStripWithOneControl(browser, appOrigin);
   if (shouldRun(2)) await testTheListHoldsEveryOpenTab(browser, appOrigin);
   if (shouldRun(3)) await testChoosingATabActivatesIt(browser, appOrigin);
-  if (shouldRun(4)) await testDesktopStripIsUnchanged(browser, appOrigin);
+  if (shouldRun(4)) await testATabCanBeClosedFromTheList(browser, appOrigin);
+  if (shouldRun(5)) await testDesktopStripIsUnchanged(browser, appOrigin);
   console.log('mobile-tab-list: all phases passed');
 } catch (error) {
   if (serverOutput) process.stderr.write(`\n--- isolated server output ---\n${serverOutput}\n`);
@@ -247,6 +250,71 @@ async function testChoosingATabActivatesIt(browserInstance, origin) {
       (await activeRow.innerText()).trim(),
       TAB_TITLES[TARGET_INDEX],
       'the chosen tab must be the active one',
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+/**
+ * Closing a tab, which the strip carried on every tab item.
+ *
+ * The strip is gone at this width, and with it the only close affordance a phone had — the
+ * context menu needs a right-click on a tab, Ctrl+W needs a keyboard, and the remaining
+ * `closeTab` call sites are drag-and-drop paths. Without a row control, tabs accumulate for
+ * the life of the session with no way back.
+ */
+async function testATabCanBeClosedFromTheList(browserInstance, origin) {
+  const { context, page } = await createSeededPage(browserInstance, createPhoneContext);
+
+  try {
+    await openChat(page, origin);
+    await page.getByTestId('tab-list-trigger').tap();
+    const popover = page.getByTestId('tab-list-popover');
+    await popover.waitFor({ timeout: 5_000 });
+
+    const rows = page.getByTestId('tab-list-item');
+    const closes = page.getByTestId('tab-list-item-close');
+    assert.equal(
+      await closes.count(),
+      TAB_TITLES.length,
+      'every row must carry its own close target',
+    );
+
+    // A mis-tap here closes someone's tab, so the close target is measured as a target: its
+    // own box, comfortably sized, not overlapping the area that merely switches tabs.
+    const selectBox = await rows.nth(CLOSE_INDEX).boundingBox();
+    const closeBox = await closes.nth(CLOSE_INDEX).boundingBox();
+    assert.ok(selectBox && closeBox, 'both targets in a row should be measurable');
+    assert.ok(
+      closeBox.width >= 40 && closeBox.height >= 40,
+      `the close target is ${closeBox.width}x${closeBox.height}, too small to hit deliberately`,
+    );
+    assert.ok(
+      closeBox.x >= selectBox.x + selectBox.width - 1,
+      'the close target must not overlap the row area that switches tabs'
+        + ` (switch ends at ${selectBox.x + selectBox.width}px, close starts at ${closeBox.x}px)`,
+    );
+
+    await closes.nth(CLOSE_INDEX).tap();
+
+    const remaining = TAB_TITLES.filter((_, index) => index !== CLOSE_INDEX);
+    await page.waitForFunction(
+      (expected) => (
+        document.querySelectorAll('[data-testid="tab-list-item"]').length === expected
+      ),
+      remaining.length,
+      { timeout: 5_000 },
+    );
+    assert.deepEqual(
+      (await rows.allInnerTexts()).map((text) => text.trim()),
+      remaining,
+      'the closed tab must be gone and the others left alone',
+    );
+    assert.equal(
+      await popover.isVisible(),
+      true,
+      'closing one tab must not put the list away — closing two should not need two trips',
     );
   } finally {
     await context.close();

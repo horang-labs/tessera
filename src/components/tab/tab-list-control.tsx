@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
@@ -31,6 +31,7 @@ export interface TabListControlProps {
   tabs: Tab[];
   activeTabId: string;
   onActivate: (tabId: string) => void;
+  onClose: (tabId: string) => void;
 }
 
 /**
@@ -46,6 +47,7 @@ export const TabListControl = memo(function TabListControl({
   tabs,
   activeTabId,
   onActivate,
+  onClose: onCloseTab,
 }: TabListControlProps) {
   const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
@@ -156,6 +158,7 @@ export const TabListControl = memo(function TabListControl({
                   tab={tab}
                   isActive={tab.id === activeTabId}
                   onSelect={handleSelect}
+                  onClose={onCloseTab}
                 />
               ))}
             </div>,
@@ -176,36 +179,69 @@ interface TabListItemProps {
   tab: Tab;
   isActive: boolean;
   onSelect: (tabId: string) => void;
+  onClose: (tabId: string) => void;
 }
 
 /**
  * One row. Every open tab gets one, so the list is the whole set rather than
  * the one-and-a-bit the strip could show.
+ *
+ * Switching and closing are two sibling buttons, not one button with a nested
+ * one: a mis-tap here closes somebody's tab, so the close target gets its own
+ * box, comfortably sized, with nothing overlapping it. Closing is the strip's
+ * existing action given a surface a phone can reach — with the strip gone, the
+ * remaining routes to it are a right-click, Ctrl+W and drag-and-drop, none of
+ * which a phone has.
  */
-const TabListItem = memo(function TabListItem({ tab, isActive, onSelect }: TabListItemProps) {
+const TabListItem = memo(function TabListItem({
+  tab,
+  isActive,
+  onSelect,
+  onClose,
+}: TabListItemProps) {
+  const { t } = useI18n();
   const title = useTabDisplayTitle(tab);
 
   return (
-    <button
-      type="button"
-      role="menuitem"
-      className={cn(
-        'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[0.8125rem]',
-        'transition-colors focus:outline-none',
-        isActive
-          ? 'bg-(--sidebar-hover) text-(--text-primary)'
-          : 'text-(--sidebar-text-active) hover:bg-(--sidebar-hover) focus:bg-(--sidebar-hover)',
-      )}
-      onClick={() => onSelect(tab.id)}
-      title={title}
-      data-testid="tab-list-item"
-      data-tab-id={tab.id}
-      data-active={String(isActive)}
-    >
-      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-        {title}
-      </span>
-      {isActive ? <Check size={14} className="shrink-0 text-(--accent)" /> : null}
-    </button>
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        role="menuitem"
+        className={cn(
+          'flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2.5 text-left text-[0.8125rem]',
+          'transition-colors focus:outline-none',
+          isActive
+            ? 'bg-(--sidebar-hover) text-(--text-primary)'
+            : 'text-(--sidebar-text-active) hover:bg-(--sidebar-hover) focus:bg-(--sidebar-hover)',
+        )}
+        onClick={() => onSelect(tab.id)}
+        title={title}
+        data-testid="tab-list-item"
+        data-tab-id={tab.id}
+        data-active={String(isActive)}
+      >
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+          {title}
+        </span>
+        {isActive ? <Check size={14} className="shrink-0 text-(--accent)" /> : null}
+      </button>
+
+      <button
+        type="button"
+        className={cn(
+          'flex h-10 w-10 shrink-0 items-center justify-center rounded-md',
+          'text-(--text-muted) transition-colors',
+          'hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)',
+        )}
+        onClick={() => onClose(tab.id)}
+        aria-label={t('chat.closeTab', { title })}
+        data-testid="tab-list-item-close"
+        data-tab-id={tab.id}
+        tabIndex={-1}
+      >
+        <X size={14} />
+      </button>
+    </div>
   );
 });

@@ -515,7 +515,12 @@ export const TabBar = memo(function TabBar() {
           render, so a desktop tree never contains the phone control and vice
           versa. */}
       {isPhoneViewport ? (
-        <TabListControl tabs={tabs} activeTabId={activeTabId} onActivate={handleTabActivate} />
+        <TabListControl
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onActivate={handleTabActivate}
+          onClose={handleTabClose}
+        />
       ) : (
         <div className="relative flex min-w-0 items-stretch">
           {/*
