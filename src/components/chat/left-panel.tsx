@@ -18,6 +18,7 @@ import { useTabStore } from '@/stores/tab-store';
 import { useFolderBrowserStore } from '@/stores/folder-browser-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { usePopoutActive } from '@/hooks/use-popout-active';
+import { useEffectiveViewMode } from '@/hooks/use-effective-view-mode';
 import { ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SessionPeek } from '@/components/board/session-peek';
@@ -44,7 +45,7 @@ export function LeftPanel({
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
   const closeFolderBrowser = useFolderBrowserStore((state) => state.close);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
-  const viewMode = useBoardStore((state) => state.viewMode);
+  const viewMode = useEffectiveViewMode();
   const peekSessionId = useBoardStore((state) => state.peekSessionId);
   const peekFileRef = useBoardStore((state) => state.peekFileRef);
   const closeSessionPeek = useBoardStore((state) => state.closeSessionPeek);

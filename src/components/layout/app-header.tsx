@@ -5,6 +5,8 @@ import { PanelLeftClose, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
+import { usePhoneViewport } from '@/hooks/use-phone-viewport';
+import { useEffectiveViewMode } from '@/hooks/use-effective-view-mode';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -35,7 +37,9 @@ export const AppHeader = memo(function AppHeader() {
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const toggleGitPanel = useGitStore((state) => state.toggle);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
-  const viewMode = useBoardStore((state) => state.viewMode);
+  const isPhoneViewport = usePhoneViewport();
+  // The list is what a phone renders, so the header's board chrome goes with it.
+  const viewMode = useEffectiveViewMode();
   const isKanbanPeekMode = viewMode === 'board' && kanbanSessionOpenMode === 'peek';
   const projects = useSessionStore((state) => state.projects);
   const selectedProject = projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
@@ -95,10 +99,13 @@ export const AppHeader = memo(function AppHeader() {
                   {projectDisplayName}
                 </div>
               </div>
-              <ProjectViewModeToggle
-                className={isElectronTitlebar ? 'electron-no-drag' : undefined}
-                labelMode="short"
-              />
+              {/* A phone cannot reach the board, so it is not offered the way there. */}
+              {!isPhoneViewport && (
+                <ProjectViewModeToggle
+                  className={isElectronTitlebar ? 'electron-no-drag' : undefined}
+                  labelMode="short"
+                />
+              )}
               {isKanbanPeekMode ? (
                 <>
                   <div
