@@ -563,7 +563,10 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           </span>
         </button>
         {row.deletable && row.summary ? (
-          <div className="pointer-events-none absolute right-1 top-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+          // Below the Phone viewport step the actions are simply present: `hover:`
+          // compiles to `@media (hover: hover)`, so on a phone no rule exists to reveal
+          // them. The reveal is kept from `sm` up (#250).
+          <div className="pointer-events-auto absolute right-1 top-1.5 flex items-center gap-0.5 opacity-100 sm:pointer-events-none sm:opacity-0 transition-opacity sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
             <Tooltip content={t("memoryPanel.rows.deleteMemory")}>
               <button
                 type="button"

@@ -329,7 +329,10 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                 <Pencil
                   className={cn(
                     'h-3 w-3 shrink-0 text-(--text-muted) opacity-0 transition-opacity',
-                    !isGeneratingTitle && 'group-hover:opacity-100'
+                    // Below the Phone viewport step the hint is simply shown: `hover:`
+                    // compiles to `@media (hover: hover)`, so on a phone no rule exists
+                    // to reveal it. The reveal is kept from `sm` up (#250).
+                    !isGeneratingTitle && 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100'
                   )}
                 />
               </span>
