@@ -784,21 +784,30 @@ function TaskRowActions({
 /**
  * A task's title, or its title above the list of sessions archived with it.
  * Shared by both presentations so every session stays reachable on a phone.
+ *
+ * A desktop truncates what will not fit and puts the rest in a `title`
+ * tooltip. A phone has no pointer to hover with, so a truncated title is
+ * simply gone — and it is the one value that says which archived task this
+ * is. In a stacked row the text wraps instead, which the extra height a
+ * stacked row already costs makes free.
  */
 function TaskTitleBlock({
   item,
   onOpenSession,
+  stacked = false,
 }: {
   item: ArchiveItem;
   onOpenSession: (item: ArchiveItem, sessionId: string) => void;
+  stacked?: boolean;
 }) {
+  const fit = stacked ? 'break-words' : 'truncate';
   const singleSession = item.sessions.length === 1 ? item.sessions[0] : null;
 
   if (singleSession) {
     return (
       <button
         onClick={() => onOpenSession(item, singleSession.id)}
-        className="block max-w-full truncate text-left font-medium text-(--text-primary) hover:underline"
+        className={cn('block max-w-full text-left font-medium text-(--text-primary) hover:underline', fit)}
         title={item.title}
       >
         {item.title}
@@ -809,7 +818,7 @@ function TaskTitleBlock({
   return (
     <>
       <div
-        className="max-w-full truncate font-medium text-(--text-primary)"
+        className={cn('max-w-full font-medium text-(--text-primary)', fit)}
         title={item.title}
       >
         {item.title}
@@ -819,7 +828,10 @@ function TaskTitleBlock({
           <li key={session.id} data-testid={`archive-task-session-row-${session.id}`}>
             <button
               onClick={() => onOpenSession(item, session.id)}
-              className="block w-full max-w-full truncate text-left text-[0.6875rem] text-(--text-secondary) hover:text-(--text-primary) hover:underline"
+              className={cn(
+                'block w-full max-w-full text-left text-[0.6875rem] text-(--text-secondary) hover:text-(--text-primary) hover:underline',
+                fit,
+              )}
               title={session.title}
             >
               {session.title}
@@ -1002,7 +1014,7 @@ function TaskArchiveTable({
                 data-testid={`archive-task-row-${item.id}`}
               >
                 <td className="px-3 py-2.5">
-                  <TaskTitleBlock item={item} onOpenSession={onOpenSession} />
+                  <TaskTitleBlock item={item} onOpenSession={onOpenSession} stacked />
                   <StackedField
                     label={t('archive.columns.worktree')}
                     value={getWorktreeText(item, t)}

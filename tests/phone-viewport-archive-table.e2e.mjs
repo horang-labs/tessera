@@ -322,11 +322,15 @@ function documentScroll() {
 function columnHeadings(rowTestId) {
   return page.evaluate((testId) => {
     const table = document.querySelector(`[data-testid="${testId}"]`)?.closest('table');
-    return [...(table?.querySelectorAll('thead th') ?? [])].map((cell) => ({
-      text: cell.innerText.trim(),
-      left: Math.round(cell.getBoundingClientRect().left),
-      top: Math.round(cell.getBoundingClientRect().top),
-    }));
+    return [...(table?.querySelectorAll('thead th') ?? [])].map((cell) => {
+      const box = cell.getBoundingClientRect();
+      return {
+        text: cell.innerText.trim(),
+        left: Math.round(box.left),
+        top: Math.round(box.top),
+        width: Math.round(box.width),
+      };
+    });
   }, rowTestId);
 }
 
@@ -415,17 +419,29 @@ async function phaseTheDesktopTableIsUnchanged() {
     });
   }
 
-  // Five columns for a task, four for a chat, and side by side on one row —
-  // exactly the table that was there before this ticket.
-  for (const [rowTestId, expectedColumns] of [
-    ['archive-task-row-task-multi', 5],
-    ['archive-chat-row-chat-one', 4],
+  // Five columns for a task, four for a chat, side by side on one row, at the
+  // widths that were there before this ticket. The widths are written out
+  // rather than read off the code: "same widths" is the acceptance criterion,
+  // so the numbers have to come from somewhere a mistake cannot follow. Only
+  // the first column is elastic, so only it is left out.
+  for (const [rowTestId, expectedColumns, fixedWidths] of [
+    ['archive-task-row-task-multi', 5, [220, 150, 100, 320]],
+    ['archive-chat-row-chat-one', 4, [220, 130, 150]],
   ]) {
     const headings = await columnHeadings(rowTestId);
     assert.equal(
       headings.length,
       expectedColumns,
       `${rowTestId} keeps its ${expectedColumns} column headings: ${JSON.stringify(headings)}`,
+    );
+    assert.deepEqual(
+      headings.slice(1).map((heading) => heading.width),
+      fixedWidths,
+      `${rowTestId} keeps its column widths: ${JSON.stringify(headings)}`,
+    );
+    assert.ok(
+      headings[0].width > 0,
+      `and its first column still takes the slack: ${JSON.stringify(headings[0])}`,
     );
     assert.equal(
       new Set(headings.map((heading) => heading.top)).size,
@@ -513,6 +529,36 @@ async function phaseEveryColumnIsStillReachableOnAPhone() {
   }
 }
 
+/**
+ * Fitting the screen must not have been bought by cutting text off.
+ *
+ * A desktop truncates what will not fit and puts the rest in a `title`
+ * tooltip. On a phone there is no pointer to hover with, so truncated text is
+ * unreachable — and text content alone cannot see this, because CSS
+ * truncation leaves `innerText` complete. Only the rendered width can.
+ */
+async function phaseNoValueIsCutOffOnAPhone() {
+  for (const [, rowTestId] of ROWS) {
+    const clipped = await page.evaluate((testId) => {
+      const row = document.querySelector(`[data-testid="${testId}"]`);
+      return [...(row?.querySelectorAll('*') ?? [])]
+        .filter((element) => element.scrollWidth > element.clientWidth + 1)
+        .map((element) => ({
+          text: element.innerText?.replace(/\s+/g, ' ').trim().slice(0, 80) ?? '',
+          scrollWidth: Math.round(element.scrollWidth),
+          clientWidth: Math.round(element.clientWidth),
+        }));
+    }, rowTestId);
+
+    assert.deepEqual(
+      clipped,
+      [],
+      `nothing in ${rowTestId} may be cut off at ${PHONE_VIEWPORT.width}px`
+        + ` — a phone cannot hover to read the rest: ${JSON.stringify(clipped)}`,
+    );
+  }
+}
+
 // A stacked row shows bare values with no header above them, so it has to say
 // which is which — otherwise a project name, a path and a timestamp read as
 // three anonymous strings.
@@ -551,6 +597,7 @@ const phases = [
   ['the desktop table is unchanged', phaseTheDesktopTableIsUnchanged],
   ['the archive tab does not scroll sideways on a phone', phaseTheArchiveTabDoesNotScrollSidewaysOnAPhone],
   ['every column is still reachable on a phone', phaseEveryColumnIsStillReachableOnAPhone],
+  ['no value is cut off on a phone', phaseNoValueIsCutOffOnAPhone],
   ['a stacked row says which value is which', phaseAStackedRowSaysWhichValueIsWhich],
 ];
 
