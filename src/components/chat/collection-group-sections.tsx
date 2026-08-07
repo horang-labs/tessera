@@ -239,6 +239,7 @@ export function CollectionContextMenu({
   onStopProcess,
   onStatusChange,
   onRunPreparation,
+  onBranchFromWorktree,
 }: {
   menu: ContextMenuState;
   collections?: Collection[];
@@ -253,6 +254,8 @@ export function CollectionContextMenu({
   onStatusChange?: (status: string) => void;
   /** Runs the project's preparation script again on this task's worktree. */
   onRunPreparation?: () => void;
+  /** Creates a new worktree starting from this task's branch. */
+  onBranchFromWorktree?: () => void;
 }) {
   const { t } = useI18n();
   const fallbackCollections = useCollectionStore((state) => state.collections);
@@ -412,6 +415,17 @@ export function CollectionContextMenu({
           >
             <RefreshCw className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>{t('task.preparation.runNow')}</span>
+          </button>
+        )}
+
+        {onBranchFromWorktree && (
+          <button
+            className={menuItemClass}
+            onClick={() => { onBranchFromWorktree(); onClose(); }}
+            data-testid="ctx-branch-from-worktree"
+          >
+            <GitBranch className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+            <span>{t('task.contextMenu.branchFromWorktree' as Parameters<typeof t>[0])}</span>
           </button>
         )}
 

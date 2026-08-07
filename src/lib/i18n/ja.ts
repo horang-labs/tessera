@@ -1231,6 +1231,8 @@ export const ja: I18nMessages = {
       baseRefCurrentHead: '現在のHEAD',
       baseRefLocalGroup: 'ローカル',
       baseRefRemoteGroup: 'リモート',
+      baseRefFixedHint: 'このワークツリーから分岐',
+      baseRefUncommittedWarning: '未コミットの変更 {{files}} 件は引き継がれません',
     },
     contextMenu: {
       setStatus: 'ステータスを変更',
@@ -1244,6 +1246,7 @@ export const ja: I18nMessages = {
       moveToProject: 'プロジェクトに移動',
       cannotMoveRunning: '実行中のセッションは移動できません',
       generateTitle: 'AI タイトルを生成',
+      branchFromWorktree: 'このワークツリーから分岐',
     },
     moveDialog: {
       title: 'プロジェクトに移動',

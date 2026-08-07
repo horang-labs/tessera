@@ -242,8 +242,18 @@ test('collection quick create sheet renders and submits a base ref selector', ()
   assert.match(source, /WorktreeStartFromControl/);
   assert.match(source, /collection-task-base-ref/);
   assert.match(source, /selectedBaseRefForCreate/);
-  assert.match(source, /baseRef: selectedBaseRefForCreate/);
+  // A fixed base ref (branching from a worktree) wins over the picker, which
+  // only reports a ref the user chose by hand.
+  assert.match(source, /baseRef: fixedBaseRef \?\? selectedBaseRefForCreate/);
   assert.doesNotMatch(source, /isLoadingBaseRefs \|\| !selectedBaseRef/);
+});
+
+test('a fixed base ref skips the branch list fetch and locks the control', () => {
+  const source = quickCreateSource();
+
+  assert.match(source, /useWorktreeBaseRefs\(canCreateTask && !fixedBaseRef \? projectDir : null\)/);
+  assert.match(source, /fixedRefName=\{fixedBaseRef\}/);
+  assert.match(source, /buildBranchedWorktreeSlug\(fixedBaseRef\)/);
 });
 
 test('English i18n includes worktree base ref selector copy', () => {

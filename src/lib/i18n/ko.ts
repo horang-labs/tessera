@@ -1238,6 +1238,8 @@ export const ko: I18nMessages = {
       baseRefCurrentHead: '현재 HEAD',
       baseRefLocalGroup: '로컬',
       baseRefRemoteGroup: '원격',
+      baseRefFixedHint: '이 워크트리에서 분기',
+      baseRefUncommittedWarning: '커밋되지 않은 변경 {{files}}개는 따라가지 않습니다',
     },
     contextMenu: {
       setStatus: '상태 변경',
@@ -1251,6 +1253,7 @@ export const ko: I18nMessages = {
       moveToProject: '프로젝트 이동',
       cannotMoveRunning: '실행 중인 세션은 이동할 수 없습니다',
       generateTitle: 'AI 제목 생성',
+      branchFromWorktree: '이 워크트리에서 분기',
     },
     moveDialog: {
       title: '프로젝트 이동',

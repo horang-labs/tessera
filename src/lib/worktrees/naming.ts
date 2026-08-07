@@ -114,6 +114,27 @@ export function buildManagedWorktreeSlug(
   return `${formatManagedWorktreeSlugDate(date)}-${normalizeManagedWorktreeSlug(randomSuffix)}`;
 }
 
+/**
+ * Slug for a worktree branched off another worktree's branch.
+ *
+ * The `-b<random>` marker keeps the parentage readable in the branch name —
+ * which is the only place it is recorded — while staying distinct from the
+ * `-2`, `-3` suffixes that a plain name collision produces.
+ */
+export function buildBranchedWorktreeSlug(
+  sourceBranchName: string,
+  randomSuffix = createManagedWorktreeRandomSuffix()
+): string {
+  const sourceSlug = normalizeManagedWorktreeSlug(
+    sourceBranchName.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? ''
+  );
+  if (!sourceSlug) {
+    return buildManagedWorktreeSlug();
+  }
+
+  return `${sourceSlug}-b${normalizeManagedWorktreeSlug(randomSuffix)}`;
+}
+
 export function buildManagedWorktreeCollisionSlug(slug: string, collisionIndex = 0): string {
   const normalizedSlug = normalizeManagedWorktreeSlug(slug);
   return collisionIndex > 0 ? `${normalizedSlug}-${collisionIndex + 1}` : normalizedSlug;

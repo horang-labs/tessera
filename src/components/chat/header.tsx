@@ -21,6 +21,11 @@ import { useIsSessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { TaskContextMenu } from './task-context-menu';
+import {
+  BranchFromWorktreeSheet,
+  canBranchFromTask,
+  type BranchFromWorktreeSource,
+} from './branch-from-worktree-sheet';
 import { wsClient } from '@/lib/ws/client';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 import { ProviderBadge } from './provider-brand';
@@ -35,6 +40,7 @@ import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
+import type { TaskEntity } from '@/types/task-entity';
 
 interface HeaderProps {
   sessionId: string;
@@ -102,6 +108,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
 
   // Context menu state
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
+  const [branchSource, setBranchSource] = useState<BranchFromWorktreeSource | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const suppressTitleClickAfterDragRef = useRef(false);
 
@@ -135,6 +142,13 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const handleCloseMenu = useCallback(() => {
     setMenuAnchorRect(null);
   }, []);
+
+  // Plain function, like handleTitleSave above: React Compiler memoizes it, and
+  // wrapping it in useCallback is what breaks that inference here.
+  const openBranchSheet = (task: TaskEntity, rect: DOMRect) => {
+    setBranchSource({ task, point: { x: rect.left, y: rect.bottom } });
+    setMenuAnchorRect(null);
+  };
 
   const handleStatusChange = useCallback((status: string) => {
     if (!session?.taskId) return;
@@ -467,9 +481,16 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
           onDelete={handleDelete}
           onGenerateTitle={() => generateTitle(sessionId)}
           onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
+          onBranchFromWorktree={
+            linkedTask && canBranchFromTask(linkedTask)
+              ? () => openBranchSheet(linkedTask, menuAnchorRect)
+              : undefined
+          }
           onClose={handleCloseMenu}
         />
       )}
+
+      <BranchFromWorktreeSheet source={branchSource} onClose={() => setBranchSource(null)} />
     </div>
   );
 }

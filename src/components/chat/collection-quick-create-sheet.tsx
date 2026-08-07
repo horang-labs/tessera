@@ -10,6 +10,7 @@ import { useWorktreeBaseRefs } from '@/hooks/use-worktree-base-refs';
 import { useWorktreeSession } from '@/hooks/use-worktree-session';
 import { WorktreeStartFromControl } from '@/components/task/worktree-start-from-control';
 import {
+  buildBranchedWorktreeSlug,
   buildManagedWorktreePreviewPath,
   buildManagedWorktreeSlug,
   isManagedWorktreeSlugInputAllowed,
@@ -47,8 +48,21 @@ interface CollectionQuickCreateSheetProps {
   allowedModes?: Array<'chat' | 'task'>;
   boundaryRef?: RefObject<HTMLElement | null>;
   anchorRef?: RefObject<HTMLElement | null>;
+  /**
+   * Viewport point to anchor against when there is no element to attach to —
+   * used by context menus, which know where they opened but not on what.
+   */
+  anchorPoint?: { x: number; y: number };
   anchorPlacement?: QuickCreatePlacement;
   continuationSourceTitle?: string;
+  /**
+   * Branch the new worktree must start from. Set when creation was launched
+   * from a specific worktree: the ref becomes read-only and the branch list is
+   * never fetched.
+   */
+  fixedBaseRef?: string;
+  /** Uncommitted changes in the worktree being branched from. */
+  uncommittedChangeCount?: number;
   onSessionCreated?: (sessionId: string) => void | Promise<void>;
 }
 
@@ -119,8 +133,11 @@ export function CollectionQuickCreateSheet({
   allowedModes = ['chat', 'task'],
   boundaryRef,
   anchorRef,
+  anchorPoint,
   anchorPlacement = 'side',
   continuationSourceTitle,
+  fixedBaseRef,
+  uncommittedChangeCount = 0,
   onSessionCreated,
 }: CollectionQuickCreateSheetProps) {
   const { t } = useI18n();
@@ -141,14 +158,16 @@ export function CollectionQuickCreateSheet({
   const executionModeTouchedRef = useRef(false);
   const [isTaskExpanded, setIsTaskExpanded] = useState(resolvedInitialMode === 'task');
   const [taskTitle, setTaskTitle] = useState('');
-  const [branchSlug, setBranchSlug] = useState(() => buildManagedWorktreeSlug());
+  const [branchSlug, setBranchSlug] = useState(() =>
+    fixedBaseRef ? buildBranchedWorktreeSlug(fixedBaseRef) : buildManagedWorktreeSlug()
+  );
   const [branchSlugEdited, setBranchSlugEdited] = useState(false);
   const [submittingMode, setSubmittingMode] = useState<'chat' | 'task' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rawSelectedCollectionId, setSelectedCollectionId] = useState<string | null>(collection?.id ?? null);
   const containerRef = useRef<HTMLDivElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
-  const useAnchoredPortal = Boolean(anchorRef);
+  const useAnchoredPortal = Boolean(anchorRef) || Boolean(anchorPoint);
   const [anchoredPosition, setAnchoredPosition] = useState<{ left: number; top: number } | null>(null);
   const hasChatMode = availableModes.includes('chat');
   const hasTaskMode = availableModes.includes('task');
@@ -211,10 +230,19 @@ export function CollectionQuickCreateSheet({
     };
   }, [anchorRef, boundaryRef, onClose]);
 
+  const anchorPointX = anchorPoint?.x;
+  const anchorPointY = anchorPoint?.y;
+
   const updateAnchoredPosition = useCallback(() => {
     const anchorElement = anchorRef?.current;
-    if (!anchorElement) return;
-    const rect = anchorElement.getBoundingClientRect();
+    // A context menu hands over the point it opened at rather than an element,
+    // so treat that point as a zero-sized anchor and reuse the same placement.
+    const rect = anchorElement
+      ? anchorElement.getBoundingClientRect()
+      : anchorPointX !== undefined && anchorPointY !== undefined
+        ? { left: anchorPointX, right: anchorPointX, top: anchorPointY, bottom: anchorPointY }
+        : null;
+    if (!rect) return;
     const sheetWidth = containerRef.current?.offsetWidth ?? ANCHORED_SHEET_WIDTH;
     const sheetHeight = containerRef.current?.offsetHeight ?? 360;
     const viewportWidth = window.innerWidth;
@@ -251,7 +279,7 @@ export function CollectionQuickCreateSheet({
     }
 
     setAnchoredPosition({ left, top });
-  }, [anchorPlacement, anchorRef]);
+  }, [anchorPlacement, anchorPointX, anchorPointY, anchorRef]);
 
   useLayoutEffect(() => {
     if (!useAnchoredPortal) return;
@@ -285,7 +313,8 @@ export function CollectionQuickCreateSheet({
     setSelectedBaseRef,
     isLoading: isLoadingBaseRefs,
     error: baseRefError,
-  } = useWorktreeBaseRefs(canCreateTask ? projectDir : null);
+    // A fixed base ref leaves nothing to choose, so the branch list is never fetched.
+  } = useWorktreeBaseRefs(canCreateTask && !fixedBaseRef ? projectDir : null);
 
   const handleCreateChat = useCallback(async () => {
     setError(null);
@@ -346,7 +375,9 @@ export function CollectionQuickCreateSheet({
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
         branchSlug: normalizedBranchSlug,
-        baseRef: selectedBaseRefForCreate,
+        // Pass the fixed ref explicitly: useWorktreeBaseRefs only reports a ref
+        // the user picked by hand, so relying on it here would silently drop it.
+        baseRef: fixedBaseRef ?? selectedBaseRefForCreate,
         allowBranchSlugSuffix: !branchSlugEdited,
         suppressErrorToast: true,
         collectionId: selectedCollection?.id ?? undefined,
@@ -379,6 +410,7 @@ export function CollectionQuickCreateSheet({
     onSessionCreated,
     branchSlug,
     branchSlugEdited,
+    fixedBaseRef,
     projectDir,
     projectId,
     selectedBaseRefForCreate,
@@ -662,6 +694,8 @@ export function CollectionQuickCreateSheet({
               error={baseRefError}
               disabled={submittingMode !== null}
               compact
+              fixedRefName={fixedBaseRef}
+              uncommittedChangeCount={uncommittedChangeCount}
               onSelectedBaseRefChange={setSelectedBaseRef}
             />
 

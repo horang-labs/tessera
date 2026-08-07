@@ -1212,6 +1212,8 @@ export interface I18nMessages {
       baseRefCurrentHead: string;
       baseRefLocalGroup: string;
       baseRefRemoteGroup: string;
+      baseRefFixedHint: string;
+      baseRefUncommittedWarning: string;
     };
     contextMenu: {
       setStatus: string;
@@ -1225,6 +1227,7 @@ export interface I18nMessages {
       moveToProject: string;
       cannotMoveRunning: string;
       generateTitle: string;
+      branchFromWorktree: string;
     };
     moveDialog: {
       title: string;

@@ -1231,6 +1231,8 @@ export const en: I18nMessages = {
       baseRefCurrentHead: 'current HEAD',
       baseRefLocalGroup: 'Local',
       baseRefRemoteGroup: 'Remote',
+      baseRefFixedHint: 'Branching from this worktree',
+      baseRefUncommittedWarning: '{{files}} uncommitted changes stay behind',
     },
     contextMenu: {
       setStatus: 'Set Status',
@@ -1244,6 +1246,7 @@ export const en: I18nMessages = {
       moveToProject: 'Move to Project',
       cannotMoveRunning: 'Stop session before moving',
       generateTitle: 'Generate AI title',
+      branchFromWorktree: 'Branch from this worktree',
     },
     moveDialog: {
       title: 'Move to Project',

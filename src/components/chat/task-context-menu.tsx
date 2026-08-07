@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, CircleStop, Pencil, RefreshCw, Trash2, ExternalLink, FolderInput, Sparkles } from 'lucide-react';
+import { Archive, ArchiveRestore, CircleStop, GitBranch, Pencil, RefreshCw, Trash2, ExternalLink, FolderInput, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
@@ -32,6 +32,8 @@ export interface TaskContextMenuProps {
   onStopProcess?: () => void;
   /** Runs the project's preparation script again on this task's worktree. */
   onRunPreparation?: () => void;
+  /** Creates a new worktree starting from this task's branch. */
+  onBranchFromWorktree?: () => void;
   onClose: () => void;
 }
 
@@ -58,6 +60,7 @@ export function TaskContextMenu({
   onMoveToProject,
   onStopProcess,
   onRunPreparation,
+  onBranchFromWorktree,
   onClose,
 }: TaskContextMenuProps) {
   const { t } = useI18n();
@@ -80,6 +83,7 @@ export function TaskContextMenu({
       + (onMoveToCollection ? 1 : 0)
       + (onMoveToProject ? 1 : 0)
       + (onGenerateTitle ? 1 : 0)
+      + (onBranchFromWorktree ? 1 : 0)
       + (onOpenInNewTab ? 1 : 0);
     const statusSectionHeight = statusCount > 0 ? 20 + statusCount * ITEM_HEIGHT + 8 : 0;
     const stopProcessDividerHeight = isRunning && onStopProcess ? 8 : 0;
@@ -110,6 +114,7 @@ export function TaskContextMenu({
     allowChatStatus,
     currentStatus,
     isRunning,
+    onBranchFromWorktree,
     onGenerateTitle,
     onMoveToCollection,
     onMoveToProject,
@@ -189,6 +194,11 @@ export function TaskContextMenu({
     onRunPreparation?.();
     onClose();
   }, [onClose, onRunPreparation]);
+
+  const handleBranchFromWorktree = useCallback(() => {
+    onBranchFromWorktree?.();
+    onClose();
+  }, [onBranchFromWorktree, onClose]);
 
   const handleDelete = useCallback(() => {
     onDelete();
@@ -318,6 +328,18 @@ export function TaskContextMenu({
         >
           <RefreshCw className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
           <span>{t('task.preparation.runNow')}</span>
+        </button>
+      )}
+
+      {onBranchFromWorktree && (
+        <button
+          role="menuitem"
+          className={menuItemClass}
+          onClick={handleBranchFromWorktree}
+          data-testid="ctx-branch-from-worktree"
+        >
+          <GitBranch className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
+          <span>{t('task.contextMenu.branchFromWorktree' as Parameters<typeof t>[0])}</span>
         </button>
       )}
 

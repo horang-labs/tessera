@@ -34,6 +34,11 @@ import { KanbanChatColumn, KanbanWorkflowColumn } from './kanban-column';
 import { KanbanScrollControls } from './kanban-scroll-controls';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
 import {
+  BranchFromWorktreeSheet,
+  canBranchFromTask,
+  type BranchFromWorktreeSource,
+} from '@/components/chat/branch-from-worktree-sheet';
+import {
   canPrepareTask,
   useProjectHasPreparationScript,
   useWorktreePreparation,
@@ -899,6 +904,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
   const [taskMenuAnchor, setTaskMenuAnchor] = useState<{ task: TaskEntity; rect: DOMRect } | null>(null);
+  const [branchSource, setBranchSource] = useState<BranchFromWorktreeSource | null>(null);
   const taskMenuProjectHasScript = useProjectHasPreparationScript(taskMenuAnchor?.task.projectId);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
 
@@ -915,6 +921,16 @@ export const KanbanBoard = memo(function KanbanBoard() {
     requestPreparation(taskMenuAnchor.task.id);
     setTaskMenuAnchor(null);
   }, [requestPreparation, taskMenuAnchor]);
+
+  const handleTaskBranchFromWorktree = useCallback(() => {
+    if (!taskMenuAnchor) return;
+    // The menu opened against the card, so branch from where the menu itself sits.
+    setBranchSource({
+      task: taskMenuAnchor.task,
+      point: { x: taskMenuAnchor.rect.left, y: taskMenuAnchor.rect.bottom },
+    });
+    setTaskMenuAnchor(null);
+  }, [taskMenuAnchor]);
 
   // Task context menu action handlers
   const handleTaskStatusChange = useCallback((status: string) => {
@@ -1128,6 +1144,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
           onGenerateTitle={handleTaskGenerateTitle}
           isRunning={taskMenuIsRunning}
           onStopProcess={taskMenuIsRunning ? handleTaskStopProcess : undefined}
+          onBranchFromWorktree={
+            canBranchFromTask(taskMenuAnchor.task) ? handleTaskBranchFromWorktree : undefined
+          }
           onRunPreparation={
             canPrepareTask(taskMenuAnchor.task, taskMenuProjectHasScript)
               ? handleTaskRunPreparation
@@ -1136,6 +1155,8 @@ export const KanbanBoard = memo(function KanbanBoard() {
           onClose={handleTaskMenuClose}
         />
       )}
+
+      <BranchFromWorktreeSheet source={branchSource} onClose={() => setBranchSource(null)} />
 
       {preparationConfirmDialog}
 

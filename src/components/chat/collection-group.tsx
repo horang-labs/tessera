@@ -27,6 +27,11 @@ import type { TaskEntity } from '@/types/task-entity';
 import { useI18n } from '@/lib/i18n';
 import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import {
+  BranchFromWorktreeSheet,
+  canBranchFromTask,
+  type BranchFromWorktreeSource,
+} from './branch-from-worktree-sheet';
+import {
   ChatItemRow,
   CollectionContextMenu,
   CollectionHeaderMenu,
@@ -293,6 +298,7 @@ export const CollectionGroup = memo(function CollectionGroup({
   }, [activeSessionId]);
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [branchSource, setBranchSource] = useState<BranchFromWorktreeSource | null>(null);
   const [renamingItem, setRenamingItem] = useState<{ type: 'task' | 'chat'; id: string } | null>(null);
   const [isEditingCollection, setIsEditingCollection] = useState(false);
   const [editingLabel, setEditingLabel] = useState('');
@@ -691,6 +697,14 @@ export const CollectionGroup = memo(function CollectionGroup({
           onGenerateTitle={onSessionGenerateTitle ? handleContextMenuGenerateTitle : undefined}
           onMoveToProject={contextMenu.type === 'chat' && !contextMenu.isSubSession ? () => onSessionMoveToProject?.(contextMenu.targetId) : undefined}
           onStopProcess={contextMenu.isRunning ? handleContextMenuStopProcess : undefined}
+          onBranchFromWorktree={
+            contextMenuTask && canBranchFromTask(contextMenuTask)
+              ? () => setBranchSource({
+                  task: contextMenuTask,
+                  point: { x: contextMenu.x, y: contextMenu.y },
+                })
+              : undefined
+          }
           onRunPreparation={
             contextMenuTask && canPrepareTask(contextMenuTask, projectHasPreparationScript)
               ? () => requestPreparation(contextMenuTask.id)
@@ -705,6 +719,8 @@ export const CollectionGroup = memo(function CollectionGroup({
           }
         />
       )}
+
+      <BranchFromWorktreeSheet source={branchSource} onClose={() => setBranchSource(null)} />
 
       {preparationConfirmDialog}
 

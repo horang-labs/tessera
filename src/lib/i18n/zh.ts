@@ -1231,6 +1231,8 @@ export const zh: I18nMessages = {
       baseRefCurrentHead: '当前 HEAD',
       baseRefLocalGroup: '本地',
       baseRefRemoteGroup: '远程',
+      baseRefFixedHint: '从此工作树分支',
+      baseRefUncommittedWarning: '{{files}} 项未提交更改不会带过去',
     },
     contextMenu: {
       setStatus: '设置状态',
@@ -1244,6 +1246,7 @@ export const zh: I18nMessages = {
       moveToProject: '移动到项目',
       cannotMoveRunning: '停止会话后才能移动',
       generateTitle: '生成 AI 标题',
+      branchFromWorktree: '从此工作树分支',
     },
     moveDialog: {
       title: '移动到项目',
