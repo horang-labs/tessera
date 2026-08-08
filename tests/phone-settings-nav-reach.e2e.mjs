@@ -31,6 +31,11 @@
  *   4. Phases 1 and 2 again with the address bar scrolled away, which is the
  *      other height the same phone really has. Phases 0-3 take the smaller of
  *      the two, so this is the transition, not a second guess at the default.
+ *   5. One width in the band between the Phone viewport step and the dialog's own
+ *      column step, 640-767px (#266). The picker was phone-only and the column is
+ *      `md:`, so these widths got neither and fell back to the strip: 1040px of
+ *      tabs in a 658px box at 700px wide, three of the seven pages off-screen.
+ *      Plus 768px itself, so no width sits between the two controls.
  *
  * The server runs from the repository itself rather than a copied app root:
  * every assertion here is a measured box and Tailwind only generates its
@@ -60,6 +65,25 @@ import {
 
 /** A pointer-driven window, which is what must not regress. */
 const DESKTOP_VIEWPORT = { width: 1280, height: 900 };
+
+/**
+ * One width inside the band the two controls used to leave uncovered (#266).
+ * 880px tall because that is the whole Z Flip screen — a window this wide is the
+ * phone turned over or a narrowed desktop, not the page inside Chrome's
+ * furniture, so `PHONE_VIEWPORT`'s height derivation does not apply here.
+ *
+ * One width and one scale: the strip overflowed at every width in the band and
+ * at every font scale (640/700/767 at 1 and 1.375 are in the ticket's report as
+ * numbers), so a sweep here would re-assert the same claim six times.
+ */
+const BAND_VIEWPORT = { width: 700, height: 880 };
+
+/**
+ * The first width at which the dialog grows its sidebar
+ * (`SETTINGS_DIALOG_SIDEBAR_BREAKPOINT`). Asserted as the band's far edge so the
+ * two controls are shown to meet rather than assumed to.
+ */
+const SIDEBAR_STEP_WIDTH = 768;
 
 /** The floor a finger needs, in CSS px (`PHONE_TOUCH_TARGET_PX`, #259). */
 const MIN_TOUCH_TARGET = 44;
@@ -237,7 +261,9 @@ async function setFontScale(scale) {
  * Opens the app with Settings showing.
  *
  * @param {object} options
- * @param {'phone'|'phone-address-bar-hidden'|'desktop'} options.viewport
+ * @param {'phone'|'phone-address-bar-hidden'|'desktop'|{width: number, height: number}}
+ *   options.viewport A named case, or an explicit touch viewport for the widths
+ *   between the phone step and the dialog's column step.
  * @param {number} options.fontScale One of `FONT_SCALE_OPTIONS`. Also seeded
  *   where the FOUC-prevention script in `layout.tsx` reads it, so the root font
  *   size is already right on the first paint.
@@ -245,11 +271,13 @@ async function setFontScale(scale) {
 async function openSettingsPage({ viewport, fontScale }) {
   await setFontScale(fontScale);
   const options = { extraHTTPHeaders: { 'x-tessera-app-secret': appSecret } };
-  const context = viewport === 'phone'
-    ? await createPhoneContext(browser, options)
-    : viewport === 'phone-address-bar-hidden'
-      ? await createPhoneContextWithAddressBarHidden(browser, options)
-      : await browser.newContext({ ...options, viewport: DESKTOP_VIEWPORT, hasTouch: false });
+  const context = typeof viewport === 'object'
+    ? await browser.newContext({ ...options, viewport, hasTouch: true })
+    : viewport === 'phone'
+      ? await createPhoneContext(browser, options)
+      : viewport === 'phone-address-bar-hidden'
+        ? await createPhoneContextWithAddressBarHidden(browser, options)
+        : await browser.newContext({ ...options, viewport: DESKTOP_VIEWPORT, hasTouch: false });
 
   await context.addInitScript((scale) => {
     localStorage.setItem('tessera:settings', JSON.stringify({
@@ -483,6 +511,35 @@ function assertNavBandStaysCheap(measurement, label) {
     `${label}: the nav takes ${asideBox.height}px of ${modalBox.height}px`
       + ` (${Math.round(navShare * 100)}%, ceiling ${Math.round(MAX_NAV_SHARE * 100)}%)`,
   );
+}
+
+/**
+ * The defect itself, stated without naming the control that answers it: whatever
+ * the nav is at this width, it may not be showing some pages and hiding the rest
+ * off-screen behind a scroll nothing advertises.
+ *
+ * A nav that renders no page controls until it is opened — the picker — passes
+ * this vacuously and is held to `assertPickerIsAdvertised` and
+ * `assertOpenListShowsEveryPage` instead. A strip has all seven in the DOM at
+ * once, and is caught here.
+ */
+function assertNothingIsHiddenSideways(measurement, label) {
+  const offscreen = measurement.tabs.filter(({ box }) => (
+    box && (box.left < 0 || box.right > measurement.innerWidth)
+  ));
+  assert.equal(
+    offscreen.length,
+    0,
+    `${label}: ${offscreen.length} of ${measurement.tabs.length} pages sit outside`
+      + ` 0→${measurement.innerWidth}, reachable only by scrubbing\n${describeTabs(measurement)}`,
+  );
+  for (const scroller of measurement.stripScrollers) {
+    assert.ok(
+      scroller.scrollWidth <= scroller.clientWidth + 1,
+      `${label}: the nav scroller ${scroller.testId ?? '(unnamed)'} holds ${scroller.scrollWidth}px`
+        + ` in a ${scroller.clientWidth}px box`,
+    );
+  }
 }
 
 /**
@@ -803,6 +860,65 @@ async function phase4() {
   }
 }
 
+/**
+ * The band between the two controls, 640-767px (#266).
+ *
+ * The picker hung off the Phone viewport step and the column hangs off the
+ * dialog's `md:`, so these widths had neither and kept the strip: measured
+ * headful at 700x880 before the fix, 1040px of tabs in a 658px box with
+ * remote-access, development and git wholly outside the viewport — the same
+ * blind scrub #264 removed from the phone.
+ *
+ * The band belongs to the picker rather than to an earlier column because of the
+ * width, not the height: the picker leaves the body the dialog's full 658px at
+ * 700px wide for a 111.5px band (14%), where `md:w-64` is 16rem — 256px at the
+ * default scale, 352px at the largest — and would leave the body 402px, or 231px
+ * at 640px with the largest scale, narrower than the body a 360px phone gets.
+ */
+async function phase5() {
+  const label = `band-${BAND_VIEWPORT.width}`;
+  const { context, page } = await openSettingsPage({ viewport: BAND_VIEWPORT, fontScale: 1 });
+  try {
+    const closed = await measureDialog(page);
+    results.push(`${label}: dialog ${closed.modalClientWidth}px wide, page ${closed.innerWidth}px`);
+    assertNothingIsHiddenSideways(closed, label);
+    assertPickerIsAdvertised(closed, label, 'General');
+    assertNavBandStaysCheap(closed, label);
+
+    await openPicker(page);
+    const open = await measureDialog(page);
+    assertOpenListShowsEveryPage(open, label);
+    await page.screenshot({ path: path.join(artifactDir, `settings-picker-${BAND_VIEWPORT.width}.png`) });
+
+    await assertEveryPageOpens(page, label);
+  } finally {
+    await context.close();
+  }
+
+  // The far edge, which is what "no width falls between two controls" means: one
+  // step up the column has to be the one that answers.
+  const edge = await openSettingsPage({
+    viewport: { width: SIDEBAR_STEP_WIDTH, height: BAND_VIEWPORT.height },
+    fontScale: 1,
+  });
+  try {
+    const measurement = await measureDialog(edge.page);
+    assert.equal(measurement.triggerBox, null, `${SIDEBAR_STEP_WIDTH}px: the picker outlived the band`);
+    assert.equal(measurement.hasStrip, true, `${SIDEBAR_STEP_WIDTH}px: neither control is rendered`);
+    const lefts = measurement.tabs.map(({ id, box }) => {
+      assert.ok(box, `${SIDEBAR_STEP_WIDTH}px: no nav button for ${id}`);
+      return box.left;
+    });
+    assert.ok(
+      lefts.every((left) => left === lefts[0]),
+      `${SIDEBAR_STEP_WIDTH}px: the tabs are not the sidebar column — the strip is back`,
+    );
+    results.push(`${SIDEBAR_STEP_WIDTH}px: the sidebar column has arrived, no picker`);
+  } finally {
+    await edge.context.close();
+  }
+}
+
 // -------------------------------------------------------------------- run ---
 
 const phases = [
@@ -811,6 +927,7 @@ const phases = [
   ['2', phase2],
   ['3', phase3],
   ['4', phase4],
+  ['5', phase5],
 ];
 
 try {

@@ -34,7 +34,8 @@ import SettingsSectionPicker from './settings-section-picker';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
-import { usePhoneViewport } from '@/hooks/use-phone-viewport';
+import { useMediaQuery } from '@/hooks/use-media-query';
+import { SETTINGS_DIALOG_STACKED_NAV_MEDIA_QUERY } from '@/lib/viewport/settings-dialog-viewport';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
 // Defined with the store, because opening the panel is how a caller asks for a
@@ -71,7 +72,9 @@ export default function SettingsPanel() {
   const isWindowsServer = useSettingsStore((state) => state.serverHostInfo?.isWindowsEcosystem ?? false);
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === 'win32';
-  const isPhoneViewport = usePhoneViewport();
+  // The nav is a band above the body until the dialog grows its sidebar, and the
+  // picker owns every width where it is (#266).
+  const isNavStacked = useMediaQuery(SETTINGS_DIALOG_STACKED_NAV_MEDIA_QUERY);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
   // Whoever opened the panel may have said where to land. Their ask holds until
@@ -284,11 +287,13 @@ export default function SettingsPanel() {
                 {t('settings.title')}
               </p>
             </div>
-            {/* At the Phone viewport the strip below is 1029px of tabs in a 332px
-                box, so five of the seven pages sat off-screen behind a scroll
-                nothing advertised (#264). One control lists them all and costs
-                the dialog a single row. */}
-            {isPhoneViewport ? (
+            {/* Wherever the nav is this band rather than the column, the strip
+                below is ~1040px of tabs in a box the dialog's width: 332px at
+                360px wide, where five of the seven pages sat off-screen behind a
+                scroll nothing advertised (#264), and still only 658px at 700px
+                wide, where three of them did (#266). One control lists them all
+                and costs the dialog a single row. */}
+            {isNavStacked ? (
               <div className="px-3 pb-3">
                 <SettingsSectionPicker
                   sections={sections}
