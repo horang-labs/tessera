@@ -2,8 +2,9 @@
 
 import { useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import Image from 'next/image';
+import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useI18n } from '@/lib/i18n';
+import { cn } from '@/lib/utils';
 
 export interface ImageLightboxProps {
   src: string;
@@ -13,6 +14,13 @@ export interface ImageLightboxProps {
 
 export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   const { t } = useI18n();
+  const electronPlatform = useElectronPlatform();
+  // On Windows the window controls are a native titleBarOverlay the page can
+  // never paint above, so a close button in the top-right corner sits *under*
+  // them. Drop it below the titlebar strip the app header already reserves.
+  // Linux draws its controls in the DOM (this portal covers them) and macOS
+  // puts them on the left, so neither needs the offset.
+  const avoidsWindowControls = electronPlatform === 'win32';
   const resolvedAlt = alt || t('chat.imageOriginalView');
 
   // ESC key to close
@@ -39,10 +47,6 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
     onClose();
   }, [onClose]);
 
-  const handleImageClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-  }, []);
-
   if (typeof document === 'undefined') {
     return null;
   }
@@ -58,24 +62,26 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
       <button
         type="button"
         onClick={onClose}
-        className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors text-xl"
+        className={cn(
+          'absolute right-4 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors text-xl',
+          avoidsWindowControls ? 'top-12' : 'top-4',
+        )}
         aria-label={t('common.close')}
       >
         ×
       </button>
-      <div
-        className="relative w-[90vw] h-[90vh]"
-        onClick={handleImageClick}
-      >
-        <Image
-          src={src}
-          alt={resolvedAlt}
-          fill
-          unoptimized
-          sizes="90vw"
-          className="object-contain rounded-lg shadow-2xl"
-        />
-      </div>
+      {/*
+        Nothing swallows the click: clicking anywhere — the backdrop or the
+        picture itself — dismisses. The old wrapper was sized to the viewport
+        and stopped propagation, so the click that opened the image could not
+        close it again anywhere the user would naturally aim.
+      */}
+      {/* eslint-disable-next-line @next/next/no-img-element -- dynamic local image, dimensions unknown */}
+      <img
+        src={src}
+        alt={resolvedAlt}
+        className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+      />
     </div>,
     document.body,
   );
