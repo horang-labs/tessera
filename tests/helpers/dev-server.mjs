@@ -37,18 +37,32 @@ async function reservePort() {
 }
 
 /**
- * Start a dev server and wait until it answers. Resolves to `{ origin, appSecret, stop }`
- * — `appSecret` is the value the `x-tessera-app-secret` header needs, and `stop` is safe to
- * call from a `finally` whether or not the server ever came up.
+ * Start a dev server and wait until it answers. Resolves to
+ * `{ origin, appSecret, dataDir, stop }` — `appSecret` is the value the
+ * `x-tessera-app-secret` header needs, and `stop` is safe to call from a `finally`
+ * whether or not the server ever came up.
  *
- * @param {{ dataDirPrefix?: string }} [options]
+ * `seed` runs once the data directory exists and before the server is spawned, which is
+ * the only moment a file the server reads at boot — `users.json`, say — can be written.
+ * `env` is merged last, for the variables a file needs and this default does not set.
+ *
+ * @param {{
+ *   dataDirPrefix?: string,
+ *   env?: Record<string, string>,
+ *   seed?: (dataDir: string) => Promise<void> | void,
+ * }} [options]
  */
-export async function startDevServer({ dataDirPrefix = 'tessera-e2e-data-' } = {}) {
+export async function startDevServer({
+  dataDirPrefix = 'tessera-e2e-data-',
+  env: extraEnv = {},
+  seed,
+} = {}) {
   const port = await reservePort();
   const origin = `http://127.0.0.1:${port}`;
   const tempRoot = path.join(os.homedir(), 'tmp');
   await fs.mkdir(tempRoot, { recursive: true });
   const dataDir = await fs.mkdtemp(path.join(tempRoot, dataDirPrefix));
+  await seed?.(dataDir);
 
   const env = { ...process.env };
   for (const key of HOST_SESSION_KEYS) delete env[key];
@@ -64,6 +78,7 @@ export async function startDevServer({ dataDirPrefix = 'tessera-e2e-data-' } = {
       TESSERA_DATA_DIR: dataDir,
       TESSERA_ELECTRON_RUNTIME: '1',
       LOG_LEVEL: 'error',
+      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -93,7 +108,7 @@ export async function startDevServer({ dataDirPrefix = 'tessera-e2e-data-' } = {
       const probe = await fetch(`${origin}/api/settings`, {
         headers: { 'x-tessera-app-secret': appSecret },
       });
-      if (probe.ok) return { origin, appSecret, stop };
+      if (probe.ok) return { origin, appSecret, dataDir, stop };
     } catch { /* Next is still starting. */ }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }

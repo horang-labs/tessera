@@ -26,9 +26,9 @@ import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
  *
  * Text goes to the terminal as a paste followed by Enter (terminal-chat-send.ts),
  * so this stays deliberately plain: no attachments, no slash-command handling,
- * no skill picker. Those need the TUI's own input affordances, and the
- * placeholder says so rather than letting the surface look more capable than it
- * is.
+ * no skill picker. Those need the TUI's own input affordances, and the input's
+ * accessible name says so rather than letting the surface look more capable
+ * than it is.
  *
  * It also carries the PTY's lifecycle state, because the overlay has no other
  * live signal — without it a quiet session is indistinguishable from a broken one.
@@ -137,6 +137,14 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 onKeyDown={handleKeyDown}
                 disabled={isBlocked}
                 rows={1}
+                // The visible hint has to fit the one line this box is tall: at
+                // 360px it is 204px wide, and the sentence that named the
+                // attachment limit wrapped onto a second line the user cannot
+                // scroll to, so it read as ending on "no" (#271). The whole
+                // sentence stays as the accessible name and as the pointer
+                // tooltip, both of which have no such line.
+                aria-label={t('chat.terminalComposerLabel')}
+                title={t('chat.terminalComposerLabel')}
                 placeholder={
                   isBlocked
                     ? t('chat.terminalComposerBlocked')
