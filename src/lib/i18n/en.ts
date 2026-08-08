@@ -19,6 +19,7 @@ export const en: I18nMessages = {
       git: 'Git',
       gitDesc: 'Branch naming defaults.',
     },
+    sectionPicker: 'Section',
     language: 'Language',
     terminalView: {
       title: 'Terminal session view',

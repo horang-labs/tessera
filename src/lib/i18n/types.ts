@@ -17,6 +17,8 @@ export interface I18nMessages {
       git: string;
       gitDesc: string;
     };
+    /** Names the control the Phone viewport navigates the sections with (#264). */
+    sectionPicker: string;
     language: string;
     terminalView: {
       title: string;

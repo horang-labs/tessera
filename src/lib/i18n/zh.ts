@@ -19,6 +19,7 @@ export const zh: I18nMessages = {
       git: 'Git',
       gitDesc: '分支命名的默认设置。',
     },
+    sectionPicker: '分区',
     language: '语言',
     terminalView: {
       title: '终端会话视图',
