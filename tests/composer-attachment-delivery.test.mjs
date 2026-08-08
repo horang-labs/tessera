@@ -7,6 +7,10 @@
 // attachment is still attached — and the builders then dropped the attachment silently.
 // QA measured exactly that at the socket: a `send_message` frame with no attachment field
 // of any kind while a blob preview was on screen.
+//
+// The named imports below could not resolve until #278 raised the tsx floor — see
+// `mjs-ts-named-import-contract.test.mjs` for why, and before reaching for the
+// `import * as ns` workaround the older `.test.mjs` files use.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
