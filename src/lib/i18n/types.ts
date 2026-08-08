@@ -1405,13 +1405,19 @@ export interface I18nMessages {
       chatInstantHint: string;
       taskWorktreeHint: string;
       taskWorktreeDescription: string;
+      worktreeSourceLabel: string;
+      worktreeSourceBranchOff: string;
+      worktreeSourceCheckout: string;
       baseRefLabel: string;
+      checkoutBranchLabel: string;
       baseRefLoading: string;
       baseRefUnavailable: string;
+      checkoutBranchUnavailable: string;
       baseRefCurrentSuffix: string;
       baseRefCurrentHead: string;
       baseRefLocalGroup: string;
       baseRefRemoteGroup: string;
+      errorCheckoutBranchRequired: string;
     };
     contextMenu: {
       setStatus: string;

@@ -194,9 +194,10 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const {
     refs: baseRefs,
     selectedBaseRef,
-    selectedBaseRefForCreate,
-    selectedRef,
     setSelectedBaseRef,
+    creationMode: worktreeCreationMode,
+    setCreationMode: setWorktreeCreationMode,
+    worktreeSourceForCreate,
     isLoading: isLoadingBaseRefs,
     error: baseRefError,
   } = useWorktreeBaseRefs(mode === 'task' ? activeProject?.decodedPath : null);
@@ -254,15 +255,23 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     setIsSubmittingTask(true);
     try {
       const trimmedTaskTitle = taskTitle.trim();
-      const rawBranchSlug = branchSlug.trim();
-      if (!isManagedWorktreeSlugInputAllowed(rawBranchSlug)) {
-        setError(t('task.creation.errorInvalidBranchSlug'));
+      if (!worktreeSourceForCreate) {
+        setError(t('task.creation.errorCheckoutBranchRequired'));
         return;
       }
-      const normalizedBranchSlug = normalizeManagedWorktreeSlug(rawBranchSlug);
-      if (!normalizedBranchSlug) {
-        setError(t('task.creation.errorEmptyBranchSlug'));
-        return;
+
+      let normalizedBranchSlug: string | undefined;
+      if (worktreeSourceForCreate.mode === 'branch-off') {
+        const rawBranchSlug = branchSlug.trim();
+        if (!isManagedWorktreeSlugInputAllowed(rawBranchSlug)) {
+          setError(t('task.creation.errorInvalidBranchSlug'));
+          return;
+        }
+        normalizedBranchSlug = normalizeManagedWorktreeSlug(rawBranchSlug);
+        if (!normalizedBranchSlug) {
+          setError(t('task.creation.errorEmptyBranchSlug'));
+          return;
+        }
       }
       const result = await createWorktreeSession({
         projectDir: activeProject.decodedPath,
@@ -271,9 +280,11 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
         executionMode,
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
-        branchSlug: normalizedBranchSlug,
-        baseRef: selectedBaseRefForCreate,
-        allowBranchSlugSuffix: !branchSlugEdited,
+        worktreeSource: worktreeSourceForCreate,
+        ...(worktreeSourceForCreate.mode === 'branch-off' && {
+          branchSlug: normalizedBranchSlug,
+          allowBranchSlugSuffix: !branchSlugEdited,
+        }),
         suppressErrorToast: true,
         collectionId: selectedCollectionId ?? undefined,
         source: 'new_session',
@@ -303,13 +314,13 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     panelId,
     tabId,
     selectedCollectionId,
-    selectedBaseRefForCreate,
     selectedProvider,
     setActivePanelId,
     t,
     branchSlug,
     branchSlugEdited,
     taskTitle,
+    worktreeSourceForCreate,
   ]);
 
   useEffect(() => {
@@ -332,6 +343,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const isSubmitting = isCreating || isSubmittingTask;
   const isLaunchDisabled = isSubmitting
     || !activeProject
+    || (mode === 'task' && !worktreeSourceForCreate)
     || (mode !== 'shell' && (!isSelectedProviderReady || !isSelectedExecutionModeSupported));
   const branchPreview = activeProject
     ? buildManagedWorktreeBranchName(branchSlug, branchPrefix)
@@ -596,7 +608,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                     />
                   </div>
 
-                  {activeProject && (
+                  {activeProject && worktreeCreationMode === 'branch-off' && (
                     <div className="space-y-1.5">
                       <label
                         htmlFor={`empty-panel-branch-slug-${panelId}`}
@@ -649,11 +661,12 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                       id={`empty-panel-base-ref-${panelId}`}
                       testId="empty-panel-base-ref"
                       refs={baseRefs}
+                      creationMode={worktreeCreationMode}
                       selectedBaseRef={selectedBaseRef}
-                      selectedRef={selectedRef}
                       isLoading={isLoadingBaseRefs}
                       error={baseRefError}
                       disabled={isSubmitting}
+                      onCreationModeChange={setWorktreeCreationMode}
                       onSelectedBaseRefChange={setSelectedBaseRef}
                     />
                   )}
