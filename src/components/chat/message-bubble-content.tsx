@@ -45,8 +45,15 @@ interface TimestampFormatterProps {
 // Below the Phone viewport step these actions are simply present: `hover:` compiles to
 // `@media (hover: hover)`, so on a phone no rule exists to reveal them. The reveal is kept
 // from `sm` up, where a pointer is what drives the UI (#250).
+// `flex-wrap` and no `shrink-0` (#261), and the canonical explanation for both
+// copies of this constant — the twin in `agent-message-group.tsx` points here.
+// The row is `ml-auto` in a column 235px wide at 360px, and its three buttons
+// are 284px of `rem`-sized boxes. Pinned right and unable to give width back, it
+// simply painted past the screen edge. Wrapping is a no-op wherever the row
+// fits, so a desktop is untouched; all three headers that hold this row wrap for
+// the same reason.
 const MESSAGE_ACTIONS_CLASS =
-  'ml-auto inline-flex shrink-0 items-center gap-1 opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none transition-opacity sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
+  'ml-auto inline-flex flex-wrap justify-end items-center gap-1 opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none transition-opacity sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
 
 const MESSAGE_ACTION_BUTTON_CLASS =
   'inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
@@ -342,14 +349,23 @@ const UserMessage = memo(function UserMessage({
         <UserAvatar avatarDataUrl={avatarDataUrl} displayName={displayName} />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 mb-1 max-w-2xl">
+        {/* `flex-wrap` here is what *preserves* this row, not what changes it.
+            #261 says to leave the user variant alone, and it does fit — but the
+            `shrink-0` this ticket removes is shared through
+            MESSAGE_ACTIONS_CLASS, so without a line of its own the actions row
+            is squeezed on the name line and wraps in two. Measured at 360px and
+            the default scale: one line, Copy 155..231 and From here 235..335,
+            against Copy 158.56..234.56 and From here 238.56..338.56 before the
+            ticket. Drop this and it becomes two lines — a row the ticket wanted
+            untouched, made worse. */}
+        <div className="flex flex-wrap items-baseline gap-2 mb-1 max-w-2xl">
           <span className="text-sm font-medium text-(--accent)">{displayName}</span>
           <Tooltip content={formatFullTime(message.timestamp)}>
             <span className="text-[10px] text-(--text-muted) opacity-100 sm:opacity-0 sm:group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity cursor-default">
               {formatTime(message.timestamp)}
             </span>
           </Tooltip>
-          <div className={MESSAGE_ACTIONS_CLASS}>
+          <div data-testid="message-actions" className={MESSAGE_ACTIONS_CLASS}>
             <button
               type="button"
               onClick={handleCopy}
@@ -533,7 +549,9 @@ const AssistantMessage = memo(function AssistantMessage({
         />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 mb-0.5 max-w-2xl">
+        {/* `flex-wrap` so the actions row can take a line of its own — see
+            MESSAGE_ACTIONS_CLASS above (#261). */}
+        <div className="flex flex-wrap items-baseline gap-2 mb-0.5 max-w-2xl">
           <span
             className="text-sm font-medium"
             style={{ color: providerBrand.tone.icon }}
@@ -546,7 +564,7 @@ const AssistantMessage = memo(function AssistantMessage({
             </span>
           </Tooltip>
           {(message.content || onForkFromMessage) && (
-            <div className={MESSAGE_ACTIONS_CLASS}>
+            <div data-testid="message-actions" className={MESSAGE_ACTIONS_CLASS}>
               {message.content && (
                 <button
                   type="button"
