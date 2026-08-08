@@ -654,18 +654,20 @@ export async function routeClientTransportMessage({
         const existingDisposer = launchObserverDisposer;
         const providerSessionObserver = createTerminalProviderSessionObserver({
           provider: terminalProvider,
+          userId,
           currentProviderSessionId: () => {
             const activeSessionId = manager.getSessionIdForTerminal(terminalId, userId)
               ?? sessionId;
             return getTerminalProviderSessionForTesseraSession(activeSessionId)
               ?.provider_session_id;
           },
-          onObservation: ({ activation, identity }) => {
+          onObservation: ({ activation, identity, workDir }) => {
             try {
               observeTerminalProviderSession({
                 pane: { terminalId, userId, sessionId, providerId },
                 identity,
                 activation,
+                ...(workDir ? { workDir } : {}),
               });
             } catch (error) {
               logger.warn({ error, providerId, terminalId },

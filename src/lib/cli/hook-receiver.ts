@@ -202,16 +202,23 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     if (activeSessionId && providerIdentity) {
       const currentProviderSessionId = getTerminalProviderSessionForTesseraSession(activeSessionId)
         ?.provider_session_id;
+      const backgroundFork = currentProviderSessionId
+        ? await cliProviderRegistry.getProvider(entry.providerId)
+          .resolveBackgroundTerminalSessionFork?.({
+            currentProviderSessionId,
+            observedProviderSessionId: providerIdentity.providerSessionId,
+            userId: entry.userId,
+          }) ?? null
+        : null;
       const discoveredInBackground = payload.tessera_session_activation === 'background'
-        || Boolean(currentProviderSessionId && cliProviderRegistry.getProvider(entry.providerId)
-          .isBackgroundTerminalSessionFork?.({
-          currentProviderSessionId,
-          observedProviderSessionId: providerIdentity.providerSessionId,
-        }));
+        || Boolean(backgroundFork);
       const observation = observeTerminalProviderSession({
         pane: entry,
         identity: providerIdentity,
         activation: discoveredInBackground ? 'background' : 'active',
+        // A fork out of a worktree runs in the origin checkout, so the child
+        // must not inherit the parent's directory.
+        ...(backgroundFork?.workDir ? { workDir: backgroundFork.workDir } : {}),
         // SessionStart(source=clear) is a conversation reset, not a branch of the
         // current one: the child starts empty and must be titled like a new session.
         ...(event === 'SessionStart' && readString(payload.source) === 'clear'

@@ -1,6 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { resolveCodexAccountHome } from '@/lib/codex-home';
+import {
+  isBridgedAgentEnvironment,
+  resolveAgentHomeFilesystemPath,
+  type FilesystemBrowseEnvironment,
+} from '@/lib/filesystem/path-environment';
 import type {
   ProviderTerminalSessionObserver,
   ProviderTerminalSessionObserverOptions,
@@ -54,11 +60,39 @@ function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | nul
   }
 }
 
+/**
+ * Where Codex records rollouts, as a path *this server* can open. Across a
+ * bridge both `os.homedir()` and `CODEX_HOME` describe the server rather than
+ * the CLI, so neither can name the file the agent actually wrote.
+ */
+export async function resolveCodexSessionsDir(options: {
+  environment: FilesystemBrowseEnvironment;
+  /** Overrides the sessions root (tests). */
+  sessionsDir?: string;
+}): Promise<string> {
+  if (options.sessionsDir) return options.sessionsDir;
+  if (isBridgedAgentEnvironment(options.environment)) {
+    return path.join(
+      await resolveAgentHomeFilesystemPath(options.environment),
+      '.codex',
+      'sessions',
+    );
+  }
+  return path.join(resolveCodexAccountHome(), 'sessions');
+}
+
 export function createCodexTerminalSessionObserver(
-  options: ProviderTerminalSessionObserverOptions & { sessionsDir?: string },
+  options: ProviderTerminalSessionObserverOptions & {
+    sessionsDir?: string;
+    /** Overrides the resolved environment (tests). */
+    environment?: FilesystemBrowseEnvironment;
+  },
 ): ProviderTerminalSessionObserver {
   return createTerminalSessionArtifactObserver({
-    root: options.sessionsDir ?? path.join(resolveCodexAccountHome(), 'sessions'),
+    root: (async () => resolveCodexSessionsDir({
+      environment: options.environment ?? await getAgentEnvironment(options.userId),
+      sessionsDir: options.sessionsDir,
+    }))(),
     matchesPath: (relativePath) => relativePath.endsWith('.jsonl'),
     readCandidate: readCodexFork,
     currentProviderSessionId: options.currentProviderSessionId,
