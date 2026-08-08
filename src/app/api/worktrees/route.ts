@@ -7,17 +7,23 @@ import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { startWorktreePreparation } from '@/lib/projects/worktree-preparation';
 import { SettingsManager } from '@/lib/settings/manager';
 import {
+  allocateCheckoutManagedWorktree,
   allocateManagedWorktree,
+  ExplicitManagedWorktreeAllocationError,
   ManagedWorktreeAllocationError,
   resolveManagedWorktreeRoot,
 } from '@/lib/worktrees/managed';
 import { ManagedWorktreePathTemplateError } from '@/lib/worktrees/path-template-server';
 import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
-import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
+import { createGitRunner } from '@/lib/worktrees/git-runner';
 import {
-  buildGitWorktreeAddArgs,
+  createGitWorktree,
+  WorktreeCreationError,
+  type WorktreeCreationSource,
+} from '@/lib/worktrees/create';
+import {
   listWorktreeBaseRefs,
-  recordWorktreeBaseRef,
+  resolveWorktreeCheckoutTarget,
   validateWorktreeBaseRef,
 } from '@/lib/worktrees/base-refs';
 
@@ -27,7 +33,7 @@ import {
  * Creates a git worktree for a given session.
  *
  * Request body:
- *   { projectDir: string, branchPrefix?: string, branchSlug?: string, allowBranchSlugSuffix?: boolean, baseRef?: string }
+ *   { projectDir: string, source?: WorktreeCreationSource, ...branchNamingInputs }
  *
  * Response (200):
  *   { worktreePath: string, branchName: string }
@@ -39,7 +45,7 @@ import {
  * This endpoint:
  * 1. Validates all inputs
  * 2. Allocates a managed temp branch/path pair under the configured location
- * 3. Runs: git -C projectDir worktree add <worktreePath> -b <branchName> [baseRef]
+ * 3. Creates the Worktree through the source-aware Git seam
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuthenticatedUserId(req);
@@ -55,12 +61,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { projectDir, branchPrefix, branchSlug, allowBranchSlugSuffix, baseRef, taskId } = body as {
+  const {
+    projectDir,
+    branchPrefix,
+    branchSlug,
+    allowBranchSlugSuffix,
+    baseRef,
+    source: requestedSource,
+    taskId,
+  } = body as {
     projectDir?: unknown;
     branchPrefix?: unknown;
     branchSlug?: unknown;
     allowBranchSlugSuffix?: unknown;
     baseRef?: unknown;
+    source?: unknown;
     taskId?: unknown;
   };
 
@@ -84,6 +99,11 @@ export async function POST(req: NextRequest) {
 
   if (baseRef !== undefined && typeof baseRef !== 'string') {
     return NextResponse.json({ error: 'baseRef must be a string' }, { status: 400 });
+  }
+
+  const source = parseCreationSource(requestedSource, baseRef);
+  if (!source.ok) {
+    return NextResponse.json({ error: source.error }, { status: 400 });
   }
 
   if (taskId !== undefined && typeof taskId !== 'string') {
@@ -127,12 +147,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const selectedBaseRef = typeof baseRef === 'string' && baseRef.trim()
-    ? baseRef.trim()
+  const selectedBaseRef = source.value.mode === 'branch-off'
+    ? source.value.baseRef
     : null;
 
+  const availableBaseRefs = selectedBaseRef || source.value.mode === 'checkout-branch'
+    ? await listWorktreeBaseRefs(projectDir, runGit)
+    : [];
+
   if (selectedBaseRef) {
-    const availableBaseRefs = await listWorktreeBaseRefs(projectDir, runGit);
     const baseRefExists = await validateWorktreeBaseRef(
       projectDir,
       selectedBaseRef,
@@ -150,21 +173,45 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const checkoutTarget = source.value.mode === 'checkout-branch'
+    ? resolveWorktreeCheckoutTarget(source.value.branch, availableBaseRefs)
+    : null;
+  if (source.value.mode === 'checkout-branch' && !checkoutTarget) {
+    return NextResponse.json(
+      {
+        code: 'BRANCH_NOT_FOUND',
+        error: `Branch '${source.value.branch}' does not exist.`,
+      },
+      { status: 422 },
+    );
+  }
+
   let branchName: string;
   let worktreePath: string;
   try {
-    const allocation = await allocateManagedWorktree(
-      projectDir,
-      branchPrefix ?? settings.gitConfig.branchPrefix,
-      branchSlug,
-      {
-        allowCollisionSuffix: allowBranchSlugSuffix !== false,
-        rootDir: worktreeRoot,
-        pathTemplate: settings.managedWorktreePathTemplate,
-        agentEnvironment: settings.agentEnvironment,
-        runGit,
-      }
-    );
+    const allocation = checkoutTarget
+      ? await allocateCheckoutManagedWorktree(
+          projectDir,
+          checkoutTarget.branchName,
+          {
+            rootDir: worktreeRoot,
+            pathTemplate: settings.managedWorktreePathTemplate,
+            agentEnvironment: settings.agentEnvironment,
+            runGit,
+          },
+        )
+      : await allocateManagedWorktree(
+          projectDir,
+          branchPrefix ?? settings.gitConfig.branchPrefix,
+          branchSlug,
+          {
+            allowCollisionSuffix: allowBranchSlugSuffix !== false,
+            rootDir: worktreeRoot,
+            pathTemplate: settings.managedWorktreePathTemplate,
+            agentEnvironment: settings.agentEnvironment,
+            runGit,
+          },
+        );
     branchName = allocation.branchName;
     worktreePath = allocation.worktreePath;
   } catch (error) {
@@ -178,6 +225,17 @@ export async function POST(req: NextRequest) {
           worktreePath: error.worktreePath,
         },
         { status }
+      );
+    }
+    if (error instanceof ExplicitManagedWorktreeAllocationError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: error.code,
+          branchName: error.branchName,
+          worktreePath: error.worktreePath,
+        },
+        { status: 409 },
       );
     }
     if (error instanceof ManagedWorktreePathTemplateError) {
@@ -196,12 +254,37 @@ export async function POST(req: NextRequest) {
 
   // --- Run git worktree add ---
   try {
-    await runGitWorktreeAdd(projectDir, worktreePath, branchName, selectedBaseRef, runGit);
+    await createGitWorktree({
+      projectDir,
+      worktreePath,
+      branchName,
+      source: checkoutTarget
+        ? { mode: 'checkout-branch', branch: checkoutTarget.selectedRef }
+        : { mode: 'branch-off', baseRef: selectedBaseRef },
+      runGit,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ branchName, projectDir, error: msg }, 'git worktree add failed');
 
     // Distinguish common git errors for better client messages
+    if (err instanceof WorktreeCreationError && err.code === 'branch_not_found') {
+      return NextResponse.json(
+        { code: 'BRANCH_NOT_FOUND', error: err.message },
+        { status: 422 },
+      );
+    }
+    if (err instanceof WorktreeCreationError && err.code === 'branch_already_checked_out') {
+      return NextResponse.json(
+        {
+          code: 'BRANCH_ALREADY_CHECKED_OUT',
+          error: err.message,
+          branchName: err.branchName,
+          holderWorktreePath: err.holderWorktreePath,
+        },
+        { status: 409 },
+      );
+    }
     if (msg.includes('already exists')) {
       return NextResponse.json(
         { error: `Worktree path already exists: ${worktreePath}` },
@@ -214,9 +297,12 @@ export async function POST(req: NextRequest) {
         { status: 422 }
       );
     }
-    if (msg.includes('already checked out')) {
+    if (msg.includes('already checked out') || msg.includes('already used by worktree')) {
       return NextResponse.json(
-        { error: `Branch '${branchName}' is already checked out.` },
+        {
+          code: 'BRANCH_ALREADY_CHECKED_OUT',
+          error: `Branch '${branchName}' is already checked out.`,
+        },
         { status: 409 }
       );
     }
@@ -226,11 +312,6 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-
-  // `HEAD` where the caller named no base: that is the start point git just
-  // used, and it resolves to the branch the project has checked out rather
-  // than to a bare commit.
-  await recordWorktreeBaseRef(projectDir, branchName, selectedBaseRef ?? 'HEAD', runGit);
 
   if (taskId) {
     // Recorded here rather than by a follow-up call from the client, so the
@@ -264,21 +345,49 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ worktreePath, branchName });
 }
 
-/**
- * Run `git -C <cwd> worktree add <worktreePath> -b <branchName>` safely.
- *
- * Arguments are passed as a plain argv array (no shell interpolation).
- * Rejects if the process exits non-zero.
- */
-function runGitWorktreeAdd(
-  cwd: string,
-  worktreePath: string,
-  branchName: string,
-  baseRef: string | null,
-  runGit: GitRunner,
-): Promise<void> {
-  return runGit(buildGitWorktreeAddArgs(cwd, worktreePath, branchName, baseRef))
-    .then(() => undefined);
+function parseCreationSource(
+  requestedSource: unknown,
+  legacyBaseRef: unknown,
+): { ok: true; value: WorktreeCreationSource } | { ok: false; error: string } {
+  if (requestedSource === undefined) {
+    const baseRef = typeof legacyBaseRef === 'string' && legacyBaseRef.trim()
+      ? legacyBaseRef.trim()
+      : null;
+    return { ok: true, value: { mode: 'branch-off', baseRef } };
+  }
+  if (!requestedSource || typeof requestedSource !== 'object' || Array.isArray(requestedSource)) {
+    return { ok: false, error: 'source must be an object' };
+  }
+
+  const candidate = requestedSource as { mode?: unknown; baseRef?: unknown; branch?: unknown };
+  if (candidate.mode === 'branch-off') {
+    if (
+      candidate.baseRef !== undefined
+      && candidate.baseRef !== null
+      && typeof candidate.baseRef !== 'string'
+    ) {
+      return { ok: false, error: 'source.baseRef must be a string' };
+    }
+    return {
+      ok: true,
+      value: {
+        mode: 'branch-off',
+        baseRef: typeof candidate.baseRef === 'string' && candidate.baseRef.trim()
+          ? candidate.baseRef.trim()
+          : null,
+      },
+    };
+  }
+  if (candidate.mode === 'checkout-branch') {
+    if (typeof candidate.branch !== 'string' || !candidate.branch.trim()) {
+      return { ok: false, error: 'source.branch is required' };
+    }
+    return {
+      ok: true,
+      value: { mode: 'checkout-branch', branch: candidate.branch.trim() },
+    };
+  }
+  return { ok: false, error: 'source.mode is invalid' };
 }
 
 function isAbsoluteFilesystemPath(candidate: string): boolean {

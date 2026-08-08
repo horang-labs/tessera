@@ -285,9 +285,10 @@ export function CollectionQuickCreateSheet({
   const {
     refs: baseRefs,
     selectedBaseRef,
-    selectedBaseRefForCreate,
-    selectedRef,
     setSelectedBaseRef,
+    creationMode: worktreeCreationMode,
+    setCreationMode: setWorktreeCreationMode,
+    worktreeSourceForCreate,
     isLoading: isLoadingBaseRefs,
     error: baseRefError,
   } = useWorktreeBaseRefs(canCreateTask ? projectDir : null);
@@ -342,15 +343,23 @@ export function CollectionQuickCreateSheet({
       return;
     }
     const trimmedTaskTitle = taskTitle.trim();
-    const rawBranchSlug = branchSlug.trim();
-    if (!isManagedWorktreeSlugInputAllowed(rawBranchSlug)) {
-      setError(t('task.creation.errorInvalidBranchSlug'));
+    if (!worktreeSourceForCreate) {
+      setError(t('task.creation.errorCheckoutBranchRequired'));
       return;
     }
-    const normalizedBranchSlug = normalizeManagedWorktreeSlug(rawBranchSlug);
-    if (!normalizedBranchSlug) {
-      setError(t('task.creation.errorEmptyBranchSlug'));
-      return;
+
+    let normalizedBranchSlug: string | undefined;
+    if (worktreeSourceForCreate.mode === 'branch-off') {
+      const rawBranchSlug = branchSlug.trim();
+      if (!isManagedWorktreeSlugInputAllowed(rawBranchSlug)) {
+        setError(t('task.creation.errorInvalidBranchSlug'));
+        return;
+      }
+      normalizedBranchSlug = normalizeManagedWorktreeSlug(rawBranchSlug);
+      if (!normalizedBranchSlug) {
+        setError(t('task.creation.errorEmptyBranchSlug'));
+        return;
+      }
     }
     setSubmittingMode('task');
     let shouldClose = false;
@@ -363,9 +372,11 @@ export function CollectionQuickCreateSheet({
         executionMode,
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
-        branchSlug: normalizedBranchSlug,
-        baseRef: selectedBaseRefForCreate,
-        allowBranchSlugSuffix: !branchSlugEdited,
+        worktreeSource: worktreeSourceForCreate,
+        ...(worktreeSourceForCreate.mode === 'branch-off' && {
+          branchSlug: normalizedBranchSlug,
+          allowBranchSlugSuffix: !branchSlugEdited,
+        }),
         suppressErrorToast: true,
         collectionId: selectedCollection?.id ?? undefined,
         workflowStatus,
@@ -402,13 +413,13 @@ export function CollectionQuickCreateSheet({
     branchSlugEdited,
     projectDir,
     projectId,
-    selectedBaseRefForCreate,
     selectedCollection?.id,
     selectedProvider,
     t,
     taskTitle,
     taskTelemetrySource,
     workflowStatus,
+    worktreeSourceForCreate,
   ]);
 
   const handleSheetKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -634,7 +645,8 @@ export function CollectionQuickCreateSheet({
               />
             </div>
 
-            <div className="space-y-1">
+            {worktreeCreationMode === 'branch-off' ? (
+              <div className="space-y-1">
               <label
                 htmlFor={`collection-task-branch-slug-${resolvedScopeId}`}
                 className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)"
@@ -677,18 +689,20 @@ export function CollectionQuickCreateSheet({
               >
                 {worktreePathPreview}
               </p>
-            </div>
+              </div>
+            ) : null}
 
             <WorktreeStartFromControl
               id={`collection-task-base-ref-${resolvedScopeId}`}
               testId={`collection-task-base-ref-${resolvedScopeId}`}
               refs={baseRefs}
+              creationMode={worktreeCreationMode}
               selectedBaseRef={selectedBaseRef}
-              selectedRef={selectedRef}
               isLoading={isLoadingBaseRefs}
               error={baseRefError}
               disabled={submittingMode !== null}
               compact
+              onCreationModeChange={setWorktreeCreationMode}
               onSelectedBaseRefChange={setSelectedBaseRef}
             />
 
@@ -715,7 +729,7 @@ export function CollectionQuickCreateSheet({
               <button
                 type="button"
                 onClick={() => void handleCreateTask()}
-                disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
+                disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported || !worktreeSourceForCreate}
                 className="rounded-md bg-(--accent) px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-(--accent-hover) disabled:cursor-not-allowed disabled:opacity-60"
                 data-testid={`collection-task-submit-${resolvedScopeId}`}
               >

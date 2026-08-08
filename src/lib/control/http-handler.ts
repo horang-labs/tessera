@@ -4,6 +4,7 @@ import {
   isTerminalNamedKey,
   type TerminalNamedKey,
 } from '@/lib/terminal/session-control-input';
+import type { WorktreeCreationSource } from '@/lib/worktrees/create';
 import type { RuntimeDescriptor } from './runtime-descriptor';
 import {
   ControlOperationError,
@@ -295,12 +296,38 @@ function requireMethod(request: IncomingMessage, expected: 'GET' | 'POST'): void
 async function readWorktreeCreationBody(request: IncomingMessage): Promise<{
   branch: string;
   startPoint: string;
+  source?: WorktreeCreationSource;
   title?: string;
 }> {
   const body = await readJsonObject(request);
-  const unknownKey = Object.keys(body).find((key) => !['branch', 'startPoint', 'title'].includes(key));
+  const unknownKey = Object.keys(body).find(
+    (key) => !['branch', 'startPoint', 'source', 'title'].includes(key),
+  );
   if (unknownKey) {
     throw new ControlOperationError('INVALID_USAGE', `Unsupported Worktree field: ${unknownKey}`, 400);
+  }
+  if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
+    throw new ControlOperationError('INVALID_USAGE', 'A Worktree title must not be empty.', 400);
+  }
+  if (body.source !== undefined) {
+    const source = parseControlWorktreeSource(body.source);
+    if (source.mode === 'checkout-branch') {
+      return {
+        branch: source.branch,
+        startPoint: source.branch,
+        source,
+        ...(body.title === undefined ? {} : { title: body.title as string }),
+      };
+    }
+    if (typeof body.branch !== 'string' || !body.branch.trim()) {
+      throw new ControlOperationError('BRANCH_REQUIRED', 'A new Worktree branch is required.', 400);
+    }
+    return {
+      branch: body.branch,
+      startPoint: source.baseRef ?? 'HEAD',
+      source,
+      ...(body.title === undefined ? {} : { title: body.title as string }),
+    };
   }
   if (typeof body.branch !== 'string' || !body.branch.trim()) {
     throw new ControlOperationError('BRANCH_REQUIRED', 'A new Worktree branch is required.', 400);
@@ -308,14 +335,40 @@ async function readWorktreeCreationBody(request: IncomingMessage): Promise<{
   if (typeof body.startPoint !== 'string' || !body.startPoint.trim()) {
     throw new ControlOperationError('START_POINT_REQUIRED', 'A Worktree start point is required.', 400);
   }
-  if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
-    throw new ControlOperationError('INVALID_USAGE', 'A Worktree title must not be empty.', 400);
-  }
   return {
     branch: body.branch,
     startPoint: body.startPoint,
     ...(body.title === undefined ? {} : { title: body.title as string }),
   };
+}
+
+function parseControlWorktreeSource(source: unknown): WorktreeCreationSource {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    throw new ControlOperationError('INVALID_USAGE', 'The Worktree source is invalid.', 400);
+  }
+  const candidate = source as { mode?: unknown; baseRef?: unknown; branch?: unknown };
+  if (candidate.mode === 'branch-off') {
+    if (
+      candidate.baseRef !== undefined
+      && candidate.baseRef !== null
+      && typeof candidate.baseRef !== 'string'
+    ) {
+      throw new ControlOperationError('INVALID_USAGE', 'The Worktree base ref is invalid.', 400);
+    }
+    return {
+      mode: 'branch-off',
+      baseRef: typeof candidate.baseRef === 'string' && candidate.baseRef.trim()
+        ? candidate.baseRef.trim()
+        : null,
+    };
+  }
+  if (candidate.mode === 'checkout-branch') {
+    if (typeof candidate.branch !== 'string' || !candidate.branch.trim()) {
+      throw new ControlOperationError('BRANCH_REQUIRED', 'A Worktree branch is required.', 400);
+    }
+    return { mode: 'checkout-branch', branch: candidate.branch.trim() };
+  }
+  throw new ControlOperationError('INVALID_USAGE', 'The Worktree source mode is invalid.', 400);
 }
 
 async function readSessionCreationBody(request: IncomingMessage): Promise<{
