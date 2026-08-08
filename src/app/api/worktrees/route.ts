@@ -13,11 +13,10 @@ import {
 } from '@/lib/worktrees/managed';
 import { ManagedWorktreePathTemplateError } from '@/lib/worktrees/path-template-server';
 import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
-import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
+import { createGitRunner } from '@/lib/worktrees/git-runner';
+import { createGitWorktree } from '@/lib/worktrees/create';
 import {
-  buildGitWorktreeAddArgs,
   listWorktreeBaseRefs,
-  recordWorktreeBaseRef,
   validateWorktreeBaseRef,
 } from '@/lib/worktrees/base-refs';
 
@@ -196,7 +195,13 @@ export async function POST(req: NextRequest) {
 
   // --- Run git worktree add ---
   try {
-    await runGitWorktreeAdd(projectDir, worktreePath, branchName, selectedBaseRef, runGit);
+    await createGitWorktree({
+      projectDir,
+      worktreePath,
+      branchName,
+      source: { mode: 'branch-off', baseRef: selectedBaseRef },
+      runGit,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ branchName, projectDir, error: msg }, 'git worktree add failed');
@@ -226,11 +231,6 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-
-  // `HEAD` where the caller named no base: that is the start point git just
-  // used, and it resolves to the branch the project has checked out rather
-  // than to a bare commit.
-  await recordWorktreeBaseRef(projectDir, branchName, selectedBaseRef ?? 'HEAD', runGit);
 
   if (taskId) {
     // Recorded here rather than by a follow-up call from the client, so the
@@ -262,23 +262,6 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ worktreePath, branchName });
-}
-
-/**
- * Run `git -C <cwd> worktree add <worktreePath> -b <branchName>` safely.
- *
- * Arguments are passed as a plain argv array (no shell interpolation).
- * Rejects if the process exits non-zero.
- */
-function runGitWorktreeAdd(
-  cwd: string,
-  worktreePath: string,
-  branchName: string,
-  baseRef: string | null,
-  runGit: GitRunner,
-): Promise<void> {
-  return runGit(buildGitWorktreeAddArgs(cwd, worktreePath, branchName, baseRef))
-    .then(() => undefined);
 }
 
 function isAbsoluteFilesystemPath(candidate: string): boolean {
