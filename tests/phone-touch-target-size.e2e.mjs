@@ -8,7 +8,7 @@
  * pair 16px tall. This file measures the same boxes the same way — a
  * `getBoundingClientRect()` on the control's own element, not on its icon.
  *
- *   1. Phone viewport (360x880, touch): every listed control's own hit box is
+ *   1. Phone viewport (360x776, touch): every listed control's own hit box is
  *      at least 44x44 CSS px, the header's four icons are still four distinct
  *      non-overlapping targets, and the header row still fits 360px with its
  *      provider chip and session title on screen.
@@ -345,7 +345,7 @@ async function createSession() {
 
 // --------------------------------------------------------------------- ui ---
 
-/** The shared wave context: 360x880 with touch enabled (spec #241). */
+/** The shared wave context: 360x776 with touch enabled (spec #241, height #265). */
 async function openPhonePage() {
   return preparePage(await createPhoneContext(browser, {
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },

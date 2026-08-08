@@ -12,7 +12,7 @@
  * already settled, and what happens after it is the server's, which QA showed
  * never received anything.
  *
- *   1. Phone viewport (360x880, touch): an image whose marker the text lost is
+ *   1. Phone viewport (360x776, touch): an image whose marker the text lost is
  *      still delivered.
  *   2. Phone viewport: an attachment does not follow the user into another
  *      session, in the composer or in the frame.
@@ -454,7 +454,7 @@ async function createSession(title) {
 
 // ----------------------------------------------------------------- browser ---
 
-/** The shared wave context: 360x880 with touch enabled (spec #241). */
+/** The shared wave context: 360x776 with touch enabled (spec #241, height #265). */
 async function openPhonePage() {
   return preparePage(await createPhoneContext(browser, {
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },

@@ -1,8 +1,10 @@
 /**
  * Phone viewport, and the kanban staying off phones (issue #242).
  *
- * The whole ticket is verifiable through one browser context: 360x880 with
- * touch, the Galaxy Z Flip main display. Everything asserted here is what a
+ * The whole ticket is verifiable through one browser context: 360x776 with
+ * touch, which is what a Galaxy Z Flip's main display leaves the page once
+ * Chrome's address bar and Android's bars come out of the 880px screen
+ * (#265). Everything asserted here is what a
  * user can see or reach — a control present or absent from the tree, a box
  * inside the viewport, a stored value unchanged — never a class name.
  *
@@ -18,6 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
+import { PHONE_VIEWPORT } from './helpers/phone-viewport.mjs';
 
 const run = promisify(execFile);
 
@@ -31,7 +34,9 @@ const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-phone-fixtur
 const projectName = `phone-e2e-${path.basename(fixtureDir).slice(-6)}`;
 const projectDir = path.join(fixtureDir, projectName);
 
-const PHONE = { width: 360, height: 880 };
+// The wave's shared context rather than a restatement of it, so this file cannot
+// drift away from the height a Z Flip really hands the page (#265).
+const PHONE = PHONE_VIEWPORT;
 const NARROW_DESKTOP = { width: 1000, height: 900 };
 const VIEW_MODE_KEY = 'ccw:viewMode';
 

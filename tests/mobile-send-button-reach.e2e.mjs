@@ -5,7 +5,7 @@
  * right-hand controls — the send button last of all — were pushed off the right
  * edge of the screen. This file measures what a user can reach:
  *
- *   1. Phone viewport (360x880, touch): the send button's box lies inside the
+ *   1. Phone viewport (360x776, touch): the send button's box lies inside the
  *      viewport, the chat view does not scroll horizontally, and the textarea
  *      is still wide enough to type into.
  *   2. Desktop width (1280x900, no touch): the composer is laid out exactly as
@@ -245,7 +245,7 @@ async function createSession() {
 
 // --------------------------------------------------------------------- ui ---
 
-/** The shared wave context: 360x880 with touch enabled (spec #241). */
+/** The shared wave context: 360x776 with touch enabled (spec #241, height #265). */
 async function openPhonePage() {
   return preparePage(await createPhoneContext(browser, {
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
