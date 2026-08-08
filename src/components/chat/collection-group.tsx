@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { ChevronRight, Plus, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { collectionGroupContainsSession } from '@/lib/chat/build-collection-groups';
 import {
   getCollectionSessionSnapshots,
@@ -600,7 +601,13 @@ export const CollectionGroup = memo(function CollectionGroup({
             <div
               className={cn(
                 'flex items-center gap-0.5 transition-opacity duration-150',
-                isQuickCreateOpen ? 'opacity-100' : 'opacity-0 group-hover/collection:opacity-100',
+                // Below the Phone viewport step these stay visible: a phone has
+                // no hover, so a hover-revealed control is one it can never
+                // find. The reveal is kept from `sm` up, where a pointer is
+                // what actually drives the UI.
+                isQuickCreateOpen
+                  ? 'opacity-100'
+                  : 'opacity-100 sm:opacity-0 sm:group-hover/collection:opacity-100',
               )}
               onClick={(event) => event.stopPropagation()}
             >
@@ -610,6 +617,10 @@ export const CollectionGroup = memo(function CollectionGroup({
                 onClick={() => setIsQuickCreateOpen((prev) => !prev)}
                 className={cn(
                   'rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
+                  // #244 made this visible on a phone; being visible and being
+                  // hittable are different properties, and 15px was the second
+                  // one missing (#259).
+                  PHONE_TOUCH_TARGET,
                   isQuickCreateOpen && 'bg-(--sidebar-hover) text-(--sidebar-text-active)',
                 )}
                 aria-label="Create in collection"

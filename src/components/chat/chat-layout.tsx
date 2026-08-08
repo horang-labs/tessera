@@ -51,6 +51,7 @@ import {
 } from "@/lib/session/active-workspace-session";
 import { activateSessionPanel } from "@/lib/session/focus-session-panel";
 import { resolveSessionTabOpenMode } from "@/lib/terminal/terminal-preview-policy";
+import { useEffectiveViewMode } from "@/hooks/use-effective-view-mode";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -97,7 +98,11 @@ function getKanbanScrollArea(): HTMLDivElement | null {
 export function ChatLayout() {
   const { t } = useI18n();
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  // The stored view mode, which is what the persisted sidebar width is keyed by.
+  // What is on screen is `renderedViewMode` below — a phone shows the list
+  // whatever this says, and must not write that back.
   const viewMode = useBoardStore((state) => state.viewMode);
+  const renderedViewMode = useEffectiveViewMode();
   const peekSessionId = useBoardStore((state) => state.peekSessionId);
   const selectedBoardSessionId = useBoardStore((state) => state.selectedBoardSessionId);
   const kanbanSessionOpenMode = useSettingsStore(
@@ -107,7 +112,7 @@ export function ChatLayout() {
     const activeTabData = selectActiveTab(state);
     return activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
   });
-  const isKanbanPeekMode = viewMode === 'board' && kanbanSessionOpenMode === 'peek';
+  const isKanbanPeekMode = renderedViewMode === 'board' && kanbanSessionOpenMode === 'peek';
   const activeGitSessionId = isKanbanPeekMode && selectedBoardSessionId
     ? selectedBoardSessionId
     : resolveActiveWorkspaceSessionId({
@@ -522,7 +527,7 @@ export function ChatLayout() {
   return (
     <KeyboardShortcutProvider>
       <ElectronTitlebarThemeSync />
-      <div className="flex h-screen flex-col overflow-hidden" data-testid="chat-layout">
+      <div className="flex h-dvh flex-col overflow-hidden" data-testid="chat-layout">
         <div className="flex flex-1 overflow-hidden">
           {/* Left panel — project strip + header + content (list/kanban) */}
           <LeftPanel

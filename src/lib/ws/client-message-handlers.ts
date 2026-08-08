@@ -12,6 +12,7 @@ import {
 import { serverMessageToReplayEvents } from '@/lib/chat/server-message-to-replay-events';
 import { useChatStore } from '@/stores/chat-store';
 import { useBoardStore } from '@/stores/board-store';
+import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
@@ -64,8 +65,10 @@ function getVisibleWorkspaceSessionId(activeSessionId: string | null): string | 
   return resolveVisibleWorkspaceSessionId({
     activeSessionId,
     peekSessionId: boardState.peekSessionId,
+    // The rendered mode, so this agrees with what chat-layout passes for the
+    // same screen — a phone renders the list and has no peek layout.
     isKanbanPeekLayout:
-      boardState.viewMode === 'board'
+      getRenderedViewMode() === 'board'
       && settingsState.settings.kanbanSessionOpenMode === 'peek'
       && !settingsState.sidebarCollapsed,
   });

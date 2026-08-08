@@ -9,6 +9,7 @@ import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { resolveSessionTabOpenMode } from '@/lib/terminal/terminal-preview-policy';
+import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import type { UnifiedSession } from '@/types/chat';
 
 interface PopoutElectronApi {
@@ -110,6 +111,12 @@ export function useSessionClickHandlers(options?: {
       if (tryForwardClickToMainWindow(session.id, 'preview')) {
         return;
       }
+
+      // #258: this tap opens the session here, and on a phone the sidebar it
+      // was tapped in is a full-screen overlay — so the session would open
+      // behind it. The multi-select branches above return before this point:
+      // they are not selections and leave the sidebar where it is.
+      stepAsidePhoneSidebar();
 
       if (onOpenSession) {
         await onOpenSession(session);

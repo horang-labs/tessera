@@ -3,6 +3,7 @@
 import { memo, useCallback, useRef, useState } from 'react';
 import { ArrowUp, Loader2, Lock, SquareTerminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/stores/notification-store';
 import {
@@ -25,9 +26,9 @@ import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
  *
  * Text goes to the terminal as a paste followed by Enter (terminal-chat-send.ts),
  * so this stays deliberately plain: no attachments, no slash-command handling,
- * no skill picker. Those need the TUI's own input affordances, and the
- * placeholder says so rather than letting the surface look more capable than it
- * is.
+ * no skill picker. Those need the TUI's own input affordances, and the input's
+ * accessible name says so rather than letting the surface look more capable
+ * than it is.
  *
  * It also carries the PTY's lifecycle state, because the overlay has no other
  * live signal — without it a quiet session is indistinguishable from a broken one.
@@ -112,6 +113,13 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
 
   const canSubmit = !!value.trim() && !isBlocked;
 
+  // What the shortened placeholders were shortened from. The placeholder is the
+  // accessible name when nothing else names the input, so this has to say the
+  // same thing the visible hint does, only in full.
+  const accessibleName = isBlocked
+    ? t('chat.terminalComposerBlockedLabel')
+    : t('chat.terminalComposerLabel');
+
   return (
     <div className="shrink-0 pb-2 pt-0">
       <div className={cn('w-full', isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-4')}>
@@ -136,6 +144,15 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 onKeyDown={handleKeyDown}
                 disabled={isBlocked}
                 rows={1}
+                // The visible hint has to fit the one line this box is tall: at
+                // 360px it is 204px wide, and the sentence that named the
+                // attachment limit wrapped onto a second line the user cannot
+                // scroll to, so it read as ending on "no" (#271). The whole
+                // sentence stays as the accessible name and as the pointer
+                // tooltip, both of which have no such line — and it follows the
+                // state, or a blocked box would announce that it takes text.
+                aria-label={accessibleName}
+                title={accessibleName}
                 placeholder={
                   isBlocked
                     ? t('chat.terminalComposerBlocked')
@@ -156,6 +173,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 aria-label={t('chat.send')}
                 className={cn(
                   'mb-0.5 shrink-0 rounded-md p-1.5 transition-colors',
+                  PHONE_TOUCH_TARGET,
                   canSubmit
                     ? 'bg-(--accent) text-white hover:opacity-90'
                     : 'text-(--text-muted) opacity-40',
@@ -179,7 +197,12 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 type="button"
                 onClick={() => setMode(sessionId, 'terminal')}
                 title={t('chat.viewAsTerminal')}
-                className="ml-auto flex items-center gap-1.5 text-(--text-muted) transition-colors hover:text-(--accent)"
+                className={cn(
+                  'ml-auto flex items-center gap-1.5 text-(--text-muted) transition-colors hover:text-(--accent)',
+                  // The label is hidden below `sm`, which left a bare 14px
+                  // glyph as the only way back to the terminal (#259).
+                  PHONE_TOUCH_TARGET,
+                )}
                 data-testid="terminal-chat-back-to-terminal"
               >
                 <SquareTerminal className="h-3.5 w-3.5 shrink-0" />

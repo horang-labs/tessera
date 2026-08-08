@@ -12,8 +12,17 @@ import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { switchToSessionProject } from '@/lib/session/switch-session-project';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
+import {
+  resolveAnchoredAlignedLeft,
+  resolveAnchoredSideLeft,
+} from '@/lib/ui/anchored-viewport';
+
+/** Kept in step with the panel's own `w-[320px]`, which the clamp has to measure against. */
+const NOTIFICATION_CENTER_WIDTH = 320;
+const NOTIFICATION_CENTER_GAP = 6;
 
 interface NotificationCenterProps {
   isOpen: boolean;
@@ -97,7 +106,9 @@ function NotificationCenterContent({
     // Kanban peek mode: open the session in the board peek panel instead of a tab
     const boardStore = useBoardStore.getState();
     const peekMode = useSettingsStore.getState().settings.kanbanSessionOpenMode === 'peek';
-    if (boardStore.viewMode === 'board' && peekMode) {
+    // The rendered mode, not the stored one: a phone shows the list, so a peek
+    // opened here would have nothing rendering it and the tap would do nothing.
+    if (getRenderedViewMode() === 'board' && peekMode) {
       boardStore.openSessionPeek(sessionId);
       onClose();
       return;
@@ -137,24 +148,39 @@ function NotificationCenterContent({
     }
   };
 
-  // Compute fixed position based on direction
+  // Compute fixed position based on direction. The horizontal side goes through the same
+  // clamp the quick-create sheet uses: this panel is 320px wide and opens from a 44px
+  // strip, so on a phone its unclamped left edge puts the right edge past the screen.
+  // Vertical placement is untouched — `max-h-[400px] overflow-y-auto` below already
+  // handles a panel taller than the screen.
   const style: React.CSSProperties = anchorRect
     ? direction === 'right'
       ? {
           position: 'fixed',
           bottom: Math.max(8, window.innerHeight - anchorRect.bottom),
-          left: anchorRect.right + 6,
+          left: resolveAnchoredSideLeft({
+            anchorLeft: anchorRect.left,
+            anchorRight: anchorRect.right,
+            elementWidth: NOTIFICATION_CENTER_WIDTH,
+            viewportWidth: window.innerWidth,
+            gap: NOTIFICATION_CENTER_GAP,
+          }),
         }
       : {
           position: 'fixed',
           top: anchorRect.bottom + 8,
-          right: window.innerWidth - anchorRect.right,
+          left: resolveAnchoredAlignedLeft({
+            anchorRight: anchorRect.right,
+            elementWidth: NOTIFICATION_CENTER_WIDTH,
+            viewportWidth: window.innerWidth,
+          }),
         }
     : {};
 
   const dropdown = (
     <div
       ref={dropdownRef}
+      data-testid="notification-center"
       className="w-[320px] bg-(--sidebar-bg) rounded-lg shadow-2xl border border-(--divider) z-[9999]"
       style={style}
     >
