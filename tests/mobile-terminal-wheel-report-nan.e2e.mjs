@@ -28,8 +28,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { createPhoneContext } from './helpers/phone-viewport.mjs';
 
 const run = promisify(execFile);
@@ -97,7 +97,7 @@ try {
 
   appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
-  browser = await chromium.launch({ headless: true });
+  browser = await launchPhoneBrowser();
   await testTouchSwipeSendsNoCoordinateLessReport(browser, appOrigin);
   await testDesktopMouseWheelStillReportsWithCoordinates(browser, appOrigin);
 } catch (error) {

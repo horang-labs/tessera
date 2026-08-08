@@ -4,8 +4,13 @@
 // the addon's own WebGL canvas, which draws the glyphs, and the link layer beside it. Both
 // are sized from the same `IRenderDimensions`, so a difference between them is the defect
 // itself rather than a symptom of it. Every assertion here reads canvas dimensions, which
-// are computed in JS and therefore independent of the software rasteriser headless
-// Chromium uses for WebGL.
+// are computed in JS rather than rasterised, so they survive the software WebGL backend.
+//
+// The run is headful (#263), but note what that does and does not buy: the scale still
+// arrives through `deviceScaleFactor`, which is device-metrics emulation in any window.
+// A real display supplies the scale instead, and there `devicePixelContentBoxSize` agrees
+// with `devicePixelRatio` — which is why #256 closed as a harness artifact. What this file
+// pins is the patched observer's behaviour under the contradiction, not a phone defect.
 //
 // The defect is in the vendored @xterm/addon-webgl bundle, not in Tessera. The addon sizes
 // the WebGL canvas twice: `handleResize` sets it to `dimensions.device.canvas`, which is
@@ -23,8 +28,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { createPhoneContext } from './helpers/phone-viewport.mjs';
 
 const run = promisify(execFile);
@@ -91,7 +96,7 @@ try {
 
   appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
-  browser = await chromium.launch({ headless: true });
+  browser = await launchPhoneBrowser();
   await testBackingStoreFollowsDevicePixelRatio(browser, appOrigin, 1);
   await testBackingStoreFollowsDevicePixelRatio(browser, appOrigin, 2);
   await testBackingStoreFollowsDevicePixelRatio(browser, appOrigin, 3);

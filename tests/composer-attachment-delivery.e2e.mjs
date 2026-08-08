@@ -39,8 +39,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { createPhoneContext } from './helpers/phone-viewport.mjs';
 
 const run = promisify(execFile);
@@ -54,12 +54,9 @@ const PNG_BASE64 =
 
 const BROWSER_USER_ID = 'e2e-browser-user';
 
-// Headful by default. This wave is about what a person sees and touches, and a
-// headless browser rasterises differently, reports injected device metrics, and
-// never paints — #256 and #260 were both filed from observations that only held
-// under headless emulation. WSLg supplies the display here. Set
-// TESSERA_E2E_HEADLESS=1 only where no display exists.
-const headless = process.env.TESSERA_E2E_HEADLESS === '1';
+// Headful by default, through the wave's shared launcher — this file's own
+// TESSERA_E2E_HEADLESS variable was folded into `TESSERA_E2E_HEADED=0` there (#263)
+// so the wave has one escape hatch rather than two spellings of it.
 const selectedPhases = (process.env.TESSERA_E2E_PHASES ?? '')
   .split(',')
   .map((value) => value.trim())
@@ -95,7 +92,7 @@ try {
   await startServer();
   await registerProject();
 
-  browser = await chromium.launch({ headless });
+  browser = await launchPhoneBrowser();
 
   if (shouldRun(1)) results.push(await testAnImageWhoseMarkerTheTextLostIsStillDelivered());
   if (shouldRun(2)) results.push(await testAttachmentsDoNotFollowTheUserIntoAnotherSession());
