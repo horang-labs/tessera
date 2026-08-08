@@ -13,8 +13,10 @@ export type WorktreeCreationSource =
 
 export class WorktreeCreationError extends Error {
   constructor(
-    readonly code: 'branch_not_found',
+    readonly code: 'branch_not_found' | 'branch_already_checked_out',
     message: string,
+    readonly branchName?: string,
+    readonly holderWorktreePath?: string,
   ) {
     super(message);
     this.name = 'WorktreeCreationError';
@@ -64,6 +66,16 @@ async function checkoutExistingBranch(options: {
   runGit: GitRunner;
 }): Promise<WorktreeCreationResult> {
   const { projectDir, worktreePath, branchName, selectedBranch, runGit } = options;
+  const holderPath = await findWorktreeHoldingBranch(projectDir, branchName, runGit);
+  if (holderPath) {
+    throw new WorktreeCreationError(
+      'branch_already_checked_out',
+      `Branch '${branchName}' is already checked out in Worktree '${holderPath}'.`,
+      branchName,
+      holderPath,
+    );
+  }
+
   if (await refExists(projectDir, `refs/heads/${branchName}`, runGit)) {
     await runGit([
       '-C', projectDir, 'worktree', 'add', worktreePath, branchName,
@@ -79,6 +91,7 @@ async function checkoutExistingBranch(options: {
     throw new WorktreeCreationError(
       'branch_not_found',
       `Branch '${selectedBranch}' does not exist.`,
+      selectedBranch,
     );
   }
 
@@ -87,6 +100,30 @@ async function checkoutExistingBranch(options: {
     '-b', branchName, '--track', selectedBranch,
   ]);
   return { createdBranch: true };
+}
+
+async function findWorktreeHoldingBranch(
+  projectDir: string,
+  branchName: string,
+  runGit: GitRunner,
+): Promise<string | null> {
+  const result = await runGit([
+    '-C', projectDir, 'worktree', 'list', '--porcelain', '-z',
+  ]);
+  const branchRef = `refs/heads/${branchName}`;
+  let worktreePath: string | null = null;
+
+  for (const field of result.stdout.split('\0')) {
+    if (field.startsWith('worktree ')) {
+      worktreePath = field.slice('worktree '.length);
+    } else if (field === `branch ${branchRef}` && worktreePath) {
+      return worktreePath;
+    } else if (!field) {
+      worktreePath = null;
+    }
+  }
+
+  return null;
 }
 
 async function refExists(

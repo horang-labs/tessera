@@ -112,7 +112,7 @@ test('checkout-branch opens local and remote-only branches without losing lineag
   });
 });
 
-test('checkout-branch refuses missing and already-held branches without creating a path', async () => {
+test('checkout-branch refuses a missing branch without creating a path', async () => {
   await withRepository(async ({ root, repoDir, runGit }) => {
     const missingPath = path.join(root, 'worktrees', 'missing');
     await assert.rejects(
@@ -126,15 +126,72 @@ test('checkout-branch refuses missing and already-held branches without creating
       (error) => error instanceof WorktreeCreationError && error.code === 'branch_not_found',
     );
     assert.equal(fs.existsSync(missingPath), false);
+  });
+});
 
-    const heldPath = path.join(root, 'worktrees', 'held');
-    await assert.rejects(createGitWorktree({
-      projectDir: repoDir,
-      worktreePath: heldPath,
-      branchName: 'main',
-      source: { mode: 'checkout-branch', branch: 'main' },
-      runGit,
-    }));
-    assert.equal(fs.existsSync(heldPath), false);
+test('checkout-branch names the Worktree already holding the branch before Git adds another', async () => {
+  await withRepository(async ({ root, repoDir, runGit }) => {
+    const holderPath = path.join(root, 'worktrees', 'holder');
+    const attemptedPath = path.join(root, 'worktrees', 'attempted');
+    await git(['worktree', 'add', holderPath, 'feature/local'], repoDir);
+
+    const invocations: string[][] = [];
+    const recordingRunGit: GitRunner = async (args, options) => {
+      invocations.push(args);
+      return runGit(args, options);
+    };
+
+    await assert.rejects(
+      createGitWorktree({
+        projectDir: repoDir,
+        worktreePath: attemptedPath,
+        branchName: 'feature/local',
+        source: { mode: 'checkout-branch', branch: 'feature/local' },
+        runGit: recordingRunGit,
+      }),
+      (error) => error instanceof WorktreeCreationError
+        && error.code === 'branch_already_checked_out'
+        && error.branchName === 'feature/local'
+        && error.holderWorktreePath === holderPath
+        && error.message === `Branch 'feature/local' is already checked out in Worktree '${holderPath}'.`,
+    );
+
+    assert.equal(
+      invocations.some((args) => args[2] === 'worktree' && args[3] === 'add'),
+      false,
+    );
+    assert.equal(fs.existsSync(attemptedPath), false);
+    const worktrees = (await git(['worktree', 'list', '--porcelain'], repoDir)).stdout;
+    assert.equal(worktrees.includes(`worktree ${attemptedPath}`), false);
+    assert.equal(worktrees.includes(`worktree ${holderPath}`), true);
+  });
+});
+
+test('checkout-branch still lets Git reject a branch claimed after the holder lookup', async () => {
+  await withRepository(async ({ root, repoDir, runGit }) => {
+    const holderPath = path.join(root, 'worktrees', 'racing-holder');
+    const attemptedPath = path.join(root, 'worktrees', 'racing-attempt');
+    let claimed = false;
+    const racingRunGit: GitRunner = async (args, options) => {
+      const result = await runGit(args, options);
+      if (!claimed && args[2] === 'worktree' && args[3] === 'list') {
+        claimed = true;
+        await git(['worktree', 'add', holderPath, 'feature/local'], repoDir);
+      }
+      return result;
+    };
+
+    await assert.rejects(
+      createGitWorktree({
+        projectDir: repoDir,
+        worktreePath: attemptedPath,
+        branchName: 'feature/local',
+        source: { mode: 'checkout-branch', branch: 'feature/local' },
+        runGit: racingRunGit,
+      }),
+      /already used by worktree/,
+    );
+    assert.equal(fs.existsSync(attemptedPath), false);
+    assert.equal(fs.existsSync(holderPath), true);
   });
 });

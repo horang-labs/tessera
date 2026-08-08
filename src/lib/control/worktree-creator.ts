@@ -170,6 +170,20 @@ export function createDatabaseControlWorktreeCreator(options: {
             { branch: source.mode === 'checkout-branch' ? source.branch : branchName },
           );
         }
+        if (
+          error instanceof WorktreeCreationError
+          && error.code === 'branch_already_checked_out'
+        ) {
+          throw new ControlWorktreeCreationError(
+            'BRANCH_ALREADY_CHECKED_OUT',
+            error.message,
+            409,
+            {
+              branch: error.branchName,
+              holderWorktreePath: error.holderWorktreePath,
+            },
+          );
+        }
         const branchAlreadyCheckedOut = isAlreadyCheckedOutError(error);
         const branchAlreadyExists = isExistingBranchError(error);
         throw new ControlWorktreeCreationError(
