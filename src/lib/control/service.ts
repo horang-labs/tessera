@@ -17,11 +17,14 @@ import type {
   PreparationPhase,
   PreparationStatus,
 } from '@/lib/projects/preparation-status-policy';
+import type { WorktreeCreationSource } from '@/lib/worktrees/create';
 import { CONTROL_API_VERSION } from './runtime-descriptor';
 
 export type ControlErrorCode =
   | 'BRANCH_REQUIRED'
   | 'BRANCH_ALREADY_EXISTS'
+  | 'BRANCH_ALREADY_CHECKED_OUT'
+  | 'BRANCH_NOT_FOUND'
   | 'CALLER_CONTEXT_UNAVAILABLE'
   | 'CONTROL_VERSION_MISMATCH'
   | 'INSTANCE_UNAVAILABLE'
@@ -188,6 +191,7 @@ export interface ControlWorktreeCreationRequest {
   project: ControlProjectRecord;
   branch: string;
   startPoint: string;
+  source?: WorktreeCreationSource;
   title?: string;
 }
 
@@ -204,6 +208,8 @@ export class ControlWorktreeCreationError extends Error {
   constructor(
     readonly code: Extract<ControlErrorCode,
       | 'BRANCH_ALREADY_EXISTS'
+      | 'BRANCH_ALREADY_CHECKED_OUT'
+      | 'BRANCH_NOT_FOUND'
       | 'INVALID_START_POINT'
       | 'PREPARATION_FAILED'
       | 'PREPARATION_TIMEOUT'
@@ -264,6 +270,7 @@ export interface ControlService {
       selector: ControlProjectSelector;
       branch: string;
       startPoint: string;
+      source?: WorktreeCreationSource;
       title?: string;
     },
     context: ControlCallerContext,
@@ -486,6 +493,7 @@ export function createControlService(options: {
           project,
           branch: request.branch,
           startPoint: request.startPoint,
+          ...(request.source === undefined ? {} : { source: request.source }),
           ...(request.title === undefined ? {} : { title: request.title }),
         });
       } catch (error) {

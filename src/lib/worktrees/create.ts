@@ -1,9 +1,30 @@
 import type { GitRunner } from './git-runner';
 
-export type WorktreeCreationSource = {
-  mode: 'branch-off';
-  baseRef: string | null;
-};
+export type WorktreeCreationSource =
+  | {
+      mode: 'branch-off';
+      baseRef: string | null;
+    }
+  | {
+      mode: 'checkout-branch';
+      /** Local branch name, or the explicitly selected remote-tracking ref. */
+      branch: string;
+    };
+
+export class WorktreeCreationError extends Error {
+  constructor(
+    readonly code: 'branch_not_found',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'WorktreeCreationError';
+  }
+}
+
+export interface WorktreeCreationResult {
+  /** Whether this invocation created the local branch as well as the Worktree. */
+  createdBranch: boolean;
+}
 
 export async function createGitWorktree(options: {
   projectDir: string;
@@ -11,8 +32,18 @@ export async function createGitWorktree(options: {
   branchName: string;
   source: WorktreeCreationSource;
   runGit: GitRunner;
-}): Promise<void> {
+}): Promise<WorktreeCreationResult> {
   const { projectDir, worktreePath, branchName, source, runGit } = options;
+  if (source.mode === 'checkout-branch') {
+    return checkoutExistingBranch({
+      projectDir,
+      worktreePath,
+      branchName,
+      selectedBranch: source.branch,
+      runGit,
+    });
+  }
+
   const gitBaseRef = await resolveGitBaseRef(projectDir, source.baseRef, runGit);
 
   await runGit(buildBranchOffArgs(projectDir, worktreePath, branchName, gitBaseRef));
@@ -22,6 +53,55 @@ export async function createGitWorktree(options: {
     source.baseRef ?? 'HEAD',
     runGit,
   );
+  return { createdBranch: true };
+}
+
+async function checkoutExistingBranch(options: {
+  projectDir: string;
+  worktreePath: string;
+  branchName: string;
+  selectedBranch: string;
+  runGit: GitRunner;
+}): Promise<WorktreeCreationResult> {
+  const { projectDir, worktreePath, branchName, selectedBranch, runGit } = options;
+  if (await refExists(projectDir, `refs/heads/${branchName}`, runGit)) {
+    await runGit([
+      '-C', projectDir, 'worktree', 'add', worktreePath, branchName,
+    ]);
+    return { createdBranch: false };
+  }
+
+  const remoteRef = `refs/remotes/${selectedBranch}`;
+  if (
+    selectedBranch === branchName
+    || !await refExists(projectDir, remoteRef, runGit)
+  ) {
+    throw new WorktreeCreationError(
+      'branch_not_found',
+      `Branch '${selectedBranch}' does not exist.`,
+    );
+  }
+
+  await runGit([
+    '-C', projectDir, 'worktree', 'add', worktreePath,
+    '-b', branchName, '--track', selectedBranch,
+  ]);
+  return { createdBranch: true };
+}
+
+async function refExists(
+  projectDir: string,
+  ref: string,
+  runGit: GitRunner,
+): Promise<boolean> {
+  try {
+    await runGit([
+      '-C', projectDir, 'show-ref', '--verify', '--quiet', ref,
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function buildBranchOffArgs(

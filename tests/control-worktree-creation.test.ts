@@ -196,6 +196,135 @@ test('Control creates exact local and remote branches through the managed path p
   assert.equal(mods.tasks.getTasks(repository.path).length, 2);
 });
 
+test('Control opens local and remote-only branches and returns distinct checkout refusals', async () => {
+  const mods = await modules();
+  const repository = createRepository('checkout-existing');
+  const managedRoot = path.join(testRoot, 'checkout-existing-worktrees');
+  git(repository.path, ['branch', 'feature/resume', repository.localCommit]);
+  git(repository.path, ['config', 'branch.feature/resume.base', 'refs/heads/main']);
+  mods.projects.registerProject(repository.path, repository.path, 'Checkout existing');
+  await mods.settings.SettingsManager.save(USER_ID, {
+    ...mods.defaults.DEFAULT_SETTINGS,
+    agentEnvironment: 'wsl',
+    managedWorktreePathTemplate: path.join(managedRoot, '{branchName}'),
+    lastModified: new Date().toISOString(),
+  });
+  const control = createControl(mods, 5_000);
+  const context = { agentEnvironment: 'wsl' as const };
+
+  const local = await control.createWorktree({
+    selector: { kind: 'project', projectId: repository.path },
+    branch: 'feature/resume',
+    startPoint: 'feature/resume',
+    source: { mode: 'checkout-branch', branch: 'feature/resume' },
+  }, context);
+  assert.equal(local.branch, 'feature/resume');
+  assert.equal(git(local.path!, ['rev-parse', 'HEAD']), repository.localCommit);
+  assert.equal(
+    git(repository.path, ['config', '--get', 'branch.feature/resume.base']),
+    'refs/heads/main',
+  );
+
+  const remote = await control.createWorktree({
+    selector: { kind: 'project', projectId: repository.path },
+    branch: 'origin/remote-start',
+    startPoint: 'origin/remote-start',
+    source: { mode: 'checkout-branch', branch: 'origin/remote-start' },
+  }, context);
+  assert.equal(remote.branch, 'remote-start');
+  assert.equal(git(remote.path!, ['rev-parse', 'HEAD']), repository.remoteCommit);
+  assert.equal(
+    git(repository.path, ['config', '--get', 'branch.remote-start.remote']),
+    'origin',
+  );
+  assert.equal(
+    git(repository.path, ['config', '--get', 'branch.remote-start.merge']),
+    'refs/heads/remote-start',
+  );
+
+  await assert.rejects(
+    control.createWorktree({
+      selector: { kind: 'project', projectId: repository.path },
+      branch: 'feature/missing',
+      startPoint: 'feature/missing',
+      source: { mode: 'checkout-branch', branch: 'feature/missing' },
+    }, context),
+    (error: unknown) => error instanceof mods.service.ControlOperationError
+      && error.code === 'BRANCH_NOT_FOUND',
+  );
+  await assert.rejects(
+    control.createWorktree({
+      selector: { kind: 'project', projectId: repository.path },
+      branch: 'main',
+      startPoint: 'main',
+      source: { mode: 'checkout-branch', branch: 'main' },
+    }, context),
+    (error: unknown) => error instanceof mods.service.ControlOperationError
+      && error.code === 'BRANCH_ALREADY_CHECKED_OUT',
+  );
+  assert.equal(fs.existsSync(path.join(managedRoot, 'feature/missing')), false);
+  assert.equal(fs.existsSync(path.join(managedRoot, 'main')), false);
+});
+
+test('the Worktree API ignores naming inputs when opening an existing branch', async () => {
+  const mods = await modules();
+  const repository = createRepository('api-checkout-existing');
+  const managedRoot = path.join(testRoot, 'api-checkout-worktrees');
+  git(repository.path, ['branch', 'feature/api-resume', repository.localCommit]);
+  git(repository.path, ['config', 'branch.feature/api-resume.base', 'refs/heads/main']);
+  await mods.settings.SettingsManager.save('electron-local-user', {
+    ...mods.defaults.DEFAULT_SETTINGS,
+    agentEnvironment: 'wsl',
+    managedWorktreePathTemplate: path.join(managedRoot, '{branchName}'),
+    lastModified: new Date().toISOString(),
+  });
+
+  const previousElectronRuntime = process.env.TESSERA_ELECTRON_RUNTIME;
+  const previousPort = process.env.PORT;
+  process.env.TESSERA_ELECTRON_RUNTIME = '1';
+  process.env.PORT = '32123';
+  try {
+    const [{ NextRequest }, { POST }, { APP_SECRET_HEADER, ensureAppSecret }] = await Promise.all([
+      import('next/server'),
+      import('../src/app/api/worktrees/route'),
+      import('../src/lib/auth/app-secret'),
+    ]);
+    const secret = await ensureAppSecret();
+    const response = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
+      method: 'POST',
+      headers: {
+        [APP_SECRET_HEADER]: secret,
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({
+        projectDir: repository.path,
+        source: { mode: 'checkout-branch', branch: 'feature/api-resume' },
+        branchPrefix: 'must-not-apply/',
+        branchSlug: 'must-not-apply',
+        allowBranchSlugSuffix: false,
+      }),
+    }));
+    const responseText = await response.text();
+    assert.equal(response.status, 200, responseText);
+    const created = JSON.parse(responseText);
+    assert.equal(created.branchName, 'feature/api-resume');
+    assert.equal(created.worktreePath, path.join(managedRoot, 'feature/api-resume'));
+    assert.equal(git(created.worktreePath, ['symbolic-ref', '--short', 'HEAD']), 'feature/api-resume');
+    assert.equal(git(created.worktreePath, ['rev-parse', 'HEAD']), repository.localCommit);
+    assert.equal(
+      git(repository.path, ['config', '--get', 'branch.feature/api-resume.base']),
+      'refs/heads/main',
+    );
+  } finally {
+    if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
+    else process.env.TESSERA_ELECTRON_RUNTIME = previousElectronRuntime;
+    if (previousPort === undefined) delete process.env.PORT;
+    else process.env.PORT = previousPort;
+  }
+});
+
 test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git ref and broadcast UI visibility', async () => {
   const mods = await modules();
   const repository = createRepository('cli-http-exact-input');
@@ -205,6 +334,7 @@ test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git re
     fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'),
   ).version as string;
   git(repository.path, ['update-ref', 'refs/tags/--json', repository.localCommit]);
+  git(repository.path, ['branch', 'feature/cli-resume', repository.localCommit]);
   mods.projects.registerProject(repository.path, repository.path, 'CLI HTTP exact input');
   await mods.settings.SettingsManager.save(USER_ID, {
     ...mods.defaults.DEFAULT_SETTINGS,
@@ -269,10 +399,24 @@ test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git re
     assert.equal(created.startPoint, '--json');
     assert.equal(git(created.path as string, ['rev-parse', 'HEAD']), repository.localCommit);
 
+    const checkout = await runControlCli([
+      'worktree', 'create', '--project', repository.path,
+      '--mode', 'checkout-branch', '-b', 'feature/cli-resume', '--json',
+      '--control-descriptor', runtime.path,
+    ]);
+    assert.equal(checkout.code, 0, checkout.stderr || checkout.stdout);
+    const resumed = JSON.parse(checkout.stdout).data as Record<string, unknown>;
+    assert.equal(resumed.branch, 'feature/cli-resume');
+    assert.equal(resumed.startPoint, 'feature/cli-resume');
+    assert.equal(git(resumed.path as string, ['rev-parse', 'HEAD']), repository.localCommit);
+
     const visible = mods.tasks.getTasks(repository.path);
-    assert.equal(visible.length, 1);
-    assert.equal(visible[0]?.worktreeBranch, 'feature/cli-http');
-    assert.equal(visible[0]?.sessions.length, 0);
+    assert.equal(visible.length, 2);
+    assert.deepEqual(
+      visible.map((worktree) => worktree.worktreeBranch).sort(),
+      ['feature/cli-http', 'feature/cli-resume'],
+    );
+    assert.equal(visible.every((worktree) => worktree.sessions.length === 0), true);
     assert.equal(mutations.some((mutation) => (
       mutation.userId === USER_ID
       && mutation.type === 'task_mutated'
@@ -460,6 +604,10 @@ function createRepository(label: string): {
   git(repository, ['commit', '-am', 'remote start']);
   const remoteCommit = git(repository, ['rev-parse', 'HEAD']);
   git(repository, ['update-ref', 'refs/remotes/origin/remote-start', remoteCommit]);
+  git(repository, ['config', 'remote.origin.url', path.join(testRoot, label, 'origin.git')]);
+  git(repository, [
+    'config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*',
+  ]);
   git(repository, ['reset', '--hard', localCommit]);
   return { path: repository, localCommit, remoteCommit };
 }
