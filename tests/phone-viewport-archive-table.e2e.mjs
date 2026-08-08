@@ -4,7 +4,7 @@
  * The archive tab is the one tab whose content slides sideways: both of its
  * tables declare a minimum width far wider than the screen, so the box around
  * them scrolls horizontally. This file drives the real tab through the shared
- * 360x880 touch context and asserts what a user can see and reach — a box that
+ * 360x776 touch context and asserts what a user can see and reach — a box that
  * fits the screen, a value that is on screen, a button whose label still says
  * what it does — never a class name.
  *

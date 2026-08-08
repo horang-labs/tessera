@@ -15,7 +15,7 @@
  * (`message-bubble-content.tsx`) — plus the user row, which fits today and must
  * keep fitting.
  *
- *   1. Phone viewport (360x880, touch), default font scale: every action row's
+ *   1. Phone viewport (360x776, touch), default font scale: every action row's
  *      own box, and every button inside it, lies within the viewport; the three
  *      assistant actions are all present; the page does not scroll sideways.
  *   2. The same at both ends of FONT_SCALE_OPTIONS. The row is sized in `rem`
@@ -358,7 +358,7 @@ async function setFontScale(scale) {
 
 // --------------------------------------------------------------------- ui ---
 
-/** The shared wave context: 360x880 with touch enabled (spec #241). */
+/** The shared wave context: 360x776 with touch enabled (spec #241, height #265). */
 async function openPhonePage() {
   return preparePage(await createPhoneContext(browser, {
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },

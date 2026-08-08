@@ -4,7 +4,7 @@
  * The + control that opens the sheet used to exist only on hover, and a phone
  * has no hover. Two phases, both against a real server and a real browser:
  *
- *   1. Phone viewport (360x880, touch): the + control is visible without any
+ *   1. Phone viewport (360x776, touch): the + control is visible without any
  *      hover interaction.
  *   2. Desktop width (1280x900, no touch): the same control is still revealed
  *      by hover and still hidden without it — the desktop layout must not
@@ -26,6 +26,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import jwt from 'jsonwebtoken';
 import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
+import { PHONE_VIEWPORT } from './helpers/phone-viewport.mjs';
 
 const run = promisify(execFile);
 
@@ -39,10 +40,11 @@ const selectedPhases = (process.env.TESSERA_E2E_PHASES ?? '')
   .filter(Boolean);
 
 /**
- * The seam this wave shares: one 360x880 context with touch enabled, which is
- * the Galaxy Z Flip main display the spec targets.
+ * The seam this wave shares: one touch-enabled context at the width and content
+ * height a Galaxy Z Flip actually hands the page. Taken from the shared helper
+ * rather than restated here, so this file cannot drift away from the wave (#265).
  */
-const PHONE_CONTEXT = { viewport: { width: 360, height: 880 }, hasTouch: true };
+const PHONE_CONTEXT = { viewport: PHONE_VIEWPORT, hasTouch: true };
 /** A pointer-driven window, which is what must not regress. */
 const DESKTOP_CONTEXT = { viewport: { width: 1280, height: 900 }, hasTouch: false };
 

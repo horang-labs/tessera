@@ -138,7 +138,7 @@ async function testTallPanelScrollsInsideItsOwnBox(browserInstance, origin) {
   const { context, page } = await createPhonePage(browserInstance);
 
   try {
-    // Enough entries that the list is several screens tall at 880px.
+    // Enough entries that the list is several screens tall at the phone height.
     await page.route('**/api/filesystem/browse**', async (route) => {
       await route.fulfill(jsonResponse(browsePayload('/home/tester', 60)));
     });

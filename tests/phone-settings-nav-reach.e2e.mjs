@@ -16,7 +16,7 @@
  *
  *   0. The height budget the wrapped-strip option had to fit, at the height the
  *      device really gives the page.
- *   1. Phone viewport (360x880, touch), default font scale: the strip is gone,
+ *   1. Phone viewport (360x776, touch), default font scale: the strip is gone,
  *      one picker names the page you are on, opening it puts all seven pages
  *      wholly inside the viewport with nothing hidden in either axis, each row
  *      is a 44px touch target, tapping a row lands on its page, and the page
@@ -28,7 +28,9 @@
  *   3. Desktop width (1280x900, no touch): the same seven tabs, same order,
  *      still one column in the sidebar, and no picker. Nothing above the Phone
  *      viewport step may move.
- *   4. Phases 1 and 2 again at the height the device actually gives the page.
+ *   4. Phases 1 and 2 again with the address bar scrolled away, which is the
+ *      other height the same phone really has. Phases 0-3 take the smaller of
+ *      the two, so this is the transition, not a second guess at the default.
  *
  * The server runs from the repository itself rather than a copied app root:
  * every assertion here is a measured box and Tailwind only generates its
@@ -49,22 +51,15 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
-import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs';
+import {
+  PHONE_VIEWPORT,
+  PHONE_VIEWPORT_ADDRESS_BAR_HIDDEN,
+  createPhoneContext,
+  createPhoneContextWithAddressBarHidden,
+} from './helpers/phone-viewport.mjs';
 
 /** A pointer-driven window, which is what must not regress. */
 const DESKTOP_VIEWPORT = { width: 1280, height: 900 };
-
-/**
- * The height the phone's *page* really gets. The shared helper's 880 is the Z
- * Flip's whole screen, but Playwright's `viewport` is the content area, so the
- * harness hands the page ~100px the device never gives it: the status bar
- * (~24), Chrome's address bar (~56) and the gesture bar (~24) come out of it
- * first. Every height-shaped verdict is therefore taken here as well, because
- * this is the number the dialog has to fit inside on the device.
- *
- * The shared helper is deliberately left alone — a separate ticket owns it.
- */
-const DEVICE_PHONE_VIEWPORT = { width: PHONE_VIEWPORT.width, height: 776 };
 
 /** The floor a finger needs, in CSS px (`PHONE_TOUCH_TARGET_PX`, #259). */
 const MIN_TOUCH_TARGET = 44;
@@ -242,7 +237,7 @@ async function setFontScale(scale) {
  * Opens the app with Settings showing.
  *
  * @param {object} options
- * @param {'phone'|'phone-device-height'|'desktop'} options.viewport
+ * @param {'phone'|'phone-address-bar-hidden'|'desktop'} options.viewport
  * @param {number} options.fontScale One of `FONT_SCALE_OPTIONS`. Also seeded
  *   where the FOUC-prevention script in `layout.tsx` reads it, so the root font
  *   size is already right on the first paint.
@@ -252,8 +247,8 @@ async function openSettingsPage({ viewport, fontScale }) {
   const options = { extraHTTPHeaders: { 'x-tessera-app-secret': appSecret } };
   const context = viewport === 'phone'
     ? await createPhoneContext(browser, options)
-    : viewport === 'phone-device-height'
-      ? await browser.newContext({ ...options, viewport: DEVICE_PHONE_VIEWPORT, hasTouch: true })
+    : viewport === 'phone-address-bar-hidden'
+      ? await createPhoneContextWithAddressBarHidden(browser, options)
       : await browser.newContext({ ...options, viewport: DESKTOP_VIEWPORT, hasTouch: false });
 
   await context.addInitScript((scale) => {
@@ -607,7 +602,7 @@ async function assertEveryPageOpens(page, label) {
  */
 async function phase0() {
   const { context, page } = await openSettingsPage({
-    viewport: 'phone-device-height',
+    viewport: 'phone',
     fontScale: 1,
   });
   try {
@@ -763,24 +758,26 @@ async function phase3() {
 }
 
 /**
- * Phases 1 and 2 again at the height the device really gives the page. Every
- * vertical verdict above was taken with ~100px the phone does not have, and
- * this is where the ones that matter — the list fitting the viewport, the body
- * keeping its share — are taken honestly.
+ * Phases 1 and 2 again with the address bar scrolled away. The phone has two
+ * real content heights, not one, and this file used to take the taller of them
+ * as its default (#265). Now the phases above run at the height the user starts
+ * at and this one runs at the height they get once the page scrolls, so the
+ * verdicts that matter — the list fitting the viewport, the body keeping its
+ * share — hold on both sides of the transition rather than on one.
  */
 async function phase4() {
   for (const scale of [1, LARGEST_FONT_SCALE]) {
-    const label = `phone-776/scale-${scale}`;
+    const label = `phone-${PHONE_VIEWPORT_ADDRESS_BAR_HIDDEN.height}/scale-${scale}`;
     const { context, page } = await openSettingsPage({
-      viewport: 'phone-device-height',
+      viewport: 'phone-address-bar-hidden',
       fontScale: scale,
     });
     try {
       const closed = await measureDialog(page);
       assert.equal(
         closed.innerHeight,
-        DEVICE_PHONE_VIEWPORT.height,
-        `${label}: the page is not at the device height`,
+        PHONE_VIEWPORT_ADDRESS_BAR_HIDDEN.height,
+        `${label}: the page is not at the address-bar-hidden height`,
       );
       results.push(`${label}: root font ${closed.rootFontSize}px, page ${closed.innerHeight}px tall`);
       assertPickerIsAdvertised(closed, label, 'General');
@@ -792,7 +789,12 @@ async function phase4() {
       const open = await measureDialog(page);
       results.push(describeTabs(open));
       assertOpenListShowsEveryPage(open, label);
-      await page.screenshot({ path: path.join(artifactDir, `phone-776-settings-picker-${scale}.png`) });
+      await page.screenshot({
+        path: path.join(
+          artifactDir,
+          `phone-${PHONE_VIEWPORT_ADDRESS_BAR_HIDDEN.height}-settings-picker-${scale}.png`,
+        ),
+      });
 
       await assertEveryPageOpens(page, label);
     } finally {
