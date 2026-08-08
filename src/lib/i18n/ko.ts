@@ -1173,6 +1173,22 @@ export const ko: I18nMessages = {
       label: '모든 git 작업',
       pending: '이미 실행 중인 git 작업이 있습니다',
     },
+    failure: {
+      commitTitle: '커밋 실패',
+      pushTitle: '푸시 실패',
+      pullTitle: '풀 실패',
+      createPrTitle: '풀 리퀘스트 생성 실패',
+      abortTitle: '중단 실패',
+      showDetails: 'git 출력 보기',
+      hideDetails: 'git 출력 숨기기',
+      dismiss: '이 오류 닫기',
+      copyOutput: 'git 출력 복사',
+      exitCode: '종료 코드 {{code}}',
+      exitCodeUnknown: '명령이 종료 코드를 남기지 않았습니다',
+      stderrLabel: 'stderr',
+      stdoutLabel: 'stdout',
+      noOutput: 'git이 아무것도 출력하지 않았습니다.',
+    },
   },
   memoryPanel: {
     sections: {

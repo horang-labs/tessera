@@ -1166,6 +1166,22 @@ export const zh: I18nMessages = {
       label: '全部 git 操作',
       pending: '已有 git 操作正在执行',
     },
+    failure: {
+      commitTitle: '提交失败',
+      pushTitle: '推送失败',
+      pullTitle: '拉取失败',
+      createPrTitle: '创建拉取请求失败',
+      abortTitle: '中止失败',
+      showDetails: '查看 git 输出',
+      hideDetails: '隐藏 git 输出',
+      dismiss: '关闭该错误',
+      copyOutput: '复制 git 输出',
+      exitCode: '退出码 {{code}}',
+      exitCodeUnknown: '命令没有返回退出码',
+      stderrLabel: 'stderr',
+      stdoutLabel: 'stdout',
+      noOutput: 'git 没有任何输出。',
+    },
   },
   memoryPanel: {
     sections: {

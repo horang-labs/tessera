@@ -29,6 +29,8 @@ import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
 import type { GitPendingVerb } from "./use-git-panel-controller";
 import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
 import { GitActionMenu } from "./git-action-menu";
+import { GitActionFailureBanner } from "./git-action-failure-banner";
+import type { GitActionFailureReport } from "./git-action-report";
 import { GitCommitForm } from "./git-commit-form";
 import { GitPrimaryActionBar } from "./git-primary-action";
 import {
@@ -595,6 +597,7 @@ export function GitPanelContentSection({
   commit,
   data,
   error,
+  failure,
   loading,
   menu,
   primary,
@@ -620,6 +623,15 @@ export function GitPanelContentSection({
   };
   data: GitPanelData | null;
   error: string | null;
+  /**
+   * The last Git action that failed, or null. Distinct from `error`, which is
+   * the panel failing to load: this one is a panel that reads fine reporting a
+   * command that did not (#248).
+   */
+  failure: {
+    report: GitActionFailureReport | null;
+    onDismiss: () => void;
+  };
   loading: boolean;
   /** The one Git action this state calls for, and the press that runs it. */
   primary: {
@@ -699,6 +711,18 @@ export function GitPanelContentSection({
               onRun={primary.onRun}
             />
           )}
+
+          {/*
+            Directly under the button that raised it, and outside the gate
+            below: a failure has to be readable on a rung with nothing else to
+            show — a clean tree whose push Git refused (#248).
+          */}
+          {failure.report ? (
+            <GitActionFailureBanner
+              report={failure.report}
+              onDismiss={failure.onDismiss}
+            />
+          ) : null}
 
           {loading || error || !data ? null : (
             changedFileCount === 0 ? (

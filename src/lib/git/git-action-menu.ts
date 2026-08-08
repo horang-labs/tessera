@@ -275,13 +275,17 @@ function describePush(snapshot: GitStateSnapshot): GitMenuAction {
     };
   }
 
-  const ahead = snapshot.ahead > 0;
+  // A null count is "Git cannot compare", not "nothing to push": the branch
+  // tracks something no remote-tracking ref mirrors. The entry stays enabled and
+  // loses its count, because "Nothing to push" is a claim nothing here supports.
+  const count = snapshot.ahead !== null && snapshot.ahead > 0 ? snapshot.ahead : null;
+  const ahead = count !== null || snapshot.ahead === null;
   return {
     id: 'push',
     kind: 'push',
     enabled: !blocked && ahead,
-    labelKey: ahead ? 'gitPanel.push.buttonCount' : 'gitPanel.push.button',
-    ...(ahead ? { labelParams: { count: snapshot.ahead } } : {}),
+    labelKey: count !== null ? 'gitPanel.push.buttonCount' : 'gitPanel.push.button',
+    ...(count !== null ? { labelParams: { count } } : {}),
     disabledReasonKey:
       blocked ?? (ahead ? null : 'gitPanel.push.nothingToPush'),
   };
@@ -298,7 +302,12 @@ function describePush(snapshot: GitStateSnapshot): GitMenuAction {
  * told afterwards what the menu already knew.
  */
 function describePull(snapshot: GitStateSnapshot): GitMenuAction {
-  const behind = snapshot.behind > 0;
+  // Null as in `describePush`, and the same answer: `git pull` fetches and
+  // merges through the branch's configured upstream, so it works on exactly the
+  // branch this cannot count, and "Nothing to pull" would be the panel asserting
+  // a comparison it never made.
+  const count = snapshot.behind !== null && snapshot.behind > 0 ? snapshot.behind : null;
+  const behind = count !== null || snapshot.behind === null;
   const blocked = describeConflictObstacle(snapshot)
     ?? describeRemoteObstacle(snapshot)
     ?? (snapshot.upstream ? null : 'gitPanel.pull.noUpstream');
@@ -307,8 +316,8 @@ function describePull(snapshot: GitStateSnapshot): GitMenuAction {
     id: 'pull',
     kind: 'pull',
     enabled: !blocked && behind,
-    labelKey: behind ? 'gitPanel.pull.button' : 'gitPanel.pull.menuButton',
-    ...(behind ? { labelParams: { count: snapshot.behind } } : {}),
+    labelKey: count !== null ? 'gitPanel.pull.button' : 'gitPanel.pull.menuButton',
+    ...(count !== null ? { labelParams: { count } } : {}),
     disabledReasonKey:
       blocked ?? (behind ? null : 'gitPanel.pull.nothingToPull'),
   };

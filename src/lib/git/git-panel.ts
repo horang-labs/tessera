@@ -28,6 +28,10 @@ import {
 } from "@/lib/git/git-environment";
 import { detectGitConflictOperation } from "@/lib/git/git-conflict-state";
 import { parseGitStatus } from "@/lib/git/git-status";
+import {
+  resolveConfiguredUpstream,
+  type ConfiguredUpstream,
+} from "@/lib/git/upstream-config";
 import type { GitActionTarget } from "@/lib/git/git-actions";
 import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
 import { getRuntimePlatform } from "@/lib/system/runtime-platform";
@@ -385,17 +389,94 @@ export function getWorktreeDisplayName(workDir: string): string {
   return pathModule.basename(pathModule.resolve(workDir));
 }
 
-function parseAheadBehind(raw: string | null): {
+interface AheadBehind {
   ahead: number;
   behind: number;
-} {
-  if (!raw) return { ahead: 0, behind: 0 };
+}
+
+/**
+ * Null rather than zero when there is nothing to parse. `rev-list` printing
+ * nothing means it refused to run, and a refusal reported as `0 0` is the panel
+ * claiming a branch is in sync when what happened is that it could not look.
+ */
+function parseAheadBehind(raw: string | null): AheadBehind | null {
+  if (!raw) return null;
   const [aheadRaw, behindRaw] = raw.trim().split(/\s+/);
-  const ahead = Number.parseInt(aheadRaw ?? "0", 10);
-  const behind = Number.parseInt(behindRaw ?? "0", 10);
+  const ahead = Number.parseInt(aheadRaw ?? "", 10);
+  const behind = Number.parseInt(behindRaw ?? "", 10);
+  if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return null;
+  return { ahead, behind };
+}
+
+/**
+ * How far this branch and its upstream have drifted, or nulls when there is no
+ * local way to say.
+ *
+ * `HEAD...@{upstream}` fails for exactly the branches `@{upstream}` itself fails
+ * for — the ones the fetch refspec does not map — so the fallback names the
+ * remote-tracking ref outright. That still answers whenever the ref exists,
+ * which it can even while `@{upstream}` refuses: Git checks the refspec, not the
+ * ref. When the ref is genuinely absent there is no local answer at all, and
+ * both counts stay null; short of asking the remote over the network, which a
+ * panel read is not allowed to do, nothing here can know.
+ *
+ * The extra process is spent only on the path where the first read came back
+ * empty, so an ordinary repository still pays for one `rev-list`.
+ */
+async function resolveAheadBehind(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+  aheadBehindRaw: string | null,
+  configured: ConfiguredUpstream | null,
+): Promise<{ ahead: number | null; behind: number | null }> {
+  const counted = parseAheadBehind(aheadBehindRaw);
+  if (counted) return counted;
+  if (!configured) return { ahead: null, behind: null };
+
+  const raw = await runOptionalGitCommand(
+    ["rev-list", "--left-right", "--count", `HEAD...${configured.trackingRef}`],
+    workDir,
+    agentEnvironment,
+  );
+  return parseAheadBehind(raw) ?? { ahead: null, behind: null };
+}
+
+export interface GitUpstreamState {
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+}
+
+/**
+ * What the panel says about tracking, from the raw reads either command path
+ * collected. It sits between the two so the batched and the unbatched snapshot
+ * cannot drift apart on the one question this panel gets wrong most often, and
+ * it is exported so a test can drive it over a real repository.
+ */
+export async function resolveUpstreamState(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+  snapshot: Pick<
+    GitPanelSnapshot,
+    "branchRaw" | "upstream" | "upstreamConfigRaw" | "aheadBehindRaw"
+  >,
+): Promise<GitUpstreamState> {
+  // Whether the branch tracks is the config pair's answer, not `@{upstream}`'s
+  // (`upstream-config.ts`). Getting this wrong is what put a published branch
+  // permanently under a Publish Branch button.
+  const configured = resolveConfiguredUpstream(
+    snapshot.upstreamConfigRaw,
+    snapshot.branchRaw,
+  );
+
   return {
-    ahead: Number.isFinite(ahead) ? ahead : 0,
-    behind: Number.isFinite(behind) ? behind : 0,
+    upstream: snapshot.upstream ?? configured?.name ?? null,
+    ...(await resolveAheadBehind(
+      workDir,
+      agentEnvironment,
+      snapshot.aheadBehindRaw,
+      configured,
+    )),
   };
 }
 
@@ -616,10 +697,22 @@ function attachFileDiffStats(
   return { files, total: stoppedEarly ? undefined : parsed.length, truncated };
 }
 
-interface GitPanelSnapshot {
+/** Exported alongside `getGitPanelSnapshot`, which a test drives directly. */
+export interface GitPanelSnapshot {
   repoRoot: string;
   branchRaw: string | null;
+  /**
+   * `@{upstream}`, which answers only for a branch this clone's fetch refspec
+   * maps into `refs/remotes`. `upstreamConfigRaw` is what actually decides
+   * whether the branch tracks; see `upstream-config.ts`.
+   */
   upstream: string | null;
+  /**
+   * Every `branch.<name>.remote` and `branch.<name>.merge` in this repository,
+   * one per line. Read for all branches for the same reason `branchBasesRaw` is:
+   * the batch is built before the checked-out branch is known.
+   */
+  upstreamConfigRaw: string | null;
   aheadBehindRaw: string | null;
   remoteUrl: string | null;
   /** `git remote`, one name per line. Null when the command could not run. */
@@ -653,7 +746,12 @@ function getChangedFilesBatchCommands(): GitBatchCommand[] {
   ];
 }
 
-function getGitPanelBatchCommands(): GitBatchCommand[] {
+/**
+ * Exported so a test can run the bridged path's command set on any platform:
+ * `shouldBatchGitCommands` is false everywhere except a Windows host with a WSL
+ * agent, and this is the half of the panel read no ordinary test run reaches.
+ */
+export function getGitPanelBatchCommands(): GitBatchCommand[] {
   return [
     ...getChangedFilesBatchCommands(),
     { key: "branch", args: ["branch", "--show-current"] },
@@ -664,6 +762,13 @@ function getGitPanelBatchCommands(): GitBatchCommand[] {
     {
       key: "aheadBehind",
       args: ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    },
+    {
+      // No scope flag, unlike `branchBases`: Git resolves an upstream from
+      // whichever scope set the pair, so restricting this read to `--local`
+      // would answer a narrower question than the one `@{upstream}` asked.
+      key: "upstreamConfig",
+      args: ["config", "--get-regexp", "^branch\\..*\\.(remote|merge)$"],
     },
     { key: "remoteUrl", args: ["remote", "get-url", "origin"] },
     // Separately from the URL above: the primary Git action needs to know
@@ -742,6 +847,7 @@ async function getBatchedGitPanelSnapshot(
     repoRoot,
     branchRaw: getOptionalBatchOutput(results, "branch"),
     upstream,
+    upstreamConfigRaw: getOptionalBatchOutput(results, "upstreamConfig"),
     aheadBehindRaw: getOptionalBatchOutput(results, "aheadBehind"),
     remoteUrl: getOptionalBatchOutput(results, "remoteUrl"),
     remoteListRaw: getOptionalBatchOutput(results, "remotes"),
@@ -752,6 +858,9 @@ async function getBatchedGitPanelSnapshot(
       getOptionalBatchOutput(results, "status"),
       fileDiffStats,
     ),
+    // The raw `@{upstream}`, not the config fallback: `recentUpstream` spells
+    // `@{upstream}` in its own arguments, so it has whatever Git will resolve —
+    // where a config-only upstream would pick a command that prints nothing.
     recentCommitsRaw: getOptionalBatchOutput(
       results,
       upstream ? "recentUpstream" : "recentLocal",
@@ -782,6 +891,7 @@ async function getSeparateGitPanelSnapshot(
   const [
     branchRaw,
     upstream,
+    upstreamConfigRaw,
     aheadBehindRaw,
     remoteUrl,
     remoteListRaw,
@@ -793,6 +903,14 @@ async function getSeparateGitPanelSnapshot(
   ] = await Promise.all([
     runOptionalGitCommand(["branch", "--show-current"], workDir, agentEnvironment),
     upstreamPromise,
+    // Kept identical to the batched path's `upstreamConfig`, down to the absent
+    // scope flag: the two paths answer the same question on different platforms
+    // and a difference between them is a bug only one of them can show.
+    runOptionalGitCommand(
+      ["config", "--get-regexp", "^branch\\..*\\.(remote|merge)$"],
+      workDir,
+      agentEnvironment,
+    ),
     runOptionalGitCommand(
       ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
       workDir,
@@ -828,6 +946,7 @@ async function getSeparateGitPanelSnapshot(
     repoRoot,
     branchRaw,
     upstream,
+    upstreamConfigRaw,
     aheadBehindRaw,
     remoteUrl,
     remoteListRaw,
@@ -841,7 +960,11 @@ async function getSeparateGitPanelSnapshot(
   };
 }
 
-function getGitPanelSnapshot(
+/**
+ * Exported so a test can read a real repository through whichever path this
+ * platform actually takes, rather than through a reconstruction of it.
+ */
+export function getGitPanelSnapshot(
   workDir: string,
   agentEnvironment: AgentEnvironment,
 ): Promise<GitPanelSnapshot> {
@@ -914,7 +1037,8 @@ export async function getGitPanelData(
   const {
     repoRoot,
     branchRaw,
-    upstream,
+    upstream: upstreamRaw,
+    upstreamConfigRaw,
     aheadBehindRaw,
     remoteUrl,
     remoteListRaw,
@@ -944,7 +1068,11 @@ export async function getGitPanelData(
     repoRoot,
     agentEnvironment,
   );
-  const { ahead, behind } = parseAheadBehind(aheadBehindRaw);
+  const { upstream, ahead, behind } = await resolveUpstreamState(
+    workDir,
+    agentEnvironment,
+    { branchRaw, upstream: upstreamRaw, upstreamConfigRaw, aheadBehindRaw },
+  );
   const prSummary = prContext
     ? { wasUnsupported: prContext.wasUnsupported, prStatus: prContext.prStatus }
     : bareSessionPr
@@ -1064,12 +1192,26 @@ export async function fetchGitRemote(
 ): Promise<void> {
   const agentEnvironment = await resolveGitEnvironment(environmentSource);
   await resolveRepoRoot(workDir, agentEnvironment);
-  const upstream = await runOptionalGitCommand(
-    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-    workDir,
-    agentEnvironment,
+  const [upstream, branch, upstreamConfigRaw] = await Promise.all([
+    runOptionalGitCommand(
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      workDir,
+      agentEnvironment,
+    ),
+    runOptionalGitCommand(["branch", "--show-current"], workDir, agentEnvironment),
+    runOptionalGitCommand(
+      ["config", "--get-regexp", "^branch\\..*\\.(remote|merge)$"],
+      workDir,
+      agentEnvironment,
+    ),
+  ]);
+  // Same conflation as everywhere else: a branch this clone's refspec does not
+  // map has an upstream Git will not name, and fetching `origin` by default
+  // would refresh the wrong remote in a repository that named its own something
+  // else.
+  const remoteName = getFetchRemoteName(
+    upstream ?? resolveConfiguredUpstream(upstreamConfigRaw, branch)?.name ?? null,
   );
-  const remoteName = getFetchRemoteName(upstream);
   await runGitCommand(["fetch", "--prune", remoteName], workDir, agentEnvironment);
 }
 
