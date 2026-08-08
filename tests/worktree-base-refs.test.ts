@@ -141,19 +141,31 @@ test('validated remote base refs can create a real worktree branch from that com
     const { stdout: subject } = await git(['show', '-s', '--format=%s', 'HEAD'], worktreePath);
     assert.equal(branch.trim(), 'tw/test');
     assert.equal(subject.trim(), 'develop');
+
+    // A remote-tracking start point must stay a start point. Git's default
+    // `branch.autoSetupMerge` would make `origin/develop` this branch's
+    // upstream, which is what bare `git push` and bare `git pull` obey: the
+    // push would be refused for a name mismatch and the pull would merge
+    // `develop` in. Asserted against the config pair rather than `@{upstream}`
+    // because that pair is the whole of Git's definition (`upstream-config.ts`).
+    const { stdout: upstreamConfig } = await git(
+      ['config', '--get-regexp', '^branch\\.tw/test\\.(remote|merge)$'],
+      repoDir,
+    ).catch(() => ({ stdout: '' }));
+    assert.equal(upstreamConfig.trim(), '');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test('buildGitWorktreeAddArgs preserves old behavior without baseRef and appends explicit baseRef when selected', () => {
+test('buildGitWorktreeAddArgs refuses to track the base and appends explicit baseRef when selected', () => {
   assert.deepEqual(
     buildGitWorktreeAddArgs('/repo', '/worktree', 'tw/test', null),
-    ['-C', '/repo', 'worktree', 'add', '/worktree', '-b', 'tw/test'],
+    ['-C', '/repo', 'worktree', 'add', '--no-track', '/worktree', '-b', 'tw/test'],
   );
   assert.deepEqual(
     buildGitWorktreeAddArgs('/repo', '/worktree', 'tw/test', 'origin/main'),
-    ['-C', '/repo', 'worktree', 'add', '/worktree', '-b', 'tw/test', 'origin/main'],
+    ['-C', '/repo', 'worktree', 'add', '--no-track', '/worktree', '-b', 'tw/test', 'origin/main'],
   );
 });
 

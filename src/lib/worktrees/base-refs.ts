@@ -128,7 +128,15 @@ export function buildGitWorktreeAddArgs(
   branchName: string,
   baseRef: string | null,
 ): string[] {
-  const args = ['-C', cwd, 'worktree', 'add', worktreePath, '-b', branchName];
+  // `--no-track` because the base is a start point, never an upstream. Git's
+  // default `branch.autoSetupMerge` writes `branch.<new>.remote`/`.merge` from
+  // any start point that is a remote-tracking ref, and the base picker offers
+  // those (`refs/remotes` is in the candidate list above). A worktree cut from
+  // `origin/dev` would come out tracking `dev`: bare `git push` refuses under
+  // `push.default=simple` because the names differ, bare `git pull` merges
+  // `dev` into the branch, and the panel counts ahead/behind against `dev`
+  // while reporting a branch that was never published as published.
+  const args = ['-C', cwd, 'worktree', 'add', '--no-track', worktreePath, '-b', branchName];
   if (baseRef) {
     args.push(baseRef);
   }

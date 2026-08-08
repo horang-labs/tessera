@@ -125,8 +125,11 @@ export function createDatabaseControlWorktreeCreator(options: {
       }
 
       try {
+        // `--no-track` for the reason spelled out in `buildGitWorktreeAddArgs`:
+        // a start point that is a remote-tracking ref would otherwise become
+        // this branch's upstream, and the CLI accepts one as `startPoint`.
         await runGit([
-          '-C', projectDir, 'worktree', 'add', '-b', request.branch,
+          '-C', projectDir, 'worktree', 'add', '--no-track', '-b', request.branch,
           '--', worktreePath, gitStartPoint,
         ]);
       } catch (error) {
