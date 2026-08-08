@@ -569,17 +569,26 @@ async function phaseCreatingFromTheCollectionPlusLandsOnTheSession() {
   assert.equal(before.sidebarPresent, true, 'the sidebar is open while the sheet is filled in');
 
   await createChat.tap();
-  await page.waitForFunction(
-    (known) => {
-      const rows = [...document.querySelectorAll(
-        '[data-testid="collection-group-__uncategorized"] [data-testid^="collection-chat-"]',
-      )];
-      return rows.length > known;
-    },
-    sessionIds.length,
-    { timeout: 60_000 },
-  ).catch(() => {});
-  await page.waitForTimeout(1_200);
+  // #279: wait for the creation, not for a row count and a timer.
+  //
+  // The row count never measured the creation. `[data-testid^="collection-chat-"]`
+  // matches several elements per row — the row, its agent icon, its status
+  // bubble, its quick actions — so the group already held eight of them for this
+  // fixture's two sessions before the tap, and "more than two" was true the whole
+  // time. On the runs where the sidebar had already stepped aside and taken the
+  // group out of the DOM it was never true again, and the `.catch` swallowed a
+  // full 60s timeout. Either way the only real wait was the flat 1.2s, and under
+  // the load of a full-suite run the POST outlives that — the phase measured a
+  // screen that still read "Creating…" and, correctly, still had its sidebar up.
+  //
+  // The sheet closing is the signal. `handleCreateChat` closes it on the line
+  // above the `stepAsidePhoneSidebar()` this phase is about, and both are plain
+  // store writes in one continuation, so React commits them together. Nothing
+  // closes it earlier: a creation that fails leaves the sheet up, and this wait
+  // then times out — a poorer message than the assertions below, but not a false
+  // pass. And it stays a wait on the creation rather than on the verdict, since
+  // `onClose()` runs whether or not the sidebar steps aside.
+  await createChat.waitFor({ state: 'detached', timeout: 60_000 });
 
   const after = await measure();
   record('2 after creating from the collection +', {
