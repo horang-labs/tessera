@@ -274,6 +274,17 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       );
     }
+    if (err instanceof WorktreeCreationError && err.code === 'branch_already_checked_out') {
+      return NextResponse.json(
+        {
+          code: 'BRANCH_ALREADY_CHECKED_OUT',
+          error: err.message,
+          branchName: err.branchName,
+          holderWorktreePath: err.holderWorktreePath,
+        },
+        { status: 409 },
+      );
+    }
     if (msg.includes('already exists')) {
       return NextResponse.json(
         { error: `Worktree path already exists: ${worktreePath}` },

@@ -260,7 +260,9 @@ test('Control opens local and remote-only branches and returns distinct checkout
       source: { mode: 'checkout-branch', branch: 'main' },
     }, context),
     (error: unknown) => error instanceof mods.service.ControlOperationError
-      && error.code === 'BRANCH_ALREADY_CHECKED_OUT',
+      && error.code === 'BRANCH_ALREADY_CHECKED_OUT'
+      && error.message === `Branch 'main' is already checked out in Worktree '${repository.path}'.`
+      && error.details.holderWorktreePath === repository.path,
   );
   assert.equal(fs.existsSync(path.join(managedRoot, 'feature/missing')), false);
   assert.equal(fs.existsSync(path.join(managedRoot, 'main')), false);
@@ -317,6 +319,28 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
       git(repository.path, ['config', '--get', 'branch.feature/api-resume.base']),
       'refs/heads/main',
     );
+
+    const refusal = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
+      method: 'POST',
+      headers: {
+        [APP_SECRET_HEADER]: secret,
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({
+        projectDir: repository.path,
+        source: { mode: 'checkout-branch', branch: 'main' },
+      }),
+    }));
+    assert.equal(refusal.status, 409);
+    assert.deepEqual(await refusal.json(), {
+      code: 'BRANCH_ALREADY_CHECKED_OUT',
+      error: `Branch 'main' is already checked out in Worktree '${repository.path}'.`,
+      branchName: 'main',
+      holderWorktreePath: repository.path,
+    });
+    assert.equal(fs.existsSync(path.join(managedRoot, 'main')), false);
   } finally {
     if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
     else process.env.TESSERA_ELECTRON_RUNTIME = previousElectronRuntime;
