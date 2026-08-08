@@ -14,8 +14,10 @@ export function observeTerminalProviderSession(options: {
   identity: TerminalProviderSessionIdentity;
   activation: 'active' | 'background';
   origin?: TerminalProviderSessionOrigin;
+  /** Where the observed conversation runs, when it left the parent's directory. */
+  workDir?: string;
 }): { ignored: boolean; sessionId: string | null } {
-  const { pane, identity, activation, origin } = options;
+  const { pane, identity, activation, origin, workDir } = options;
   const activeSessionId = pane.sessionId
     ? terminalManager.getSessionIdForTerminal(pane.terminalId, pane.userId)
     : null;
@@ -52,6 +54,7 @@ export function observeTerminalProviderSession(options: {
     identity,
     activation,
     ...(origin ? { origin } : {}),
+    ...(workDir ? { workDir } : {}),
   });
   if (reconciliation.kind === 'created') {
     broadcastSessionMutation(pane.userId, {

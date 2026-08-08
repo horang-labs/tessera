@@ -46,6 +46,12 @@ export interface ProviderTerminalSessionObservation {
   activation: 'active' | 'background';
   providerSessionId: string;
   transcriptPath?: string;
+  /**
+   * Where this conversation runs, as the CLI itself names it — a fork may leave
+   * the parent's directory behind. Callers must translate it through
+   * `resolveAgentReportedPath` before opening or storing it.
+   */
+  workDir?: string;
 }
 
 export interface ProviderTerminalSessionObserver {
@@ -56,6 +62,12 @@ export interface ProviderTerminalSessionObserver {
 export interface ProviderTerminalSessionObserverOptions {
   currentProviderSessionId: () => string | undefined;
   onObservation: (observation: ProviderTerminalSessionObservation) => void;
+  /**
+   * Whose CLI this is. Decides which filesystem the provider's artifacts live
+   * on; omitting it resolves to `native`, which across a bridge watches the
+   * server's own home instead of the agent's.
+   */
+  userId?: string;
 }
 
 export interface CliProbeSummary {
@@ -194,11 +206,19 @@ export interface CliProvider {
     userId?: string;
   }): Promise<string | null>;
 
-  /** Classifies a provider hook that may belong to a non-active fork child. */
-  isBackgroundTerminalSessionFork?(options: {
+  /**
+   * Classifies a provider hook that may belong to a non-active fork child.
+   * Returns the child's own details when it is one — `workDir` when the fork
+   * runs somewhere other than the parent — and null when it is not.
+   *
+   * Async because the answer lives in a file the CLI wrote, which across a
+   * bridge sits on the agent's filesystem and takes a probe to locate.
+   */
+  resolveBackgroundTerminalSessionFork?(options: {
     currentProviderSessionId: string;
     observedProviderSessionId: string;
-  }): boolean;
+    userId?: string;
+  }): Promise<{ workDir?: string } | null>;
 
   /**
    * Recognizes, from what the PTY currently shows, that the running conversation
