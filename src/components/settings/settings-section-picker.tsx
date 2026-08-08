@@ -9,7 +9,7 @@ import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { useCloseOnEscape } from '@/hooks/use-close-on-escape';
 import { useMenuNavigation } from '@/hooks/use-menu-navigation';
 import { ANCHORED_VIEWPORT_MARGIN } from '@/lib/ui/anchored-viewport';
-import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { ALWAYS_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import type { SettingsSectionId } from '@/stores/settings-store';
 
 /** Distance kept between the trigger and the list below it. */
@@ -35,12 +35,15 @@ export interface SettingsSectionPickerProps {
 }
 
 /**
- * The Phone viewport stand-in for the Settings dialog's section strip (#264).
+ * The stand-in for the Settings dialog's section strip wherever the dialog has
+ * not grown its sidebar — every width below 768px (#264, #266).
  *
  * At 360px the strip held 1029px of tabs in a 332px box: two pages on screen,
  * five off it behind a horizontal scrub nothing advertised — Remote access and
  * Models among them, which are the pages someone opens *because* they are on a
- * phone.
+ * phone. Widening the window does not fix that on its own: at 700px the strip
+ * is 1040px in a 658px box and three pages are still off-screen, which is why
+ * this reaches up to the dialog's own column step rather than to 640px.
  *
  * Wrapping the strip onto rows was measured first and rejected on height: four
  * rows cost 333px of a dialog that is only 698px tall once the phone's own
@@ -109,7 +112,7 @@ export default function SettingsSectionPicker({
         onClick={() => setIsOpen((open) => !open)}
         className={cn(
           'flex w-full items-center gap-3 rounded-2xl border border-(--divider) bg-(--input-bg)/80 px-3 py-2 text-left',
-          PHONE_TOUCH_TARGET_HEIGHT,
+          ALWAYS_TOUCH_TARGET_HEIGHT,
           'text-(--sidebar-text-active) transition-colors',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)',
           isOpen && 'bg-(--sidebar-hover)',
@@ -176,7 +179,7 @@ export default function SettingsSectionPicker({
                 }}
                 className={cn(
                   'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left',
-                  PHONE_TOUCH_TARGET_HEIGHT,
+                  ALWAYS_TOUCH_TARGET_HEIGHT,
                   'transition-colors focus:outline-none',
                   isActive
                     ? 'bg-(--sidebar-active) text-(--sidebar-text-active)'

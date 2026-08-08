@@ -39,3 +39,16 @@ export const PHONE_TOUCH_TARGET =
  * width on one of those would fight the layout that already gives it more.
  */
 export const PHONE_TOUCH_TARGET_HEIGHT = 'max-sm:min-h-[44px]';
+
+/**
+ * The same floor without the `max-sm` guard, for a control that does not exist
+ * above the phone step's neighbourhood in the first place.
+ *
+ * Desktop non-regression is why the others are guarded, and a control that never
+ * renders at desktop width has nothing to regress. The Settings section picker
+ * is one: it replaces the stacked nav below 768px and is absent above it (#266).
+ * Guarded, its rows measured 36px between 640 and 767 — the strip they replace
+ * there is 60px tall, so the guard would have bought desktop nothing and cost a
+ * finger a quarter of its target.
+ */
+export const ALWAYS_TOUCH_TARGET_HEIGHT = 'min-h-[44px]';
