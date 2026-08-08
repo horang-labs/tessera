@@ -25,7 +25,7 @@ interface TerminalInputBarProps {
    * over later. An inactive bar therefore drops out of layout rather than unmounting:
    * a draft typed before a tab switch is still there on the way back.
    */
-  tabActive?: boolean;
+  isTabActive?: boolean;
 }
 
 /**
@@ -46,7 +46,7 @@ interface TerminalInputBarProps {
  * has finished by the time the user taps send, so the browser's own
  * composition handling is all that is needed.
  */
-export function TerminalInputBar({ terminalId, tabActive = true }: TerminalInputBarProps) {
+export function TerminalInputBar({ terminalId, isTabActive = true }: TerminalInputBarProps) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
   const [didFail, setDidFail] = useState(false);
@@ -79,7 +79,7 @@ export function TerminalInputBar({ terminalId, tabActive = true }: TerminalInput
     <div
       className={cn(
         'shrink-0 border-t border-black/10 bg-(--chat-bg) p-2 dark:border-white/10',
-        !tabActive && 'hidden',
+        !isTabActive && 'hidden',
       )}
       data-testid="terminal-input-bar"
       role="group"

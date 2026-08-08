@@ -28,7 +28,12 @@ const DESKTOP_VIEWPORT = { width: 1000, height: 900 };
 const FONT_SCALE = 0.8125;
 /** `w-[17rem]` at that scale. Desktop must still get the `rem` width, not the phone's. */
 const DESKTOP_SHEET_WIDTH = Math.round(17 * 16 * FONT_SCALE);
-/** Both margins the anchored clamp keeps, so this is the width a phone has to offer. */
+/**
+ * The floor for "took the width the screen has". The fixed sheet is `calc(100vw-1.5rem)`,
+ * which is 340.5px at this scale, and the clamp keeps 12px each side; 48 is that inset with
+ * slack, since the `rem` part of it moves with the scale. It sits well above both unfixed
+ * widths (221px here, 272px at the default scale), which is what it has to discriminate.
+ */
 const PHONE_SHEET_MIN_WIDTH = PHONE_VIEWPORT.width - 48;
 const SHEET_SELECTOR = '[data-testid^="collection-quick-create-"]:not([data-testid*="toggle"])';
 
@@ -115,15 +120,18 @@ async function testTheSheetTakesTheWidthAPhoneOffers() {
       `the wider sheet escaped the viewport: ${JSON.stringify(box)}`,
     );
 
-    // The execution-mode labels are what the narrow sheet truncated, so they are what says
-    // the extra width reached the content and not only the container.
-    const clipped = await page.evaluate((selector) => (
+    // Width on the container is not width in the content, so one truncated label stands for
+    // the content. Deliberately not asserted: that `New Worktree` sits on one line. The AC
+    // asks for it, but it was already on one line at 221px — measured — so an assertion on
+    // it would pass with or without this fix and prove nothing. What wraps to three lines in
+    // that card is the description under the heading, which is body text and is meant to.
+    const truncated = await page.evaluate((selector) => (
       [...document.querySelectorAll(`${selector} *`)]
         .filter((el) => !el.children.length && el.textContent?.includes('·'))
         .filter((el) => el.scrollWidth > el.clientWidth + 1)
         .map((el) => el.textContent.trim())
     ), SHEET_SELECTOR);
-    assert.deepEqual(clipped, [], `execution-mode labels are still truncated: ${clipped}`);
+    assert.deepEqual(truncated, [], `execution-mode labels are still truncated: ${truncated}`);
   } finally {
     await context.close();
   }
