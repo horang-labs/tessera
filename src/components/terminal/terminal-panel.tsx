@@ -355,10 +355,13 @@ export function TerminalPanel({
           </div>
         )}
       </div>
-      {/* Conditional render, never `display: none`: a desktop tree must not contain the
-          bar at all. The terminal above is not told about it — the bar writes to the PTY
-          through the registry, and the surface stays exactly as it was. */}
-      {isPhoneViewport && <TerminalInputBar terminalId={terminalId} />}
+      {/* Conditional render for the viewport, never `display: none`: a desktop tree must
+          not contain the bar at all. Being on an inactive tab is the other question and
+          takes the other answer — the bar stays mounted and drops out of layout, so a
+          draft survives a tab switch (#262). The terminal above is not told about either:
+          the bar writes to the PTY through the registry, and the surface stays exactly as
+          it was. */}
+      {isPhoneViewport && <TerminalInputBar terminalId={terminalId} isTabActive={isTabActive} />}
     </div>
   );
 }
