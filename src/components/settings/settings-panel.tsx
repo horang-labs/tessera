@@ -29,10 +29,12 @@ import NewSessionKindSettings from './new-session-kind-settings';
 import CustomModelSettings from './custom-model-settings';
 import ProjectPreparationSettings from './project-preparation-settings';
 import RemoteAccessSection from './remote-access-section';
+import SettingsSectionPicker from './settings-section-picker';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
+import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
 // Defined with the store, because opening the panel is how a caller asks for a
@@ -69,6 +71,7 @@ export default function SettingsPanel() {
   const isWindowsServer = useSettingsStore((state) => state.serverHostInfo?.isWindowsEcosystem ?? false);
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === 'win32';
+  const isPhoneViewport = usePhoneViewport();
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
   // Whoever opened the panel may have said where to land. Their ask holds until
@@ -281,10 +284,24 @@ export default function SettingsPanel() {
                 {t('settings.title')}
               </p>
             </div>
+            {/* At the Phone viewport the strip below is 1029px of tabs in a 332px
+                box, so five of the seven pages sat off-screen behind a scroll
+                nothing advertised (#264). One control lists them all and costs
+                the dialog a single row. */}
+            {isPhoneViewport ? (
+              <div className="px-3 pb-3">
+                <SettingsSectionPicker
+                  sections={sections}
+                  activeId={currentSection.id}
+                  onSelect={setActiveSection}
+                />
+              </div>
+            ) : (
             <ScrollArea className="md:h-[calc(90vh-96px)]">
               <nav
                 className="flex gap-2 px-3 pb-4 md:flex-col md:px-4 md:pb-6"
                 aria-label="Settings sections"
+                data-testid="settings-nav"
               >
                 {sections.map((section) => {
                   const Icon = section.icon;
@@ -322,6 +339,7 @@ export default function SettingsPanel() {
                 })}
               </nav>
             </ScrollArea>
+            )}
           </aside>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

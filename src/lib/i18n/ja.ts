@@ -19,6 +19,7 @@ export const ja: I18nMessages = {
       git: 'Git',
       gitDesc: 'ブランチ命名規則の既定値を設定します。',
     },
+    sectionPicker: 'セクション',
     language: '言語',
     terminalView: {
       title: 'ターミナルセッションの表示',

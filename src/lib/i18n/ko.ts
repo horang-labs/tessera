@@ -19,6 +19,7 @@ export const ko: I18nMessages = {
       git: 'Git',
       gitDesc: '브랜치 네이밍 기본값을 설정합니다.',
     },
+    sectionPicker: '섹션',
     language: '언어',
     terminalView: {
       title: '터미널 세션 화면',
