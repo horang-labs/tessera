@@ -469,7 +469,7 @@ function assertNoSidewaysScroll(measurement, label) {
  * The dialog body is not what #264 is about and must come out unchanged: the
  * full dialog width at the phone step, and nothing of its own sliding sideways.
  */
-function assertBodyIsIntact(measurement, label, { expectNoInternalOverflow = true } = {}) {
+function assertBodyIsIntact(measurement, label) {
   const { contentBox } = measurement;
   assert.ok(contentBox, `${label}: the dialog body was not found`);
   assert.ok(
@@ -478,23 +478,19 @@ function assertBodyIsIntact(measurement, label, { expectNoInternalOverflow = tru
       + ` ${measurement.modalClientWidth}px wide within its border`,
   );
 
+  // Asserted at every font scale, including the extremes. It used to be a NOTE there: the
+  // body carried a 49px overflow at scale 1.375 that this ticket neither caused nor owned,
+  // and recording it kept the signal alive without failing #264 for someone else's defect.
+  // #268 owned it and fixed it (the shortcut rows now wrap), so the NOTE is an assertion.
   const overflow = measurement.contentScroll.scrollWidth - measurement.contentScroll.clientWidth;
-  if (overflow > 1) {
-    const culprits = measurement.contentOverflowers
-      .map((item) => `${item.owner ?? item.tag} → "${item.text}" ends at ${item.right}`)
-      .join('; ');
-    results.push(`${label}: NOTE the body's own content overflows by ${overflow}px — ${culprits}`);
-  }
-  // Off at the font-scale extremes on purpose: the body carries a pre-existing
-  // overflow there which this ticket neither caused nor owns (it is the page's
-  // own content, and the *page* still does not scroll sideways — see
-  // `assertNoSidewaysScroll`). Left on at the default scale, which is where the
-  // ticket verified the body renders correctly.
-  if (!expectNoInternalOverflow) return;
+  const culprits = measurement.contentOverflowers
+    .map((item) => `${item.owner ?? item.tag} → "${item.text}" ends at ${item.right}`)
+    .join('; ');
   assert.ok(
     overflow <= 1,
-    `${label}: the body slides sideways (scrollWidth ${measurement.contentScroll.scrollWidth},`
-      + ` clientWidth ${measurement.contentScroll.clientWidth})`,
+    `${label}: the body slides sideways by ${overflow}px (scrollWidth`
+      + ` ${measurement.contentScroll.scrollWidth}, clientWidth`
+      + ` ${measurement.contentScroll.clientWidth}) — ${culprits}`,
   );
 }
 
@@ -748,7 +744,7 @@ async function phase2() {
       results.push(`${label}: root font ${closed.rootFontSize}px`);
       assertPickerIsAdvertised(closed, label, 'General');
       assertNoSidewaysScroll(closed, label);
-      assertBodyIsIntact(closed, label, { expectNoInternalOverflow: false });
+      assertBodyIsIntact(closed, label);
       assertNavBandStaysCheap(closed, label);
 
       await openPicker(page);
@@ -839,7 +835,7 @@ async function phase4() {
       results.push(`${label}: root font ${closed.rootFontSize}px, page ${closed.innerHeight}px tall`);
       assertPickerIsAdvertised(closed, label, 'General');
       assertNoSidewaysScroll(closed, label);
-      assertBodyIsIntact(closed, label, { expectNoInternalOverflow: scale === 1 });
+      assertBodyIsIntact(closed, label);
       assertNavBandStaysCheap(closed, label);
 
       await openPicker(page);
