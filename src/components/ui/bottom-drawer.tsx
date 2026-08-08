@@ -86,7 +86,11 @@ export function BottomDrawer({
           aria-label="Resize drawer"
           role="separator"
         >
-          <div className="mx-auto mt-[2px] h-[2px] w-10 rounded-full bg-(--accent) opacity-0 transition-opacity group-hover:opacity-60" />
+          {/* Shown below the Phone viewport step: `hover:` compiles to
+              `@media (hover: hover)`, so on a phone no rule exists to reveal the grip and
+              the handle looks like nothing at all. The reveal is kept from `sm` up (#250).
+              Dragging it still needs a pointer — this only marks where the handle is. */}
+          <div className="mx-auto mt-[2px] h-[2px] w-10 rounded-full bg-(--accent) opacity-60 sm:opacity-0 transition-opacity sm:group-hover:opacity-60" />
         </div>
       ) : null}
 

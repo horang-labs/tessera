@@ -4,6 +4,8 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useBoardStore } from "@/stores/board-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { getRenderedViewMode } from "@/lib/viewport/rendered-view-mode";
+import { stepAsidePhoneGitPanel } from "@/lib/viewport/phone-overlay-step-aside";
 import {
   buildMemoryFileSessionId,
   buildWorkspaceFileSessionId,
@@ -17,10 +19,11 @@ interface FileOpenOptions {
 
 function canOpenFileInKanbanPeek(): boolean {
   const settingsState = useSettingsStore.getState();
-  const boardState = useBoardStore.getState();
+  // The rendered mode, not the stored one: a phone shows the list, so a peek
+  // opened here would have nothing rendering it and the tap would do nothing.
   return settingsState.settings.kanbanSessionOpenMode === "peek"
     && !settingsState.sidebarCollapsed
-    && boardState.viewMode === "board";
+    && getRenderedViewMode() === "board";
 }
 
 function tryOpenWorkspaceFileInKanbanPeek(
@@ -59,6 +62,14 @@ function focusOrCreateSpecialTab(
   specialSessionId: string,
   options: { pinExistingPreview?: boolean; insertAfterTabId?: string | null } = {},
 ): void {
+  // #258: a file tab is about to become the active tab, and on a phone the Git
+  // panel these are opened from is a full-screen overlay — so the tab would
+  // open behind it. Placed on the tab-opening helpers rather than on each
+  // caller: the Files tab, the Git tab's diffs and the Context tab all sit in
+  // that one panel. The explorer tab also comes through here and is not in it,
+  // where closing a panel that is not open is a no-op. Expanding a folder opens
+  // no tab and never reaches this at all.
+  stepAsidePhoneGitPanel();
   const tabStore = useTabStore.getState();
   const existing = tabStore.findSessionLocation(specialSessionId);
   if (existing) {
@@ -137,6 +148,7 @@ export function previewMemoryFileTab(
 }
 
 function previewSpecialFileTab(specialSessionId: string): void {
+  stepAsidePhoneGitPanel();
   const tabStore = useTabStore.getState();
   const existing = tabStore.findSessionLocation(specialSessionId);
   if (existing) {

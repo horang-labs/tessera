@@ -72,6 +72,7 @@ import {
 import { toast } from '@/stores/notification-store';
 import { useVoiceInput } from '@/hooks/use-voice-input';
 import { useMessageInputAttachments } from '@/hooks/use-message-input-attachments';
+import { dropAttachmentPlaceholders } from '@/lib/chat/attachment-content';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { VoiceRecordingOverlay } from './voice-recording-overlay';
 import { tinykeys } from 'tinykeys';
@@ -117,6 +118,7 @@ import {
   isReservedCodexSlashCommandName,
 } from '@/lib/chat/codex-slash-command-registry';
 import { dispatchCodexNativeUiAction } from '@/lib/chat/codex-native-command-events';
+import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import {
   MessageInputAttachmentStrip,
   MessageInputSessionRefStrip,
@@ -204,7 +206,15 @@ export function MessageInput({
   const prevSessionIdRef = useRef(sessionId);
   useEffect(() => {
     if (prevSessionIdRef.current !== sessionId) {
-      setDraftInput(prevSessionIdRef.current, inputValue);
+      // One composer serves whichever session is open, but attachments are held
+      // by the composer rather than by a session. Carrying them across would
+      // send one session's image from another (#254), so they are dropped here —
+      // and their markers go out of the draft being left behind with them.
+      setDraftInput(
+        prevSessionIdRef.current,
+        dropAttachmentPlaceholders(inputValue, attachments),
+      );
+      clearAttachments();
       const draft = useChatStore.getState().getDraftInput(sessionId);
       setInputValue(draft);
       prevSessionIdRef.current = sessionId;
@@ -310,7 +320,6 @@ export function MessageInput({
     handleFileSelect,
     handlePaste,
     handleRemoveAttachment,
-    syncAttachmentsWithText,
   } = useMessageInputAttachments({
     textareaRef,
     setInputValue: setInputValueFromProgrammaticEdit,
@@ -555,10 +564,13 @@ export function MessageInput({
       skillPicker.onInputChange(value);
       const cursor = textareaRef.current?.selectionStart ?? value.length;
       filePicker.onInputChange(value, cursor);
-      syncAttachmentsWithText(value);
+      // Editing the text deliberately does not drop attachments. The marker is
+      // ordinary editable text, and losing an image because the message around
+      // it was rewritten is what #254 was; the strip's remove control is how an
+      // attachment is taken back.
       syncSessionRefsWithText(value);
     },
-    [sessionId, setDraftInput, skillPicker, filePicker, syncAttachmentsWithText, syncSessionRefsWithText],
+    [sessionId, setDraftInput, skillPicker, filePicker, syncSessionRefsWithText],
   );
 
   // --- File drop handlers (OS file explorer → textarea) ---
@@ -1633,18 +1645,34 @@ export function MessageInput({
           />
         )}
 
-        {/* Hidden file input */}
+        {/* Hidden file input.
+
+            `accept` declares the image types the composer inlines. The wildcard
+            entry is what keeps every other file attachable: this one control
+            also uploads arbitrary files, and an image-only list would take that
+            away — the affordance is not worth removing half the control.
+
+            Be aware of what that costs: a list containing a wildcard accepts
+            everything, so a picker that would surface the gallery and camera for
+            an image-only input most likely will not here. Giving a phone that
+            affordance without narrowing this control needs a second, image-typed
+            entry point, which #254 did not open. No `capture` either — forcing
+            the camera would cost the gallery. */}
         <input
           ref={fileInputRef}
           type="file"
           multiple
+          accept="image/png,image/jpeg,image/gif,image/webp,*/*"
           className="hidden"
           onChange={handleFileSelect}
           tabIndex={-1}
         />
 
         {/* Textarea row with controls */}
-        <div className="flex items-center gap-2">
+        {/* Tighter gaps below the Phone step: send grew 12px to reach the touch
+            floor and the textarea had only 4px of slack over #251's 120px, so
+            the spacing gives the width back rather than the composer (#270). */}
+        <div className="flex items-center gap-2 max-sm:gap-1" data-testid="message-input-row">
         {/* Attachment button */}
         {!isVoiceActive && (
           <button
@@ -1653,6 +1681,15 @@ export function MessageInput({
             disabled={isInputUnavailable || !!activePrompt}
             className={cn(
               'shrink-0 rounded-md p-2 transition-all duration-150',
+              // Height only, and the row's width is the reason. At 360px this
+              // row is 280px wide; the textarea has to keep the 120px #251 set
+              // as the point where it stops being usable, which leaves 160px
+              // for the icons and the spacing between them. Send takes 44 of
+              // that (below), the counter and the gaps take the rest, and a
+              // third and fourth 44px *width* do not exist. The row would have
+              // to stack on a phone to carry them, and this ticket's boundary
+              // reserves where a control sits. The height is free.
+              PHONE_TOUCH_TARGET_HEIGHT,
               isInputUnavailable || activePrompt
                 ? 'text-(--text-muted) cursor-not-allowed opacity-50'
                 : 'text-(--text-muted) hover:text-(--accent) hover:bg-(--accent)/10',
@@ -1673,7 +1710,11 @@ export function MessageInput({
             onStop={stopVoiceRecording}
           />
         ) : (
-          <div className="flex-1 flex items-center min-h-[2.75rem]">
+          // `min-w-0` because a flex item's default minimum width is its content's
+          // intrinsic width, and a textarea's is its default 20 columns — which the
+          // wrapper would otherwise refuse to shrink below, pushing the controls to
+          // the right of it off screen. It has nothing to do where width is ample.
+          <div className="flex-1 flex items-center min-h-[2.75rem] min-w-0">
             {/* Skill chip */}
             {skillPicker.selectedSkill && (
               <MessageInputSkillChip
@@ -1723,7 +1764,9 @@ export function MessageInput({
               disabled={isInputUnavailable || !!activePrompt}
               readOnly={isWebSpeechActive && voicePendingInterim !== ''}
               className={cn(
-                'flex-1 px-3 py-3 bg-transparent text-sm text-(--input-text) resize-none overflow-y-auto',
+                // `min-w-0` for the same reason as the wrapper: the textarea is itself
+                // a flex item, and its own intrinsic width would hold the wrapper open.
+                'flex-1 min-w-0 px-3 py-3 bg-transparent text-sm text-(--input-text) resize-none overflow-y-auto',
                 'placeholder:text-(--input-placeholder) placeholder:whitespace-nowrap placeholder:overflow-hidden placeholder:text-ellipsis',
                 'focus:outline-none',
                 'disabled:cursor-not-allowed',
@@ -1735,11 +1778,14 @@ export function MessageInput({
           </div>
         )}
 
-        {/* Right side controls */}
-        <div className="flex items-center gap-1 pr-2">
+        {/* Right side controls — `shrink-0` so the width the textarea gives up is not
+            taken out of the send button instead. */}
+        <div className="flex items-center gap-1 pr-2 max-sm:pr-1 shrink-0">
           {!isVoiceActive && remainingChars < 1000 && (
-            <span className={cn(
-              'text-xs px-1',
+            <span
+              data-testid="message-input-char-count"
+              className={cn(
+              'text-xs px-1 max-sm:px-0',
               isOverLimit ? 'text-(--error)' : 'text-(--text-muted)'
             )}>
               {remainingChars}
@@ -1754,6 +1800,8 @@ export function MessageInput({
                 disabled={!canUseVoice}
                 className={cn(
                   'p-2 rounded-md transition-all duration-150',
+                  // Height only, for the width reason on the attach button.
+                  PHONE_TOUCH_TARGET_HEIGHT,
                   canUseVoice
                     ? 'text-(--text-muted) hover:text-(--accent) hover:bg-(--accent)/10'
                     : 'text-(--text-muted) cursor-not-allowed opacity-50',
@@ -1771,7 +1819,10 @@ export function MessageInput({
                 type="button"
                 onClick={handleCancel}
                 data-testid="cancel-generation-btn"
-                className="p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100"
+                className={cn(
+                  'p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100',
+                  PHONE_TOUCH_TARGET,
+                )}
                 title={t('chat.cancelButton')}
               >
                 <Square className="w-4 h-4 fill-current" />
@@ -1780,7 +1831,10 @@ export function MessageInput({
                 <button
                   type="button"
                   onClick={() => handleSend()}
-                  className="p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100"
+                  className={cn(
+                    'p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100',
+                    PHONE_TOUCH_TARGET,
+                  )}
                   title={t('chat.send')}
                   data-testid="send-during-generation-btn"
                 >
@@ -1791,10 +1845,14 @@ export function MessageInput({
           ) : !isVoiceActive ? (
             <button
               onClick={() => handleSend()}
+              data-testid="message-send-btn"
               disabled={isInputUnavailable || !!activePrompt || !canSubmit || isOverLimit}
               title={`${t('chat.send')}\n${t('chat.translateAndSend')} (${formatShortcut(translateSendShortcut)})`}
               className={cn(
                 'p-2 rounded-md transition-all duration-150',
+                // The PTY composer's send is 44x44 (#259) and this one was 26x26
+                // — same job, two bars, one of them measured (#270).
+                PHONE_TOUCH_TARGET,
                 canSubmit && !isInputUnavailable && !activePrompt && !isOverLimit
                   ? 'bg-(--accent) text-white hover:bg-(--accent-hover) scale-100'
                   : 'text-(--text-muted) cursor-not-allowed scale-95'

@@ -29,10 +29,14 @@ import NewSessionKindSettings from './new-session-kind-settings';
 import CustomModelSettings from './custom-model-settings';
 import ProjectPreparationSettings from './project-preparation-settings';
 import RemoteAccessSection from './remote-access-section';
+import SettingsSectionPicker from './settings-section-picker';
 // import SttSettings from './stt-settings'; // Gemini STT 설정 — 당분간 비활성화
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
+import { useMediaQuery } from '@/hooks/use-media-query';
+import { SETTINGS_DIALOG_STACKED_NAV_MEDIA_QUERY } from '@/lib/viewport/settings-dialog-viewport';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
 // Defined with the store, because opening the panel is how a caller asks for a
@@ -69,6 +73,9 @@ export default function SettingsPanel() {
   const isWindowsServer = useSettingsStore((state) => state.serverHostInfo?.isWindowsEcosystem ?? false);
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === 'win32';
+  // The nav is a band above the body until the dialog grows its sidebar, and the
+  // picker owns every width where it is (#266).
+  const isNavStacked = useMediaQuery(SETTINGS_DIALOG_STACKED_NAV_MEDIA_QUERY);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
   // Whoever opened the panel may have said where to land. Their ask holds until
@@ -281,10 +288,26 @@ export default function SettingsPanel() {
                 {t('settings.title')}
               </p>
             </div>
+            {/* Wherever the nav is this band rather than the column, the strip
+                below is ~1040px of tabs in a box the dialog's width: 332px at
+                360px wide, where five of the seven pages sat off-screen behind a
+                scroll nothing advertised (#264), and still only 658px at 700px
+                wide, where three of them did (#266). One control lists them all
+                and costs the dialog a single row. */}
+            {isNavStacked ? (
+              <div className="px-3 pb-3">
+                <SettingsSectionPicker
+                  sections={sections}
+                  activeId={currentSection.id}
+                  onSelect={setActiveSection}
+                />
+              </div>
+            ) : (
             <ScrollArea className="md:h-[calc(90vh-96px)]">
               <nav
                 className="flex gap-2 px-3 pb-4 md:flex-col md:px-4 md:pb-6"
                 aria-label="Settings sections"
+                data-testid="settings-nav"
               >
                 {sections.map((section) => {
                   const Icon = section.icon;
@@ -322,36 +345,61 @@ export default function SettingsPanel() {
                 })}
               </nav>
             </ScrollArea>
+            )}
           </aside>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-start justify-between gap-4 border-b border-(--divider) bg-(--input-bg)/45 px-5 py-5 md:px-7 md:py-6">
-            <div className="min-w-0 space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-(--text-muted)">
-                {currentSection.label}
-              </p>
-              <h2 id="settings-title" className="text-2xl font-bold text-(--text-primary)">
-                {t('settings.title')}
-              </h2>
-              <p className="max-w-2xl text-sm leading-6 text-(--text-secondary)">
-                {currentSection.description}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
+          {/* At 360px these two buttons sat beside the text and squeezed its column
+              to 96px at the default font scale and to nothing at all at the largest,
+              so the description wrapped one word to a line and the block took 265px,
+              then 463px, of a 698px dialog — more than the nav and the body together
+              (#267). Below the Phone viewport step the buttons take the first row
+              beside the section name, the description gets the dialog's full width,
+              and the "Settings" heading — which the sidebar already prints two rows
+              above — stays only as the dialog's accessible name. Grid rather than
+              flex so both arrangements are the same DOM: above the step the buttons
+              span all three rows, which is the top-right corner they have always
+              had. */}
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 border-b border-(--divider) bg-(--input-bg)/45 px-5 py-3 sm:py-5 md:px-7 md:py-6">
+            <p className="col-start-1 row-start-1 self-center text-xs font-semibold uppercase tracking-[0.18em] text-(--text-muted) sm:self-start">
+              {currentSection.label}
+            </p>
+            <h2
+              id="settings-title"
+              className="col-start-1 row-start-2 text-2xl font-bold text-(--text-primary) max-sm:sr-only"
+            >
+              {t('settings.title')}
+            </h2>
+            <p className="col-span-2 row-start-2 max-w-2xl text-sm leading-6 text-(--text-secondary) sm:col-span-1 sm:col-start-1 sm:row-start-3">
+              {currentSection.description}
+            </p>
+            <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-2 sm:row-span-3">
               <button
                 type="button"
                 onClick={() => setIsFeedbackOpen(true)}
-                className="inline-flex items-center gap-2 rounded-xl border border-(--divider) px-3 py-2 text-xs font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-xl border border-(--divider) px-3 py-2 text-xs font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+                  // The label is what collapses, so the hit area has to be
+                  // restated: a bare icon at px-3 is 40px across, under the 44px
+                  // the same wave gave every other phone control (#259).
+                  PHONE_TOUCH_TARGET,
+                )}
                 data-testid="settings-feedback"
               >
                 <MessageSquarePlus className="h-4 w-4" />
-                {t('feedback.settingsCta')}
+                <span className="max-sm:sr-only">{t('feedback.settingsCta')}</span>
               </button>
               <button
                 onClick={closeSettings}
                 disabled={isSaving}
                 aria-label="Close settings"
-                className="rounded-xl p-2 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-wait disabled:opacity-50"
+                className={cn(
+                  'rounded-xl p-2 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-wait disabled:opacity-50',
+                  // Free here, and only here: the row is already 44px tall for the
+                  // collapsed button beside it, so the floor costs the block no
+                  // height at any scale — it just stops the pair looking mismatched.
+                  PHONE_TOUCH_TARGET,
+                )}
                 data-testid="settings-close"
               >
                 <X className="h-5 w-5" />

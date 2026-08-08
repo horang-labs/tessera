@@ -502,7 +502,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               {t('task.creation.startAsLabel')}
             </span>
 
-            <div className="mt-2 grid max-w-xl grid-cols-3 gap-1 rounded-xl border border-(--divider) bg-(--sidebar-bg) p-1">
+            {/* Three columns inside `px-6` leave ~98px per cell at 360px, which
+                wraps the hints one word per line. Stacked below `sm`. */}
+            <div className="mt-2 grid max-w-xl grid-cols-1 gap-1 rounded-xl border border-(--divider) bg-(--sidebar-bg) p-1 sm:grid-cols-3">
               <button
                 type="button"
                 onClick={() => selectMode('chat')}

@@ -49,7 +49,7 @@ import { getRateLimitData } from '@/lib/rate-limit/fetcher';
 import { buildClaudeRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import {
   createClaudeTerminalSessionObserver,
-  isClaudeBackgroundTerminalSessionFork,
+  resolveClaudeBackgroundTerminalSessionFork,
 } from './terminal-session-observer';
 import {
   createClaudeTranscriptDecoderState,
@@ -144,7 +144,7 @@ export class ClaudeCodeAdapter implements CliProvider {
 
   createTerminalSessionObserver = createClaudeTerminalSessionObserver;
 
-  isBackgroundTerminalSessionFork = isClaudeBackgroundTerminalSessionFork;
+  resolveBackgroundTerminalSessionFork = resolveClaudeBackgroundTerminalSessionFork;
 
   /** Identity of the transcript file backing this session (see CliProvider). */
   async readTerminalTranscriptFingerprint(options: {

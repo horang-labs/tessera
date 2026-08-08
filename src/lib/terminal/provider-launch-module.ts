@@ -811,6 +811,7 @@ export function createProviderLaunchModule(
         });
         const providerSessionObserver = createTerminalProviderSessionObserver({
           provider: decision.provider,
+          userId: request.userId,
           currentProviderSessionId: () => {
             const activeSessionId = manager.getSessionIdForTerminal(
               terminalId,
@@ -819,7 +820,7 @@ export function createProviderLaunchModule(
             return getTerminalProviderSessionForTesseraSession(activeSessionId)
               ?.provider_session_id;
           },
-          onObservation: ({ activation, identity }) => {
+          onObservation: ({ activation, identity, workDir: observedWorkDir }) => {
             try {
               options.observeProviderSession?.({
                 pane: {
@@ -830,6 +831,7 @@ export function createProviderLaunchModule(
                 },
                 identity,
                 activation,
+                ...(observedWorkDir ? { workDir: observedWorkDir } : {}),
               });
             } catch (error) {
               logger.warn(

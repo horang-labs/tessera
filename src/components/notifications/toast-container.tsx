@@ -10,13 +10,15 @@ import { useTabStore } from '@/stores/tab-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { ToastNotification } from './toast-notification';
+import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
+import { ToastNotification, TOAST_DISMISS_TOUCH_TARGET } from './toast-notification';
 import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { switchToSessionProject } from '@/lib/session/switch-session-project';
+import { ANCHORED_VIEWPORT_MARGIN } from '@/lib/ui/anchored-viewport';
 
 const MAX_VISIBLE_TOASTS = 5;
 const ACTION_TOAST_DURATION = 3000;
@@ -58,7 +60,7 @@ function ActionToastItem({ t: toastItem, onDismiss }: { t: ActionToast; onDismis
       exit={{ x: -400, opacity: 0 }}
       transition={{ type: 'spring', damping: 25, stiffness: 300 }}
       className={cn(
-        'w-[17rem] rounded-lg border border-(--toast-border)',
+        'w-[17rem] max-w-full rounded-lg border border-(--toast-border)',
         'bg-(--toast-bg) hover:bg-(--toast-bg-hover) transition-colors',
         'flex items-center gap-2 p-2.5',
       )}
@@ -79,7 +81,12 @@ function ActionToastItem({ t: toastItem, onDismiss }: { t: ActionToast; onDismis
       )}
       <button
         onClick={(e) => { e.stopPropagation(); onDismissRef.current(); }}
-        className="shrink-0 p-0.5 rounded text-(--toast-muted) hover:text-(--text-primary) hover:bg-(--toast-icon-bg) transition-colors"
+        data-testid="toast-dismiss"
+        className={cn(
+          'shrink-0 p-0.5 rounded text-(--toast-muted) hover:text-(--text-primary)',
+          'hover:bg-(--toast-icon-bg) transition-colors',
+          TOAST_DISMISS_TOUCH_TARGET,
+        )}
         aria-label={t('common.close')}
       >
         <X className="w-3 h-3" />
@@ -123,7 +130,9 @@ export function ToastContainer() {
     // Kanban peek mode: open the session in the board peek panel instead of a tab
     const boardStore = useBoardStore.getState();
     const peekMode = useSettingsStore.getState().settings.kanbanSessionOpenMode === 'peek';
-    if (boardStore.viewMode === 'board' && peekMode) {
+    // The rendered mode, not the stored one: a phone shows the list, so a peek
+    // opened here would have nothing rendering it and the tap would do nothing.
+    if (getRenderedViewMode() === 'board' && peekMode) {
       boardStore.openSessionPeek(sessionId);
       return;
     }
@@ -150,19 +159,32 @@ export function ToastContainer() {
     <>
       <NotificationSound />
       <div
-        className="flex flex-col-reverse gap-2.5 pointer-events-none"
-        style={{ position: 'fixed', bottom: '1.25rem', left: '3.75rem', zIndex: 9999 }}
+        data-testid="toast-container"
+        className="flex flex-col-reverse items-start gap-2.5 pointer-events-none"
+        style={{
+          position: 'fixed',
+          bottom: '1.25rem',
+          left: '3.75rem',
+          // The same viewport margin the anchored clamp keeps, expressed as a width bound
+          // rather than a position: a toast has no anchor to be pushed away from, and both
+          // its offset and its 17rem width are declared in `rem`, so at the largest font
+          // preset they add up to 456px of a 360px screen. Bounding the right edge lets the
+          // card shrink instead of running off. Inert on a desktop, where 17rem is far
+          // inside the bound and the card keeps its declared width.
+          right: ANCHORED_VIEWPORT_MARGIN,
+          zIndex: 9999,
+        }}
       >
         <AnimatePresence>
           {/* Action toasts (simple success/error/warning) */}
           {actionToasts.map((t) => (
-            <div key={t.id} className="pointer-events-auto">
+            <div key={t.id} className="pointer-events-auto max-w-full">
               <ActionToastItem t={t} onDismiss={() => dismissActionToast(t.id)} />
             </div>
           ))}
           {/* Session notifications (completed/input_required) */}
           {visibleNotifications.map((n) => (
-            <div key={n.id} className="pointer-events-auto">
+            <div key={n.id} className="pointer-events-auto max-w-full">
               <ToastNotification
                 notification={n}
                 onDismiss={() => dismissToast(n.id)}

@@ -205,10 +205,16 @@ export function ProviderLogoMark({
 export function ProviderBadge({
   providerId,
   className,
+  labelClassName,
   fullLabel = false,
 }: {
   providerId?: string;
   className?: string;
+  /**
+   * Applied to the written name only. A caller with no width to spare can hide
+   * it and keep the mark, which still says which provider this is.
+   */
+  labelClassName?: string;
   fullLabel?: boolean;
 }) {
   const brand = getProviderBrand(providerId);
@@ -230,7 +236,7 @@ export function ProviderBadge({
         className="h-3.5 w-3.5 rounded-[3px]"
         iconClassName="h-2.5 w-2.5"
       />
-      <span>{fullLabel ? brand.displayName : brand.label}</span>
+      <span className={labelClassName}>{fullLabel ? brand.displayName : brand.label}</span>
     </span>
   );
 }

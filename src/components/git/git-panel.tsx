@@ -28,6 +28,7 @@ import {
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
 import { MemoryPanel } from "@/components/memory/memory-panel";
 import { cn } from "@/lib/utils";
+import { PHONE_TOUCH_TARGET } from "@/lib/ui/touch-target";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
 
 /**
@@ -224,6 +225,7 @@ export function GitPanel({
         className,
       )}
       style={{ width: typeof width === "number" ? `${width}px` : width }}
+      data-testid="git-panel"
     >
       {isWindowsElectron || isLinuxElectron ? (
         <div className="electron-drag flex h-[40px] shrink-0 items-stretch justify-end border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)">
@@ -231,7 +233,9 @@ export function GitPanel({
         </div>
       ) : null}
 
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-(--chat-header-border) px-2">
+      {/* `max-sm:h-auto` so the close target below can be 44px without
+          overflowing a 29px row (#270). */}
+      <div className="flex h-9 max-sm:h-auto shrink-0 items-center gap-2 border-b border-(--chat-header-border) px-2">
         <div
           role="tablist"
           aria-label={t("gitPanel.tabs.rightPanel")}
@@ -270,7 +274,10 @@ export function GitPanel({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+              PHONE_TOUCH_TARGET,
+            )}
             aria-label={resolvedCloseLabel}
             title={resolvedCloseLabel}
             data-testid="git-panel-close-btn"

@@ -112,6 +112,20 @@ export function shouldMultiplyTerminalMouseWheel(
 }
 
 /**
+ * True when a wheel event can be encoded as a mouse report at all.
+ *
+ * A mouse report is a position, and `cloneWheelReportEvent` copies `clientX`/`clientY` into
+ * every clone it dispatches — so one event that cannot say where it happened becomes as
+ * many reports that cannot say where they happened. xterm encodes those as
+ * `ESC [ < 65 ; NaN ; NaN M`, which no TUI can parse; it prints the tail as literal text.
+ * Under mouse reporting a wheel is a report and never a scroll, so dropping the event
+ * outright costs nothing — there is no second thing for xterm to do with it.
+ */
+export function hasReportableWheelPosition(event: WheelEvent): boolean {
+  return Number.isFinite(event.clientX) && Number.isFinite(event.clientY);
+}
+
+/**
  * True when a wheel event belongs to a mouse-reporting TUI (Claude Code,
  * Codex, ...) instead of xterm scrollback: xterm forwards it to the PTY as
  * mouse reports, so scroll-intent tracking must not pin the viewport on it.
@@ -179,6 +193,7 @@ export function attachTerminalMouseWheelMultiplier(
   const replayState = createTerminalTuiMouseWheelReplayState();
   terminal.attachCustomWheelEventHandler((event) => {
     if (!shouldMultiplyTerminalMouseWheel(event, terminal.element)) return true;
+    if (!hasReportableWheelPosition(event)) return false;
 
     const target = event.currentTarget instanceof EventTarget
       ? event.currentTarget

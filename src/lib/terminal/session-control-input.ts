@@ -6,6 +6,10 @@ export const TERMINAL_NAMED_KEYS = [
   'down',
   'left',
   'right',
+  // Added for the Terminal input bar (#243), which needs it to cycle a provider's
+  // permission mode. Its absence was a gap rather than a judgement: the Control CLI
+  // drives sessions programmatically and never had to reach that control.
+  'shift-tab',
 ] as const;
 
 export type TerminalNamedKey = typeof TERMINAL_NAMED_KEYS[number];
@@ -20,6 +24,7 @@ const TERMINAL_NAMED_KEY_SEQUENCES: Record<TerminalNamedKey, string> = {
   down: '\x1b[B',
   left: '\x1b[D',
   right: '\x1b[C',
+  'shift-tab': '\x1b[Z',
 };
 
 export function isTerminalNamedKey(value: unknown): value is TerminalNamedKey {
