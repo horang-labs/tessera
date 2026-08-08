@@ -224,6 +224,7 @@ export function GitPanel({
         className,
       )}
       style={{ width: typeof width === "number" ? `${width}px` : width }}
+      data-testid="git-panel"
     >
       {isWindowsElectron || isLinuxElectron ? (
         <div className="electron-drag flex h-[40px] shrink-0 items-stretch justify-end border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)">

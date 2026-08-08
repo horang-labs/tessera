@@ -26,6 +26,7 @@ import {
 } from './cli-provider-chip-selector';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
+import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import {
   ANCHORED_VIEWPORT_MARGIN,
   resolveAnchoredAlignedLeft,
@@ -313,6 +314,18 @@ export function CollectionQuickCreateSheet({
 
       await onSessionCreated?.(sessionId);
       onClose();
+      // #258: creating is a stronger statement of intent than selecting —
+      // nobody creates a session in order to keep browsing the list, and on a
+      // phone the sidebar covers the session that was just made (three taps to
+      // reach it was the worst case in the QA report). Last, after the sheet
+      // has closed by its own path: `left-panel.tsx` renders this whole subtree
+      // behind `!collapsed`, so collapsing mid-await would unmount the sheet
+      // from under the rest of this function and take the error surface with
+      // it. Above the Phone viewport step this is a no-op, which is also what
+      // makes it harmless on the other surfaces that mount this sheet — the
+      // composer, the message list, the board — where the sidebar is not what
+      // the user is looking at.
+      stepAsidePhoneSidebar();
     } finally {
       setSubmittingMode(null);
     }
@@ -341,6 +354,7 @@ export function CollectionQuickCreateSheet({
     }
     setSubmittingMode('task');
     let shouldClose = false;
+    let createdSessionId: string | null = null;
     try {
       const result = await createWorktreeSession({
         projectDir,
@@ -366,6 +380,7 @@ export function CollectionQuickCreateSheet({
         return;
       }
       if (result.sessionId) {
+        createdSessionId = result.sessionId;
         await onSessionCreated?.(result.sessionId);
       }
       shouldClose = true;
@@ -374,6 +389,8 @@ export function CollectionQuickCreateSheet({
     }
     if (shouldClose) {
       onClose();
+      // #258, same rule as the chat path above, and last for the same reason.
+      if (createdSessionId) stepAsidePhoneSidebar();
     }
   }, [
     createWorktreeSession,
