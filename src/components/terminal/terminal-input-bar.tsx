@@ -10,6 +10,8 @@ import {
 } from '@/lib/terminal/terminal-input-bar-input';
 import { sendInputToTerminal } from '@/lib/terminal/terminal-surface-registry';
 import type { TerminalNamedKey } from '@/lib/terminal/session-control-input';
+import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 
 interface TerminalInputBarProps {
   terminalId: string;
@@ -71,7 +73,14 @@ export function TerminalInputBar({ terminalId }: TerminalInputBarProps) {
     >
       {/* The keys sit against the terminal, so pressing one lands next to the prompt it
           answers. 44px targets with 4px gaps take 284px of the 344px a 360px screen
-          leaves inside this padding. */}
+          leaves inside this padding.
+
+          The size comes from PHONE_TOUCH_TARGET rather than `h-11 min-w-11`, which this
+          bar shipped with. `rem` resolves against a root font the user scales, so those
+          classes were 44px at the default scale and 35.75px at the smallest — which is
+          the scale QA measured at, and why these keys came out 47x36 against a 44px
+          budget. Restating 44 by hand here would be a third place for the same
+          arithmetic to go wrong (#259). */}
       <div className="flex gap-1">
         {TERMINAL_INPUT_BAR_KEYS.map((key) => (
           <button
@@ -81,7 +90,10 @@ export function TerminalInputBar({ terminalId }: TerminalInputBarProps) {
             aria-label={t(key.labelKey)}
             title={t(key.labelKey)}
             data-testid={`terminal-input-bar-key-${key.namedKey}`}
-            className="h-11 min-w-11 flex-1 rounded border border-(--divider) bg-(--chat-header-bg) text-xs font-medium text-(--text-primary) active:bg-black/10 dark:active:bg-white/15"
+            className={cn(
+              'flex-1 rounded border border-(--divider) bg-(--chat-header-bg) text-xs font-medium text-(--text-primary) active:bg-black/10 dark:active:bg-white/15',
+              PHONE_TOUCH_TARGET,
+            )}
           >
             {key.label}
           </button>
@@ -96,8 +108,12 @@ export function TerminalInputBar({ terminalId }: TerminalInputBarProps) {
           placeholder={t('chat.terminalInputBar.placeholder')}
           aria-label={t('chat.terminalInputBar.placeholder')}
           data-testid="terminal-input-bar-textarea"
-          // min-w-0 so the textarea yields instead of pushing send off the screen.
-          className="min-h-11 min-w-0 flex-1 resize-none rounded border border-(--divider) bg-(--chat-bg) px-2 py-2.5 text-sm text-(--text-primary) outline-none focus:border-(--accent)"
+          // min-w-0 so the textarea yields instead of pushing send off the screen
+          // (#251) — so this takes the height floor only, never a width one.
+          className={cn(
+            'min-w-0 flex-1 resize-none rounded border border-(--divider) bg-(--chat-bg) px-2 py-2.5 text-sm text-(--text-primary) outline-none focus:border-(--accent)',
+            PHONE_TOUCH_TARGET_HEIGHT,
+          )}
         />
         <button
           type="button"
@@ -106,7 +122,12 @@ export function TerminalInputBar({ terminalId }: TerminalInputBarProps) {
           aria-label={t('chat.terminalInputBar.send')}
           title={t('chat.terminalInputBar.send')}
           data-testid="terminal-input-bar-send"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded border border-(--divider) bg-(--chat-header-bg) text-(--text-primary) disabled:opacity-40 active:bg-black/10 dark:active:bg-white/15"
+          // The worst of the bar, and unmeasured until now: `h-11 w-11` made this
+          // 35.75x35.75 at the smallest font scale, square rather than merely short.
+          className={cn(
+            'flex shrink-0 items-center justify-center rounded border border-(--divider) bg-(--chat-header-bg) text-(--text-primary) disabled:opacity-40 active:bg-black/10 dark:active:bg-white/15',
+            PHONE_TOUCH_TARGET,
+          )}
         >
           <SendHorizontal className="h-4 w-4" />
         </button>

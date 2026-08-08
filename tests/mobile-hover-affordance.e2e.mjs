@@ -145,7 +145,11 @@ const FILE_ROW_SITE = {
  */
 const EXISTING_ACTIVE_SITE = {
   file: 'src/components/terminal/terminal-input-bar.tsx',
-  markers: ['h-11 min-w-11 flex-1 rounded border'],
+  // Was 'h-11 min-w-11 flex-1 rounded border'. #259 took the `rem` sizing off these keys
+  // — it was 35.75px at the smallest font scale — and the size now comes from
+  // PHONE_TOUCH_TARGET. Same element, same `active:` declarations, which are the only
+  // part this probe is about.
+  markers: ['flex-1 rounded border'],
 };
 
 /** Everything a press is compared through, so no single property is the contract. */

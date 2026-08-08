@@ -4,6 +4,7 @@ import { memo } from 'react';
 import { PanelLeftClose, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useEffectiveViewMode } from '@/hooks/use-effective-view-mode';
@@ -58,6 +59,10 @@ export const AppHeader = memo(function AppHeader() {
       <header
         className={cn(
           'shrink-0 flex h-9 items-center border-b border-(--divider) bg-(--sidebar-bg)',
+          // The collapse control is 44px tall at Phone viewport, which a fixed
+          // 36px bar would clip (#259). Electron's own titlebar heights below
+          // are desktop-only and untouched.
+          'max-sm:h-auto',
           isWindowsElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
           isLinuxElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
           isMacElectron && 'electron-drag h-10 bg-(--chat-header-bg) border-b-(--chat-header-border) select-none'
@@ -147,6 +152,7 @@ export const AppHeader = memo(function AppHeader() {
                 onClick={toggleSidebar}
                 className={cn(
                   'shrink-0 rounded p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+                  PHONE_TOUCH_TARGET,
                   isElectronTitlebar && 'electron-no-drag',
                 )}
                 aria-label={t('sidebar.collapse')}

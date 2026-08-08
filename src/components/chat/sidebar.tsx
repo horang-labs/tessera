@@ -49,6 +49,7 @@ import {
 import { buildRecentWorkItems } from '@/lib/chat/recent-work';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -158,7 +159,12 @@ function ProjectListContextHeader({
     >
       <div className="flex min-w-0 items-center gap-2">
         <div
-          className="grid h-6 min-w-0 flex-1 grid-cols-2 rounded-md border border-(--divider) bg-(--sidebar-bg) p-px"
+          className={cn(
+            'grid h-6 min-w-0 flex-1 grid-cols-2 rounded-md border border-(--divider) bg-(--sidebar-bg) p-px',
+            // Its two buttons are 44px tall at Phone viewport, which a fixed
+            // 24px row would clip; the bar follows them instead (#259).
+            'max-sm:h-auto',
+          )}
           role="group"
           aria-label="Session filters"
           data-testid="sidebar-filter-bar"
@@ -169,6 +175,7 @@ function ProjectListContextHeader({
             aria-pressed={!isRunningFilterActive}
             className={cn(
               'min-w-0 rounded px-1.5 text-[0.6875rem] font-medium leading-none transition-colors',
+              PHONE_TOUCH_TARGET_HEIGHT,
               !isRunningFilterActive
                 ? 'bg-(--sidebar-hover) text-(--sidebar-text-active)'
                 : 'text-(--text-muted) hover:text-(--sidebar-text-active)',
@@ -183,6 +190,7 @@ function ProjectListContextHeader({
             aria-pressed={isRunningFilterActive}
             className={cn(
               'flex min-w-0 items-center justify-center gap-1 rounded px-1.5 text-[0.6875rem] font-medium leading-none transition-colors',
+              PHONE_TOUCH_TARGET_HEIGHT,
               isRunningFilterActive
                 ? 'bg-[color-mix(in_srgb,var(--success)_13%,var(--sidebar-hover))] text-(--sidebar-text-active)'
                 : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--success)_7%,transparent)] hover:text-(--sidebar-text-active)',
