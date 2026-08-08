@@ -12,6 +12,7 @@ import { TAB_MIN_WIDTH, TAB_MAX_WIDTH } from '@/types/tab';
 import { PANEL_NODE_DRAG_MIME, PANEL_SESSION_DRAG_MIME } from '@/types/panel';
 import { useGitStore } from '@/stores/git-store';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { TabItem } from './tab-item';
 import { TabContextMenu } from './tab-context-menu';
 import { TabListControl } from './tab-list-control';
@@ -482,7 +483,11 @@ export const TabBar = memo(function TabBar() {
       role="tablist"
       aria-label={t('chat.tabList')}
       className={cn(
-        'flex items-stretch h-9 border-b border-b-(--divider) bg-(--chat-header-bg) shrink-0',
+        // `max-sm:h-auto` because `h-9` is the row this bar's controls are cut
+        // to: a 44px target inside a 29px row overflows it instead of being
+        // hittable, so below the Phone step the targets decide the height
+        // (#270, and the same note in `touch-target.ts`).
+        'flex items-stretch h-9 max-sm:h-auto border-b border-b-(--divider) bg-(--chat-header-bg) shrink-0',
         isWindowsElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
         isWindowsElectron && !gitPanelOpen && 'pr-[152px]',
         isLinuxElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
@@ -496,6 +501,7 @@ export const TabBar = memo(function TabBar() {
         <button
           className={cn(
             'shrink-0 flex items-center justify-center w-9 h-9 text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors border-r border-r-(--divider)',
+            PHONE_TOUCH_TARGET,
             isWindowsElectron && 'electron-no-drag w-[40px] h-[39px]',
             isLinuxElectron && 'electron-no-drag w-[40px] h-[39px]',
             isMacElectron && 'electron-no-drag w-10 h-10'
@@ -623,6 +629,7 @@ export const TabBar = memo(function TabBar() {
         <button
           className={cn(
             'shrink-0 flex items-center justify-center w-9 h-9 text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors',
+            PHONE_TOUCH_TARGET,
             isWindowsElectron && 'electron-no-drag w-[40px] h-[39px]',
             isLinuxElectron && 'electron-no-drag w-[40px] h-[39px]',
             isMacElectron && 'electron-no-drag w-10 h-10',
@@ -665,6 +672,7 @@ export const TabBar = memo(function TabBar() {
       <button
         className={cn(
           'electron-no-drag shrink-0 flex items-center justify-center w-10 h-9 transition-colors border-l border-l-(--divider)',
+          PHONE_TOUCH_TARGET,
           'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover)',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent)',
           isWindowsElectron && 'w-[40px] h-[39px]',

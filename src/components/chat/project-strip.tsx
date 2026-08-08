@@ -12,6 +12,7 @@ import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-
 import { ARCHIVE_DASHBOARD_SESSION_ID, SKILLS_DASHBOARD_SESSION_ID } from '@/lib/constants/special-sessions';
 import { useProjectStripDnd } from '@/hooks/use-project-strip-dnd';
 import { usePopoutActive } from '@/hooks/use-popout-active';
+import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_WIDTH } from '@/lib/ui/touch-target';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -111,7 +112,10 @@ export function ProjectStrip({
   const isAllMode = selectedProjectDir === ALL_PROJECTS_SENTINEL;
 
   return (
-    <div className="shrink-0 w-11 flex flex-col border-r border-(--divider) bg-(--sidebar-bg)">
+    <div className={cn(
+      'shrink-0 w-11 flex flex-col border-r border-(--divider) bg-(--sidebar-bg)',
+      PHONE_TOUCH_TARGET_WIDTH,
+    )}>
       {isMacElectron && (
         <div
           className="electron-drag h-10 shrink-0 border-b border-(--chat-header-border) bg-(--chat-header-bg) select-none"
@@ -124,7 +128,10 @@ export function ProjectStrip({
         <Tooltip content={t('projectStrip.addProject')} delay={300}>
           <button
             onClick={onAddProject}
-            className="w-11 h-9 flex items-center justify-center shrink-0 text-(--text-muted) hover:text-(--sidebar-text-active) transition-colors"
+            className={cn(
+              'w-11 h-9 flex items-center justify-center shrink-0 text-(--text-muted) hover:text-(--sidebar-text-active) transition-colors',
+              PHONE_TOUCH_TARGET,
+            )}
             data-testid="project-strip-add"
           >
             <Plus className="w-4 h-4" />
@@ -150,6 +157,7 @@ export function ProjectStrip({
           aria-disabled={isPopoutActive}
           className={cn(
             'relative w-11 h-11 flex items-center justify-center shrink-0 transition-colors',
+            PHONE_TOUCH_TARGET,
             isAllMode
               ? 'text-(--accent)'
               : 'text-(--text-muted) hover:text-(--sidebar-text-active)',
@@ -191,6 +199,15 @@ export function ProjectStrip({
                   className={cn(
                     'relative w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
                     'font-bold text-white text-xs select-none transition-all',
+                    // Unlike the other controls the floor is applied to, this
+                    // box is painted: the coloured tile *is* the button, so on
+                    // a phone the tile grows to 44px with it and fills the
+                    // column. That is deliberate — splitting a transparent
+                    // 44px hit box from a 26px tile would leave the running
+                    // badge and the selected marker, both absolutely
+                    // positioned against this element, floating off the tile
+                    // they belong to. The letter keeps its `text-xs` (#270).
+                    PHONE_TOUCH_TARGET,
                     isSelected ? 'opacity-100' : 'opacity-50 hover:opacity-80',
                     isDragging && 'opacity-30 scale-90',
                     isDragOver && 'ring-2 ring-(--accent) ring-offset-1 ring-offset-(--sidebar-bg)'

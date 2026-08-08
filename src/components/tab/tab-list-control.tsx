@@ -13,6 +13,7 @@ import {
   ANCHORED_VIEWPORT_MARGIN,
   resolveAnchoredAlignedLeft,
 } from '@/lib/ui/anchored-viewport';
+import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import type { Tab } from '@/types/tab';
 
 /** Widest the list is allowed to get; a phone gets whatever the viewport leaves. */
@@ -114,6 +115,15 @@ export const TabListControl = memo(function TabListControl({
         type="button"
         className={cn(
           'electron-no-drag flex min-w-0 flex-1 items-center gap-1.5 px-3',
+          // Height only: the trigger already spans everything the bar's icons
+          // leave it, and a minimum width would fight that (#270).
+          PHONE_TOUCH_TARGET_HEIGHT,
+          // The three icons beside it grew by 20px between them to reach the
+          // floor, and they took that width off the tab name — 159px to 139px,
+          // one under the 140px #247 fixed as the point where the name stops
+          // being readable. The padding gives 8px of it straight back; the
+          // target is 184x44 either way, so nothing here is hit area.
+          'max-sm:px-2',
           'border-r border-r-(--divider) text-sm font-medium',
           'text-(--text-primary) transition-colors',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent)',
@@ -209,6 +219,8 @@ const TabListItem = memo(function TabListItem({
         role="menuitem"
         className={cn(
           'flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2.5 text-left text-[0.8125rem]',
+          // The row already spans the list; only its height was ever short (#270).
+          PHONE_TOUCH_TARGET_HEIGHT,
           'transition-colors focus:outline-none',
           isActive
             ? 'bg-(--sidebar-hover) text-(--text-primary)'
@@ -230,6 +242,9 @@ const TabListItem = memo(function TabListItem({
         type="button"
         className={cn(
           'flex h-10 w-10 shrink-0 items-center justify-center rounded-md',
+          // `h-10 w-10` is 40px at the default font scale and 32.5px at 0.8125;
+          // a mis-tap here closes somebody's tab, so it gets the px floor (#270).
+          PHONE_TOUCH_TARGET,
           'text-(--text-muted) transition-colors',
           'hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)',

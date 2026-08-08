@@ -33,6 +33,7 @@ import { ProviderLogoMark, getProviderBrand } from './provider-brand';
 import { renderMarkdownCode, renderMarkdownPre } from './markdown-code';
 import { MarkdownLink } from './markdown-link';
 import { MessageRowShell } from './message-row-shell';
+import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 
 type TextMessage = Extract<EnhancedMessage, { type: 'text' }>;
 export type ForkFromMessageHandler = (message: EnhancedMessage, anchorElement: HTMLElement) => void;
@@ -56,7 +57,7 @@ const MESSAGE_ACTIONS_CLASS =
   'ml-auto inline-flex flex-wrap justify-end items-center gap-1 opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none transition-opacity sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
 
 const MESSAGE_ACTION_BUTTON_CLASS =
-  'inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
+  `inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent) ${PHONE_TOUCH_TARGET_HEIGHT}`;
 
 const MESSAGE_COPY_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[4.75rem]`;
 const MESSAGE_FORK_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[6.25rem]`;

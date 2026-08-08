@@ -118,6 +118,7 @@ import {
   isReservedCodexSlashCommandName,
 } from '@/lib/chat/codex-slash-command-registry';
 import { dispatchCodexNativeUiAction } from '@/lib/chat/codex-native-command-events';
+import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import {
   MessageInputAttachmentStrip,
   MessageInputSessionRefStrip,
@@ -1668,7 +1669,10 @@ export function MessageInput({
         />
 
         {/* Textarea row with controls */}
-        <div className="flex items-center gap-2" data-testid="message-input-row">
+        {/* Tighter gaps below the Phone step: send grew 12px to reach the touch
+            floor and the textarea had only 4px of slack over #251's 120px, so
+            the spacing gives the width back rather than the composer (#270). */}
+        <div className="flex items-center gap-2 max-sm:gap-1" data-testid="message-input-row">
         {/* Attachment button */}
         {!isVoiceActive && (
           <button
@@ -1677,6 +1681,15 @@ export function MessageInput({
             disabled={isInputUnavailable || !!activePrompt}
             className={cn(
               'shrink-0 rounded-md p-2 transition-all duration-150',
+              // Height only, and the row's width is the reason. At 360px this
+              // row is 280px wide; the textarea has to keep the 120px #251 set
+              // as the point where it stops being usable, which leaves 160px
+              // for the icons and the spacing between them. Send takes 44 of
+              // that (below), the counter and the gaps take the rest, and a
+              // third and fourth 44px *width* do not exist. The row would have
+              // to stack on a phone to carry them, and this ticket's boundary
+              // reserves where a control sits. The height is free.
+              PHONE_TOUCH_TARGET_HEIGHT,
               isInputUnavailable || activePrompt
                 ? 'text-(--text-muted) cursor-not-allowed opacity-50'
                 : 'text-(--text-muted) hover:text-(--accent) hover:bg-(--accent)/10',
@@ -1767,12 +1780,12 @@ export function MessageInput({
 
         {/* Right side controls — `shrink-0` so the width the textarea gives up is not
             taken out of the send button instead. */}
-        <div className="flex items-center gap-1 pr-2 shrink-0">
+        <div className="flex items-center gap-1 pr-2 max-sm:pr-1 shrink-0">
           {!isVoiceActive && remainingChars < 1000 && (
             <span
               data-testid="message-input-char-count"
               className={cn(
-              'text-xs px-1',
+              'text-xs px-1 max-sm:px-0',
               isOverLimit ? 'text-(--error)' : 'text-(--text-muted)'
             )}>
               {remainingChars}
@@ -1787,6 +1800,8 @@ export function MessageInput({
                 disabled={!canUseVoice}
                 className={cn(
                   'p-2 rounded-md transition-all duration-150',
+                  // Height only, for the width reason on the attach button.
+                  PHONE_TOUCH_TARGET_HEIGHT,
                   canUseVoice
                     ? 'text-(--text-muted) hover:text-(--accent) hover:bg-(--accent)/10'
                     : 'text-(--text-muted) cursor-not-allowed opacity-50',
@@ -1804,7 +1819,10 @@ export function MessageInput({
                 type="button"
                 onClick={handleCancel}
                 data-testid="cancel-generation-btn"
-                className="p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100"
+                className={cn(
+                  'p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100',
+                  PHONE_TOUCH_TARGET,
+                )}
                 title={t('chat.cancelButton')}
               >
                 <Square className="w-4 h-4 fill-current" />
@@ -1813,7 +1831,10 @@ export function MessageInput({
                 <button
                   type="button"
                   onClick={() => handleSend()}
-                  className="p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100"
+                  className={cn(
+                    'p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100',
+                    PHONE_TOUCH_TARGET,
+                  )}
                   title={t('chat.send')}
                   data-testid="send-during-generation-btn"
                 >
@@ -1829,6 +1850,9 @@ export function MessageInput({
               title={`${t('chat.send')}\n${t('chat.translateAndSend')} (${formatShortcut(translateSendShortcut)})`}
               className={cn(
                 'p-2 rounded-md transition-all duration-150',
+                // The PTY composer's send is 44x44 (#259) and this one was 26x26
+                // — same job, two bars, one of them measured (#270).
+                PHONE_TOUCH_TARGET,
                 canSubmit && !isInputUnavailable && !activePrompt && !isOverLimit
                   ? 'bg-(--accent) text-white hover:bg-(--accent-hover) scale-100'
                   : 'text-(--text-muted) cursor-not-allowed scale-95'
