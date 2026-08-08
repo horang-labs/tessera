@@ -71,7 +71,10 @@ const HOVER_REVEALED_SITES = [
   {
     label: 'user and agent message actions',
     file: 'src/components/chat/message-bubble-content.tsx',
-    markers: ['ml-auto inline-flex shrink-0 items-center gap-1'],
+    // Was 'ml-auto inline-flex shrink-0 items-center gap-1'. #261 took `shrink-0` off the
+    // row and let it wrap — it was 284px of buttons pinned right in a 235px column at
+    // 360px. Same element, same opacity rules, which are the only part this probe is about.
+    markers: ['ml-auto inline-flex'],
   },
   {
     label: 'user message timestamp',
@@ -86,7 +89,10 @@ const HOVER_REVEALED_SITES = [
   {
     label: 'agent message group actions',
     file: 'src/components/chat/agent-message-group.tsx',
-    markers: ['ml-auto inline-flex shrink-0 items-center gap-1'],
+    // Was 'ml-auto inline-flex shrink-0 items-center gap-1'. #261 took `shrink-0` off the
+    // row and let it wrap — it was 284px of buttons pinned right in a 235px column at
+    // 360px. Same element, same opacity rules, which are the only part this probe is about.
+    markers: ['ml-auto inline-flex'],
   },
   {
     label: 'agent message group timestamp',
