@@ -10,6 +10,7 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type { WorktreeCreationSource } from '@/lib/worktrees/create';
 
 type TaskCreatedTelemetrySource = 'kanban' | 'list' | 'new_session';
 
@@ -46,8 +47,8 @@ interface CreateWorktreeSessionOptions {
   workflowStatus?: WorkflowStatus;
   /** Editable slug appended after the configured branch prefix. */
   branchSlug?: string;
-  /** Branch/ref used as the starting commit for the new worktree branch. */
-  baseRef?: string;
+  /** Whether to cut a new branch or check out the selected existing branch. */
+  worktreeSource: WorktreeCreationSource;
   /** Allow server-side suffixes like -2 when the requested slug collides. */
   allowBranchSlugSuffix?: boolean;
   /** Product surface that initiated task creation. */
@@ -82,7 +83,7 @@ export function useWorktreeSession() {
       collectionId,
       workflowStatus,
       branchSlug,
-      baseRef,
+      worktreeSource,
       allowBranchSlugSuffix,
       source = 'new_session',
       suppressErrorToast = false,
@@ -192,7 +193,7 @@ export function useWorktreeSession() {
             projectDir,
             branchPrefix,
             branchSlug,
-            baseRef,
+            source: worktreeSource,
             allowBranchSlugSuffix,
             ...(createdTaskId && { taskId: createdTaskId }),
           }),
