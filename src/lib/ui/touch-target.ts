@@ -41,6 +41,18 @@ export const PHONE_TOUCH_TARGET =
 export const PHONE_TOUCH_TARGET_HEIGHT = 'max-sm:min-h-[44px]';
 
 /**
+ * Width only, and a fixed width rather than a minimum — for the *column* a
+ * target sits in rather than for the target itself.
+ *
+ * The project strip is one: `w-11` is the same 44 the floor asks for, but only
+ * at the default font scale, and at 0.8125 the column is 35.75px so nothing
+ * inside it can be 44px wide however the button is declared (#270). This states
+ * the column in the unit the floor is claimed in, for the same reason
+ * everything else here is in px.
+ */
+export const PHONE_TOUCH_TARGET_WIDTH = 'max-sm:w-[44px]';
+
+/**
  * The same floor without the `max-sm` guard, for a control that does not exist
  * above the phone step's neighbourhood in the first place.
  *
