@@ -26,6 +26,9 @@
  *      `rem`-shaped, so this is a guard rather than the point — the default
  *      scale is where a layout carries slack, and the wave has been bitten by
  *      only testing it.
+ *   9. The harness's own footing (#280): the open Git panel covers the tab bar
+ *      control that opened it, so closing has to go through the control that is
+ *      on top. This one is about the file rather than about the product.
  *
  * The server runs from the repository itself rather than a copied app root, so
  * Tailwind's utility layer exists and every box measured is a styled box (#252).
@@ -410,9 +413,41 @@ async function collapseSidebarIfStillOpen() {
   await page.getByTestId('sidebar').waitFor({ state: 'detached', timeout: 30_000 });
 }
 
+/**
+ * Establish the panel's state rather than inherit it (#280). A caller that
+ * arrives with the panel already open would otherwise toggle it *shut* and then
+ * wait out 30s for a panel that is never coming back.
+ */
 async function openGitPanel() {
-  await page.getByTestId('tab-bar-git-toggle').click();
+  if (await page.getByTestId('git-panel').count() === 0) {
+    await page.getByTestId('tab-bar-git-toggle').click();
+  }
   await page.getByTestId('git-panel').waitFor({ state: 'visible', timeout: 30_000 });
+}
+
+/**
+ * Close the panel through whichever control is actually reachable (#280).
+ *
+ * At the Phone viewport the panel is `fixed inset-0 z-50` and covers the whole
+ * screen, tab bar included: measured at 360x776 the panel spans 0,0-360,776
+ * while `tab-bar-git-toggle` sits at 316,0-360,44 underneath it, and the element
+ * at the toggle's own centre is `git-panel-close-btn`. So the tab bar's toggle
+ * cannot be clicked from here — Playwright spends its 30s watching the panel's
+ * subtree intercept the pointer — and the panel's own close button, sitting on
+ * top of it, is both the reachable control and the one a user reaches for.
+ *
+ * That button is `onClose={isCompactViewport ? … : undefined}`, so on a desktop
+ * it does not exist; there the panel is a column beside the content and the tab
+ * bar's toggle is covered by nothing.
+ */
+async function closeGitPanel() {
+  if (await page.getByTestId('git-panel').count() === 0) return;
+  const closeButton = page.getByTestId('git-panel-close-btn');
+  const control = await closeButton.count() > 0
+    ? closeButton
+    : page.getByTestId('tab-bar-git-toggle');
+  await control.click();
+  await page.getByTestId('git-panel').waitFor({ state: 'detached', timeout: 30_000 });
 }
 
 /**
@@ -422,7 +457,21 @@ async function openGitPanel() {
  * resolution can still be settling when the panel mounts — it then renders "no
  * readable files" and never asks again, because nothing about the tree changed.
  * A user would tap the control twice; so does this, once, rather than measure an
- * empty panel. Unrelated to the ticket: it happens with and without the fix.
+ * empty panel. Unrelated to #258: it happens with and without that fix.
+ *
+ * #280 was this retry, not a phase inheriting somebody else's panel. The second
+ * tap used to go back to `tab-bar-git-toggle`, which the open panel covers at the
+ * Phone viewport, so the close could not land and the phase spent its 30s
+ * watching the panel intercept the pointer. Whether the branch is taken at all
+ * is a race, which is why phase 3 failed on one run and passed on the next at
+ * the same commit. Phase 9 pins the close on its own.
+ *
+ * The retry is a weaker recovery than the comment above suggests, and knowing
+ * that is worth more than a stronger-sounding claim: forcing the branch after a
+ * mount that *had* listed the files gave 3 files on the first mount and 0 on the
+ * second — "This workspace has no readable files" — at 1280px and at the Phone
+ * viewport alike. That is #272, which is parked, so this loop can still exhaust
+ * both attempts and say so rather than measure an empty panel.
  */
 async function openGitPanelWithFiles() {
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -433,8 +482,7 @@ async function openGitPanelWithFiles() {
       .waitFor({ state: 'visible', timeout: 20_000 })
       .then(() => true, () => false);
     if (listed) return;
-    await page.getByTestId('tab-bar-git-toggle').click();
-    await page.getByTestId('git-panel').waitFor({ state: 'detached', timeout: 30_000 });
+    await closeGitPanel();
   }
   throw new Error('the Files tab never listed the workspace');
 }
@@ -863,6 +911,70 @@ async function phaseTheLargestFontScaleAgrees() {
   assert.equal(after.centre.owner, 'tab-panel-host', JSON.stringify(after.centre));
 }
 
+/**
+ * The harness's own footing (#280).
+ *
+ * Phase 3 failed on one run and passed on the next at the same commit. No
+ * earlier phase had left the Git panel open: `openGitPanelWithFiles` opens it
+ * itself, and when the Files tab lists nothing it closes and re-opens — through
+ * `tab-bar-git-toggle`, which the open panel covers here. The helper could not
+ * shut the panel it had just opened.
+ *
+ * So this is the state that used to be unrecoverable, measured rather than
+ * argued: the panel open at the Phone viewport with its own toggle underneath
+ * it, and a close that has to land from there anyway.
+ */
+async function phaseTheGitPanelClosesWhileItCoversItsOwnToggle() {
+  await openApp({ viewport: PHONE_VIEWPORT, touch: true, gitPanelTab: 'files' });
+  await expandSidebar();
+  await openSessionFromSidebar(0);
+  await collapseSidebarIfStillOpen();
+  await openGitPanel();
+
+  const covered = await page.evaluate(() => {
+    const round = (value) => Math.round(value * 100) / 100;
+    const toggle = document.querySelector('[data-testid="tab-bar-git-toggle"]');
+    const box = toggle.getBoundingClientRect();
+    const centre = {
+      x: Math.round(box.left + box.width / 2),
+      y: Math.round(box.top + box.height / 2),
+    };
+    const at = document.elementFromPoint(centre.x, centre.y);
+    return {
+      toggle: { left: round(box.left), top: round(box.top), right: round(box.right), bottom: round(box.bottom) },
+      togglePressed: toggle.getAttribute('aria-pressed'),
+      centre,
+      ownerOfTheToggleCentre: at?.getAttribute('data-testid') ?? at?.tagName.toLowerCase() ?? null,
+      toggleIsUnderThePanel: Boolean(at?.closest('[data-testid="git-panel"]')),
+    };
+  });
+  record('9 the tab bar while the Git panel is open', covered);
+
+  // The premise, and the reason `closeGitPanel` cannot use the tab bar here.
+  assert.equal(
+    covered.togglePressed,
+    'true',
+    `the tab bar's control reports the panel open: ${JSON.stringify(covered)}`,
+  );
+  // And the answer to whether a *user* is stuck by the same covering. The panel
+  // owns the pixel at the toggle's own centre, but what it puts there is the
+  // panel's close button — the same corner, the same tap, the same result. Only
+  // the harness was stuck. Asserted rather than recorded so that moving the
+  // close button off that pixel has to be a decision somebody makes on purpose.
+  assert.equal(
+    covered.ownerOfTheToggleCentre,
+    'git-panel-close-btn',
+    `the control under the covered toggle still closes the panel: ${JSON.stringify(covered)}`,
+  );
+
+  // The teeth: closing has to work from there. Against the toggle this is a 30s
+  // timeout on the panel's subtree intercepting the pointer.
+  await closeGitPanel();
+  const after = await measure();
+  record('9 after closing', { gitPanelPresent: after.gitPanelPresent, centreOwner: after.centre.owner });
+  assert.equal(after.gitPanelPresent, false, 'the panel closed from a state where its toggle was covered');
+}
+
 // -------------------------------------------------------------------- main ---
 
 const phases = [
@@ -874,6 +986,7 @@ const phases = [
   ['6 a compact viewport is unchanged', phaseACompactViewportIsUnchanged],
   ['7 a desktop is unchanged', phaseADesktopIsUnchanged],
   ['8 the largest font scale agrees', phaseTheLargestFontScaleAgrees],
+  ['9 the git panel closes while it covers its own toggle', phaseTheGitPanelClosesWhileItCoversItsOwnToggle],
 ];
 
 let failure = null;
