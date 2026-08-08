@@ -125,6 +125,8 @@ export interface GitPanelData {
   github: GitHubPanelState;
   diffStats?: WorktreeDiffStats | null;
   prStatus?: TaskPrStatus;
+  /** False while PR discovery/topology is unconfirmed; creation must fail closed. */
+  prStatusKnown?: boolean;
   prUnsupported?: boolean;
   remoteBranchExists?: boolean;
   /** Current HEAD commit SHA (full). `null` when detached/unresolvable. */
@@ -197,6 +199,8 @@ export interface GitPullOutcome {
 
 export interface GitCreatePullRequestOutcome {
   action: "create_pr";
+  /** Whether this request created a PR or idempotently reused an open one. */
+  disposition: "created" | "existing";
   /** The branch the pull request was opened from. */
   branch: string;
   /**

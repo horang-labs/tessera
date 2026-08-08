@@ -433,6 +433,7 @@ export function useGitPanelController(sessionId: string | null) {
     const livePr = taskSnapshot
       ? {
           prStatus: taskSnapshot.prStatus,
+          prStatusKnown: taskSnapshot.prStatusKnown,
           prUnsupported: taskSnapshot.prUnsupported,
           remoteBranchExists: taskSnapshot.remoteBranchExists,
         }
@@ -441,10 +442,13 @@ export function useGitPanelController(sessionId: string | null) {
     return {
       ...data,
       diffStats: storeDiffStats !== undefined ? storeDiffStats : data.diffStats,
-      prStatus: livePr?.prStatus ?? data.prStatus,
-      prUnsupported: livePr?.prUnsupported ?? data.prUnsupported,
+      // The presence of a live entry is authoritative even when its PR is
+      // undefined: that is the WebSocket representation of confirmed none.
+      prStatus: livePr ? livePr.prStatus : data.prStatus,
+      prStatusKnown: livePr ? livePr.prStatusKnown : data.prStatusKnown,
+      prUnsupported: livePr ? livePr.prUnsupported : data.prUnsupported,
       remoteBranchExists:
-        livePr?.remoteBranchExists ?? data.remoteBranchExists,
+        livePr ? livePr.remoteBranchExists : data.remoteBranchExists,
     };
   }, [data, liveSessionPr, livePrStatus, sessionSnapshot?.diffStats, taskSnapshot]);
 

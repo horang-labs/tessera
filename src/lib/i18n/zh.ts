@@ -1149,6 +1149,9 @@ export const zh: I18nMessages = {
     pr: {
       createdToast: '已创建 PR #{{number}} 到 {{baseBranch}} · {{origin}}',
       createdNoDetailToast: '已创建拉取请求 · {{origin}}',
+      existingToast: '正在使用已有 PR #{{number}} 到 {{baseBranch}} · {{origin}}',
+      existingNoDetailToast: '正在使用已有拉取请求 · {{origin}}',
+      previousLabel: '之前的 PR #{{number}}',
       failureToast: '创建拉取请求失败 · {{origin}} — {{reason}}',
       createButton: '创建 PR',
       createButtonPending: '正在创建 PR…',
@@ -1468,6 +1471,7 @@ export const zh: I18nMessages = {
       open: '打开（审查中）',
       merged: '已合并',
       closed: '已关闭（未合并）',
+      previous: '之前',
       mergedAt: '合并时间：{{date}}',
       lastSynced: '最后同步：{{date}}',
       remoteBranch: '远程分支',

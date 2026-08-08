@@ -224,6 +224,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
   addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
   addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
+  addPullRequestRevisionColumns(db);
   addPreparationStatusColumns(db);
   ensureWorktreeIdentityColumns(db);
 }
@@ -1034,6 +1035,38 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     ensureWorktreeIdentityColumns(db);
     logger.info('Migration v33 applied: persisted public Worktree identity and checkout path');
   }
+
+  if (fromVersion < 34) {
+    addPullRequestRevisionColumns(db);
+    backfillPullRequestRevisionColumns(db);
+    logger.info('Migration v34 applied: PR revision relation and probe knownness added');
+  }
+}
+
+function addPullRequestRevisionColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'pr_relation', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'pr_status_known', 'INTEGER NOT NULL DEFAULT 0');
+}
+
+function backfillPullRequestRevisionColumns(db: DatabaseWrapper): void {
+  // Legacy rows have no topology result. Keep open/merged conservative until
+  // the next poll; closed PRs are always historical by policy.
+  db.exec(`
+    UPDATE tasks
+    SET pr_relation = CASE
+      WHEN pr_state = 'closed' THEN 'historical'
+      WHEN pr_state IN ('open', 'merged') THEN 'current'
+      ELSE NULL
+    END
+    WHERE pr_relation IS NULL
+  `);
+  db.exec(`
+    UPDATE tasks
+    SET pr_status_known = 1
+    WHERE pr_unsupported = 0
+      AND pr_last_synced IS NOT NULL
+      AND pr_status_known = 0
+  `);
 }
 
 function ensureWorktreeIdentityColumns(db: DatabaseWrapper): void {

@@ -1149,6 +1149,9 @@ export const ja: I18nMessages = {
     pr: {
       createdToast: 'PR #{{number}} を {{baseBranch}} 宛に作成しました · {{origin}}',
       createdNoDetailToast: 'プルリクエストを作成しました · {{origin}}',
+      existingToast: '既存の PR #{{number}}（{{baseBranch}} 宛）を使用します · {{origin}}',
+      existingNoDetailToast: '既存のプルリクエストを使用します · {{origin}}',
+      previousLabel: '以前の PR #{{number}}',
       failureToast: 'プルリクエストの作成に失敗しました · {{origin}} — {{reason}}',
       createButton: 'PR を作成',
       createButtonPending: 'PR を作成中…',
@@ -1468,6 +1471,7 @@ export const ja: I18nMessages = {
       open: '開いています（レビュー中）',
       merged: 'マージ済み',
       closed: 'クローズ（未マージ）',
+      previous: '以前',
       mergedAt: 'マージ日時: {{date}}',
       lastSynced: '最終同期: {{date}}',
       remoteBranch: 'リモートブランチ',

@@ -358,6 +358,32 @@ export async function runCreatePullRequest(
 
   const repository = await readGitHubRepository(workDir, upstream, runGit);
 
+  // The panel is advisory state. Re-check at the mutation boundary so another
+  // tab, process, or GitHub action cannot turn a stale enabled button into a
+  // duplicate-create error.
+  const existing = await readExistingOpenPullRequest(
+    workDir,
+    repository,
+    branch,
+    runGh,
+  );
+  if (existing.kind === "failure") {
+    return { ok: false, failure: existing.failure };
+  }
+  if (existing.kind === "found") {
+    return {
+      ok: true,
+      outcome: {
+        action: "create_pr",
+        disposition: "existing",
+        branch,
+        url: existing.pullRequest.url,
+        number: existing.pullRequest.number,
+        baseBranch: existing.pullRequest.baseRefName,
+      },
+    };
+  }
+
   // `--fill` takes the title and body from the commits, which is the only
   // source there is: §3 gives this action one button and no form. `--base` is
   // passed only when this worktree recorded one; without it GitHub's own
@@ -372,7 +398,30 @@ export async function runCreatePullRequest(
     { cwd: workDir },
   );
   if (created.exitCode !== 0) {
-    return { ok: false, failure: describeGhFailure(created) };
+    const originalFailure = describeGhFailure(created);
+    // A PR may have appeared after the preflight and before GitHub handled the
+    // create. Re-read once; finding it makes this request an idempotent success
+    // without relying on localized `already exists` stderr.
+    const raced = await readExistingOpenPullRequest(
+      workDir,
+      repository,
+      branch,
+      runGh,
+    );
+    if (raced.kind === "found") {
+      return {
+        ok: true,
+        outcome: {
+          action: "create_pr",
+          disposition: "existing",
+          branch,
+          url: raced.pullRequest.url,
+          number: raced.pullRequest.number,
+          baseBranch: raced.pullRequest.baseRefName,
+        },
+      };
+    }
+    return { ok: false, failure: originalFailure };
   }
 
   const opened = await readOpenedPullRequest(workDir, repository, branch, runGh);
@@ -380,6 +429,7 @@ export async function runCreatePullRequest(
     ok: true,
     outcome: {
       action: "create_pr",
+      disposition: "created",
       branch,
       // The read-back first, then what `gh pr create` printed. Both can be
       // missing without the pull request being missing — it exists the moment
@@ -425,6 +475,93 @@ interface OpenedPullRequest {
   number: number | null;
   url: string | null;
   baseRefName: string | null;
+}
+
+type ExistingOpenPullRequestResult =
+  | { kind: "found"; pullRequest: OpenedPullRequest }
+  | { kind: "none" }
+  | { kind: "failure"; failure: GitActionFailure };
+
+async function readExistingOpenPullRequest(
+  workDir: string,
+  repository: string,
+  branch: string,
+  runGh: GhRunner,
+): Promise<ExistingOpenPullRequestResult> {
+  const listed = await runGh(
+    [
+      "pr", "list", "--repo", repository, "--head", branch,
+      "--state", "open", "--json", "number,url,baseRefName", "--limit", "1",
+    ],
+    { cwd: workDir },
+  ).catch((error: unknown) => ({
+    exitCode: null,
+    stdout: "",
+    stderr: error instanceof Error ? error.message : String(error),
+  }));
+  if (listed.exitCode !== 0) {
+    return { kind: "failure", failure: describeGhFailure(listed) };
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(listed.stdout);
+  } catch {
+    return {
+      kind: "failure",
+      failure: describeMalformedGhPayload("gh returned malformed open-PR JSON", listed),
+    };
+  }
+  if (!Array.isArray(payload)) {
+    return {
+      kind: "failure",
+      failure: describeMalformedGhPayload("gh returned a non-array open-PR payload", listed),
+    };
+  }
+  if (payload.length === 0) return { kind: "none" };
+
+  const first = payload[0];
+  if (!first || typeof first !== "object") {
+    return {
+      kind: "failure",
+      failure: describeMalformedGhPayload("gh returned an invalid open PR", listed),
+    };
+  }
+  const row = first as Record<string, unknown>;
+  if (
+    typeof row.number !== "number"
+    || !Number.isInteger(row.number)
+    || typeof row.url !== "string"
+    || typeof row.baseRefName !== "string"
+  ) {
+    return {
+      kind: "failure",
+      failure: describeMalformedGhPayload("gh returned incomplete open-PR details", listed),
+    };
+  }
+
+  return {
+    kind: "found",
+    pullRequest: {
+      number: row.number,
+      url: row.url,
+      baseRefName: row.baseRefName,
+    },
+  };
+}
+
+function describeMalformedGhPayload(
+  message: string,
+  result: GhCommandResult,
+): GitActionFailure {
+  return {
+    kind: "command_failed",
+    message,
+    stderr: truncateStderr(result.stderr),
+    stdout: truncateStderr(result.stdout),
+    exitCode: result.exitCode,
+    changedFiles: [],
+  };
 }
 
 /**

@@ -39,6 +39,8 @@ export type GitActionToastKey =
   | "gitPanel.pull.hookRejectedNoDetailToast"
   | "gitPanel.pr.createdToast"
   | "gitPanel.pr.createdNoDetailToast"
+  | "gitPanel.pr.existingToast"
+  | "gitPanel.pr.existingNoDetailToast"
   | "gitPanel.pr.failureToast"
   | "gitPanel.conflict.mergeAbortedToast"
   | "gitPanel.conflict.rebaseAbortedToast"
@@ -268,7 +270,9 @@ function describeCreatePullRequestOutcome(
   if (outcome.number === null || !outcome.baseBranch) {
     return {
       tone: "success",
-      messageKey: "gitPanel.pr.createdNoDetailToast",
+      messageKey: outcome.disposition === "existing"
+        ? "gitPanel.pr.existingNoDetailToast"
+        : "gitPanel.pr.createdNoDetailToast",
       params: { origin },
       clearsDraft: false,
     };
@@ -276,7 +280,9 @@ function describeCreatePullRequestOutcome(
 
   return {
     tone: "success",
-    messageKey: "gitPanel.pr.createdToast",
+    messageKey: outcome.disposition === "existing"
+      ? "gitPanel.pr.existingToast"
+      : "gitPanel.pr.createdToast",
     params: { origin, number: outcome.number, baseBranch: outcome.baseBranch },
     clearsDraft: false,
   };

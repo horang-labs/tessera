@@ -60,6 +60,8 @@ export interface TaskEntity {
   diffStats?: import('./worktree-diff-stats').WorktreeDiffStats | null;
   /** Latest known GitHub PR for the task branch. */
   prStatus?: import('./task-pr-status').TaskPrStatus;
+  /** False while the current GitHub/topology probe is unknown or transient. */
+  prStatusKnown?: boolean;
   /** True when PR sync is not applicable (not GitHub, gh missing, no branch). */
   prUnsupported?: boolean;
   /** How far the worktree's preparation has progressed, and whether it succeeded. */

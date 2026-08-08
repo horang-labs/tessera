@@ -1149,6 +1149,9 @@ export const en: I18nMessages = {
     pr: {
       createdToast: 'Opened PR #{{number}} into {{baseBranch}} · {{origin}}',
       createdNoDetailToast: 'Opened a pull request · {{origin}}',
+      existingToast: 'Using existing PR #{{number}} into {{baseBranch}} · {{origin}}',
+      existingNoDetailToast: 'Using the existing pull request · {{origin}}',
+      previousLabel: 'Previous PR #{{number}}',
       failureToast: 'Creating the pull request failed · {{origin}} — {{reason}}',
       createButton: 'Create PR',
       createButtonPending: 'Creating PR…',
@@ -1471,6 +1474,7 @@ export const en: I18nMessages = {
       open: 'Open (in review)',
       merged: 'Merged',
       closed: 'Closed (not merged)',
+      previous: 'Previous',
       mergedAt: 'Merged at: {{date}}',
       lastSynced: 'Last synced: {{date}}',
       remoteBranch: 'Remote branch',

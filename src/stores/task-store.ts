@@ -14,6 +14,7 @@ interface QueuedProjectLoad {
 
 interface TaskPrStatusCacheEntry {
   prStatus: TaskEntity['prStatus'];
+  prStatusKnown: boolean;
   prUnsupported: boolean;
   remoteBranchExists: boolean | undefined;
 }
@@ -100,6 +101,7 @@ interface TaskState {
   applyPrStatusUpdate: (
     taskId: string,
     prStatus: TaskEntity['prStatus'],
+    prStatusKnown: boolean,
     prUnsupported: boolean,
     remoteBranchExists: boolean | undefined,
   ) => void;
@@ -759,20 +761,20 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }));
   },
 
-  applyPrStatusUpdate: (taskId, prStatus, prUnsupported, remoteBranchExists) => {
+  applyPrStatusUpdate: (taskId, prStatus, prStatusKnown, prUnsupported, remoteBranchExists) => {
     const patch = (tasks: TaskEntity[]): TaskEntity[] => {
       let changed = false;
       const next = tasks.map((task) => {
         if (task.id !== taskId) return task;
         changed = true;
-        return { ...task, prStatus, prUnsupported, remoteBranchExists };
+        return { ...task, prStatus, prStatusKnown, prUnsupported, remoteBranchExists };
       });
       return changed ? next : tasks;
     };
     set((state) => ({
       prStatusByTaskId: {
         ...state.prStatusByTaskId,
-        [taskId]: { prStatus, prUnsupported, remoteBranchExists },
+        [taskId]: { prStatus, prStatusKnown, prUnsupported, remoteBranchExists },
       },
       tasks: patch(state.tasks),
       tasksByProject: Object.fromEntries(

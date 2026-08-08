@@ -1156,6 +1156,9 @@ export const ko: I18nMessages = {
     pr: {
       createdToast: 'PR #{{number}}을(를) {{baseBranch}}(으)로 열었습니다 · {{origin}}',
       createdNoDetailToast: '풀 리퀘스트를 열었습니다 · {{origin}}',
+      existingToast: '기존 PR #{{number}}을(를) 사용합니다 · 대상 {{baseBranch}} · {{origin}}',
+      existingNoDetailToast: '기존 풀 리퀘스트를 사용합니다 · {{origin}}',
+      previousLabel: '이전 PR #{{number}}',
       failureToast: '풀 리퀘스트 생성 실패 · {{origin}} — {{reason}}',
       createButton: 'PR 생성',
       createButtonPending: 'PR 생성 중…',
@@ -1475,6 +1478,7 @@ export const ko: I18nMessages = {
       open: '열려있음 (리뷰 중)',
       merged: '머지됨',
       closed: '닫힘 (머지되지 않음)',
+      previous: '이전',
       mergedAt: '머지 시각: {{date}}',
       lastSynced: '마지막 동기화: {{date}}',
       remoteBranch: '원격 브랜치',

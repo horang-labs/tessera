@@ -53,6 +53,14 @@ function ghViewed(payload: Record<string, unknown>): GhCommandResult {
   return { exitCode: 0, stdout: JSON.stringify(payload), stderr: '' };
 }
 
+function ghNoOpenPullRequest(): GhCommandResult {
+  return { exitCode: 0, stdout: '[]', stderr: '' };
+}
+
+function ghExisting(payload: Record<string, unknown>): GhCommandResult {
+  return { exitCode: 0, stdout: JSON.stringify([payload]), stderr: '' };
+}
+
 interface PrFixture {
   workDir: string;
   runGit: GitRunner;
@@ -109,13 +117,13 @@ test('a synced branch gets a pull request, reported with the base GitHub used', 
   if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
 
   await withSyncedRepo(async ({ workDir, runGit }) => {
-    const gh = fakeGh((args) =>
-      args[1] === 'create'
-        ? ghCreated()
-        // `dev`, not the fixture's `main`: the base is read back off the pull
-        // request GitHub opened, never assumed from the local repository.
-        : ghViewed({ number: 236, url: PR_URL, baseRefName: 'dev' }),
-    );
+    const gh = fakeGh((args) => {
+      if (args[1] === 'list') return ghNoOpenPullRequest();
+      if (args[1] === 'create') return ghCreated();
+      // `dev`, not the fixture's `main`: the base is read back off the pull
+      // request GitHub opened, never assumed from the local repository.
+      return ghViewed({ number: 236, url: PR_URL, baseRefName: 'dev' });
+    });
 
     const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
 
@@ -125,8 +133,9 @@ test('a synced branch gets a pull request, reported with the base GitHub used', 
     assert.equal(result.outcome.url, PR_URL);
     assert.equal(result.outcome.baseBranch, 'dev');
     assert.equal(result.outcome.branch, 'main');
+    assert.equal(result.outcome.disposition, 'created');
 
-    const create = gh.calls[0]!;
+    const create = gh.calls.find((call) => call.args[1] === 'create')!;
     assert.deepEqual(create.args.slice(0, 2), ['pr', 'create']);
     assert.equal(create.cwd, workDir);
     // The head branch is stated rather than left to gh's working-directory
@@ -155,18 +164,19 @@ test('a branch cut from another branch opens against that branch', async (t) => 
 
   await withSyncedRepo(
     async ({ workDir, runGit }) => {
-      const gh = fakeGh((args) =>
-        args[1] === 'create'
+      const gh = fakeGh((args) => {
+        if (args[1] === 'list') return ghNoOpenPullRequest();
+        return args[1] === 'create'
           ? ghCreated()
-          : ghViewed({ number: 236, url: PR_URL, baseRefName: 'feature/parent' }),
-      );
+          : ghViewed({ number: 236, url: PR_URL, baseRefName: 'feature/parent' });
+      });
 
       const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
       assert.equal(result.ok, true, 'expected the pull request to be created');
 
       // Left to GitHub this would open against the repository default and carry
       // the parent's commits in its diff.
-      const create = gh.calls[0]!;
+      const create = gh.calls.find((call) => call.args[1] === 'create')!;
       assert.equal(create.args[create.args.indexOf('--base') + 1], 'feature/parent');
       assert.equal(create.args[create.args.indexOf('--head') + 1], 'feature/child');
     },
@@ -188,18 +198,20 @@ test('a branch with no recorded base leaves the base to GitHub', async (t) => {
   if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
 
   await withSyncedRepo(async ({ workDir, runGit }) => {
-    const gh = fakeGh((args) =>
-      args[1] === 'create'
+    const gh = fakeGh((args) => {
+      if (args[1] === 'list') return ghNoOpenPullRequest();
+      return args[1] === 'create'
         ? ghCreated()
-        : ghViewed({ number: 236, url: PR_URL, baseRefName: 'dev' }),
-    );
+        : ghViewed({ number: 236, url: PR_URL, baseRefName: 'dev' });
+    });
 
     const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
     assert.equal(result.ok, true, 'expected the pull request to be created');
 
     // A branch made outside Tessera records nothing, and Git remembers nothing
     // by itself: the host's default is still the right answer to fall back to.
-    assert.equal(gh.calls[0]!.args.includes('--base'), false);
+    const create = gh.calls.find((call) => call.args[1] === 'create')!;
+    assert.equal(create.args.includes('--base'), false);
   });
 });
 
@@ -208,18 +220,20 @@ test('a base that never reached the remote is left to GitHub', async (t) => {
 
   await withSyncedRepo(
     async ({ workDir, runGit }) => {
-      const gh = fakeGh((args) =>
-        args[1] === 'create'
+      const gh = fakeGh((args) => {
+        if (args[1] === 'list') return ghNoOpenPullRequest();
+        return args[1] === 'create'
           ? ghCreated()
-          : ghViewed({ number: 236, url: PR_URL, baseRefName: 'dev' }),
-      );
+          : ghViewed({ number: 236, url: PR_URL, baseRefName: 'dev' });
+      });
 
       const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
       assert.equal(result.ok, true, 'expected the pull request to be created');
 
       // `gh` resolves the base on the remote, so passing a local-only parent
       // would fail the create outright. A wider pull request still opens.
-      assert.equal(gh.calls[0]!.args.includes('--base'), false);
+      const create = gh.calls.find((call) => call.args[1] === 'create')!;
+      assert.equal(create.args.includes('--base'), false);
     },
     {
       beforeRename: async (workDir) => {
@@ -353,18 +367,20 @@ test('a pull request gh refuses to open comes back as a failure value', async (t
   if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
 
   await withSyncedRepo(async ({ workDir, runGit }) => {
-    const gh = fakeGh(() => ({
-      exitCode: 1,
-      stdout: '',
-      stderr: 'a pull request for branch "main" into branch "dev" already exists',
-    }));
+    const gh = fakeGh((args) => args[1] === 'list'
+      ? ghNoOpenPullRequest()
+      : {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'GitHub refused to create the pull request',
+        });
 
     const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
 
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.equal(result.failure.kind, 'command_failed');
-    assert.match(result.failure.message, /already exists/);
+    assert.match(result.failure.message, /refused/);
     assert.equal(result.failure.exitCode, 1);
   });
 });
@@ -373,11 +389,12 @@ test('a pull request that was opened is not reported as failed because reading i
   if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
 
   await withSyncedRepo(async ({ workDir, runGit }) => {
-    const gh = fakeGh((args) =>
-      args[1] === 'create'
+    const gh = fakeGh((args) => {
+      if (args[1] === 'list') return ghNoOpenPullRequest();
+      return args[1] === 'create'
         ? ghCreated()
-        : { exitCode: 1, stdout: '', stderr: 'could not read pull request' },
-    );
+        : { exitCode: 1, stdout: '', stderr: 'could not read pull request' };
+    });
 
     const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
 
@@ -387,5 +404,69 @@ test('a pull request that was opened is not reported as failed because reading i
     assert.equal(result.outcome.url, PR_URL);
     assert.equal(result.outcome.number, null);
     assert.equal(result.outcome.baseBranch, null);
+  });
+});
+
+test('an existing open pull request is returned without creating another', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withSyncedRepo(async ({ workDir, runGit }) => {
+    const gh = fakeGh(() => ghExisting({
+      number: 236,
+      url: PR_URL,
+      baseRefName: 'dev',
+    }));
+
+    const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
+
+    assert.equal(result.ok, true);
+    if (!result.ok || result.outcome.action !== 'create_pr') return;
+    assert.equal(result.outcome.disposition, 'existing');
+    assert.equal(result.outcome.number, 236);
+    assert.equal(gh.calls.some((call) => call.args[1] === 'create'), false);
+  });
+});
+
+test('a create race recovers by returning the PR that appeared', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withSyncedRepo(async ({ workDir, runGit }) => {
+    let listCalls = 0;
+    const gh = fakeGh((args) => {
+      if (args[1] === 'list') {
+        listCalls += 1;
+        return listCalls === 1
+          ? ghNoOpenPullRequest()
+          : ghExisting({ number: 236, url: PR_URL, baseRefName: 'dev' });
+      }
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'a pull request for this branch already exists',
+      };
+    });
+
+    const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
+
+    assert.equal(result.ok, true);
+    if (!result.ok || result.outcome.action !== 'create_pr') return;
+    assert.equal(result.outcome.disposition, 'existing');
+    assert.equal(result.outcome.number, 236);
+    assert.equal(listCalls, 2);
+  });
+});
+
+test('malformed open-PR preflight fails closed', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withSyncedRepo(async ({ workDir, runGit }) => {
+    const gh = fakeGh(() => ({ exitCode: 0, stdout: '{oops', stderr: '' }));
+
+    const result = await runCreatePullRequest(workDir, runGit, gh.runGh);
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.failure.message, /malformed/);
+    assert.equal(gh.calls.some((call) => call.args[1] === 'create'), false);
   });
 });

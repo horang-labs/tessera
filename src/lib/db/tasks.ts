@@ -5,7 +5,12 @@
 import { getDb } from './database';
 import logger from '../logger';
 import type { WorkflowStatus, TaskEntity, TaskSession } from '@/types/task-entity';
-import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
+import {
+  effectiveTaskPrRelation,
+  type TaskPrRelation,
+  type TaskPrState,
+  type TaskPrStatus,
+} from '@/types/task-pr-status';
 import { readPreparationStatus } from '@/lib/projects/preparation-status-policy';
 import { extractSessionKind } from './sessions';
 import {
@@ -36,6 +41,8 @@ export interface TaskRow {
   pr_unsupported: number;
   remote_branch_exists: number | null;
   pr_head_ref_oid: string | null;
+  pr_relation: string | null;
+  pr_status_known: number;
   preparation_status: string | null;
   preparation_started_at: string | null;
   preparation_finished_at: string | null;
@@ -45,14 +52,32 @@ export interface TaskRow {
   updated_at: string;
 }
 
-function readPrStatusFromRow(row: TaskRow): TaskPrStatus | undefined {
+type TaskPrRow = Pick<
+  TaskRow,
+  | 'pr_number'
+  | 'pr_url'
+  | 'pr_state'
+  | 'pr_merged_at'
+  | 'pr_last_synced'
+  | 'pr_head_ref_oid'
+  | 'pr_relation'
+>;
+
+function readPrStatusFromRow(row: TaskPrRow): TaskPrStatus | undefined {
   if (row.pr_number === null || row.pr_url === null || row.pr_state === null || row.pr_last_synced === null) {
     return undefined;
   }
+  const state = row.pr_state as TaskPrState;
   return {
     number: row.pr_number,
     url: row.pr_url,
-    state: row.pr_state as TaskPrState,
+    state,
+    relation: effectiveTaskPrRelation({
+      state,
+      relation: row.pr_relation === 'current' || row.pr_relation === 'historical'
+        ? (row.pr_relation as TaskPrRelation)
+        : undefined,
+    }),
     mergedAt: row.pr_merged_at ?? undefined,
     lastSynced: row.pr_last_synced,
     headRefOid: row.pr_head_ref_oid ?? undefined,
@@ -138,6 +163,7 @@ function mapRowToEntity(
     summary: row.summary ?? undefined,
     sortOrder: row.sort_order ?? 0,
     prStatus: readPrStatusFromRow(row),
+    prStatusKnown: !!row.pr_status_known,
     prUnsupported: !!row.pr_unsupported,
     preparationStatus: readPreparationStatus(row.preparation_status),
     remoteBranchExists:
@@ -457,7 +483,9 @@ export function setTaskPrStatus(
           pr_last_synced = ?,
           pr_unsupported = 1,
           remote_branch_exists = NULL,
-          pr_head_ref_oid = NULL
+          pr_head_ref_oid = NULL,
+          pr_relation = NULL,
+          pr_status_known = 0
       WHERE id = ?
     `).run(new Date().toISOString(), id);
     return;
@@ -476,7 +504,9 @@ export function setTaskPrStatus(
           pr_last_synced = ?,
           pr_unsupported = 0,
           remote_branch_exists = ?,
-          pr_head_ref_oid = NULL
+          pr_head_ref_oid = NULL,
+          pr_relation = NULL,
+          pr_status_known = 1
       WHERE id = ?
     `).run(new Date().toISOString(), remoteFlag, id);
     return;
@@ -491,7 +521,9 @@ export function setTaskPrStatus(
         pr_last_synced = ?,
         pr_unsupported = 0,
         remote_branch_exists = ?,
-        pr_head_ref_oid = ?
+        pr_head_ref_oid = ?,
+        pr_relation = ?,
+        pr_status_known = 1
     WHERE id = ?
   `).run(
     pr.number,
@@ -501,8 +533,19 @@ export function setTaskPrStatus(
     pr.lastSynced,
     remoteFlag,
     pr.headRefOid ?? null,
+    pr.relation,
     id,
   );
+}
+
+/** Preserve the last displayable PR while making creation fail closed. */
+export function markTaskPrStatusUnknown(id: string): void {
+  getDb().prepare(`
+    UPDATE tasks
+    SET pr_unsupported = 0,
+        pr_status_known = 0
+    WHERE id = ?
+  `).run(id);
 }
 
 export interface TaskPrSyncContext {
@@ -510,6 +553,7 @@ export interface TaskPrSyncContext {
   branch: string | null;
   workDir: string | null;
   wasUnsupported: boolean;
+  prStatusKnown: boolean;
   prStatus?: TaskPrStatus;
   remoteBranchExists?: boolean;
 }
@@ -529,29 +573,22 @@ export function getTaskPrSyncContext(id: string): TaskPrSyncContext | null {
       tasks.pr_last_synced AS pr_last_synced,
       tasks.remote_branch_exists AS remote_branch_exists,
       tasks.pr_head_ref_oid AS pr_head_ref_oid,
+      tasks.pr_relation AS pr_relation,
+      tasks.pr_status_known AS pr_status_known,
       ${PARENT_FIRST_WORKTREE_PATH_SQL} AS work_dir
     FROM tasks
     WHERE tasks.id = ?
-  `).get(id) as (Pick<TaskRow, 'id' | 'worktree_branch' | 'pr_unsupported' | 'pr_number' | 'pr_url' | 'pr_state' | 'pr_merged_at' | 'pr_last_synced' | 'remote_branch_exists' | 'pr_head_ref_oid'> & { work_dir: string | null }) | undefined;
+  `).get(id) as (Pick<TaskRow, 'id' | 'worktree_branch' | 'pr_unsupported' | 'pr_number' | 'pr_url' | 'pr_state' | 'pr_merged_at' | 'pr_last_synced' | 'remote_branch_exists' | 'pr_head_ref_oid' | 'pr_relation' | 'pr_status_known'> & { work_dir: string | null }) | undefined;
   if (!row) return null;
 
-  const prStatus: TaskPrStatus | undefined =
-    row.pr_number !== null && row.pr_url !== null && row.pr_state !== null && row.pr_last_synced !== null
-      ? {
-          number: row.pr_number,
-          url: row.pr_url,
-          state: row.pr_state as TaskPrState,
-          mergedAt: row.pr_merged_at ?? undefined,
-          lastSynced: row.pr_last_synced,
-          headRefOid: row.pr_head_ref_oid ?? undefined,
-        }
-      : undefined;
+  const prStatus = readPrStatusFromRow(row);
 
   return {
     id: row.id,
     branch: row.worktree_branch,
     workDir: row.work_dir,
     wasUnsupported: !!row.pr_unsupported,
+    prStatusKnown: !!row.pr_status_known,
     prStatus,
     remoteBranchExists:
       row.remote_branch_exists === null || row.remote_branch_exists === undefined

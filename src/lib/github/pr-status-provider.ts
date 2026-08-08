@@ -1,5 +1,5 @@
 /**
- * Queries GitHub for the latest PR state of a given task branch.
+ * Queries GitHub for the representative PR state of a given task branch.
  *
  * Uses `gh pr list --head <branch> --state all` scoped to the task's workDir.
  * Returns null when the branch has no PR. Returns { unsupported: true } when
@@ -7,14 +7,16 @@
  * — callers should mark the task accordingly so the UI stops asking for sync.
  */
 
-import type { SpawnOptions } from 'child_process';
 import logger from '@/lib/logger';
-import { spawnCli } from '@/lib/cli/spawn-cli';
-import { createGitRunner } from '@/lib/worktrees/git-runner';
+import { createGitRunner, GitCommandError } from '@/lib/worktrees/git-runner';
 import type { AgentEnvironment } from '@/lib/settings/types';
-import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
-
-const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
+import type { TaskPrStatus } from '@/types/task-pr-status';
+import { createGhRunner } from './gh-cli';
+import {
+  parsePullRequestCandidates,
+  selectRepresentativePullRequest,
+  type HeadContainment,
+} from './pr-status-selection';
 
 type ProbeUnsupportedReason =
   | 'workdir_missing'
@@ -66,11 +68,18 @@ async function execGhInDir(
   agentEnvironment: AgentEnvironment,
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   try {
-    const result = await runCliCommand('gh', args, cwd, agentEnvironment);
-    return { ok: true, ...result };
+    const result = await createGhRunner(agentEnvironment)(args, { cwd });
+    return {
+      ok: result.exitCode === 0,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, stdout: '', stderr: message };
+    return {
+      ok: false,
+      stdout: '',
+      stderr: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -81,8 +90,8 @@ export async function isGhCliAvailable(
   if (cached !== undefined) return cached;
 
   try {
-    await runCliCommand('gh', ['--version'], undefined, agentEnvironment);
-    ghAvailableCache.set(agentEnvironment, true);
+    const result = await createGhRunner(agentEnvironment)(['--version']);
+    ghAvailableCache.set(agentEnvironment, result.exitCode === 0);
   } catch {
     ghAvailableCache.set(agentEnvironment, false);
   }
@@ -127,24 +136,48 @@ export function normalizeGithubOwnerRepo(remoteUrl: string | null): string | nul
   return null;
 }
 
-function mapGithubStateToTaskPrState(
-  rawState: string,
-  mergedAt: string | null,
-): TaskPrState {
-  const state = rawState.toUpperCase();
-  if (state === 'MERGED' || mergedAt) return 'merged';
-  if (state === 'CLOSED') return 'closed';
-  return 'open';
-}
+async function compareHeadContainment(
+  workDir: string,
+  ownerRepo: string,
+  currentHead: string,
+  prHead: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<HeadContainment> {
+  const runGit = createGitRunner(agentEnvironment);
+  try {
+    await runGit(
+      ['-C', workDir, 'merge-base', '--is-ancestor', currentHead, prHead],
+      { timeoutMs: 10_000 },
+    );
+    return 'contains';
+  } catch (error) {
+    // `merge-base --is-ancestor` uses exit 1 for a proven negative. Missing
+    // objects and actual Git failures use other codes and need the remote
+    // fallback below.
+    if (error instanceof GitCommandError && error.exitCode === 1) {
+      return 'not_contains';
+    }
+  }
 
-interface GhPrListItem {
-  number: number;
-  state: string;
-  url: string;
-  mergedAt: string | null;
-  updatedAt?: string;
-  headRefName?: string;
-  headRefOid?: string;
+  // Shallow clones and force-pushes may not retain the old PR head locally.
+  // GitHub can still compare the two advertised commits. This is an edge-case
+  // fallback, not another API request on the normal polling path.
+  const compared = await execGhInDir(
+    [
+      'api',
+      `repos/${ownerRepo}/compare/${currentHead}...${prHead}`,
+      '--jq',
+      '.status',
+    ],
+    workDir,
+    agentEnvironment,
+  );
+  if (!compared.ok) return 'unknown';
+
+  const status = compared.stdout.trim().toLowerCase();
+  if (status === 'identical' || status === 'ahead') return 'contains';
+  if (status === 'behind' || status === 'diverged') return 'not_contains';
+  return 'unknown';
 }
 
 /**
@@ -196,7 +229,14 @@ export async function probeTaskPrStatus(params: {
     workDir,
     agentEnvironment,
   );
-  const remoteBranchExists = !!lsRemote && lsRemote.stdout.trim().length > 0;
+  if (!lsRemote) {
+    return {
+      kind: 'transient_error',
+      stderr: 'Could not determine whether the remote branch exists',
+      resolvedBranch,
+    };
+  }
+  const remoteBranchExists = lsRemote.stdout.trim().length > 0;
 
   const run = await execGhInDir(
     [
@@ -205,7 +245,7 @@ export async function probeTaskPrStatus(params: {
       '--head', probeBranch,
       '--state', 'all',
       '--json', 'number,state,url,mergedAt,updatedAt,headRefName,headRefOid',
-      '--limit', '5',
+      '--limit', '100',
     ],
     workDir,
     agentEnvironment,
@@ -223,82 +263,52 @@ export async function probeTaskPrStatus(params: {
     return { kind: 'transient_error', stderr: run.stderr, resolvedBranch };
   }
 
-  let payload: GhPrListItem[] = [];
-  try {
-    payload = JSON.parse(run.stdout) as GhPrListItem[];
-  } catch {
+  const parsed = parsePullRequestCandidates(run.stdout);
+  if (!parsed.ok) {
+    logger.warn(
+      { branch: probeBranch, ownerRepo, error: parsed.error },
+      'gh pr list returned an invalid payload',
+    );
+    return { kind: 'transient_error', stderr: parsed.error, resolvedBranch };
+  }
+
+  if (parsed.candidates.length === 0) {
     return { kind: 'ok', prStatus: null, remoteBranchExists, resolvedBranch };
   }
 
-  if (!Array.isArray(payload) || payload.length === 0) {
+  const head = await execGitInDir(['rev-parse', 'HEAD'], workDir, agentEnvironment);
+  const currentHead = head?.stdout.trim();
+  const selected = await selectRepresentativePullRequest(
+    parsed.candidates,
+    currentHead && /^[0-9a-f]{40}$/i.test(currentHead) ? currentHead : null,
+    (headSha, prHead) => compareHeadContainment(
+      workDir,
+      ownerRepo,
+      headSha,
+      prHead,
+      agentEnvironment,
+    ),
+  );
+  if (selected.kind === 'unknown') {
+    logger.warn(
+      { branch: probeBranch, ownerRepo, reason: selected.reason },
+      'PR revision relationship is unknown',
+    );
+    return { kind: 'transient_error', stderr: selected.reason, resolvedBranch };
+  }
+  if (selected.kind === 'none') {
     return { kind: 'ok', prStatus: null, remoteBranchExists, resolvedBranch };
   }
-
-  // Pick the most recently updated PR for this branch (gh already orders
-  // newest-first, but we double-sort for safety).
-  const sorted = [...payload].sort((a, b) => {
-    const ta = a.updatedAt ? Date.parse(a.updatedAt) : 0;
-    const tb = b.updatedAt ? Date.parse(b.updatedAt) : 0;
-    return tb - ta;
-  });
-  const top = sorted[0];
-  const mappedState = mapGithubStateToTaskPrState(top.state, top.mergedAt ?? null);
 
   const prStatus: TaskPrStatus = {
-    number: top.number,
-    url: top.url,
-    state: mappedState,
-    mergedAt: top.mergedAt ?? undefined,
+    number: selected.candidate.number,
+    url: selected.candidate.url,
+    state: selected.candidate.state,
+    relation: selected.relation,
+    mergedAt: selected.candidate.mergedAt,
     lastSynced: new Date().toISOString(),
-    headRefOid: top.headRefOid ?? undefined,
+    headRefOid: selected.candidate.headRefOid,
   };
 
   return { kind: 'ok', prStatus, remoteBranchExists, resolvedBranch };
 }
-
-function runCliCommand(
-  command: string,
-  args: string[],
-  cwd: string | undefined,
-  agentEnvironment: AgentEnvironment,
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const options: SpawnOptions = {
-      ...(cwd ? { cwd } : {}),
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    };
-    const child = spawnCli(command, args, options, agentEnvironment);
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let stdoutLength = 0;
-    let stderrLength = 0;
-
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdoutLength += chunk.length;
-      if (stdoutLength <= EXEC_MAX_BUFFER) stdoutChunks.push(chunk);
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderrLength += chunk.length;
-      if (stderrLength <= EXEC_MAX_BUFFER) stderrChunks.push(chunk);
-    });
-
-    child.on('close', (code) => {
-      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trimEnd();
-      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-
-      if (code === 0) {
-        resolve({ stdout, stderr });
-        return;
-      }
-
-      reject(new Error(stderr || `${command} exited with code ${code}`));
-    });
-
-    child.on('error', (error) => {
-      reject(error);
-    });
-  });
-}
-
