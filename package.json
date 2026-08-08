@@ -149,7 +149,7 @@
     "pino-pretty": "^10.3.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^4.0.0",
-    "tsx": "^4.7.0",
+    "tsx": "^4.23.11",
     "typescript": "5.9.3",
     "wait-on": "^8.0.0"
   },
