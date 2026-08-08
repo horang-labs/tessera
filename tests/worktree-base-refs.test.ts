@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { createGitWorktree } from '../src/lib/worktrees/create';
 import {
-  buildGitWorktreeAddArgs,
   listWorktreeBaseRefs,
   validateWorktreeBaseRef,
   type WorktreeBaseRef,
@@ -113,10 +113,11 @@ test('validateWorktreeBaseRef only accepts listed refs and verifies they point t
   ]);
 });
 
-test('validated remote base refs can create a real worktree branch from that commit', async () => {
+test('branch-off creates from local and remote refs, records each base, and never adopts an upstream', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-worktree-add-'));
   const repoDir = path.join(tmp, 'repo');
-  const worktreePath = path.join(tmp, 'worktrees', 'task');
+  const localWorktreePath = path.join(tmp, 'worktrees', 'local');
+  const remoteWorktreePath = path.join(tmp, 'worktrees', 'remote');
   try {
     await git(['init', repoDir], tmp);
     await git(['config', 'user.email', 'test@example.com'], repoDir);
@@ -135,12 +136,45 @@ test('validated remote base refs can create a real worktree branch from that com
     const refs = await listWorktreeBaseRefs(repoDir, runGit);
     assert.equal(await validateWorktreeBaseRef(repoDir, 'origin/develop', refs, runGit), true);
 
-    await execFileAsync('git', buildGitWorktreeAddArgs(repoDir, worktreePath, 'tw/test', 'origin/develop'));
+    await createGitWorktree({
+      projectDir: repoDir,
+      worktreePath: localWorktreePath,
+      branchName: 'tw/local',
+      source: { mode: 'branch-off', baseRef: 'main' },
+      runGit,
+    });
+    await createGitWorktree({
+      projectDir: repoDir,
+      worktreePath: remoteWorktreePath,
+      branchName: 'tw/remote',
+      source: { mode: 'branch-off', baseRef: 'origin/develop' },
+      runGit,
+    });
 
-    const { stdout: branch } = await git(['rev-parse', '--abbrev-ref', 'HEAD'], worktreePath);
-    const { stdout: subject } = await git(['show', '-s', '--format=%s', 'HEAD'], worktreePath);
-    assert.equal(branch.trim(), 'tw/test');
-    assert.equal(subject.trim(), 'develop');
+    assert.equal(
+      (await git(['rev-parse', '--abbrev-ref', 'HEAD'], localWorktreePath)).stdout.trim(),
+      'tw/local',
+    );
+    assert.equal(
+      (await git(['show', '-s', '--format=%s', 'HEAD'], localWorktreePath)).stdout.trim(),
+      'main',
+    );
+    assert.equal(
+      (await git(['config', '--get', 'branch.tw/local.base'], repoDir)).stdout.trim(),
+      'refs/heads/main',
+    );
+    assert.equal(
+      (await git(['rev-parse', '--abbrev-ref', 'HEAD'], remoteWorktreePath)).stdout.trim(),
+      'tw/remote',
+    );
+    assert.equal(
+      (await git(['show', '-s', '--format=%s', 'HEAD'], remoteWorktreePath)).stdout.trim(),
+      'develop',
+    );
+    assert.equal(
+      (await git(['config', '--get', 'branch.tw/remote.base'], repoDir)).stdout.trim(),
+      'refs/remotes/origin/develop',
+    );
 
     // A remote-tracking start point must stay a start point. Git's default
     // `branch.autoSetupMerge` would make `origin/develop` this branch's
@@ -149,24 +183,13 @@ test('validated remote base refs can create a real worktree branch from that com
     // `develop` in. Asserted against the config pair rather than `@{upstream}`
     // because that pair is the whole of Git's definition (`upstream-config.ts`).
     const { stdout: upstreamConfig } = await git(
-      ['config', '--get-regexp', '^branch\\.tw/test\\.(remote|merge)$'],
+      ['config', '--get-regexp', '^branch\\.tw/(local|remote)\\.(remote|merge)$'],
       repoDir,
     ).catch(() => ({ stdout: '' }));
     assert.equal(upstreamConfig.trim(), '');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
-});
-
-test('buildGitWorktreeAddArgs refuses to track the base and appends explicit baseRef when selected', () => {
-  assert.deepEqual(
-    buildGitWorktreeAddArgs('/repo', '/worktree', 'tw/test', null),
-    ['-C', '/repo', 'worktree', 'add', '--no-track', '/worktree', '-b', 'tw/test'],
-  );
-  assert.deepEqual(
-    buildGitWorktreeAddArgs('/repo', '/worktree', 'tw/test', 'origin/main'),
-    ['-C', '/repo', 'worktree', 'add', '--no-track', '/worktree', '-b', 'tw/test', 'origin/main'],
-  );
 });
 
 const routePath = new URL('../src/app/api/worktrees/route.ts', import.meta.url);
@@ -188,7 +211,7 @@ test('worktree route validates selected baseRef before add', () => {
   assert.match(source, /baseRef must be a string/);
   assert.match(source, /INVALID_BASE_REF/);
   assert.match(source, /validateWorktreeBaseRef\([\s\S]*availableBaseRefs[\s\S]*runGit[\s\S]*\)/);
-  assert.match(source, /buildGitWorktreeAddArgs/);
+  assert.match(source, /createGitWorktree/);
 });
 
 test('worktree refs route exposes the base-ref listing endpoint used by the client', () => {

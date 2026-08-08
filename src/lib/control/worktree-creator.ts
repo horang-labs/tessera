@@ -6,7 +6,7 @@ import { waitForPreparationBeforeAgent } from '@/lib/projects/preparation-gate';
 import { broadcastTaskMutation } from '@/lib/ws/mutation-broadcast';
 import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
-import { recordWorktreeBaseRef } from '@/lib/worktrees/base-refs';
+import { createGitWorktree } from '@/lib/worktrees/create';
 import {
   allocateExplicitManagedWorktree,
   ExplicitManagedWorktreeAllocationError,
@@ -76,18 +76,11 @@ export function createDatabaseControlWorktreeCreator(options: {
       }
 
       await validateBranch(projectDir, request.branch, runGit);
-      const resolvedStartPoint = await resolveStartPoint(
+      await resolveStartPoint(
         projectDir,
         request.startPoint,
         runGit,
       );
-      // Git's worktree implementation forwards a dash-prefixed start point to
-      // its internal branch command as an option even after `--`. Preserve the
-      // caller's exact ref normally and use its verified commit only for that
-      // argv edge case.
-      const gitStartPoint = request.startPoint.startsWith('-')
-        ? resolvedStartPoint
-        : request.startPoint;
 
       let worktreePath: string;
       try {
@@ -125,13 +118,13 @@ export function createDatabaseControlWorktreeCreator(options: {
       }
 
       try {
-        // `--no-track` for the reason spelled out in `buildGitWorktreeAddArgs`:
-        // a start point that is a remote-tracking ref would otherwise become
-        // this branch's upstream, and the CLI accepts one as `startPoint`.
-        await runGit([
-          '-C', projectDir, 'worktree', 'add', '--no-track', '-b', request.branch,
-          '--', worktreePath, gitStartPoint,
-        ]);
+        await createGitWorktree({
+          projectDir,
+          worktreePath,
+          branchName: request.branch,
+          source: { mode: 'branch-off', baseRef: request.startPoint },
+          runGit,
+        });
       } catch (error) {
         const branchAlreadyExists = isExistingBranchError(error);
         throw new ControlWorktreeCreationError(
@@ -143,9 +136,6 @@ export function createDatabaseControlWorktreeCreator(options: {
           { branch: request.branch, startPoint: request.startPoint },
         );
       }
-
-      await recordWorktreeBaseRef(projectDir, request.branch, request.startPoint, runGit);
-
       let persisted: { taskId: string; worktree: ControlWorktreeRecord };
       try {
         persisted = persistDatabaseControlWorktree({
