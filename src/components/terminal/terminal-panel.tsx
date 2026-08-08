@@ -358,7 +358,7 @@ export function TerminalPanel({
       {/* Conditional render, never `display: none`: a desktop tree must not contain the
           bar at all. The terminal above is not told about it — the bar writes to the PTY
           through the registry, and the surface stays exactly as it was. */}
-      {isPhoneViewport && <TerminalInputBar terminalId={terminalId} />}
+      {isPhoneViewport && <TerminalInputBar terminalId={terminalId} tabActive={isTabActive} />}
     </div>
   );
 }

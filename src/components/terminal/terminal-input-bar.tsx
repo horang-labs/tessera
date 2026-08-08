@@ -15,6 +15,17 @@ import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-ta
 
 interface TerminalInputBarProps {
   terminalId: string;
+  /**
+   * Whether this bar's tab is the one on screen.
+   *
+   * An inactive tab's slot keeps `visibility: hidden` and `aria-hidden` — which is
+   * right, and untouched — but it is still laid out, so a second bar sat at the active
+   * one's exact coordinates (#262). Laying out a hidden session's bar is wasted work,
+   * and two bars stacked on one point is what a focus or shortcut change would trip
+   * over later. An inactive bar therefore drops out of layout rather than unmounting:
+   * a draft typed before a tab switch is still there on the way back.
+   */
+  tabActive?: boolean;
 }
 
 /**
@@ -35,7 +46,7 @@ interface TerminalInputBarProps {
  * has finished by the time the user taps send, so the browser's own
  * composition handling is all that is needed.
  */
-export function TerminalInputBar({ terminalId }: TerminalInputBarProps) {
+export function TerminalInputBar({ terminalId, tabActive = true }: TerminalInputBarProps) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
   const [didFail, setDidFail] = useState(false);
@@ -66,7 +77,10 @@ export function TerminalInputBar({ terminalId }: TerminalInputBarProps) {
 
   return (
     <div
-      className="shrink-0 border-t border-black/10 bg-(--chat-bg) p-2 dark:border-white/10"
+      className={cn(
+        'shrink-0 border-t border-black/10 bg-(--chat-bg) p-2 dark:border-white/10',
+        !tabActive && 'hidden',
+      )}
       data-testid="terminal-input-bar"
       role="group"
       aria-label={t('chat.terminalInputBar.label')}

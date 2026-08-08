@@ -435,7 +435,13 @@ export function CollectionQuickCreateSheet({
 
   const sheetContainerClassName = useAnchoredPortal
     ? cn(
-        'fixed z-[10001] w-[17rem] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl',
+        // 17rem is a desktop width beside a sidebar, and it is `rem`, so at the
+        // smallest font scale it resolves to 221px — a sheet that leaves 115px of a
+        // 360px screen unused and wraps its own labels to pay for it (#262). Below
+        // the Phone viewport step the sheet takes the width the screen has; from
+        // `sm` up nothing changes. `updateAnchoredPosition` reads the rendered
+        // width, so the clamp follows on its own.
+        'fixed z-[10001] w-[calc(100vw-1.5rem)] sm:w-[17rem] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl',
         'border border-[color-mix(in_srgb,var(--accent)_38%,var(--divider))]',
         'bg-[color-mix(in_srgb,var(--input-bg)_80%,var(--accent)_20%)]',
         'shadow-[0_24px_60px_rgba(0,0,0,0.46),0_0_0_1px_color-mix(in_srgb,var(--accent)_24%,transparent),0_0_34px_color-mix(in_srgb,var(--accent)_10%,transparent)] backdrop-blur-xl',
