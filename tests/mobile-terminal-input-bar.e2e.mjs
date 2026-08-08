@@ -6,7 +6,7 @@
 // `interactive-widget=resizes-content`, are device-only. They are the acceptance criteria
 // that matter most and they are settled by holding a phone, not by this suite.
 //
-// What is provable headlessly is the other half: that the bar is in the tree at a Phone
+// What this file can prove is the other half: that the bar is in the tree at a Phone
 // viewport and absent above one, and that typed text and each of the six keys leave the
 // browser addressed to that terminal as the exact bytes. The seam is the outgoing
 // WebSocket frame — the last point the browser owns before the bytes are the server's,
@@ -25,8 +25,8 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs';
 
 // Wide enough to be an ordinary desktop window, and well clear of the 640px Phone
@@ -93,7 +93,7 @@ let appSecret;
 try {
   appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
-  browser = await chromium.launch({ headless: true });
+  browser = await launchPhoneBrowser();
   await testTheBarIsPresentAtAPhoneViewport(browser, appOrigin);
   await testTheBarIsAbsentFromTheDesktopTree(browser, appOrigin);
   await testSubmittedTextLeavesForThePtyBracketedPasteWrapped(browser, appOrigin);

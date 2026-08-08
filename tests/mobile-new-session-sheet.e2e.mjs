@@ -24,14 +24,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 
 const run = promisify(execFile);
 
 const port = Number(process.env.TESSERA_E2E_PORT ?? 34244);
 const origin = `http://127.0.0.1:${port}`;
-const headless = process.env.TESSERA_E2E_HEADED !== '1';
 const artifactDir = process.env.TESSERA_E2E_ARTIFACT_DIR
   ?? path.join(os.tmpdir(), 'tessera-mobile-sheet-e2e');
 const selectedPhases = (process.env.TESSERA_E2E_PHASES ?? '')
@@ -377,7 +376,7 @@ try {
   await registerProject();
   collectionId = await createCollection();
 
-  browser = await chromium.launch({ headless });
+  browser = await launchPhoneBrowser();
 
   if (shouldRun(1)) await phase1();
   if (shouldRun(2)) await phase2();

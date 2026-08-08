@@ -17,13 +17,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 
 const run = promisify(execFile);
 
 const port = Number(process.env.TESSERA_E2E_PORT ?? 34216);
 const origin = `http://127.0.0.1:${port}`;
-const headless = process.env.TESSERA_E2E_HEADED !== '1';
 const artifactDir = process.env.TESSERA_E2E_ARTIFACT_DIR
   ?? path.join(os.tmpdir(), 'tessera-phone-viewport-e2e');
 
@@ -320,7 +319,7 @@ try {
   });
   assert.equal(registered.ok, true, `could not register the project: ${registered.text}`);
 
-  browser = await chromium.launch({ headless });
+  browser = await launchPhoneBrowser();
 
   for (const [name, phase] of phases) {
     try {

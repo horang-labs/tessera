@@ -21,8 +21,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { createPhoneContext } from './helpers/phone-viewport.mjs';
 
 // Both the raw form and the application-cursor-keys form the deleted branch could emit.
@@ -89,7 +89,7 @@ try {
 
   appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
-  browser = await chromium.launch({ headless: true });
+  browser = await launchPhoneBrowser();
   await testAltScreenTouchDragInjectsNoArrowKeys(browser, appOrigin);
   await testWheelReportingTouchDragStillReportsWheel(browser, appOrigin);
   await testScrollbackTouchDragStillScrollsTheViewport(browser, appOrigin);

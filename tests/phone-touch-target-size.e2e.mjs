@@ -36,8 +36,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs';
 
 const run = promisify(execFile);
@@ -113,24 +113,9 @@ const INPUT_BAR_CONTROLS = [
  */
 const SMALLEST_FONT_SCALE = 0.8125;
 
-/**
- * Headful by default, which is unusual for this repo and deliberate here.
- *
- * Every assertion in this file is a box a person is meant to be able to hit.
- * Headless Chromium rasterises differently, runs WebGL on SwiftShader and has
- * its device metrics injected rather than read from a display, and this wave
- * has already been burned by it twice: #256 chased a canvas-sizing defect that
- * may exist only under that emulation, and #260 was filed and closed
- * unreproducible after a headless observation that a file would not open. A
- * browser that never paints to a screen is not a witness to what a person sees.
- *
- * The rest of tests/ defaults headless, so this file is the exception and says
- * so here. It keeps the repo's `TESSERA_E2E_HEADED` variable rather than
- * inventing a second one — setting it to `1` still means headed, it is just
- * already the default. `TESSERA_E2E_HEADED=0` is the escape hatch for a machine
- * with no display, and a run that takes it is not evidence about layout.
- */
-const headless = process.env.TESSERA_E2E_HEADED === '0';
+// Headful, like the rest of the wave: every assertion here is a box a person is meant to
+// be able to hit. This file argued that for itself under #259; the argument, and the
+// escape hatch, now live in tests/helpers/phone-browser.mjs (#263).
 const artifactDir = process.env.TESSERA_E2E_ARTIFACT_DIR
   ?? path.join(os.tmpdir(), 'tessera-phone-touch-target-e2e');
 const selectedPhases = (process.env.TESSERA_E2E_PHASES ?? '')
@@ -832,7 +817,7 @@ try {
   await registerProject();
   sessionId = await createSession();
 
-  browser = await chromium.launch({ headless });
+  browser = await launchPhoneBrowser();
 
   if (shouldRun(1)) await phase1();
   if (shouldRun(2)) await phase2();

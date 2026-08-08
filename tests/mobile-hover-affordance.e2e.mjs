@@ -23,9 +23,9 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { chromium } from '@playwright/test';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 900 };
@@ -215,7 +215,7 @@ try {
   appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
   const tapProbes = await buildTapProbes();
-  browser = await chromium.launch({ headless: true });
+  browser = await launchPhoneBrowser();
   await testControlsAreVisibleOnAPhone(browser, probes);
   await testHoverRevealIsUnchangedOnADesktop(browser, probes);
 

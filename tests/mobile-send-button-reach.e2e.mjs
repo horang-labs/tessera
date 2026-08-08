@@ -26,8 +26,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs';
 
 const run = promisify(execFile);
@@ -35,7 +35,6 @@ const run = promisify(execFile);
 /** A pointer-driven window, which is what must not regress. */
 const DESKTOP_VIEWPORT = { width: 1280, height: 900 };
 
-const headless = process.env.TESSERA_E2E_HEADED !== '1';
 const artifactDir = process.env.TESSERA_E2E_ARTIFACT_DIR
   ?? path.join(os.tmpdir(), 'tessera-mobile-send-button-e2e');
 const selectedPhases = (process.env.TESSERA_E2E_PHASES ?? '')
@@ -520,7 +519,7 @@ try {
   await registerProject();
   sessionId = await createSession();
 
-  browser = await chromium.launch({ headless });
+  browser = await launchPhoneBrowser();
 
   if (shouldRun(1)) await phase1();
   if (shouldRun(2)) await phase2();
