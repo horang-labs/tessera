@@ -20,6 +20,7 @@ export function installTaskPrStatusBroadcast(broadcast: BroadcastFn): void {
         type: 'task_pr_status_update',
         taskId: update.taskId,
         prStatus: update.prStatus,
+        prStatusKnown: update.prStatusKnown,
         prUnsupported: update.prUnsupported,
         remoteBranchExists: update.remoteBranchExists,
       });

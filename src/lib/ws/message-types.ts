@@ -551,6 +551,7 @@ export type AppServerMessage =
       type: 'task_pr_status_update';
       taskId: string;
       prStatus?: import('@/types/task-pr-status').TaskPrStatus;
+      prStatusKnown: boolean;
       prUnsupported: boolean;
       remoteBranchExists?: boolean;
     }
@@ -558,6 +559,7 @@ export type AppServerMessage =
       type: 'session_pr_status_update';
       sessionId: string;
       prStatus?: import('@/types/task-pr-status').TaskPrStatus;
+      prStatusKnown: boolean;
       prUnsupported: boolean;
       remoteBranchExists?: boolean;
     }

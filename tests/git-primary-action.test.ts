@@ -355,11 +355,48 @@ test('a linked pull request reaches the ladder however the panel learned of it',
       number: 236,
       url: 'https://github.com/horang-labs/tessera/pull/236',
       state: 'open',
+      relation: 'current',
       lastSynced: '2026-08-07T00:00:00.000Z',
     },
   });
 
   assert.equal(snapshot?.pullRequest, 'exists');
+});
+
+test('a historical pull request remains visible without blocking Create PR', () => {
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    prStatusKnown: true,
+    github: { ...PANEL.github, available: true, reasonCode: null },
+    prStatus: {
+      number: 235,
+      url: 'https://github.com/horang-labs/tessera/pull/235',
+      state: 'merged',
+      relation: 'historical',
+      lastSynced: '2026-08-07T00:00:00.000Z',
+    },
+  });
+
+  assert.equal(snapshot?.pullRequest, 'none');
+  assert.equal(derivePrimaryGitAction(snapshot).kind, 'create_pr');
+  assert.equal(derivePrimaryGitAction(snapshot).enabled, true);
+});
+
+test('an unknown probe fails closed even when the saved PR is historical', () => {
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    prStatusKnown: false,
+    prStatus: {
+      number: 235,
+      url: 'https://github.com/horang-labs/tessera/pull/235',
+      state: 'merged',
+      relation: 'historical',
+      lastSynced: '2026-08-07T00:00:00.000Z',
+    },
+  });
+
+  assert.equal(snapshot?.pullRequest, 'unknown');
+  assert.equal(derivePrimaryGitAction(snapshot).enabled, false);
 });
 
 test('GitHub answering "no pull request" is what unlocks Create PR', () => {

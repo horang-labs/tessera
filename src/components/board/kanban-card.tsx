@@ -625,7 +625,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   // Skip mismatch detection when PR sync is unsupported — we can't trust the
   // (likely empty) prStatus, so flagging "no PR" would be false-positive noise.
-  const prMismatch = task.prUnsupported
+  const prMismatch = task.prUnsupported || task.prStatusKnown === false
     ? null
     : detectPrMismatch(task.workflowStatus, task.prStatus);
   const prMismatchReason = prMismatch ? prMismatchTooltip(prMismatch, task.prStatus?.number, t) : null;
@@ -1070,6 +1070,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 <TaskPrBadge
                   workflowStatus={task.workflowStatus}
                   prStatus={task.prStatus}
+                  prStatusKnown={task.prStatusKnown}
                   prUnsupported={task.prUnsupported}
                   remoteBranchExists={task.remoteBranchExists}
                   branchName={task.worktreeBranch}

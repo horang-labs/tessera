@@ -290,6 +290,7 @@ const OPENED: GitActionResult = {
   ok: true,
   outcome: {
     action: 'create_pr',
+    disposition: 'created',
     branch: 'feature/0807-t236',
     url: 'https://github.com/horang-labs/tessera/pull/236',
     number: 236,
@@ -317,6 +318,7 @@ test('a pull request that could not be read back is still reported as opened', (
       ok: true,
       outcome: {
         action: 'create_pr',
+        disposition: 'created',
         branch: 'feature/0807-t236',
         url: null,
         number: null,
@@ -330,6 +332,26 @@ test('a pull request that could not be read back is still reported as opened', (
   assert.equal(toast.tone, 'success');
   assert.equal(toast.messageKey, 'gitPanel.pr.createdNoDetailToast');
   assert.equal(toast.params.number, undefined);
+});
+
+test('an existing pull request is reported as reused, not newly created', () => {
+  const toast = describeGitActionToast(
+    {
+      ok: true,
+      outcome: {
+        action: 'create_pr',
+        disposition: 'existing',
+        branch: 'feature/0807-t236',
+        url: 'https://github.com/horang-labs/tessera/pull/236',
+        number: 236,
+        baseBranch: 'dev',
+      },
+    },
+    'feature/0807-t236',
+    'create_pr',
+  );
+
+  assert.equal(toast.messageKey, 'gitPanel.pr.existingToast');
 });
 
 test('a pull request that was refused is reported against its own verb', () => {

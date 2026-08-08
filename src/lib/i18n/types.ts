@@ -1131,6 +1131,9 @@ export interface I18nMessages {
     pr: {
       createdToast: string;
       createdNoDetailToast: string;
+      existingToast: string;
+      existingNoDetailToast: string;
+      previousLabel: string;
       failureToast: string;
       createButton: string;
       createButtonPending: string;
@@ -1450,6 +1453,7 @@ export interface I18nMessages {
       open: string;
       merged: string;
       closed: string;
+      previous: string;
       mergedAt: string;
       lastSynced: string;
       remoteBranch: string;

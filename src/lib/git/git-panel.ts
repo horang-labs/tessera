@@ -545,7 +545,11 @@ export function summarizeStatusCheckRollup(items: unknown[]): GitChecksSummary {
 
 function resolveGitHubPanelState(
   remoteUrl: string | null,
-  prSummary: { wasUnsupported: boolean; prStatus?: unknown } | null,
+  prSummary: {
+    wasUnsupported: boolean;
+    prStatusKnown: boolean;
+    prStatus?: unknown;
+  } | null,
 ): GitPanelData["github"] {
   if (!normalizeGithubUrl(remoteUrl)) {
     return {
@@ -570,6 +574,15 @@ function resolveGitHubPanelState(
       available: false,
       reasonCode: "unknown",
       reason: "GitHub PR sync is unavailable for this session.",
+      pullRequest: null,
+    };
+  }
+
+  if (!prSummary.prStatusKnown) {
+    return {
+      available: false,
+      reasonCode: "unknown",
+      reason: "GitHub status will update shortly.",
       pullRequest: null,
     };
   }
@@ -1074,9 +1087,17 @@ export async function getGitPanelData(
     { branchRaw, upstream: upstreamRaw, upstreamConfigRaw, aheadBehindRaw },
   );
   const prSummary = prContext
-    ? { wasUnsupported: prContext.wasUnsupported, prStatus: prContext.prStatus }
+    ? {
+        wasUnsupported: prContext.wasUnsupported,
+        prStatusKnown: prContext.prStatusKnown,
+        prStatus: prContext.prStatus,
+      }
     : bareSessionPr
-      ? { wasUnsupported: bareSessionPr.prUnsupported, prStatus: bareSessionPr.prStatus }
+      ? {
+          wasUnsupported: bareSessionPr.prUnsupported,
+          prStatusKnown: bareSessionPr.prStatusKnown,
+          prStatus: bareSessionPr.prStatus,
+        }
       : null;
   const github = resolveGitHubPanelState(remoteUrl, prSummary);
 
@@ -1120,6 +1141,8 @@ export async function getGitPanelData(
         : getCachedDiffStats(workDir)) ?? undefined
       : undefined,
     prStatus: prContext?.prStatus ?? bareSessionPr?.prStatus,
+    prStatusKnown:
+      prContext?.prStatusKnown ?? bareSessionPr?.prStatusKnown ?? false,
     prUnsupported:
       prContext?.wasUnsupported ?? bareSessionPr?.prUnsupported ?? false,
     remoteBranchExists:

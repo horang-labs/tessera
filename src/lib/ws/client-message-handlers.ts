@@ -391,6 +391,7 @@ export function handleIncomingServerMessage({
       useTaskStore.getState().applyPrStatusUpdate(
         msg.taskId,
         msg.prStatus,
+        msg.prStatusKnown,
         msg.prUnsupported,
         msg.remoteBranchExists,
       );
@@ -400,6 +401,7 @@ export function handleIncomingServerMessage({
       useSessionPrStore.getState().applyPrStatusUpdate(
         msg.sessionId,
         msg.prStatus,
+        msg.prStatusKnown,
         msg.prUnsupported,
         msg.remoteBranchExists,
       );

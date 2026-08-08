@@ -932,7 +932,7 @@ export function TaskItemRow({
         {(() => {
           // Skip mismatch badge when PR sync is unsupported — we have no
           // reliable prStatus to compare against the column.
-          const mismatch = task.prUnsupported
+          const mismatch = task.prUnsupported || task.prStatusKnown === false
             ? null
             : detectPrMismatch(task.workflowStatus, task.prStatus);
           if (!mismatch) return null;

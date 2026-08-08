@@ -28,6 +28,7 @@ import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
 import type { GitPendingVerb } from "./use-git-panel-controller";
 import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
+import { isCurrentTaskPr } from '@/types/task-pr-status';
 import { GitActionMenu } from "./git-action-menu";
 import { GitActionFailureBanner } from "./git-action-failure-banner";
 import type { GitActionFailureReport } from "./git-action-report";
@@ -410,13 +411,17 @@ export function GitPanelSummarySection({
   onOpenExternal: (url: string | null | undefined) => void;
   showDetails?: boolean;
 }) {
+  const { t } = useI18n();
   const projectName = data ? getGitPanelProjectName(data) : "Repository";
   const worktreeName = data ? getGitPanelWorktreeName(data) : "worktree";
   const branchName = data?.branch ?? "branch";
   const worktreeTooltip = data?.worktreePath ?? "Worktree path unavailable";
   const prUrl = data?.prStatus?.url ?? data?.github.pullRequest?.url;
+  const historicalPr = data?.prStatus ? !isCurrentTaskPr(data.prStatus) : false;
   const prLabel = data?.prStatus
-    ? data.github.pullRequest?.title
+    ? historicalPr
+      ? t('gitPanel.pr.previousLabel', { number: data.prStatus.number })
+      : data.github.pullRequest?.title
       ? `#${data.prStatus.number} ${data.github.pullRequest.title}`
       : `PR #${data.prStatus.number}`
     : "No PR";
@@ -543,7 +548,10 @@ export function GitPanelSummarySection({
                   <Tooltip content={`Open PR #${data.prStatus?.number ?? data.github.pullRequest?.number}`} side="top" wrapperClassName="min-w-0">
                     <button
                       type="button"
-                      className="min-w-0 cursor-pointer truncate text-left text-xs font-semibold text-(--text-primary) hover:text-(--accent)"
+                      className={cn(
+                        "min-w-0 cursor-pointer truncate text-left text-xs font-semibold hover:text-(--accent)",
+                        historicalPr ? "text-(--text-muted)" : "text-(--text-primary)",
+                      )}
                       onClick={() => onOpenExternal(prUrl)}
                       aria-label={`Open pull request ${data.prStatus?.number ?? data.github.pullRequest?.number}`}
                     >

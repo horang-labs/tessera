@@ -12,6 +12,7 @@
  */
 
 import type { GitConflictOperation, GitPanelData } from "@/types/git";
+import { isCurrentTaskPr } from '@/types/task-pr-status';
 
 /**
  * What the button says. `publish` and `push` run the same action (§2).
@@ -168,8 +169,10 @@ export function gitStateSnapshotFromPanel(
  * `github.reasonCode` is the server's own reading of the remote.
  */
 function readPullRequestReadiness(panel: GitPanelData): GitPullRequestReadiness {
-  if (panel.prStatus || panel.github.pullRequest) return 'exists';
   if (panel.prUnsupported) return 'unsupported';
+  if (panel.prStatusKnown === false) return 'unknown';
+  if (panel.prStatus) return isCurrentTaskPr(panel.prStatus) ? 'exists' : 'none';
+  if (panel.github.pullRequest) return 'exists';
   if (panel.github.reasonCode === 'no_pull_request') return 'none';
   if (panel.github.reasonCode === 'unknown' || panel.github.reasonCode === null) {
     return 'unknown';

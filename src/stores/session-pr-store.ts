@@ -3,6 +3,7 @@ import type { TaskPrStatus } from '@/types/task-pr-status';
 
 export interface SessionPrCacheEntry {
   prStatus?: TaskPrStatus;
+  prStatusKnown: boolean;
   prUnsupported: boolean;
   remoteBranchExists?: boolean;
 }
@@ -12,6 +13,7 @@ interface SessionPrState {
   applyPrStatusUpdate: (
     sessionId: string,
     prStatus: TaskPrStatus | undefined,
+    prStatusKnown: boolean,
     prUnsupported: boolean,
     remoteBranchExists: boolean | undefined,
   ) => void;
@@ -20,11 +22,11 @@ interface SessionPrState {
 
 export const useSessionPrStore = create<SessionPrState>((set) => ({
   prBySessionId: {},
-  applyPrStatusUpdate: (sessionId, prStatus, prUnsupported, remoteBranchExists) => {
+  applyPrStatusUpdate: (sessionId, prStatus, prStatusKnown, prUnsupported, remoteBranchExists) => {
     set((state) => ({
       prBySessionId: {
         ...state.prBySessionId,
-        [sessionId]: { prStatus, prUnsupported, remoteBranchExists },
+        [sessionId]: { prStatus, prStatusKnown, prUnsupported, remoteBranchExists },
       },
     }));
   },
