@@ -630,6 +630,7 @@ export interface I18nMessages {
     terminalComposerLabel: string;
     terminalComposerPlaceholder: string;
     terminalComposerBlocked: string;
+    terminalComposerBlockedLabel: string;
     terminalSendFailed: string;
     terminalInputBar: {
       label: string;

@@ -653,6 +653,7 @@ export const en: I18nMessages = {
     terminalComposerLabel: 'Send text to the terminal \u2014 text only, no attachments',
     terminalComposerPlaceholder: 'Send text to the terminal',
     terminalComposerBlocked: 'Answer in the terminal',
+    terminalComposerBlockedLabel: 'The terminal is waiting for an answer \u2014 reply there',
     terminalSendFailed: 'No running terminal to send to',
     terminalInputBar: {
       label: 'Terminal input',

@@ -655,6 +655,7 @@ export const ko: I18nMessages = {
     terminalComposerLabel: '터미널로 보낼 텍스트 \u2014 텍스트만 가능, 첨부는 불가',
     terminalComposerPlaceholder: '터미널로 보낼 텍스트',
     terminalComposerBlocked: '터미널에서 답하세요',
+    terminalComposerBlockedLabel: '터미널이 응답을 기다리는 중 \u2014 터미널에서 답하세요',
     terminalSendFailed: '전송할 터미널이 실행 중이 아닙니다',
     terminalInputBar: {
       label: '터미널 입력',

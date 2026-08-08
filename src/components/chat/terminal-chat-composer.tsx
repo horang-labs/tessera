@@ -113,6 +113,13 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
 
   const canSubmit = !!value.trim() && !isBlocked;
 
+  // What the shortened placeholders were shortened from. The placeholder is the
+  // accessible name when nothing else names the input, so this has to say the
+  // same thing the visible hint does, only in full.
+  const accessibleName = isBlocked
+    ? t('chat.terminalComposerBlockedLabel')
+    : t('chat.terminalComposerLabel');
+
   return (
     <div className="shrink-0 pb-2 pt-0">
       <div className={cn('w-full', isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-4')}>
@@ -142,9 +149,10 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 // attachment limit wrapped onto a second line the user cannot
                 // scroll to, so it read as ending on "no" (#271). The whole
                 // sentence stays as the accessible name and as the pointer
-                // tooltip, both of which have no such line.
-                aria-label={t('chat.terminalComposerLabel')}
-                title={t('chat.terminalComposerLabel')}
+                // tooltip, both of which have no such line — and it follows the
+                // state, or a blocked box would announce that it takes text.
+                aria-label={accessibleName}
+                title={accessibleName}
                 placeholder={
                   isBlocked
                     ? t('chat.terminalComposerBlocked')

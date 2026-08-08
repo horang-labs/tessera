@@ -36,7 +36,11 @@ const run = promisify(execFile);
 const DESKTOP_VIEWPORT = { width: 1280, height: 900 };
 /** The default, and the smallest preset a phone offers — 1.375 is out of scope (#269). */
 const FONT_SCALES = [1, 0.8125];
-/** What the shortened hint may not quietly drop. */
+/**
+ * What the shortened hint may not quietly drop. Written out rather than imported from
+ * `en.ts` on purpose: reading it from the same file the page reads would pass whatever
+ * that file said, which is the copy edit this is here to catch.
+ */
 const FULL_SENTENCE = 'Send text to the terminal — text only, no attachments';
 const BROWSER_USER_ID = 'e2e-browser-user';
 

@@ -653,6 +653,7 @@ export const ja: I18nMessages = {
     terminalComposerLabel: 'ターミナルに送るテキスト \u2014 テキストのみ、添付は不可',
     terminalComposerPlaceholder: 'ターミナルに送るテキスト',
     terminalComposerBlocked: 'ターミナルで答えてください',
+    terminalComposerBlockedLabel: 'ターミナルが応答を待機中 \u2014 ターミナルで答えてください',
     terminalSendFailed: '送信先のターミナルが実行されていません',
     terminalInputBar: {
       label: 'ターミナル入力',

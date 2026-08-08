@@ -44,7 +44,8 @@ async function reservePort() {
  *
  * `seed` runs once the data directory exists and before the server is spawned, which is
  * the only moment a file the server reads at boot — `users.json`, say — can be written.
- * `env` is merged last, for the variables a file needs and this default does not set.
+ * `env` adds the variables a caller needs and this default does not set; the helper's own
+ * variables still win, so `dataDir` and the port it returns stay the ones in use.
  *
  * @param {{
  *   dataDirPrefix?: string,
@@ -73,12 +74,12 @@ export async function startDevServer({
     detached: process.platform !== 'win32',
     env: {
       ...env,
+      ...extraEnv,
       NODE_ENV: 'development',
       PORT: String(port),
       TESSERA_DATA_DIR: dataDir,
       TESSERA_ELECTRON_RUNTIME: '1',
       LOG_LEVEL: 'error',
-      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
