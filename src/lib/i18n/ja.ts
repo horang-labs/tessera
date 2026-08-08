@@ -650,8 +650,10 @@ export const ja: I18nMessages = {
     terminalWorkingNotice: 'ターミナルで作業中 \u2014 閲覧のみ',
     terminalWaitingNotice: 'ターミナルで入力を待機中',
     terminalComposerHint: 'ターミナルを開く',
-    terminalComposerPlaceholder: 'ターミナルに送るテキスト \u2014 テキストのみ、添付は不可',
-    terminalComposerBlocked: 'ターミナルが応答を待機中 \u2014 ターミナルで答えてください',
+    terminalComposerLabel: 'ターミナルに送るテキスト \u2014 テキストのみ、添付は不可',
+    terminalComposerPlaceholder: 'ターミナルに送るテキスト',
+    terminalComposerBlocked: 'ターミナルで答えてください',
+    terminalComposerBlockedLabel: 'ターミナルが応答を待機中 \u2014 ターミナルで答えてください',
     terminalSendFailed: '送信先のターミナルが実行されていません',
     terminalInputBar: {
       label: 'ターミナル入力',

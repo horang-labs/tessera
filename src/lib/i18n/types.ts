@@ -627,8 +627,10 @@ export interface I18nMessages {
     terminalWorkingNotice: string;
     terminalWaitingNotice: string;
     terminalComposerHint: string;
+    terminalComposerLabel: string;
     terminalComposerPlaceholder: string;
     terminalComposerBlocked: string;
+    terminalComposerBlockedLabel: string;
     terminalSendFailed: string;
     terminalInputBar: {
       label: string;

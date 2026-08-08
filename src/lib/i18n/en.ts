@@ -650,8 +650,10 @@ export const en: I18nMessages = {
     terminalWorkingNotice: 'Working in the terminal \u2014 view only',
     terminalWaitingNotice: 'Waiting for input in the terminal',
     terminalComposerHint: 'Open the terminal',
-    terminalComposerPlaceholder: 'Send text to the terminal \u2014 text only, no attachments',
-    terminalComposerBlocked: 'The terminal is waiting for an answer \u2014 reply there',
+    terminalComposerLabel: 'Send text to the terminal \u2014 text only, no attachments',
+    terminalComposerPlaceholder: 'Send text to the terminal',
+    terminalComposerBlocked: 'Answer in the terminal',
+    terminalComposerBlockedLabel: 'The terminal is waiting for an answer \u2014 reply there',
     terminalSendFailed: 'No running terminal to send to',
     terminalInputBar: {
       label: 'Terminal input',
