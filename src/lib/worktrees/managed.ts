@@ -153,6 +153,37 @@ export async function allocateExplicitManagedWorktree(
   return { branchName, worktreePath };
 }
 
+/** Allocate only the path: an existing branch is the expected input here. */
+export async function allocateCheckoutManagedWorktree(
+  projectDir: string,
+  branchName: string,
+  options: {
+    rootDir: string;
+    runGit: GitRunner;
+    pathTemplate?: string | null;
+    agentEnvironment: AgentEnvironment;
+  },
+): Promise<ManagedWorktreeAllocation> {
+  const worktreePath = resolveAllocatedWorktreePath(projectDir, branchName, options);
+  const collision = await findAllocationCollision(
+    projectDir,
+    branchName,
+    worktreePath,
+    options.runGit,
+  );
+  if (collision.worktreePathExists) {
+    throw new ExplicitManagedWorktreeAllocationError(
+      'path_unavailable',
+      `The managed Worktree path already exists: ${worktreePath}`,
+      branchName,
+      worktreePath,
+    );
+  }
+
+  await ensureManagedWorktreeParent(worktreePath);
+  return { branchName, worktreePath };
+}
+
 function resolveAllocatedWorktreePath(
   projectDir: string,
   branchName: string,

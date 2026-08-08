@@ -6,8 +6,17 @@ import { waitForPreparationBeforeAgent } from '@/lib/projects/preparation-gate';
 import { broadcastTaskMutation } from '@/lib/ws/mutation-broadcast';
 import { checkManagedWorktreePreflight } from '@/lib/worktrees/preflight';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
-import { createGitWorktree } from '@/lib/worktrees/create';
 import {
+  createGitWorktree,
+  WorktreeCreationError,
+  type WorktreeCreationResult,
+} from '@/lib/worktrees/create';
+import {
+  listWorktreeBaseRefs,
+  resolveWorktreeCheckoutTarget,
+} from '@/lib/worktrees/base-refs';
+import {
+  allocateCheckoutManagedWorktree,
   allocateExplicitManagedWorktree,
   ExplicitManagedWorktreeAllocationError,
   removeManagedWorktree,
@@ -64,6 +73,10 @@ export function createDatabaseControlWorktreeCreator(options: {
         );
       }
       const runGit = createGitRunner(agentEnvironment);
+      const source = request.source ?? {
+        mode: 'branch-off' as const,
+        baseRef: request.startPoint,
+      };
 
       const preflight = await checkManagedWorktreePreflight(projectDir, runGit);
       if (!preflight.ok) {
@@ -75,82 +88,124 @@ export function createDatabaseControlWorktreeCreator(options: {
         );
       }
 
-      await validateBranch(projectDir, request.branch, runGit);
-      await resolveStartPoint(
-        projectDir,
-        request.startPoint,
-        runGit,
-      );
+      const checkoutTarget = source.mode === 'checkout-branch'
+        ? resolveWorktreeCheckoutTarget(
+            source.branch,
+            await listWorktreeBaseRefs(projectDir, runGit),
+          )
+        : null;
+      if (source.mode === 'checkout-branch' && !checkoutTarget) {
+        throw new ControlWorktreeCreationError(
+          'BRANCH_NOT_FOUND',
+          `Branch '${source.branch}' does not exist.`,
+          422,
+          { branch: source.branch },
+        );
+      }
+      const branchName = checkoutTarget?.branchName ?? request.branch;
+      await validateBranch(projectDir, branchName, runGit);
+      if (source.mode === 'branch-off') {
+        await resolveStartPoint(projectDir, source.baseRef ?? 'HEAD', runGit);
+      }
 
       let worktreePath: string;
       try {
         const rootDir = await resolveManagedWorktreeRoot(projectDir, agentEnvironment);
-        const allocation = await allocateExplicitManagedWorktree(projectDir, request.branch, {
-          rootDir,
-          runGit,
-          pathTemplate: settings.managedWorktreePathTemplate,
-          agentEnvironment,
-        });
+        const allocation = checkoutTarget
+          ? await allocateCheckoutManagedWorktree(projectDir, branchName, {
+              rootDir,
+              runGit,
+              pathTemplate: settings.managedWorktreePathTemplate,
+              agentEnvironment,
+            })
+          : await allocateExplicitManagedWorktree(projectDir, branchName, {
+              rootDir,
+              runGit,
+              pathTemplate: settings.managedWorktreePathTemplate,
+              agentEnvironment,
+            });
         worktreePath = allocation.worktreePath;
       } catch (error) {
         if (error instanceof ExplicitManagedWorktreeAllocationError) {
           if (error.code === 'branch_already_exists') {
             throw new ControlWorktreeCreationError(
               'BRANCH_ALREADY_EXISTS',
-              `Branch '${request.branch}' already exists.`,
+              `Branch '${branchName}' already exists.`,
               409,
-              { branch: request.branch },
+              { branch: branchName },
             );
           }
           throw new ControlWorktreeCreationError(
             'WORKTREE_CREATE_FAILED',
             'The managed Worktree path is unavailable.',
             409,
-            { branch: request.branch },
+            { branch: branchName },
           );
         }
         throw new ControlWorktreeCreationError(
           'WORKTREE_CREATE_FAILED',
           'The managed Worktree path policy could not allocate a checkout.',
           500,
-          { branch: request.branch },
+          { branch: branchName },
         );
       }
 
+      let creation: WorktreeCreationResult;
       try {
-        await createGitWorktree({
+        creation = await createGitWorktree({
           projectDir,
           worktreePath,
-          branchName: request.branch,
-          source: { mode: 'branch-off', baseRef: request.startPoint },
+          branchName,
+          source: checkoutTarget
+            ? { mode: 'checkout-branch', branch: checkoutTarget.selectedRef }
+            : source,
           runGit,
         });
       } catch (error) {
+        if (error instanceof WorktreeCreationError && error.code === 'branch_not_found') {
+          throw new ControlWorktreeCreationError(
+            'BRANCH_NOT_FOUND',
+            error.message,
+            422,
+            { branch: source.mode === 'checkout-branch' ? source.branch : branchName },
+          );
+        }
+        const branchAlreadyCheckedOut = isAlreadyCheckedOutError(error);
         const branchAlreadyExists = isExistingBranchError(error);
         throw new ControlWorktreeCreationError(
-          branchAlreadyExists ? 'BRANCH_ALREADY_EXISTS' : 'WORKTREE_CREATE_FAILED',
-          branchAlreadyExists
-            ? `Branch '${request.branch}' already exists.`
-            : 'Git could not create the managed Worktree.',
-          branchAlreadyExists ? 409 : 500,
-          { branch: request.branch, startPoint: request.startPoint },
+          branchAlreadyCheckedOut
+            ? 'BRANCH_ALREADY_CHECKED_OUT'
+            : branchAlreadyExists ? 'BRANCH_ALREADY_EXISTS' : 'WORKTREE_CREATE_FAILED',
+          branchAlreadyCheckedOut
+            ? `Branch '${branchName}' is already checked out.`
+            : branchAlreadyExists
+              ? `Branch '${branchName}' already exists.`
+              : 'Git could not create the managed Worktree.',
+          branchAlreadyCheckedOut || branchAlreadyExists ? 409 : 500,
+          { branch: branchName, startPoint: request.startPoint },
         );
       }
       let persisted: { taskId: string; worktree: ControlWorktreeRecord };
       try {
         persisted = persistDatabaseControlWorktree({
           projectId: request.project.id,
-          title: request.title ?? request.branch,
-          branch: request.branch,
+          title: request.title ?? branchName,
+          branch: branchName,
           filesystemPath: worktreePath,
         });
       } catch {
-        await compensateCreatedWorktree(projectDir, worktreePath, request.branch, runGit);
+        await compensateCreatedWorktree(
+          projectDir,
+          worktreePath,
+          branchName,
+          creation.createdBranch,
+          runGit,
+        );
         throw new ControlWorktreeCreationError(
           'WORKTREE_PERSIST_FAILED',
           'The managed Worktree could not be persisted.',
           500,
-          { branch: request.branch, startPoint: request.startPoint },
+          { branch: branchName, startPoint: request.startPoint },
         );
       }
 
@@ -166,7 +221,7 @@ export function createDatabaseControlWorktreeCreator(options: {
           projectId: request.project.id,
           projectDir,
           worktreePath,
-          branchName: request.branch,
+          branchName,
         });
       } catch {
         const failedWorktree = createDatabaseControlWorktreeSource()
@@ -244,14 +299,22 @@ function isExistingBranchError(error: unknown): boolean {
     .includes('already exists');
 }
 
+function isAlreadyCheckedOutError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return message.includes('already checked out') || message.includes('already used by worktree');
+}
+
 async function compensateCreatedWorktree(
   projectDir: string,
   worktreePath: string,
   branch: string,
+  deleteBranch: boolean,
   runGit: GitRunner,
 ): Promise<void> {
   await removeManagedWorktree(projectDir, worktreePath, runGit).catch(() => undefined);
-  await runGit(['-C', projectDir, 'branch', '-D', '--', branch]).catch(() => undefined);
+  if (deleteBranch) {
+    await runGit(['-C', projectDir, 'branch', '-D', '--', branch]).catch(() => undefined);
+  }
 }
 
 function preparationError(

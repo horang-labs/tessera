@@ -147,7 +147,7 @@ export function controlUsage() {
   tessera project show <project-id> [--json]
   tessera worktree list (--current | --project <project-id>) [--json]
   tessera worktree show <worktree-id> [--json]
-  tessera worktree create (--current | --project <project-id>) -b <new-branch> <start-point> [--title <title>] [--json]
+  tessera worktree create (--current | --project <project-id>) [--mode <branch-off|checkout-branch>] -b <branch> [<start-point>] [--title <title>] [--json]
   tessera session list --worktree <worktree-id> [--json]
   tessera session show <session-id> [--json]
   tessera session create --worktree <worktree-id> --provider <provider-id> [--title <title>] [--model <model>] [--effort <level>] [--fast | --no-fast] [--json]
@@ -423,8 +423,8 @@ function parseControlInvocation(argv, env) {
         ? '/__tessera/control/v1/worktrees?current=1'
         : `/__tessera/control/v1/worktrees?projectId=${encodeURIComponent(creation.selector.projectId)}`,
       requestBody: {
-        branch: creation.branch,
-        startPoint: creation.startPoint,
+        ...(creation.source.mode === 'branch-off' ? { branch: creation.branch } : {}),
+        source: creation.source,
         ...(creation.title === undefined ? {} : { title: creation.title }),
       },
     };
@@ -725,6 +725,8 @@ function parseWorktreeCreation(args) {
   let branchSeen = false;
   let title;
   let titleSeen = false;
+  let mode = 'branch-off';
+  let modeSeen = false;
   let positionalOnly = false;
   const positionals = [];
 
@@ -758,6 +760,17 @@ function parseWorktreeCreation(args) {
       index += 1;
       continue;
     }
+    if (!positionalOnly && arg === '--mode') {
+      if (modeSeen) throw new Error('--mode may be supplied only once.');
+      const value = args[index + 1];
+      if (value !== 'branch-off' && value !== 'checkout-branch') {
+        throw new Error('--mode requires branch-off or checkout-branch.');
+      }
+      mode = value;
+      modeSeen = true;
+      index += 1;
+      continue;
+    }
     if (!positionalOnly && arg === '--title') {
       if (titleSeen) throw new Error('--title may be supplied only once.');
       const value = args[index + 1];
@@ -777,13 +790,18 @@ function parseWorktreeCreation(args) {
     throw new Error('Exactly one of --current and --project <project-id> is required.');
   }
   if (!branchSeen) throw new Error('-b/--branch is required.');
-  if (positionals.length !== 1 || !positionals[0]) {
+  if (mode === 'branch-off' && (positionals.length !== 1 || !positionals[0])) {
     throw new Error('Exactly one Worktree start point is required.');
+  }
+  if (mode === 'checkout-branch' && positionals.length !== 0) {
+    throw new Error('checkout-branch does not accept a Worktree start point.');
   }
   return {
     selector: current ? { kind: 'current' } : { kind: 'project', projectId },
     branch,
-    startPoint: positionals[0],
+    source: mode === 'checkout-branch'
+      ? { mode, branch }
+      : { mode, baseRef: positionals[0] },
     ...(title === undefined ? {} : { title }),
   };
 }
