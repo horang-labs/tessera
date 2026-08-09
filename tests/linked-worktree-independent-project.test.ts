@@ -116,6 +116,16 @@ test('a linked Worktree opens as an independent Project without changing canonic
     false,
   );
   await archiveService.restoreArchivedChat('session-c');
+  assert.equal(
+    projection.getProjectViewProjection('project-a').linkedWorktrees[0].sessions
+      .some((session) => session.id === 'session-c'),
+    true,
+  );
+  assert.equal(
+    projection.getProjectViewProjection('project-c').sessions
+      .some((session) => session.id === 'session-c'),
+    true,
+  );
 
   persistence.persistCreatedSessionRecord({
     sessionId: 'session-c-delete',

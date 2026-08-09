@@ -286,7 +286,7 @@ export function ArchiveDashboard() {
 
   const deleteWorktreeOnly = useCallback(async (item: ArchiveItem) => {
     if (!item.worktreeId) return;
-    const res = await fetch(`/api/archive/worktrees/${item.worktreeId}`, { method: 'DELETE' });
+    const res = await fetch(`/api/worktrees/${item.worktreeId}`, { method: 'DELETE' });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
       const message = body.error ?? t('archive.errors.deleteWorktreeFailed');
@@ -332,10 +332,12 @@ export function ArchiveDashboard() {
     setBulkWorktreeDeleteOpen(false);
 
     if (body.result?.errors.length) {
-      setError(t('archive.errors.bulkPartial', {
+      const summary = t('archive.errors.bulkPartial', {
         removed: body.result.removed,
         errors: body.result.errors.length,
-      }));
+      });
+      const details = [...new Set(body.result.errors.map((entry) => entry.error))].join(' ');
+      setError(`${summary} ${details}`);
     } else {
       setError(null);
     }

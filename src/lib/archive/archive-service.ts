@@ -375,6 +375,34 @@ export async function permanentlyDeleteArchivedTask(userId: string, taskId: stri
   dbTasks.deleteTask(taskId);
 }
 
+export async function removeWorktreeById(worktreeId: string, userId?: string): Promise<void> {
+  assertWorktreeDeletionAllowed(worktreeId);
+  const archivedForDeletion: string[] = [];
+
+  try {
+    for (const taskId of dbWorktrees.getTaskIdsForWorktree(worktreeId)) {
+      const task = dbTasks.getTask(taskId, getActiveSessionIds(), { includeArchivedSessions: true });
+      if (task && !task.archived) {
+        await setTaskArchived(taskId, true, userId);
+        archivedForDeletion.push(taskId);
+      }
+    }
+    await removeArchivedWorktreeById(worktreeId, userId);
+  } catch (error) {
+    for (const taskId of archivedForDeletion.reverse()) {
+      try {
+        await setTaskArchived(taskId, false, userId);
+      } catch (compensationError) {
+        logger.error(
+          { taskId, worktreeId, error: compensationError },
+          'Failed to restore Task after Worktree deletion failure',
+        );
+      }
+    }
+    throw error;
+  }
+}
+
 export async function removeArchivedWorktreeById(worktreeId: string, userId?: string): Promise<void> {
   const { items } = await listArchiveItems();
   const item = items.find((entry) => entry.worktreeId === worktreeId && !entry.sharedWorktree);

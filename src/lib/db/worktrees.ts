@@ -91,6 +91,16 @@ export function getSessionIdsForWorktree(worktreeId: string): string[] {
   return rows.map((row) => row.id);
 }
 
+export function getTaskIdsForWorktree(worktreeId: string): string[] {
+  const rows = getDb().prepare(`
+    SELECT id
+    FROM tasks
+    WHERE public_worktree_id = ?
+    ORDER BY created_at, id
+  `).all(worktreeId) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
+}
+
 /** Record an explicit physical deletion without removing canonical history. */
 export function markWorktreeDeleted(worktreeId: string, deletedAt: string): void {
   const db = getDb();

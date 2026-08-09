@@ -49,7 +49,7 @@ export function DeleteTaskDialog({
             </p>
           )}
           <p className="mt-2 text-sm text-(--text-muted)">
-            {t('dialog.deleteWarning')}
+            {t('dialog.deleteTaskWarning')}
           </p>
         </>
       )}

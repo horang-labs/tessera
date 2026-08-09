@@ -859,6 +859,7 @@ export interface I18nMessages {
     deleteTaskTitle: string;
     deleteTaskConfirm: string;
     deleteTaskChildSessions: string;
+    deleteTaskWarning: string;
     deleteWarning: string;
     deleteWorktreeWarning: string;
     deleteSession: string;

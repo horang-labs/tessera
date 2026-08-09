@@ -3,6 +3,7 @@ import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import { useSessionStore } from './session-store';
 import { useTabStore } from './tab-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { toast } from './notification-store';
 
 interface LoadTasksOptions {
   setCurrent?: boolean;
@@ -480,6 +481,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   deleteTask: async (id) => {
     const existingTask = get().getTask(id);
+    if (!existingTask?.worktreeId) {
+      toast.error('This Worktree has no canonical identity and cannot be deleted safely.');
+      return null;
+    }
     const projectId = existingTask?.projectId;
     const linkedSessionIds = existingTask?.sessions.map((session) => session.id) ?? [];
 
@@ -503,16 +508,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
 
     try {
-      const res = await fetchWithClientId(`/api/tasks/${id}`, { method: 'DELETE' });
+      const res = await fetchWithClientId(`/api/worktrees/${existingTask.worktreeId}`, { method: 'DELETE' });
       if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        toast.error(body.error ?? 'Failed to delete Worktree');
         await useSessionStore.getState().loadProjects();
         if (projectId)
           await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
         return null;
       }
-      const data = await res.json();
-      return { deletedSessionCount: data.deletedSessionCount ?? data.unlinkedCount ?? 0 };
-    } catch {
+      return { deletedSessionCount: 0 };
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete Worktree');
       await useSessionStore.getState().loadProjects();
       if (projectId)
         await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });

@@ -15,8 +15,11 @@ test('Project ownership transfer API and UI are unavailable', () => {
   );
   assert.equal(
     fs.existsSync(new URL('../src/app/api/archive/worktrees/[id]/route.ts', import.meta.url)),
-    true,
+    false,
   );
+  assert.equal(fs.existsSync(new URL('../src/app/api/worktrees/[id]/route.ts', import.meta.url)), true);
+  assert.doesNotMatch(read('src/app/api/tasks/[id]/route.ts'), /export async function DELETE/);
+  assert.match(read('src/stores/task-store.ts'), /\/api\/worktrees\/\$\{existingTask\.worktreeId\}/);
 
   const userSurfaces = [
     'src/components/chat/collection-group-sections.tsx',
