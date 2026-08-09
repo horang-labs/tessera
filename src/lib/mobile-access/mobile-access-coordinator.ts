@@ -318,7 +318,6 @@ export class MobileAccessCoordinator {
       }
 
       await this.dependencies.checkHealth(persisted.origin);
-      await this.dependencies.publishPairingOrigin(persisted.origin);
       return this.remember({ state: 'ready', origin: persisted.origin });
     } catch (error) {
       return this.remember(retryableFailure(error));

@@ -72,6 +72,7 @@ function createHarness(options: {
   configureResult?: TailscaleConfigureResult;
   configureError?: Error | null;
   configureGate?: Promise<void>;
+  inspectServeGate?: Promise<void>;
 } = {}) {
   const calls: string[] = [];
   const opened: string[] = [];
@@ -97,6 +98,7 @@ function createHarness(options: {
     },
     async inspectServe() {
       calls.push('inspect-serve');
+      await options.inspectServeGate;
       return structuredClone(serve);
     },
     async configureServe(endpoint) {
@@ -178,9 +180,29 @@ test('launch reconciliation leaves a current owned mapping unchanged', async () 
     'inspect-node',
     'inspect-serve',
     `health:https://${DNS_NAME}`,
-    `publish:https://${DNS_NAME}`,
   ]);
   assert.equal(harness.store.saves.length, 0);
+});
+
+test('launch reconciliation does not finish before Serve inspection is ready', async () => {
+  let releaseInspection!: () => void;
+  const inspectServeGate = new Promise<void>((resolve) => { releaseInspection = resolve; });
+  const harness = createHarness({ serve: ownedServe(), inspectServeGate });
+  rememberCompletedSetup(harness.store);
+
+  let settled = false;
+  const reconciliation = harness.coordinator
+    .reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT })
+    .finally(() => { settled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(harness.calls, ['inspect-node', 'inspect-serve']);
+  assert.equal(settled, false);
+  releaseInspection();
+  assert.deepEqual(await reconciliation, {
+    state: 'ready',
+    origin: `https://${DNS_NAME}`,
+  });
 });
 
 test('launch reconciliation repairs only the owned backend target and preserves its origin', async () => {
