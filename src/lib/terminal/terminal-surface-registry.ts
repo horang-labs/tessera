@@ -1571,6 +1571,7 @@ export class TerminalSurface {
     controller: TerminalScrollController,
   ): () => void {
     let pointerScrollActive = false;
+    let touchScrollActive = false;
     const isScrollbarTarget = (target: EventTarget | null): boolean => (
       target instanceof Element
       && target.closest('.xterm-viewport, .xterm-scrollbar, .xterm-slider') !== null
@@ -1591,22 +1592,36 @@ export class TerminalSurface {
       pointerScrollActive = false;
       controller.syncFromViewport();
     };
+    const onTouchStart = () => {
+      touchScrollActive = true;
+    };
+    const onTouchDone = () => {
+      if (!touchScrollActive) return;
+      touchScrollActive = false;
+      controller.syncFromViewport();
+    };
     const onScroll = () => {
       controller.notifyViewportChanged();
-      if (pointerScrollActive) controller.syncFromViewport();
+      if (pointerScrollActive || touchScrollActive) controller.syncFromViewport();
     };
 
     root.addEventListener('wheel', onWheel, { capture: true, passive: true });
     root.addEventListener('pointerdown', onPointerDown, true);
+    root.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
     root.addEventListener('scroll', onScroll, true);
     window.addEventListener('pointerup', onPointerDone, true);
     window.addEventListener('pointercancel', onPointerDone, true);
+    window.addEventListener('touchend', onTouchDone, true);
+    window.addEventListener('touchcancel', onTouchDone, true);
     return () => {
       root.removeEventListener('wheel', onWheel, true);
       root.removeEventListener('pointerdown', onPointerDown, true);
+      root.removeEventListener('touchstart', onTouchStart, true);
       root.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('pointerup', onPointerDone, true);
       window.removeEventListener('pointercancel', onPointerDone, true);
+      window.removeEventListener('touchend', onTouchDone, true);
+      window.removeEventListener('touchcancel', onTouchDone, true);
     };
   }
 

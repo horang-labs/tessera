@@ -12,8 +12,8 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { chromium } from '@playwright/test';
 import { createPhoneContext, createPhoneContextWithAddressBarHidden } from './phone-viewport.mjs';
+import { launchPhoneBrowser } from './phone-browser.mjs';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 900 };
 
@@ -33,8 +33,8 @@ async function reservePort() {
  * ticket needs: a way to open Settings at a viewport and font scale, and a way to
  * shut it all down.
  *
- * Headful is not optional — a headless run renders through SwiftShader and reports
- * emulated device metrics, which invented one defect in this wave already (#256).
+ * Headless is the regression-test default so the suite never steals desktop focus.
+ * `TESSERA_E2E_HEADED=1` remains available for deliberate visual QA.
  *
  * `viewport` keeps the three states the files this was extracted from already
  * distinguish — the phone has two real content heights, not one (#265), and a helper
@@ -102,7 +102,7 @@ export async function startSettingsHarness() {
   }
   if (!ready) throw new Error(`server did not start:\n${logs()}`);
 
-  const browser = await chromium.launch({ headless: false });
+  const browser = await launchPhoneBrowser();
 
   /**
    * The font scale is set on the server *and* in localStorage: `ThemeInitializer`

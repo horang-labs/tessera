@@ -493,16 +493,17 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
           </section>
 
           <section className="border-t border-(--divider) py-4">
-            <div className="flex items-center gap-3">
-              <span className="w-24 shrink-0 whitespace-nowrap text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:gap-3">
+              <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted) sm:w-24">
                 {t('task.creation.agentUiLabel')}
               </span>
-              <div className="w-fit min-w-0 max-w-full" data-empty-panel-execution-mode>
+              <div className="w-full min-w-0 sm:w-fit sm:max-w-full" data-empty-panel-execution-mode>
                 <ExecutionModeSelector
                   value={executionMode}
                   onChange={setExecutionMode}
                   providerId={selectedProvider}
                   density="regular"
+                  className="w-full"
                   name={`empty-panel-execution-mode-${panelId}`}
                 />
               </div>

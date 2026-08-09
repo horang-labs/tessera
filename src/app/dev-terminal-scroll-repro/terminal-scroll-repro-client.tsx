@@ -46,6 +46,7 @@ interface ReproWindow extends Window {
     takeCapturedPtyInput(): string[];
     visibleText(): string | null;
     viewportY(): number | null;
+    writeLiveOutput(data: string): boolean;
     writeOutput(data: string): Promise<boolean>;
   };
 }
@@ -210,6 +211,17 @@ export function TerminalScrollReproClient() {
           terminal: { buffer: { active: ReproTerminalBuffer } } | null;
         }).terminal?.buffer.active.viewportY ?? null
       ),
+      writeLiveOutput: (data) => {
+        // Exercise the production live-output wrapper rather than xterm.write()
+        // directly. The wrapper owns viewport capture/restore after each PTY chunk.
+        const internals = surface as unknown as {
+          applyTerminalOutput(value: string): void;
+          terminal: unknown | null;
+        };
+        if (!internals.terminal) return false;
+        internals.applyTerminalOutput(data);
+        return true;
+      },
       writeOutput: (data) => new Promise((resolve) => {
         const terminal = (surface as unknown as {
           terminal: { write(value: string, callback: () => void): void } | null;
