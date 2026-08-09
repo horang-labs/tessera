@@ -38,12 +38,21 @@ export const CHAT_WORKFLOW_ICON_FILL: Record<WorkflowStatus, string> = {
 
 export interface TaskEntity {
   id: string;              // 'task_<uuid>'
+  /** Stable identity of the linked Worktree represented by this task. */
+  worktreeId?: string;
   projectId: string;
   title: string;
   collectionId?: string;   // FK -> collections.id
   workflowStatus: WorkflowStatus;
   worktreeBranch?: string;
   workDir?: string;        // Parent-owned checkout path (legacy child fallback during migration)
+  /** Immutable Project-view placement captured when the Worktree was created. */
+  creationScope?: {
+    originWorktreeId: string;
+    branch: string;
+  };
+  /** Git provenance only; never used to decide Project-view placement. */
+  startPoint?: string;
   /** True when Tessera recorded this worktree as app-managed. */
   worktreeManaged?: boolean;
   archived?: boolean;

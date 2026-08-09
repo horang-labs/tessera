@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { setTaskWorktreeCheckout, taskExists } from '@/lib/db/tasks';
+import { getTask, setTaskWorktreeCheckout, taskExists } from '@/lib/db/tasks';
+import { getProjectWorktree } from '@/lib/db/projects';
 import logger from '@/lib/logger';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { startWorktreePreparation } from '@/lib/projects/worktree-preparation';
@@ -113,6 +114,29 @@ export async function POST(req: NextRequest) {
   if (taskId !== undefined && !taskExists(taskId)) {
     return NextResponse.json({ error: `Unknown task: ${taskId}` }, { status: 404 });
   }
+
+  const originatingTask = typeof taskId === 'string' ? getTask(taskId) : undefined;
+  const originProjectWorktree = originatingTask
+    ? getProjectWorktree(originatingTask.projectId)
+    : undefined;
+  if (originatingTask && !originProjectWorktree?.currentBranch) {
+    return NextResponse.json(
+      {
+        code: 'PROJECT_BRANCH_UNAVAILABLE',
+        error: 'The Project Worktree must be on a branch before creating a linked Worktree.',
+      },
+      { status: 422 },
+    );
+  }
+  const creationScope = originProjectWorktree?.currentBranch
+    ? {
+        originWorktreeId: originProjectWorktree.id,
+        branch: originProjectWorktree.currentBranch,
+      }
+    : undefined;
+  const startPoint = source.value.mode === 'checkout-branch'
+    ? source.value.branch
+    : source.value.baseRef ?? 'HEAD';
 
   // Ensure projectDir is absolute and has no path traversal
   if (!isAbsoluteFilesystemPath(projectDir) || projectDir.includes('..')) {
@@ -317,7 +341,12 @@ export async function POST(req: NextRequest) {
     // Recorded here rather than by a follow-up call from the client, so the
     // task and its worktree cannot be left disagreeing if that call never
     // arrives.
-    setTaskWorktreeCheckout(taskId, { branch: branchName, path: worktreePath });
+    setTaskWorktreeCheckout(taskId, {
+      branch: branchName,
+      path: worktreePath,
+      creationScope,
+      startPoint,
+    });
 
     // The worktree exists the moment git succeeds, so its creation is reported
     // without waiting on preparation — which may take as long as the user's

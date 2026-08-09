@@ -32,6 +32,7 @@ import {
   type ControlWorktreeCreator,
   type ControlWorktreeRecord,
 } from './service';
+import * as dbProjects from '@/lib/db/projects';
 
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -55,6 +56,19 @@ export function createDatabaseControlWorktreeCreator(options: {
         getAgentEnvironment(userId),
       ]);
       const projectDir = request.project.decodedPath;
+      const originProjectWorktree = dbProjects.getProjectWorktree(request.project.id);
+      if (!originProjectWorktree?.currentBranch) {
+        throw new ControlWorktreeCreationError(
+          'WORKTREE_CREATE_FAILED',
+          'The Project Worktree must be on a branch before creating a linked Worktree.',
+          422,
+          { projectId: request.project.id },
+        );
+      }
+      const creationScope = {
+        originWorktreeId: originProjectWorktree.id,
+        branch: originProjectWorktree.currentBranch,
+      };
       const environmentValidation = validateProjectEnvironment(
         projectDir,
         agentEnvironment,
@@ -206,6 +220,8 @@ export function createDatabaseControlWorktreeCreator(options: {
           title: request.title ?? branchName,
           branch: branchName,
           filesystemPath: worktreePath,
+          creationScope,
+          startPoint: request.startPoint,
         });
       } catch {
         await compensateCreatedWorktree(

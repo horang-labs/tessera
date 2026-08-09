@@ -137,12 +137,16 @@ test('Control creates exact local and remote branches through the managed path p
   assert.equal(remote.title, 'Remote presentation title');
   assert.equal(git(remote.path!, ['rev-parse', 'HEAD']), repository.remoteCommit);
 
+  const originWorktree = mods.projects.getProjectWorktree(repository.path);
+  assert.ok(originWorktree);
   const uiWorktrees = mods.tasks.getTasks(repository.path);
   assert.deepEqual(
     uiWorktrees.map((worktree) => ({
       title: worktree.title,
       branch: worktree.worktreeBranch,
       path: worktree.workDir,
+      creationScope: worktree.creationScope,
+      startPoint: worktree.startPoint,
       sessionCount: worktree.sessions.length,
     })),
     [
@@ -150,15 +154,32 @@ test('Control creates exact local and remote branches through the managed path p
         title: 'Remote presentation title',
         branch: 'feature/exact-remote',
         path: remote.path,
+        creationScope: { originWorktreeId: originWorktree.id, branch: 'main' },
+        startPoint: 'origin/remote-start',
         sessionCount: 0,
       },
       {
         title: 'feature/exact-local',
         branch: 'feature/exact-local',
         path: local.path,
+        creationScope: { originWorktreeId: originWorktree.id, branch: 'main' },
+        startPoint: 'main',
         sessionCount: 0,
       },
     ],
+  );
+
+  git(repository.path, ['checkout', '-b', 'view/other']);
+  assert.deepEqual(
+    (await control.listWorktrees({ kind: 'project', projectId: repository.path }, context))
+      .worktrees,
+    [],
+  );
+  git(repository.path, ['checkout', 'main']);
+  assert.deepEqual(
+    (await control.listWorktrees({ kind: 'project', projectId: repository.path }, context))
+      .worktrees.map((worktree) => worktree.branch),
+    ['feature/exact-remote', 'feature/exact-local'],
   );
 
   await assert.rejects(
@@ -193,6 +214,19 @@ test('Control creates exact local and remote branches through the managed path p
       && error.code === 'PROJECT_ENVIRONMENT_MISMATCH',
   );
   assert.equal(hasBranch(repository.path, 'feature/environment-mismatch'), false);
+
+  git(repository.path, ['checkout', '--detach']);
+  await assert.rejects(
+    control.createWorktree({
+      selector: { kind: 'project', projectId: repository.path },
+      branch: 'feature/detached-origin',
+      startPoint: 'main',
+    }, context),
+    (error: unknown) => error instanceof mods.service.ControlOperationError
+      && error.code === 'WORKTREE_CREATE_FAILED'
+      && error.message === 'The Project Worktree must be on a branch before creating a linked Worktree.',
+  );
+  assert.equal(hasBranch(repository.path, 'feature/detached-origin'), false);
   assert.equal(mods.tasks.getTasks(repository.path).length, 2);
 });
 
@@ -274,6 +308,12 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
   const managedRoot = path.join(testRoot, 'api-checkout-worktrees');
   git(repository.path, ['branch', 'feature/api-resume', repository.localCommit]);
   git(repository.path, ['config', 'branch.feature/api-resume.base', 'refs/heads/main']);
+  mods.projects.registerProject(repository.path, repository.path, 'API checkout existing');
+  mods.tasks.createTask({
+    id: 'api-creation-scope-task',
+    projectId: repository.path,
+    title: 'API creation scope',
+  });
   await mods.settings.SettingsManager.save('electron-local-user', {
     ...mods.defaults.DEFAULT_SETTINGS,
     agentEnvironment: 'wsl',
@@ -306,6 +346,7 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
         branchPrefix: 'must-not-apply/',
         branchSlug: 'must-not-apply',
         allowBranchSlugSuffix: false,
+        taskId: 'api-creation-scope-task',
       }),
     }));
     const responseText = await response.text();
@@ -319,6 +360,12 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
       git(repository.path, ['config', '--get', 'branch.feature/api-resume.base']),
       'refs/heads/main',
     );
+    const persisted = mods.tasks.getTask('api-creation-scope-task');
+    assert.deepEqual(persisted?.creationScope, {
+      originWorktreeId: mods.projects.getProjectWorktree(repository.path)?.id,
+      branch: 'main',
+    });
+    assert.equal(persisted?.startPoint, 'feature/api-resume');
 
     const refusal = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
       method: 'POST',
@@ -341,6 +388,35 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
       holderWorktreePath: repository.path,
     });
     assert.equal(fs.existsSync(path.join(managedRoot, 'main')), false);
+
+    mods.tasks.createTask({
+      id: 'api-detached-origin-task',
+      projectId: repository.path,
+      title: 'Detached origin refusal',
+    });
+    git(repository.path, ['checkout', '--detach']);
+    const detachedRefusal = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
+      method: 'POST',
+      headers: {
+        [APP_SECRET_HEADER]: secret,
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({
+        projectDir: repository.path,
+        source: { mode: 'branch-off', baseRef: 'main' },
+        branchSlug: 'detached-origin',
+        taskId: 'api-detached-origin-task',
+      }),
+    }));
+    assert.equal(detachedRefusal.status, 422);
+    assert.deepEqual(await detachedRefusal.json(), {
+      code: 'PROJECT_BRANCH_UNAVAILABLE',
+      error: 'The Project Worktree must be on a branch before creating a linked Worktree.',
+    });
+    assert.equal(hasBranch(repository.path, 'detached-origin'), false);
+    assert.equal(mods.tasks.getTask('api-detached-origin-task')?.creationScope, undefined);
   } finally {
     if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
     else process.env.TESSERA_ELECTRON_RUNTIME = previousElectronRuntime;

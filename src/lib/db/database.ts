@@ -232,6 +232,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addPreparationStatusColumns(db);
   ensureWorktreeIdentityColumns(db);
   ensureCanonicalWorktreeRegistry(db);
+  ensureWorktreeCreationScopeColumns(db);
 }
 
 /**
@@ -1051,6 +1052,38 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     addColumnIfMissing(db, 'sessions', 'scope_branch', 'TEXT');
     logger.info('Migration v35 applied: immutable Session Worktree and branch scope');
   }
+
+  if (fromVersion < 36) {
+    ensureWorktreeCreationScopeColumns(db);
+    logger.info('Migration v36 applied: immutable Worktree creation scope and start point');
+  }
+}
+
+function ensureWorktreeCreationScopeColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'creation_scope_worktree_id', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'creation_scope_branch', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'start_point', 'TEXT');
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_tasks_creation_scope_immutable
+    BEFORE UPDATE OF creation_scope_worktree_id, creation_scope_branch ON tasks
+    FOR EACH ROW
+    WHEN OLD.creation_scope_worktree_id IS NOT NULL
+      AND (
+        NEW.creation_scope_worktree_id IS NOT OLD.creation_scope_worktree_id
+        OR NEW.creation_scope_branch IS NOT OLD.creation_scope_branch
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Worktree Creation Scope is immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tasks_start_point_immutable
+    BEFORE UPDATE OF start_point ON tasks
+    FOR EACH ROW
+    WHEN OLD.start_point IS NOT NULL AND NEW.start_point IS NOT OLD.start_point
+    BEGIN
+      SELECT RAISE(ABORT, 'Worktree Start Point is immutable');
+    END;
+  `);
 }
 
 function ensureCanonicalWorktreeRegistry(db: DatabaseWrapper): void {
