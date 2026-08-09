@@ -9,6 +9,7 @@ import { RendererConsoleBridge } from '@/components/renderer-console-bridge';
 import { Agentation } from 'agentation';
 import { ElectronCloseDialog } from '@/components/layout/electron-close-dialog';
 import { TelemetryProvider } from '@/components/telemetry/telemetry-provider';
+import { PwaServiceWorkerRegistrar } from '@/components/pwa/pwa-service-worker-registrar';
 import {
   DEFAULT_FONT_SCALE,
   FONT_SCALE_MIGRATIONS,
@@ -18,6 +19,16 @@ import {
 export const metadata: Metadata = {
   title: 'Tessera',
   description: 'Multi-provider chat development tool',
+  applicationName: 'Tessera',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    apple: '/icons/tessera-192.png',
+  },
+  appleWebApp: {
+    capable: true,
+    title: 'Tessera',
+    statusBarStyle: 'black-translucent',
+  },
 };
 
 // `width` and `initialScale` restate Next's default; declaring `viewport` replaces it.
@@ -30,6 +41,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   interactiveWidget: 'resizes-content',
+  themeColor: '#0b1118',
 };
 
 // Inline script to prevent FOUC (Flash of Unstyled Content)
@@ -76,6 +88,7 @@ export default function RootLayout({
         <I18nHtmlLang />
         <ThemeInitializer />
         <TelemetryProvider />
+        <PwaServiceWorkerRegistrar />
         {children}
         <ElectronCloseDialog />
         {process.env.NODE_ENV === 'development' && <Agentation />}

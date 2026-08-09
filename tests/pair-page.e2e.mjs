@@ -219,6 +219,8 @@ try {
   );
   await decidePairingRequest(pending.id, 'approve');
   await page.getByTestId('pairing-approved').waitFor({ timeout: 15_000 });
+  await page.waitForURL(`${origin}/install`, { timeout: 30_000 });
+  await page.getByRole('button', { name: 'Continue in browser' }).click();
   await page.waitForURL(`${origin}/chat`, { timeout: 30_000 });
   assert.match(
     (await context.cookies(origin)).find((cookie) => cookie.name === 'device')?.value ?? '',

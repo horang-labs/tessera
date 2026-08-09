@@ -45,6 +45,7 @@ next-env.d.ts
 *.png
 !assets/*.png
 !docs/**/*.png
+!public/icons/*.png
 
 # docs: README 홍보물, 에이전트 지침만 추적, 나머지는 로컬 전용 (ADR 포함)
 docs/*

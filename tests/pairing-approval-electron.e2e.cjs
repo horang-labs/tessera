@@ -175,6 +175,8 @@ async function main() {
     await approveButton.focus();
     await electronPage.keyboard.press('Enter');
     await approvedMobile.page.getByTestId('pairing-approved').waitFor({ timeout: 20_000 });
+    await approvedMobile.page.waitForURL(`${origin}/install`, { timeout: 30_000 });
+    await approvedMobile.page.getByRole('button', { name: 'Continue in browser' }).click();
     await approvedMobile.page.waitForURL(`${origin}/chat`, { timeout: 30_000 });
     assert.match(
       (await approvedMobile.context.cookies(origin))
