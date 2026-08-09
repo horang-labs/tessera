@@ -49,6 +49,7 @@ test('a background completed push displays exactly one routed notification', asy
       title: 'Task completed.',
       preview: 'All checks passed.',
       sessionId: 'session-1',
+      eventId: 'event-1',
       url: '/chat?session=session-1',
     }) },
   });
@@ -59,19 +60,67 @@ test('a background completed push displays exactly one routed notification', asy
       body: 'All checks passed.',
       icon: '/icons/tessera-192.png',
       badge: '/icons/tessera-192.png',
-      tag: 'tessera-session-completed-session-1',
+      tag: 'tessera-session-notification-event-1',
       data: { url: 'https://tessera.example/chat?session=session-1' },
     },
   }]);
 });
 
-test('a visible Tessera window suppresses the redundant operating-system notification', async () => {
+test('a visible Tessera window receives the event without an operating-system notification', async () => {
   const worker = await workerHarness();
-  worker.clients.push({ visibilityState: 'visible' });
+  const forwarded: unknown[] = [];
+  worker.clients.push({
+    visibilityState: 'visible',
+    postMessage: (message: unknown) => forwarded.push(message),
+  });
   await dispatch(worker.handlers.push, {
-    data: { json: () => ({ kind: 'completed', sessionId: 's1' }) },
+    data: { json: () => ({
+      kind: 'permission_request', eventId: 'event-visible', sessionId: 's1',
+      title: 'Permission requested.', preview: 'Bash is requesting permission to run',
+      url: '/chat?session=s1&prompt=tool-1',
+    }) },
   });
   assert.equal(worker.shown.length, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(forwarded)), [{
+    type: 'tessera-session-notification',
+    notification: {
+      kind: 'permission_request', eventId: 'event-visible', sessionId: 's1',
+      title: 'Permission requested.', preview: 'Bash is requesting permission to run',
+      url: '/chat?session=s1&prompt=tool-1',
+    },
+  }]);
+});
+
+test('all eligible kinds use kind-specific fallbacks and unrelated Push is ignored', async () => {
+  const worker = await workerHarness();
+  for (const [kind, title, body] of [
+    ['completed', 'Task completed.', 'Your Tessera session completed.'],
+    ['input_required', 'Input required.', 'Your Tessera session needs input.'],
+    ['permission_request', 'Permission requested.', 'A tool is waiting for permission.'],
+    ['ask_user_question', 'Question requires your answer.', 'A question is waiting for your answer.'],
+    ['plan_approval', 'Plan approval required.', 'A plan is waiting for approval.'],
+  ] as const) {
+    await dispatch(worker.handlers.push, {
+      data: { json: () => ({ kind, eventId: `event-${kind}`, sessionId: 's1' }) },
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(worker.shown.at(-1))), {
+      title,
+      options: {
+        body,
+        icon: '/icons/tessera-192.png',
+        badge: '/icons/tessera-192.png',
+        tag: `tessera-session-notification-event-${kind}`,
+        data: { url: 'https://tessera.example/chat' },
+      },
+    });
+  }
+
+  const shownBeforeExcluded = worker.shown.length;
+  await dispatch(worker.handlers.push, {
+    data: { json: () => ({ kind: 'error', eventId: 'event-error', sessionId: 's1' }) },
+  });
+  await dispatch(worker.handlers.push, { data: null });
+  assert.equal(worker.shown.length, shownBeforeExcluded);
 });
 
 test('notification click focuses an existing window or opens the same-origin session URL', async () => {
@@ -85,11 +134,11 @@ test('notification click focuses an existing window or opens the same-origin ses
   });
   await dispatch(existing.handlers.notificationclick, {
     notification: {
-      data: { url: 'https://tessera.example/chat?session=session-1' },
+      data: { url: 'https://tessera.example/chat?session=session-1&prompt=tool-1' },
       close() {},
     },
   });
-  assert.equal(navigated, 'https://tessera.example/chat?session=session-1');
+  assert.equal(navigated, 'https://tessera.example/chat?session=session-1&prompt=tool-1');
   assert.equal(focused, 1);
   assert.deepEqual(existing.opened, []);
 

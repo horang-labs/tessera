@@ -22,7 +22,11 @@ import {
   uninstallDiffStatsSafetySweep,
 } from '../git/diff-stats-safety-sweep-runner';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
-import { bindTerminalRuntimeSender, terminalManager } from '../terminal/shared-terminal-manager';
+import {
+  bindTerminalRuntimeSender,
+  terminalManager,
+  type TerminalRuntimeSendOptions,
+} from '../terminal/shared-terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import { getGeneratingTitleSessionIds } from './title-generation-state';
 import {
@@ -34,6 +38,7 @@ import {
 import { WebSocketServerHeartbeat, WS_HEARTBEAT_INTERVAL_MS } from './server-heartbeat';
 import { isDeviceRegistered } from '../auth/device-registry';
 import { scheduleWebPushForTransportMessage } from '../push/web-push-dispatcher';
+import { describeSessionNotification } from '../notifications/session-notification';
 
 // Supports five 5MiB image attachments after base64 expansion; lowering this
 // to a generic RPC-sized cap would break the existing composer contract.
@@ -142,8 +147,8 @@ export class WebSocketServer {
     protocolAdapter.setSendToUser((userId, message) => {
       this.sendToUser(userId, message);
     });
-    bindTerminalRuntimeSender((userId, message) => {
-      this.sendToUser(userId, message);
+    bindTerminalRuntimeSender((userId, message, options) => {
+      this.sendToUser(userId, message, options);
     });
 
     // Relay worktree diff-stats updates to connected users
@@ -252,13 +257,21 @@ export class WebSocketServer {
   /**
    * Send message to a specific user (broadcasts to all their connections)
    */
-  sendToUser(userId: string, message: ServerTransportMessage): void {
-    sessionHistory.recordTransportMessage(message);
-    this.scheduleWebPush(userId, message);
+  sendToUser(
+    userId: string,
+    message: ServerTransportMessage,
+    options: TerminalRuntimeSendOptions = {},
+  ): void {
+    const deliveryMessage = !options.replay && describeSessionNotification(message)
+      && !('eventId' in message && message.eventId)
+      ? { ...message, eventId: randomUUID() }
+      : message;
+    sessionHistory.recordTransportMessage(deliveryMessage);
+    if (!options.replay) this.scheduleWebPush(userId, deliveryMessage);
 
-    if (message.type === 'rate_limit_update') {
+    if (deliveryMessage.type === 'rate_limit_update') {
       const cachedByProvider = this.rateLimitCache.get(userId) ?? new Map();
-      cachedByProvider.set(message.providerId, message);
+      cachedByProvider.set(deliveryMessage.providerId, deliveryMessage);
       this.rateLimitCache.set(userId, cachedByProvider);
     }
 
@@ -269,7 +282,7 @@ export class WebSocketServer {
       return;
     }
 
-    const payload = JSON.stringify(message);
+    const payload = JSON.stringify(deliveryMessage);
 
     for (const ws of wsSet) {
       if (ws.readyState !== WebSocket.OPEN) continue;

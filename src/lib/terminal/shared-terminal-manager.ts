@@ -7,7 +7,14 @@ import { workspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-
 import { TerminalManager } from './terminal-manager';
 
 type SendToConnection = (connectionId: string, message: ServerTransportMessage) => void;
-type SendToUser = (userId: string, message: ServerTransportMessage) => void;
+export interface TerminalRuntimeSendOptions {
+  replay?: boolean;
+}
+type SendToUser = (
+  userId: string,
+  message: ServerTransportMessage,
+  options?: TerminalRuntimeSendOptions,
+) => void;
 
 interface SharedTerminalManagerState {
   manager: TerminalManager;
@@ -49,7 +56,7 @@ function createSharedState(): SharedTerminalManagerState {
         // 어긋난 순서로 도착해 클라이언트가 버렸을 수 있는 상태를 복구한다.
         if (running) {
           const lastState = state.manager.getSessionStateForSession(sessionId, userId);
-          if (lastState) state.sendToUser?.(userId, lastState);
+          if (lastState) state.sendToUser?.(userId, lastState, { replay: true });
         }
       },
       onSessionStateChange: ({ message, userId }) => {

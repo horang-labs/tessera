@@ -6,6 +6,11 @@ import {
 } from '@/lib/auth/paired-device-lifecycle';
 import { SettingsManager } from '@/lib/settings/manager';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import {
+  describeSessionNotification,
+  sessionNotificationUrl,
+  type SessionNotificationPayload,
+} from '@/lib/notifications/session-notification';
 import { ensureVapidIdentity } from './vapid-identity';
 import type {
   DevicePushSubscription,
@@ -15,20 +20,7 @@ import type {
 const MAX_PUSH_PAYLOAD_BYTES = 2_048;
 const MAX_TITLE_BYTES = 160;
 const MAX_PREVIEW_BYTES = 1_200;
-const COMPLETED_TITLE_FALLBACK = 'Task completed.';
-const COMPLETED_PREVIEW_FALLBACK = 'Your Tessera session completed.';
 const VAPID_SUBJECT = 'mailto:notifications@tessera.local';
-
-type NotificationMessage = Extract<ServerTransportMessage, { type: 'notification' }>;
-type CompletedNotificationMessage = NotificationMessage & { event: 'completed' };
-
-export interface CompletedPushPayload {
-  kind: 'completed';
-  title: string;
-  preview: string;
-  sessionId: string;
-  url: string;
-}
 
 interface PushSettingsSnapshot {
   notifications?: {
@@ -63,25 +55,20 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return `${result}${suffix}`;
 }
 
-function notificationUrl(sessionId: string): string {
-  const search = new URLSearchParams({ session: sessionId });
-  return `/chat?${search}`;
-}
-
-export function buildCompletedPushPayload(
-  message: CompletedNotificationMessage,
-): CompletedPushPayload {
-  const title = truncateUtf8(message.message.trim() || COMPLETED_TITLE_FALLBACK, MAX_TITLE_BYTES);
-  let preview = truncateUtf8(
-    message.preview.trim() || COMPLETED_PREVIEW_FALLBACK,
-    MAX_PREVIEW_BYTES,
-  );
-  const payload: CompletedPushPayload = {
-    kind: 'completed',
+export function buildSessionNotificationPushPayload(
+  message: ServerTransportMessage & { eventId: string },
+): SessionNotificationPayload {
+  const description = describeSessionNotification(message);
+  if (!description) throw new TypeError('Message is not an eligible Session Notification');
+  const title = truncateUtf8(description.title, MAX_TITLE_BYTES);
+  let preview = truncateUtf8(description.preview, MAX_PREVIEW_BYTES);
+  const payload: SessionNotificationPayload = {
+    kind: description.kind,
+    eventId: message.eventId,
     title,
     preview,
-    sessionId: message.sessionId,
-    url: notificationUrl(message.sessionId),
+    sessionId: description.sessionId,
+    url: sessionNotificationUrl(description.sessionId, description.promptId),
   };
 
   while (Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_PUSH_PAYLOAD_BYTES) {
@@ -92,18 +79,12 @@ export function buildCompletedPushPayload(
   return payload;
 }
 
-function isCompletedNotification(
-  message: ServerTransportMessage,
-): message is CompletedNotificationMessage {
-  return message.type === 'notification' && message.event === 'completed';
-}
-
 export function createWebPushDispatcher(dependencies: WebPushDispatcherDependencies) {
   return function scheduleWebPush(
     userId: string,
     message: ServerTransportMessage,
   ): void {
-    if (!isCompletedNotification(message)) return;
+    if (!('eventId' in message) || !message.eventId || !describeSessionNotification(message)) return;
 
     void (async () => {
       const settings = await dependencies.loadSettings(userId);
@@ -111,7 +92,9 @@ export function createWebPushDispatcher(dependencies: WebPushDispatcherDependenc
 
       const subscriptions = await dependencies.listSubscriptions();
       if (subscriptions.length === 0) return;
-      const payload = JSON.stringify(buildCompletedPushPayload(message));
+      const payload = JSON.stringify(buildSessionNotificationPushPayload(
+        message as ServerTransportMessage & { eventId: string },
+      ));
 
       await Promise.all(subscriptions.map(async ({ deviceId, subscription }) => {
         if (

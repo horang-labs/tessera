@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
+import { presentServiceWorkerSessionNotification } from '@/lib/notifications/session-notification-presentation';
 
 export function PwaServiceWorkerRegistrar() {
   const pathname = usePathname();
@@ -9,6 +10,10 @@ export function PwaServiceWorkerRegistrar() {
   useEffect(function registerForAuthenticatedBrowser() {
     if (!('serviceWorker' in navigator)) return;
     let cancelled = false;
+    const receiveSessionNotification = (event: MessageEvent) => {
+      presentServiceWorkerSessionNotification(event.data);
+    };
+    navigator.serviceWorker.addEventListener('message', receiveSessionNotification);
 
     void fetch('/api/auth/me', {
       cache: 'no-store',
@@ -25,6 +30,7 @@ export function PwaServiceWorkerRegistrar() {
 
     return function ignoreRegistrationAfterLeaving() {
       cancelled = true;
+      navigator.serviceWorker.removeEventListener('message', receiveSessionNotification);
     };
   }, [pathname]);
 

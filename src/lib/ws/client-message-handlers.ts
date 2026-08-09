@@ -11,8 +11,6 @@ import {
 } from '@/lib/chat/session-client-effects';
 import { serverMessageToReplayEvents } from '@/lib/chat/server-message-to-replay-events';
 import { useChatStore } from '@/stores/chat-store';
-import { useBoardStore } from '@/stores/board-store';
-import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
@@ -20,7 +18,6 @@ import { useNotificationStore } from '@/stores/notification-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useRateLimitStore } from '@/stores/rate-limit-store';
 import { useSessionStore } from '@/stores/session-store';
-import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionPrStore } from '@/stores/session-pr-store';
 import { useSkillAnalysisStore } from '@/stores/skill-analysis-store';
 import { useTaskStore } from '@/stores/task-store';
@@ -32,7 +29,11 @@ import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
-import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
+import {
+  describeSessionNotification,
+  sessionNotificationUrl,
+} from '@/lib/notifications/session-notification';
+import { presentSessionNotificationOnPage } from '@/lib/notifications/session-notification-presentation';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
@@ -58,21 +59,6 @@ const COMPACT_REQUEST_ERROR_CODES = new Set([
   'session_compact_unavailable',
   'session_compact_failed',
 ]);
-
-function getVisibleWorkspaceSessionId(activeSessionId: string | null): string | null {
-  const boardState = useBoardStore.getState();
-  const settingsState = useSettingsStore.getState();
-  return resolveVisibleWorkspaceSessionId({
-    activeSessionId,
-    peekSessionId: boardState.peekSessionId,
-    // The rendered mode, so this agrees with what chat-layout passes for the
-    // same screen — a phone renders the list and has no peek layout.
-    isKanbanPeekLayout:
-      getRenderedViewMode() === 'board'
-      && settingsState.settings.kanbanSessionOpenMode === 'peek'
-      && !settingsState.sidebarCollapsed,
-  });
-}
 
 export function handleIncomingServerMessage({
   msg,
@@ -141,7 +127,7 @@ export function handleIncomingServerMessage({
 
     case 'notification':
       sessionStore.touchSessionActivity(msg.sessionId);
-      handleNotificationMessage(msg, getVisibleWorkspaceSessionId(sessionStore.activeSessionId));
+      handleNotificationMessage(msg);
       if (msg.event === 'completed') {
         finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
         sessionStore.updateSessionStatus(msg.sessionId, 'completed');
@@ -170,10 +156,7 @@ export function handleIncomingServerMessage({
         if (location) useTabStore.getState().pinTab(location.tabId);
       }
       if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
-        handleTerminalSessionStateMessage(
-          msg,
-          getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
-        );
+        handleTerminalSessionStateMessage(msg);
       }
       return { wasReconnect };
     }
@@ -247,7 +230,6 @@ export function handleIncomingServerMessage({
       sessionStore.touchSessionActivity(msg.sessionId);
       handleInteractivePromptMessage(
         msg,
-        getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
       );
       return { wasReconnect };
 
@@ -613,73 +595,42 @@ function addCreatedSession(
 
 function handleNotificationMessage(
   msg: Extract<ServerTransportMessage, { type: 'notification' }>,
-  activeSessionId: string | null,
 ): void {
-  const notificationStore = useNotificationStore.getState();
-  const sessionStore = useSessionStore.getState();
-
-  if (msg.sessionId !== activeSessionId) {
-    notificationStore.addNotification({
-      sessionId: msg.sessionId,
-      type: msg.event === 'completed' ? 'completed' : 'input_required',
-      preview: msg.preview,
-      actions: msg.actions,
-    });
-    sessionStore.incrementUnreadCount(msg.sessionId);
-    return;
-  }
-
-  notificationStore.playSound();
+  presentWebSocketSessionNotification(msg);
 }
 
 function handleTerminalSessionStateMessage(
   msg: Extract<ServerTransportMessage, { type: 'session_state' }>,
-  activeSessionId: string | null,
 ): void {
-  const notificationStore = useNotificationStore.getState();
-  if (msg.sessionId === activeSessionId) {
-    notificationStore.playSound();
-    return;
-  }
-
-  const added = notificationStore.addNotification({
-    sessionId: msg.sessionId,
-    type: msg.status === 'completed' ? 'completed' : 'input_required',
-    preview: msg.preview
-      ?? (msg.status === 'completed'
-        ? 'Terminal task completed'
-        : 'Terminal is waiting for input'),
-    dedupKey: msg.stateAt != null
-      ? `${msg.sessionId}:${msg.status}:${msg.stateAt}`
-      : undefined,
-  });
-  if (added) useSessionStore.getState().incrementUnreadCount(msg.sessionId);
+  presentWebSocketSessionNotification(msg);
 }
 
 function handleInteractivePromptMessage(
   msg: Extract<ServerTransportMessage, { type: 'interactive_prompt' }>,
-  activeSessionId: string | null,
 ): void {
   stopTurnInFlight(msg.sessionId);
   applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
 
-  if (msg.sessionId === activeSessionId) {
-    return;
-  }
+  presentWebSocketSessionNotification(msg);
+}
 
-  const notificationStore = useNotificationStore.getState();
-  const isAskUserQuestion = msg.promptType === 'ask_user_question';
-  const isPlanApproval = msg.promptType === 'plan_approval';
-  notificationStore.addNotification({
-    sessionId: msg.sessionId,
-    type: isPlanApproval ? 'plan_approval' : isAskUserQuestion ? 'ask_user_question' : 'permission_request',
-    preview: isPlanApproval
-      ? i18n.t('notifications.planApprovalWaiting')
-      : isAskUserQuestion
-        ? (msg.data.questions?.[0]?.question ?? i18n.t('notifications.questionWaiting'))
-        : i18n.t('notifications.permissionWaiting', { tool: msg.data.toolName ?? 'Tool' }),
+function presentWebSocketSessionNotification(
+  msg: Extract<ServerTransportMessage, {
+    type: 'notification' | 'interactive_prompt' | 'session_state';
+  }>,
+): void {
+  const description = describeSessionNotification(msg);
+  if (!description) return;
+  presentSessionNotificationOnPage({
+    ...description,
+    eventId: msg.eventId
+      ?? (msg.type === 'session_state' && msg.stateAt != null
+        ? `${msg.sessionId}:${msg.status}:${msg.stateAt}`
+        : uuidv4()),
+    url: sessionNotificationUrl(description.sessionId, description.promptId),
+    source: 'websocket',
+    ...(msg.type === 'notification' && msg.actions ? { actions: msg.actions } : {}),
   });
-  useSessionStore.getState().incrementUnreadCount(msg.sessionId);
 }
 
 function handleSessionListMessage(
