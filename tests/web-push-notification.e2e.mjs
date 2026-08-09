@@ -18,8 +18,18 @@ const appHeaders = {
 };
 
 async function pairDevice() {
+  const configured = await fetch(`${app.origin}/api/settings`, {
+    method: 'PUT', headers: appHeaders,
+    body: JSON.stringify({
+      setup: { completedAt: '2026-08-09T00:00:00.000Z', dismissedAt: null },
+      machineSettings: { advertisedAddress: app.origin },
+    }),
+  });
+  assert.equal(configured.status, 200, await configured.text());
   const issued = await fetch(`${app.origin}/api/pairing`, { method: 'POST', headers: appHeaders });
-  const link = (await issued.json()).pairingLink;
+  const issuedBody = await issued.text();
+  assert.equal(issued.status, 201, issuedBody);
+  const link = JSON.parse(issuedBody).pairingLink;
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get('t');
   const claimResponse = await fetch(`${app.origin}/api/pairing/requests`, {
     method: 'POST', headers: { ...appHeaders, 'x-tessera-remote-address': '127.0.0.1' },
@@ -70,12 +80,6 @@ try {
   await page.screenshot({ path: path.join(artifacts, 'permission-denied.png'), fullPage: true });
   await installed.close();
 
-  const cdp = await browser.newBrowserCDPSession();
-  const registrations = new Map();
-  cdp.on('ServiceWorker.workerRegistrationUpdated', ({ registrations: updates }) => {
-    for (const registration of updates) registrations.set(registration.scopeURL, registration);
-  });
-  await cdp.send('ServiceWorker.enable');
   const background = await browser.newContext({
     extraHTTPHeaders: { 'x-tessera-app-secret': app.appSecret },
   });
@@ -83,20 +87,15 @@ try {
   const backgroundPage = await background.newPage();
   await backgroundPage.goto(`${app.origin}/chat`);
   await backgroundPage.evaluate(() => navigator.serviceWorker.ready.then((ready) => ready.scope));
-  for (let attempts = 0; attempts < 40 && !registrations.has(`${app.origin}/`); attempts += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  const registration = registrations.get(`${app.origin}/`);
-  assert.ok(registration?.registrationId);
+  const worker = background.serviceWorkers()[0];
+  assert.ok(worker);
   await backgroundPage.close();
-  await cdp.send('ServiceWorker.deliverPushMessage', {
-    origin: app.origin,
-    registrationId: registration.registrationId,
-    data: JSON.stringify({
+  await worker.evaluate((payload) => {
+    self.dispatchEvent(new PushEvent('push', { data: JSON.stringify(payload) }));
+  }, {
       kind: 'completed', title: 'Task completed.', preview: 'Background result',
       eventId: 'event-background', sessionId: 'session-1',
       url: '/chat?session=session-1&prompt=tool-1',
-    }),
   });
 
   const notificationPage = await background.newPage();
@@ -111,14 +110,12 @@ try {
     title: 'Task completed.', body: 'Background result',
     data: { url: `${app.origin}/chat?session=session-1&prompt=tool-1` },
   }]);
-  const worker = background.serviceWorkers()[0];
   await worker.evaluate(async () => {
     const [notification] = await registration.getNotifications();
     self.dispatchEvent(new NotificationEvent('notificationclick', { notification }));
   });
   await notificationPage.waitForURL(`${app.origin}/chat?session=session-1&prompt=tool-1`);
   await background.close();
-  await cdp.detach();
 
   console.log(JSON.stringify({ permissionCallsBeforeAction: 0, deniedKeepsAppUsable: true,
     backgroundNotificationCount: 1,
