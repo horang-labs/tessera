@@ -11,6 +11,7 @@ import { getTesseraDataPath } from '../tessera-data-dir';
 import {
   getWslHostedWindowsHomeMountPath,
   getWindowsHostedWslRootFilesystemPath,
+  resolveAgentHomeFilesystemPath,
 } from '../filesystem/path-environment';
 import { resolvePathForHostFilesystem } from '../filesystem/host-path';
 import type { AgentEnvironment } from '../settings/types';
@@ -269,15 +270,20 @@ export function getManagedWorktreeRelativeDisplayPath(candidate: string): string
 export async function resolveManagedWorktreeRoot(
   projectDir: string,
   agentEnvironment: AgentEnvironment,
+  options: { agentHomeFilesystemPath?: string } = {},
 ): Promise<string> {
   if (agentEnvironment === 'wsl') {
-    return (
+    const projectDerivedRoot = (
       resolveWslHomeManagedWorktreeRoot(projectDir)
       ?? resolveWslFallbackManagedWorktreeRoot(projectDir)
       ?? resolveWslPosixHomeManagedWorktreeRoot(projectDir)
       ?? resolveWslPosixFallbackManagedWorktreeRoot(projectDir)
-      ?? MANAGED_WORKTREE_ROOT
     );
+    if (projectDerivedRoot) return projectDerivedRoot;
+
+    const agentHome = options.agentHomeFilesystemPath
+      ?? await resolveAgentHomeFilesystemPath(agentEnvironment);
+    return getPathModule(agentHome).join(agentHome, '.tessera', 'worktrees');
   }
 
   if (getRuntimePlatform() === 'linux' && isRunningInWsl()) {

@@ -33,6 +33,8 @@ import {
   type ControlWorktreeRecord,
 } from './service';
 import * as dbProjects from '@/lib/db/projects';
+import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
+import { resolveAgentReportedPath } from '@/lib/filesystem/path-environment';
 
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -55,6 +57,7 @@ export function createDatabaseControlWorktreeCreator(options: {
         SettingsManager.load(userId, { silent: true }),
         getAgentEnvironment(userId),
       ]);
+      await routeCanonicalWorktreePaths(agentEnvironment);
       const projectDir = request.project.decodedPath;
       const originProjectWorktree = dbProjects.getProjectWorktree(request.project.id);
       if (!originProjectWorktree?.currentBranch) {
@@ -165,6 +168,7 @@ export function createDatabaseControlWorktreeCreator(options: {
       }
 
       let creation: WorktreeCreationResult;
+      const agentWorktreePath = worktreePath;
       try {
         creation = await createGitWorktree({
           projectDir,
@@ -213,6 +217,10 @@ export function createDatabaseControlWorktreeCreator(options: {
           { branch: branchName, startPoint: request.startPoint },
         );
       }
+      worktreePath = await resolveAgentReportedPath(
+        agentWorktreePath,
+        agentEnvironment,
+      );
       let persisted: { taskId: string; worktree: ControlWorktreeRecord };
       try {
         persisted = persistDatabaseControlWorktree({
@@ -226,7 +234,7 @@ export function createDatabaseControlWorktreeCreator(options: {
       } catch {
         await compensateCreatedWorktree(
           projectDir,
-          worktreePath,
+          agentWorktreePath,
           branchName,
           creation.createdBranch,
           runGit,

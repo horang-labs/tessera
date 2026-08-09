@@ -16,6 +16,7 @@ import {
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
 import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -47,6 +48,7 @@ export async function GET(req: NextRequest) {
     const generatingSessionIds = processManager.getGeneratingSessionIds();
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
     const agentEnvironment = await getAgentEnvironment(userId);
+    await routeCanonicalWorktreePaths(agentEnvironment);
 
     // Current project directory (matches projects.id which is now the absolute path)
     const currentProjectId = process.cwd();

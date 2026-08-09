@@ -23,6 +23,10 @@ export interface ProjectRow {
   updated_at: string;
 }
 
+interface RegisterProjectOptions {
+  equivalentFilesystemPaths?: readonly string[];
+}
+
 /**
  * Register a project (idempotent).
  * If the project was previously closed (visible=0), re-opens it.
@@ -32,10 +36,11 @@ export function registerProject(
   decodedPath: string,
   displayName: string,
   provider: string | null = null,
+  options: RegisterProjectOptions = {},
 ): void {
   const db = getDb();
   const now = new Date().toISOString();
-  const projectWorktree = resolveCanonicalWorktree(decodedPath);
+  const projectWorktree = resolveCanonicalWorktree(decodedPath, undefined, options);
   // New projects get sort_order = max + 1 (append to bottom of strip)
   const maxRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM projects WHERE visible = 1').get() as { max_order: number };
   const nextOrder = maxRow.max_order + 1;

@@ -139,7 +139,7 @@ export async function resolveCodexMemoryContext(
   if (!session) return null;
 
   const codexHome = await resolveCodexHomeForEnvironment(environment);
-  const projectRoot = await resolveCodexProjectRoot(sessionId);
+  const projectRoot = await resolveCodexProjectRoot(sessionId, environment);
   const memoryDir = path.join(codexHome, "memories");
   return {
     codexHome,
@@ -149,8 +149,13 @@ export async function resolveCodexMemoryContext(
   };
 }
 
-async function resolveCodexProjectRoot(sessionId: string): Promise<string | null> {
-  return resolveSessionWorkspaceFilesystemRoot(sessionId);
+async function resolveCodexProjectRoot(
+  sessionId: string,
+  environment: CliEnvironment,
+): Promise<string | null> {
+  return resolveSessionWorkspaceFilesystemRoot(sessionId, {
+    agentEnvironment: environment,
+  });
 }
 
 async function buildInstructionRows(
@@ -204,7 +209,7 @@ export async function resolveCodexGuidelineTargets(
 
   const codexHome = await resolveCodexHomeForEnvironment(environment);
   const targets = await buildInstructionRows("global-guideline", codexHome);
-  const projectRoot = await resolveCodexProjectRoot(sessionId);
+  const projectRoot = await resolveCodexProjectRoot(sessionId, environment);
   if (projectRoot) {
     targets.push(...await buildInstructionRows("project-guideline", projectRoot));
   }

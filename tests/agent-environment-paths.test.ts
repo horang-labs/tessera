@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { formatPathForAgentDisplay } from '../src/lib/filesystem/path-environment';
+import {
+  formatPathForAgentDisplay,
+  resolveAgentReportedPath,
+} from '../src/lib/filesystem/path-environment';
 import { normalizeCwdForCliEnvironment } from '../src/lib/cli/spawn-cli-runtime';
 
 const pathEnvironmentSource = fs.readFileSync(
@@ -101,6 +104,30 @@ function withPlatform(platform: NodeJS.Platform, run: () => void): void {
     Object.defineProperty(process, 'platform', original);
   }
 }
+
+async function withPlatformAsync<T>(
+  platform: NodeJS.Platform,
+  run: () => Promise<T>,
+): Promise<T> {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { ...original, value: platform });
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(process, 'platform', original);
+  }
+}
+
+test('an already host-openable WSL path is not translated twice', async () => {
+  await withPlatformAsync('win32', async () => {
+    const unc = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\project';
+    assert.equal(await resolveAgentReportedPath(unc, 'wsl'), unc);
+    assert.equal(
+      await resolveAgentReportedPath('C:\\Users\\work\\project', 'wsl'),
+      'C:\\Users\\work\\project',
+    );
+  });
+});
 
 function assertDisplayMatchesSpawnCwd(hostPaths: string[], label: string): void {
   for (const hostPath of hostPaths) {

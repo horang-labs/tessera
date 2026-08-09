@@ -9,6 +9,7 @@ import {
   isAbsoluteFilesystemPath,
 } from "@/lib/filesystem/host-path";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import {
   isInsideWorkspacePath,
   resolveWorkspaceReadTarget,
@@ -177,7 +178,9 @@ export async function GET(
     });
     if ("response" in auth) return auth.response;
 
-    const root = await resolveSessionWorkspaceFilesystemRoot(id);
+    const root = await resolveSessionWorkspaceFilesystemRoot(id, {
+      agentEnvironment: await getAgentEnvironment(auth.userId),
+    });
     if (!root) {
       return jsonError("missing_work_dir", "Session has no working directory", 422);
     }

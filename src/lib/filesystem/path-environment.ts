@@ -117,6 +117,12 @@ export async function resolveAgentReportedPath(
   if (!isBridgedAgentEnvironment(environment)) return trimmed;
 
   if (environment === 'wsl') {
+    // Callers at a routing seam may already hold the Windows server's path
+    // spelling. Treat host-openable paths idempotently instead of prepending
+    // the WSL share a second time.
+    if (wslUncPathToDisplayPath(trimmed) || isWindowsDrivePath(trimmed)) {
+      return path.win32.normalize(trimmed);
+    }
     const wslPathInfo = await getWslPathInfo();
     return wslPathInfo
       ? wslDisplayPathToWindowsFilesystemPath(trimmed, wslPathInfo)
@@ -155,11 +161,7 @@ export async function resolveAgentHomeFilesystemPath(
   environment: FilesystemBrowseEnvironment,
 ): Promise<string> {
   if (!isBridgedAgentEnvironment(environment)) return homedir();
-  try {
-    return (await resolveBrowsePath(null, environment)).filesystemPath;
-  } catch {
-    return homedir();
-  }
+  return (await resolveBrowsePath(null, environment)).filesystemPath;
 }
 
 function formatWslHostedNativeDisplayPath(filesystemPath: string): string {

@@ -3,11 +3,13 @@ import fs from 'fs';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
 import {
+  formatPathForAgentDisplay,
   getFilesystemPathBasename,
   resolveBrowsePath,
 } from '@/lib/filesystem/path-environment';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { SettingsManager } from '@/lib/settings/manager';
+import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 
 /**
  * POST /api/projects — Register a project directory (no session creation).
@@ -24,6 +26,7 @@ export async function POST(req: NextRequest) {
   }
 
   const settings = await SettingsManager.load(auth.userId);
+  await routeCanonicalWorktreePaths(settings.agentEnvironment);
   let resolvedPath: string;
   try {
     resolvedPath = (await resolveBrowsePath(
@@ -55,7 +58,12 @@ export async function POST(req: NextRequest) {
   }
 
   const displayName = getFilesystemPathBasename(resolvedPath);
-  dbProjects.registerProject(resolvedPath, resolvedPath, displayName);
+  dbProjects.registerProject(resolvedPath, resolvedPath, displayName, null, {
+    equivalentFilesystemPaths: [
+      folderPath,
+      formatPathForAgentDisplay(resolvedPath, settings.agentEnvironment),
+    ],
+  });
 
   return NextResponse.json({ ok: true, projectId: resolvedPath, displayName });
 }

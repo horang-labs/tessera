@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import * as dbSessions from '@/lib/db/sessions';
 import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
@@ -53,7 +54,10 @@ export async function GET(
     // Opening a session is the earliest signal that its Files tab may be used.
     // Network-share workspaces (WSL paths served from Windows) take hundreds of
     // ms per walk, so start building the index before the tab is clicked.
-    workspaceFileWatchManager.warmSessionWorkspace(id);
+    workspaceFileWatchManager.warmSessionWorkspace(
+      id,
+      await getAgentEnvironment(userId),
+    );
 
     const { searchParams } = new URL(request.url);
     const limit = parseInt(searchParams.get('limit') || '100', 10);

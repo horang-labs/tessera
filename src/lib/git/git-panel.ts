@@ -1040,6 +1040,13 @@ export async function getWorktreeGitPanelData(
   worktreeId: string,
   userId?: string,
 ): Promise<GitPanelData> {
+  const initialWorktree = dbWorktrees.getWorktree(worktreeId);
+  const agentEnvironment = await resolveGitEnvironment(
+    userId
+      ? { userId }
+      : { inferFromPaths: initialWorktree?.filesystemPath ? [initialWorktree.filesystemPath] : [] },
+  );
+  await dbWorktrees.routeCanonicalWorktreePaths(agentEnvironment);
   const worktree = dbWorktrees.getWorktree(worktreeId);
   if (!worktree) {
     throw new GitPanelError('session_not_found', 'Worktree not found', 404);
@@ -1056,6 +1063,7 @@ export async function getWorktreeGitPanelData(
     },
     userId,
     worktreeId,
+    agentEnvironment,
   );
 }
 
@@ -1064,9 +1072,11 @@ async function buildGitPanelData(
   sessionContext: GitSessionContext,
   userId?: string,
   worktreeId?: string,
+  resolvedAgentEnvironment?: AgentEnvironment,
 ): Promise<GitPanelData> {
   const { workDir } = sessionContext;
-  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
+  const agentEnvironment = resolvedAgentEnvironment
+    ?? await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const {
     repoRoot,
     branchRaw,
