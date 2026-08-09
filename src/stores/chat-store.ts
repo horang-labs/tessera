@@ -851,7 +851,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           (msg.id === targetId || msg.toolUseId === toolUseId)
         ) {
           changed = true;
-          return { ...msg, toolProgress: progress };
+          return { ...msg, toolProgress: { ...(msg.toolProgress ?? {}), ...progress } };
         }
         return msg;
       });
