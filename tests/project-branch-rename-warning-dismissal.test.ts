@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { useSessionStore } from '@/stores/session-store';
+
+const stored = new Map<string, string>();
+const localStorage = {
+  getItem: (key: string) => stored.get(key) ?? null,
+  setItem: (key: string, value: string) => { stored.set(key, value); },
+  removeItem: (key: string) => { stored.delete(key); },
+};
+
+function apiProject(previousBranch: string, currentBranch: string, eventId?: string) {
+  return {
+    encodedDir: '/repo',
+    displayName: 'Repo',
+    decodedPath: '/repo',
+    isCurrent: true,
+    projectWorktree: {
+      id: 'wt_root',
+      path: '/repo',
+      displayPath: '/repo',
+      currentBranch,
+    },
+    branchRenameWarning: eventId
+      ? { previousBranch, currentBranch, eventId }
+      : undefined,
+    sessions: [],
+    totalSessions: 0,
+    countByStatus: {},
+    cursorByStatus: {},
+    nextCursor: null,
+  };
+}
+
+test('dismissal hides only the same one-time branch rename warning across reloads', async (t) => {
+  Object.defineProperty(globalThis, 'window', {
+    value: { localStorage },
+    configurable: true,
+  });
+  t.after(() => {
+    delete (globalThis as { window?: unknown }).window;
+    stored.clear();
+  });
+  let responseProject = apiProject('main', 'renamed', 'rename-event-1');
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    projects: [responseProject],
+  }), { status: 200, headers: { 'content-type': 'application/json' } }));
+  useSessionStore.setState(useSessionStore.getInitialState());
+
+  await useSessionStore.getState().loadProjects();
+  assert.deepEqual(useSessionStore.getState().projects[0].branchRenameWarning, {
+    previousBranch: 'main',
+    currentBranch: 'renamed',
+    eventId: 'rename-event-1',
+  });
+
+  useSessionStore.getState().dismissBranchRenameWarning('/repo');
+  assert.equal(useSessionStore.getState().projects[0].branchRenameWarning, undefined);
+  await useSessionStore.getState().loadProjects();
+  assert.equal(useSessionStore.getState().projects[0].branchRenameWarning, undefined);
+
+  responseProject = apiProject('main', 'renamed', 'rename-event-2');
+  await useSessionStore.getState().loadProjects();
+  assert.deepEqual(useSessionStore.getState().projects[0].branchRenameWarning, {
+    previousBranch: 'main',
+    currentBranch: 'renamed',
+    eventId: 'rename-event-2',
+  });
+
+  responseProject = apiProject('main', 'unrelated');
+  useSessionStore.getState().updateProjectWorktreeBranch('wt_root', 'unrelated');
+  assert.equal(
+    useSessionStore.getState().projects[0].branchRenameWarning,
+    undefined,
+    'stale rename evidence must clear synchronously when the observed branch changes',
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(useSessionStore.getState().projects[0].branchRenameWarning, undefined);
+});

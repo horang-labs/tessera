@@ -51,6 +51,7 @@ import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -276,6 +277,9 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 export function Sidebar() {
   const { t } = useI18n();
   const projects = useSessionStore((state) => state.projects);
+  const dismissBranchRenameWarning = useSessionStore(
+    (state) => state.dismissBranchRenameWarning,
+  );
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   const { deleteSession, renameSession, generateTitle } = useSessionCrud();
   const { viewSession } = useSessionNavigation();
@@ -761,12 +765,20 @@ export function Sidebar() {
         ) : visibleCollectionGroups && selectedProject ? (
           <>
             {selectedProject.projectWorktree ? (
-              <ProjectWorktreeRow
-                active={activePanelWorktreeId === selectedProject.projectWorktree.id}
-                branch={selectedProject.projectWorktree.currentBranch}
-                label="Project Worktree"
-                onSelect={handleProjectWorktreeSelect}
-              />
+              <>
+                <ProjectWorktreeRow
+                  active={activePanelWorktreeId === selectedProject.projectWorktree.id}
+                  branch={selectedProject.projectWorktree.currentBranch}
+                  label="Project Worktree"
+                  onSelect={handleProjectWorktreeSelect}
+                />
+                {selectedProject.branchRenameWarning ? (
+                  <BranchRenameWarning
+                    warning={selectedProject.branchRenameWarning}
+                    onDismiss={() => dismissBranchRenameWarning(selectedProject.encodedDir)}
+                  />
+                ) : null}
+              </>
             ) : null}
             {isRunningFilterActive && runningFlatItems.tasks.length + runningFlatItems.chats.length === 0 ? (
               <SidebarRunningFilterEmpty label={t('status.noRunningProcesses')} />

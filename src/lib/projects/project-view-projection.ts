@@ -1,6 +1,27 @@
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import * as dbTasks from '@/lib/db/tasks';
+import { readExactOneHopBranchRename } from '@/lib/db/worktree-identity';
+import type { ProjectBranchRenameWarning } from './branch-rename-warning';
+
+function getBranchRenameWarning(
+  projectWorktree: NonNullable<ReturnType<typeof dbProjects.getProjectWorktree>>,
+): ProjectBranchRenameWarning | undefined {
+  if (!projectWorktree.filesystemPath || !projectWorktree.currentBranch) return undefined;
+  const rename = readExactOneHopBranchRename(
+    projectWorktree.filesystemPath,
+    projectWorktree.currentBranch,
+  );
+  if (!rename) return undefined;
+  const hasHiddenScope = dbSessions.hasActiveSessionScope(
+    projectWorktree.id,
+    rename.previousBranch,
+  ) || dbTasks.hasActiveWorktreeCreationScope(
+    projectWorktree.id,
+    rename.previousBranch,
+  );
+  return hasHiddenScope ? rename : undefined;
+}
 
 export type ProjectViewSession = dbSessions.SessionRow & {
   /** Stable representative Project for global surfaces, independent of this view. */
@@ -42,7 +63,10 @@ export function getProjectViewProjection(
       : undefined,
   }));
   const linkedWorktrees = getProjectViewWorktrees(projectId, options.activeSessionIds);
-  return { projectWorktree, linkedWorktrees, ...result };
+  const branchRenameWarning = projectWorktree
+    ? getBranchRenameWarning(projectWorktree)
+    : undefined;
+  return { projectWorktree, linkedWorktrees, branchRenameWarning, ...result };
 }
 
 export function getProjectViewWorktrees(

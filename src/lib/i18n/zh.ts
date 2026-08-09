@@ -946,6 +946,9 @@ export const zh: I18nMessages = {
     showMore: '显示更多 ({{count}})',
     noSessions: '暂无会话',
     dragSessionToReference: '拖入聊天以引用此会话',
+    branchRenameWarningTitle: '分支已在 Tessera 外部重命名',
+    branchRenameWarningDescription: 'Git 记录显示分支已从“{{previousBranch}}”直接重命名为“{{currentBranch}}”。范围设为“{{previousBranch}}”的会话和工作树已隐藏。Tessera 并未移动或更改它们。',
+    dismissBranchRenameWarning: '关闭此分支重命名警告',
   },
   status: {
     starting: '启动中',

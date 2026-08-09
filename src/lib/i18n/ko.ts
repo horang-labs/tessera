@@ -953,6 +953,9 @@ export const ko: I18nMessages = {
     showMore: '더 보기 ({{count}})',
     noSessions: '세션이 없습니다',
     dragSessionToReference: '채팅으로 드래그해 이 세션 참조',
+    branchRenameWarningTitle: 'Tessera 외부에서 브랜치 이름이 변경됨',
+    branchRenameWarningDescription: 'Git 기록에 “{{previousBranch}}”에서 “{{currentBranch}}”(으)로 직접 이름을 바꾼 내역이 있습니다. “{{previousBranch}}” 범위의 세션과 워크트리는 숨겨져 있습니다. Tessera는 해당 항목을 이동하거나 변경하지 않았습니다.',
+    dismissBranchRenameWarning: '브랜치 이름 변경 경고 닫기',
   },
   status: {
     starting: '시작 중',
