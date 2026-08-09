@@ -3,9 +3,9 @@ import test from 'node:test';
 import {
   buildOriginProjectRepresentation,
   getCanonicalRunningSessionRepresentatives,
-  getProjectIdsMissingTaskProjection,
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
+import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
 

@@ -47,7 +47,7 @@ import {
   findSidebarProject,
 } from './sidebar-utils';
 import { buildRecentWorkItems } from '@/lib/chat/recent-work';
-import { getProjectIdsMissingTaskProjection } from '@/lib/projects/origin-project-representation';
+import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';

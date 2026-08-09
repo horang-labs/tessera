@@ -25,21 +25,6 @@ export function originProjectContainsRunningSession(
   ));
 }
 
-export function getProjectIdsMissingTaskProjection(
-  projects: Array<Pick<ProjectGroup, 'encodedDir'>>,
-  loadedProjects: Record<string, boolean>,
-  loadingProjects: Record<string, boolean>,
-  attemptedProjectIds: ReadonlySet<string>,
-): string[] {
-  return projects
-    .map((project) => project.encodedDir)
-    .filter((projectId) =>
-      !loadedProjects[projectId]
-      && !loadingProjects[projectId]
-      && !attemptedProjectIds.has(projectId)
-    );
-}
-
 /**
  * Global aggregate surfaces deliberately use the persisted origin Project as
  * the one representative location. Alternate Project View appearances are
