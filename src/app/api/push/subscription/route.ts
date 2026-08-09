@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import {
   deletePairedDevicePushSubscription,
-  getPairedDevicePushSubscription,
+  getPairedDevicePushConfiguration,
   replacePairedDevicePushSubscription,
 } from '@/lib/auth/paired-device-lifecycle';
 import {
   isDevicePushSubscription,
 } from '@/lib/push/device-push-subscription-store';
-import { ensureVapidIdentity } from '@/lib/push/vapid-identity';
 
 async function requirePairedDevice(request: NextRequest) {
   const auth = await requireAuthenticatedUserId(request);
@@ -28,10 +27,11 @@ export async function GET(request: NextRequest) {
   const auth = await requirePairedDevice(request);
   if ('response' in auth) return auth.response;
 
-  const [identity, subscription] = await Promise.all([
-    ensureVapidIdentity(),
-    getPairedDevicePushSubscription(auth.deviceId),
-  ]);
+  const configuration = await getPairedDevicePushConfiguration(auth.deviceId);
+  if (!configuration) {
+    return NextResponse.json({ error: 'Paired device not found' }, { status: 404 });
+  }
+  const { identity, subscription } = configuration;
   return NextResponse.json({
     vapidPublicKey: identity.publicKey,
     subscription,

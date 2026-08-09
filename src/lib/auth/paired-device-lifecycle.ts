@@ -7,6 +7,25 @@ import {
   replaceDevicePushSubscription,
   type DevicePushSubscription,
 } from '../push/device-push-subscription-store';
+import { ensureVapidIdentity, type VapidIdentity } from '../push/vapid-identity';
+
+export interface PairedDevicePushConfiguration {
+  identity: VapidIdentity;
+  subscription: DevicePushSubscription | null;
+}
+
+export function getPairedDevicePushConfiguration(
+  deviceId: string,
+): Promise<PairedDevicePushConfiguration | null> {
+  return withPairedDeviceLifecycle(async () => {
+    if (!isDeviceRegistered(deviceId)) return null;
+    const [identity, subscription] = await Promise.all([
+      ensureVapidIdentity(),
+      getDevicePushSubscription(deviceId),
+    ]);
+    return { identity, subscription };
+  });
+}
 
 export function getPairedDevicePushSubscription(deviceId: string) {
   return withPairedDeviceLifecycle(() => getDevicePushSubscription(deviceId));

@@ -55,6 +55,7 @@ function ownedServe(
 class MemoryStateStore implements MobileAccessStateStore {
   state: MobileAccessPersistedState | null = null;
   readonly saves: MobileAccessPersistedState[] = [];
+  clears = 0;
 
   async load(): Promise<MobileAccessPersistedState | null> {
     return this.state ? structuredClone(this.state) : null;
@@ -63,6 +64,11 @@ class MemoryStateStore implements MobileAccessStateStore {
   async save(state: MobileAccessPersistedState): Promise<void> {
     this.state = structuredClone(state);
     this.saves.push(structuredClone(state));
+  }
+
+  async clear(): Promise<void> {
+    this.state = null;
+    this.clears += 1;
   }
 }
 
@@ -73,6 +79,9 @@ function createHarness(options: {
   configureError?: Error | null;
   configureGate?: Promise<void>;
   inspectServeGate?: Promise<void>;
+  removeError?: Error | null;
+  removeNoop?: boolean;
+  clearLocalStateError?: Error | null;
 } = {}) {
   const calls: string[] = [];
   const opened: string[] = [];
@@ -129,12 +138,39 @@ function createHarness(options: {
       ].sort((left, right) => left.key.localeCompare(right.key));
       return configureResult;
     },
+    async removeServe(endpoint) {
+      calls.push(`remove:${endpoint.port}:${endpoint.mountPath}`);
+      if (options.removeError) throw options.removeError;
+      if (options.removeNoop) return;
+      const endpointKey = `background:web:${endpoint.dnsName}:${endpoint.port}:/`;
+      serve.endpoints = serve.endpoints.filter((candidate) => !(
+        candidate.scope !== 'foreground'
+        && candidate.scope !== 'service'
+        && candidate.dnsName === endpoint.dnsName
+        && candidate.port === endpoint.port
+        && candidate.mountPath === endpoint.mountPath
+      ));
+      serve.resources = serve.resources.filter((resource) => resource.key !== endpointKey);
+      const hasOtherResourceOnPort = serve.resources.some((resource) => (
+        resource.key.startsWith(`background:web:${endpoint.dnsName}:${endpoint.port}:`)
+      ));
+      if (!hasOtherResourceOnPort) {
+        serve.resources = serve.resources.filter((resource) => (
+          resource.key !== `background:tcp:${endpoint.port}`
+        ));
+        serve.occupiedPorts = serve.occupiedPorts.filter((port) => port !== endpoint.port);
+      }
+    },
   };
   const coordinator = new MobileAccessCoordinator({
     adapter,
     stateStore: store,
     async checkHealth(origin) { calls.push(`health:${origin}`); },
     async openExternal(url) { opened.push(url); },
+    async clearLocalState() {
+      calls.push('clear-local-state');
+      if (options.clearLocalStateError) throw options.clearLocalStateError;
+    },
   });
 
   return {
@@ -294,6 +330,104 @@ test('launch recognizes persisted mobile configuration while Tailscale is unavai
   await harness.coordinator.reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT });
 
   assert.equal(harness.coordinator.hasConfiguredConnection(), true);
+});
+
+test('removal turns off the exact owned root, preserves unrelated resources, and clears local state', async () => {
+  const serve = ownedServe();
+  const unrelated = [
+    { key: `background:web:${DNS_NAME}:443:/other`, value: '{"Text":"leave me"}' },
+    { key: 'background:allow-funnel:desktop.tailnet.ts.net:8443', value: 'true' },
+    { key: 'background:tcp:8443', value: '{"HTTPS":true}' },
+  ].sort((left, right) => left.key.localeCompare(right.key));
+  serve.resources.push(...unrelated);
+  serve.occupiedPorts.push(8443);
+  serve.resources.sort((left, right) => left.key.localeCompare(right.key));
+  const harness = createHarness({ serve });
+  rememberCompletedSetup(harness.store);
+  await harness.coordinator.reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT });
+
+  assert.deepEqual(await harness.coordinator.remove(), {
+    ok: true,
+    status: { state: 'not-configured' },
+  });
+  assert.equal(harness.calls.includes('remove:443:/'), true);
+  assert.deepEqual(
+    harness.serve().resources.filter((resource) => unrelated.some(({ key }) => key === resource.key)),
+    unrelated,
+  );
+  assert.equal(harness.calls.at(-1), 'clear-local-state');
+  assert.equal(harness.store.state, null);
+  assert.equal(harness.store.clears, 1);
+  assert.equal(harness.coordinator.hasConfiguredConnection(), false);
+});
+
+test('removal accepts a verified already-absent endpoint and starts setup fresh afterward', async () => {
+  const harness = createHarness({ serve: emptyServe() });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(await harness.coordinator.remove(), {
+    ok: true,
+    status: { state: 'not-configured' },
+  });
+  assert.equal(harness.calls.some((call) => call.startsWith('remove:')), false);
+  assert.equal(harness.store.state, null);
+
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'ready',
+    origin: `https://${DNS_NAME}`,
+  });
+  assert.equal(harness.calls.includes('configure:443'), true);
+});
+
+test('removal failure retains endpoint ownership and all local trust state for retry', async () => {
+  const harness = createHarness({
+    serve: ownedServe(),
+    removeError: new Error('Tailscale Serve off failed'),
+  });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(await harness.coordinator.remove(), {
+    ok: false,
+    error: 'Tailscale Serve off failed',
+  });
+  assert.notEqual(harness.store.state, null);
+  assert.equal(harness.store.clears, 0);
+  assert.equal(harness.calls.includes('clear-local-state'), false);
+  assert.equal(harness.coordinator.hasConfiguredConnection(), true);
+});
+
+test('removal fails closed when ownership is ambiguous or endpoint absence cannot be proved', async () => {
+  const changed = ownedServe('http://127.0.0.1:9999');
+  const ambiguous = createHarness({ serve: changed });
+  rememberCompletedSetup(ambiguous.store);
+  assert.deepEqual(await ambiguous.coordinator.remove(), {
+    ok: false,
+    error: 'The Tessera-owned Tailscale Serve endpoint changed',
+  });
+  assert.equal(ambiguous.calls.some((call) => call.startsWith('remove:')), false);
+  assert.notEqual(ambiguous.store.state, null);
+
+  const unverified = createHarness({ serve: ownedServe(), removeNoop: true });
+  rememberCompletedSetup(unverified.store);
+  assert.deepEqual(await unverified.coordinator.remove(), {
+    ok: false,
+    error: 'Tailscale Serve endpoint removal could not be verified',
+  });
+  assert.notEqual(unverified.store.state, null);
+  assert.equal(unverified.calls.includes('clear-local-state'), false);
+});
+
+test('removal retains metadata when Tailscale is unavailable immediately before mutation', async () => {
+  const harness = createHarness({ node: { state: 'missing' }, serve: ownedServe() });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(await harness.coordinator.remove(), {
+    ok: false,
+    error: 'Tailscale is not installed',
+  });
+  assert.deepEqual(harness.calls, ['inspect-node']);
+  assert.notEqual(harness.store.state, null);
+  assert.equal(harness.store.clears, 0);
 });
 
 test('launch reconciliation requires removal and fresh setup when the public origin changed', async () => {
@@ -633,6 +767,8 @@ test('Windows persistence applies current-user ACLs and retains a selected high 
     assert.match(protectedPaths[1]?.targetPath ?? '', /\.mobile-access\..+\.tmp$/);
     assert.equal(protectedPaths[2]?.targetPath, statePath);
     assert.equal((await stat(statePath)).isFile(), true);
+    await store.clear();
+    await assert.rejects(stat(statePath), { code: 'ENOENT' });
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

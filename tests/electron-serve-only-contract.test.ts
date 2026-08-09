@@ -32,6 +32,10 @@ test('Electron exposes only Serve setup for remote transport', () => {
   }
   assert.match(main, /start-mobile-access-setup/);
   assert.match(preload, /start-mobile-access-setup/);
+  assert.match(main, /remove-mobile-access/);
+  assert.match(main, /\/api\/mobile-access\/local-state/);
+  assert.match(preload, /remove-mobile-access/);
+  assert.doesNotMatch(main, /serve[^\n]*reset/);
 });
 
 test('Remote Access UI has no manual listener or firewall controls', () => {

@@ -5,6 +5,7 @@ import { Bell, BellOff, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import {
+  pushApplicationServerKeyMatches,
   requestPushPermission,
   supportsInstalledPwaPush,
   vapidPublicKeyBytes,
@@ -75,10 +76,21 @@ export function PushNotificationControls() {
       if (typeof body.vapidPublicKey !== 'string') throw new Error('vapid-key-missing');
 
       const registration = await navigator.serviceWorker.ready;
-      const existing = await registration.pushManager.getSubscription();
+      const applicationServerKey = vapidPublicKeyBytes(body.vapidPublicKey);
+      let existing = await registration.pushManager.getSubscription();
+      if (
+        existing
+        && !pushApplicationServerKeyMatches(
+          existing.options.applicationServerKey,
+          applicationServerKey,
+        )
+      ) {
+        await existing.unsubscribe();
+        existing = null;
+      }
       const subscription = existing ?? await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: vapidPublicKeyBytes(body.vapidPublicKey),
+        applicationServerKey,
       });
       const stored = await fetch('/api/push/subscription', {
         method: 'PUT',

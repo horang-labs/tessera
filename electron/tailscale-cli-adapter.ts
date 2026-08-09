@@ -290,6 +290,17 @@ export function buildTailscaleServeArguments(proxyTarget: string, port = 443): s
   ];
 }
 
+export function buildTailscaleServeOffArguments(port: number, mountPath: string): string[] {
+  return [
+    'serve',
+    '--bg',
+    '--yes',
+    `--https=${port}`,
+    `--set-path=${mountPath}`,
+    'off',
+  ];
+}
+
 function resolveTailscaleExecutable(): string {
   if (process.platform !== 'win32') return 'tailscale';
 
@@ -446,5 +457,9 @@ export class TailscaleCliAdapter implements TailscaleAdapter {
     return authorizationUrl
       ? { state: 'authorization-required', authorizationUrl }
       : { state: 'configured' };
+  }
+
+  async removeServe(endpoint: TailscaleServeEndpoint): Promise<void> {
+    await this.run(buildTailscaleServeOffArguments(endpoint.port, endpoint.mountPath));
   }
 }

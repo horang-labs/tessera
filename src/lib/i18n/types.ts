@@ -85,6 +85,14 @@ export interface I18nMessages {
       mobileSetupOriginChangedHelp: string;
       mobileSetupRetryHelp: string;
       mobileSetupFailed: string;
+      mobileRemovalAction: string;
+      mobileRemovalTitle: string;
+      mobileRemovalDescription: string;
+      mobileRemovalWarning: string;
+      mobileRemovalConfirm: string;
+      mobileRemoving: string;
+      mobileRemovalFailed: string;
+      mobileRemovalSucceeded: string;
       addDeviceTitle: string;
       addDeviceDescription: string;
       addDevice: string;

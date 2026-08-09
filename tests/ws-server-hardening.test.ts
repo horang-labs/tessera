@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import path from 'node:path';
@@ -279,6 +279,77 @@ test('revoking a device removes its subscription, credential, and open connectio
     assert.equal(closeCode, 1006);
     await waitFor(() => transport.listConnections().length === 0);
     assert.equal(await subscriptions.getDevicePushSubscription(device.id), null);
+    assert.deepEqual(await evaluateRequest({
+      purpose: 'http', method: 'GET', rawUrl: '/api/push/subscription',
+      host: 'localhost:3100', origin: 'http://localhost:3100',
+      cookies: { device: device.token }, headers: {},
+    }), { allow: false, reason: 'unauthorized', status: 401 });
+  } finally {
+    await closeServer(transport, httpServer, [client]);
+    if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
+    else process.env.TESSERA_DATA_DIR = previousDataDir;
+    if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
+    else process.env.TESSERA_ELECTRON_RUNTIME = previousElectronRuntime;
+    if (previousPort === undefined) delete process.env.PORT;
+    else process.env.PORT = previousPort;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('mobile connection removal clears every trust generation and active device connection', async () => {
+  delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  const previousElectronRuntime = process.env.TESSERA_ELECTRON_RUNTIME;
+  const previousPort = process.env.PORT;
+  const dataDir = await mkdtemp(path.join(process.cwd(), '.tessera-mobile-removal-'));
+  process.env.TESSERA_DATA_DIR = dataDir;
+  process.env.TESSERA_ELECTRON_RUNTIME = '1';
+  process.env.PORT = '3100';
+  const registry = await import('../src/lib/auth/device-registry');
+  const subscriptions = await import('../src/lib/push/device-push-subscription-store');
+  const vapid = await import('../src/lib/push/vapid-identity');
+  const { clearMobileAccessLocalState } = await import(
+    '../src/lib/mobile-access/mobile-access-local-state'
+  );
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+  await subscriptions.clearDevicePushSubscriptions();
+  await registry.clearDeviceRegistry();
+  const { device } = await pairApprovedDevice('Removed phone');
+  await subscriptions.replaceDevicePushSubscription(device.id, {
+    endpoint: 'https://push.example.test/removed-device',
+    expirationTime: null,
+    keys: { p256dh: 'removed-public-key', auth: 'removed-auth-key' },
+  });
+  const firstIdentity = await vapid.ensureVapidIdentity();
+  const pendingPairing = await registry.issuePairingToken();
+  await registry.claimPairingToken({
+    token: pendingPairing.token,
+    name: 'Pending phone',
+    browser: 'Test browser',
+    platform: 'Test platform',
+    remoteAddress: '127.0.0.1',
+  });
+  const httpServer = createServer();
+  const transport = wsServer;
+  const port = await listen(httpServer);
+  transport.start(httpServer);
+  const client = await openDeviceWebSocket(port, device.token);
+
+  try {
+    await waitFor(() => transport.listConnections().length === 1);
+    const closed = once(client, 'close');
+    assert.deepEqual(await clearMobileAccessLocalState(), {
+      revokedDevices: 1,
+      disconnectedConnections: 1,
+    });
+    await closed;
+    assert.deepEqual(await registry.listDevices(), []);
+    assert.equal(await registry.getPairingStatus(), null);
+    assert.deepEqual(await registry.listPairingRequests(), []);
+    assert.deepEqual(await subscriptions.listDevicePushSubscriptions(), []);
+    await assert.rejects(stat(vapid.getVapidIdentityPath()), { code: 'ENOENT' });
+    const freshIdentity = await vapid.ensureVapidIdentity();
+    assert.notEqual(freshIdentity.publicKey, firstIdentity.publicKey);
     assert.deepEqual(await evaluateRequest({
       purpose: 'http', method: 'GET', rawUrl: '/api/push/subscription',
       host: 'localhost:3100', origin: 'http://localhost:3100',

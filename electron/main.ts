@@ -935,6 +935,29 @@ async function requestPairingApprovalApi(
   }
 }
 
+async function clearServerMobileAccessLocalState(): Promise<void> {
+  if (!serverPort || !electronAppSecret) {
+    throw new Error('The Tessera server is unavailable');
+  }
+  const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+  const response = await fetch(
+    `http://127.0.0.1:${serverPort}/api/mobile-access/local-state`,
+    {
+      method: 'DELETE',
+      headers: {
+        [APP_SECRET_HEADER]: electronAppSecret,
+        origin: `http://127.0.0.1:${serverPort}`,
+      },
+      signal: AbortSignal.timeout(PAIRING_PRESENTATION_TIMEOUT_MS),
+    },
+  );
+  if (response.ok) return;
+  const body = await response.json().catch(() => null) as { error?: unknown } | null;
+  throw new Error(
+    typeof body?.error === 'string' ? body.error : 'Mobile access cleanup failed',
+  );
+}
+
 async function requestRemoteAccessStatus(): Promise<RemoteAccessStatus | null> {
   if (!serverPort || !electronAppSecret) return null;
 
@@ -1565,6 +1588,10 @@ ipcMain.handle('start-mobile-access-setup', () => (
   mobileAccessCoordinator?.setup({ loopbackPort: serverPort })
     ?? unavailableMobileAccessStatus()
 ));
+ipcMain.handle('remove-mobile-access', () => (
+  mobileAccessCoordinator?.remove()
+    ?? { ok: false, error: 'Mobile access is unavailable' }
+));
 ipcMain.handle('create-pairing-code', (_event, action: unknown) => {
   if (action !== 'issue' && action !== 'rotate') {
     return { ok: false, code: 'invalid-action', error: 'Invalid pairing action' };
@@ -1811,6 +1838,7 @@ app.whenReady().then(async () => {
       stateStore: createMobileAccessStateStore(),
       checkHealth: checkMobileAccessHealth,
       openExternal: async (url) => { await shell.openExternal(url); },
+      clearLocalState: clearServerMobileAccessLocalState,
     });
     await mobileAccessCoordinator.reconcileOnLaunch({ loopbackPort: port });
     mainWindow = createWindow(port);
