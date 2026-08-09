@@ -5,6 +5,7 @@ import logger from '@/lib/logger';
 import {
   readCodexOverlayAccountHome,
   resolveCodexAccountHome,
+  extractCodexOverlayTerminalId,
   writeCodexOverlayMarker,
 } from '@/lib/codex-home';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
@@ -286,9 +287,30 @@ function promoteCodexOverlayTrust(overlayDir: string): void {
   }
 }
 
-/** 종료 직전 trust 결정만 승격한 뒤 심링크와 임시 overlay를 제거한다. */
+function preserveCodexOverlaySessionsLink(overlayDir: string, accountHome: string): void {
+  const source = path.join(accountHome, 'sessions');
+  try {
+    if (!fs.statSync(source).isDirectory()) return;
+    fs.mkdirSync(overlayDir, { recursive: true, mode: 0o700 });
+    const target = path.join(overlayDir, 'sessions');
+    if (fs.existsSync(target)) return;
+    fs.symlinkSync(source, target, getRuntimePlatform() === 'win32' ? 'junction' : 'dir');
+  } catch (err) {
+    logger.debug({ err, overlayDir }, 'codex overlay resume link could not be preserved');
+  }
+}
+
+/** Recreates a sessions-only alias for rollouts recorded by an older overlay. */
+export function repairCodexOverlayResumePath(transcriptPath: string): void {
+  const terminalId = extractCodexOverlayTerminalId(transcriptPath);
+  if (!terminalId) return;
+  preserveCodexOverlaySessionsLink(overlayDirFor(terminalId), resolveCodexAccountHome());
+}
+
+/** 종료 직전 trust 결정만 승격한 뒤 resume 링크를 제외한 overlay를 제거한다. */
 export function cleanupCodexOverlayForTerminal(terminalId: string): void {
   const overlayDir = overlayDirFor(terminalId);
+  const accountHome = readCodexOverlayAccountHome(overlayDir) ?? resolveCodexAccountHome();
   try {
     promoteCodexOverlayTrust(overlayDir);
   } catch (err) {
@@ -296,6 +318,7 @@ export function cleanupCodexOverlayForTerminal(terminalId: string): void {
   }
   try {
     fs.rmSync(overlayDir, { recursive: true, force: true });
+    preserveCodexOverlaySessionsLink(overlayDir, accountHome);
   } catch (err) {
     logger.debug({ err, terminalId }, 'codex overlay cleanup skipped');
   }

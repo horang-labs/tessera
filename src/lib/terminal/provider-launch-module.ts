@@ -15,10 +15,11 @@ import {
   createClaudeSkillOverlayInWsl,
   type WslClaudeSkillOverlay,
 } from './claude-skill-overlay-wsl';
-import { createCodexOverlay } from './codex-overlay';
+import { createCodexOverlay, repairCodexOverlayResumePath } from './codex-overlay';
 import {
   cleanupCodexOverlayInWsl,
   createCodexOverlayInWsl,
+  repairCodexOverlayResumePathInWsl,
 } from './codex-overlay-wsl';
 import { createOpenCodeOverlay } from './opencode-overlay';
 import { createOpenCodeOverlayInWsl } from './opencode-overlay-wsl';
@@ -568,6 +569,10 @@ export function createProviderLaunchModule(
           claudePluginDir,
         );
         decision.launchSpec.cwd = workDir;
+        const codexResumeTranscriptPath = decision.providerId === 'codex'
+          && dbSessions.extractCodexTerminalSessionId(decision.providerState)
+          ? getTerminalProviderSessionForTesseraSession(request.sessionId)?.transcript_path
+          : undefined;
 
         let launchEnv: Record<string, string | undefined> | undefined;
         let prepareLaunch: (() => Promise<void>) | undefined;
@@ -610,7 +615,12 @@ export function createProviderLaunchModule(
           const pending = createOverlayWithRetry(
             'Codex WSL',
             terminalId,
-            () => createCodexOverlayInWsl(terminalId, hookCommandStyle),
+            async () => {
+              if (codexResumeTranscriptPath) {
+                await repairCodexOverlayResumePathInWsl(codexResumeTranscriptPath);
+              }
+              return createCodexOverlayInWsl(terminalId, hookCommandStyle);
+            },
           );
           codexOverlayPromise = pending;
           // Waits for the creation to settle first. The cleanup is keyed by
@@ -721,7 +731,12 @@ export function createProviderLaunchModule(
             try {
               const overlayHome = codexOverlayPromise
                 ? await codexOverlayPromise
-                : createCodexOverlay(terminalId, hookCommandStyle);
+                : (() => {
+                    if (codexResumeTranscriptPath) {
+                      repairCodexOverlayResumePath(codexResumeTranscriptPath);
+                    }
+                    return createCodexOverlay(terminalId, hookCommandStyle);
+                  })();
               if (!overlayHome) {
                 throw new Error('the guest script failed twice');
               }

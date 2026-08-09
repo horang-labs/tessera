@@ -125,6 +125,27 @@ export function buildInotifyExcludeRegex(posixRoot: string): string {
   return `^${escapeRegExp(normalizedRoot)}/(.*/)?(${names})(/|$)`;
 }
 
+/** Builds the guest-side command without imposing workspace filtering on other callers. */
+export function buildWslInotifyArguments(options: {
+  root: WslUncRoot;
+  excludeRegex?: string;
+  eventMask?: string;
+}): string[] {
+  const args = [
+    "-d", options.root.distro,
+    // No -q: it would also suppress the "Watches established." stderr line
+    // this bridge relies on to detect readiness.
+    "--exec", "stdbuf", "-oL",
+    "inotifywait", "-m", "-r",
+    "-e", options.eventMask ?? "create,delete,move,modify,close_write",
+  ];
+  if (options.excludeRegex) {
+    args.push("--exclude", options.excludeRegex);
+  }
+  args.push("--format", "%e|%w%f", "--", options.root.posixPath);
+  return args;
+}
+
 export class WslInotifyBridge {
   private child: ChildProcess | null = null;
   private distroWaitTimer: NodeJS.Timeout | null = null;
@@ -138,6 +159,10 @@ export class WslInotifyBridge {
 
   constructor(private readonly options: {
     root: WslUncRoot;
+    /** Optional POSIX ERE applied inside the distro. */
+    excludeRegex?: string;
+    /** Optional inotifywait event mask; workspace watching uses the full default. */
+    eventMask?: string;
     onEvent(event: BridgeEvent): void;
     onEstablished(): void;
     onDown(reason: string): void;
@@ -151,17 +176,11 @@ export class WslInotifyBridge {
 
     let child: ChildProcess;
     try {
-      child = spawn("wsl.exe", [
-        "-d", this.options.root.distro,
-        // No -q: it would also suppress the "Watches established." stderr line
-        // this bridge relies on to detect readiness.
-        "--exec", "stdbuf", "-oL",
-        "inotifywait", "-m", "-r",
-        "-e", "create,delete,move,modify,close_write",
-        "--exclude", buildInotifyExcludeRegex(this.options.root.posixPath),
-        "--format", "%e|%w%f",
-        "--", this.options.root.posixPath,
-      ], {
+      child = spawn("wsl.exe", buildWslInotifyArguments({
+        root: this.options.root,
+        ...(this.options.excludeRegex ? { excludeRegex: this.options.excludeRegex } : {}),
+        ...(this.options.eventMask ? { eventMask: this.options.eventMask } : {}),
+      }), {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });

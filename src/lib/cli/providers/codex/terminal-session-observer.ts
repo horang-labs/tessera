@@ -7,6 +7,7 @@ import {
   resolveAgentHomeFilesystemPath,
   type FilesystemBrowseEnvironment,
 } from '@/lib/filesystem/path-environment';
+import { parseWslUncRoot } from '@/lib/workspace-files/wsl-inotify-bridge';
 import type {
   ProviderTerminalSessionObserver,
   ProviderTerminalSessionObserverOptions,
@@ -16,7 +17,7 @@ import {
   type ProviderSessionArtifactCandidate,
 } from '../terminal-session-artifact-observer';
 
-function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | null {
+function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | false | null {
   let firstLine = '';
   try {
     const descriptor = fs.openSync(filePath, 'r');
@@ -37,7 +38,7 @@ function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | nul
       type?: unknown;
       payload?: Record<string, unknown>;
     };
-    if (entry.type !== 'session_meta' || !entry.payload) return null;
+    if (entry.type !== 'session_meta' || !entry.payload) return false;
     const providerSessionId = typeof entry.payload.session_id === 'string'
       ? entry.payload.session_id.trim()
       : typeof entry.payload.id === 'string'
@@ -47,13 +48,15 @@ function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | nul
       ? entry.payload.forked_from_id.trim()
       : '';
     if (!providerSessionId || !previousProviderSessionId || providerSessionId === previousProviderSessionId) {
-      return null;
+      return false;
     }
     return {
       activation: 'active',
       providerSessionId,
       previousProviderSessionId,
-      transcriptPath: filePath,
+      // Watching uses a server-openable path, but persisted provider paths stay
+      // in the CLI's filesystem domain and are translated only when opened.
+      transcriptPath: parseWslUncRoot(filePath)?.posixPath ?? filePath,
     };
   } catch {
     return null;

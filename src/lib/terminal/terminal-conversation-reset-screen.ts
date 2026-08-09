@@ -24,7 +24,14 @@ export function codexScreenShowsConversationReset(options: {
   const { currentProviderSessionId, visibleText } = options;
   if (!currentProviderSessionId) return false;
   const escaped = currentProviderSessionId.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  return new RegExp(`codex\\s+resume\\s+${escaped}\\b`, 'iu').test(visibleText);
+  const resumeHint = new RegExp(`codex\\s+resume\\s+${escaped}\\b`, 'iu');
+  if (!resumeHint.test(visibleText)) return false;
+
+  // `/fork` prints the same parent resume hint as `/clear`, but it also names
+  // the parent explicitly. The rollout observer owns this transition: it sees
+  // the child id and creates a real `(Fork)` session instead of an empty reset.
+  const forkBanner = new RegExp(`thread\\s+forked\\s+from\\s+${escaped}\\b`, 'iu');
+  return !forkBanner.test(visibleText);
 }
 
 /**

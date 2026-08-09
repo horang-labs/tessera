@@ -83,7 +83,7 @@ export const ChatArea = memo(function ChatArea({
   const isLoading = useChatStore((state) => state.isLoading);
   const isTurnInFlight = useChatStore(selectIsTurnInFlight(sessionId));
   const connectionStatus = useChatStore((state) => state.connectionStatus);
-  const { viewSession } = useSessionNavigation();
+  const { viewSession, isLoading: isHistoryLoading } = useSessionNavigation();
 
   const historyLoaded = useChatStore((state) =>
     state.isHistoryLoaded(sessionId),
@@ -291,7 +291,7 @@ export const ChatArea = memo(function ChatArea({
             <div className="min-h-0 flex-1 overflow-hidden">
               <MessageList
                 messages={windowedMessages}
-                isLoading={isLoading}
+                isLoading={isLoading || isHistoryLoading}
                 sessionId={sessionId}
                 hasMore={hasMore}
                 onLoadMore={loadMore}

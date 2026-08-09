@@ -8,6 +8,7 @@ import {
   buildWslCodexOverlayCleanupScript,
   buildWslCodexOverlayCreateScript,
   buildWslCodexOverlayFinalizeScript,
+  buildWslCodexOverlayResumeRepairScript,
   buildWslCodexTrustPromotionScript,
   buildWslCodexTrustReportScript,
   readWslOverlayReport,
@@ -116,9 +117,14 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
     assert.equal(fs.existsSync(path.join(overlay!, 'config.toml')), false);
     assert.equal(fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf8'), '{"token":"live"}');
 
-    // 정리 스크립트는 오버레이만 제거(심링크 타깃 무손상).
+    // 정리 스크립트는 설정과 훅을 제거하되 Codex DB가 기록한 rollout
+    // 절대경로를 위해 sessions 링크만 남긴다.
     runScript(buildWslCodexOverlayCleanupScript('terminal-wsl-test'), home);
-    assert.equal(fs.existsSync(overlay!), false);
+    assert.deepEqual(fs.readdirSync(overlay!), ['sessions']);
+    assert.equal(
+      fs.readlinkSync(path.join(overlay!, 'sessions')),
+      path.join(codexHome, 'sessions'),
+    );
     assert.equal(fs.existsSync(path.join(codexHome, 'auth.json')), true);
     assert.equal(fs.readFileSync(accountControlSkill, 'utf8'), 'user-owned Tessera skill\n');
     assert.equal(fs.readFileSync(accountOtherSkill, 'utf8'), 'user-owned other skill\n');
@@ -139,6 +145,76 @@ test('WSL overlay create script tolerates a missing codex home', () => {
     assert.equal(fs.readFileSync(path.join(overlay!, 'hooks.json'), 'utf8'), '{}');
     // config가 없으면 보고 라인도 없다.
     assert.equal(readWslOverlayReport(stdout, 'TESSERA_CONFIG_B64'), undefined);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('WSL overlay cleanup keeps recorded rollout paths resumable', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-resume-'));
+  const codexHome = path.join(home, '.codex');
+  const rolloutRelative = path.join(
+    'sessions',
+    '2026',
+    '08',
+    '09',
+    'rollout-2026-08-09T09-09-06-child-session.jsonl',
+  );
+  const accountRollout = path.join(codexHome, rolloutRelative);
+  fs.mkdirSync(path.dirname(accountRollout), { recursive: true });
+  fs.writeFileSync(accountRollout, '{"type":"session_meta"}\n');
+
+  try {
+    const stdout = runScript(
+      buildWslCodexOverlayCreateScript('parent-terminal', b64('{}')),
+      home,
+    );
+    const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
+    assert.ok(overlay);
+    const recordedRollout = path.join(overlay!, rolloutRelative);
+    assert.equal(fs.readFileSync(recordedRollout, 'utf8'), '{"type":"session_meta"}\n');
+
+    runScript(buildWslCodexOverlayCleanupScript('parent-terminal'), home);
+
+    assert.equal(
+      fs.readFileSync(recordedRollout, 'utf8'),
+      '{"type":"session_meta"}\n',
+      'Codex persists the overlay rollout path and must still be able to read it on resume',
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('WSL resume repair restores rollout paths left by older cleanup behavior', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-repair-'));
+  const rolloutRelative = path.join(
+    'sessions',
+    '2026',
+    '08',
+    '09',
+    'rollout-2026-08-09T09-09-06-legacy-child.jsonl',
+  );
+  const accountRollout = path.join(home, '.codex', rolloutRelative);
+  fs.mkdirSync(path.dirname(accountRollout), { recursive: true });
+  fs.writeFileSync(accountRollout, 'legacy fork\n');
+  const recordedRollout = path.join(
+    home,
+    '.tessera',
+    'codex-overlay',
+    'session-old-parent',
+    rolloutRelative,
+  );
+
+  try {
+    const repairScript = buildWslCodexOverlayResumeRepairScript(recordedRollout);
+    assert.ok(repairScript);
+    runScript(repairScript!, home);
+    assert.equal(fs.readFileSync(recordedRollout, 'utf8'), 'legacy fork\n');
+    assert.equal(
+      buildWslCodexOverlayResumeRepairScript(accountRollout),
+      undefined,
+    );
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

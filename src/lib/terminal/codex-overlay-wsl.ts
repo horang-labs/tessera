@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process';
 import logger from '@/lib/logger';
-import { buildCodexOverlayMarkerJson, CODEX_OVERLAY_MARKER } from '@/lib/codex-home';
+import {
+  buildCodexOverlayMarkerJson,
+  CODEX_OVERLAY_MARKER,
+  extractCodexOverlayTerminalId,
+} from '@/lib/codex-home';
 import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
 import { buildCodexHookSettings } from './codex-hook-settings';
 import { appendTrustedHookState } from './codex-overlay';
@@ -223,7 +227,41 @@ export function buildWslCodexOverlayCleanupScript(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   assertSafeTerminalId(terminalId);
-  return `rm -rf "${getWslGuestTesseraStateRoot(env)}/codex-overlay/${terminalId}"`;
+  const stateRoot = getWslGuestTesseraStateRoot(env);
+  return [
+    'set -eu',
+    `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
+    'sessions="$HOME/.codex/sessions"',
+    'rm -rf "$overlay"',
+    // Codex persists rollout_path through the overlay name. Keep the one live
+    // account link that makes that absolute path resumable; settings and hooks
+    // have already been removed with the rest of the overlay.
+    'if [ -d "$sessions" ]; then',
+    '  mkdir -p "$overlay"',
+    '  ln -s "$sessions" "$overlay/sessions"',
+    'fi',
+  ].join('\n');
+}
+
+/** Recreates the sessions-only tombstone for sessions broken by older cleanup. */
+export function buildWslCodexOverlayResumeRepairScript(
+  transcriptPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const terminalId = extractCodexOverlayTerminalId(transcriptPath);
+  if (!terminalId) return undefined;
+  assertSafeTerminalId(terminalId);
+  const stateRoot = getWslGuestTesseraStateRoot(env);
+  return [
+    'set -eu',
+    `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
+    'sessions="$HOME/.codex/sessions"',
+    'target="$overlay/sessions"',
+    'if [ -d "$sessions" ] && [ ! -e "$target" ] && [ ! -L "$target" ]; then',
+    '  mkdir -p "$overlay"',
+    '  ln -s "$sessions" "$target"',
+    'fi',
+  ].join('\n');
 }
 
 /** 스크립트 stdout에서 `LABEL:value` 보고 라인을 찾는다. */
@@ -328,6 +366,16 @@ async function createOverlayScripts(
   });
   logger.debug({ terminalId, overlayPath, accountHome }, 'codex WSL overlay created');
   return overlayPath;
+}
+
+export async function repairCodexOverlayResumePathInWsl(
+  transcriptPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const terminalId = extractCodexOverlayTerminalId(transcriptPath);
+  const script = buildWslCodexOverlayResumeRepairScript(transcriptPath, env);
+  if (!terminalId || !script) return;
+  await chainGuestOp(terminalId, () => runWslScript(script, FINALIZE_TIMEOUT_MS));
 }
 
 /**

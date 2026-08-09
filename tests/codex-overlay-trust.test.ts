@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   cleanupCodexOverlayForTerminal,
   createCodexOverlay,
+  repairCodexOverlayResumePath,
 } from '@/lib/terminal/codex-overlay';
 
 // 훅 커맨드(hook-command.ts)나 timeout이 바뀌면 함께 바뀐다 — codex의
@@ -107,6 +108,43 @@ test('Codex overlay preserves trust for project-local hooks', () => {
     assert.match(config, /trusted_hash = "sha256:project-hook"/);
   } finally {
     cleanupCodexOverlayForTerminal('terminal-user-trust-test');
+    restoreEnv('CODEX_HOME', previousCodexHome);
+    restoreEnv('TESSERA_DATA_DIR', previousDataDir);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex overlay cleanup and legacy repair keep recorded rollouts resumable', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-overlay-resume-'));
+  const systemHome = path.join(root, 'system-codex-home');
+  const dataDir = path.join(root, 'tessera-data');
+  const rolloutRelative = path.join(
+    'sessions',
+    '2026',
+    '08',
+    '09',
+    'rollout-2026-08-09T09-09-06-child-session.jsonl',
+  );
+  const accountRollout = path.join(systemHome, rolloutRelative);
+  fs.mkdirSync(path.dirname(accountRollout), { recursive: true });
+  fs.writeFileSync(accountRollout, 'fork rollout\n');
+
+  const previousCodexHome = process.env.CODEX_HOME;
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  process.env.CODEX_HOME = systemHome;
+  process.env.TESSERA_DATA_DIR = dataDir;
+
+  try {
+    const overlayDir = createCodexOverlay('session-parent-terminal');
+    const recordedRollout = path.join(overlayDir, rolloutRelative);
+    cleanupCodexOverlayForTerminal('session-parent-terminal');
+    assert.equal(fs.readFileSync(recordedRollout, 'utf8'), 'fork rollout\n');
+    assert.deepEqual(fs.readdirSync(overlayDir), ['sessions']);
+
+    fs.rmSync(overlayDir, { recursive: true, force: true });
+    repairCodexOverlayResumePath(recordedRollout);
+    assert.equal(fs.readFileSync(recordedRollout, 'utf8'), 'fork rollout\n');
+  } finally {
     restoreEnv('CODEX_HOME', previousCodexHome);
     restoreEnv('TESSERA_DATA_DIR', previousDataDir);
     fs.rmSync(root, { recursive: true, force: true });
