@@ -82,11 +82,11 @@ export function resolveCanonicalWorktree(
         db.prepare(`
           UPDATE sessions SET worktree_id = ? WHERE worktree_id = ?
         `).run(existing.id, duplicate.id);
+        db.prepare('DELETE FROM worktrees WHERE id = ?').run(duplicate.id);
         db.prepare(`
           UPDATE tasks SET creation_scope_worktree_id = ?
           WHERE creation_scope_worktree_id = ?
         `).run(existing.id, duplicate.id);
-        db.prepare('DELETE FROM worktrees WHERE id = ?').run(duplicate.id);
       }
       if (
         existing.filesystem_path !== identity.filesystemPath

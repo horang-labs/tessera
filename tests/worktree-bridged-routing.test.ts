@@ -147,3 +147,51 @@ test('configured routing translates stored CLI paths before navigation and Files
   );
   assert.equal(sessionRoot, fs.realpathSync.native(repository));
 });
+
+test('canonical reconciliation preserves immutable Worktree Creation Scope', async () => {
+  const [database, projects, tasks, worktrees] = await Promise.all([
+    import('@/lib/db/database'),
+    import('@/lib/db/projects'),
+    import('@/lib/db/tasks'),
+    import('@/lib/db/worktrees'),
+  ]);
+  await database.initDatabase();
+
+  const repository = createRepository('duplicate-scope-project');
+  projects.registerProject('duplicate-scope-project', repository, 'Duplicate Scope');
+  const canonicalId = tasks.createTask({
+    id: 'canonical-owner-task',
+    projectId: 'duplicate-scope-project',
+    title: 'Canonical owner',
+    worktreePath: repository,
+  });
+  const duplicateId = worktrees.createPendingWorktree('wt_duplicate_scope');
+  const reportedPath = '/home/work/duplicate-scope-project';
+  const reportedIdentity = canonicalizeWorktreePath(reportedPath);
+  assert.ok(reportedIdentity);
+  database.getDb().prepare(`
+    UPDATE worktrees SET filesystem_path = ?, canonical_path_key = ? WHERE id = ?
+  `).run(reportedPath, reportedIdentity.canonicalPathKey, duplicateId);
+
+  tasks.createTask({
+    id: 'scoped-child-task',
+    projectId: 'duplicate-scope-project',
+    title: 'Scoped child',
+    creationScope: { originWorktreeId: duplicateId, branch: 'feature/c' },
+  });
+
+  const translate = async (candidate: string) => (
+    candidate === reportedPath ? repository : candidate
+  );
+  await worktrees.routeCanonicalWorktreePaths('wsl', translate);
+
+  const scope = database.getDb().prepare(`
+    SELECT creation_scope_worktree_id, creation_scope_branch
+    FROM tasks WHERE id = 'scoped-child-task'
+  `).get() as { creation_scope_worktree_id: string; creation_scope_branch: string };
+  assert.deepEqual(scope, {
+    creation_scope_worktree_id: canonicalId,
+    creation_scope_branch: 'feature/c',
+  });
+  assert.equal(worktrees.getWorktree(duplicateId), undefined);
+});

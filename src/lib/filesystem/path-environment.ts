@@ -474,34 +474,39 @@ async function loadWslPathInfo(): Promise<WslPathInfo | null> {
   if (getRuntimePlatform() !== 'win32') return null;
 
   const wslCandidates = getWslExecutableCandidates();
-  const script = [
-    'printf "%s\\n" "${WSL_DISTRO_NAME:-}"',
-    'printf "%s\\n" "$HOME"',
-    'wslpath -w "$HOME" 2>/dev/null || true',
-  ].join('; ');
-
   for (const wslExecutable of wslCandidates) {
-    try {
-      const { stdout } = await execFileAsync(
-        wslExecutable,
-        ['-e', 'sh', '-c', script],
-        {
-          encoding: 'utf8',
-          timeout: 5000,
-          windowsHide: true,
-        },
-      );
-      const parsed = parseWslPathInfo(stdout);
-      if (parsed) return parsed;
-    } catch {
-      // Try the next executable candidate.
-    }
+    const parsed = await probeWslPathInfo(wslExecutable);
+    if (parsed) return parsed;
   }
 
   const discoveredFromDistroList = await discoverWslPathInfoFromDistroList(wslCandidates);
   if (discoveredFromDistroList) return discoveredFromDistroList;
 
   return discoverWslPathInfoFromUnc();
+}
+
+async function probeWslPathInfo(
+  wslExecutable: string,
+  distroName?: string,
+): Promise<WslPathInfo | null> {
+  const script = [
+    'printf "%s\\n" "${WSL_DISTRO_NAME:-}"',
+    'printf "%s\\n" "$HOME"',
+    'wslpath -w "$HOME" 2>/dev/null || true',
+  ].join('; ');
+  const args = distroName
+    ? ['-d', distroName, '-e', 'sh', '-c', script]
+    : ['-e', 'sh', '-c', script];
+  try {
+    const { stdout } = await execFileAsync(wslExecutable, args, {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+    });
+    return parseWslPathInfo(stdout);
+  } catch {
+    return null;
+  }
 }
 
 function parseWslPathInfo(stdout: string): WslPathInfo | null {
@@ -555,21 +560,18 @@ async function discoverWslPathInfoFromUnc(): Promise<WslPathInfo | null> {
       continue;
     }
 
-    for (const distroName of distroNames.filter((name) => name.trim().length > 0)) {
+    const availableDistroNames = distroNames.filter((name) => name.trim().length > 0);
+    // Without a successful WSL probe there is no configured distro identity.
+    // A sole share is unambiguous; choosing the first of several would route
+    // the CLI home through an unrelated distro.
+    if (availableDistroNames.length !== 1) continue;
+    for (const distroName of availableDistroNames) {
       const rootFilesystemPath = path.win32.join(namespaceRoot, distroName);
       const homeCandidate = await resolveBestWslHomeCandidate(rootFilesystemPath);
       if (homeCandidate) {
         return {
           homeDisplayPath: homeCandidate.displayPath,
           homeFilesystemPath: homeCandidate.filesystemPath,
-          rootFilesystemPath,
-        };
-      }
-
-      if (await directoryExists(rootFilesystemPath)) {
-        return {
-          homeDisplayPath: '/',
-          homeFilesystemPath: rootFilesystemPath,
           rootFilesystemPath,
         };
       }
@@ -595,7 +597,11 @@ async function discoverWslPathInfoFromDistroList(
       continue;
     }
 
+    if (distroNames.length !== 1) continue;
+
     for (const distroName of distroNames) {
+      const probed = await probeWslPathInfo(wslExecutable, distroName);
+      if (probed) return probed;
       const discovered = await discoverWslPathInfoFromDistroName(distroName);
       if (discovered) return discovered;
     }
@@ -618,12 +624,6 @@ async function discoverWslPathInfoFromDistroName(distroName: string): Promise<Ws
         rootFilesystemPath,
       };
     }
-
-    return {
-      homeDisplayPath: '/',
-      homeFilesystemPath: rootFilesystemPath,
-      rootFilesystemPath,
-    };
   }
 
   return null;
@@ -644,17 +644,6 @@ async function resolveBestWslHomeCandidate(
   rootFilesystemPath: string,
 ): Promise<{ displayPath: string; filesystemPath: string } | null> {
   const homeRoot = path.win32.join(rootFilesystemPath, 'home');
-  const usernameCandidates = getWindowsUsernameCandidates();
-
-  for (const username of usernameCandidates) {
-    const filesystemPath = path.win32.join(homeRoot, username);
-    if (await directoryExists(filesystemPath)) {
-      return {
-        displayPath: `/home/${username}`,
-        filesystemPath,
-      };
-    }
-  }
 
   try {
     const homeEntries = await readdir(homeRoot, { withFileTypes: true });
@@ -671,27 +660,10 @@ async function resolveBestWslHomeCandidate(
       };
     }
   } catch {
-    // Fall back to /home or /.
-  }
-
-  if (await directoryExists(homeRoot)) {
-    return {
-      displayPath: '/home',
-      filesystemPath: homeRoot,
-    };
+    return null;
   }
 
   return null;
-}
-
-function getWindowsUsernameCandidates(): string[] {
-  const candidates = [
-    process.env.USERNAME,
-    process.env.USERPROFILE ? path.win32.basename(process.env.USERPROFILE) : null,
-    isWindowsDrivePath(homedir()) ? path.win32.basename(homedir()) : null,
-  ];
-
-  return [...new Set(candidates.filter((value): value is string => Boolean(value)))];
 }
 
 async function directoryExists(candidate: string): Promise<boolean> {
