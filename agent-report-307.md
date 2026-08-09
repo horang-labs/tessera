@@ -102,14 +102,16 @@ sent an app-secret-authenticated `DELETE` to
 `http://127.0.0.1:32126/api/mobile-access/local-state`; it returned `success=true`,
 `revokedDevices=0`, `disconnectedConnections=0`, and the VAPID file no longer existed. The
 packaged settings page then showed Not configured, enabled setup, one unchanged global Push
-toggle, and no removal button (correct outside Ready). The visually inspected screenshot is
-`\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-307-mobile-removal-settings.png`, SHA-256
-`4d278ef9ba91555232a8b6b6423062d056aadf8aea676450b5624b90373e01df`.
+toggle, and no removal button (correct outside Ready). The screenshot was captured at
+`\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-307-mobile-removal-settings.png`, visually
+inspected, and measured SHA-256
+`4d278ef9ba91555232a8b6b6423062d056aadf8aea676450b5624b90373e01df` before cleanup.
 
 Cleanup used `scripts/stop-electron-test-session.ps1 -SessionId
 codex-307-removal-0809-2340 -RemoveData`; it stopped only PID 39516 and removed the isolated data
-and manifest. Ports 32126/9339 closed. The portable artifact and unpacked directory were moved to
-desktop trash. Installed PID 15040/port 32123 and both source DB hashes were unchanged.
+and manifest. Ports 32126/9339 closed. The portable artifact, unpacked directory, and packaged-test
+screenshot were moved to desktop trash and remain recoverable. Installed PID 15040/port 32123 and
+both source DB hashes were unchanged.
 
 ## `$code-review`
 
@@ -121,7 +123,9 @@ The requested `$code-review` pinned `d1b3f56`, confirmed the non-empty
 The initial Standards pass found two hard process findings: the graph was stale, and the packaged
 boundary evidence had not yet been recorded in the diff. `graphify update .` was run after both
 source commits, and this report now records the isolated packaged topology, mutation, invariants,
-and cleanup evidence.
+and cleanup evidence. The final pass found the retained packaged-test screenshot violated the
+required cleanup rule; it was moved to desktop trash. The subsequent working-tree check confirmed
+the original temporary path no longer exists. No hard Standards findings remain.
 
 ### Spec
 
@@ -138,7 +142,11 @@ The fourth noted that the browser E2E mocks the Electron removal call. That is a
 safely fixable by changing the user's live Tailscale mapping; deterministic coordinator, adapter,
 server lifecycle, real WebSocket, and UI tests cover the individual public boundaries, while the
 packaged smoke covers the real Electron/server filesystem boundary. The unexercised live mapping
-is explicitly recorded below.
+is explicitly recorded below. The final Spec pass confirmed the first three findings were fixed
+and retained this single partial AC10 finding.
+
+Final review summary: Standards 0 remaining findings; Spec 1 remaining partial verification
+finding (AC10 live end-to-end removal).
 
 ## Not verified and deliberately left out
 
