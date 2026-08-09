@@ -104,7 +104,7 @@ export function createWebPushDispatcher(dependencies: WebPushDispatcherDependenc
         try {
           await dependencies.sendNotification(subscription, payload);
         } catch (error) {
-          logger.warn({ error, userId, endpoint: subscription.endpoint }, 'Web Push delivery failed');
+          logger.warn({ error, userId }, 'Web Push delivery failed');
         }
       }));
     })().catch((error) => {
