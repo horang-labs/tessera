@@ -75,6 +75,7 @@ test('WSL home discovery never guesses from Windows user identity', () => {
   assert.doesNotMatch(pathEnvironmentSource, /resolveBestWslHomeCandidate/);
   assert.match(pathEnvironmentSource, /\['-d', distroName, '-e', 'sh', '-c', script\]/);
   assert.match(pathEnvironmentSource, /printf .*\$HOME/);
+  assert.match(pathEnvironmentSource, /if \(!distroName \|\| !reportedHome\) return null/);
 });
 
 /**

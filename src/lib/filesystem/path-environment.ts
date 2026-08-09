@@ -514,7 +514,9 @@ function parseWslPathInfo(stdout: string): WslPathInfo | null {
       .split(/\r?\n/)
       .map((line) => line.trim());
     const distroName = lines[0];
-    const homeDisplayPath = normalizeWslDisplayPath(lines[1] || '/');
+    const reportedHome = lines[1];
+    if (!distroName || !reportedHome) return null;
+    const homeDisplayPath = normalizeWslDisplayPath(reportedHome);
     const homeFilesystemPath = path.win32.normalize(
       lines[2] || buildWslUncPath(distroName, homeDisplayPath) || '',
     );
