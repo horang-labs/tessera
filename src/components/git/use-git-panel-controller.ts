@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useGitPanelStore } from "@/stores/git-panel-store";
+import {
+  gitWorktreeKey,
+  provisionalGitWorktreeKey,
+  useGitPanelStore,
+  type GitPendingVerb,
+} from "@/stores/git-panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
@@ -42,7 +47,6 @@ import {
   describeGitActionToast,
   describeGitRequestFailure,
   describeGitRequestFailureToast,
-  type GitActionFailureReport,
   type GitActionToast,
   type GitActionVerb,
 } from "./git-action-report";
@@ -71,7 +75,7 @@ type GitBranchActionVerb = "push" | "pull" | "create_pr" | "abort";
  * rather than the two requests it makes, because what the panel has to disable
  * is the whole press, not each half as it goes by.
  */
-export type GitPendingVerb = GitActionVerb | "commit_push";
+export type { GitPendingVerb } from "@/stores/git-panel-store";
 
 /**
  * What a branch action says when the request never came back with anything of
@@ -99,6 +103,7 @@ const BRANCH_ACTION_TELEMETRY_TARGET: Record<GitBranchActionVerb, string> = {
 
 const PANEL_CACHE_LIMIT = 20;
 const gitPanelSessionCache = new Map<string, GitPanelSessionCacheEntry>();
+const EMPTY_DESELECTED_PATHS: ReadonlySet<string> = new Set<string>();
 
 async function writeClipboardText(value: string | null | undefined) {
   if (!value || typeof navigator === "undefined" || !navigator.clipboard) {
@@ -143,6 +148,28 @@ export function useGitPanelController(sessionId: string | null) {
     sessionId ? state.dataBySessionId[sessionId] ?? null : null,
   );
   const applyGitPanelData = useGitPanelStore((state) => state.applyGitPanelData);
+  // The unknown-state frame already permits typing before `data` exists. Keep
+  // that input under a provisional key, then follow the snapshot's canonical
+  // owner once Git resolves it; the store migrates the provisional draft.
+  const worktreeKey = data
+    ? gitWorktreeKey(data)
+    : sessionId
+      ? provisionalGitWorktreeKey(sessionId)
+      : null;
+  const delivery = useGitPanelStore((state) =>
+    worktreeKey ? state.deliveryByWorktree[worktreeKey] : undefined,
+  );
+  const setWorktreeCommitMessage = useGitPanelStore(
+    (state) => state.setCommitMessage,
+  );
+  const toggleWorktreeCommitFile = useGitPanelStore(
+    (state) => state.toggleCommitFile,
+  );
+  const clearWorktreeDraft = useGitPanelStore((state) => state.clearDraft);
+  const markWorktreePending = useGitPanelStore((state) => state.markPending);
+  const setWorktreeActionFailure = useGitPanelStore(
+    (state) => state.setActionFailure,
+  );
   const [loading, setLoading] = useState(() => {
     if (!sessionId || isTransientSessionId(sessionId)) return false;
     return !useGitPanelStore.getState().dataBySessionId[sessionId];
@@ -156,15 +183,13 @@ export function useGitPanelController(sessionId: string | null) {
   );
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
-  const [commitMessage, setCommitMessage] = useState("");
+  const commitMessage = delivery?.commitMessage ?? "";
   // Checkboxes start selected, so it is the *de*selection that has to persist.
   // The changed-file list is re-polled every few seconds; holding the selection
   // instead would make every poll fight over files that had just appeared.
-  const [deselectedPaths, setDeselectedPaths] = useState<ReadonlySet<string>>(
-    () => new Set<string>(),
-  );
+  const deselectedPaths = delivery?.deselectedPaths ?? EMPTY_DESELECTED_PATHS;
   /**
-   * The Git action in flight against each working directory, if any.
+   * The Git action in flight against this canonical worktree, if any.
    *
    * Not one slot for the whole panel: the panel is a single component pointed at
    * whichever session is active, while this state outlives a switch, so a shared
@@ -173,7 +198,7 @@ export function useGitPanelController(sessionId: string | null) {
    * cleared on switch, moving away and back re-enables the button over the
    * action already running.
    *
-   * Keyed by working directory rather than by session because that is what
+   * Keyed by Git's worktree root rather than by session because that is what
    * actually contends. Several sessions can share one (`docs/design/git-delivery.md`
    * §5, and §11 refreshes all of them after an action), and `git commit` holds
    * `index.lock` for the whole of a pre-commit hook — so a second commit into
@@ -184,31 +209,13 @@ export function useGitPanelController(sessionId: string | null) {
    * terminal was always free to run Git underneath us, and ADR 0007 declines
    * orchestration. It stops the panel from being the thing that causes it.
    */
-  const [pendingActions, setPendingActions] = useState<
-    Readonly<Record<string, GitPendingVerb>>
-  >(() => ({}));
-  /**
-   * Null while Git state is unknown — no action can be started from that frame.
-   * Read off the store rather than `panelData`, which is assembled further down;
-   * the merge there leaves the working directory alone.
-   */
-  const pendingWorkDir = data?.workDir ?? null;
-  const pendingHere = (pendingWorkDir ? pendingActions[pendingWorkDir] : null) ?? null;
+  const pendingHere = delivery?.pendingVerb ?? null;
 
   const markPending = useCallback(
-    (workDir: string, verb: GitPendingVerb | null): void => {
-      // Every action that runs from this panel opens a slot here, so this is
-      // the one place that knows a new one has started — and a banner about the
-      // last run must not sit under a button that is running again (#248).
-      if (verb) setActionFailure(null);
-      setPendingActions((current) => {
-        const next = { ...current };
-        if (verb) next[workDir] = verb;
-        else delete next[workDir];
-        return next;
-      });
+    (ownerKey: string, verb: GitPendingVerb | null): void => {
+      markWorktreePending(ownerKey, verb);
     },
-    [],
+    [markWorktreePending],
   );
   /**
    * The question standing between a press and a push to the default branch, or
@@ -248,8 +255,7 @@ export function useGitPanelController(sessionId: string | null) {
    * Separate from `error`, which says the panel could not be read at all — a
    * push that Git refused leaves the panel perfectly readable.
    */
-  const [actionFailure, setActionFailure] =
-    useState<GitActionFailureReport | null>(null);
+  const actionFailure = delivery?.actionFailure ?? null;
   const lastDiffStatsTokenRef = useRef<string | null>(null);
 
   const sessionSnapshot = useSessionStore((state) =>
@@ -343,14 +349,10 @@ export function useGitPanelController(sessionId: string | null) {
     setSelectedPath(cached?.selectedPath ?? null);
     setDiffCache(cached?.diffCache ?? {});
     setDiffError(null);
-    // A commit draft belongs to the session it was typed in, and so does the
-    // selection under it — neither survives a switch.
-    setCommitMessage("");
-    setDeselectedPaths(new Set<string>());
+    // Generation progress and confirmations belong to this mounted surface.
+    // The draft and retained action failure live in the worktree owner and are
+    // selected above, so switching between sessions cannot erase either.
     setGenerateMessageError(null);
-    // The failure was another session's, and the branch it names is not the one
-    // on screen any more.
-    setActionFailure(null);
     // The question was asked about the branch the panel was showing a moment
     // ago; answering it here would push a different session's branch.
     setPushConfirmation(null);
@@ -559,21 +561,6 @@ export function useGitPanelController(sessionId: string | null) {
     [panelData, selectedPath],
   );
 
-  // A path that left the change set must not stay deselected: if the same file
-  // changes again it is a new choice, and it should arrive checked like the
-  // rest.
-  useEffect(() => {
-    const files = panelData?.changedFiles;
-    if (!files) return;
-
-    setDeselectedPaths((current) => {
-      if (current.size === 0) return current;
-      const live = new Set(files.map((file) => file.path));
-      const next = new Set([...current].filter((path) => live.has(path)));
-      return next.size === current.size ? current : next;
-    });
-  }, [panelData]);
-
   const commitFiles = useMemo<GitChangedFile[]>(
     () =>
       (panelData?.changedFiles ?? []).filter(
@@ -600,20 +587,17 @@ export function useGitPanelController(sessionId: string | null) {
   );
 
   const toggleCommitFile = useCallback((path: string) => {
-    setDeselectedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
+    if (!worktreeKey) return;
+    toggleWorktreeCommitFile(worktreeKey, path);
+  }, [toggleWorktreeCommitFile, worktreeKey]);
 
   const changeCommitMessage = useCallback((value: string) => {
-    setCommitMessage(value);
+    if (!worktreeKey) return;
+    setWorktreeCommitMessage(worktreeKey, value);
     // Typing over the field answers the failure; keeping it visible would leave
     // a complaint about text the user has already replaced.
     setGenerateMessageError(null);
-  }, []);
+  }, [setWorktreeCommitMessage, worktreeKey]);
 
   const generateCommitMessage = useCallback(async () => {
     // The button is disabled without a selection, and a poll can empty one out
@@ -650,7 +634,7 @@ export function useGitPanelController(sessionId: string | null) {
         throw new Error(t("gitPanel.commit.generateFailed"));
       }
 
-      setCommitMessage(message);
+      if (worktreeKey) setWorktreeCommitMessage(worktreeKey, message);
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
         action: "generate_commit_message",
@@ -680,7 +664,15 @@ export function useGitPanelController(sessionId: string | null) {
     } finally {
       setGeneratingMessage(false);
     }
-  }, [commitFiles, generatingMessage, pendingHere, sessionId, t]);
+  }, [
+    commitFiles,
+    generatingMessage,
+    pendingHere,
+    sessionId,
+    setWorktreeCommitMessage,
+    t,
+    worktreeKey,
+  ]);
 
   // Which of the parallel sessions a toast is about. Held here rather than
   // inside the action so the callback depends on the name, not on every panel
@@ -712,12 +704,11 @@ export function useGitPanelController(sessionId: string | null) {
     else toast.error(rendered);
 
     if (!toastReport.clearsDraft) return;
-    setCommitMessage("");
-    setDeselectedPaths(new Set<string>());
+    if (worktreeKey) clearWorktreeDraft(worktreeKey);
     // The draft is gone, so a stale generation failure would be complaining
     // about text that no longer exists (#232).
     setGenerateMessageError(null);
-  }, [t]);
+  }, [clearWorktreeDraft, t, worktreeKey]);
 
   /**
    * One commit request, reported. It owns no pending slot, because the compound
@@ -759,9 +750,12 @@ export function useGitPanelController(sessionId: string | null) {
       // The toast says the first line and then leaves; the banner keeps the
       // whole of what Git said until the user is done with it (#248).
       if (!result.ok) {
-        setActionFailure(
-          describeGitActionFailure(result.failure, commitOrigin, "commit"),
-        );
+        if (worktreeKey) {
+          setWorktreeActionFailure(
+            worktreeKey,
+            describeGitActionFailure(result.failure, commitOrigin, "commit"),
+          );
+        }
       }
       void captureTelemetryEvent("git_action_triggered", {
         source: "git_panel",
@@ -780,24 +774,37 @@ export function useGitPanelController(sessionId: string | null) {
       reportAction(
         describeGitRequestFailureToast(message, commitOrigin, "commit"),
       );
-      setActionFailure(describeGitRequestFailure(message, commitOrigin, "commit"));
+      if (worktreeKey) {
+        setWorktreeActionFailure(
+          worktreeKey,
+          describeGitRequestFailure(message, commitOrigin, "commit"),
+        );
+      }
       return false;
     }
-  }, [commitFiles, commitMessage, commitOrigin, reportAction, sessionId]);
+  }, [
+    commitFiles,
+    commitMessage,
+    commitOrigin,
+    reportAction,
+    sessionId,
+    setWorktreeActionFailure,
+    worktreeKey,
+  ]);
 
   const commitSelectedFiles = useCallback(async () => {
-    if (!pendingWorkDir || pendingHere) return;
+    if (!worktreeKey || pendingHere) return;
     // Captured, so the entry cleared below is the one this action opened even if
     // the panel has moved to another session by then.
-    const workDir = pendingWorkDir;
+    const ownerKey = worktreeKey;
 
-    markPending(workDir, "commit");
+    markPending(ownerKey, "commit");
     try {
       await requestCommit();
     } finally {
-      markPending(workDir, null);
+      markPending(ownerKey, null);
     }
-  }, [markPending, pendingHere, pendingWorkDir, requestCommit]);
+  }, [markPending, pendingHere, requestCommit, worktreeKey]);
 
   /**
    * The actions whose whole request is the verb: Push, Publish Branch — the same
@@ -831,9 +838,12 @@ export function useGitPanelController(sessionId: string | null) {
         const result = payload as GitActionResult;
         reportAction(describeGitActionToast(result, commitOrigin, verb));
         if (!result.ok) {
-          setActionFailure(
-            describeGitActionFailure(result.failure, commitOrigin, verb),
-          );
+          if (worktreeKey) {
+            setWorktreeActionFailure(
+              worktreeKey,
+              describeGitActionFailure(result.failure, commitOrigin, verb),
+            );
+          }
         }
         void captureTelemetryEvent("git_action_triggered", {
           source: "git_panel",
@@ -848,23 +858,34 @@ export function useGitPanelController(sessionId: string | null) {
             ? nextError.message
             : BRANCH_ACTION_FALLBACK[verb];
         reportAction(describeGitRequestFailureToast(message, commitOrigin, verb));
-        setActionFailure(describeGitRequestFailure(message, commitOrigin, verb));
+        if (worktreeKey) {
+          setWorktreeActionFailure(
+            worktreeKey,
+            describeGitRequestFailure(message, commitOrigin, verb),
+          );
+        }
       }
     },
-    [commitOrigin, reportAction, sessionId],
+    [
+      commitOrigin,
+      reportAction,
+      sessionId,
+      setWorktreeActionFailure,
+      worktreeKey,
+    ],
   );
 
   const runBranchAction = useCallback(async (verb: GitBranchActionVerb) => {
-    if (!pendingWorkDir || pendingHere) return;
+    if (!worktreeKey || pendingHere) return;
 
-    const workDir = pendingWorkDir;
-    markPending(workDir, verb);
+    const ownerKey = worktreeKey;
+    markPending(ownerKey, verb);
     try {
       await requestBranchAction(verb);
     } finally {
-      markPending(workDir, null);
+      markPending(ownerKey, null);
     }
-  }, [markPending, pendingHere, pendingWorkDir, requestBranchAction]);
+  }, [markPending, pendingHere, requestBranchAction, worktreeKey]);
 
   /**
    * The menu's one compound (§2): the commit selection goes in, and the branch
@@ -878,21 +899,21 @@ export function useGitPanelController(sessionId: string | null) {
    * nothing new to send.
    */
   const runCommitAndPush = useCallback(async () => {
-    if (!pendingWorkDir || pendingHere) return;
+    if (!worktreeKey || pendingHere) return;
 
-    const workDir = pendingWorkDir;
-    markPending(workDir, "commit_push");
+    const ownerKey = worktreeKey;
+    markPending(ownerKey, "commit_push");
     try {
       if (await requestCommit()) await requestBranchAction("push");
     } finally {
-      markPending(workDir, null);
+      markPending(ownerKey, null);
     }
   }, [
     markPending,
     pendingHere,
-    pendingWorkDir,
     requestBranchAction,
     requestCommit,
+    worktreeKey,
   ]);
 
   /** The one button. Which verb it runs is the ladder's answer, not the user's. */
@@ -988,7 +1009,9 @@ export function useGitPanelController(sessionId: string | null) {
 
   const cancelPrimaryAction = useCallback(() => setPushConfirmation(null), []);
 
-  const dismissActionFailure = useCallback(() => setActionFailure(null), []);
+  const dismissActionFailure = useCallback(() => {
+    if (worktreeKey) setWorktreeActionFailure(worktreeKey, null);
+  }, [setWorktreeActionFailure, worktreeKey]);
 
   const changedFileCount = panelData?.changedFiles.length ?? 0;
   const diffData = selectedPath ? (diffCache[selectedPath] ?? null) : null;
@@ -1108,7 +1131,8 @@ export function useGitPanelController(sessionId: string | null) {
     pendingVerb: pendingHere,
     /**
      * The last Git action that failed here, still on screen. Null once it is
-     * dismissed, once another action starts, or on a session switch.
+     * dismissed or another action starts. A session switch onto the same
+     * worktree deliberately keeps it visible.
      */
     actionFailure,
     dismissActionFailure,
