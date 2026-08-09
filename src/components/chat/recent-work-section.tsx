@@ -25,7 +25,6 @@ type RecentWorkSectionProps = Pick<
   | 'onSessionArchive'
   | 'onSessionOpenInNewTab'
   | 'onSessionGenerateTitle'
-  | 'onSessionMoveToProject'
   | 'onSessionStopProcess'
 > & {
   items: RecentWorkItem[];

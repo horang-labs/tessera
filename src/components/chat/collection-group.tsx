@@ -169,7 +169,6 @@ export interface CollectionGroupProps {
   onSessionArchive?: (sessionId: string) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
-  onSessionMoveToProject?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
   onTaskStatusChange?: (taskId: string, status: string) => void;
   onChatStatusChange?: (sessionId: string, status: string) => void;
@@ -218,7 +217,6 @@ export const CollectionGroup = memo(function CollectionGroup({
   onSessionArchive,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   onTaskStatusChange,
   onChatStatusChange,
@@ -700,7 +698,6 @@ export const CollectionGroup = memo(function CollectionGroup({
           onArchive={handleContextMenuArchive}
           onOpenInNewTab={contextMenu.type === 'chat' ? () => onSessionOpenInNewTab?.(contextMenu.targetId) : undefined}
           onGenerateTitle={onSessionGenerateTitle ? handleContextMenuGenerateTitle : undefined}
-          onMoveToProject={contextMenu.type === 'chat' && !contextMenu.isSubSession ? () => onSessionMoveToProject?.(contextMenu.targetId) : undefined}
           onStopProcess={contextMenu.isRunning ? handleContextMenuStopProcess : undefined}
           onRunPreparation={
             contextMenuTask && canPrepareTask(contextMenuTask, projectHasPreparationScript)

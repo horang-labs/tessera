@@ -5,7 +5,6 @@ import * as dbTasks from '@/lib/db/tasks';
 import * as dbSessions from '@/lib/db/sessions';
 import { collectionExists } from '@/lib/db/collections';
 import logger from '@/lib/logger';
-import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { syncSingleSessionSessionTitleFromTask } from '@/lib/task-title-sync';
 import { suppressDiffAutoPromoteForTask } from '@/lib/git/worktree-diff-auto-promote';
 import { getCachedDiffStats } from '@/lib/git/worktree-diff-stats-cache';
@@ -183,56 +182,5 @@ export async function PATCH(
       return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
     }
     return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
-  }
-}
-
-/**
- * DELETE /api/tasks/[id]
- * Deletes a task and all child sessions.
- */
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const auth = await requireAuthenticatedUserId(req);
-  if ('response' in auth) return auth.response;
-
-  const { id } = await params;
-
-  const task = dbTasks.getTask(id, getActiveSessionIds());
-  if (!task) {
-    return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-  }
-
-  try {
-    for (const session of task.sessions) {
-      await sessionOrchestrator.deleteSession(auth.userId, session.id);
-    }
-
-    const { deletedSessionCount: fallbackDeletedSessionCount } = dbTasks.deleteTask(id);
-    const deletedSessionCount = task.sessions.length + fallbackDeletedSessionCount;
-    logger.info({ taskId: id, deletedSessionCount }, 'Task deleted via API');
-    const originClientId = getOriginClientIdFromRequest(req);
-    broadcastTaskMutation(auth.userId, {
-      kind: 'deleted',
-      projectId: task.projectId,
-      originClientId,
-    });
-    broadcastSessionMutation(auth.userId, {
-      kind: 'updated',
-      projectId: task.projectId,
-      originClientId,
-    });
-    return NextResponse.json({
-      ok: true,
-      deletedSessionCount,
-      unlinkedCount: deletedSessionCount,
-    });
-  } catch (err: unknown) {
-    logger.error({ id, error: err }, 'Failed to delete task');
-    if (isTerminalHandoffConflictError(err) || isSessionOperationConflictError(err)) {
-      return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
-    }
-    return NextResponse.json({ error: 'Failed to delete task' }, { status: 500 });
   }
 }

@@ -20,6 +20,11 @@ export interface CanonicalWorktree {
   currentBranch: string | null;
 }
 
+export interface VisibleProjectWorktreeView {
+  id: string;
+  displayName: string;
+}
+
 export function createPendingWorktree(id = generatePublicWorktreeId()): string {
   const now = new Date().toISOString();
   getDb().prepare(`
@@ -62,6 +67,58 @@ export function getWorktree(id: string): CanonicalWorktree | undefined {
     | WorktreeRow
     | undefined;
   return row ? mapWorktree(row) : undefined;
+}
+
+export function getVisibleProjectWorktreeViews(worktreeId: string): VisibleProjectWorktreeView[] {
+  const rows = getDb().prepare(`
+    SELECT id, display_name
+    FROM projects
+    WHERE project_worktree_id = ? AND visible = 1
+    ORDER BY sort_order, display_name
+  `).all(worktreeId) as Array<{ id: string; display_name: string }>;
+  return rows.map((row) => ({ id: row.id, displayName: row.display_name }));
+}
+
+export function getSessionIdsForWorktree(worktreeId: string): string[] {
+  const rows = getDb().prepare(`
+    SELECT s.id
+    FROM sessions s
+    LEFT JOIN tasks t ON t.id = s.task_id
+    WHERE s.deleted = 0
+      AND COALESCE(s.worktree_id, t.public_worktree_id) = ?
+    ORDER BY s.id
+  `).all(worktreeId) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
+}
+
+export function getTaskIdsForWorktree(worktreeId: string): string[] {
+  const rows = getDb().prepare(`
+    SELECT id
+    FROM tasks
+    WHERE public_worktree_id = ?
+    ORDER BY created_at, id
+  `).all(worktreeId) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
+}
+
+/** Record an explicit physical deletion without removing canonical history. */
+export function markWorktreeDeleted(worktreeId: string, deletedAt: string): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE tasks
+      SET worktree_deleted_at = ?, updated_at = ?
+      WHERE public_worktree_id = ?
+    `).run(deletedAt, deletedAt, worktreeId);
+    db.prepare(`
+      UPDATE sessions
+      SET worktree_deleted_at = ?, updated_at = ?
+      WHERE deleted = 0 AND (
+        worktree_id = ?
+        OR task_id IN (SELECT id FROM tasks WHERE public_worktree_id = ?)
+      )
+    `).run(deletedAt, deletedAt, worktreeId, worktreeId);
+  })();
 }
 
 function mapWorktree(row: WorktreeRow): CanonicalWorktree {

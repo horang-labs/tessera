@@ -105,7 +105,6 @@ export interface SessionState {
   replaceCollectionId: (fromCollectionId: string, toCollectionId: string | null) => void;
   setTaskIdForSessions: (sessionIds: string[], taskId: string | null) => void;
   toggleArchive: (sessionId: string, archived: boolean) => void;
-  moveSession: (sessionId: string, targetProjectId: string) => void;
 
   // Task selectors
   getSessionsByStatusGroup: (
@@ -1490,107 +1489,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           console.warn(`[session-store] toggleArchive rollback for session ${sessionId}`);
         }
       });
-  },
-
-  moveSession: (sessionId, targetProjectId) => {
-    // Find session and source project for rollback
-    const state = get();
-    let session: UnifiedSession | undefined;
-    let sourceProject: ProjectGroup | undefined;
-    for (const p of state.projects) {
-      const s = p.sessions.find((s) => s.id === sessionId);
-      if (s) { session = s; sourceProject = p; break; }
-    }
-    if (!session || !sourceProject) return;
-
-    const targetProject = state.projects.find(
-      (p) => p.decodedPath === targetProjectId || p.encodedDir === targetProjectId
-    );
-    if (!targetProject || targetProject.encodedDir === sourceProject.encodedDir) return;
-
-    const movedSession: UnifiedSession = {
-      ...session,
-      projectDir: targetProject.encodedDir,
-      lastModified: new Date().toISOString(),
-    };
-
-    // Optimistic update: remove from source, add to target
-    const sessionStatus = getSessionStatusGroup(session);
-    set((state) => ({
-      projects: state.projects.map((p) => {
-        if (p.encodedDir === sourceProject!.encodedDir) {
-          const counts = { ...p.countByStatus };
-          if (sessionStatus && counts[sessionStatus] != null) {
-            counts[sessionStatus] = Math.max(0, counts[sessionStatus] - 1);
-          }
-          return {
-            ...p,
-            sessions: p.sessions.filter((s) => s.id !== sessionId),
-            totalSessions: Math.max(0, p.totalSessions - 1),
-            loadedCount: Math.max(0, p.loadedCount - 1),
-            countByStatus: counts,
-          };
-        }
-        if (p.encodedDir === targetProject!.encodedDir) {
-          const counts = { ...p.countByStatus };
-          if (sessionStatus) {
-            counts[sessionStatus] = (counts[sessionStatus] ?? 0) + 1;
-          }
-          return {
-            ...p,
-            sessions: [movedSession, ...p.sessions],
-            totalSessions: p.totalSessions + 1,
-            loadedCount: p.loadedCount + 1,
-            countByStatus: counts,
-          };
-        }
-        return p;
-      }),
-    }));
-
-    // Server sync with rollback
-    fetchWithClientId(`/api/sessions/${sessionId}/move`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetProjectId }),
-    }).then((res) => {
-      if (!res.ok) throw new Error('Move failed');
-    }).catch(() => {
-      // Rollback: move session back to source
-      set((state) => ({
-        projects: state.projects.map((p) => {
-          if (p.encodedDir === targetProject!.encodedDir) {
-            const counts = { ...p.countByStatus };
-            if (sessionStatus && counts[sessionStatus] != null) {
-              counts[sessionStatus] = Math.max(0, counts[sessionStatus] - 1);
-            }
-            return {
-              ...p,
-              sessions: p.sessions.filter((s) => s.id !== sessionId),
-              totalSessions: Math.max(0, p.totalSessions - 1),
-              loadedCount: Math.max(0, p.loadedCount - 1),
-              countByStatus: counts,
-            };
-          }
-          if (p.encodedDir === sourceProject!.encodedDir) {
-            const counts = { ...p.countByStatus };
-            if (sessionStatus) {
-              counts[sessionStatus] = (counts[sessionStatus] ?? 0) + 1;
-            }
-            return {
-              ...p,
-              sessions: [session!, ...p.sessions],
-              totalSessions: p.totalSessions + 1,
-              loadedCount: p.loadedCount + 1,
-              countByStatus: counts,
-            };
-          }
-          return p;
-        }),
-      }));
-      console.warn(`[session-store] moveSession rollback for session ${sessionId}`);
-      toast.error('Failed to move session');
-    });
   },
 
   getSessionsByStatusGroup: (projectDir, statusGroup, excludeArchived = true) => {

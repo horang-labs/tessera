@@ -15,7 +15,6 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
-import { useWorktreeRetentionSettingsUpdate } from '@/hooks/use-worktree-retention-settings-update';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
@@ -198,12 +197,6 @@ export function ArchiveDashboard() {
     void loadArchive();
   }, [loadArchive]);
 
-  const {
-    settings,
-    updateSettings,
-    retentionConfirmDialog,
-  } = useWorktreeRetentionSettingsUpdate({ onApplied: loadArchive });
-
   const chatItems = chatState.items;
   const taskItems = taskState.items;
 
@@ -292,8 +285,8 @@ export function ArchiveDashboard() {
   }, [loadArchive, t]);
 
   const deleteWorktreeOnly = useCallback(async (item: ArchiveItem) => {
-    if (item.kind !== 'task') return;
-    const res = await fetch(`/api/archive/tasks/${item.id}/worktree`, { method: 'DELETE' });
+    if (!item.worktreeId) return;
+    const res = await fetch(`/api/worktrees/${item.worktreeId}`, { method: 'DELETE' });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
       const message = body.error ?? t('archive.errors.deleteWorktreeFailed');
@@ -339,10 +332,12 @@ export function ArchiveDashboard() {
     setBulkWorktreeDeleteOpen(false);
 
     if (body.result?.errors.length) {
-      setError(t('archive.errors.bulkPartial', {
+      const summary = t('archive.errors.bulkPartial', {
         removed: body.result.removed,
         errors: body.result.errors.length,
-      }));
+      });
+      const details = [...new Set(body.result.errors.map((entry) => entry.error))].join(' ');
+      setError(`${summary} ${details}`);
     } else {
       setError(null);
     }
@@ -408,31 +403,12 @@ export function ArchiveDashboard() {
       <main className="mx-auto max-w-[1320px] space-y-4 px-6 py-5">
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-(--divider) bg-(--board-card-bg) p-3">
           <div className="flex flex-wrap items-center gap-3 text-xs text-(--text-muted)">
-            <span>{settings.autoDeleteArchivedWorktrees ? t('archive.autoDeleteOn') : t('archive.autoDeleteOff')}</span>
-            <span>{t('archive.retentionInfo', { days: settings.archivedWorktreeRetentionDays })}</span>
             <span>{t('archive.loadedCount', { loaded: visibleItemCount, total: summary?.total ?? 0 })}</span>
             <span>{t('archive.worktreesPresent', { count: loadedWorktreesPresent })}</span>
             <span>{t('archive.worktreesDeleted', { count: loadedWorktreesDeleted })}</span>
             <span>{t('archive.worktreesMissing', { count: loadedWorktreesMissing })}</span>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <label className="flex items-center gap-1.5 text-xs text-(--text-muted)">
-              <input
-                type="checkbox"
-                checked={settings.autoDeleteArchivedWorktrees}
-                onChange={(event) => void updateSettings({ autoDeleteArchivedWorktrees: event.target.checked })}
-                className="accent-(--accent)"
-              />
-              {t('archive.autoLabel')}
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={365}
-              value={settings.archivedWorktreeRetentionDays}
-              onChange={(event) => void updateSettings({ archivedWorktreeRetentionDays: Math.max(1, Number(event.target.value) || 1) })}
-              className="h-7 w-16 rounded-md border border-(--input-border) bg-(--input-bg) px-2 text-xs text-(--text-primary) outline-none"
-            />
             <button
               onClick={() => setBulkWorktreeDeleteOpen(true)}
               disabled={isLoading || visibleItemCount === 0}
@@ -589,7 +565,6 @@ export function ArchiveDashboard() {
           </>
         )}
       />
-      {retentionConfirmDialog}
     </div>
   );
 }

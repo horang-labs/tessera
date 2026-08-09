@@ -12,7 +12,6 @@ import { useTabStore } from '@/stores/tab-store';
 import { CollectionGroup } from './collection-group';
 import { AllProjectsList } from './all-projects-list';
 import { RecentWorkSection } from './recent-work-section';
-import { MoveProjectDialog } from './move-project-dialog';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -391,7 +390,7 @@ export function Sidebar() {
   }, []);
 
   const handleTaskEntityDelete = useCallback((taskId: string) => {
-    void useTaskStore.getState().deleteTask(taskId);
+    void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
   const handleTaskArchive = useCallback((taskId: string) => {
@@ -453,24 +452,12 @@ export function Sidebar() {
   }, [newCollectionLabel, resetCollectionComposer, selectedProjectDir]);
 
   const [isInitialized, setIsInitialized] = useState(false);
-  const [moveSessionTarget, setMoveSessionTarget] = useState<UnifiedSession | null>(null);
-
-  const handleTaskMoveToProject = useCallback((taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
-    if (session) setMoveSessionTarget(session);
-  }, []);
-
   const handleTaskStopProcess = useCallback((taskId: string) => {
     wsClient.stopSession(taskId);
     useSessionStore.getState().clearUnreadCount(taskId);
     wsClient.sendMarkAsRead(taskId);
   }, []);
 
-  const handleMoveConfirm = useCallback((targetProjectId: string) => {
-    if (!moveSessionTarget) return;
-    useSessionStore.getState().moveSession(moveSessionTarget.id, targetProjectId);
-    setMoveSessionTarget(null);
-  }, [moveSessionTarget]);
   const prevActivePanelIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -763,7 +750,6 @@ export function Sidebar() {
                   onSessionArchive={handleTaskArchive}
                   onSessionOpenInNewTab={handleTaskOpenInNewTab}
                   onSessionGenerateTitle={handleTaskGenerateTitle}
-                  onSessionMoveToProject={handleTaskMoveToProject}
                   onSessionStopProcess={handleTaskStopProcess}
                 />
               )}
@@ -778,7 +764,6 @@ export function Sidebar() {
                 onSessionDelete={handleTaskDelete}
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
-                onSessionMoveToProject={handleTaskMoveToProject}
                 onSessionStopProcess={handleTaskStopProcess}
               />
             </>
@@ -842,7 +827,6 @@ export function Sidebar() {
                 onSessionArchive={handleTaskArchive}
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
-                onSessionMoveToProject={handleTaskMoveToProject}
                 onSessionStopProcess={handleTaskStopProcess}
                 disableDnd
                 allowPanelSessionDnd
@@ -868,7 +852,6 @@ export function Sidebar() {
                     onSessionArchive={handleTaskArchive}
                     onSessionOpenInNewTab={handleTaskOpenInNewTab}
                     onSessionGenerateTitle={handleTaskGenerateTitle}
-                    onSessionMoveToProject={handleTaskMoveToProject}
                     onSessionStopProcess={handleTaskStopProcess}
                   />
                 )}
@@ -927,7 +910,6 @@ export function Sidebar() {
                       onSessionArchive={handleTaskArchive}
                       onSessionOpenInNewTab={handleTaskOpenInNewTab}
                       onSessionGenerateTitle={handleTaskGenerateTitle}
-                      onSessionMoveToProject={handleTaskMoveToProject}
                       onSessionStopProcess={handleTaskStopProcess}
                       disableDnd={isRunningFilterActive}
                     />
@@ -961,12 +943,6 @@ export function Sidebar() {
         onCancel={() => setSessionToDelete(null)}
       />
 
-      <MoveProjectDialog
-        session={moveSessionTarget}
-        isOpen={moveSessionTarget !== null}
-        onConfirm={handleMoveConfirm}
-        onCancel={() => setMoveSessionTarget(null)}
-      />
     </div>
   );
 }

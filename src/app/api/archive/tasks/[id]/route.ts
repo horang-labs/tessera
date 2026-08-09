@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import {
   permanentlyDeleteArchivedTask,
-  pruneExpiredArchivedWorktrees,
   setTaskArchived,
 } from '@/lib/archive/archive-service';
-import { SettingsManager } from '@/lib/settings/manager';
 import * as dbTasks from '@/lib/db/tasks';
 import logger from '@/lib/logger';
 import {
@@ -45,12 +43,6 @@ export async function PATCH(
   try {
     const projectId = dbTasks.getTask(id)?.projectId;
     await setTaskArchived(id, archived, auth.userId);
-    if (archived) {
-      const settings = await SettingsManager.load(auth.userId);
-      if (settings.autoDeleteArchivedWorktrees) {
-        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, auth.userId);
-      }
-    }
     if (projectId) {
       const originClientId = getOriginClientIdFromRequest(req);
       broadcastTaskMutation(auth.userId, { kind: 'updated', projectId, originClientId });

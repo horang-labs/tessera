@@ -39,7 +39,6 @@ interface AllProjectsListProps {
   onSessionDelete: (sessionId: string) => void;
   onSessionOpenInNewTab: (sessionId: string) => void;
   onSessionGenerateTitle: (sessionId: string) => void;
-  onSessionMoveToProject: (sessionId: string) => void;
   onSessionStopProcess: (sessionId: string) => void;
   onChatStatusChange: (sessionId: string, status: string) => void;
 }
@@ -54,7 +53,6 @@ export function AllProjectsList({
   onSessionDelete,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   onChatStatusChange,
 }: AllProjectsListProps) {
@@ -88,7 +86,6 @@ export function AllProjectsList({
           onSessionDelete={onSessionDelete}
           onSessionOpenInNewTab={onSessionOpenInNewTab}
           onSessionGenerateTitle={onSessionGenerateTitle}
-          onSessionMoveToProject={onSessionMoveToProject}
           onSessionStopProcess={onSessionStopProcess}
           onChatStatusChange={onChatStatusChange}
         />
@@ -114,7 +111,6 @@ function AllProjectSection({
   onSessionDelete,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   onChatStatusChange,
 }: AllProjectSectionProps) {
@@ -213,7 +209,7 @@ function AllProjectSection({
   }, []);
 
   const handleTaskDelete = useCallback((taskId: string) => {
-    void useTaskStore.getState().deleteTask(taskId);
+    void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
   const handleTaskStatusChange = useCallback((taskId: string, status: string) => {
@@ -327,7 +323,6 @@ function AllProjectSection({
               onSessionArchive={onSessionArchive}
               onSessionOpenInNewTab={onSessionOpenInNewTab}
               onSessionGenerateTitle={onSessionGenerateTitle}
-              onSessionMoveToProject={onSessionMoveToProject}
               onSessionStopProcess={onSessionStopProcess}
               disableDnd
               allowPanelSessionDnd
@@ -380,7 +375,6 @@ function AllProjectSection({
                   onSessionArchive={onSessionArchive}
                   onSessionOpenInNewTab={onSessionOpenInNewTab}
                   onSessionGenerateTitle={onSessionGenerateTitle}
-                  onSessionMoveToProject={onSessionMoveToProject}
                   onSessionStopProcess={onSessionStopProcess}
                 />
               );
