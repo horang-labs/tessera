@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { PairingDecision } from '../src/lib/auth/pairing-contract';
+import type { MobileAccessStatus } from '../src/lib/mobile-access/mobile-access-coordinator';
 import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -17,6 +18,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
   getRemoteAccessAddressCandidates: () =>
     ipcRenderer.invoke('get-remote-access-address-candidates'),
+  getMobileAccessStatus: () =>
+    ipcRenderer.invoke('get-mobile-access-status') as Promise<MobileAccessStatus>,
+  startMobileAccessSetup: () =>
+    ipcRenderer.invoke('start-mobile-access-setup') as Promise<MobileAccessStatus>,
   configureTailscaleFirewall: () => ipcRenderer.invoke('configure-tailscale-firewall'),
   createPairingCode: (action: 'issue' | 'rotate') =>
     ipcRenderer.invoke('create-pairing-code', action),
