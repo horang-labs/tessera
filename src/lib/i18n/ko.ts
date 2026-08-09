@@ -79,6 +79,13 @@ export const ko: I18nMessages = {
     remoteAccess: {
       title: '원격 접속',
       description: 'Tailscale로 직접 연결하거나 기존 터널을 계속 사용한 뒤, 일회용 링크로 다른 기기를 페어링합니다.',
+      mobileSetupTitle: '모바일 연결',
+      mobileSetupDescription: 'Tessera가 이 데스크톱의 Tailscale Serve를 안전하게 자동 설정합니다.',
+      mobileSetupNotConfigured: '설정되지 않음',
+      mobileSetupConfiguring: '설정 중',
+      mobileSetupReady: '준비됨',
+      mobileSetupAction: '모바일 접속 설정',
+      mobileSetupFailed: '설정하지 못했습니다. 로컬 데스크톱 접속은 계속 사용할 수 있습니다.',
       warningTitle: '데스크톱 앱은 모든 IPv4 인터페이스에서 연결을 받습니다',
       warningDescription: 'Windows·macOS·Linux에서 Tailscale 직접 접속을 사용하면 같은 LAN 경로에도 리스너가 열립니다. 모든 HTTP API와 WebSocket에는 App secret·Device token·웹 로그인이 계속 필요합니다. 신뢰하는 기기만 페어링하세요.',
       systemFirewallTitle: '시스템 방화벽을 확인하세요',

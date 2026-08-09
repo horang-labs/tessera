@@ -79,6 +79,13 @@ export const ja: I18nMessages = {
     remoteAccess: {
       title: 'リモートアクセス',
       description: 'Tailscale で直接接続するか既存のトンネルを使い、ワンタイムリンクで別のデバイスをペアリングします。',
+      mobileSetupTitle: 'モバイル接続',
+      mobileSetupDescription: 'Tessera がこのデスクトップの Tailscale Serve を安全に自動設定します。',
+      mobileSetupNotConfigured: '未設定',
+      mobileSetupConfiguring: '設定中',
+      mobileSetupReady: '準備完了',
+      mobileSetupAction: 'モバイルアクセスを設定',
+      mobileSetupFailed: '設定できませんでした。ローカルのデスクトップアクセスは引き続き利用できます。',
       warningTitle: 'デスクトップアプリはすべての IPv4 インターフェースで待ち受けます',
       warningDescription: 'Windows・macOS・Linux で Tailscale の直接接続を使うと、LAN 経由でもリスナーに到達できます。すべての HTTP API と WebSocket では引き続き認証が必要です。信頼できるデバイスだけをペアリングしてください。',
       systemFirewallTitle: 'システムファイアウォールを確認してください',

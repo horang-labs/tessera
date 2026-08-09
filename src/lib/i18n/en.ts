@@ -79,6 +79,13 @@ export const en: I18nMessages = {
     remoteAccess: {
       title: 'Remote access',
       description: 'Connect directly over Tailscale, or keep using an existing tunnel, then pair another device with a one-time link.',
+      mobileSetupTitle: 'Mobile connection',
+      mobileSetupDescription: 'Tessera can securely configure Tailscale Serve for this desktop automatically.',
+      mobileSetupNotConfigured: 'Not configured',
+      mobileSetupConfiguring: 'Configuring',
+      mobileSetupReady: 'Ready',
+      mobileSetupAction: 'Set up mobile access',
+      mobileSetupFailed: 'Setup failed. Local desktop access is still available.',
       warningTitle: 'The desktop app listens on every IPv4 interface',
       warningDescription: 'Direct Tailscale access also opens the listener to LAN paths on Windows, macOS, and Linux. Every HTTP API and WebSocket still requires an app secret, device token, or web login. Pair only devices you trust.',
       systemFirewallTitle: 'Check your system firewall',

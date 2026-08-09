@@ -27,6 +27,7 @@ import {
 } from '@/lib/auth/pairing-contract';
 import { useI18n } from '@/lib/i18n';
 import { getIntlLocale } from '@/lib/i18n/locale-map';
+import type { MobileAccessStatus } from '@/lib/mobile-access/mobile-access-coordinator';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
 import PairedDeviceManagement from './paired-device-management';
@@ -105,6 +106,8 @@ type ElectronPairingApi = {
   platform?: string;
   supportsTailscaleFirewallConfiguration?: boolean;
   getRemoteAccessAddressCandidates?: () => Promise<RemoteAccessAddressCandidate[]>;
+  getMobileAccessStatus?: () => Promise<MobileAccessStatus>;
+  startMobileAccessSetup?: () => Promise<MobileAccessStatus>;
   createPairingCode?: (action: 'issue' | 'rotate') => Promise<ElectronPairingResult>;
   listPairingRequests?: () => Promise<ElectronPairingRequestListResult>;
   decidePairingRequest?: (
@@ -180,6 +183,7 @@ export default function RemoteAccessSection() {
   const [isSaving, setIsSaving] = useState(false);
   const [isPairing, setIsPairing] = useState(false);
   const [isConfiguringFirewall, setIsConfiguringFirewall] = useState(false);
+  const [mobileAccessStatus, setMobileAccessStatus] = useState<MobileAccessStatus | null>(null);
   const [addressError, setAddressError] = useState<string | null>(null);
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [firewallError, setFirewallError] = useState<string | null>(null);
@@ -230,6 +234,33 @@ export default function RemoteAccessSection() {
       cancelled = true;
     };
   }, [t]);
+
+  useEffect(function loadMobileAccessStatus() {
+    const electronApi = getElectronPairingApi();
+    if (!electronApi?.isElectron || !electronApi.getMobileAccessStatus) return;
+
+    let cancelled = false;
+    void electronApi.getMobileAccessStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setMobileAccessStatus(status);
+        if (status.state === 'ready') {
+          setAddress(status.origin);
+          setSavedAddress(status.origin);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMobileAccessStatus({
+            state: 'not-configured',
+            error: { code: 'setup-failed', message: 'Status unavailable' },
+          });
+        }
+      });
+    return function ignoreMobileAccessStatusAfterUnmount() {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(function tickPairingExpiry() {
     if (!presentation) return;
@@ -296,10 +327,21 @@ export default function RemoteAccessSection() {
     }
   })();
   const isSavedAddressCurrent = normalizedDraft !== undefined && normalizedDraft === savedAddress;
-  const canAddDevice = Boolean(savedAddress && isSavedAddressCurrent && !isSaving && !isLoading);
+  const electronApi = getElectronPairingApi();
+  const hasMobileAccessCoordinator = Boolean(
+    electronApi?.isElectron
+    && electronApi.getMobileAccessStatus
+    && electronApi.startMobileAccessSetup,
+  );
+  const canAddDevice = Boolean(
+    savedAddress
+    && isSavedAddressCurrent
+    && !isSaving
+    && !isLoading
+    && (!hasMobileAccessCoordinator || mobileAccessStatus?.state === 'ready'),
+  );
   const remainingMs = presentation ? Date.parse(presentation.expiresAt) - now : 0;
   const isExpired = Boolean(presentation && remainingMs <= 0);
-  const electronApi = getElectronPairingApi();
   const canConfigureWindowsFirewall = Boolean(
     electronApi?.isElectron
     && electronApi.platform === 'win32'
@@ -332,6 +374,26 @@ export default function RemoteAccessSection() {
       setFirewallError(t('settings.remoteAccess.firewallFailed'));
     } finally {
       setIsConfiguringFirewall(false);
+    }
+  };
+
+  const handleMobileAccessSetup = async () => {
+    if (!electronApi?.startMobileAccessSetup) return;
+    setMobileAccessStatus({ state: 'configuring' });
+    setPairingError(null);
+    try {
+      const status = await electronApi.startMobileAccessSetup();
+      setMobileAccessStatus(status);
+      if (status.state === 'ready') {
+        setAddress(status.origin);
+        setSavedAddress(status.origin);
+        setPresentation(null);
+      }
+    } catch {
+      setMobileAccessStatus({
+        state: 'not-configured',
+        error: { code: 'setup-failed', message: 'Setup failed' },
+      });
     }
   };
 
@@ -497,6 +559,73 @@ export default function RemoteAccessSection() {
           </p>
         </div>
       </div>
+
+      {hasMobileAccessCoordinator ? (
+        <div
+          data-testid="mobile-access-status"
+          className="rounded-lg border border-(--divider) bg-(--input-bg) p-3"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-sm font-medium text-(--text-primary)">
+                {mobileAccessStatus?.state === 'ready' ? (
+                  <CheckCircle2 className="h-4 w-4 text-(--status-success-text)" />
+                ) : mobileAccessStatus?.state === 'configuring' ? (
+                  <span className="animate-spin text-(--accent)">
+                    <RefreshCw className="h-4 w-4" />
+                  </span>
+                ) : (
+                  <RadioTower className="h-4 w-4 text-(--text-muted)" />
+                )}
+                {t('settings.remoteAccess.mobileSetupTitle')}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-(--text-muted)">
+                {t('settings.remoteAccess.mobileSetupDescription')}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span
+                role="status"
+                aria-live="polite"
+                className="text-xs font-medium text-(--text-secondary)"
+              >
+                {mobileAccessStatus?.state === 'ready'
+                  ? t('settings.remoteAccess.mobileSetupReady')
+                  : mobileAccessStatus?.state === 'configuring'
+                    ? t('settings.remoteAccess.mobileSetupConfiguring')
+                    : t('settings.remoteAccess.mobileSetupNotConfigured')}
+              </span>
+              {mobileAccessStatus?.state !== 'ready' ? (
+                <Button
+                  type="button"
+                  onClick={() => void handleMobileAccessSetup()}
+                  disabled={!mobileAccessStatus || mobileAccessStatus.state === 'configuring'}
+                >
+                  {mobileAccessStatus?.state === 'configuring' ? (
+                    <span className="animate-spin">
+                      <RefreshCw className="h-4 w-4" />
+                    </span>
+                  ) : (
+                    <RadioTower className="h-4 w-4" />
+                  )}
+                  {mobileAccessStatus?.state === 'configuring'
+                    ? t('settings.remoteAccess.mobileSetupConfiguring')
+                    : t('settings.remoteAccess.mobileSetupAction')}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          {mobileAccessStatus?.state === 'ready' ? (
+            <code className="mt-3 block truncate text-xs text-(--status-success-text)">
+              {mobileAccessStatus.origin}
+            </code>
+          ) : mobileAccessStatus?.state === 'not-configured' && mobileAccessStatus.error ? (
+            <p role="alert" className="mt-3 text-xs text-(--status-error-text)">
+              {t('settings.remoteAccess.mobileSetupFailed')}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {canConfigureWindowsFirewall ? (
         <div className="flex flex-col gap-3 rounded-lg border border-(--divider) bg-(--input-bg) p-3 sm:flex-row sm:items-center sm:justify-between">

@@ -60,6 +60,13 @@ export interface I18nMessages {
     remoteAccess: {
       title: string;
       description: string;
+      mobileSetupTitle: string;
+      mobileSetupDescription: string;
+      mobileSetupNotConfigured: string;
+      mobileSetupConfiguring: string;
+      mobileSetupReady: string;
+      mobileSetupAction: string;
+      mobileSetupFailed: string;
       warningTitle: string;
       warningDescription: string;
       systemFirewallTitle: string;

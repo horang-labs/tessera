@@ -41,6 +41,12 @@ import { registerAppSecretHeader } from './app-secret-header';
 import { configureTailscaleFirewall } from './windows-firewall';
 import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
 import { buildRemoteAccessAddressCandidates } from './network-addresses';
+import { TailscaleCliAdapter } from './tailscale-cli-adapter';
+import {
+  MobileAccessCoordinator,
+  type MobileAccessStatus,
+} from '../src/lib/mobile-access/mobile-access-coordinator';
+import { FileMobileAccessStateStore } from '../src/lib/mobile-access/mobile-access-state-store';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -694,6 +700,7 @@ let activeQuitConfirmation: Promise<void> | null = null;
 let terminalSummarySequence = 0;
 let pairingPresentationSequence = 0;
 let electronAppSecret = '';
+let mobileAccessCoordinator: MobileAccessCoordinator | null = null;
 let remoteAccessStatus: RemoteAccessStatus | null = null;
 let remoteAccessStatusTimer: NodeJS.Timeout | null = null;
 
@@ -709,6 +716,7 @@ const SERVER_SHUTDOWN_TIMEOUT_MS = 8_000;
 const TERMINAL_SUMMARY_TIMEOUT_MS = 1_500;
 const PAIRING_PRESENTATION_TIMEOUT_MS = 5_000;
 const REMOTE_ACCESS_STATUS_TIMEOUT_MS = 1_500;
+const MOBILE_ACCESS_HEALTH_TIMEOUT_MS = 15_000;
 const REMOTE_ACCESS_STATUS_POLL_INTERVAL_MS = 2_000;
 const pendingCloseRequests = new Map<string, PendingCloseRequest>();
 type TerminalRuntimeSummary = { activeCount: number; sessionCount: number };
@@ -949,6 +957,44 @@ async function requestRemoteAccessStatus(): Promise<RemoteAccessStatus | null> {
   } catch {
     return null;
   }
+}
+
+async function checkMobileAccessHealth(origin: string): Promise<void> {
+  if (!electronAppSecret) throw new Error('The Tessera server is unavailable');
+  const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+  const response = await fetch(`${origin}/api/settings`, {
+    headers: { [APP_SECRET_HEADER]: electronAppSecret },
+    signal: AbortSignal.timeout(MOBILE_ACCESS_HEALTH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`Tessera health check returned HTTP ${response.status}`);
+  }
+}
+
+async function publishMobileAccessPairingOrigin(origin: string): Promise<void> {
+  if (!serverPort || !electronAppSecret) throw new Error('The Tessera server is unavailable');
+  const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+  const loopbackOrigin = `http://127.0.0.1:${serverPort}`;
+  const response = await fetch(`${loopbackOrigin}/api/settings`, {
+    method: 'PUT',
+    headers: {
+      [APP_SECRET_HEADER]: electronAppSecret,
+      'content-type': 'application/json',
+      origin: loopbackOrigin,
+    },
+    body: JSON.stringify({ machineSettings: { advertisedAddress: origin } }),
+    signal: AbortSignal.timeout(MOBILE_ACCESS_HEALTH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not publish the mobile access origin (HTTP ${response.status})`);
+  }
+}
+
+function unavailableMobileAccessStatus(): MobileAccessStatus {
+  return {
+    state: 'not-configured',
+    error: { code: 'setup-failed', message: 'The Tessera server is unavailable' },
+  };
 }
 
 async function refreshRemoteAccessStatus(): Promise<void> {
@@ -1539,6 +1585,13 @@ ipcMain.handle('get-server-port', () => serverPort);
 ipcMain.handle('get-remote-access-address-candidates', () => (
   buildRemoteAccessAddressCandidates(networkInterfaces(), serverPort)
 ));
+ipcMain.handle('get-mobile-access-status', () => (
+  mobileAccessCoordinator?.getStatus() ?? unavailableMobileAccessStatus()
+));
+ipcMain.handle('start-mobile-access-setup', () => (
+  mobileAccessCoordinator?.setup({ loopbackPort: serverPort })
+    ?? unavailableMobileAccessStatus()
+));
 ipcMain.on('supports-tailscale-firewall-configuration', (event) => {
   event.returnValue = supportsTailscaleFirewallConfiguration();
 });
@@ -1793,6 +1846,12 @@ app.whenReady().then(async () => {
   try {
     const port = await startServer();
     electronAppSecret = await registerAppSecretHeader(port);
+    mobileAccessCoordinator = new MobileAccessCoordinator({
+      adapter: new TailscaleCliAdapter(),
+      stateStore: new FileMobileAccessStateStore(getTesseraDataPath('mobile-access.json')),
+      checkHealth: checkMobileAccessHealth,
+      publishPairingOrigin: publishMobileAccessPairingOrigin,
+    });
     mainWindow = createWindow(port);
     createTray(mainWindow, requestAppQuit, {
       closeBehavior: windowsCloseBehavior,
