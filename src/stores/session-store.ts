@@ -506,6 +506,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   updateProjectWorktreeBranch: (worktreeId, branch) => {
+    const affectedProjectIds = get().projects
+      .filter((project) => project.projectWorktree?.id === worktreeId)
+      .map((project) => project.encodedDir);
     const changed = get().projects.some(
       (project) => project.projectWorktree?.id === worktreeId
         && project.projectWorktree.currentBranch !== branch,
@@ -527,7 +530,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           : project,
       ),
     }));
-    if (changed) void get().loadProjects();
+    if (changed) {
+      void get().loadProjects();
+      void Promise.all(
+        affectedProjectIds.map((projectId) => useTaskStore.getState().loadTasks(projectId, {
+          setCurrent: useTaskStore.getState().currentProjectId === projectId,
+        })),
+      );
+    }
   },
 
   dismissBranchRenameWarning: (projectId) => {

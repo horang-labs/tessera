@@ -13,11 +13,18 @@ import { CollectionGroup } from './collection-group';
 import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import { getProjectColor } from '@/lib/constants/project-strip';
 import { Tooltip } from '@/components/ui/tooltip';
-import { buildProjectCollectionGroups, filterCollectionGroupsByRunning } from '@/lib/chat/build-collection-groups';
+import {
+  buildProjectCollectionGroups,
+  countRunningCollectionGroupItems,
+  filterCollectionGroupsByRunning,
+} from '@/lib/chat/build-collection-groups';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
-import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  buildOriginProjectRepresentation,
+  originProjectContainsRunningSession,
+} from '@/lib/projects/origin-project-representation';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -52,14 +59,18 @@ export function AllProjectsList({
   onChatStatusChange,
 }: AllProjectsListProps) {
   const projects = useSessionStore((state) => state.projects);
+  const tasksByProject = useTaskStore((state) => state.tasksByProject);
+  const representation = useMemo(
+    () => buildOriginProjectRepresentation(projects, tasksByProject),
+    [projects, tasksByProject],
+  );
   const visibleProjects = useMemo(() => {
-    if (!isRunningFilterActive) return projects;
-    return projects.filter((project) =>
-      project.sessions.some((session) =>
-        !session.archived && resolveSessionRuntimePresentation(session).showRunning
-      ),
-    );
-  }, [isRunningFilterActive, projects]);
+    if (!isRunningFilterActive) return representation.projects;
+    return representation.projects.filter((project) => originProjectContainsRunningSession(
+      project,
+      representation.tasksByProject[project.encodedDir] ?? EMPTY_TASKS,
+    ));
+  }, [isRunningFilterActive, representation]);
 
   return (
     <>
@@ -67,6 +78,7 @@ export function AllProjectsList({
         <AllProjectSection
           key={project.encodedDir}
           project={project}
+          projectTasks={representation.tasksByProject[project.encodedDir] ?? EMPTY_TASKS}
           activeSessionId={activeSessionId}
           isRunningFilterActive={isRunningFilterActive}
           onSessionClick={onSessionClick}
@@ -87,10 +99,12 @@ export function AllProjectsList({
 
 interface AllProjectSectionProps extends AllProjectsListProps {
   project: ProjectGroup;
+  projectTasks: TaskEntity[];
 }
 
 function AllProjectSection({
   project,
+  projectTasks,
   activeSessionId,
   isRunningFilterActive,
   onSessionClick,
@@ -112,7 +126,6 @@ function AllProjectSection({
   const collectionsLoaded = useCollectionStore((state) => state.loadedProjects[project.encodedDir] ?? false);
   const collectionsLoading = useCollectionStore((state) => state.loadingProjectIds[project.encodedDir] ?? false);
   const loadTasks = useTaskStore((state) => state.loadTasks);
-  const projectTasks = useTaskStore((state) => state.tasksByProject[project.encodedDir] ?? EMPTY_TASKS);
   const tasksLoaded = useTaskStore((state) => state.loadedProjects[project.encodedDir] ?? false);
   const tasksLoading = useTaskStore((state) => state.loadingProjectIds[project.encodedDir] ?? false);
   const collapsedCollections = useBoardStore((state) => state.collapsedCollections);
@@ -139,16 +152,6 @@ function AllProjectSection({
     handleGroupDrop,
   } = useCollectionDnd();
 
-  const hasMissingTaskData = useMemo(() => {
-    if (projectTasks.length === 0)
-      return project.sessions.some((session) => !session.archived && !!session.taskId);
-
-    const knownTaskIds = new Set(projectTasks.map((task) => task.id));
-    return project.sessions.some(
-      (session) => !session.archived && !!session.taskId && !knownTaskIds.has(session.taskId)
-    );
-  }, [project.sessions, projectTasks]);
-
   useEffect(() => {
     if (!isExpanded) return;
     if (isRunningFilterActive) return;
@@ -159,9 +162,9 @@ function AllProjectSection({
 
   useEffect(() => {
     if (!isExpanded) return;
-    if (tasksLoaded && !hasMissingTaskData) return;
+    if (tasksLoaded) return;
     void loadTasks(project.encodedDir, { setCurrent: false });
-  }, [hasMissingTaskData, isExpanded, loadTasks, project.encodedDir, tasksLoaded]);
+  }, [isExpanded, loadTasks, project.encodedDir, tasksLoaded]);
 
   const collectionGroups = useMemo(
     () => buildProjectCollectionGroups(project, collections, projectTasks),
@@ -191,10 +194,8 @@ function AllProjectSection({
     [project.sessions]
   );
   const runningSessionCount = useMemo(
-    () => project.sessions.filter((session) =>
-      !session.archived && resolveSessionRuntimePresentation(session).showRunning
-    ).length,
-    [project.sessions],
+    () => countRunningCollectionGroupItems(collectionGroups),
+    [collectionGroups],
   );
   const sectionSessionCount = isRunningFilterActive ? runningSessionCount : visibleSessionCount;
 

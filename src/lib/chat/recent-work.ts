@@ -1,5 +1,6 @@
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
+import { buildOriginProjectRepresentation } from '@/lib/projects/origin-project-representation';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 
 export type RecentWorkItem =
@@ -199,15 +200,23 @@ export function buildRecentWorkItems({
   projects,
   tasksByProject,
   limit = 8,
+  originOnly = false,
 }: {
   projects: ProjectGroup[];
   tasksByProject: Record<string, TaskEntity[]>;
   limit?: number;
+  originOnly?: boolean;
 }): RecentWorkItem[] {
   const items: RecentWorkItem[] = [];
+  const representation = originOnly
+    ? buildOriginProjectRepresentation(projects, tasksByProject)
+    : { projects, tasksByProject };
 
-  for (const project of projects) {
-    const tasks = mergeTasksWithLiveSessions(tasksByProject[project.encodedDir] ?? [], project.sessions);
+  for (const project of representation.projects) {
+    const tasks = mergeTasksWithLiveSessions(
+      representation.tasksByProject[project.encodedDir] ?? [],
+      project.sessions,
+    );
     const knownTaskIds = new Set(tasks.map((task) => task.id));
 
     for (const task of tasks) {

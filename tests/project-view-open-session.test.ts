@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useTaskStore } from '@/stores/task-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 
 const scopedSession: UnifiedSession = {
@@ -103,12 +104,19 @@ test('a changed Worktree branch schedules a Project projection refresh', async (
     projects: [project([], 'main')],
   });
   let refreshes = 0;
+  const taskRefreshes: string[] = [];
   useSessionStore.setState({ loadProjects: async () => { refreshes += 1; } });
+  useTaskStore.setState({
+    currentProjectId: 'project-view',
+    loadTasks: async (projectId) => { taskRefreshes.push(projectId); },
+  });
 
   useSessionStore.getState().updateProjectWorktreeBranch('wt_root', 'feature/external-switch');
   await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.equal(refreshes, 1);
+  assert.deepEqual(taskRefreshes, ['project-view']);
   assert.equal(
     useSessionStore.getState().projects[0].projectWorktree?.currentBranch,
     'feature/external-switch',

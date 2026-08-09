@@ -82,7 +82,7 @@ test('running menus and stop-all targets include live PTY runtimes', () => {
   }]);
 });
 
-test('sidebar groups keep zero-session worktrees while excluding tasks with only hidden children', () => {
+test('sidebar trusts the linked Worktree projection regardless of visible child Sessions', () => {
   const visibleTask = mergeTasksWithLiveSessions([{
     ...task,
     id: 'visible-task',
@@ -115,5 +115,6 @@ test('sidebar groups keep zero-session worktrees while excluding tasks with only
   assert.deepEqual(groups[0]?.tasks.map((item) => item.id), [
     'zero-session-task',
     'visible-task',
+    'hidden-task',
   ]);
 });

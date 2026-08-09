@@ -19,6 +19,7 @@ import {
   resolveAnchoredAlignedLeft,
   resolveAnchoredSideLeft,
 } from '@/lib/ui/anchored-viewport';
+import { getSessionOriginProjectId } from '@/lib/projects/origin-project-representation';
 
 /** Kept in step with the panel's own `w-[320px]`, which the clamp has to measure against. */
 const NOTIFICATION_CENTER_WIDTH = 320;
@@ -98,7 +99,7 @@ function NotificationCenterContent({
 
     // Notified session may live in another project — bring that project into scope first,
     // otherwise it opens in a tab belonging to the project currently on screen.
-    if (!switchToSessionProject(session?.projectDir)) {
+    if (!switchToSessionProject(session ? getSessionOriginProjectId(session) : undefined)) {
       onClose();
       return;
     }

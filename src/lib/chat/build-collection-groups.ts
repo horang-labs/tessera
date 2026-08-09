@@ -115,18 +115,11 @@ export function buildCollectionGroups(
   const groupMap = createOrderedGroupMap(collections);
   const liveTasks = mergeTasksWithLiveSessions(tasks, visibleSessions);
   const knownTaskIds = new Set(liveTasks.map((task) => task.id));
-  const visibleTaskIds = new Set(
-    visibleSessions
-      .map((session) => session.taskId)
-      .filter((taskId): taskId is string => !!taskId && knownTaskIds.has(taskId))
-  );
 
   for (const task of liveTasks) {
-    // Canonical Worktrees are already branch/session-filtered by the Project
-    // projection and remain selectable independently of the Project's direct
-    // Session list. Keep the legacy visibility guard only for pre-identity
-    // task groups whose children are archived or otherwise out of scope.
-    if (!task.worktreeId && task.sessions.length > 0 && !visibleTaskIds.has(task.id)) continue;
+    // The task read model is already the branch-scoped linked Worktree
+    // projection. A Worktree remains present independently of whether any of
+    // its child Sessions also appear in the direct Session projection.
 
     const collectionId = task.collectionId ?? null;
     if (!groupMap.has(collectionId)) {

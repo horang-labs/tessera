@@ -12,6 +12,7 @@ import { wsClient } from '@/lib/ws/client';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { getCanonicalRunningSessionRepresentatives } from '@/lib/projects/origin-project-representation';
 
 interface RunningProcessPanelProps {
   /** Dropdown open direction: 'down' (header) or 'right' (vertical strip) */
@@ -31,21 +32,10 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
 
   // Get all running sessions across all projects
   const projects = useSessionStore((state) => state.projects);
-  const runningSessions = useMemo(() => {
-    const sessions: Array<{ id: string; title: string; projectDir: string }> = [];
-    for (const project of projects) {
-      for (const session of project.sessions) {
-        if (session.isRunning) {
-          sessions.push({
-            id: session.id,
-            title: session.title,
-            projectDir: project.encodedDir,
-          });
-        }
-      }
-    }
-    return sessions;
-  }, [projects]);
+  const runningSessions = useMemo(
+    () => getCanonicalRunningSessionRepresentatives(projects),
+    [projects],
+  );
 
   const runningCount = runningSessions.length;
 

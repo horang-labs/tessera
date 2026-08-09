@@ -2,6 +2,7 @@ import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import type { TaskEntity } from '@/types/task-entity';
+import { buildOriginProjectRepresentation } from '@/lib/projects/origin-project-representation';
 
 export type KanbanScope =
   | { kind: 'project'; projectId: string }
@@ -42,6 +43,18 @@ export function collectKanbanScopeData(
   const projectIdSet = new Set(projectIds);
   const scopedProjects = projects.filter((project) => projectIdSet.has(project.encodedDir));
 
+  if (scope?.kind === 'all-projects') {
+    const origin = buildOriginProjectRepresentation(scopedProjects, tasksByProject);
+    return {
+      projects: origin.projects,
+      sessions: origin.sessions,
+      tasks: origin.tasks,
+      collectionsByProject: Object.fromEntries(
+        projectIds.map((projectId) => [projectId, collectionsByProject[projectId] ?? []]),
+      ),
+    };
+  }
+
   return {
     projects: scopedProjects,
     sessions: scopedProjects.flatMap((project) => project.sessions),
@@ -52,16 +65,24 @@ export function collectKanbanScopeData(
   };
 }
 
-export function filterKanbanTasks(
+export function selectKanbanProjectionItems(
+  data: Pick<KanbanScopeData, 'sessions' | 'tasks'>,
+  collectionId: string | null,
+) {
+  return {
+    chats: data.sessions.filter((session) =>
+      !session.archived && (!collectionId || session.collectionId === collectionId)
+    ),
+    tasks: filterKanbanTasksByCollection(data.tasks, collectionId),
+  };
+}
+
+export function filterKanbanTasksByCollection(
   tasks: TaskEntity[],
-  visibleTaskSessions: UnifiedSession[],
   collectionId: string | null,
 ): TaskEntity[] {
-  const visibleTaskSessionIds = new Set(visibleTaskSessions.map((session) => session.id));
   return tasks.filter((task) => {
-    const hasVisibleSession = task.sessions.length === 0
-      || task.sessions.some((session) => visibleTaskSessionIds.has(session.id));
     const isInCollection = !collectionId || task.collectionId === collectionId;
-    return hasVisibleSession && isInCollection;
+    return isInCollection;
   });
 }

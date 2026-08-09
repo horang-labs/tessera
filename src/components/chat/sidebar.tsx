@@ -47,6 +47,7 @@ import {
   findSidebarProject,
 } from './sidebar-utils';
 import { buildRecentWorkItems } from '@/lib/chat/recent-work';
+import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
@@ -319,6 +320,9 @@ export function Sidebar() {
   );
   const tasks = useTaskStore((state) => state.tasks);
   const tasksByProject = useTaskStore((state) => state.tasksByProject);
+  const loadedTaskProjects = useTaskStore((state) => state.loadedProjects);
+  const loadingTaskProjects = useTaskStore((state) => state.loadingProjectIds);
+  const allProjectsTaskLoadAttemptsRef = useRef(new Set<string>());
 
   // Load collections and tasks on mount / when selectedProject changes
   useEffect(() => {
@@ -331,6 +335,22 @@ export function Sidebar() {
       useTaskStore.getState().loadTasks(selectedProjectDir);
     }
   }, [selectedProjectDir]);
+
+  useEffect(() => {
+    if (selectedProjectDir !== ALL_PROJECTS_SENTINEL) {
+      allProjectsTaskLoadAttemptsRef.current.clear();
+      return;
+    }
+    for (const projectId of getProjectIdsMissingTaskProjection(
+      projects,
+      loadedTaskProjects,
+      loadingTaskProjects,
+      allProjectsTaskLoadAttemptsRef.current,
+    )) {
+      allProjectsTaskLoadAttemptsRef.current.add(projectId);
+      void useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
+    }
+  }, [loadedTaskProjects, loadingTaskProjects, projects, selectedProjectDir]);
 
   // Collection DnD (item moves between collections + group reorder)
   const {
@@ -633,6 +653,7 @@ export function Sidebar() {
       projects: scopedProjects,
       tasksByProject,
       limit: 8,
+      originOnly: isAllMode,
     });
   }, [isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
 
