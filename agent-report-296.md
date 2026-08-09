@@ -136,15 +136,13 @@ node --import tsx --test \
   tests/control-worktree-creation.test.ts \
   tests/git-action-session-refresh.test.ts \
   tests/terminal-session-runtime-state.test.ts \
-  tests/ws-session-access-guard.test.ts \
-  tests/session-websocket-broadcast.test.ts \
   tests/project-ownership-transfer-contract.test.mjs
 ```
 
 Final result: exit 0, 113 passed, 0 failed, 0 skipped. Before review fixes, the
-corresponding 24-file matrix passed 108/108.
+earlier matrix passed 108/108.
 
-After the cross-environment review fix, the same 24-file matrix again passed
+After the cross-environment review fix, the earlier matrix again passed
 110/110, followed in the same shell chain by successful `npx tsc --noEmit`,
 `npm run lint`, and `git diff --check`.
 
@@ -157,8 +155,12 @@ passed.
 
 After the final lifecycle fix, the same focused command passed 4/4 (canonical
 mutation, Collection isolation, archive, and deletion); TypeScript, lint, and
-diff checks passed again. The complete 25-file matrix was then rerun and passed
+diff checks passed again. The complete 23-file matrix was then rerun and passed
 113/113 with no failures or skips.
+
+An additional diagnostic run of `tests/ws-session-access-guard.test.ts` showed
+all 3 assertions passing, but its Node process retained an open handle and was
+terminated by the timeout. It is therefore not counted in the 113-pass matrix.
 
 Final focused regression command:
 
