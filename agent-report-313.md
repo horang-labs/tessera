@@ -104,6 +104,7 @@ Summary: Standards 0 eligible findings; Spec 3 findings, all resolved. The worst
 ## What could not be verified
 
 - No live GitHub repository was mutated, so enabled Create PR and View PR were not clicked against a real external PR. Their pure matrix/action tests passed; the local bare-remote E2E correctly reached disabled Create PR for a non-GitHub remote.
+- The isolated Electron package contained the initial implementation state used for `$code-review`. The review-only fail-closed comparison changes and loading-form preservation were verified afterward with the targeted browser E2Es, TypeScript, and lint, but the several-minute Windows package build was not repeated. The Windows server + WSL CLI action/menu wiring those fixes reuse was exercised in the isolated package.
 - The portable Windows executable was unsigned because no signing identity was configured; packaging and execution still succeeded.
 - The orchestrator-owned full suite and integrated-wave checks were intentionally not run here.
 
