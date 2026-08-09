@@ -1057,6 +1057,11 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     ensureWorktreeCreationScopeColumns(db);
     logger.info('Migration v36 applied: immutable Worktree creation scope and start point');
   }
+
+  if (fromVersion < 37) {
+    ensureWorktreeCreationScopeColumns(db);
+    logger.info('Migration v37 applied: canonical Worktree identity reconciliation');
+  }
 }
 
 function ensureWorktreeCreationScopeColumns(db: DatabaseWrapper): void {
@@ -1064,13 +1069,33 @@ function ensureWorktreeCreationScopeColumns(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'tasks', 'creation_scope_branch', 'TEXT');
   addColumnIfMissing(db, 'tasks', 'start_point', 'TEXT');
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_tasks_creation_scope_immutable
+    CREATE TABLE IF NOT EXISTS worktree_identity_reconciliation_authorizations (
+      old_worktree_id TEXT NOT NULL,
+      new_worktree_id TEXT NOT NULL,
+      PRIMARY KEY (old_worktree_id, new_worktree_id)
+    )
+  `);
+  const existingTrigger = db.prepare(`
+    SELECT sql FROM sqlite_master
+    WHERE type = 'trigger' AND name = 'trg_tasks_creation_scope_immutable'
+  `).get() as { sql: string | null } | undefined;
+  if (existingTrigger?.sql?.includes('worktree_identity_reconciliation_authorizations')) return;
+  db.exec(`
+    DROP TRIGGER IF EXISTS trg_tasks_creation_scope_immutable;
+    CREATE TRIGGER trg_tasks_creation_scope_immutable
     BEFORE UPDATE OF creation_scope_worktree_id, creation_scope_branch ON tasks
     FOR EACH ROW
     WHEN OLD.creation_scope_worktree_id IS NOT NULL
       AND (
-        NEW.creation_scope_worktree_id IS NOT OLD.creation_scope_worktree_id
-        OR NEW.creation_scope_branch IS NOT OLD.creation_scope_branch
+        NEW.creation_scope_branch IS NOT OLD.creation_scope_branch
+        OR (
+          NEW.creation_scope_worktree_id IS NOT OLD.creation_scope_worktree_id
+          AND NOT EXISTS (
+            SELECT 1 FROM worktree_identity_reconciliation_authorizations
+            WHERE old_worktree_id = OLD.creation_scope_worktree_id
+              AND new_worktree_id = NEW.creation_scope_worktree_id
+          )
+        )
       )
     BEGIN
       SELECT RAISE(ABORT, 'Worktree Creation Scope is immutable');

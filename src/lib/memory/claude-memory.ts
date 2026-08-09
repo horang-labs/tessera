@@ -249,7 +249,9 @@ export async function resolveGuidelineTargets(
     absolutePath: path.join(configDir, "CLAUDE.md"),
   });
 
-  const workspaceRoot = await resolveSessionWorkspaceFilesystemRoot(sessionId);
+  const workspaceRoot = await resolveSessionWorkspaceFilesystemRoot(sessionId, {
+    agentEnvironment: environment,
+  });
   if (workspaceRoot) {
     targets.push({
       kind: "project-guideline",

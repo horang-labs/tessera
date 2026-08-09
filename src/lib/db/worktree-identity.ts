@@ -14,8 +14,15 @@ export function generatePublicWorktreeId(): string {
 
 export function canonicalizeWorktreePath(
   filesystemPath: string,
+  referenceFilesystemPath?: string,
 ): CanonicalWorktreePath | null {
-  const trimmed = filesystemPath.trim();
+  const reportedPath = filesystemPath.trim();
+  const trimmed = referenceFilesystemPath
+    ? resolveWslDisplayPathAgainstWindowsHostedPath(
+        reportedPath,
+        referenceFilesystemPath,
+      ) ?? reportedPath
+    : reportedPath;
   if (!trimmed) return null;
   const pathModule = /^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\')
     ? path.win32

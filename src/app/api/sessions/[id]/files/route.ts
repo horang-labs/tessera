@@ -4,6 +4,7 @@ import * as dbSessions from '@/lib/db/sessions';
 import { getDb } from '@/lib/db/database';
 import { resolveSessionWorkspaceFilesystemRoot } from '@/lib/session/session-workspace-root';
 import { readWorkspaceRootFiles } from '@/lib/workspace-files/read-workspace-root';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 
 interface SessionRef {
   sessionId: string;
@@ -52,7 +53,9 @@ export async function GET(
 
   const refs = projectId ? listReferenceSessions(projectId, id) : { chats: [], tasks: [] };
 
-  const root = await resolveSessionWorkspaceFilesystemRoot(id);
+  const root = await resolveSessionWorkspaceFilesystemRoot(id, {
+    agentEnvironment: await getAgentEnvironment(auth.userId),
+  });
   if (!root) {
     return NextResponse.json({
       files: [],

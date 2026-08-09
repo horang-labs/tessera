@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 36;
+export const SCHEMA_VERSION = 37;
 
 export const CREATE_TABLES = `
 CREATE TABLE IF NOT EXISTS _meta (
@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS worktrees (
   canonical_path_key TEXT UNIQUE,
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worktree_identity_reconciliation_authorizations (
+  old_worktree_id TEXT NOT NULL,
+  new_worktree_id TEXT NOT NULL,
+  PRIMARY KEY (old_worktree_id, new_worktree_id)
 );
 
 CREATE TABLE IF NOT EXISTS projects (

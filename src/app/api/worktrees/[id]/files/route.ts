@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { getWorktree } from '@/lib/db/worktrees';
 import { readWorkspaceRootFiles } from '@/lib/workspace-files/read-workspace-root';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 
 export async function GET(
   request: NextRequest,
@@ -12,6 +14,7 @@ export async function GET(
   });
   if ('response' in auth) return auth.response;
 
+  await routeCanonicalWorktreePaths(await getAgentEnvironment(auth.userId));
   const { id } = await params;
   const worktree = getWorktree(id);
   if (!worktree) {

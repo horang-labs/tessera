@@ -3,6 +3,7 @@ import path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { getTask, setTaskWorktreeCheckout, taskExists } from '@/lib/db/tasks';
 import { getProjectWorktree } from '@/lib/db/projects';
+import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 import logger from '@/lib/logger';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { startWorktreePreparation } from '@/lib/projects/worktree-preparation';
@@ -27,6 +28,7 @@ import {
   resolveWorktreeCheckoutTarget,
   validateWorktreeBaseRef,
 } from '@/lib/worktrees/base-refs';
+import { resolveAgentReportedPath } from '@/lib/filesystem/path-environment';
 
 /**
  * POST /api/worktrees
@@ -115,6 +117,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Unknown task: ${taskId}` }, { status: 404 });
   }
 
+  const settings = await SettingsManager.load(userId);
+  await routeCanonicalWorktreePaths(settings.agentEnvironment);
+
   const originatingTask = typeof taskId === 'string' ? getTask(taskId) : undefined;
   const originProjectWorktree = originatingTask
     ? getProjectWorktree(originatingTask.projectId)
@@ -143,7 +148,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid projectDir' }, { status: 400 });
   }
 
-  const settings = await SettingsManager.load(userId);
   const environmentValidation = validateProjectEnvironment(projectDir, settings.agentEnvironment);
   if (!environmentValidation.ok) {
     return NextResponse.json(
@@ -336,6 +340,14 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+
+  // Git runs inside the configured agent environment and must receive its own
+  // path spelling. Only convert to the Windows server's filesystem form after
+  // the checkout exists, before identity persistence and host-side readers.
+  worktreePath = await resolveAgentReportedPath(
+    worktreePath,
+    settings.agentEnvironment,
+  );
 
   if (taskId) {
     // Recorded here rather than by a follow-up call from the client, so the
