@@ -100,17 +100,19 @@ test.before(async () => {
   const dbTasks = await import('../src/lib/db/tasks');
   dbTasks.createTask({
     id: TASK_ID,
-    projectId: persistCreatedSessionRecord({
-      sessionId: 'task-bystander-session',
-      resolvedWorkDir: sharedRepo,
-      title: 'task bystander',
-      providerId: 'claude-code',
-    }).projectId,
+    projectId: sharedRepo,
     title: 'Shared checkout task',
     worktreeBranch: 'main',
     worktreePath: sharedRepo,
   });
-  dbTasks.addSessionToTask(TASK_ID, 'task-bystander-session');
+  persistCreatedSessionRecord({
+    sessionId: 'task-bystander-session',
+    resolvedWorkDir: sharedRepo,
+    parentProjectId: sharedRepo,
+    taskId: TASK_ID,
+    title: 'task bystander',
+    providerId: 'claude-code',
+  });
   dbSessions.updateSession('task-bystander-session', { work_dir: null });
 
   // The same shape one migration earlier: a task that has not stored its own
@@ -119,23 +121,26 @@ test.before(async () => {
   // resolves onto the shared tree and still has a panel to update.
   dbTasks.createTask({
     id: LEGACY_TASK_ID,
-    projectId: persistCreatedSessionRecord({
-      sessionId: 'legacy-anchor-session',
-      resolvedWorkDir: sharedRepo,
-      title: 'legacy anchor',
-      providerId: 'claude-code',
-    }).projectId,
+    projectId: sharedRepo,
     title: 'Task with no stored worktree path',
     worktreeBranch: 'main',
   });
-  dbTasks.addSessionToTask(LEGACY_TASK_ID, 'legacy-anchor-session');
+  persistCreatedSessionRecord({
+    sessionId: 'legacy-anchor-session',
+    resolvedWorkDir: sharedRepo,
+    parentProjectId: sharedRepo,
+    taskId: LEGACY_TASK_ID,
+    title: 'legacy anchor',
+    providerId: 'claude-code',
+  });
   persistCreatedSessionRecord({
     sessionId: 'legacy-bystander-session',
     resolvedWorkDir: sharedRepo,
+    parentProjectId: sharedRepo,
+    taskId: LEGACY_TASK_ID,
     title: 'legacy bystander',
     providerId: 'claude-code',
   });
-  dbTasks.addSessionToTask(LEGACY_TASK_ID, 'legacy-bystander-session');
   dbSessions.updateSession('legacy-bystander-session', { work_dir: null });
 
   unsubscribe = subscribeGitPanelData((sessionId) => {

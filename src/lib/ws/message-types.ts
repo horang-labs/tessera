@@ -249,7 +249,7 @@ export type ModelUsageEntry = {
 };
 
 export type AppServerMessage =
-  | ({ type: 'session_created'; sessionId: string; status: 'ready'; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null; kind?: 'chat' | 'terminal' } & ProviderRuntimeControls)
+  | ({ type: 'session_created'; sessionId: string; status: 'ready'; projectId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null; kind?: 'chat' | 'terminal' } & ProviderRuntimeControls)
   | ({ type: 'session_started'; sessionId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'session_closed'; sessionId: string }
   | {

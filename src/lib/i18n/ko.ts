@@ -1460,17 +1460,7 @@ export const ko: I18nMessages = {
       rename: '이름 변경',
       delete: '삭제',
       openInNewTab: '새 탭에서 열기',
-      moveToProject: '프로젝트 이동',
-      cannotMoveRunning: '실행 중인 세션은 이동할 수 없습니다',
       generateTitle: 'AI 제목 생성',
-    },
-    moveDialog: {
-      title: '프로젝트 이동',
-      subtitle: '이동할 프로젝트를 선택하세요',
-      currentProject: '현재',
-      noOtherProjects: '다른 프로젝트가 없습니다',
-      move: '이동',
-      movedFrom: '{{project}}에서 이동됨',
     },
     prMismatch: {
       reviewMissing: '리뷰 상태인데 연결된 PR이 없음 — PR을 올리거나 컬럼을 내려주세요',

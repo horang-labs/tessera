@@ -4,6 +4,7 @@ import * as dbSessions from '@/lib/db/sessions';
 import * as dbTasks from '@/lib/db/tasks';
 import { readExactOneHopBranchRename } from '@/lib/db/worktree-identity';
 import type { ProjectBranchRenameWarning } from './branch-rename-warning';
+import type { ProjectViewMembership } from './project-view-membership';
 
 function getBranchRenameWarning(
   projectWorktree: NonNullable<ReturnType<typeof dbProjects.getProjectWorktree>>,
@@ -51,19 +52,11 @@ function projectSessions<T extends { sessions: dbSessions.SessionRow[] }>(
 }
 
 function projectWorktrees(
-  projectId: string,
+  membership: ProjectViewMembership,
   activeSessionIds: Set<string>,
   projectCollectionIds: Set<string>,
 ) {
-  const projectWorktree = dbProjects.getProjectWorktree(projectId);
-  const worktrees = projectWorktree
-    ? dbTasks.getTasks(projectId, activeSessionIds, {
-        viewScope: {
-          originWorktreeId: projectWorktree.id,
-          branch: projectWorktree.currentBranch,
-        },
-      })
-    : dbTasks.getTasks(projectId, activeSessionIds);
+  const worktrees = dbTasks.getTasksForProjectView(membership, activeSessionIds);
 
   return worktrees.map((worktree) => ({
     ...worktree,
@@ -74,11 +67,17 @@ function projectWorktrees(
   }));
 }
 
-function getViewScope(projectId: string): dbSessions.ProjectViewSessionScope | undefined {
-  const projectWorktree = dbProjects.getProjectWorktree(projectId);
+function getViewMembership(
+  projectId: string,
+  projectWorktree = dbProjects.getProjectWorktree(projectId),
+): ProjectViewMembership {
   return projectWorktree
-    ? { worktreeId: projectWorktree.id, currentBranch: projectWorktree.currentBranch }
-    : undefined;
+    ? {
+        kind: 'canonical-worktree',
+        worktreeId: projectWorktree.id,
+        currentBranch: projectWorktree.currentBranch,
+      }
+    : { kind: 'non-git-project', projectId };
 }
 
 /**
@@ -90,15 +89,13 @@ export function getProjectViewProjection(
   options: { limitPerStatus?: number; activeSessionIds?: Set<string> } = {},
 ) {
   const projectWorktree = dbProjects.getProjectWorktree(projectId);
+  const membership = getViewMembership(projectId, projectWorktree);
   const projectCollectionIds = getProjectCollectionIds(projectId);
-  const result = projectSessions(dbSessions.getSessionsByProjectGrouped(projectId, {
+  const result = projectSessions(dbSessions.getSessionsForProjectViewGrouped(membership, {
     limitPerStatus: options.limitPerStatus,
-    viewScope: projectWorktree
-      ? { worktreeId: projectWorktree.id, currentBranch: projectWorktree.currentBranch }
-      : undefined,
   }), projectCollectionIds);
   const linkedWorktrees = projectWorktrees(
-    projectId,
+    membership,
     options.activeSessionIds ?? new Set(),
     projectCollectionIds,
   );
@@ -112,16 +109,19 @@ export function getProjectViewWorktrees(
   projectId: string,
   activeSessionIds: Set<string> = new Set(),
 ) {
-  return projectWorktrees(projectId, activeSessionIds, getProjectCollectionIds(projectId));
+  return projectWorktrees(
+    getViewMembership(projectId),
+    activeSessionIds,
+    getProjectCollectionIds(projectId),
+  );
 }
 
 export function getProjectViewSessions(
   projectId: string,
   options: { limit?: number; cursor?: string } = {},
 ) {
-  return projectSessions(dbSessions.getSessionsByProject(projectId, {
+  return projectSessions(dbSessions.getSessionsForProjectView(getViewMembership(projectId), {
     ...options,
-    viewScope: getViewScope(projectId),
   }), getProjectCollectionIds(projectId));
 }
 
@@ -130,8 +130,30 @@ export function getProjectViewSessionsByStatus(
   statusGroup: string,
   options: { limit?: number; cursor?: string } = {},
 ) {
-  return projectSessions(dbSessions.getSessionsByStatus(projectId, statusGroup, {
-    ...options,
-    viewScope: getViewScope(projectId),
-  }), getProjectCollectionIds(projectId));
+  return projectSessions(
+    dbSessions.getSessionsForProjectViewByStatus(
+      getViewMembership(projectId),
+      statusGroup,
+      options,
+    ),
+    getProjectCollectionIds(projectId),
+  );
+}
+
+/** @-mention Session references, classified exactly as the current Project View renders them. */
+export function getProjectViewReferenceSessions(projectId: string, currentSessionId: string) {
+  const projection = getProjectViewProjection(projectId, { limitPerStatus: 100_000 });
+  const mapSession = (session: { id: string; title: string }) => ({
+    sessionId: session.id,
+    title: session.title || '(generating title)',
+  });
+  return {
+    chats: projection.sessions
+      .filter((session) => session.id !== currentSessionId)
+      .map(mapSession),
+    tasks: projection.linkedWorktrees
+      .flatMap((worktree) => worktree.sessions)
+      .filter((session) => session.id !== currentSessionId)
+      .map(mapSession),
+  };
 }

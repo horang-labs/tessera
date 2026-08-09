@@ -3,13 +3,13 @@ import type { TaskEntity } from '@/types/task-entity';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 export function getSessionOriginProjectId(session: UnifiedSession): string {
-  return session.originProjectId ?? session.projectDir;
+  return session.originProjectId;
 }
 
 /** Remove Project View appearances that belong to another Project's origin. */
 export function getTaskOriginProjectRepresentation(task: TaskEntity): TaskEntity {
   const sessions = task.sessions.filter(
-    (session) => (session.originProjectId ?? task.projectId) === task.projectId,
+    (session) => session.originProjectId === task.projectId,
   );
   return sessions.length === task.sessions.length ? task : { ...task, sessions };
 }

@@ -178,11 +178,8 @@ export async function routeCanonicalWorktreePaths(
       `).run(identity.filesystemPath, row.id, reportedPath);
       db.prepare(`
         UPDATE sessions SET work_dir = ?
-        WHERE work_dir = ? AND (
-          worktree_id = ?
-          OR task_id IN (SELECT id FROM tasks WHERE public_worktree_id = ?)
-        )
-      `).run(identity.filesystemPath, reportedPath, row.id, row.id);
+        WHERE work_dir = ? AND worktree_id = ?
+      `).run(identity.filesystemPath, reportedPath, row.id);
     })();
     routedCount += 1;
   }
@@ -204,9 +201,8 @@ export function getSessionIdsForWorktree(worktreeId: string): string[] {
   const rows = getDb().prepare(`
     SELECT s.id
     FROM sessions s
-    LEFT JOIN tasks t ON t.id = s.task_id
     WHERE s.deleted = 0
-      AND COALESCE(s.worktree_id, t.public_worktree_id) = ?
+      AND s.worktree_id = ?
     ORDER BY s.id
   `).all(worktreeId) as Array<{ id: string }>;
   return rows.map((row) => row.id);
@@ -234,11 +230,8 @@ export function markWorktreeDeleted(worktreeId: string, deletedAt: string): void
     db.prepare(`
       UPDATE sessions
       SET worktree_deleted_at = ?, updated_at = ?
-      WHERE deleted = 0 AND (
-        worktree_id = ?
-        OR task_id IN (SELECT id FROM tasks WHERE public_worktree_id = ?)
-      )
-    `).run(deletedAt, deletedAt, worktreeId, worktreeId);
+      WHERE deleted = 0 AND worktree_id = ?
+    `).run(deletedAt, deletedAt, worktreeId);
   })();
 }
 

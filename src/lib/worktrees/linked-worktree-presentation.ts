@@ -37,6 +37,7 @@ export function toLinkedWorktreeSession(
     id: session.id,
     title: session.title,
     projectDir: task.projectId,
+    originProjectId: session.originProjectId,
     isRunning: session.isRunning,
     status: session.isRunning ? 'running' : session.kind === 'terminal' ? 'stopped' : 'completed',
     lastModified: session.lastModified,

@@ -590,7 +590,8 @@ function addCreatedSession(
   sessionStore.addSession({
     id: msg.sessionId,
     title: i18n.t('chat.sessionDefaultTitle', { count: totalSessions + 1 }),
-    projectDir: msg.workDir,
+    projectDir: msg.projectId,
+    originProjectId: msg.projectId,
     workDir: msg.workDir,
     isRunning: false,
     hasStarted: false,

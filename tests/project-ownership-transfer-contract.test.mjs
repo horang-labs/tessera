@@ -10,6 +10,10 @@ test('Project ownership transfer API and UI are unavailable', () => {
     false,
   );
   assert.equal(
+    fs.existsSync(new URL('../src/app/api/tasks/[id]/sessions/route.ts', import.meta.url)),
+    false,
+  );
+  assert.equal(
     fs.existsSync(new URL('../src/app/api/archive/tasks/[id]/worktree/route.ts', import.meta.url)),
     false,
   );
@@ -31,4 +35,25 @@ test('Project ownership transfer API and UI are unavailable', () => {
   ].map(read).join('\n');
   assert.doesNotMatch(userSurfaces, /Move to Project|moveSession|MoveProjectDialog|onMoveToProject/);
   assert.doesNotMatch(read('src/stores/session-store.ts'), /\bmoveSession\s*[:(]/);
+  assert.doesNotMatch(read('src/stores/session-store.ts'), /\bsetTaskIdForSessions\s*[:(]/);
+  assert.doesNotMatch(read('src/lib/db/tasks.ts'), /export function addSessionToTask\(/);
+  assert.doesNotMatch(
+    read('src/lib/db/sessions.ts'),
+    /patch\.project_id|sets\.push\('project_id = \?'\)/,
+  );
+  assert.doesNotMatch(read('src/lib/db/sessions.ts'), /export function reorderSessions\(/);
+  assert.doesNotMatch(read('src/app/api/sessions/reorder/route.ts'), /reorderSessions\(projectId/);
+  const sessionFilesRoute = read('src/app/api/sessions/[id]/files/route.ts');
+  assert.match(sessionFilesRoute, /getProjectViewReferenceSessions\(projectId/);
+  assert.match(sessionFilesRoute, /projectId is required for Project View references/);
+  assert.doesNotMatch(sessionFilesRoute, /WHERE project_id = \?/);
+
+  const translations = [
+    'src/lib/i18n/en.ts',
+    'src/lib/i18n/ja.ts',
+    'src/lib/i18n/ko.ts',
+    'src/lib/i18n/zh.ts',
+    'src/lib/i18n/types.ts',
+  ].map(read).join('\n');
+  assert.doesNotMatch(translations, /moveToProject|moveDialog|Move to Project/);
 });

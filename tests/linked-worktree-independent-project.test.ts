@@ -78,6 +78,8 @@ test('a linked Worktree opens as an independent Project without changing canonic
 
   const inA = projection.getProjectViewProjection('project-a');
   const inC = projection.getProjectViewProjection('project-c');
+  assert.equal(sessions.getSession('session-c')?.worktree_id, linkedCWorktreeId);
+  assert.equal(sessions.getSession('direct-c-session')?.worktree_id, linkedCWorktreeId);
   assert.deepEqual(inA.linkedWorktrees.map((worktree) => worktree.id), ['linked-c']);
   assert.deepEqual(
     inA.linkedWorktrees[0].sessions.map((session) => [session.id, session.originProjectId]),
@@ -87,6 +89,14 @@ test('a linked Worktree opens as an independent Project without changing canonic
     inC.sessions.map((session) => [session.id, session.originProjectId]).sort(),
     [['direct-c-session', 'project-c'], ['session-c', 'project-a']],
   );
+  assert.deepEqual(projection.getProjectViewReferenceSessions('project-a', 'session-c'), {
+    chats: [],
+    tasks: [{ sessionId: 'direct-c-session', title: 'Created from Project C' }],
+  });
+  assert.deepEqual(projection.getProjectViewReferenceSessions('project-c', 'session-c'), {
+    chats: [{ sessionId: 'direct-c-session', title: 'Created from Project C' }],
+    tasks: [],
+  });
 
   sessions.updateSession('session-c', { title: 'Renamed once' });
   const runningIds = new Set(['session-c']);

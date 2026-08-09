@@ -27,6 +27,7 @@ export function buildTaskChildSession(
     id: sessionId,
     title: result.title || 'New Session',
     projectDir: task.projectId || '',
+    originProjectId: task.projectId,
     workDir: task.workDir,
     isRunning: false,
     hasStarted: false,

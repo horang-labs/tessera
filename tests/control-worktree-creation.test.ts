@@ -20,6 +20,7 @@ type Modules = {
   settings: typeof import('@/lib/settings/manager');
   defaults: typeof import('@/lib/settings/defaults');
   tasks: typeof import('@/lib/db/tasks');
+  projection: typeof import('@/lib/projects/project-view-projection');
   controlProjects: typeof import('@/lib/control/database-project-source');
   controlWorktrees: typeof import('@/lib/control/database-worktree-source');
   service: typeof import('@/lib/control/service');
@@ -38,6 +39,7 @@ function modules(): Promise<Modules> {
       settings,
       defaults,
       tasks,
+      projection,
       controlProjects,
       controlWorktrees,
       service,
@@ -51,6 +53,7 @@ function modules(): Promise<Modules> {
       import('@/lib/settings/manager'),
       import('@/lib/settings/defaults'),
       import('@/lib/db/tasks'),
+      import('@/lib/projects/project-view-projection'),
       import('@/lib/control/database-project-source'),
       import('@/lib/control/database-worktree-source'),
       import('@/lib/control/service'),
@@ -66,6 +69,7 @@ function modules(): Promise<Modules> {
       settings,
       defaults,
       tasks,
+      projection,
       controlProjects,
       controlWorktrees,
       service,
@@ -139,7 +143,7 @@ test('Control creates exact local and remote branches through the managed path p
 
   const originWorktree = mods.projects.getProjectWorktree(repository.path);
   assert.ok(originWorktree);
-  const uiWorktrees = mods.tasks.getTasks(repository.path);
+  const uiWorktrees = mods.projection.getProjectViewWorktrees(repository.path);
   assert.deepEqual(
     uiWorktrees.map((worktree) => ({
       title: worktree.title,
@@ -227,7 +231,10 @@ test('Control creates exact local and remote branches through the managed path p
       && error.message === 'The Project Worktree must be on a branch before creating a linked Worktree.',
   );
   assert.equal(hasBranch(repository.path, 'feature/detached-origin'), false);
-  assert.equal(mods.tasks.getTasks(repository.path).length, 2);
+  const persistedCount = mods.database.getDb().prepare(`
+    SELECT COUNT(*) AS count FROM tasks WHERE project_id = ?
+  `).get(repository.path) as { count: number };
+  assert.equal(persistedCount.count, 2);
 });
 
 test('Control opens local and remote-only branches and returns distinct checkout refusals', async () => {
@@ -510,7 +517,7 @@ test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git re
     assert.equal(resumed.startPoint, 'feature/cli-resume');
     assert.equal(git(resumed.path as string, ['rev-parse', 'HEAD']), repository.localCommit);
 
-    const visible = mods.tasks.getTasks(repository.path);
+    const visible = mods.projection.getProjectViewWorktrees(repository.path);
     assert.equal(visible.length, 2);
     assert.deepEqual(
       visible.map((worktree) => worktree.worktreeBranch).sort(),
@@ -560,7 +567,7 @@ test('Control reports blocking preparation outcomes while preserving inspectable
       return true;
     },
   );
-  assert.equal(mods.tasks.getTasks(failedRepository.path)[0]?.sessions.length, 0);
+  assert.equal(mods.projection.getProjectViewWorktrees(failedRepository.path)[0]?.sessions.length, 0);
   assert.equal(hasBranch(failedRepository.path, 'feature/preparation-failed'), true);
 
   const succeededRepository = createRepository('preparation-succeeded');
@@ -627,7 +634,7 @@ test('Control reports blocking preparation outcomes while preserving inspectable
       return true;
     },
   );
-  assert.equal(mods.tasks.getTasks(timeoutRepository.path)[0]?.sessions.length, 0);
+  assert.equal(mods.projection.getProjectViewWorktrees(timeoutRepository.path)[0]?.sessions.length, 0);
   assert.equal(hasBranch(timeoutRepository.path, 'feature/preparation-timeout'), true);
 });
 
@@ -666,7 +673,7 @@ test('a persistence failure compensates the checkout and exact new branch', asyn
     mods.database.getDb().exec('DROP TRIGGER fail_control_worktree_persist');
   }
 
-  assert.equal(mods.tasks.getTasks(repository.path).length, 0);
+  assert.equal(mods.projection.getProjectViewWorktrees(repository.path).length, 0);
   assert.equal(hasBranch(repository.path, 'feature/compensated'), false);
   assert.equal(fs.existsSync(path.join(managedRoot, 'feature/compensated')), false);
 });

@@ -13,6 +13,7 @@ import {
   PARENT_FIRST_WORKTREE_PATH_SQL,
   resolveEffectiveWorktreeCheckout,
 } from './worktree-identity';
+import type { ProjectViewMembership } from '@/lib/projects/project-view-membership';
 
 export interface TaskRow {
   id: string;
@@ -72,11 +73,6 @@ interface SessionForTask {
 }
 
 export interface WorktreeCreationScope {
-  originWorktreeId: string;
-  branch: string;
-}
-
-interface WorktreeViewScope {
   originWorktreeId: string;
   branch: string | null;
 }
@@ -161,7 +157,7 @@ function mapRowToEntity(
     workflowStatus: row.workflow_status as WorkflowStatus,
     worktreeBranch: row.worktree_branch ?? undefined,
     workDir: parentWorkDir ?? sessionData.workDir,
-    ...(row.creation_scope_worktree_id && row.creation_scope_branch
+    ...(row.creation_scope_worktree_id
       ? {
           creationScope: {
             originWorktreeId: row.creation_scope_worktree_id,
@@ -202,22 +198,25 @@ function loadTaskSessions(
   activeSessionIds: Set<string>,
   options: {
     includeArchived?: boolean;
-    worktreeProjection?: { worktreeId: string; currentBranch: string | null };
+    projectViewMembership?: ProjectViewMembership;
   } = {}
 ): { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean } {
   const db = getDb();
-  const ownership = options.worktreeProjection
-    ? { sql: '(task_id = ? OR worktree_id = ?)', params: [taskId, options.worktreeProjection.worktreeId] }
+  const canonicalMembership = options.projectViewMembership?.kind === 'canonical-worktree'
+    ? options.projectViewMembership
+    : undefined;
+  const ownership = canonicalMembership
+    ? { sql: 'worktree_id = ?', params: [canonicalMembership.worktreeId] }
     : { sql: 'task_id = ?', params: [taskId] };
-  const branchScope = options.worktreeProjection
+  const branchScope = canonicalMembership
     ? {
         sql: `AND (
           scope_branch IS NULL
           OR (? IS NOT NULL AND scope_branch = ?)
         )`,
         params: [
-          options.worktreeProjection.currentBranch,
-          options.worktreeProjection.currentBranch,
+          canonicalMembership.currentBranch,
+          canonicalMembership.currentBranch,
         ],
       }
     : { sql: '', params: [] };
@@ -266,30 +265,28 @@ function loadTaskSessions(
 /**
  * Get all tasks for a project with their child sessions.
  */
-export function getTasks(
-  projectId: string,
+export function getTasksForProjectView(
+  membership: ProjectViewMembership,
   activeSessionIds: Set<string> = new Set(),
-  options: { includeArchived?: boolean; viewScope?: WorktreeViewScope } = {}
+  options: { includeArchived?: boolean } = {}
 ): TaskEntity[] {
   const db = getDb();
-  const where = options.viewScope
+  const where = membership.kind === 'canonical-worktree'
     ? {
         sql: `(
-          (
-            creation_scope_worktree_id = ?
-            AND ? IS NOT NULL
-            AND creation_scope_branch = ?
+          creation_scope_worktree_id = ?
+          AND (
+            creation_scope_branch IS NULL
+            OR (? IS NOT NULL AND creation_scope_branch = ?)
           )
-          OR (creation_scope_worktree_id IS NULL AND project_id = ?)
         )`,
         params: [
-          options.viewScope.originWorktreeId,
-          options.viewScope.branch,
-          options.viewScope.branch,
-          projectId,
+          membership.worktreeId,
+          membership.currentBranch,
+          membership.currentBranch,
         ],
       }
-    : { sql: 'project_id = ?', params: [projectId] };
+    : { sql: 'project_id = ?', params: [membership.projectId] };
   const rows = db.prepare(`
     SELECT * FROM tasks
     WHERE ${where.sql} ${options.includeArchived ? '' : 'AND archived = 0'}
@@ -302,9 +299,10 @@ export function getTasks(
       loadTaskSessions(
         row.id,
         activeSessionIds,
-        options.viewScope
+        membership.kind === 'canonical-worktree'
           ? {
-              worktreeProjection: {
+              projectViewMembership: {
+                kind: 'canonical-worktree',
                 worktreeId: row.public_worktree_id,
                 currentBranch: getWorktree(row.public_worktree_id)?.currentBranch
                   ?? row.worktree_branch,
@@ -800,50 +798,6 @@ export function findTaskIdForWorktree(workDir: string): string | null {
     LIMIT 1
   `).get(workDir) as { task_id: string } | undefined;
   return row?.task_id ?? null;
-}
-
-/**
- * Add a session to a task by updating sessions.task_id.
- */
-export function addSessionToTask(taskId: string, sessionId: string): void {
-  const db = getDb();
-  const now = new Date().toISOString();
-  const task = db.prepare(`
-    SELECT
-      tasks.collection_id AS collection_id,
-      tasks.worktree_branch AS worktree_branch,
-      ${PARENT_FIRST_WORKTREE_PATH_SQL} AS worktree_path
-    FROM tasks
-    WHERE tasks.id = ?
-  `).get(taskId) as {
-    collection_id: string | null;
-    worktree_branch: string | null;
-    worktree_path: string | null;
-  } | undefined;
-  const effectiveCheckout = resolveEffectiveWorktreeCheckout(task);
-
-  // Clear any standalone archive state: a session joining a task comes back to
-  // the task's active session list.
-  db.prepare(`
-    UPDATE sessions
-    SET task_id = ?, collection_id = ?, work_dir = COALESCE(?, work_dir),
-        worktree_branch = COALESCE(?, worktree_branch),
-        worktree_managed = CASE WHEN ? IS NULL THEN worktree_managed ELSE 1 END,
-        updated_at = ?, archived = 0, archived_at = NULL
-    WHERE id = ?
-  `).run(
-    taskId,
-    task?.collection_id ?? null,
-    effectiveCheckout.path ?? null,
-    effectiveCheckout.branch ?? null,
-    effectiveCheckout.path ?? null,
-    now,
-    sessionId,
-  );
-  // Also touch the task's updated_at
-  db.prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
-    .run(now, taskId);
-  logger.info({ taskId, sessionId }, 'Session added to task');
 }
 
 /**
