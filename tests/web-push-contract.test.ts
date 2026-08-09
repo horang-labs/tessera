@@ -134,9 +134,9 @@ test('a paired device can replace, read, and delete only its own subscription', 
   assert.equal(unauthenticated.status, 401);
 });
 
-test('completed notifications schedule size-limited push without blocking WebSocket delivery', async () => {
+test('all five Session Notification kinds schedule one bounded navigation-only Push payload', async () => {
   const {
-    buildCompletedPushPayload,
+    buildSessionNotificationPushPayload,
     createWebPushDispatcher,
   } = await import('../src/lib/push/web-push-dispatcher');
   const subscription = {
@@ -156,27 +156,86 @@ test('completed notifications schedule size-limited push without blocking WebSoc
     },
   });
 
-  const result = dispatch('user-1', {
-    type: 'notification',
-    sessionId: 'session / 1',
-    event: 'completed',
-    message: 'Task completed.',
-    preview: 'x'.repeat(20_000),
-  });
+  const eligible = [
+    {
+      type: 'notification' as const,
+      sessionId: 'session / 1',
+      event: 'completed' as const,
+      eventId: 'event-completed',
+      message: 'Task completed.',
+      preview: 'x'.repeat(20_000),
+    },
+    {
+      type: 'notification' as const,
+      sessionId: 'session-2',
+      event: 'input_required' as const,
+      eventId: 'event-input',
+      message: '',
+      preview: 'The terminal is waiting at a prompt.',
+    },
+    {
+      type: 'interactive_prompt' as const,
+      sessionId: 'session-3',
+      promptType: 'permission_request' as const,
+      eventId: 'event-permission',
+      data: { question: '', toolUseId: 'tool-3', toolName: 'Bash' },
+    },
+    {
+      type: 'interactive_prompt' as const,
+      sessionId: 'session-4',
+      promptType: 'ask_user_question' as const,
+      eventId: 'event-question',
+      data: {
+        question: '',
+        toolUseId: 'tool-4',
+        questions: [{ question: 'Which database should we use?', header: 'Database', options: [] }],
+      },
+    },
+    {
+      type: 'interactive_prompt' as const,
+      sessionId: 'session-5',
+      promptType: 'plan_approval' as const,
+      eventId: 'event-plan',
+      data: { question: '', toolUseId: 'tool-5', plan: '# Ship it' },
+    },
+  ];
+
+  const result = dispatch('user-1', eligible[0]);
+  for (const message of eligible.slice(1)) dispatch('user-1', message);
 
   assert.equal(result, undefined, 'the send-to-user seam must remain synchronous');
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(sent.length, 1, 'push starts in the background');
-  const payload = JSON.parse(sent[0]);
-  assert.equal(payload.kind, 'completed');
-  assert.equal(payload.url, '/chat?session=session+%2F+1');
-  assert.ok(Buffer.byteLength(sent[0], 'utf8') <= 2_048);
+  assert.equal(sent.length, 5, 'each eligible kind starts Push in the background');
+  const payloads = sent.map((payload) => JSON.parse(payload));
+  assert.deepEqual(payloads.map(({ kind }) => kind), [
+    'completed',
+    'input_required',
+    'permission_request',
+    'ask_user_question',
+    'plan_approval',
+  ]);
+  assert.deepEqual(payloads.map(({ eventId }) => eventId), eligible.map(({ eventId }) => eventId));
+  assert.equal(payloads[0].url, '/chat?session=session+%2F+1');
+  assert.equal(payloads[1].preview, 'The terminal is waiting at a prompt.');
+  assert.equal(payloads[2].preview, 'Bash is requesting permission to run');
+  assert.equal(payloads[3].preview, 'Which database should we use?');
+  assert.equal(payloads[4].preview, 'Waiting for plan approval');
+  assert.equal(payloads[2].url, '/chat?session=session-3&prompt=tool-3');
+  assert.deepEqual(payloads.map(({ title }) => title), [
+    'Task completed.',
+    'Input required.',
+    'Permission requested.',
+    'Question requires your answer.',
+    'Plan approval required.',
+  ]);
+  assert.ok(sent.every((payload) => Buffer.byteLength(payload, 'utf8') <= 2_048));
   releasePush();
 
-  const fallback = buildCompletedPushPayload({
+  const fallback = buildSessionNotificationPushPayload({
     type: 'notification',
     sessionId: 'session-2',
     event: 'completed',
+    eventId: 'event-fallback',
     message: '',
     preview: '',
   });
@@ -184,23 +243,66 @@ test('completed notifications schedule size-limited push without blocking WebSoc
   assert.equal(fallback.preview, 'Your Tessera session completed.');
 });
 
-test('the server send-to-user seam classifies push even when no WebSocket is connected', async () => {
+test('the server send-to-user seam creates or preserves an event ID before fan-out', async () => {
   const { WebSocketServer } = await import('../src/lib/ws/server');
   const scheduled: unknown[] = [];
   const server = new WebSocketServer({
     scheduleWebPush: (userId, message) => scheduled.push({ userId, message }),
   });
-  const message = {
+  const generated = {
     type: 'notification' as const,
     sessionId: 'session-1',
     event: 'completed' as const,
     message: 'Task completed.',
     preview: 'Finished cleanly.',
   };
+  const preserved = {
+    type: 'interactive_prompt' as const,
+    sessionId: 'session-2',
+    promptType: 'plan_approval' as const,
+    eventId: 'upstream-event-id',
+    data: { question: '', toolUseId: 'prompt-2', plan: 'Plan' },
+  };
 
-  server.sendToUser('user-1', message);
+  server.sendToUser('user-1', generated);
+  server.sendToUser('user-1', preserved);
 
-  assert.deepEqual(scheduled, [{ userId: 'user-1', message }]);
+  assert.equal(scheduled.length, 2);
+  assert.match((scheduled[0] as any).message.eventId, /^[0-9a-f-]{36}$/);
+  assert.equal((scheduled[1] as any).message.eventId, 'upstream-event-id');
+});
+
+test('non-Session Notification transport and replay messages never schedule Push', async () => {
+  const { createWebPushDispatcher } = await import('../src/lib/push/web-push-dispatcher');
+  const sent: string[] = [];
+  const dispatch = createWebPushDispatcher({
+    loadSettings: async () => ({ notifications: { pushEnabled: true } }),
+    listSubscriptions: async () => [{
+      endpoint: 'https://push.example.test/first', expirationTime: null,
+      keys: { p256dh: 'public', auth: 'auth' },
+    }],
+    sendNotification: async (_subscription, payload) => { sent.push(payload); },
+  });
+  const excluded = [
+    { type: 'error', sessionId: 's1', code: 'failed', message: 'Generic error' },
+    { type: 'session_created', sessionId: 's1', status: 'ready', workDir: '/tmp' },
+    { type: 'rate_limit_update', providerId: 'claude-code' },
+    { type: 'session_list', sessions: [], titleGeneratingSessionIds: [] },
+    { type: 'replay_events', sessionId: 's1', events: [] },
+    {
+      type: 'session_state', sessionId: 's1', terminalId: 'terminal-1',
+      status: 'input_required', hookEvent: 'PermissionRequest', stateAt: 123,
+    },
+    { type: 'message', sessionId: 's1', role: 'assistant', content: 'transport message' },
+    {
+      type: 'interactive_prompt', sessionId: 's1', promptType: 'input',
+      data: { question: 'legacy transient input', toolUseId: 'legacy-1' },
+    },
+  ];
+
+  for (const message of excluded) dispatch('user-1', message as any);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent, []);
 });
 
 test('global suppression, missing subscriptions, and push failures stay best-effort', async () => {
@@ -220,13 +322,13 @@ test('global suppression, missing subscriptions, and push failures stay best-eff
   });
 
   disabled('user-1', {
-    type: 'notification', sessionId: 's1', event: 'completed', message: 'done', preview: '',
+    type: 'notification', sessionId: 's1', event: 'completed', eventId: 'event-disabled', message: 'done', preview: '',
   });
   missing('user-1', {
-    type: 'notification', sessionId: 's1', event: 'completed', message: 'done', preview: '',
+    type: 'notification', sessionId: 's1', event: 'completed', eventId: 'event-1', message: 'done', preview: '',
   });
   missing('user-1', {
-    type: 'notification', sessionId: 's1', event: 'input_required', message: 'input', preview: '',
+    type: 'notification', sessionId: 's1', event: 'input_required', eventId: 'event-2', message: 'input', preview: '',
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sends, 0);
@@ -240,7 +342,7 @@ test('global suppression, missing subscriptions, and push failures stay best-eff
     sendNotification: async () => { sends += 1; throw new Error('offline'); },
   });
   assert.doesNotThrow(() => failing('user-1', {
-    type: 'notification', sessionId: 's1', event: 'completed', message: 'done', preview: '',
+    type: 'notification', sessionId: 's1', event: 'completed', eventId: 'event-3', message: 'done', preview: '',
   }));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sends, 1);

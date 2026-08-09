@@ -173,7 +173,7 @@ export const en: I18nMessages = {
       noDevicesTitle: 'No paired devices',
       noDevicesDescription: 'Create a one-time pairing link above when you are ready to connect another device.',
       pushTitle: 'Web Push',
-      pushDescription: 'Send completed-session notifications to subscribed paired devices.',
+      pushDescription: 'Send Session Notifications to subscribed paired devices.',
       pushGlobalLabel: 'Enable Web Push globally',
       pushChecking: 'Checking this device…',
       pushInstallRequired: 'Install Tessera as an app to enable notifications on this device.',

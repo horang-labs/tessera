@@ -173,7 +173,7 @@ export const ko: I18nMessages = {
       noDevicesTitle: '등록된 기기가 없습니다',
       noDevicesDescription: '다른 기기를 연결할 준비가 되면 위에서 일회용 페어링 링크를 만드세요.',
       pushTitle: '웹 푸시',
-      pushDescription: '완료된 세션 알림을 구독한 페어링 기기로 보냅니다.',
+      pushDescription: '세션 알림을 구독한 페어링 기기로 보냅니다.',
       pushGlobalLabel: '웹 푸시 전체 켜기',
       pushChecking: '이 기기를 확인하는 중…',
       pushInstallRequired: '이 기기에서 알림을 받으려면 Tessera를 앱으로 설치하세요.',

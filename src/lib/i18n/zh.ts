@@ -173,7 +173,7 @@ export const zh: I18nMessages = {
       noDevicesTitle: '没有已配对设备',
       noDevicesDescription: '准备连接其他设备时，请在上方创建一次性配对链接。',
       pushTitle: '网页推送',
-      pushDescription: '将已完成会话的通知发送到已订阅的配对设备。',
+      pushDescription: '将会话通知发送到已订阅的配对设备。',
       pushGlobalLabel: '全局启用网页推送',
       pushChecking: '正在检查此设备…',
       pushInstallRequired: '请将 Tessera 安装为应用，才能在此设备上启用通知。',

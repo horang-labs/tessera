@@ -173,7 +173,7 @@ export const ja: I18nMessages = {
       noDevicesTitle: 'ペアリング済みデバイスはありません',
       noDevicesDescription: '別のデバイスを接続するときは、上で一度だけ使えるペアリングリンクを作成してください。',
       pushTitle: 'Web Push',
-      pushDescription: '完了したセッションの通知を購読済みのペアリングデバイスへ送信します。',
+      pushDescription: 'セッション通知を購読済みのペアリングデバイスへ送信します。',
       pushGlobalLabel: 'Web Push を全体で有効にする',
       pushChecking: 'このデバイスを確認中…',
       pushInstallRequired: 'このデバイスで通知を有効にするには Tessera をアプリとしてインストールしてください。',

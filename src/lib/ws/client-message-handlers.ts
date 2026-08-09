@@ -33,6 +33,11 @@ import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
+import {
+  describeSessionNotification,
+  sessionNotificationUrl,
+} from '@/lib/notifications/session-notification';
+import { presentSessionNotificationOnPage } from '@/lib/notifications/session-notification-presentation';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
@@ -141,7 +146,7 @@ export function handleIncomingServerMessage({
 
     case 'notification':
       sessionStore.touchSessionActivity(msg.sessionId);
-      handleNotificationMessage(msg, getVisibleWorkspaceSessionId(sessionStore.activeSessionId));
+      handleNotificationMessage(msg);
       if (msg.event === 'completed') {
         finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
         sessionStore.updateSessionStatus(msg.sessionId, 'completed');
@@ -247,7 +252,6 @@ export function handleIncomingServerMessage({
       sessionStore.touchSessionActivity(msg.sessionId);
       handleInteractivePromptMessage(
         msg,
-        getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
       );
       return { wasReconnect };
 
@@ -613,23 +617,8 @@ function addCreatedSession(
 
 function handleNotificationMessage(
   msg: Extract<ServerTransportMessage, { type: 'notification' }>,
-  activeSessionId: string | null,
 ): void {
-  const notificationStore = useNotificationStore.getState();
-  const sessionStore = useSessionStore.getState();
-
-  if (msg.sessionId !== activeSessionId) {
-    notificationStore.addNotification({
-      sessionId: msg.sessionId,
-      type: msg.event === 'completed' ? 'completed' : 'input_required',
-      preview: msg.preview,
-      actions: msg.actions,
-    });
-    sessionStore.incrementUnreadCount(msg.sessionId);
-    return;
-  }
-
-  notificationStore.playSound();
+  presentWebSocketSessionNotification(msg);
 }
 
 function handleTerminalSessionStateMessage(
@@ -658,28 +647,25 @@ function handleTerminalSessionStateMessage(
 
 function handleInteractivePromptMessage(
   msg: Extract<ServerTransportMessage, { type: 'interactive_prompt' }>,
-  activeSessionId: string | null,
 ): void {
   stopTurnInFlight(msg.sessionId);
   applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
 
-  if (msg.sessionId === activeSessionId) {
-    return;
-  }
+  presentWebSocketSessionNotification(msg);
+}
 
-  const notificationStore = useNotificationStore.getState();
-  const isAskUserQuestion = msg.promptType === 'ask_user_question';
-  const isPlanApproval = msg.promptType === 'plan_approval';
-  notificationStore.addNotification({
-    sessionId: msg.sessionId,
-    type: isPlanApproval ? 'plan_approval' : isAskUserQuestion ? 'ask_user_question' : 'permission_request',
-    preview: isPlanApproval
-      ? i18n.t('notifications.planApprovalWaiting')
-      : isAskUserQuestion
-        ? (msg.data.questions?.[0]?.question ?? i18n.t('notifications.questionWaiting'))
-        : i18n.t('notifications.permissionWaiting', { tool: msg.data.toolName ?? 'Tool' }),
+function presentWebSocketSessionNotification(
+  msg: Extract<ServerTransportMessage, { type: 'notification' | 'interactive_prompt' }>,
+): void {
+  const description = describeSessionNotification(msg);
+  if (!description) return;
+  presentSessionNotificationOnPage({
+    ...description,
+    eventId: msg.eventId ?? uuidv4(),
+    url: sessionNotificationUrl(description.sessionId, description.promptId),
+    source: 'websocket',
+    ...(msg.type === 'notification' && msg.actions ? { actions: msg.actions } : {}),
   });
-  useSessionStore.getState().incrementUnreadCount(msg.sessionId);
 }
 
 function handleSessionListMessage(

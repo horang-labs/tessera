@@ -94,7 +94,8 @@ try {
     registrationId: registration.registrationId,
     data: JSON.stringify({
       kind: 'completed', title: 'Task completed.', preview: 'Background result',
-      sessionId: 'session-1', url: '/chat?session=session-1',
+      eventId: 'event-background', sessionId: 'session-1',
+      url: '/chat?session=session-1&prompt=tool-1',
     }),
   });
 
@@ -108,19 +109,20 @@ try {
   });
   assert.deepEqual(notifications, [{
     title: 'Task completed.', body: 'Background result',
-    data: { url: `${app.origin}/chat?session=session-1` },
+    data: { url: `${app.origin}/chat?session=session-1&prompt=tool-1` },
   }]);
   const worker = background.serviceWorkers()[0];
   await worker.evaluate(async () => {
     const [notification] = await registration.getNotifications();
     self.dispatchEvent(new NotificationEvent('notificationclick', { notification }));
   });
-  await notificationPage.waitForURL(`${app.origin}/chat?session=session-1`);
+  await notificationPage.waitForURL(`${app.origin}/chat?session=session-1&prompt=tool-1`);
   await background.close();
   await cdp.detach();
 
   console.log(JSON.stringify({ permissionCallsBeforeAction: 0, deniedKeepsAppUsable: true,
-    backgroundNotificationCount: 1, clickUrl: `${app.origin}/chat?session=session-1` }, null, 2));
+    backgroundNotificationCount: 1,
+    clickUrl: `${app.origin}/chat?session=session-1&prompt=tool-1` }, null, 2));
 } finally {
   await browser.close();
   await app.stop();

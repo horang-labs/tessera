@@ -2,6 +2,8 @@
 
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
+import { isSessionNotificationPayload } from '@/lib/notifications/session-notification';
+import { presentSessionNotificationOnPage } from '@/lib/notifications/session-notification-presentation';
 
 export function PwaServiceWorkerRegistrar() {
   const pathname = usePathname();
@@ -9,6 +11,15 @@ export function PwaServiceWorkerRegistrar() {
   useEffect(function registerForAuthenticatedBrowser() {
     if (!('serviceWorker' in navigator)) return;
     let cancelled = false;
+    const receiveSessionNotification = (event: MessageEvent) => {
+      if (event.data?.type !== 'tessera-session-notification') return;
+      if (!isSessionNotificationPayload(event.data.notification)) return;
+      presentSessionNotificationOnPage({
+        ...event.data.notification,
+        source: 'service-worker',
+      });
+    };
+    navigator.serviceWorker.addEventListener('message', receiveSessionNotification);
 
     void fetch('/api/auth/me', {
       cache: 'no-store',
@@ -25,6 +36,7 @@ export function PwaServiceWorkerRegistrar() {
 
     return function ignoreRegistrationAfterLeaving() {
       cancelled = true;
+      navigator.serviceWorker.removeEventListener('message', receiveSessionNotification);
     };
   }, [pathname]);
 

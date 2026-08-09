@@ -256,6 +256,8 @@ export type AppServerMessage =
       type: 'notification';
       sessionId: string;
       event: 'completed' | 'input_required';
+      /** Stable across the WebSocket and Web Push copies of one presentation. */
+      eventId?: string;
       message: string;
       preview: string;
       actions?: Array<{ label: string; value: string | number; primary?: boolean }>;
@@ -415,6 +417,8 @@ export type AppServerMessage =
       type: 'interactive_prompt';
       sessionId: string;
       promptType: 'select' | 'input' | 'ask_user_question' | 'permission_request' | 'plan_approval';
+      /** Stable across the WebSocket and Web Push copies of one presentation. */
+      eventId?: string;
       data: {
         // Legacy fields (select/input types)
         question: string;

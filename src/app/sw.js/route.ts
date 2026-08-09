@@ -1,9 +1,14 @@
+import {
+  SESSION_NOTIFICATION_FALLBACKS,
+  SESSION_NOTIFICATION_KINDS,
+} from '@/lib/notifications/session-notification';
+
 const SERVICE_WORKER = `
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
-const COMPLETED_TITLE = 'Task completed.';
-const COMPLETED_PREVIEW = 'Your Tessera session completed.';
+const SESSION_NOTIFICATION_KINDS = new Set(${JSON.stringify(SESSION_NOTIFICATION_KINDS)});
+const SESSION_NOTIFICATION_FALLBACKS = ${JSON.stringify(SESSION_NOTIFICATION_FALLBACKS)};
 
 function sameOriginSessionUrl(candidate) {
   try {
@@ -18,30 +23,38 @@ function sameOriginSessionUrl(candidate) {
 
 self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
-    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    if (windows.some((client) => client.visibilityState === 'visible')) return;
-
     let payload = {};
     try {
       payload = event.data ? event.data.json() : {};
     } catch {
       payload = {};
     }
-    if (payload.kind && payload.kind !== 'completed') return;
+    if (!SESSION_NOTIFICATION_KINDS.has(payload.kind)
+      || typeof payload.eventId !== 'string' || !payload.eventId
+      || typeof payload.sessionId !== 'string') return;
 
-    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const visibleWindows = windows.filter((client) => client.visibilityState === 'visible');
+    if (visibleWindows.length > 0) {
+      for (const client of visibleWindows) {
+        client.postMessage({ type: 'tessera-session-notification', notification: payload });
+      }
+      return;
+    }
+
+    const fallback = SESSION_NOTIFICATION_FALLBACKS[payload.kind];
     const title = typeof payload.title === 'string' && payload.title.trim()
       ? payload.title
-      : COMPLETED_TITLE;
+      : fallback.title;
     const preview = typeof payload.preview === 'string' && payload.preview.trim()
       ? payload.preview
-      : COMPLETED_PREVIEW;
+      : fallback.preview;
     const url = sameOriginSessionUrl(payload.url);
     await self.registration.showNotification(title, {
       body: preview,
       icon: '/icons/tessera-192.png',
       badge: '/icons/tessera-192.png',
-      tag: 'tessera-session-completed-' + sessionId.slice(0, 128),
+      tag: 'tessera-session-notification-' + payload.eventId.slice(0, 128),
       data: { url },
     });
   })());

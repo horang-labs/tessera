@@ -34,6 +34,7 @@ import {
 import { WebSocketServerHeartbeat, WS_HEARTBEAT_INTERVAL_MS } from './server-heartbeat';
 import { isDeviceRegistered } from '../auth/device-registry';
 import { scheduleWebPushForTransportMessage } from '../push/web-push-dispatcher';
+import { describeSessionNotification } from '../notifications/session-notification';
 
 // Supports five 5MiB image attachments after base64 expansion; lowering this
 // to a generic RPC-sized cap would break the existing composer contract.
@@ -253,12 +254,16 @@ export class WebSocketServer {
    * Send message to a specific user (broadcasts to all their connections)
    */
   sendToUser(userId: string, message: ServerTransportMessage): void {
-    sessionHistory.recordTransportMessage(message);
-    this.scheduleWebPush(userId, message);
+    const deliveryMessage = describeSessionNotification(message)
+      && !('eventId' in message && message.eventId)
+      ? { ...message, eventId: randomUUID() }
+      : message;
+    sessionHistory.recordTransportMessage(deliveryMessage);
+    this.scheduleWebPush(userId, deliveryMessage);
 
-    if (message.type === 'rate_limit_update') {
+    if (deliveryMessage.type === 'rate_limit_update') {
       const cachedByProvider = this.rateLimitCache.get(userId) ?? new Map();
-      cachedByProvider.set(message.providerId, message);
+      cachedByProvider.set(deliveryMessage.providerId, deliveryMessage);
       this.rateLimitCache.set(userId, cachedByProvider);
     }
 
@@ -269,7 +274,7 @@ export class WebSocketServer {
       return;
     }
 
-    const payload = JSON.stringify(message);
+    const payload = JSON.stringify(deliveryMessage);
 
     for (const ws of wsSet) {
       if (ws.readyState !== WebSocket.OPEN) continue;
