@@ -52,6 +52,45 @@ function normalizeForMatch(content: unknown): string {
 }
 
 /**
+ * Drops optimistic sends once a newer canonical user turn contains the text the
+ * chat overlay pasted. The PTY may already hold a draft, so the provider can
+ * record `draft + sent text` rather than the sent text verbatim.
+ *
+ * Canonical messages are consumed one-to-one so one transcript turn cannot
+ * accidentally confirm several queued sends with the same suffix.
+ */
+export function reconcilePendingTerminalChatMessages(
+  pendingMessages: EnhancedMessage[],
+  serverMessages: EnhancedMessage[],
+): EnhancedMessage[] {
+  const unmatchedServerUserMessages = serverMessages.filter(
+    (message) => message.type === 'text' && message.role === 'user',
+  );
+
+  return pendingMessages.filter((pendingMessage) => {
+    const pendingText = normalizeForMatch(
+      (pendingMessage as { content?: unknown }).content,
+    );
+    const pendingTimestamp = Date.parse(pendingMessage.timestamp);
+    if (!pendingText || !Number.isFinite(pendingTimestamp)) return true;
+
+    const matchIndex = unmatchedServerUserMessages.findIndex((serverMessage) => {
+      const serverText = normalizeForMatch(
+        (serverMessage as { content?: unknown }).content,
+      );
+      const serverTimestamp = Date.parse(serverMessage.timestamp);
+      return Number.isFinite(serverTimestamp)
+        && serverTimestamp >= pendingTimestamp
+        && (serverText === pendingText || serverText.endsWith(pendingText));
+    });
+
+    if (matchIndex === -1) return true;
+    unmatchedServerUserMessages.splice(matchIndex, 1);
+    return false;
+  });
+}
+
+/**
  * Registers a message the user just sent to the PTY and shows it immediately.
  * The chat view has no stream of its own, so without this the send appears to
  * do nothing until the agent finishes its turn.
@@ -81,8 +120,8 @@ export function registerPendingTerminalChatMessage(sessionId: string, text: stri
 
 /**
  * Appends still-unconfirmed sends to a freshly read transcript. A pending entry
- * is confirmed — and dropped — once a user message with the same text appears
- * in the server's list.
+ * is dropped once reconciliation finds its canonical user turn in the server's
+ * list.
  */
 function mergePendingMessages(
   sessionId: string,
@@ -91,17 +130,7 @@ function mergePendingMessages(
   const queue = pendingSends.get(sessionId);
   if (!queue?.length) return serverMessages;
 
-  const serverUserTexts = new Set(
-    serverMessages
-      .filter((message) => message.type === 'text' && message.role === 'user')
-      .map((message) => normalizeForMatch((message as { content?: unknown }).content)),
-  );
-
-  const stillPending = queue.filter(
-    (message) => !serverUserTexts.has(
-      normalizeForMatch((message as { content?: unknown }).content),
-    ),
-  );
+  const stillPending = reconcilePendingTerminalChatMessages(queue, serverMessages);
 
   if (stillPending.length) pendingSends.set(sessionId, stillPending);
   else pendingSends.delete(sessionId);
