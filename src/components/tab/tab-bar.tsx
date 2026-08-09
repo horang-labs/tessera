@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, PanelLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GitBranch, LoaderCircle, Plus, PanelLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useTabStore } from '@/stores/tab-store';
@@ -26,8 +26,70 @@ import {
   resolveTabScrollReveal,
 } from '@/lib/tab/tab-scroll-reveal';
 import { GitDesktopDeliveryControl } from '@/components/git/git-desktop-commit-control';
+import { useSharedGitPanelController } from '@/components/git/git-panel-controller-context';
 
 const TAB_SCROLL_MIN_STEP = 180;
+
+function GitPhonePanelToggle({
+  open,
+  onToggle,
+}: {
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useI18n();
+  const controller = useSharedGitPanelController();
+  const changedFileCount = controller.data?.changedFilesTotal
+    ?? controller.changedFileCount;
+  const pending = controller.pendingVerb !== null;
+  const baseLabel = open ? t('chat.closeGitPanel') : t('chat.openGitPanel');
+  const accessibleLabel = [
+    baseLabel,
+    changedFileCount > 0 ? `${changedFileCount} ${t('gitPanel.commit.changedFiles')}` : null,
+    pending ? t('task.status.inProgress') : null,
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        'electron-no-drag relative flex h-9 w-10 shrink-0 items-center justify-center border-l border-l-(--divider) transition-colors',
+        PHONE_TOUCH_TARGET,
+        'text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent)',
+        open
+          ? 'bg-(--accent)/14 text-(--accent) shadow-[inset_0_-2px_0_var(--accent)]'
+          : 'bg-[color-mix(in_srgb,var(--chat-header-bg)_78%,var(--sidebar-hover))]',
+      )}
+      onClick={onToggle}
+      aria-label={accessibleLabel}
+      aria-pressed={open}
+      aria-busy={pending}
+      title={accessibleLabel}
+      data-testid="tab-bar-git-toggle"
+    >
+      <GitBranch size={18} data-testid="git-phone-stable-icon" />
+      {changedFileCount > 0 ? (
+        <span
+          aria-hidden="true"
+          data-testid="git-phone-changed-badge"
+          className="absolute right-0.5 top-0.5 min-w-4 rounded-full bg-(--accent) px-1 text-center text-[9px] font-semibold leading-4 text-white tabular-nums"
+        >
+          {changedFileCount > 99 ? '99+' : changedFileCount}
+        </span>
+      ) : null}
+      {pending ? (
+        <span
+          aria-hidden="true"
+          data-testid="git-phone-pending-indicator"
+          className="absolute bottom-0.5 left-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--chat-header-bg) text-(--accent)"
+        >
+          <LoaderCircle className="h-3 w-3 animate-spin" />
+        </span>
+      ) : null}
+    </button>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -50,7 +112,15 @@ export const TabBar = memo(function TabBar() {
   const toggleSidebar = useSettingsStore((state) => state.toggleSidebar);
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const toggleGitPanel = useGitStore((state) => state.toggle);
+  const openGitPanelTab = useGitStore((state) => state.openTab);
   const isPhoneViewport = usePhoneViewport();
+  const handlePhoneGitToggle = useCallback(() => {
+    if (gitPanelOpen) {
+      toggleGitPanel();
+      return;
+    }
+    openGitPanelTab('git');
+  }, [gitPanelOpen, openGitPanelTab, toggleGitPanel]);
 
   // Scrollable container ref
   const containerRef = useRef<HTMLDivElement>(null);
@@ -671,8 +741,11 @@ export const TabBar = memo(function TabBar() {
 
       {!isPhoneViewport ? <GitDesktopDeliveryControl /> : null}
 
-      {/* Right panel toggle — anchored to the right with a clear panel affordance */}
-      <button
+      {/* One stable Git entry point on phone; desktop keeps the panel affordance. */}
+      {isPhoneViewport ? (
+        <GitPhonePanelToggle open={gitPanelOpen} onToggle={handlePhoneGitToggle} />
+      ) : (
+        <button
         className={cn(
           'electron-no-drag shrink-0 flex items-center justify-center w-10 h-9 transition-colors border-l border-l-(--divider)',
           PHONE_TOUCH_TARGET,
@@ -692,7 +765,8 @@ export const TabBar = memo(function TabBar() {
         data-testid="tab-bar-git-toggle"
       >
         {gitPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-      </button>
+        </button>
+      )}
 
       {isLinuxElectron && !gitPanelOpen ? <ElectronWindowControls /> : null}
 

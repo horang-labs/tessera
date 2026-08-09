@@ -2,7 +2,11 @@
 
 import { useCallback, useRef, useState } from "react";
 import { ChevronDown, LoaderCircle } from "lucide-react";
+import { PhoneBottomSheet } from "@/components/ui/phone-bottom-sheet";
 import { useAnchoredPopover } from "@/hooks/use-anchored-popover";
+import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
+import { usePhoneOverlayNavigation } from "@/hooks/use-phone-overlay-navigation";
+import { usePhoneViewport } from "@/hooks/use-phone-viewport";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
@@ -42,13 +46,23 @@ export function GitActionMenu({
   triggerTestId?: string;
 }) {
   const { t } = useI18n();
+  const isPhoneViewport = usePhoneViewport();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
+  const dismissPhoneMenu = usePhoneOverlayNavigation({
+    enabled: isPhoneViewport,
+    open,
+    onBack: close,
+  });
+  useCloseOnEscape(dismissPhoneMenu, {
+    enabled: isPhoneViewport && open,
+    capture: true,
+  });
   const { position, updatePosition } = useAnchoredPopover({
-    isOpen: open,
+    isOpen: open && !isPhoneViewport,
     onClose: close,
     triggerRef,
     containerRef,
@@ -62,7 +76,10 @@ export function GitActionMenu({
         ref={triggerRef}
         type="button"
         onClick={() => {
-          if (open) return close();
+          if (open) {
+            if (isPhoneViewport) return dismissPhoneMenu();
+            return close();
+          }
           onBeforeOpen?.();
           updatePosition();
           setOpen(true);
@@ -92,7 +109,25 @@ export function GitActionMenu({
         )}
       </button>
 
-      {open && position ? (
+      {open && isPhoneViewport ? (
+        <PhoneBottomSheet
+          backdropTestId="git-action-menu-sheet-backdrop"
+          sheetTestId="git-action-menu-sheet"
+          className="px-2 pt-2"
+          handleClassName="mb-2"
+          onDismiss={dismissPhoneMenu}
+        >
+          <div role="menu" aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")} data-testid={menuTestId}>
+            <GitActionMenuItems
+              actions={actions}
+              commitDraftBlocked={commitDraftBlocked}
+              pending={pending}
+              touchSized
+              onRun={(id) => dismissPhoneMenu(() => onRun(id))}
+            />
+          </div>
+        </PhoneBottomSheet>
+      ) : open && position ? (
         <div
           ref={menuRef}
           role="menu"
@@ -100,41 +135,58 @@ export function GitActionMenu({
           style={{ position: "fixed", top: position.top, left: position.left, width: position.width }}
           className="z-50 overflow-hidden rounded-lg border border-(--divider) bg-(--sidebar-bg) py-1 shadow-lg"
         >
-          {actions.map((action) => (
-            <GitActionMenuItem
-              key={action.id}
-              action={action}
-              blocked={
-                (action.id === "commit" || action.id === "commit_push")
-                && commitDraftBlocked
-                // Only where the git state left the action available. An empty
-                // draft is not the reason Commit cannot run on a session whose
-                // state has not arrived, and saying so would send the user to
-                // fix the one thing that is not in the way.
-                && action.enabled
-              }
-              pending={pending}
-              onRun={() => {
-                close();
-                onRun(action.id);
-              }}
-            />
-          ))}
+          <GitActionMenuItems
+            actions={actions}
+            commitDraftBlocked={commitDraftBlocked}
+            pending={pending}
+            onRun={(id) => {
+              close();
+              onRun(id);
+            }}
+          />
         </div>
       ) : null}
     </div>
   );
 }
 
+function GitActionMenuItems({
+  actions,
+  commitDraftBlocked,
+  pending,
+  touchSized = false,
+  onRun,
+}: {
+  actions: readonly GitMenuAction[];
+  commitDraftBlocked: boolean;
+  pending: boolean;
+  touchSized?: boolean;
+  onRun: (id: GitMenuActionId) => void;
+}) {
+  return actions.map((action) => (
+    <GitActionMenuItem
+      key={action.id}
+      action={action}
+      blocked={(action.id === "commit" || action.id === "commit_push")
+        && commitDraftBlocked && action.enabled}
+      pending={pending}
+      touchSized={touchSized}
+      onRun={() => onRun(action.id)}
+    />
+  ));
+}
+
 function GitActionMenuItem({
   action,
   blocked,
   pending,
+  touchSized = false,
   onRun,
 }: {
   action: GitMenuAction;
   blocked: boolean;
   pending: boolean;
+  touchSized?: boolean;
   onRun: () => void;
 }) {
   const { t } = useI18n();
@@ -161,6 +213,7 @@ function GitActionMenuItem({
       data-git-action={action.kind}
       className={cn(
         "flex w-full flex-col items-start gap-0.5 px-2.5 py-1.5 text-left text-[11px] transition-colors",
+        touchSized && "min-h-[44px] justify-center px-4 py-2.5",
         disabled
           ? "cursor-not-allowed text-(--text-muted)"
           // §9's escape throws away whatever the operation had reached, and it
