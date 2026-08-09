@@ -60,8 +60,6 @@ export function AllProjectsList({
 }: AllProjectsListProps) {
   const projects = useSessionStore((state) => state.projects);
   const tasksByProject = useTaskStore((state) => state.tasksByProject);
-  const loadedTaskProjects = useTaskStore((state) => state.loadedProjects);
-  const loadingTaskProjects = useTaskStore((state) => state.loadingProjectIds);
   const representation = useMemo(
     () => buildOriginProjectRepresentation(projects, tasksByProject),
     [projects, tasksByProject],
@@ -73,14 +71,6 @@ export function AllProjectsList({
       representation.tasksByProject[project.encodedDir] ?? EMPTY_TASKS,
     ));
   }, [isRunningFilterActive, representation]);
-
-  useEffect(() => {
-    if (!isRunningFilterActive) return;
-    for (const project of projects) {
-      if (loadedTaskProjects[project.encodedDir] || loadingTaskProjects[project.encodedDir]) continue;
-      void useTaskStore.getState().loadTasks(project.encodedDir, { setCurrent: false });
-    }
-  }, [isRunningFilterActive, loadedTaskProjects, loadingTaskProjects, projects]);
 
   return (
     <>

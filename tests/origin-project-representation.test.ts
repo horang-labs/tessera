@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildOriginProjectRepresentation,
   getCanonicalRunningSessionRepresentatives,
+  getProjectIdsMissingTaskProjection,
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
@@ -115,4 +116,18 @@ test('running navigation deduplicates canonical Sessions and targets the origin 
     getCanonicalRunningSessionRepresentatives(projects).map((item) => [item.id, item.projectDir]),
     [['shared', 'project-a'], ['running-c', 'project-c']],
   );
+});
+
+test('fresh global surfaces request every missing Project task projection', () => {
+  const projects = [project('project-a', []), project('project-c', [])];
+
+  assert.deepEqual(getProjectIdsMissingTaskProjection(
+    projects,
+    { 'project-a': true },
+    {},
+  ), ['project-c']);
+  assert.deepEqual(getProjectIdsMissingTaskProjection(projects, {}, {}), [
+    'project-a',
+    'project-c',
+  ]);
 });
