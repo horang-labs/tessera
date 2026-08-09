@@ -2,6 +2,10 @@
 export interface Panel {
   readonly id: string;
   sessionId: string | null;
+  /** A canonical Worktree target selected without synthesizing a Session. */
+  worktreeId?: string | null;
+  /** Creation screen requested by a Worktree overview action. */
+  creationMode?: 'chat' | 'task' | null;
   terminalId?: string | null;
   terminalSessionId?: string | null;
   /** Explicit cwd for standalone terminals that are not owned by a session. */
@@ -56,6 +60,8 @@ export interface PanelStoreActions {
   closePanelInTab(tabId: string, panelId: string): void;
   assignSession(panelId: string, sessionId: string | null): void;
   assignSessionInTab(tabId: string, panelId: string, sessionId: string | null): void;
+  assignWorktree(panelId: string, worktreeId: string): void;
+  startWorktreeCreation(panelId: string, mode: 'chat' | 'task'): void;
   rebindSession(previousSessionId: string, sessionId: string): void;
   assignTerminal(
     panelId: string,

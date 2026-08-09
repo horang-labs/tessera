@@ -112,6 +112,10 @@ export function ChatLayout() {
     const activeTabData = selectActiveTab(state);
     return activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
   });
+  const activePanelWorktreeId = usePanelStore((state) => {
+    const activeTabData = selectActiveTab(state);
+    return activeTabData?.panels[activeTabData.activePanelId]?.worktreeId ?? null;
+  });
   const isKanbanPeekMode = renderedViewMode === 'board' && kanbanSessionOpenMode === 'peek';
   const activeGitSessionId = isKanbanPeekMode && selectedBoardSessionId
     ? selectedBoardSessionId
@@ -595,6 +599,7 @@ export function ChatLayout() {
               )}
               <GitPanel
                 sessionId={activeGitSessionId}
+                worktreeId={activeGitSessionId ? null : activePanelWorktreeId}
                 width={isCompactViewport ? "100vw" : gitPanelWidth}
                 className={cn(
                   isCompactViewport

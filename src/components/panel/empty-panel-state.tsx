@@ -92,6 +92,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
   const defaultNewSessionKind = useSettingsStore((state) => state.settings.defaultNewSessionKind);
+  const requestedCreationMode = usePanelStore(
+    (state) => state.tabPanels[tabId]?.panels[panelId]?.creationMode ?? null,
+  );
   const providers = useProvidersStore((state) => state.providers);
   const { createSession, isCreating } = useSessionCrud();
   const { createWorktreeSession } = useWorktreeSession();
@@ -137,7 +140,9 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const [selectedProvider, setSelectedProvider] = useState('');
   const [executionMode, setExecutionModeState] = useState(defaultExecutionMode);
   const executionModeTouchedRef = useRef(false);
-  const [mode, setMode] = useState<'chat' | 'task' | 'shell'>(defaultNewSessionKind);
+  const [mode, setMode] = useState<'chat' | 'task' | 'shell'>(
+    requestedCreationMode ?? defaultNewSessionKind,
+  );
   const modeTouchedRef = useRef(false);
   const [rawSelectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState('');

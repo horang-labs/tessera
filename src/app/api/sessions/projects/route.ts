@@ -71,6 +71,7 @@ export async function GET(req: NextRequest) {
 
     // Build project groups with sessions (per-status limit)
     const projectResults = projects.map((project) => {
+      const projectWorktree = dbProjects.getProjectWorktree(project.id);
       const result = dbSessions.getSessionsByProjectGrouped(project.id, { limitPerStatus });
 
       const mapped = result.sessions.map((row) => ({
@@ -97,6 +98,17 @@ export async function GET(req: NextRequest) {
         displayName: project.display_name,
         decodedPath: project.decoded_path,
         displayPath: formatPathForAgentDisplay(project.decoded_path, agentEnvironment),
+        ...(projectWorktree?.filesystemPath && {
+          projectWorktree: {
+            id: projectWorktree.id,
+            path: projectWorktree.filesystemPath,
+            displayPath: formatPathForAgentDisplay(
+              projectWorktree.filesystemPath,
+              agentEnvironment,
+            ),
+            currentBranch: projectWorktree.currentBranch,
+          },
+        }),
         isCurrent: shouldRegisterCurrentProject && project.id === currentProjectId,
         // Without one there is nothing to prepare, and no surface should offer
         // it — either stage having something to run counts.

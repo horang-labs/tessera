@@ -32,8 +32,11 @@ import fs from 'fs';
 import { CREATE_INDEXES, CREATE_TABLES, SCHEMA_VERSION } from './schema';
 import { resolveDatabaseLocation } from './location';
 import {
+  canonicalizeWorktreePath,
   generatePublicWorktreeId,
+  isGitCheckoutPath,
   LEGACY_WORKTREE_PATH_FROM_CHILD_SQL,
+  PARENT_FIRST_WORKTREE_PATH_SQL,
 } from './worktree-identity';
 import logger from '../logger';
 
@@ -226,6 +229,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
   addPreparationStatusColumns(db);
   ensureWorktreeIdentityColumns(db);
+  ensureCanonicalWorktreeRegistry(db);
 }
 
 /**
@@ -1033,6 +1037,78 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
   if (fromVersion < 33) {
     ensureWorktreeIdentityColumns(db);
     logger.info('Migration v33 applied: persisted public Worktree identity and checkout path');
+  }
+
+  if (fromVersion < 34) {
+    ensureCanonicalWorktreeRegistry(db);
+    logger.info('Migration v34 applied: canonical Worktrees and Project roots added');
+  }
+}
+
+function ensureCanonicalWorktreeRegistry(db: DatabaseWrapper): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worktrees (
+      id                 TEXT PRIMARY KEY,
+      filesystem_path    TEXT,
+      canonical_path_key TEXT UNIQUE,
+      created_at         TEXT NOT NULL,
+      updated_at         TEXT NOT NULL
+    )
+  `);
+  addColumnIfMissing(db, 'projects', 'project_worktree_id', 'TEXT');
+
+  const now = new Date().toISOString();
+  const taskRows = db.prepare(`
+    SELECT public_worktree_id, ${PARENT_FIRST_WORKTREE_PATH_SQL} AS worktree_path
+    FROM tasks
+    WHERE public_worktree_id IS NOT NULL AND public_worktree_id != ''
+  `).all() as Array<{ public_worktree_id: string; worktree_path: string | null }>;
+  const insertWorktree = db.prepare(`
+    INSERT OR IGNORE INTO worktrees (
+      id, filesystem_path, canonical_path_key, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `);
+  for (const row of taskRows) {
+    const identity = row.worktree_path ? canonicalizeWorktreePath(row.worktree_path) : null;
+    insertWorktree.run(
+      row.public_worktree_id,
+      identity?.filesystemPath ?? null,
+      identity?.canonicalPathKey ?? null,
+      now,
+      now,
+    );
+  }
+
+  const projectRows = db.prepare(`
+    SELECT id, decoded_path, project_worktree_id
+    FROM projects
+  `).all() as Array<{
+    id: string;
+    decoded_path: string;
+    project_worktree_id: string | null;
+  }>;
+  const findByPath = db.prepare(`
+    SELECT id FROM worktrees WHERE canonical_path_key = ?
+  `);
+  const updateProject = db.prepare(`
+    UPDATE projects SET project_worktree_id = ? WHERE id = ?
+  `);
+  for (const project of projectRows) {
+    if (project.project_worktree_id || !isGitCheckoutPath(project.decoded_path)) continue;
+    const identity = canonicalizeWorktreePath(project.decoded_path);
+    if (!identity) continue;
+    const existing = findByPath.get(identity.canonicalPathKey) as { id: string } | undefined;
+    const worktreeId = existing?.id ?? generatePublicWorktreeId();
+    if (!existing) {
+      insertWorktree.run(
+        worktreeId,
+        identity.filesystemPath,
+        identity.canonicalPathKey,
+        now,
+        now,
+      );
+    }
+    updateProject.run(worktreeId, project.id);
   }
 }
 

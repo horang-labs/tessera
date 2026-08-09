@@ -606,6 +606,7 @@ export function GitPanelContentSection({
   primary,
   selectedPath,
   sessionId,
+  targetSelected = Boolean(sessionId),
   setSelectedPath,
   onCopyFilePath,
   onOpenDiffFile,
@@ -650,6 +651,7 @@ export function GitPanelContentSection({
   };
   selectedPath: string | null;
   sessionId: string | null;
+  targetSelected?: boolean;
   setSelectedPath: (path: string | null) => void;
   onCopyFilePath: (relativePath: string) => void;
   onOpenDiffFile: (file: GitChangedFile) => void;
@@ -678,14 +680,14 @@ export function GitPanelContentSection({
   return (
     <>
     <div className="flex-1 overflow-hidden p-3">
-      {!sessionId && !loading ? (
+      {!targetSelected && !loading ? (
         <EmptyPanelMessage
           title={t("gitPanel.empty.noWorktreeTitle")}
           body={t("gitPanel.empty.noWorktreeBody")}
         />
       ) : null}
 
-      {!sessionId ? null : (
+      {!targetSelected ? null : (
         <div className="flex h-full flex-col gap-2">
           {/*
             The primary action renders on every rung, including the ones where

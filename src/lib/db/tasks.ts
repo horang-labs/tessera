@@ -5,11 +5,11 @@
 import { getDb } from './database';
 import logger from '../logger';
 import type { WorkflowStatus, TaskEntity, TaskSession } from '@/types/task-entity';
+import { createPendingWorktree, resolveCanonicalWorktree } from './worktrees';
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
 import { readPreparationStatus } from '@/lib/projects/preparation-status-policy';
 import { extractSessionKind } from './sessions';
 import {
-  generatePublicWorktreeId,
   PARENT_FIRST_WORKTREE_PATH_SQL,
   resolveEffectiveWorktreeCheckout,
 } from './worktree-identity';
@@ -295,7 +295,9 @@ export function createTask(params: {
 }): string {
   const db = getDb();
   const now = new Date().toISOString();
-  const publicWorktreeId = generatePublicWorktreeId();
+  const publicWorktreeId = params.worktreePath
+    ? resolveCanonicalWorktree(params.worktreePath)?.id ?? createPendingWorktree()
+    : createPendingWorktree();
   db.prepare(`
     INSERT INTO tasks (
       id, public_worktree_id, project_id, title, collection_id, workflow_status,
@@ -323,11 +325,19 @@ export function setTaskWorktreeCheckout(
   checkout: { branch: string; path: string },
 ): void {
   const now = new Date().toISOString();
-  getDb().prepare(`
+  const db = getDb();
+  const row = db.prepare('SELECT public_worktree_id FROM tasks WHERE id = ?').get(id) as
+    | { public_worktree_id: string }
+    | undefined;
+  const worktreeId = row
+    ? resolveCanonicalWorktree(checkout.path, row.public_worktree_id)?.id ?? row.public_worktree_id
+    : undefined;
+  db.prepare(`
     UPDATE tasks
-    SET worktree_branch = ?, worktree_path = ?, updated_at = ?
+    SET public_worktree_id = COALESCE(?, public_worktree_id),
+        worktree_branch = ?, worktree_path = ?, updated_at = ?
     WHERE id = ?
-  `).run(checkout.branch, checkout.path, now, id);
+  `).run(worktreeId ?? null, checkout.branch, checkout.path, now, id);
 }
 
 /**
