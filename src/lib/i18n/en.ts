@@ -101,6 +101,7 @@ export const en: I18nMessages = {
       mobileSetupMachineAuthorizationHelp: 'Ask your Tailscale administrator to approve this device, then retry.',
       mobileSetupUnavailableHelp: 'Start Tailscale or wait for it to finish starting, then retry.',
       mobileSetupConflictHelp: 'Tessera cannot prove ownership of the existing endpoint. Restore or move the conflicting configuration, then retry.',
+      mobileSetupOriginChangedHelp: 'The Tailscale node or tailnet domain changed. Remove the existing mobile connection, then set it up again.',
       mobileSetupRetryHelp: 'Setup stopped safely without publishing mobile access. Retry when the underlying issue is resolved.',
       mobileSetupFailed: 'Setup failed. Local desktop access is still available.',
       warningTitle: 'The desktop app listens on every IPv4 interface',

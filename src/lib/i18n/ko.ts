@@ -101,6 +101,7 @@ export const ko: I18nMessages = {
       mobileSetupMachineAuthorizationHelp: 'Tailscale 관리자에게 이 기기 승인을 요청한 뒤 다시 시도하세요.',
       mobileSetupUnavailableHelp: 'Tailscale을 시작하거나 시작이 끝날 때까지 기다린 뒤 다시 시도하세요.',
       mobileSetupConflictHelp: '기존 엔드포인트의 소유권을 확인할 수 없습니다. 충돌하는 설정을 복원하거나 옮긴 뒤 다시 시도하세요.',
+      mobileSetupOriginChangedHelp: 'Tailscale 노드 또는 tailnet 도메인이 변경되었습니다. 기존 모바일 연결을 제거한 뒤 다시 설정하세요.',
       mobileSetupRetryHelp: '모바일 접속을 게시하지 않고 안전하게 중단했습니다. 원인을 해결한 뒤 다시 시도하세요.',
       mobileSetupFailed: '설정하지 못했습니다. 로컬 데스크톱 접속은 계속 사용할 수 있습니다.',
       warningTitle: '데스크톱 앱은 모든 IPv4 인터페이스에서 연결을 받습니다',

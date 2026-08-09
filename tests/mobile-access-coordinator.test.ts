@@ -28,6 +28,30 @@ function emptyServe(): TailscaleServeStatus {
   return { endpoints: [], occupiedPorts: [], resources: [] };
 }
 
+function ownedServe(
+  proxyTarget = LOOPBACK_TARGET,
+  dnsName = DNS_NAME,
+  port = 443,
+): TailscaleServeStatus {
+  return {
+    endpoints: [{
+      dnsName,
+      port,
+      mountPath: '/',
+      proxyTarget,
+      scope: 'background',
+    }],
+    occupiedPorts: [port],
+    resources: [
+      { key: `background:tcp:${port}`, value: '{"HTTPS":true}' },
+      {
+        key: `background:web:${dnsName}:${port}:/`,
+        value: `{"Proxy":"${proxyTarget}"}`,
+      },
+    ],
+  };
+}
+
 class MemoryStateStore implements MobileAccessStateStore {
   state: MobileAccessPersistedState | null = null;
   readonly saves: MobileAccessPersistedState[] = [];
@@ -125,6 +149,141 @@ function createHarness(options: {
     serve: () => structuredClone(serve),
   };
 }
+
+function rememberCompletedSetup(
+  store: MemoryStateStore,
+  overrides: Partial<MobileAccessPersistedState> = {},
+): void {
+  store.state = {
+    schemaVersion: 1,
+    owner: MOBILE_ACCESS_OWNER,
+    nodeDnsName: DNS_NAME,
+    origin: `https://${DNS_NAME}`,
+    servePort: 443,
+    mountPath: '/',
+    lastLoopbackTarget: LOOPBACK_TARGET,
+    ...overrides,
+  } as MobileAccessPersistedState;
+}
+
+test('launch reconciliation leaves a current owned mapping unchanged', async () => {
+  const harness = createHarness({ serve: ownedServe() });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(
+    await harness.coordinator.reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT }),
+    { state: 'ready', origin: `https://${DNS_NAME}` },
+  );
+  assert.deepEqual(harness.calls, [
+    'inspect-node',
+    'inspect-serve',
+    `health:https://${DNS_NAME}`,
+    `publish:https://${DNS_NAME}`,
+  ]);
+  assert.equal(harness.store.saves.length, 0);
+});
+
+test('launch reconciliation repairs only the owned backend target and preserves its origin', async () => {
+  const nextLoopbackPort = LOOPBACK_PORT + 1;
+  const nextLoopbackTarget = `http://127.0.0.1:${nextLoopbackPort}`;
+  const serve = ownedServe();
+  const unrelatedResource = {
+    key: 'background:web:desktop.tailnet.ts.net:8443:/other',
+    value: '{"Text":"unrelated"}',
+  };
+  serve.resources.push(unrelatedResource);
+  const harness = createHarness({ serve });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(
+    await harness.coordinator.reconcileOnLaunch({ loopbackPort: nextLoopbackPort }),
+    { state: 'ready', origin: `https://${DNS_NAME}` },
+  );
+  assert.equal(harness.calls.includes('configure:443'), true);
+  assert.equal(harness.serve().endpoints[0]?.proxyTarget, nextLoopbackTarget);
+  assert.deepEqual(
+    harness.serve().resources.find((resource) => resource.key === unrelatedResource.key),
+    unrelatedResource,
+  );
+  assert.deepEqual(harness.store.state, {
+    schemaVersion: 1,
+    owner: MOBILE_ACCESS_OWNER,
+    nodeDnsName: DNS_NAME,
+    origin: `https://${DNS_NAME}`,
+    servePort: 443,
+    mountPath: '/',
+    lastLoopbackTarget: nextLoopbackTarget,
+  });
+});
+
+test('launch reconciliation recreates an absent owned mapping at its persisted origin', async () => {
+  const harness = createHarness({ serve: emptyServe() });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(
+    await harness.coordinator.reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT }),
+    { state: 'ready', origin: `https://${DNS_NAME}` },
+  );
+  assert.equal(harness.calls.includes('configure:443'), true);
+  assert.deepEqual(harness.serve().endpoints, ownedServe().endpoints);
+  assert.equal(harness.store.saves.length, 0);
+});
+
+test('launch reconciliation reports ownership loss without overwriting an unrecognized target', async () => {
+  const harness = createHarness({ serve: ownedServe('http://127.0.0.1:45678') });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(
+    await harness.coordinator.reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT + 1 }),
+    {
+      state: 'ownership-conflict',
+      message: 'The Tessera-owned Tailscale Serve endpoint changed',
+    },
+  );
+  assert.equal(harness.calls.some((call) => call.startsWith('configure:')), false);
+  assert.equal(harness.store.saves.length, 0);
+});
+
+test('configured mobile access is temporarily unavailable while Tailscale cannot serve', async () => {
+  const cases: Array<{
+    node: TailscaleNodeStatus;
+    reason: 'missing' | 'signed-out' | 'stopped';
+    message: string;
+  }> = [
+    { node: { state: 'missing' }, reason: 'missing', message: 'Tailscale is not installed' },
+    { node: { state: 'needs-login' }, reason: 'signed-out', message: 'Tailscale is signed out' },
+    { node: { state: 'stopped' }, reason: 'stopped', message: 'Tailscale is stopped' },
+  ];
+
+  for (const { node, reason, message } of cases) {
+    const harness = createHarness({ node });
+    rememberCompletedSetup(harness.store);
+    assert.deepEqual(
+      await harness.coordinator.reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT }),
+      { state: 'temporarily-unavailable', reason, message },
+    );
+    assert.equal(harness.store.saves.length, 0);
+  }
+});
+
+test('launch reconciliation requires removal and fresh setup when the public origin changed', async () => {
+  const harness = createHarness({
+    node: { state: 'running', dnsName: 'desktop.changed-tailnet.ts.net', httpsReady: true },
+  });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(
+    await harness.coordinator.reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT }),
+    {
+      state: 'ownership-conflict',
+      reason: 'origin-changed',
+      message: 'The Tailscale node or tailnet domain changed. Remove the mobile connection, then set it up again.',
+    },
+  );
+  assert.equal(harness.calls.includes('inspect-serve'), false);
+  assert.equal(harness.calls.some((call) => call.startsWith('configure:')), false);
+  assert.equal(harness.store.saves.length, 0);
+});
 
 test('status distinguishes missing, sign-in, unavailable, and unsupported Tailscale states', async () => {
   const missing = createHarness({ node: { state: 'missing' } });

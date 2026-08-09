@@ -35,3 +35,17 @@ test('Electron installs header injection before creating any app window', () => 
   assert.ok(registerIndex < createIndex);
   assert.doesNotMatch(electronMainSource, /\bpartition\s*:/);
 });
+
+test('Electron reconciles completed mobile access after server startup and before opening the UI', () => {
+  const serverIndex = electronMainSource.indexOf('const port = await startServer();');
+  const reconcileIndex = electronMainSource.indexOf(
+    'await mobileAccessCoordinator.reconcileOnLaunch({ loopbackPort: port });',
+  );
+  const createIndex = electronMainSource.indexOf('mainWindow = createWindow(port);');
+
+  assert.notEqual(serverIndex, -1);
+  assert.notEqual(reconcileIndex, -1);
+  assert.notEqual(createIndex, -1);
+  assert.ok(serverIndex < reconcileIndex);
+  assert.ok(reconcileIndex < createIndex);
+});

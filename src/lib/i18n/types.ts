@@ -82,6 +82,7 @@ export interface I18nMessages {
       mobileSetupMachineAuthorizationHelp: string;
       mobileSetupUnavailableHelp: string;
       mobileSetupConflictHelp: string;
+      mobileSetupOriginChangedHelp: string;
       mobileSetupRetryHelp: string;
       mobileSetupFailed: string;
       warningTitle: string;
