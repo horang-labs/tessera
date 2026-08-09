@@ -148,6 +148,7 @@ function mapApiSessionToUnified(
     id: s.id,
     title: s.title,
     projectDir: s.projectDir ?? fallbackProjectDir,
+    originProjectId: s.originProjectId ?? s.projectDir ?? fallbackProjectDir,
     isRunning: s.isRunning,
     status: s.status as SessionStatus,
     lastModified: s.lastModified,
@@ -640,6 +641,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       session = {
         ...session,
         projectDir,
+        originProjectId: session.originProjectId ?? projectDir,
         archived: session.archived ?? false,
         hasStarted: session.hasStarted ?? session.isRunning ?? false,
         sortOrder: session.sortOrder ?? 0,
@@ -746,6 +748,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const normalizedSession: UnifiedSession = {
         ...session,
         projectDir,
+        originProjectId: session.originProjectId ?? projectDir,
         archived: session.archived ?? false,
         isReadOnly: session.isReadOnly ?? session.archived ?? false,
         hasStarted: session.hasStarted ?? session.isRunning ?? false,

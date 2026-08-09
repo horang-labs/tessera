@@ -182,6 +182,8 @@ export interface UnifiedSession {
   title: string;
   /** Encoded project directory name */
   projectDir: string;
+  /** Stable representative Project, independent of the Project view showing this Session. */
+  originProjectId?: string;
   /** Whether a CLI process is currently running for this session */
   isRunning: boolean;
   /** Session status (only meaningful when isRunning=true) */

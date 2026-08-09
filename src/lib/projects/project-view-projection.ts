@@ -2,6 +2,23 @@ import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import * as dbTasks from '@/lib/db/tasks';
 
+export type ProjectViewSession = dbSessions.SessionRow & {
+  /** Stable representative Project for global surfaces, independent of this view. */
+  originProjectId: string;
+};
+
+function exposeSessionOrigins<T extends { sessions: dbSessions.SessionRow[] }>(
+  result: T,
+): Omit<T, 'sessions'> & { sessions: ProjectViewSession[] } {
+  return {
+    ...result,
+    sessions: result.sessions.map((session) => ({
+      ...session,
+      originProjectId: session.project_id,
+    })),
+  };
+}
+
 function getViewScope(projectId: string): dbSessions.ProjectViewSessionScope | undefined {
   const projectWorktree = dbProjects.getProjectWorktree(projectId);
   return projectWorktree
@@ -18,12 +35,12 @@ export function getProjectViewProjection(
   options: { limitPerStatus?: number; activeSessionIds?: Set<string> } = {},
 ) {
   const projectWorktree = dbProjects.getProjectWorktree(projectId);
-  const result = dbSessions.getSessionsByProjectGrouped(projectId, {
+  const result = exposeSessionOrigins(dbSessions.getSessionsByProjectGrouped(projectId, {
     limitPerStatus: options.limitPerStatus,
     viewScope: projectWorktree
       ? { worktreeId: projectWorktree.id, currentBranch: projectWorktree.currentBranch }
       : undefined,
-  });
+  }));
   const linkedWorktrees = getProjectViewWorktrees(projectId, options.activeSessionIds);
   return { projectWorktree, linkedWorktrees, ...result };
 }
@@ -47,10 +64,10 @@ export function getProjectViewSessions(
   projectId: string,
   options: { limit?: number; cursor?: string } = {},
 ) {
-  return dbSessions.getSessionsByProject(projectId, {
+  return exposeSessionOrigins(dbSessions.getSessionsByProject(projectId, {
     ...options,
     viewScope: getViewScope(projectId),
-  });
+  }));
 }
 
 export function getProjectViewSessionsByStatus(
@@ -58,8 +75,8 @@ export function getProjectViewSessionsByStatus(
   statusGroup: string,
   options: { limit?: number; cursor?: string } = {},
 ) {
-  return dbSessions.getSessionsByStatus(projectId, statusGroup, {
+  return exposeSessionOrigins(dbSessions.getSessionsByStatus(projectId, statusGroup, {
     ...options,
     viewScope: getViewScope(projectId),
-  });
+  }));
 }
