@@ -54,9 +54,8 @@ const PNG_BASE64 =
 
 const BROWSER_USER_ID = 'e2e-browser-user';
 
-// Headful by default, through the wave's shared launcher — this file's own
-// TESSERA_E2E_HEADLESS variable was folded into `TESSERA_E2E_HEADED=0` there (#263)
-// so the wave has one escape hatch rather than two spellings of it.
+// Headless by default through the wave's shared launcher. Visual QA can opt into
+// a visible browser with `TESSERA_E2E_HEADED=1`.
 const selectedPhases = (process.env.TESSERA_E2E_PHASES ?? '')
   .split(',')
   .map((value) => value.trim())

@@ -47,9 +47,9 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { chromium } from '@playwright/test';
 import jwt from 'jsonwebtoken';
 import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 
 const run = promisify(execFile);
 
@@ -78,14 +78,6 @@ const FONT_SCALES = [
  */
 const ASSISTANT_ACTION_LABELS = ['Copy', 'Translate', 'From here'];
 
-/**
- * Headful by default, for the same reason #259 is: every assertion here is a
- * box a person is meant to be able to hit, and headless Chromium has its device
- * metrics injected rather than read from a display. #256 was filed and closed as
- * an artifact of exactly that. `TESSERA_E2E_HEADED=0` is the escape hatch for a
- * machine with no display, and a run that takes it is not evidence about layout.
- */
-const headless = process.env.TESSERA_E2E_HEADED === '0';
 const artifactDir = process.env.TESSERA_E2E_ARTIFACT_DIR
   ?? path.join(os.tmpdir(), 'tessera-phone-action-row-e2e');
 const selectedPhases = (process.env.TESSERA_E2E_PHASES ?? '')
@@ -717,7 +709,7 @@ try {
   sessionId = await createSession();
   await seedHistory();
 
-  browser = await chromium.launch({ headless });
+  browser = await launchPhoneBrowser();
 
   if (shouldRun(1)) await phase1();
   if (shouldRun(2)) await phase2();
