@@ -20,6 +20,12 @@ param(
 
   [switch]$RefreshSeed,
 
+  [ValidateScript({ -not $_ -or (Test-Path -LiteralPath $_ -PathType Leaf) })]
+  [string]$TailscaleExecutable,
+
+  [ValidateScript({ -not $_ -or (Test-Path -LiteralPath $_ -PathType Leaf) })]
+  [string]$NodeExtraCaCert,
+
   [ValidateRange(1024, 65530)]
   [int]$CdpBasePort = 9337,
 
@@ -216,6 +222,8 @@ $environmentNames = @(
   'TESSERA_ELECTRON_TEST_INSTANCE',
   'TESSERA_ELECTRON_TEST_ROOT',
   'TESSERA_ELECTRON_TEST_SERVER_PORT',
+  'TESSERA_ELECTRON_TEST_TAILSCALE_EXECUTABLE',
+  'NODE_EXTRA_CA_CERTS',
   'WSL_DISTRO_NAME',
   'ELECTRON_RUN_AS_NODE',
   'TESSERA_DEV_PORT',
@@ -243,6 +251,10 @@ try {
     $instanceRoot = Join-Path $TestRoot $instanceId
     $dataDir = Join-Path $instanceRoot 'data'
     $userDataDir = Join-Path $instanceRoot 'user-data'
+    $isolatedTailscaleExecutable = $null
+    $tailscaleExecutableHash = $null
+    $isolatedNodeExtraCaCert = $null
+    $nodeExtraCaCertHash = $null
     if ($PrepareOnly) {
       $cdpPort = $CdpBasePort + $offset
       $testServerPort = $ServerBasePort + $offset
@@ -260,9 +272,53 @@ try {
       -SourceDataDir $SeedDataDir `
       -ForceRefresh:$RefreshSeed
 
+    if ($TailscaleExecutable) {
+      $savedErrorActionPreference = $ErrorActionPreference
+      try {
+        $ErrorActionPreference = 'SilentlyContinue'
+        $fakeMarker = (& $TailscaleExecutable '--tessera-test-marker' 2>$null | Out-String).Trim()
+        $fakeMarkerExitCode = $LASTEXITCODE
+      } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+      }
+      if (
+        $fakeMarkerExitCode -ne 0 -or
+        $fakeMarker -ne 'tessera.issue-308.fake-tailscale.v1'
+      ) {
+        throw 'Refusing a Tailscale test executable without the controlled harness marker'
+      }
+      $toolsDir = Join-Path $instanceRoot 'tools'
+      New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+      $isolatedTailscaleExecutable = Join-Path $toolsDir 'tailscale.exe'
+      Copy-Item -LiteralPath $TailscaleExecutable -Destination $isolatedTailscaleExecutable -Force
+      $tailscaleExecutableHash = (
+        Get-FileHash -LiteralPath $isolatedTailscaleExecutable -Algorithm SHA256
+      ).Hash.ToLowerInvariant()
+    }
+    if ($NodeExtraCaCert) {
+      $toolsDir = Join-Path $instanceRoot 'tools'
+      New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+      $isolatedNodeExtraCaCert = Join-Path $toolsDir 'node-extra-ca.pem'
+      Copy-Item -LiteralPath $NodeExtraCaCert -Destination $isolatedNodeExtraCaCert -Force
+      $nodeExtraCaCertHash = (
+        Get-FileHash -LiteralPath $isolatedNodeExtraCaCert -Algorithm SHA256
+      ).Hash.ToLowerInvariant()
+    }
+
     $env:TESSERA_ELECTRON_TEST_INSTANCE = $instanceId
     $env:TESSERA_ELECTRON_TEST_ROOT = $TestRoot
     $env:TESSERA_ELECTRON_TEST_SERVER_PORT = [string]$testServerPort
+    if ($isolatedTailscaleExecutable) {
+      $env:TESSERA_ELECTRON_TEST_TAILSCALE_EXECUTABLE = $isolatedTailscaleExecutable
+    } else {
+      Remove-Item -LiteralPath 'Env:TESSERA_ELECTRON_TEST_TAILSCALE_EXECUTABLE' `
+        -ErrorAction SilentlyContinue
+    }
+    if ($isolatedNodeExtraCaCert) {
+      $env:NODE_EXTRA_CA_CERTS = $isolatedNodeExtraCaCert
+    } else {
+      Remove-Item -LiteralPath 'Env:NODE_EXTRA_CA_CERTS' -ErrorAction SilentlyContinue
+    }
     $env:WSL_DISTRO_NAME = $WslDistro
     foreach ($name in @(
       'ELECTRON_RUN_AS_NODE',
@@ -284,6 +340,10 @@ try {
       dataDir = $dataDir
       userDataDir = $userDataDir
       databaseSha256 = $databaseHash
+      tailscaleExecutable = $isolatedTailscaleExecutable
+      tailscaleExecutableSha256 = $tailscaleExecutableHash
+      nodeExtraCaCert = $isolatedNodeExtraCaCert
+      nodeExtraCaCertSha256 = $nodeExtraCaCertHash
       cdpUrl = "http://127.0.0.1:$cdpPort"
       cdpPort = $cdpPort
       serverUrl = $null

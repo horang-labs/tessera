@@ -4,6 +4,8 @@ import path from 'node:path';
 export const ELECTRON_TEST_INSTANCE_ENV = 'TESSERA_ELECTRON_TEST_INSTANCE';
 export const ELECTRON_TEST_ROOT_ENV = 'TESSERA_ELECTRON_TEST_ROOT';
 export const ELECTRON_TEST_SERVER_PORT_ENV = 'TESSERA_ELECTRON_TEST_SERVER_PORT';
+export const ELECTRON_TEST_TAILSCALE_EXECUTABLE_ENV =
+  'TESSERA_ELECTRON_TEST_TAILSCALE_EXECUTABLE';
 
 const SAFE_TEST_INSTANCE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -102,6 +104,32 @@ export function resolveElectronServerPort(
     );
   }
   return port;
+}
+
+export function resolveElectronTestTailscaleExecutable(
+  testInstance: ElectronTestInstanceConfig | null,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (!testInstance) return null;
+
+  const configuredExecutable = env[ELECTRON_TEST_TAILSCALE_EXECUTABLE_ENV]?.trim();
+  if (!configuredExecutable) return null;
+
+  const pathApi = platform === 'win32' ? path.win32 : path;
+  const resolvedExecutable = pathApi.resolve(configuredExecutable);
+  const relative = pathApi.relative(testInstance.rootDir, resolvedExecutable);
+  const isInsideInstance = relative.length > 0
+    && relative !== '..'
+    && !relative.startsWith(`..${pathApi.sep}`)
+    && !pathApi.isAbsolute(relative);
+  if (!pathApi.isAbsolute(configuredExecutable) || !isInsideInstance) {
+    throw new Error(
+      `${ELECTRON_TEST_TAILSCALE_EXECUTABLE_ENV} must be an absolute path inside `
+      + 'the isolated Electron test instance root',
+    );
+  }
+  return resolvedExecutable;
 }
 
 export function getWslGuestTesseraStateRoot(

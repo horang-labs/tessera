@@ -3,9 +3,11 @@ import test from 'node:test';
 import {
   acquireElectronInstanceLock,
   configureElectronTestInstance,
+  ELECTRON_TEST_TAILSCALE_EXECUTABLE_ENV,
   getWslGuestTesseraStateRoot,
   readElectronTestInstanceId,
   resolveElectronServerPort,
+  resolveElectronTestTailscaleExecutable,
   resolveElectronTestInstanceConfig,
 } from '@/lib/electron-test-instance';
 
@@ -114,4 +116,38 @@ test('an isolated Electron test instance requires and uses its dedicated server 
     }),
     /TESSERA_ELECTRON_TEST_SERVER_PORT must be an integer between 1024 and 65535/,
   );
+});
+
+test('a normal Electron launch ignores a leaked test-only Tailscale executable', () => {
+  assert.equal(resolveElectronTestTailscaleExecutable(null, {
+    [ELECTRON_TEST_TAILSCALE_EXECUTABLE_ENV]: 'C:\\TesseraTests\\fake-tailscale.exe',
+  }, 'win32'), null);
+});
+
+test('an isolated instance accepts only its own absolute Tailscale executable', () => {
+  const testInstance = resolveElectronTestInstanceConfig({
+    env: {
+      TESSERA_ELECTRON_TEST_INSTANCE: 'issue-308',
+      TESSERA_ELECTRON_TEST_ROOT: 'C:\\TesseraTests',
+    },
+    platform: 'win32',
+  });
+  assert.ok(testInstance);
+
+  assert.equal(resolveElectronTestTailscaleExecutable(testInstance, {
+    [ELECTRON_TEST_TAILSCALE_EXECUTABLE_ENV]: 'C:\\TesseraTests\\issue-308\\tools\\tailscale.exe',
+  }, 'win32'), 'C:\\TesseraTests\\issue-308\\tools\\tailscale.exe');
+
+  for (const executable of [
+    'tailscale.exe',
+    'C:\\TesseraTests\\other-instance\\tailscale.exe',
+    'C:\\TesseraTests\\issue-308-escape\\tailscale.exe',
+  ]) {
+    assert.throws(
+      () => resolveElectronTestTailscaleExecutable(testInstance, {
+        [ELECTRON_TEST_TAILSCALE_EXECUTABLE_ENV]: executable,
+      }, 'win32'),
+      /TESSERA_ELECTRON_TEST_TAILSCALE_EXECUTABLE must be an absolute path inside/,
+    );
+  }
 });

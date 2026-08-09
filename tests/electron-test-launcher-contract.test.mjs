@@ -25,3 +25,23 @@ test('failed launches with no surviving process can still be cleaned by manifest
     /\[AllowEmptyCollection\(\)\][\s\S]*\[array\]\$ProcessIds/,
   );
 });
+
+test('the launcher copies a controlled Tailscale executable into each isolated instance', () => {
+  assert.match(launcherSource, /\[string\]\$TailscaleExecutable/);
+  assert.match(launcherSource, /\$TailscaleExecutable '--tessera-test-marker'/);
+  assert.match(launcherSource, /Refusing a Tailscale test executable without the controlled harness marker/);
+  assert.match(launcherSource, /Copy-Item -LiteralPath \$TailscaleExecutable -Destination \$isolatedTailscaleExecutable/);
+  assert.match(
+    launcherSource,
+    /\$env:TESSERA_ELECTRON_TEST_TAILSCALE_EXECUTABLE = \$isolatedTailscaleExecutable/,
+  );
+  assert.match(launcherSource, /tailscaleExecutable = \$isolatedTailscaleExecutable/);
+  assert.match(launcherSource, /tailscaleExecutableSha256 = \$tailscaleExecutableHash/);
+});
+
+test('the launcher isolates the controlled HTTPS trust root with the instance', () => {
+  assert.match(launcherSource, /\[string\]\$NodeExtraCaCert/);
+  assert.match(launcherSource, /Copy-Item -LiteralPath \$NodeExtraCaCert -Destination \$isolatedNodeExtraCaCert/);
+  assert.match(launcherSource, /\$env:NODE_EXTRA_CA_CERTS = \$isolatedNodeExtraCaCert/);
+  assert.match(launcherSource, /nodeExtraCaCertSha256 = \$nodeExtraCaCertHash/);
+});

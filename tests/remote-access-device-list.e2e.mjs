@@ -78,6 +78,15 @@ async function stopServer() {
 }
 
 try {
+  await fs.writeFile(path.join(dataDir, 'mobile-access.json'), JSON.stringify({
+    schemaVersion: 1,
+    owner: 'tessera.mobile-access',
+    nodeDnsName: 'desktop.tailnet.ts.net',
+    origin: 'https://desktop.tailnet.ts.net',
+    servePort: 443,
+    mountPath: '/',
+    lastLoopbackTarget: origin,
+  }), { mode: 0o600 });
   await startServer();
   const appSecret = (await fs.readFile(path.join(dataDir, 'auth', 'app-secret'), 'utf8')).trim();
   browser = await chromium.launch({ headless: true });
@@ -94,8 +103,15 @@ try {
       value: {
         isElectron: true,
         platform: 'linux',
-        getMobileAccessStatus: async () => ({ state: 'ready', origin }),
-        startMobileAccessSetup: async () => ({ state: 'ready', origin }),
+        getMobileAccessStatus: async () => ({
+          state: 'ready', origin: 'https://desktop.tailnet.ts.net',
+        }),
+        startMobileAccessSetup: async () => ({
+          state: 'ready', origin: 'https://desktop.tailnet.ts.net',
+        }),
+        removeMobileAccess: async () => ({
+          ok: true, status: { state: 'not-configured' },
+        }),
         createPairingCode: async () => ({
           ok: true,
           pairingLink: `${window.location.origin}/pair#t=${'x'.repeat(43)}`,
