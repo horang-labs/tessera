@@ -23,6 +23,8 @@ interface NativeCopy {
   remoteConnectedDetail: (count: number) => string;
   remoteUnavailableMessage: string;
   remoteUnavailableDetail: string;
+  mobileAccessMessage: string;
+  mobileAccessDetail: string;
   cancel: string;
   quit: string;
 }
@@ -50,6 +52,10 @@ const COPY: Record<ElectronLanguage, NativeCopy> = {
     ),
     remoteUnavailableMessage: 'Remote connection status is unavailable. Quit Tessera?',
     remoteUnavailableDetail: 'Quitting may disconnect an active remote device.',
+    mobileAccessMessage: 'Quit Tessera and stop mobile access?',
+    mobileAccessDetail: (
+      'Quitting Tessera will stop mobile access and Push notifications until Tessera is relaunched.'
+    ),
     cancel: 'Cancel',
     quit: 'Quit Tessera',
   },
@@ -73,6 +79,10 @@ const COPY: Record<ElectronLanguage, NativeCopy> = {
     ),
     remoteUnavailableMessage: '원격 접속 상태를 확인하지 못했습니다. Tessera를 종료할까요?',
     remoteUnavailableDetail: '종료하면 접속 중인 원격 기기의 연결이 끊길 수 있습니다.',
+    mobileAccessMessage: 'Tessera를 종료하고 모바일 접속을 중단할까요?',
+    mobileAccessDetail: (
+      'Tessera를 종료하면 다시 실행할 때까지 모바일 접속과 푸시 알림이 중단됩니다.'
+    ),
     cancel: '취소',
     quit: 'Tessera 종료',
   },
@@ -96,6 +106,8 @@ const COPY: Record<ElectronLanguage, NativeCopy> = {
     ),
     remoteUnavailableMessage: '无法获取远程连接状态。仍要退出 Tessera 吗？',
     remoteUnavailableDetail: '退出可能会断开正在使用的远程设备。',
+    mobileAccessMessage: '退出 Tessera 并停止移动访问吗？',
+    mobileAccessDetail: '退出 Tessera 后，移动访问和推送通知将停止，直到重新启动 Tessera。',
     cancel: '取消',
     quit: '退出 Tessera',
   },
@@ -119,6 +131,10 @@ const COPY: Record<ElectronLanguage, NativeCopy> = {
     ),
     remoteUnavailableMessage: 'リモート接続の状態を確認できません。Tesseraを終了しますか？',
     remoteUnavailableDetail: '終了すると、接続中のリモートデバイスが切断される可能性があります。',
+    mobileAccessMessage: 'Tesseraを終了してモバイルアクセスを停止しますか？',
+    mobileAccessDetail: (
+      'Tesseraを終了すると、再起動するまでモバイルアクセスとプッシュ通知が停止します。'
+    ),
     cancel: 'キャンセル',
     quit: 'Tesseraを終了',
   },
@@ -176,10 +192,11 @@ export function buildQuitConfirmation(
   language: ElectronLanguage,
   activeTerminalCount: number,
   remoteStatus: RemoteAccessStatus | null,
+  mobileAccessConfigured = false,
 ): QuitConfirmationCopy | null {
   const terminalNeedsWarning = activeTerminalCount !== 0;
   const remoteNeedsWarning = remoteStatus === null || remoteStatus.connectedDeviceCount > 0;
-  if (!terminalNeedsWarning && !remoteNeedsWarning) return null;
+  if (!terminalNeedsWarning && !remoteNeedsWarning && !mobileAccessConfigured) return null;
 
   const copy = COPY[language];
   const terminalDetail = activeTerminalCount < 0
@@ -188,7 +205,15 @@ export function buildQuitConfirmation(
 
   let message: string;
   const details: string[] = [];
-  if (!remoteStatus) {
+  if (mobileAccessConfigured) {
+    message = copy.mobileAccessMessage;
+    details.push(copy.mobileAccessDetail);
+    if (!remoteStatus) {
+      details.push(copy.remoteUnavailableDetail);
+    } else if (remoteStatus.connectedDeviceCount > 0) {
+      details.push(copy.remoteConnectedDetail(remoteStatus.connectedDeviceCount));
+    }
+  } else if (!remoteStatus) {
     message = copy.remoteUnavailableMessage;
     details.push(copy.remoteUnavailableDetail);
   } else if (remoteStatus.connectedDeviceCount > 0) {

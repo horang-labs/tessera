@@ -171,6 +171,7 @@ function originChangedStatus(): MobileAccessStatus {
 
 export class MobileAccessCoordinator {
   private status: MobileAccessStatus = { state: 'not-configured' };
+  private configuredConnection = false;
   private setupPromise: Promise<MobileAccessStatus> | null = null;
   private readonly openedAuthorizationUrls = new Set<string>();
 
@@ -181,6 +182,10 @@ export class MobileAccessCoordinator {
     publishPairingOrigin(origin: string): Promise<void>;
     openExternal(url: string): Promise<void>;
   }) {}
+
+  hasConfiguredConnection(): boolean {
+    return this.configuredConnection;
+  }
 
   async getStatus(): Promise<MobileAccessStatus> {
     if (this.setupPromise) return { state: 'configuring' };
@@ -239,6 +244,7 @@ export class MobileAccessCoordinator {
   ): Promise<MobileAccessStatus> {
     try {
       const persisted = await this.dependencies.stateStore.load();
+      this.configuredConnection = Boolean(persisted && !isSetupProgress(persisted));
       if (!persisted || isSetupProgress(persisted)) return this.status;
 
       const node = await this.dependencies.adapter.inspectNode();
@@ -442,6 +448,7 @@ export class MobileAccessCoordinator {
         lastLoopbackTarget: loopbackTarget,
       };
       await this.dependencies.stateStore.save(ownership);
+      this.configuredConnection = true;
       await this.dependencies.publishPairingOrigin(origin);
       return this.remember({ state: 'ready', origin });
     } catch (error) {
