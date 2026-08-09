@@ -1,10 +1,16 @@
 import webPush from 'web-push';
-import type { DevicePushSubscription } from '@/lib/auth/device-registry';
-import { listDevicePushSubscriptions } from '@/lib/auth/device-registry';
 import logger from '@/lib/logger';
+import {
+  deletePairedDevicePushSubscription,
+  listPairedDevicePushSubscriptions,
+} from '@/lib/auth/paired-device-lifecycle';
 import { SettingsManager } from '@/lib/settings/manager';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { ensureVapidIdentity } from './vapid-identity';
+import type {
+  DevicePushSubscription,
+  StoredDevicePushSubscription,
+} from './device-push-subscription-store';
 
 const MAX_PUSH_PAYLOAD_BYTES = 2_048;
 const MAX_TITLE_BYTES = 160;
@@ -32,11 +38,18 @@ interface PushSettingsSnapshot {
 
 interface WebPushDispatcherDependencies {
   loadSettings: (userId: string) => Promise<PushSettingsSnapshot>;
-  listSubscriptions: () => Promise<DevicePushSubscription[]>;
+  listSubscriptions: () => Promise<StoredDevicePushSubscription[]>;
+  deleteSubscription: (deviceId: string, expectedEndpoint: string) => Promise<boolean>;
   sendNotification: (
     subscription: DevicePushSubscription,
     payload: string,
   ) => Promise<unknown>;
+}
+
+function isPermanentlyRejectedEndpoint(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return statusCode === 404 || statusCode === 410;
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {
@@ -100,10 +113,26 @@ export function createWebPushDispatcher(dependencies: WebPushDispatcherDependenc
       if (subscriptions.length === 0) return;
       const payload = JSON.stringify(buildCompletedPushPayload(message));
 
-      await Promise.all(subscriptions.map(async (subscription) => {
+      await Promise.all(subscriptions.map(async ({ deviceId, subscription }) => {
+        if (
+          subscription.expirationTime !== null
+          && subscription.expirationTime <= Date.now()
+        ) {
+          await dependencies.deleteSubscription(deviceId, subscription.endpoint);
+          logger.warn({ userId, deviceId }, 'Expired Web Push subscription removed');
+          return;
+        }
         try {
           await dependencies.sendNotification(subscription, payload);
         } catch (error) {
+          if (isPermanentlyRejectedEndpoint(error)) {
+            await dependencies.deleteSubscription(deviceId, subscription.endpoint);
+            logger.warn(
+              { error, userId, deviceId },
+              'Permanently rejected Web Push subscription removed',
+            );
+            return;
+          }
           logger.warn({ error, userId }, 'Web Push delivery failed');
         }
       }));
@@ -124,6 +153,7 @@ async function sendNotification(
 
 export const scheduleWebPushForTransportMessage = createWebPushDispatcher({
   loadSettings: (userId) => SettingsManager.load(userId, { silent: true }),
-  listSubscriptions: listDevicePushSubscriptions,
+  listSubscriptions: listPairedDevicePushSubscriptions,
+  deleteSubscription: deletePairedDevicePushSubscription,
   sendNotification,
 });

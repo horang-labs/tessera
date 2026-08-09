@@ -150,6 +150,7 @@ export interface I18nMessages {
       deviceCount: string;
       capacityReachedDescription: string;
       connectedNow: string;
+      pushStatusEnabled: string;
       registeredAt: string;
       lastSeenAt: string;
       neverConnected: string;

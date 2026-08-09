@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import {
-  deleteDevicePushSubscription,
-  getDevicePushSubscription,
+  deletePairedDevicePushSubscription,
+  getPairedDevicePushSubscription,
+  replacePairedDevicePushSubscription,
+} from '@/lib/auth/paired-device-lifecycle';
+import {
   isDevicePushSubscription,
-  replaceDevicePushSubscription,
-} from '@/lib/auth/device-registry';
+} from '@/lib/push/device-push-subscription-store';
 import { ensureVapidIdentity } from '@/lib/push/vapid-identity';
 
 async function requirePairedDevice(request: NextRequest) {
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest) {
 
   const [identity, subscription] = await Promise.all([
     ensureVapidIdentity(),
-    getDevicePushSubscription(auth.deviceId),
+    getPairedDevicePushSubscription(auth.deviceId),
   ]);
   return NextResponse.json({
     vapidPublicKey: identity.publicKey,
@@ -45,7 +47,7 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid Push subscription' }, { status: 400 });
   }
 
-  const replaced = await replaceDevicePushSubscription(auth.deviceId, subscription);
+  const replaced = await replacePairedDevicePushSubscription(auth.deviceId, subscription);
   return replaced
     ? NextResponse.json({ success: true, subscription })
     : NextResponse.json({ error: 'Paired device not found' }, { status: 404 });
@@ -55,6 +57,6 @@ export async function DELETE(request: NextRequest) {
   const auth = await requirePairedDevice(request);
   if ('response' in auth) return auth.response;
 
-  await deleteDevicePushSubscription(auth.deviceId);
+  await deletePairedDevicePushSubscription(auth.deviceId);
   return NextResponse.json({ success: true });
 }

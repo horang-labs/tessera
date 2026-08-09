@@ -146,6 +146,7 @@ try {
       registeredAt: '2026-08-01T01:02:00.000Z',
       lastSeenAt: '2026-08-04T02:03:00.000Z',
       connected: true,
+      hasPushSubscription: true,
     },
     {
       id: 'tablet-2',
@@ -153,6 +154,7 @@ try {
       registeredAt: '2026-08-02T03:04:00.000Z',
       lastSeenAt: null,
       connected: false,
+      hasPushSubscription: false,
     },
   ];
   const deleteRequests = [];
@@ -282,9 +284,22 @@ try {
 
   await page.getByTestId('paired-device-phone-1').waitFor({ timeout: 15_000 });
   assert.equal(await page.getByTestId('paired-device-phone-1-status').innerText(), 'Connected now');
+  assert.equal(
+    await page.getByTestId('paired-device-phone-1-push-status').innerText(),
+    'Push enabled',
+  );
+  assert.equal(
+    await page.getByTestId('paired-device-tablet-2').getByRole('button').count(),
+    1,
+    'device cards must not add a per-device Push toggle',
+  );
   assert.match(await page.getByTestId('paired-device-phone-1').innerText(), /Registered/);
   assert.match(await page.getByTestId('paired-device-phone-1').innerText(), /Last connected/);
   await page.getByTestId('paired-device-capacity').waitFor();
+  if (process.env.TESSERA_E2E_SCREENSHOT) {
+    await page.getByTestId('paired-device-phone-1').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: process.env.TESSERA_E2E_SCREENSHOT, fullPage: true });
+  }
 
   await page.getByTestId('paired-device-phone-1-disconnect').click();
   await page.getByTestId('paired-device-disconnect-dialog').waitFor();

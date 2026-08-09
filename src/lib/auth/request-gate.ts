@@ -6,6 +6,7 @@ import { isElectronRuntime } from '../electron-runtime';
 import logger from '../logger';
 import { isOriginAllowed } from './allowed-origins';
 import { DEVICE_TOKEN_COOKIE, resolveDeviceToken } from './device-registry';
+import { withPairedDeviceLifecycle } from './paired-device-lifecycle-lock';
 
 export type RequestPurpose = 'http' | 'ws-upgrade';
 export type CredentialKind = 'app' | 'device' | 'jwt';
@@ -116,7 +117,7 @@ export async function evaluateRequest(input: RequestGateInput): Promise<RequestG
 
   const deviceToken = input.cookies[DEVICE_TOKEN_COOKIE];
   const device = deviceToken
-    ? await resolveDeviceToken(deviceToken)
+    ? await withPairedDeviceLifecycle(() => resolveDeviceToken(deviceToken))
     : null;
   if (device) {
     const userId = await resolveServerDefaultUserId();

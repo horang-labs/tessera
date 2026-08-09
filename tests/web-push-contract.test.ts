@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before, beforeEach } from 'node:test';
@@ -20,6 +20,10 @@ before(async () => {
 
 beforeEach(async () => {
   const { clearDeviceRegistry } = await import('../src/lib/auth/device-registry');
+  const { clearDevicePushSubscriptions } = await import(
+    '../src/lib/push/device-push-subscription-store'
+  );
+  await clearDevicePushSubscriptions();
   await clearDeviceRegistry();
 });
 
@@ -95,13 +99,51 @@ test('a paired device can replace, read, and delete only its own subscription', 
   ));
   assert.equal(created.status, 200);
 
+  const replacement = {
+    ...subscription,
+    endpoint: 'https://push.example.test/replaced',
+  };
+  const replaced = await route.PUT(new NextRequest(
+    'http://localhost:32123/api/push/subscription',
+    {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(replacement),
+    },
+  ));
+  assert.equal(replaced.status, 200);
+
+  const {
+    getDevicePushSubscriptionStorePath,
+    listDevicePushSubscriptions,
+  } = await import('../src/lib/push/device-push-subscription-store');
+  const persisted = JSON.parse(
+    await readFile(getDevicePushSubscriptionStorePath(), 'utf8'),
+  ) as { subscriptions: Record<string, unknown> };
+  assert.equal((await stat(getDevicePushSubscriptionStorePath())).mode & 0o777, 0o600);
+  assert.equal(
+    (await stat(path.dirname(getDevicePushSubscriptionStorePath()))).mode & 0o777,
+    0o700,
+  );
+  assert.deepEqual(Object.keys(persisted.subscriptions), [first.device.id]);
+  assert.deepEqual(persisted.subscriptions[first.device.id], replacement);
+  assert.deepEqual(await listDevicePushSubscriptions(), [{
+    deviceId: first.device.id,
+    subscription: replacement,
+  }]);
+
+  const registry = JSON.parse(
+    await readFile(path.join(tempDir, 'auth', 'device-registry.json'), 'utf8'),
+  ) as { devices: Array<Record<string, unknown>> };
+  assert.equal('pushSubscription' in registry.devices[0], false);
+
   const own = await route.GET(new NextRequest(
     'http://localhost:32123/api/push/subscription',
     { headers },
   ));
   assert.equal(own.status, 200);
   const ownBody = await own.json();
-  assert.deepEqual(ownBody.subscription, subscription);
+  assert.deepEqual(ownBody.subscription, replacement);
   assert.match(ownBody.vapidPublicKey, /^[A-Za-z0-9_-]+$/);
 
   const other = await route.GET(new NextRequest(
@@ -134,6 +176,119 @@ test('a paired device can replace, read, and delete only its own subscription', 
   assert.equal(unauthenticated.status, 401);
 });
 
+test('device list status and revocation keep subscriptions bound to device trust', async () => {
+  const first = await pairApprovedDevice('First phone');
+  const second = await pairApprovedDevice('Second phone');
+  const {
+    getDevicePushSubscription,
+    listDevicePushSubscriptions,
+    replaceDevicePushSubscription,
+  } = await import('../src/lib/push/device-push-subscription-store');
+  const { revokeAllPairedDevices, revokePairedDevice } = await import(
+    '../src/lib/auth/device-revocation'
+  );
+  const { ensureAppSecret, APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+  const devicesRoute = await import('../src/app/api/devices/route');
+  const firstSubscription = {
+    endpoint: 'https://push.example.test/first', expirationTime: null,
+    keys: { p256dh: 'first-public-key', auth: 'first-auth-key' },
+  };
+  const secondSubscription = {
+    endpoint: 'https://push.example.test/second', expirationTime: null,
+    keys: { p256dh: 'second-public-key', auth: 'second-auth-key' },
+  };
+  await replaceDevicePushSubscription(first.device.id, firstSubscription);
+  await replaceDevicePushSubscription(second.device.id, secondSubscription);
+
+  const appSecret = await ensureAppSecret();
+  const response = await devicesRoute.GET(new NextRequest(
+    'http://localhost:32123/api/devices',
+    { headers: {
+      [APP_SECRET_HEADER]: appSecret,
+      host: 'localhost:32123',
+      origin: 'http://localhost:32123',
+    } },
+  ));
+  assert.equal(response.status, 200);
+  const body = await response.json() as {
+    devices: Array<{ id: string; hasPushSubscription: boolean }>;
+  };
+  assert.deepEqual(body.devices.map(({ id, hasPushSubscription }) => ({
+    id,
+    hasPushSubscription,
+  })), [
+    { id: first.device.id, hasPushSubscription: true },
+    { id: second.device.id, hasPushSubscription: true },
+  ]);
+
+  assert.deepEqual(await revokePairedDevice(first.device.id), {
+    revokedDevices: 1,
+    disconnectedConnections: 0,
+  });
+  assert.equal(await getDevicePushSubscription(first.device.id), null);
+  assert.deepEqual(
+    await evaluateRequest({
+      purpose: 'http', method: 'GET', rawUrl: '/api/push/subscription',
+      host: 'localhost:32123', origin: 'http://localhost:32123',
+      cookies: { device: first.device.token }, headers: {},
+    }),
+    { allow: false, reason: 'unauthorized', status: 401 },
+  );
+  assert.equal((await listDevicePushSubscriptions()).length, 1);
+
+  assert.deepEqual(await revokeAllPairedDevices(), {
+    revokedDevices: 1,
+    disconnectedConnections: 0,
+  });
+  assert.deepEqual(await listDevicePushSubscriptions(), []);
+});
+
+test('revocation wins over a Push registration that authenticated before its body arrived', async () => {
+  const { device } = await pairApprovedDevice('Racing phone');
+  const route = await import('../src/app/api/push/subscription/route');
+  const { revokePairedDevice } = await import('../src/lib/auth/device-revocation');
+  const { listDevicePushSubscriptions } = await import(
+    '../src/lib/push/device-push-subscription-store'
+  );
+  let releaseBody!: () => void;
+  let bodyReadStarted!: () => void;
+  const bodyGate = new Promise<void>((resolve) => { releaseBody = resolve; });
+  const readingBody = new Promise<void>((resolve) => { bodyReadStarted = resolve; });
+  const request = new NextRequest(
+    'http://localhost:32123/api/push/subscription',
+    {
+      method: 'PUT',
+      headers: {
+        cookie: `device=${device.token}`,
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    },
+  );
+  Object.defineProperty(request, 'json', {
+    value: async () => {
+      bodyReadStarted();
+      await bodyGate;
+      return {
+        endpoint: 'https://push.example.test/race',
+        expirationTime: null,
+        keys: { p256dh: 'race-public-key', auth: 'race-auth-key' },
+      };
+    },
+  });
+
+  const registration = route.PUT(request);
+  await readingBody;
+  await revokePairedDevice(device.id);
+  releaseBody();
+
+  assert.equal((await registration).status, 404);
+  assert.deepEqual(await listDevicePushSubscriptions(), []);
+});
+
 test('completed notifications schedule size-limited push without blocking WebSocket delivery', async () => {
   const {
     buildCompletedPushPayload,
@@ -149,7 +304,8 @@ test('completed notifications schedule size-limited push without blocking WebSoc
   const sent: string[] = [];
   const dispatch = createWebPushDispatcher({
     loadSettings: async () => ({ notifications: { pushEnabled: true } }),
-    listSubscriptions: async () => [subscription],
+    listSubscriptions: async () => [{ deviceId: 'device-1', subscription }],
+    deleteSubscription: async () => false,
     sendNotification: async (_subscription, payload) => {
       sent.push(payload);
       await pendingPush;
@@ -208,6 +364,7 @@ test('global suppression, missing subscriptions, and push failures stay best-eff
   let sends = 0;
   const base = {
     listSubscriptions: async () => [],
+    deleteSubscription: async () => false,
     sendNotification: async () => { sends += 1; throw new Error('offline'); },
   };
   const disabled = createWebPushDispatcher({
@@ -234,9 +391,13 @@ test('global suppression, missing subscriptions, and push failures stay best-eff
   const failing = createWebPushDispatcher({
     loadSettings: async () => ({ notifications: { pushEnabled: true } }),
     listSubscriptions: async () => [{
-      endpoint: 'https://push.example.test/fail', expirationTime: null,
-      keys: { p256dh: 'public', auth: 'auth' },
+      deviceId: 'device-fail',
+      subscription: {
+        endpoint: 'https://push.example.test/fail', expirationTime: null,
+        keys: { p256dh: 'public', auth: 'auth' },
+      },
     }],
+    deleteSubscription: async () => false,
     sendNotification: async () => { sends += 1; throw new Error('offline'); },
   });
   assert.doesNotThrow(() => failing('user-1', {
@@ -244,4 +405,56 @@ test('global suppression, missing subscriptions, and push failures stay best-eff
   }));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sends, 1);
+});
+
+test('expired and permanently rejected endpoints are deleted while transient failures remain', async () => {
+  const { createWebPushDispatcher } = await import('../src/lib/push/web-push-dispatcher');
+  const expired = {
+    endpoint: 'https://push.example.test/expired',
+    expirationTime: Date.now() - 1,
+    keys: { p256dh: 'expired-public', auth: 'expired-auth' },
+  };
+  const rejected = {
+    endpoint: 'https://push.example.test/rejected', expirationTime: null,
+    keys: { p256dh: 'rejected-public', auth: 'rejected-auth' },
+  };
+  const transient = {
+    endpoint: 'https://push.example.test/transient', expirationTime: null,
+    keys: { p256dh: 'transient-public', auth: 'transient-auth' },
+  };
+  const sent: string[] = [];
+  const deleted: Array<{ deviceId: string; endpoint: string }> = [];
+  const dispatch = createWebPushDispatcher({
+    loadSettings: async () => ({ notifications: { pushEnabled: true } }),
+    listSubscriptions: async () => [
+      { deviceId: 'expired-device', subscription: expired },
+      { deviceId: 'rejected-device', subscription: rejected },
+      { deviceId: 'transient-device', subscription: transient },
+    ],
+    deleteSubscription: async (deviceId, endpoint) => {
+      deleted.push({ deviceId, endpoint });
+      return true;
+    },
+    sendNotification: async (subscription) => {
+      sent.push(subscription.endpoint);
+      if (subscription.endpoint === rejected.endpoint) {
+        throw Object.assign(new Error('gone'), { statusCode: 410 });
+      }
+      if (subscription.endpoint === transient.endpoint) {
+        throw Object.assign(new Error('service unavailable'), { statusCode: 503 });
+      }
+    },
+  });
+
+  dispatch('user-1', {
+    type: 'notification', sessionId: 's1', event: 'completed', message: 'done', preview: '',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(sent, [rejected.endpoint, transient.endpoint]);
+  assert.deepEqual(deleted, [
+    { deviceId: 'expired-device', endpoint: expired.endpoint },
+    { deviceId: 'rejected-device', endpoint: rejected.endpoint },
+  ]);
 });

@@ -169,6 +169,7 @@ export const ja: I18nMessages = {
       deviceCount: '{{count}} / {{max}} 台',
       capacityReachedDescription: '{{max}} 台のデバイス枠がすべて使用されています。新しいデバイスをペアリングする前に、既存のデバイスを切断してください。',
       connectedNow: '現在接続中',
+      pushStatusEnabled: 'プッシュ有効',
       registeredAt: '登録日時',
       lastSeenAt: '最終接続',
       neverConnected: '未接続',
