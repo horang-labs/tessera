@@ -77,13 +77,14 @@ export function GitActionMenu({
     popoverRef: menuRef,
     calculatePosition: calculateMenuPosition,
   });
+  const hasPosition = position !== null;
   useEffect(() => {
-    if (!open || (!isPhoneViewport && !position)) return;
+    if (!open || (!isPhoneViewport && !hasPosition)) return;
     const frame = requestAnimationFrame(() => {
       menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [isPhoneViewport, open, position]);
+  }, [hasPosition, isPhoneViewport, open]);
   const handleMenuKeyDown = useMenuNavigation(menuRef);
 
   return (

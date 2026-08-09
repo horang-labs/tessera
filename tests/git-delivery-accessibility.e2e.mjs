@@ -62,6 +62,15 @@ try {
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menuitem');
     const firstFocused = await focusedTestId(page);
     await page.keyboard.press('ArrowDown');
+    assert.equal(await focusedTestId(page), 'git-action-menu-item-commit_push');
+    await page.evaluate(() => {
+      document.dispatchEvent(new Event('scroll'));
+      window.dispatchEvent(new Event('scroll'));
+    });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+      () => requestAnimationFrame(() => resolve()),
+    )));
+    assert.equal(await focusedTestId(page), 'git-action-menu-item-commit_push');
     await page.keyboard.press('ArrowDown');
     assert.equal(await focusedTestId(page), 'git-action-menu-item-push');
     assert.equal(await page.getByTestId('git-action-menu-item-push').getAttribute('aria-disabled'), 'true');
