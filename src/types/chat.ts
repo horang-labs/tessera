@@ -280,6 +280,8 @@ export interface ProjectGroup {
   displayPath?: string;
   /** Canonical checkout opened by this saved Project view. */
   projectWorktree?: import('./worktree').ProjectWorktreeSummary;
+  /** One exact external rename that currently hides immutable branch scope. */
+  branchRenameWarning?: import('@/lib/projects/branch-rename-warning').ProjectBranchRenameWarning;
   /** Whether this is the current project (matches process.cwd()) */
   isCurrent: boolean;
   /** Whether the project has a preparation script for its worktrees to run. */

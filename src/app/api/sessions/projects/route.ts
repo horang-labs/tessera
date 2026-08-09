@@ -113,6 +113,9 @@ export async function GET(req: NextRequest) {
             currentBranch: projectWorktree.currentBranch,
           },
         }),
+        ...(result.branchRenameWarning && {
+          branchRenameWarning: result.branchRenameWarning,
+        }),
         isCurrent: shouldRegisterCurrentProject && project.id === currentProjectId,
         // Without one there is nothing to prepare, and no surface should offer
         // it — either stage having something to run counts.

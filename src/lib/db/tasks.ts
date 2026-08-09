@@ -80,6 +80,21 @@ interface WorktreeViewScope {
   branch: string | null;
 }
 
+export function hasActiveWorktreeCreationScope(
+  originWorktreeId: string,
+  branch: string,
+): boolean {
+  const row = getDb().prepare(`
+    SELECT 1
+    FROM tasks
+    WHERE creation_scope_worktree_id = ?
+      AND creation_scope_branch = ?
+      AND archived = 0
+    LIMIT 1
+  `).get(originWorktreeId, branch);
+  return Boolean(row);
+}
+
 export interface ArchivedTaskQueryOptions {
   query?: string;
   limit?: number;

@@ -946,6 +946,9 @@ export const ja: I18nMessages = {
     showMore: 'もっと見る ({{count}})',
     noSessions: 'セッションがありません',
     dragSessionToReference: 'チャットへドラッグしてこのセッションを参照',
+    branchRenameWarningTitle: 'Tessera の外部でブランチ名が変更されました',
+    branchRenameWarningDescription: 'Git には「{{previousBranch}}」から「{{currentBranch}}」への直接の名前変更が記録されています。「{{previousBranch}}」をスコープとするセッションとワークツリーは非表示です。Tessera はそれらを移動も変更もしていません。',
+    dismissBranchRenameWarning: 'ブランチ名変更の警告を閉じる',
   },
   status: {
     starting: '起動中',

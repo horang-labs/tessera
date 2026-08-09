@@ -15,6 +15,10 @@ import {
   resolveLastActiveProjectDir,
 } from '@/lib/session/last-active-project';
 import {
+  isBranchRenameWarningDismissed,
+  persistBranchRenameWarningDismissal,
+} from '@/lib/projects/branch-rename-warning';
+import {
   applySessionRuntimeLiveness,
   beginSessionRuntimeConnection,
   createSessionRuntimeLiveness,
@@ -47,6 +51,7 @@ export interface SessionState {
   // Actions - Project loading
   loadProjects: () => Promise<void>;
   updateProjectWorktreeBranch: (worktreeId: string, branch: string | null) => void;
+  dismissBranchRenameWarning: (projectId: string) => void;
   loadMoreSessions: (encodedDir: string) => Promise<void>;
   loadMoreByStatusGroup: (encodedDir: string, statusGroup: string) => Promise<void>;
 
@@ -407,6 +412,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           decodedPath: p.decodedPath,
           displayPath: p.displayPath,
           projectWorktree: p.projectWorktree,
+          branchRenameWarning: p.branchRenameWarning
+            && !isBranchRenameWarningDismissed(p.encodedDir, p.branchRenameWarning)
+            ? p.branchRenameWarning
+            : undefined,
           isCurrent: p.isCurrent,
           hasPreparationScript: p.hasPreparationScript,
           sessions,
@@ -514,6 +523,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ),
     }));
     if (changed) void get().loadProjects();
+  },
+
+  dismissBranchRenameWarning: (projectId) => {
+    const warning = get().projects.find(
+      (project) => project.encodedDir === projectId,
+    )?.branchRenameWarning;
+    if (!warning) return;
+    persistBranchRenameWarningDismissal(projectId, warning);
+    set((state) => ({
+      projects: state.projects.map((project) =>
+        project.encodedDir === projectId
+          ? { ...project, branchRenameWarning: undefined }
+          : project,
+      ),
+    }));
   },
 
   loadMoreSessions: async (encodedDir: string) => {

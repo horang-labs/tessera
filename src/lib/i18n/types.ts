@@ -928,6 +928,9 @@ export interface I18nMessages {
     showMore: string;
     noSessions: string;
     dragSessionToReference: string;
+    branchRenameWarningTitle: string;
+    branchRenameWarningDescription: string;
+    dismissBranchRenameWarning: string;
   };
   status: {
     starting: string;

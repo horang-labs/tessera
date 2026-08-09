@@ -56,6 +56,19 @@ export interface ProjectViewSessionScope {
   currentBranch: string | null;
 }
 
+export function hasActiveSessionScope(worktreeId: string, branch: string): boolean {
+  const row = getDb().prepare(`
+    SELECT 1
+    FROM sessions s
+    LEFT JOIN tasks t ON t.id = s.task_id
+    WHERE COALESCE(s.worktree_id, t.public_worktree_id) = ?
+      AND s.scope_branch = ?
+      AND ${ACTIVE_SESSION_SCOPE_SQL}
+    LIMIT 1
+  `).get(worktreeId, branch);
+  return Boolean(row);
+}
+
 export interface SessionWorktreeContext {
   taskId: string | null;
   workDir: string | null;

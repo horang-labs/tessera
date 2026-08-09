@@ -946,6 +946,9 @@ export const en: I18nMessages = {
     showMore: 'Show more ({{count}})',
     noSessions: 'No sessions',
     dragSessionToReference: 'Drag into chat to reference this session',
+    branchRenameWarningTitle: 'Branch renamed outside Tessera',
+    branchRenameWarningDescription: 'Git shows a direct rename from “{{previousBranch}}” to “{{currentBranch}}”. Sessions and worktrees scoped to “{{previousBranch}}” are hidden. Tessera has not moved or changed them.',
+    dismissBranchRenameWarning: 'Dismiss this branch rename warning',
   },
   status: {
     starting: 'Starting',
