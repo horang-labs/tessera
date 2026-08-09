@@ -43,6 +43,21 @@ async function waitForAction(page, kind, text) {
   return primary;
 }
 
+async function createSession(title) {
+  const created = await api('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({
+      workDir: repo,
+      parentProjectId: repo,
+      providerId: 'claude-code',
+      executionMode: 'gui',
+      hasCustomTitle: true,
+      title,
+    }),
+  });
+  return created.sessionId ?? created.session?.id ?? created.id;
+}
+
 try {
   await git(['init', '--bare', '--initial-branch=main', remote], root);
   await git(['init', '--initial-branch=main', repo], root);
@@ -69,18 +84,8 @@ try {
   });
   await api('/api/settings', { method: 'PUT', body: JSON.stringify({ agentEnvironment: 'wsl' }) });
   await api('/api/projects', { method: 'POST', body: JSON.stringify({ folderPath: repo }) });
-  const created = await api('/api/sessions', {
-    method: 'POST',
-    body: JSON.stringify({
-      workDir: repo,
-      parentProjectId: repo,
-      providerId: 'claude-code',
-      executionMode: 'gui',
-      hasCustomTitle: true,
-      title: 'desktop ladder',
-    }),
-  });
-  const sessionId = created.sessionId ?? created.session?.id ?? created.id;
+  const sessionId = await createSession('desktop ladder');
+  const sharedSessionId = await createSession('shared ladder');
 
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -105,8 +110,14 @@ try {
   await composer.getByTestId('git-commit-message').fill('local delivery');
   await composer.getByTestId('git-primary-action-button').click();
   await waitForAction(page, 'pull', 'Pull (1)');
+  await page.getByTestId(`collection-chat-${sharedSessionId}`).first().click();
+  await waitForAction(page, 'pull', 'Pull (1)');
+  await page.getByTestId(`collection-chat-${sessionId}`).first().click();
   await page.getByTestId('desktop-commit-primary').click();
   await waitForAction(page, 'push', 'Push (1)');
+  await page.getByTestId(`collection-chat-${sharedSessionId}`).first().click();
+  await waitForAction(page, 'push', 'Push (1)');
+  await page.getByTestId(`collection-chat-${sessionId}`).first().click();
   assert.equal((await git(['config', 'pull.rebase'])).stdout.trim(), 'true');
 
   await fs.writeFile(path.join(repo, 'compound.txt'), 'compound\n');
@@ -123,6 +134,10 @@ try {
   await page.getByTestId('desktop-git-action-failure').waitFor({ timeout: 30_000 });
   assert.equal((await git(['log', '-1', '--pretty=%s'])).stdout.trim(), 'compound delivery');
   await waitForAction(page, 'push', 'Push (2)');
+  await page.getByTestId(`collection-chat-${sharedSessionId}`).first().click();
+  await waitForAction(page, 'push', 'Push (2)');
+  await page.getByTestId('desktop-git-action-failure').waitFor();
+  await page.getByTestId(`collection-chat-${sessionId}`).first().click();
   await page.getByTestId('desktop-git-action-failure').locator('summary').click();
   await page.getByTestId('git-action-failure-summary').getByText(/push blocked for retry/i).waitFor();
   await page.getByTestId('tab-bar-git-toggle').waitFor();
@@ -133,8 +148,11 @@ try {
   await page.getByTestId('desktop-commit-primary').click();
   const blocked = await waitForAction(page, 'create_pr', 'Create PR');
   assert.equal(await blocked.isDisabled(), true);
+  await page.getByTestId(`collection-chat-${sharedSessionId}`).first().click();
+  const sharedBlocked = await waitForAction(page, 'create_pr', 'Create PR');
+  assert.equal(await sharedBlocked.isDisabled(), true);
   assert.equal((await git(['status', '--porcelain'])).stdout.trim(), '');
-  console.log(JSON.stringify({ artifact, ladder: ['commit', 'pull', 'push', 'create_pr'], partialFailure: true }));
+  console.log(JSON.stringify({ artifact, ladder: ['commit', 'pull', 'push', 'create_pr'], partialFailure: true, sharedOwner: true }));
 } finally {
   await browser?.close().catch(() => {});
   await runtime?.stop().catch(() => {});

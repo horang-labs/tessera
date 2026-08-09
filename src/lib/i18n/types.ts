@@ -1111,6 +1111,7 @@ export interface I18nMessages {
       publishButton: string;
       publishButtonPending: string;
       nothingToPush: string;
+      pullFirst: string;
       successToast: string;
       successNoUpstreamToast: string;
       publishedToast: string;
@@ -1154,6 +1155,8 @@ export interface I18nMessages {
       statusUnknown: string;
       unavailable: string;
       noUpstream: string;
+      pullFirst: string;
+      pushFirst: string;
       alreadyOpen: string;
     };
     conflict: {

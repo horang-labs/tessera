@@ -1129,6 +1129,7 @@ export const zh: I18nMessages = {
       publishButton: '发布分支',
       publishButtonPending: '发布中…',
       nothingToPush: '没有可推送的提交',
+      pullFirst: '推送前请先拉取远程提交',
       successToast: '已推送到 {{remoteBranch}} · {{origin}}',
       successNoUpstreamToast: '已推送 · {{origin}}',
       publishedToast: '已创建 {{remoteBranch}} · {{origin}}',
@@ -1172,6 +1173,8 @@ export const zh: I18nMessages = {
       statusUnknown: '正在向 GitHub 确认拉取请求…',
       unavailable: '创建拉取请求需要 GitHub 远程仓库和已登录的 gh CLI',
       noUpstream: '请先发布分支才能创建拉取请求',
+      pullFirst: '创建拉取请求前请先拉取远程提交',
+      pushFirst: '创建拉取请求前请先推送本地提交',
       alreadyOpen: '该分支已有拉取请求',
     },
     conflict: {

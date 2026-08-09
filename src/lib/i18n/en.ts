@@ -1129,6 +1129,7 @@ export const en: I18nMessages = {
       publishButton: 'Publish Branch',
       publishButtonPending: 'Publishing…',
       nothingToPush: 'Nothing to push',
+      pullFirst: 'Pull the remote commits before pushing',
       successToast: 'Pushed to {{remoteBranch}} · {{origin}}',
       successNoUpstreamToast: 'Pushed · {{origin}}',
       publishedToast: 'Published {{remoteBranch}} · {{origin}}',
@@ -1172,6 +1173,8 @@ export const en: I18nMessages = {
       statusUnknown: 'Checking GitHub for a pull request…',
       unavailable: 'A pull request needs a GitHub remote and a signed-in gh CLI',
       noUpstream: 'Publish the branch first to open a pull request',
+      pullFirst: 'Pull the remote commits before opening a pull request',
+      pushFirst: 'Push the local commits before opening a pull request',
       alreadyOpen: 'This branch already has a pull request',
     },
     conflict: {

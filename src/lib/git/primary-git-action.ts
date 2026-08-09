@@ -213,22 +213,18 @@ export function derivePrimaryGitAction(
   const blocked = describeRemoteObstacle(snapshot);
   if (blocked) return publishAction(false, blocked);
 
-  // Above the ahead rung, and only ever with an upstream to pull from: a branch
-  // that is behind cannot fast-forward its own push anyway, and one that has
-  // never been published has nothing to be behind (§3).
-  if (!blocked && snapshot.upstream && snapshot.behind !== null && snapshot.behind > 0) {
-    return pullAction(snapshot.behind);
-  }
-
   if (!snapshot.upstream) return publishAction(true, null);
-  // An uncounted branch gets the push rung rather than dropping through it. The
-  // rung below says "there is nothing left to push", and this is precisely the
-  // state where that cannot be established: pushing is idempotent, so offering
-  // it costs a branch that was already in sync nothing, while skipping it would
-  // hide commits that never reached the remote.
-  if (snapshot.ahead === null || snapshot.ahead > 0) {
-    return pushAction(true, null, snapshot.ahead ?? undefined);
-  }
+
+  // A tracking branch whose comparison could not be counted has no safe next
+  // rung: it may need Pull, Push, or neither. Hold the disabled unknown frame
+  // until a refreshed snapshot resolves both directions.
+  if (snapshot.ahead === null || snapshot.behind === null) return loadingAction();
+
+  // Above the ahead rung: a branch that is behind cannot fast-forward its own
+  // push, so it must reconcile with its configured upstream first (§3).
+  if (snapshot.behind > 0) return pullAction(snapshot.behind);
+
+  if (snapshot.ahead > 0) return pushAction(true, null, snapshot.ahead);
 
   // Committed, pushed and tracking: the only step of delivery left is the pull
   // request (§3). A branch that already has one points at that destination.

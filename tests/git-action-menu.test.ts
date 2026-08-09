@@ -72,6 +72,30 @@ test('Push counts the commits it would send, and wears Publish without an upstre
   assert.equal(unpublished.labelKey, 'gitPanel.push.publishButton');
 });
 
+test('diverged and uncounted branches do not expose speculative remote actions', () => {
+  const diverged = { ...SYNCED, ahead: 2, behind: 1, pullRequest: 'none' as const };
+  const push = entry(diverged, 'push');
+  assert.equal(push.enabled, false);
+  assert.equal(push.disabledReasonKey, 'gitPanel.push.pullFirst');
+
+  const divergedPr = entry(diverged, 'create_pr');
+  assert.equal(divergedPr.enabled, false);
+  assert.equal(divergedPr.disabledReasonKey, 'gitPanel.pr.pullFirst');
+
+  const aheadPr = entry({ ...SYNCED, ahead: 2, pullRequest: 'none' }, 'create_pr');
+  assert.equal(aheadPr.enabled, false);
+  assert.equal(aheadPr.disabledReasonKey, 'gitPanel.pr.pushFirst');
+
+  for (const id of ['push', 'pull', 'create_pr']) {
+    const unknown = entry(
+      { ...SYNCED, ahead: null, behind: null, pullRequest: 'none' },
+      id,
+    );
+    assert.equal(unknown.enabled, false, `${id} is enabled without comparison state`);
+    assert.equal(unknown.disabledReasonKey, 'gitPanel.primary.stateUnknown');
+  }
+});
+
 test('nothing reaches a remote from a detached HEAD or a repository without one', () => {
   const detached = entry({ ...SYNCED, branch: null, ahead: 2 }, 'push');
   assert.equal(detached.kind, 'publish');
@@ -180,7 +204,7 @@ test('a conflict closes the commit path in the menu as well as on the button', (
   assert.equal(commitPush.disabledReasonKey, 'gitPanel.conflict.mergeInProgress');
 });
 
-test('a conflict closes the pull too, and leaves the push where it was', () => {
+test('a conflict closes the pull, while divergence independently closes push', () => {
   // The state an unfinished merge actually leaves: the remote is ahead, so the
   // entry carried a count and read as runnable, and Git refused it after the
   // press with "Pulling is not possible because you have unmerged files".
@@ -190,11 +214,11 @@ test('a conflict closes the pull too, and leaves the push where it was', () => {
   assert.equal(pull.enabled, false);
   assert.equal(pull.disabledReasonKey, 'gitPanel.conflict.mergeInProgress');
 
-  // Push keeps its own answer: commits made before the merge began still reach
-  // the remote, so a conflict is no reason to withhold it.
+  // The conflict itself does not close Push, but the known remote commits do:
+  // this push would be rejected as non-fast-forward even after the conflict.
   const push = entry({ ...behind, ahead: 2 }, 'push');
-  assert.equal(push.enabled, true);
-  assert.equal(push.disabledReasonKey, null);
+  assert.equal(push.enabled, false);
+  assert.equal(push.disabledReasonKey, 'gitPanel.push.pullFirst');
 });
 
 test('the way out is in the menu, labelled from the operation that was detected', () => {

@@ -701,7 +701,7 @@ export function GitPanelContentSection({
             push to offer, and a session whose state has not arrived holds a
             disabled Commit rather than a gap (ADR 0007).
           */}
-          {primary.action.kind === "commit" ? (
+          {primary.action.kind === "commit" || primary.action.kind === "loading" ? (
             <GitCommitForm
               pendingVerb={primary.pendingVerb}
               generateError={commit.generateError}

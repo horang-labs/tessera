@@ -162,15 +162,17 @@ try {
   assert.equal(await page.getByTestId('git-commit-message').isEnabled(), false);
 
   finishAction();
-  await page.getByTestId('git-action-failure-banner').waitFor();
+  await page.getByTestId('desktop-git-action-failure').waitFor();
+  await page.getByTestId('git-panel').getByTestId('git-action-failure-banner').waitFor();
   await fs.mkdir(artifactDir, { recursive: true });
   await page.screenshot({ path: artifact });
   await page.getByTestId('tab-bar-git-toggle').click();
   await openPanel(page);
   assert.equal(await page.getByTestId('git-commit-message').inputValue(), 'typed before identity');
-  await page.getByTestId('git-action-failure-banner').waitFor();
+  await page.getByTestId('git-panel').getByTestId('git-action-failure-banner').waitFor();
   await openSession(page, outsider);
-  assert.equal(await page.getByTestId('git-action-failure-banner').count(), 0);
+  assert.equal(await page.getByTestId('desktop-git-action-failure').count(), 0);
+  assert.equal(await page.getByTestId('git-panel').getByTestId('git-action-failure-banner').count(), 0);
   await openSession(page, first);
 
   await git(['restore', 'a.txt', 'b.txt'], sharedRepo);

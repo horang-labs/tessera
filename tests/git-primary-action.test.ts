@@ -109,6 +109,14 @@ test('a branch that is both ahead and behind is told to pull, not to push', () =
   assert.deepEqual(action.labelParams, { count: 1 });
 });
 
+test('an uncounted tracking branch holds a disabled unknown rung', () => {
+  const action = derivePrimaryGitAction({ ...SYNCED, ahead: null, behind: null });
+
+  assert.equal(action.kind, 'loading');
+  assert.equal(action.enabled, false);
+  assert.equal(action.disabledReasonKey, 'gitPanel.primary.stateUnknown');
+});
+
 test('a branch with no upstream is not offered a pull it cannot run', () => {
   // `behind` cannot outlive the upstream it was counted against, but the panel
   // is polled and the two fields arrive together — so the rung asks for the

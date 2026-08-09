@@ -1129,6 +1129,7 @@ export const ja: I18nMessages = {
       publishButton: 'ブランチを公開',
       publishButtonPending: '公開中…',
       nothingToPush: 'プッシュするコミットがありません',
+      pullFirst: 'プッシュする前にリモートのコミットをプルしてください',
       successToast: '{{remoteBranch}} にプッシュしました · {{origin}}',
       successNoUpstreamToast: 'プッシュしました · {{origin}}',
       publishedToast: '{{remoteBranch}} を作成しました · {{origin}}',
@@ -1172,6 +1173,8 @@ export const ja: I18nMessages = {
       statusUnknown: 'GitHub のプルリクエストを確認中…',
       unavailable: 'プルリクエストには GitHub リモートとログイン済みの gh CLI が必要です',
       noUpstream: 'プルリクエストを作成するには先にブランチを公開してください',
+      pullFirst: 'プルリクエストを作成する前にリモートのコミットをプルしてください',
+      pushFirst: 'プルリクエストを作成する前にローカルのコミットをプッシュしてください',
       alreadyOpen: 'このブランチにはすでにプルリクエストがあります',
     },
     conflict: {

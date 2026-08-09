@@ -78,9 +78,12 @@ export type GitMenuActionReasonKey =
   | 'gitPanel.primary.noRemote'
   | 'gitPanel.commit.nothingToCommit'
   | 'gitPanel.push.nothingToPush'
+  | 'gitPanel.push.pullFirst'
   | 'gitPanel.pull.nothingToPull'
   | 'gitPanel.pull.noUpstream'
   | 'gitPanel.pr.noUpstream'
+  | 'gitPanel.pr.pullFirst'
+  | 'gitPanel.pr.pushFirst'
   | 'gitPanel.pr.alreadyOpen'
   | 'gitPanel.pr.statusUnknown'
   | 'gitPanel.pr.unavailable'
@@ -276,19 +279,21 @@ function describePush(snapshot: GitStateSnapshot): GitMenuAction {
     };
   }
 
-  // A null count is "Git cannot compare", not "nothing to push": the branch
-  // tracks something no remote-tracking ref mirrors. The entry stays enabled and
-  // loses its count, because "Nothing to push" is a claim nothing here supports.
+  const comparisonBlocked = snapshot.ahead === null || snapshot.behind === null
+    ? 'gitPanel.primary.stateUnknown'
+    : snapshot.behind > 0
+      ? 'gitPanel.push.pullFirst'
+      : null;
   const count = snapshot.ahead !== null && snapshot.ahead > 0 ? snapshot.ahead : null;
-  const ahead = count !== null || snapshot.ahead === null;
+  const ahead = count !== null;
   return {
     id: 'push',
     kind: 'push',
-    enabled: ahead,
+    enabled: !comparisonBlocked && ahead,
     labelKey: count !== null ? 'gitPanel.push.buttonCount' : 'gitPanel.push.button',
     ...(count !== null ? { labelParams: { count } } : {}),
     disabledReasonKey:
-      ahead ? null : 'gitPanel.push.nothingToPush',
+      comparisonBlocked ?? (ahead ? null : 'gitPanel.push.nothingToPush'),
   };
 }
 
@@ -303,15 +308,12 @@ function describePush(snapshot: GitStateSnapshot): GitMenuAction {
  * told afterwards what the menu already knew.
  */
 function describePull(snapshot: GitStateSnapshot): GitMenuAction {
-  // Null as in `describePush`, and the same answer: `git pull` fetches and
-  // merges through the branch's configured upstream, so it works on exactly the
-  // branch this cannot count, and "Nothing to pull" would be the panel asserting
-  // a comparison it never made.
   const count = snapshot.behind !== null && snapshot.behind > 0 ? snapshot.behind : null;
-  const behind = count !== null || snapshot.behind === null;
+  const behind = count !== null;
   const blocked = describeConflictObstacle(snapshot)
     ?? describeRemoteObstacle(snapshot)
-    ?? (snapshot.upstream ? null : 'gitPanel.pull.noUpstream');
+    ?? (snapshot.upstream ? null : 'gitPanel.pull.noUpstream')
+    ?? (snapshot.behind === null ? 'gitPanel.primary.stateUnknown' : null);
 
   return {
     id: 'pull',
@@ -345,6 +347,11 @@ function describeCreatePullRequest(snapshot: GitStateSnapshot): GitMenuAction {
     ?? (snapshot.defaultBranch && snapshot.branch === snapshot.defaultBranch
       ? 'gitPanel.pr.defaultBranch'
       : null)
+    ?? (snapshot.ahead === null || snapshot.behind === null
+      ? 'gitPanel.primary.stateUnknown'
+      : null)
+    ?? (snapshot.behind !== null && snapshot.behind > 0 ? 'gitPanel.pr.pullFirst' : null)
+    ?? (snapshot.ahead !== null && snapshot.ahead > 0 ? 'gitPanel.pr.pushFirst' : null)
     ?? readinessObstacle(snapshot.pullRequest);
 
   return {
