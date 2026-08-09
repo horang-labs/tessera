@@ -711,8 +711,10 @@ export function useGitPanelController(sessionId: string | null) {
     try {
       const result = await revalidateGitConflictHandoff(
         panelData,
-        sessionSnapshot,
-        connectionStatus,
+        () => ({
+          session: useSessionStore.getState().getSession(sessionId),
+          connectionStatus: useChatStore.getState().connectionStatus,
+        }),
         () => readGitPanelState(sessionId),
       );
 
@@ -739,11 +741,9 @@ export function useGitPanelController(sessionId: string | null) {
     }
   }, [
     applyGitPanelData,
-    connectionStatus,
     panelData,
     preparingConflictHandoff,
     sessionId,
-    sessionSnapshot,
     t,
   ]);
 

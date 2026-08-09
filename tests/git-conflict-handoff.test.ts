@@ -33,6 +33,7 @@ test('Resolve with AI is available only for a complete conflict list and compati
   assert.equal(deriveGitConflictHandoffAvailability(PANEL, { ...SESSION, kind: 'terminal' }, 'connected'), false);
   assert.equal(deriveGitConflictHandoffAvailability(PANEL, { ...SESSION, isReadOnly: true }, 'connected'), false);
   assert.equal(deriveGitConflictHandoffAvailability(PANEL, { ...SESSION, provider: undefined }, 'connected'), false);
+  assert.equal(deriveGitConflictHandoffAvailability(PANEL, { ...SESSION, provider: 'unknown-agent' }, 'connected'), false);
   assert.equal(deriveGitConflictHandoffAvailability(PANEL, { ...SESSION, status: 'error' }, 'connected'), false);
   assert.equal(deriveGitConflictHandoffAvailability(PANEL, SESSION, 'disconnected'), false);
   assert.equal(deriveGitConflictHandoffAvailability({ ...PANEL, changedFilesTruncated: true }, SESSION, 'connected'), false);
@@ -68,7 +69,10 @@ test('the prepared request identifies the worktree, live operation, and unresolv
 });
 
 test('handoff revalidates the live conflict state and rejects a changed path set as stale', async () => {
-  const result = await revalidateGitConflictHandoff(PANEL, SESSION, 'connected', async () => ({
+  const result = await revalidateGitConflictHandoff(PANEL, () => ({
+    session: SESSION,
+    connectionStatus: 'connected',
+  }), async () => ({
     kind: 'loaded',
     data: {
       ...PANEL,
@@ -81,7 +85,10 @@ test('handoff revalidates the live conflict state and rejects a changed path set
 });
 
 test('a current handoff prepares an editable draft without submitting a message', async () => {
-  const result = await revalidateGitConflictHandoff(PANEL, SESSION, 'connected', async () => ({
+  const result = await revalidateGitConflictHandoff(PANEL, () => ({
+    session: SESSION,
+    connectionStatus: 'connected',
+  }), async () => ({
     kind: 'loaded',
     data: PANEL,
   }));
@@ -100,9 +107,25 @@ test('a current handoff prepares an editable draft without submitting a message'
 test('handoff reports an unavailable session and preserves manual recovery', async () => {
   const result = await revalidateGitConflictHandoff(
     PANEL,
-    { ...SESSION, archived: true },
-    'connected',
+    () => ({
+      session: { ...SESSION, archived: true },
+      connectionStatus: 'connected',
+    }),
     async () => ({ kind: 'loaded', data: PANEL }),
+  );
+
+  assert.equal(result.kind, 'unavailable');
+});
+
+test('handoff rechecks composer compatibility after the Git read settles', async () => {
+  let connectionStatus: 'connected' | 'disconnected' = 'connected';
+  const result = await revalidateGitConflictHandoff(
+    PANEL,
+    () => ({ session: SESSION, connectionStatus }),
+    async () => {
+      connectionStatus = 'disconnected';
+      return { kind: 'loaded', data: PANEL };
+    },
   );
 
   assert.equal(result.kind, 'unavailable');
