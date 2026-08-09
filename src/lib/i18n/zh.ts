@@ -1181,6 +1181,7 @@ export const zh: I18nMessages = {
       cherryPickOperation: '拣选',
       operationInProgress: '正在进行{{operation}}',
       unresolvedFiles: '未解决的文件',
+      unresolvedFilesTruncated: '可能还有更多未解决的路径。请在终端中查看完整状态。',
       noUnresolvedFiles: '没有未解决的路径。请在终端中完成，或从菜单中中止。',
       openDiff: '查看差异',
       mergeInProgress: '合并尚未完成 — 请解决或中止',

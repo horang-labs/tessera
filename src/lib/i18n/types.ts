@@ -1163,6 +1163,7 @@ export interface I18nMessages {
       cherryPickOperation: string;
       operationInProgress: string;
       unresolvedFiles: string;
+      unresolvedFilesTruncated: string;
       noUnresolvedFiles: string;
       openDiff: string;
       mergeInProgress: string;

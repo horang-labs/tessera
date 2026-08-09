@@ -1181,6 +1181,7 @@ export const ja: I18nMessages = {
       cherryPickOperation: 'チェリーピック',
       operationInProgress: '{{operation}}を実行中',
       unresolvedFiles: '未解決のファイル',
+      unresolvedFilesTruncated: '未解決のパスが他にも存在する可能性があります。ターミナルで完全な状態を確認してください。',
       noUnresolvedFiles: '未解決のパスはありません。ターミナルで完了するか、メニューから中止してください。',
       openDiff: '差分を確認',
       mergeInProgress: 'マージが未完了です — 解決するか中止してください',

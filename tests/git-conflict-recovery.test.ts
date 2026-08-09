@@ -17,10 +17,22 @@ test('conflict recovery names the operation and presents only unresolved paths',
   const recovery = deriveGitConflictRecovery(CONFLICTED_PANEL);
 
   assert.equal(recovery?.operation, 'rebase');
+  assert.equal(recovery?.unresolvedFilesTruncated, false);
   assert.deepEqual(
     recovery?.unresolvedFiles.map((file) => file.path),
     ['src/unresolved.ts', 'deleted-on-both.ts'],
   );
+});
+
+test('conflict recovery preserves an incomplete status payload warning', () => {
+  const recovery = deriveGitConflictRecovery({
+    ...CONFLICTED_PANEL,
+    changedFiles: [],
+    changedFilesTruncated: true,
+  });
+
+  assert.equal(recovery?.unresolvedFiles.length, 0);
+  assert.equal(recovery?.unresolvedFilesTruncated, true);
 });
 
 test('opening conflict recovery navigates and requests focus without a git mutation', () => {

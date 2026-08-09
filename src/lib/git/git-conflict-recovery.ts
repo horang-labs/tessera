@@ -7,6 +7,7 @@ import type {
 export interface GitConflictRecovery {
   operation: GitConflictOperation;
   unresolvedFiles: GitChangedFile[];
+  unresolvedFilesTruncated: boolean;
 }
 
 /**
@@ -24,5 +25,6 @@ export function deriveGitConflictRecovery(
   return {
     operation,
     unresolvedFiles: data.changedFiles.filter((file) => file.state === 'conflicted'),
+    unresolvedFilesTruncated: Boolean(data.changedFilesTruncated),
   };
 }

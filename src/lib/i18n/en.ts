@@ -1181,6 +1181,7 @@ export const en: I18nMessages = {
       cherryPickOperation: 'Cherry-pick',
       operationInProgress: '{{operation}} in progress',
       unresolvedFiles: 'Unresolved files',
+      unresolvedFilesTruncated: 'More unresolved paths may exist. Review the complete status in the terminal.',
       noUnresolvedFiles: 'No unresolved paths remain. Finish in the terminal or abort from the menu.',
       openDiff: 'Review diff',
       // Kept to about the width of the longest reason beside it: the panel's

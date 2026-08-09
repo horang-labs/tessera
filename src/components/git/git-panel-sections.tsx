@@ -994,10 +994,21 @@ export function GitConflictRecoverySection({
 
       <div className="flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-(--text-muted)">
         <span>{t("gitPanel.conflict.unresolvedFiles")}</span>
-        <span className="font-mono tabular-nums">{recovery.unresolvedFiles.length}</span>
+        <span className="font-mono tabular-nums">
+          {recovery.unresolvedFiles.length}{recovery.unresolvedFilesTruncated ? '+' : ''}
+        </span>
       </div>
 
-      {recovery.unresolvedFiles.length === 0 ? (
+      {recovery.unresolvedFilesTruncated ? (
+        <p
+          data-testid="git-conflict-files-truncated"
+          className="px-3 pb-2 text-[11px] leading-4 text-(--status-warning-text)"
+        >
+          {t("gitPanel.conflict.unresolvedFilesTruncated")}
+        </p>
+      ) : null}
+
+      {recovery.unresolvedFiles.length === 0 && !recovery.unresolvedFilesTruncated ? (
         <p className="px-3 pb-3 text-[11px] leading-4 text-(--text-muted)">
           {t("gitPanel.conflict.noUnresolvedFiles")}
         </p>

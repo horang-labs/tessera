@@ -1188,6 +1188,7 @@ export const ko: I18nMessages = {
       cherryPickOperation: '체리픽',
       operationInProgress: '{{operation}} 진행 중',
       unresolvedFiles: '해결되지 않은 파일',
+      unresolvedFilesTruncated: '해결되지 않은 경로가 더 있을 수 있습니다. 터미널에서 전체 상태를 확인하세요.',
       noUnresolvedFiles: '해결되지 않은 경로가 없습니다. 터미널에서 완료하거나 메뉴에서 중단하세요.',
       openDiff: 'diff 검토',
       mergeInProgress: '병합이 끝나지 않았습니다 — 해결하거나 중단하세요',
