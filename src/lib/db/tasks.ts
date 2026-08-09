@@ -64,6 +64,7 @@ function readPrStatusFromRow(row: TaskRow): TaskPrStatus | undefined {
 
 interface SessionForTask {
   id: string;
+  project_id: string;
   title: string;
   provider: string;
   provider_state: string | null;
@@ -206,7 +207,7 @@ function loadTaskSessions(
       }
     : { sql: '', params: [] };
   const rows = db.prepare(`
-    SELECT id, title, provider, provider_state, created_at, updated_at, work_dir, worktree_managed, archived, sort_order
+    SELECT id, project_id, title, provider, provider_state, created_at, updated_at, work_dir, worktree_managed, archived, sort_order
     FROM sessions
     WHERE ${ownership.sql}
       AND deleted = 0
@@ -224,6 +225,7 @@ function loadTaskSessions(
     .filter((r) => options.includeArchived || !r.archived)
     .map((r) => ({
       id: r.id,
+      originProjectId: r.project_id,
       title: r.title,
       provider: r.provider,
       lastModified: r.updated_at,

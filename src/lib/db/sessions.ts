@@ -789,6 +789,7 @@ export function mapSessionRowToApi(
     hasStarted,
     status: isRunning ? ('running' as const) : kind === 'terminal' ? ('stopped' as const) : ('completed' as const),
     projectDir: row.project_id,
+    originProjectId: row.project_id,
     workDir: row.work_dir ?? undefined,
     workflowStatus: row.workflow_status ?? undefined,
     worktreeBranch: row.worktree_branch ?? undefined,

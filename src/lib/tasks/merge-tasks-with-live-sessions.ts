@@ -11,6 +11,7 @@ function sortTaskSessionsByOrder(a: TaskSession, b: TaskSession): number {
 function toTaskSession(session: UnifiedSession): TaskSession {
   return {
     id: session.id,
+    originProjectId: session.originProjectId,
     title: session.title,
     provider: session.provider,
     lastModified: session.lastModified,

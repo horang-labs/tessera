@@ -114,3 +114,53 @@ test('a changed Worktree branch schedules a Project projection refresh', async (
     'feature/external-switch',
   );
 });
+
+test('canonical Session state changes stay consistent across independent Project views', () => {
+  const sessionInA = {
+    ...scopedSession,
+    projectDir: 'project-a',
+    originProjectId: 'project-a',
+  };
+  const sessionInC = { ...sessionInA, projectDir: 'project-c' };
+  useSessionStore.setState({
+    ...useSessionStore.getInitialState(),
+    projects: [
+      { ...project([sessionInA], 'main'), encodedDir: 'project-a' },
+      { ...project([sessionInC], 'main'), encodedDir: 'project-c' },
+    ],
+  });
+
+  useSessionStore.getState().updateSessionTitle(sessionInA.id, 'One canonical title');
+  useSessionStore.getState().incrementUnreadCount(sessionInA.id);
+  useSessionStore.getState().markSessionRunning(sessionInA.id, sessionInA.id);
+
+  const appearances = useSessionStore.getState().projects.map((item) => item.sessions[0]);
+  assert.deepEqual(
+    appearances.map((session) => ({
+      id: session.id,
+      originProjectId: session.originProjectId,
+      title: session.title,
+      unreadCount: session.unreadCount,
+      isRunning: session.isRunning,
+    })),
+    [
+      {
+        id: sessionInA.id,
+        originProjectId: 'project-a',
+        title: 'One canonical title',
+        unreadCount: 1,
+        isRunning: true,
+      },
+      {
+        id: sessionInA.id,
+        originProjectId: 'project-a',
+        title: 'One canonical title',
+        unreadCount: 1,
+        isRunning: true,
+      },
+    ],
+  );
+
+  useSessionStore.getState().removeProject('project-c');
+  assert.equal(useSessionStore.getState().projects[0].sessions[0].title, 'One canonical title');
+});

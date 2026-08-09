@@ -89,6 +89,8 @@ export interface TaskEntity {
 
 export interface TaskSession {
   id: string;
+  /** Stable representative Project, independent of the Project currently showing it. */
+  originProjectId?: string;
   title: string;
   provider?: string;
   lastModified: string;
