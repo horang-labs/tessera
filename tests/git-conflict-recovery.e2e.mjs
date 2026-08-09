@@ -145,12 +145,25 @@ try {
     ['MERGE_HEAD', 'MERGE_MSG', 'ORIG_HEAD'].map((name) => fs.readFile(path.join(repo, '.git', name))),
   );
   const messagesBeforeHandoff = await page.getByTestId('user-message-row').count();
-  await recovery.getByTestId('git-conflict-resolve-with-ai').click();
+  const handoffSnapshot = await api(`/api/sessions/${sessionId}/git`);
+  const handoffReadUrl = `${runtime.origin}/api/sessions/${sessionId}/git`;
+  await page.route(handoffReadUrl, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(handoffSnapshot),
+  }));
+  await page.waitForFunction(() => {
+    const button = document.querySelector('[data-testid="git-conflict-resolve-with-ai"]');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  });
   const composer = page.locator(`textarea[data-session-input="${sessionId}"]`);
   await page.waitForFunction(
     (targetSessionId) => document.querySelector(`textarea[data-session-input="${targetSessionId}"]`)?.value.includes('Operation: merge'),
     sessionId,
   );
+  await page.unroute(handoffReadUrl);
   const request = await composer.inputValue();
   assert.match(request, /Operation: merge/);
   assert.match(request, /"conflict\.txt"/);
@@ -167,6 +180,10 @@ try {
     sequencerBeforeHandoff,
   );
   await fs.mkdir(artifactDir, { recursive: true });
+  await composer.evaluate((element) => {
+    element.setSelectionRange(0, 0);
+    element.scrollTop = 0;
+  });
   await page.screenshot({ path: artifact });
 
   const panel = page.getByTestId('git-panel');
