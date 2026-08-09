@@ -23,7 +23,7 @@ import { useSessionResume } from '@/hooks/use-session-resume';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSkillPicker, type SkillInfo } from '@/hooks/use-skill-picker';
 import { SkillPicker } from '@/components/chat/skill-picker';
-import { useFilePicker } from '@/hooks/use-file-picker';
+import { useReferencePicker } from '@/hooks/use-file-picker';
 import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
@@ -289,7 +289,7 @@ export function MessageInput({
     serverPlatform,
     agentEnvironment,
   );
-  const filePicker = useFilePicker(sessionId);
+  const filePicker = useReferencePicker(sessionId, session?.projectDir ?? projectViewDir);
   const getInputValue = useCallback(() => inputValue, [inputValue]);
   const sessionRefs = useSessionRefs({
     textareaRef,
@@ -1192,7 +1192,6 @@ export function MessageInput({
     if (shouldResumeSession && session && 'projectDir' in session) {
       void resumeAndSend(
         sessionId,
-        session.projectDir,
         sendContent,
         skillName,
         displayContent,

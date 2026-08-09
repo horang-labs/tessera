@@ -39,6 +39,7 @@ import {
   PARENT_FIRST_WORKTREE_PATH_SQL,
 } from './worktree-identity';
 import logger from '../logger';
+import { backfillCanonicalProjectViewMembership } from '@/lib/projects/project-view-membership';
 
 // ── better-sqlite3 compatible wrapper ───────────────────────────────────────
 
@@ -233,6 +234,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   ensureWorktreeIdentityColumns(db);
   ensureCanonicalWorktreeRegistry(db);
   ensureWorktreeCreationScopeColumns(db);
+  backfillCanonicalProjectViewMembership(db);
 }
 
 /**
@@ -1061,6 +1063,13 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
   if (fromVersion < 37) {
     ensureWorktreeCreationScopeColumns(db);
     logger.info('Migration v37 applied: canonical Worktree identity reconciliation');
+  }
+
+  if (fromVersion < 38) {
+    ensureCanonicalWorktreeRegistry(db);
+    ensureWorktreeCreationScopeColumns(db);
+    backfillCanonicalProjectViewMembership(db);
+    logger.info('Migration v38 applied: canonical Project View membership');
   }
 }
 

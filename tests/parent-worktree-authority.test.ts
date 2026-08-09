@@ -170,7 +170,7 @@ test('PR observation uses parent paths for zero-session Worktrees and legacy fal
   assert.equal(tasks.getTaskPrSyncContext('pr-legacy-task')?.workDir, legacyPath);
 });
 
-test('creating or attaching a child Session copies the parent checkout compatibility fields', async () => {
+test('creating a child Session copies the parent checkout compatibility fields', async () => {
   const { sessions, tasks } = await modules();
   const parentPath = path.join(dataDir, 'child-parent-owned ');
 
@@ -190,23 +190,6 @@ test('creating or attaching a child Session copies the parent checkout compatibi
       workDir: sessions.getSession('created-child')?.work_dir,
       branch: sessions.getSession('created-child')?.worktree_branch,
       managed: sessions.getSession('created-child')?.worktree_managed,
-    },
-    {
-      workDir: parentPath,
-      branch: 'feature/child-parent',
-      managed: 1,
-    },
-  );
-
-  sessions.createSession('attached-child', dataDir, 'Attached child', 'claude-code', {
-    workDir: path.join(dataDir, 'standalone-path'),
-  });
-  tasks.addSessionToTask('child-parent', 'attached-child');
-  assert.deepEqual(
-    {
-      workDir: sessions.getSession('attached-child')?.work_dir,
-      branch: sessions.getSession('attached-child')?.worktree_branch,
-      managed: sessions.getSession('attached-child')?.worktree_managed,
     },
     {
       workDir: parentPath,

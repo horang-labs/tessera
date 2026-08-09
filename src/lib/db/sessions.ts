@@ -10,6 +10,8 @@ import {
   PARENT_FIRST_WORKTREE_PATH_SQL,
   resolveEffectiveWorktreeCheckout,
 } from './worktree-identity';
+import type { ProjectViewMembership } from '@/lib/projects/project-view-membership';
+import { getWorktree, resolveCanonicalWorktree } from './worktrees';
 
 export interface SessionRow {
   id: string;
@@ -51,17 +53,12 @@ interface SessionCursor {
   sessionId: string;
 }
 
-export interface ProjectViewSessionScope {
-  worktreeId: string;
-  currentBranch: string | null;
-}
-
 export function hasActiveSessionScope(worktreeId: string, branch: string): boolean {
   const row = getDb().prepare(`
     SELECT 1
     FROM sessions s
     LEFT JOIN tasks t ON t.id = s.task_id
-    WHERE COALESCE(s.worktree_id, t.public_worktree_id) = ?
+    WHERE s.worktree_id = ?
       AND s.scope_branch = ?
       AND ${ACTIVE_SESSION_SCOPE_SQL}
     LIMIT 1
@@ -230,7 +227,7 @@ export function createSession(
     worktreeBranch?: string;
     worktreeManaged?: boolean;
     worktreeId?: string;
-    scopeBranch?: string;
+    scopeBranch?: string | null;
     taskId?: string;
     collectionId?: string;
     model?: string;
@@ -245,23 +242,46 @@ export function createSession(
     ? db.prepare(`
         SELECT
           ${PARENT_FIRST_WORKTREE_PATH_SQL} AS worktree_path,
-          tasks.worktree_branch AS worktree_branch
+          tasks.worktree_branch AS worktree_branch,
+          tasks.public_worktree_id AS public_worktree_id
         FROM tasks
         WHERE tasks.id = ?
       `).get(options.taskId) as {
         worktree_path: string | null;
         worktree_branch: string | null;
+        public_worktree_id: string;
       } | undefined
     : undefined;
   const effectiveCheckout = resolveEffectiveWorktreeCheckout(checkoutRow);
   const resolvedWorkDir = effectiveCheckout.path ?? options.workDir;
   const resolvedWorktreeBranch = effectiveCheckout.branch ?? options.worktreeBranch;
   const resolvedWorktreeManaged = effectiveCheckout.path ? true : options.worktreeManaged;
-  // Keep newest sessions at the top of the project-local ordering.
-  db.prepare(`
-    UPDATE sessions SET sort_order = sort_order + 1
-    WHERE project_id = ? AND deleted = 0
-  `).run(projectId);
+  const resolvedWorktreeId = checkoutRow?.public_worktree_id
+    ?? options.worktreeId
+    ?? (resolvedWorkDir ? resolveCanonicalWorktree(resolvedWorkDir)?.id : undefined);
+  const resolvedScopeBranch = options.scopeBranch !== undefined
+    ? options.scopeBranch
+    : resolvedWorktreeId
+      ? getWorktree(resolvedWorktreeId)?.currentBranch ?? resolvedWorktreeBranch ?? null
+      : null;
+  // Keep newest Sessions at the top of the canonical Worktree/branch view.
+  // Plain non-Git Projects retain their established Project-local ordering.
+  if (resolvedWorktreeId) {
+    db.prepare(`
+      UPDATE sessions SET sort_order = sort_order + 1
+      WHERE worktree_id = ?
+        AND (
+          scope_branch IS NULL
+          OR (? IS NOT NULL AND scope_branch = ?)
+        )
+        AND deleted = 0
+    `).run(resolvedWorktreeId, resolvedScopeBranch, resolvedScopeBranch);
+  } else {
+    db.prepare(`
+      UPDATE sessions SET sort_order = sort_order + 1
+      WHERE project_id = ? AND deleted = 0
+    `).run(projectId);
+  }
   db.prepare(`
     INSERT INTO sessions (
       id, project_id, title, provider, provider_state, model, reasoning_effort, service_tier, work_dir, worktree_branch, worktree_managed,
@@ -281,8 +301,8 @@ export function createSession(
     resolvedWorkDir ?? null,
     resolvedWorktreeBranch ?? null,
     resolvedWorktreeManaged ? 1 : 0,
-    options.worktreeId ?? null,
-    options.scopeBranch ?? null,
+    resolvedWorktreeId ?? null,
+    resolvedScopeBranch,
     options.taskId ?? null,
     options.collectionId ?? null,
     now,
@@ -428,7 +448,7 @@ export function softDeleteSession(id: string): void {
  */
 export function updateSession(
   id: string,
-  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'model' | 'reasoning_effort' | 'service_tier' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'project_id' | 'task_id' | 'chat_workflow_status' | 'collection_id'>>,
+  patch: Partial<Pick<SessionRow, 'title' | 'has_custom_title' | 'model' | 'reasoning_effort' | 'service_tier' | 'work_dir' | 'worktree_branch' | 'worktree_managed' | 'archived' | 'archived_at' | 'worktree_deleted_at' | 'provider_state' | 'task_id' | 'chat_workflow_status' | 'collection_id'>>,
   options?: { skipTimestamp?: boolean }
 ): void {
   const db = getDb();
@@ -447,7 +467,6 @@ export function updateSession(
   if (patch.archived_at !== undefined) { sets.push('archived_at = ?'); values.push(patch.archived_at); }
   if (patch.worktree_deleted_at !== undefined) { sets.push('worktree_deleted_at = ?'); values.push(patch.worktree_deleted_at); }
   if (patch.provider_state !== undefined) { sets.push('provider_state = ?'); values.push(patch.provider_state); }
-  if (patch.project_id !== undefined) { sets.push('project_id = ?'); values.push(patch.project_id); }
   if (patch.task_id !== undefined) { sets.push('task_id = ?'); values.push(patch.task_id); }
   if (patch.chat_workflow_status !== undefined) { sets.push('chat_workflow_status = ?'); values.push(patch.chat_workflow_status); }
   if (patch.collection_id !== undefined) { sets.push('collection_id = ?'); values.push(patch.collection_id); }
@@ -552,8 +571,8 @@ export function getArchivedChatSessions(
   `).all(...params) as SessionRow[];
 }
 
-/** Sessions a project currently shows, used to number a new placeholder title. */
-export function countActiveSessionsInProject(projectId: string): number {
+/** Origin-Project representatives used only to number a new placeholder title. */
+export function countActiveSessionsInOriginProject(projectId: string): number {
   const row = getDb().prepare(`
     SELECT COUNT(*) as cnt
     FROM sessions s
@@ -576,23 +595,21 @@ export function countArchivedChatSessions(projectId?: string, query?: string): n
 }
 
 function projectViewWhere(
-  projectId: string,
-  scope?: ProjectViewSessionScope,
+  membership: ProjectViewMembership,
 ): { sql: string; params: unknown[] } {
-  if (!scope) return { sql: 's.project_id = ?', params: [projectId] };
+  if (membership.kind === 'non-git-project') {
+    return { sql: 's.project_id = ?', params: [membership.projectId] };
+  }
 
   return {
     sql: `(
-      (
-        COALESCE(s.worktree_id, t.public_worktree_id) = ?
-        AND (
-          s.scope_branch IS NULL
-          OR (? IS NOT NULL AND s.scope_branch = ?)
-        )
+      s.worktree_id = ?
+      AND (
+        s.scope_branch IS NULL
+        OR (? IS NOT NULL AND s.scope_branch = ?)
       )
-      OR (s.task_id IS NULL AND s.worktree_id IS NULL AND s.project_id = ?)
     )`,
-    params: [scope.worktreeId, scope.currentBranch, scope.currentBranch, projectId],
+    params: [membership.worktreeId, membership.currentBranch, membership.currentBranch],
   };
 }
 
@@ -604,13 +621,13 @@ export function setSessionWorktreeDeletedAt(id: string, deletedAt: string): void
  * Get sessions for a project with cursor-based pagination.
  * Cursor records the project-local order plus stable cross-project tie-breakers.
  */
-export function getSessionsByProject(
-  projectId: string,
-  options: { limit?: number; cursor?: string; viewScope?: ProjectViewSessionScope } = {}
+export function getSessionsForProjectView(
+  membership: ProjectViewMembership,
+  options: { limit?: number; cursor?: string } = {}
 ): SessionQueryResult {
   const db = getDb();
   const limit = options.limit ?? 20;
-  const where = projectViewWhere(projectId, options.viewScope);
+  const where = projectViewWhere(membership);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt
@@ -651,9 +668,9 @@ export function getSessionsByProject(
 /**
  * Get sessions for a project grouped by sidebar bucket, with per-status limit.
  */
-export function getSessionsByProjectGrouped(
-  projectId: string,
-  options: { limitPerStatus?: number; viewScope?: ProjectViewSessionScope } = {}
+export function getSessionsForProjectViewGrouped(
+  membership: ProjectViewMembership,
+  options: { limitPerStatus?: number } = {}
 ): {
   sessions: SessionRow[];
   totalCount: number;
@@ -663,7 +680,7 @@ export function getSessionsByProjectGrouped(
 } {
   const db = getDb();
   const limitPerStatus = options.limitPerStatus ?? 20;
-  const where = projectViewWhere(projectId, options.viewScope);
+  const where = projectViewWhere(membership);
 
   // Get counts per status (exclude archived and soft-deleted)
   const statusCounts = db.prepare(`
@@ -737,14 +754,14 @@ export function getSessionsByProjectGrouped(
 /**
  * Get sessions for a project filtered by sidebar bucket with cursor pagination.
  */
-export function getSessionsByStatus(
-  projectId: string,
+export function getSessionsForProjectViewByStatus(
+  membership: ProjectViewMembership,
   statusGroup: string,
-  options: { limit?: number; cursor?: string; viewScope?: ProjectViewSessionScope } = {}
+  options: { limit?: number; cursor?: string } = {}
 ): { sessions: SessionRow[]; totalCount: number; nextCursor: string | null } {
   const db = getDb();
   const limit = options.limit ?? 20;
-  const where = projectViewWhere(projectId, options.viewScope);
+  const where = projectViewWhere(membership);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt
@@ -950,21 +967,8 @@ export function touchSession(id: string, touchedAt = new Date().toISOString()): 
 }
 
 /**
- * Reorder sessions within a project.
- * @param projectId - project ID
- * @param orderedIds - session IDs in the desired display order
- */
-export function reorderSessions(projectId: string, orderedIds: string[]): void {
-  const db = getDb();
-  const stmt = db.prepare('UPDATE sessions SET sort_order = ? WHERE id = ? AND project_id = ?');
-  const runAll = db.transaction(() => {
-    orderedIds.forEach((id, idx) => stmt.run(idx, id, projectId));
-  });
-  runAll();
-}
-
-/**
- * Reorder sessions by ID only (no project scoping).
+ * Reorder canonical Sessions by identity. Project Views only choose which IDs
+ * are presented; they never own the persisted ordering target.
  */
 export function reorderSessionsByIds(orderedIds: string[]): void {
   const db = getDb();

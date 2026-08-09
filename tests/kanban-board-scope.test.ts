@@ -17,6 +17,7 @@ function session(id: string, projectDir: string): UnifiedSession {
     id,
     title: id,
     projectDir,
+    originProjectId: projectDir,
     isRunning: false,
     status: 'completed',
     lastModified: '2026-07-14T00:00:00.000Z',
@@ -45,6 +46,7 @@ function task(id: string, projectId: string): TaskEntity {
   return {
     id,
     projectId,
+    projectViewId: projectId,
     title: id,
     workflowStatus: 'todo',
     sortOrder: 0,

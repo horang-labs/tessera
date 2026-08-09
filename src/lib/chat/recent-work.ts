@@ -79,6 +79,7 @@ function taskToRecentItem(project: ProjectGroup, task: TaskEntity): RecentWorkIt
     id: recentSession.id,
     title: recentSession.title,
     projectDir: project.encodedDir,
+    originProjectId: recentSession.originProjectId,
     isRunning: recentSession.isRunning,
     status: recentSession.isRunning ? 'running' : 'completed',
     lastModified: recentSession.lastModified,
@@ -138,6 +139,7 @@ function fallbackTaskItemsFromSessions(
     const taskSessions: TaskSession[] = sortedSessions.map((session) => ({
       id: session.id,
       title: session.title,
+      originProjectId: session.originProjectId,
       provider: session.provider,
       lastModified: session.lastModified,
       isRunning: session.isRunning,
@@ -147,6 +149,7 @@ function fallbackTaskItemsFromSessions(
     const task: TaskEntity = {
       id: taskId,
       projectId: project.encodedDir,
+      projectViewId: project.encodedDir,
       title: recentSession.title,
       collectionId: recentSession.collectionId,
       workflowStatus: recentSession.workflowStatus ?? 'todo',

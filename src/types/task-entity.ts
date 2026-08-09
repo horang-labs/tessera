@@ -40,7 +40,10 @@ export interface TaskEntity {
   id: string;              // 'task_<uuid>'
   /** Stable identity of the linked Worktree represented by this task. */
   worktreeId?: string;
+  /** Stable representative origin Project; Project View membership comes from creationScope. */
   projectId: string;
+  /** Project View currently projecting this Worktree; never persisted as ownership. */
+  projectViewId: string;
   title: string;
   collectionId?: string;   // FK -> collections.id
   workflowStatus: WorkflowStatus;
@@ -49,7 +52,8 @@ export interface TaskEntity {
   /** Immutable Project-view placement captured when the Worktree was created. */
   creationScope?: {
     originWorktreeId: string;
-    branch: string;
+    /** Null keeps pre-scope Worktrees visible on every branch. */
+    branch: string | null;
   };
   /** Git provenance only; never used to decide Project-view placement. */
   startPoint?: string;
@@ -90,7 +94,7 @@ export interface TaskEntity {
 export interface TaskSession {
   id: string;
   /** Stable representative Project, independent of the Project currently showing it. */
-  originProjectId?: string;
+  originProjectId: string;
   title: string;
   provider?: string;
   lastModified: string;

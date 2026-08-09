@@ -152,7 +152,22 @@ test('Project View projects branch-scoped immediate Worktrees independently from
     title: 'Legacy Worktree',
     worktreeBranch: 'legacy-worktree',
     worktreePath: path.join(testRoot, 'legacy'),
+    creationScope: { originWorktreeId: rootA.id, branch: null },
   });
+  const now = new Date().toISOString();
+  database.getDb().prepare(`
+    INSERT INTO tasks (
+      id, public_worktree_id, project_id, title, workflow_status,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'todo', ?, ?)
+  `).run(
+    'ownership-only-task',
+    'wt_ownership_only',
+    'project-a',
+    'Obsolete ownership',
+    now,
+    now,
+  );
 
   const projectA = projection.getProjectViewProjection('project-a');
   assert.deepEqual(projectA.linkedWorktrees.map((item) => item.title), [
@@ -160,6 +175,10 @@ test('Project View projects branch-scoped immediate Worktrees independently from
     'Existing branch',
     'Linked C',
   ]);
+  assert.deepEqual(
+    projectA.linkedWorktrees.find((item) => item.title === 'Legacy Worktree')?.creationScope,
+    { originWorktreeId: rootA.id, branch: null },
+  );
   const projectedC = projectA.linkedWorktrees.find((item) => item.title === 'Linked C');
   assert.deepEqual(projectedC?.creationScope, { originWorktreeId: rootA.id, branch: 'main' });
   assert.equal(projectedC?.startPoint, 'start-elsewhere');

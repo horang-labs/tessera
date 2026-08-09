@@ -73,8 +73,8 @@ export function useSessionCrud() {
         const taskStore = useTaskStore.getState();
         const task = taskStore.getTaskBySessionId(sessionId);
         if (task) {
-          taskStore.loadTasks(task.projectId, {
-            setCurrent: taskStore.currentProjectId === task.projectId,
+          taskStore.loadTasks(task.projectViewId, {
+            setCurrent: taskStore.currentProjectId === task.projectViewId,
           });
         }
       });
@@ -112,10 +112,12 @@ export function useSessionCrud() {
       // 미지정이면 글로벌 기본.
       const effectiveExecutionMode = options.executionMode
         ?? useSettingsStore.getState().settings.agentExecutionMode;
+      const originProjectId = options.parentProjectId || options.workDir || process.cwd();
       const optimisticSession: UnifiedSession = {
         id: tempSessionId,
         title: t('panel.creating'),
-        projectDir: options.parentProjectId || options.workDir || process.cwd(),
+        projectDir: originProjectId,
+        originProjectId,
         workDir: options.workDir,
         isRunning: false,
         hasStarted: false,
@@ -202,6 +204,7 @@ export function useSessionCrud() {
           id: result.sessionId,
           title: result.title,
           projectDir: projectDir,
+          originProjectId: projectDir,
           workDir: options.workDir || result.projectDir,
           isRunning: false,
           hasStarted: false,
@@ -355,6 +358,7 @@ export function useSessionCrud() {
           id: result.sessionId,
           title: result.title,
           projectDir: result.projectDir,
+          originProjectId: result.projectDir,
           workDir: result.workDir,
           isRunning: false,
           hasStarted: true,

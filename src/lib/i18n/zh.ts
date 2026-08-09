@@ -1453,17 +1453,7 @@ export const zh: I18nMessages = {
       rename: '重命名',
       delete: '删除',
       openInNewTab: '在新标签页中打开',
-      moveToProject: '移动到项目',
-      cannotMoveRunning: '停止会话后才能移动',
       generateTitle: '生成 AI 标题',
-    },
-    moveDialog: {
-      title: '移动到项目',
-      subtitle: '选择要移动到的项目',
-      currentProject: '当前',
-      noOtherProjects: '没有其他可用项目',
-      move: '移动',
-      movedFrom: '从 {{project}} 移动',
     },
     prMismatch: {
       reviewMissing: '状态为审查中但没有关联 PR — 请创建 PR 或将卡片移回',

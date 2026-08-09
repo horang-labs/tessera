@@ -46,7 +46,7 @@ function createRepository(name = 'repository'): string {
 }
 
 test('Project View Projection scopes direct Sessions without destroying hidden history', async () => {
-  const { persistence, projects, projection, sessions } = await modules();
+  const { database, persistence, projects, projection, sessions } = await modules();
   const repository = createRepository();
   projects.registerProject('project-view', repository, 'Project View');
   const projectWorktree = projects.getProjectWorktree('project-view');
@@ -63,7 +63,23 @@ test('Project View Projection scopes direct Sessions without destroying hidden h
   });
   sessions.createSession('legacy-session', 'project-view', 'Legacy conversation', 'codex', {
     workDir: repository,
+    worktreeId: projectWorktree.id,
+    scopeBranch: null,
   });
+  const now = new Date().toISOString();
+  database.getDb().prepare(`
+    INSERT INTO sessions (
+      id, project_id, title, provider, work_dir, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'ownership-only-session',
+    'project-view',
+    'Obsolete ownership',
+    'codex',
+    repository,
+    now,
+    now,
+  );
 
   const storedMain = sessions.getSession('main-session');
   assert.equal(storedMain?.worktree_id, projectWorktree.id);
@@ -95,13 +111,13 @@ test('Project View Projection scopes direct Sessions without destroying hidden h
   });
   assert.deepEqual(
     projection.getProjectViewProjection('project-view').sessions.map((session) => session.id).sort(),
-    ['feature-session', 'legacy-session'],
+    ['feature-session', 'legacy-session', 'ownership-only-session'],
   );
 
   execFileSync('git', ['checkout', 'main'], { cwd: repository, stdio: 'ignore' });
   assert.deepEqual(
     projection.getProjectViewProjection('project-view').sessions.map((session) => session.id).sort(),
-    ['legacy-session', 'main-session'],
+    ['legacy-session', 'main-session', 'ownership-only-session'],
   );
   assert.equal(sessions.getSession('feature-session')?.scope_branch, 'feature/session-scope');
 });

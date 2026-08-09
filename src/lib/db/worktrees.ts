@@ -178,13 +178,32 @@ export async function routeCanonicalWorktreePaths(
       `).run(identity.filesystemPath, row.id, reportedPath);
       db.prepare(`
         UPDATE sessions SET work_dir = ?
-        WHERE work_dir = ? AND (
-          worktree_id = ?
-          OR task_id IN (SELECT id FROM tasks WHERE public_worktree_id = ?)
-        )
-      `).run(identity.filesystemPath, reportedPath, row.id, row.id);
+        WHERE work_dir = ? AND worktree_id = ?
+      `).run(identity.filesystemPath, reportedPath, row.id);
     })();
     routedCount += 1;
+  }
+
+  const legacySessions = db.prepare(`
+    SELECT id, work_dir
+    FROM sessions
+    WHERE worktree_id IS NULL
+      AND task_id IS NULL
+      AND work_dir IS NOT NULL
+      AND TRIM(work_dir) <> ''
+    ORDER BY created_at, id
+  `).all() as Array<{ id: string; work_dir: string }>;
+  for (const session of legacySessions) {
+    const routedPath = await resolveAgentPath(session.work_dir, environment);
+    const canonical = resolveCanonicalWorktree(routedPath, undefined, {
+      equivalentFilesystemPaths: [session.work_dir],
+    });
+    if (!canonical?.filesystemPath) continue;
+    db.prepare(`
+      UPDATE sessions
+      SET worktree_id = ?, work_dir = ?
+      WHERE id = ? AND worktree_id IS NULL
+    `).run(canonical.id, canonical.filesystemPath, session.id);
   }
 
   return routedCount;
@@ -204,9 +223,8 @@ export function getSessionIdsForWorktree(worktreeId: string): string[] {
   const rows = getDb().prepare(`
     SELECT s.id
     FROM sessions s
-    LEFT JOIN tasks t ON t.id = s.task_id
     WHERE s.deleted = 0
-      AND COALESCE(s.worktree_id, t.public_worktree_id) = ?
+      AND s.worktree_id = ?
     ORDER BY s.id
   `).all(worktreeId) as Array<{ id: string }>;
   return rows.map((row) => row.id);
@@ -234,11 +252,8 @@ export function markWorktreeDeleted(worktreeId: string, deletedAt: string): void
     db.prepare(`
       UPDATE sessions
       SET worktree_deleted_at = ?, updated_at = ?
-      WHERE deleted = 0 AND (
-        worktree_id = ?
-        OR task_id IN (SELECT id FROM tasks WHERE public_worktree_id = ?)
-      )
-    `).run(deletedAt, deletedAt, worktreeId, worktreeId);
+      WHERE deleted = 0 AND worktree_id = ?
+    `).run(deletedAt, deletedAt, worktreeId);
   })();
 }
 

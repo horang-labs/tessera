@@ -50,6 +50,7 @@ function task(id: string, projectId: string, sessions: TaskEntity['sessions'] = 
   return {
     id,
     projectId,
+    projectViewId: projectId,
     title: id,
     workflowStatus: 'todo',
     sortOrder: 0,

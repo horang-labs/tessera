@@ -6,6 +6,7 @@ import { normalizePreparationScript } from '@/lib/projects/preparation-script-po
 import type { PreparationPhase } from '@/lib/projects/preparation-status-policy';
 import { getDb } from './database';
 import { getWorktree, resolveCanonicalWorktree, type CanonicalWorktree } from './worktrees';
+import { backfillCanonicalProjectViewMembership } from '@/lib/projects/project-view-membership';
 
 export interface ProjectRow {
   id: string;
@@ -64,6 +65,7 @@ export function registerProject(
     now,
     now,
   );
+  backfillCanonicalProjectViewMembership(db, id);
 }
 
 export function getProjectWorktree(projectId: string): CanonicalWorktree | undefined {

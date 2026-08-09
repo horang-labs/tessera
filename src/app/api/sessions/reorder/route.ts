@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { reorderSessions, reorderSessionsByIds } from '@/lib/db/sessions';
+import { reorderSessionsByIds } from '@/lib/db/sessions';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 
 /**
  * PATCH /api/sessions/reorder
- * Body variants:
- *   1. { projectId, orderedIds } — project-scoped reorder
- *   2. { orderedIds }            — ID-only reorder
+ * Body: { orderedIds }. Project View placement is not Session ownership.
  */
 export async function PATCH(req: NextRequest) {
   const auth = await requireAuthenticatedUserId(req);
@@ -18,23 +16,17 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { projectId, orderedIds } = body;
+    const { orderedIds } = body;
 
     if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
       return NextResponse.json({ error: 'orderedIds must be a non-empty array' }, { status: 400 });
     }
 
-    if (projectId) {
-      reorderSessions(projectId, orderedIds);
-      logger.info({ projectId, count: orderedIds.length }, 'Sessions reordered');
-    } else {
-      reorderSessionsByIds(orderedIds);
-      logger.info({ count: orderedIds.length }, 'Sessions reordered by IDs');
-    }
+    reorderSessionsByIds(orderedIds);
+    logger.info({ count: orderedIds.length }, 'Sessions reordered by canonical IDs');
 
     broadcastSessionMutation(auth.userId, {
       kind: 'reordered',
-      projectId: typeof projectId === 'string' ? projectId : undefined,
       originClientId: getOriginClientIdFromRequest(req),
     });
 

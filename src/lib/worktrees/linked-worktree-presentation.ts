@@ -36,7 +36,8 @@ export function toLinkedWorktreeSession(
   const projection: UnifiedSession = {
     id: session.id,
     title: session.title,
-    projectDir: task.projectId,
+    projectDir: task.projectViewId,
+    originProjectId: session.originProjectId,
     isRunning: session.isRunning,
     status: session.isRunning ? 'running' : session.kind === 'terminal' ? 'stopped' : 'completed',
     lastModified: session.lastModified,

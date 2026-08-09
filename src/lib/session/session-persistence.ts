@@ -54,14 +54,6 @@ export function persistCreatedSessionRecord(
 
   dbProjects.registerProject(project.projectId, project.decodedPath, project.displayName);
 
-  // Direct Sessions belong to the Project's canonical Worktree. The branch is
-  // captured here, at the persistence boundary, so clients cannot turn the
-  // presentation scope into mutable execution input. Task-owned Sessions keep
-  // their existing Worktree lifecycle until that projection migrates.
-  const directSessionWorktree = options.taskId
-    ? undefined
-    : dbProjects.getProjectWorktree(project.projectId);
-
   dbSessions.createSession(
     options.sessionId,
     project.projectId,
@@ -71,8 +63,6 @@ export function persistCreatedSessionRecord(
       workDir: options.resolvedWorkDir,
       worktreeBranch: options.worktreeBranch,
       worktreeManaged: options.worktreeManaged,
-      worktreeId: directSessionWorktree?.id,
-      scopeBranch: directSessionWorktree?.currentBranch ?? undefined,
       taskId: options.taskId,
       collectionId: options.collectionId,
       model: options.model,

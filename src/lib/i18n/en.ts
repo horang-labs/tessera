@@ -1456,17 +1456,7 @@ export const en: I18nMessages = {
       rename: 'Rename',
       delete: 'Delete',
       openInNewTab: 'Open in New Tab',
-      moveToProject: 'Move to Project',
-      cannotMoveRunning: 'Stop session before moving',
       generateTitle: 'Generate AI title',
-    },
-    moveDialog: {
-      title: 'Move to Project',
-      subtitle: 'Select a project to move this session to',
-      currentProject: 'Current',
-      noOtherProjects: 'No other projects available',
-      move: 'Move',
-      movedFrom: 'Moved from {{project}}',
     },
     prMismatch: {
       reviewMissing: 'Review status but no linked PR — open a PR or move the card back',

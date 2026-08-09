@@ -103,7 +103,6 @@ export interface SessionState {
   updateSessionCollection: (sessionId: string, collectionId: string | null) => void;
   syncTaskCollectionId: (taskId: string, collectionId: string | null) => void;
   replaceCollectionId: (fromCollectionId: string, toCollectionId: string | null) => void;
-  setTaskIdForSessions: (sessionIds: string[], taskId: string | null) => void;
   toggleArchive: (sessionId: string, archived: boolean) => void;
 
   // Task selectors
@@ -145,14 +144,14 @@ export interface SessionState {
 
 function mapApiSessionToUnified(
   s: any,
-  fallbackProjectDir: string,
+  viewProjectId: string,
   runtimeLiveness?: SessionRuntimeLiveness,
 ): UnifiedSession {
   const session: UnifiedSession = {
     id: s.id,
     title: s.title,
-    projectDir: s.projectDir ?? fallbackProjectDir,
-    originProjectId: s.originProjectId ?? s.projectDir ?? fallbackProjectDir,
+    projectDir: viewProjectId,
+    originProjectId: s.originProjectId,
     isRunning: s.isRunning,
     status: s.status as SessionStatus,
     lastModified: s.lastModified,
@@ -672,13 +671,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   addSession: (session: UnifiedSession, options) => {
     let activatedProjectDir: string | null = null;
     set((state) => {
-      // Normalize projectDir — handle undefined from WebSocket messages missing workDir
-      const projectDir = session.projectDir || 'unknown';
+      const { projectDir } = session;
       // Apply defensive defaults for task metadata fields
       session = {
         ...session,
         projectDir,
-        originProjectId: session.originProjectId ?? projectDir,
         archived: session.archived ?? false,
         hasStarted: session.hasStarted ?? session.isRunning ?? false,
         sortOrder: session.sortOrder ?? 0,
@@ -781,11 +778,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   upsertSession: (session) =>
     set((state) => {
-      const projectDir = session.projectDir || 'unknown';
+      const { projectDir } = session;
       const normalizedSession: UnifiedSession = {
         ...session,
         projectDir,
-        originProjectId: session.originProjectId ?? projectDir,
         archived: session.archived ?? false,
         isReadOnly: session.isReadOnly ?? session.archived ?? false,
         hasStarted: session.hasStarted ?? session.isRunning ?? false,
@@ -1372,28 +1368,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }));
   },
 
-  setTaskIdForSessions: (sessionIds, taskId) => {
-    if (sessionIds.length === 0) return;
-
-    const targetIds = new Set(sessionIds);
-    set((state) => ({
-      projects: state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((session) =>
-          targetIds.has(session.id)
-            ? { ...session, taskId: taskId ?? undefined }
-            : session
-        ),
-      })),
-      retainedSessions: mapRetainedSessions(
-        state.retainedSessions,
-        (session) => targetIds.has(session.id)
-          ? { ...session, taskId: taskId ?? undefined }
-          : session,
-      ),
-    }));
-  },
-
   toggleArchive: (sessionId, archived) => {
     const session = get().getSession(sessionId);
     const archivedAt = archived ? new Date().toISOString() : undefined;
@@ -1551,7 +1525,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     fetchWithClientId('/api/sessions/reorder', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: projectDir, orderedIds }),
+      body: JSON.stringify({ orderedIds }),
     }).catch(() => {
       get().loadProjects();
     });

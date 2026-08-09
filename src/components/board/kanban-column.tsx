@@ -627,7 +627,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
 
       if (task && task.workflowStatus === status && indicator) {
         const orderedIds = tasks
-          .filter((item) => item.projectId === task.projectId)
+          .filter((item) => item.projectViewId === task.projectViewId)
           .slice()
           .sort((a, b) => a.sortOrder - b.sortOrder)
           .map((item) => item.id);
@@ -637,7 +637,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         if (targetIdx !== -1) {
           const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
           filtered.splice(insertIdx, 0, taskId);
-          taskStore.reorderTasks(filtered, task.projectId);
+          taskStore.reorderTasks(filtered, task.projectViewId);
           boardStore.flashDrop(taskId);
         }
       } else if (task && task.workflowStatus !== status) {

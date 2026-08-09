@@ -46,7 +46,7 @@ import {
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { buildTaskChildSession } from '@/lib/session/task-child-session';
 
-async function addSessionToTask(
+async function createSessionInTask(
   task: TaskEntity,
   requestedProviderId?: string,
   requestedExecutionMode?: AgentExecutionMode,
@@ -97,7 +97,7 @@ async function addSessionToTask(
     );
     useTabStore.getState().syncTabProjectFromSession(latestPanelState.activeTabId, newSessionId);
 
-    await useTaskStore.getState().loadTasks(task.projectId);
+    await useTaskStore.getState().loadTasks(task.projectViewId);
     await useSessionStore.getState().loadProjects();
 
     void captureTelemetryEvent('session_created', {
@@ -462,7 +462,7 @@ export const CollectionGroup = memo(function CollectionGroup({
       renamingSessionId={renamingItem?.type === 'chat' ? renamingItem.id : null}
       isRenameRequested={renamingItem?.type === 'task' && renamingItem.id === task.id}
       onRenameComplete={finishItemRename}
-      onAddSession={(providerId, executionMode) => addSessionToTask(task, providerId, executionMode)}
+      onAddSession={(providerId, executionMode) => createSessionInTask(task, providerId, executionMode)}
       onStopProcess={onSessionStopProcess}
       disableDnd={disableDnd}
       allowPanelSessionDnd={allowPanelSessionDnd}

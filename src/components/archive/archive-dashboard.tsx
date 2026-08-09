@@ -85,6 +85,7 @@ function primarySessionFromItem(item: ArchiveItem): UnifiedSession | null {
     id: session.id,
     title: session.title,
     projectDir: item.projectId,
+    originProjectId: item.projectId,
     isRunning: session.isRunning,
     status: session.isRunning ? 'running' : 'completed',
     lastModified: session.lastModified,

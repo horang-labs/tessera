@@ -180,10 +180,10 @@ export interface UnifiedSession {
   id: string;
   /** Session title -- custom-title if set, otherwise first user prompt */
   title: string;
-  /** Encoded project directory name */
+  /** Project View placement for this rendered appearance; never canonical Worktree identity. */
   projectDir: string;
   /** Stable representative Project, independent of the Project view showing this Session. */
-  originProjectId?: string;
+  originProjectId: string;
   /** Whether a CLI process is currently running for this session */
   isRunning: boolean;
   /** Session status (only meaningful when isRunning=true) */

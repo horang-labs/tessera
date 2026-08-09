@@ -1453,17 +1453,7 @@ export const ja: I18nMessages = {
       rename: '名前を変更',
       delete: '削除',
       openInNewTab: '新しいタブで開く',
-      moveToProject: 'プロジェクトに移動',
-      cannotMoveRunning: '実行中のセッションは移動できません',
       generateTitle: 'AI タイトルを生成',
-    },
-    moveDialog: {
-      title: 'プロジェクトに移動',
-      subtitle: '移動先のプロジェクトを選択してください',
-      currentProject: '現在',
-      noOtherProjects: '他のプロジェクトがありません',
-      move: '移動',
-      movedFrom: '{{project}}から移動',
     },
     prMismatch: {
       reviewMissing: 'レビュー状態ですが関連 PR がありません — PR を作成するかカードを戻してください',

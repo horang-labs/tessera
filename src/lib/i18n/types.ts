@@ -1435,17 +1435,7 @@ export interface I18nMessages {
       rename: string;
       delete: string;
       openInNewTab: string;
-      moveToProject: string;
-      cannotMoveRunning: string;
       generateTitle: string;
-    };
-    moveDialog: {
-      title: string;
-      subtitle: string;
-      currentProject: string;
-      noOtherProjects: string;
-      move: string;
-      movedFrom: string;
     };
     prMismatch: {
       reviewMissing: string;

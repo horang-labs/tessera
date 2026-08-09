@@ -790,9 +790,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
     handleSessionDoubleClick(session);
   }, [handleSessionDoubleClick, kanbanSessionOpenMode]);
 
-  // ── Add session to existing task (matching list view's addSessionToTask) ──
+  // ── Create a new canonical Session in an existing linked Worktree ──
 
-  const handleAddSessionToTask = useCallback(async (
+  const handleCreateSessionInTask = useCallback(async (
     task: TaskEntity,
     requestedProviderId?: string,
     requestedExecutionMode?: AgentExecutionMode,
@@ -851,7 +851,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
       }
 
       // Refresh task store and session store
-      await useTaskStore.getState().loadTasks(task.projectId);
+      await useTaskStore.getState().loadTasks(task.projectViewId);
       await useSessionStore.getState().loadProjects();
 
       void captureTelemetryEvent('session_created', {
@@ -1022,7 +1022,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
               onChatDragStart={handleChatDragStart}
               onChatDragEnd={handleChatDragEnd}
               onChatDragOver={handleChatSessionDragOver}
-              onAddSession={handleAddSessionToTask}
+              onAddSession={handleCreateSessionInTask}
               onTaskContextMenu={handleTaskContextMenu}
               onTaskRename={handleTaskRename}
               onChatArchive={handleCardArchive}
