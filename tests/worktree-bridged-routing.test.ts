@@ -130,6 +130,9 @@ test('configured routing translates stored CLI paths before navigation and Files
     worktreeId,
     scopeBranch: 'feature/c',
   });
+  sessions.createSession('legacy-reported-session', 'reported-project', 'Legacy Reported', 'codex', {
+    workDir: reportedPath,
+  });
 
   const translate = async (candidate: string) => (
     candidate === reportedPath ? repository : candidate
@@ -140,6 +143,13 @@ test('configured routing translates stored CLI paths before navigation and Files
   assert.equal(routed?.id, worktreeId);
   assert.equal(routed?.filesystemPath, fs.realpathSync.native(repository));
   assert.equal(routed?.currentBranch, 'feature/c');
+  assert.deepEqual(
+    {
+      worktreeId: sessions.getSession('legacy-reported-session')?.worktree_id,
+      workDir: sessions.getSession('legacy-reported-session')?.work_dir,
+    },
+    { worktreeId, workDir: fs.realpathSync.native(repository) },
+  );
 
   const sessionRoot = await sessionRoots.resolveSessionWorkspaceFilesystemRoot(
     'reported-session',

@@ -184,6 +184,28 @@ export async function routeCanonicalWorktreePaths(
     routedCount += 1;
   }
 
+  const legacySessions = db.prepare(`
+    SELECT id, work_dir
+    FROM sessions
+    WHERE worktree_id IS NULL
+      AND task_id IS NULL
+      AND work_dir IS NOT NULL
+      AND TRIM(work_dir) <> ''
+    ORDER BY created_at, id
+  `).all() as Array<{ id: string; work_dir: string }>;
+  for (const session of legacySessions) {
+    const routedPath = await resolveAgentPath(session.work_dir, environment);
+    const canonical = resolveCanonicalWorktree(routedPath, undefined, {
+      equivalentFilesystemPaths: [session.work_dir],
+    });
+    if (!canonical?.filesystemPath) continue;
+    db.prepare(`
+      UPDATE sessions
+      SET worktree_id = ?, work_dir = ?
+      WHERE id = ? AND worktree_id IS NULL
+    `).run(canonical.id, canonical.filesystemPath, session.id);
+  }
+
   return routedCount;
 }
 

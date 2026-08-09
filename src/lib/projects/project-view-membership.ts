@@ -1,5 +1,3 @@
-import { canonicalizeWorktreePath } from '@/lib/db/worktree-identity';
-
 /** The only two membership sources accepted by Project View queries. */
 export type ProjectViewMembership =
   | {
@@ -14,21 +12,7 @@ export type ProjectViewMembership =
     };
 
 interface MembershipDatabase {
-  prepare(sql: string): {
-    run(...params: unknown[]): unknown;
-    all(...params: unknown[]): unknown[];
-  };
-}
-
-interface LegacyStandaloneSession {
-  id: string;
-  work_dir: string;
-}
-
-interface RegisteredWorktreePath {
-  id: string;
-  filesystem_path: string | null;
-  canonical_path_key: string | null;
+  prepare(sql: string): { run(...params: unknown[]): unknown };
 }
 
 function backfillStandaloneSessionsFromCheckoutPath(
@@ -36,42 +20,27 @@ function backfillStandaloneSessionsFromCheckoutPath(
   projectId?: string,
 ): void {
   const projectFilter = projectId ? 'AND project_id = ?' : '';
-  const sessions = db.prepare(`
-    SELECT id, work_dir
-    FROM sessions
+  db.prepare(`
+    UPDATE sessions
+    SET worktree_id = (
+      SELECT w.id
+      FROM worktrees w
+      WHERE w.filesystem_path = sessions.work_dir
+         OR w.canonical_path_key = sessions.work_dir
+      ORDER BY w.created_at, w.id
+      LIMIT 1
+    )
     WHERE worktree_id IS NULL
       AND task_id IS NULL
       AND work_dir IS NOT NULL
       AND TRIM(work_dir) <> ''
       ${projectFilter}
-  `).all(...(projectId ? [projectId] : [])) as LegacyStandaloneSession[];
-  if (sessions.length === 0) return;
-
-  const registered = db.prepare(`
-    SELECT id, filesystem_path, canonical_path_key FROM worktrees
-  `).all() as RegisteredWorktreePath[];
-  const worktreeIdByPathKey = new Map<string, string>();
-  for (const worktree of registered) {
-    if (worktree.canonical_path_key) {
-      worktreeIdByPathKey.set(worktree.canonical_path_key, worktree.id);
-    }
-    if (worktree.filesystem_path) {
-      const identity = canonicalizeWorktreePath(worktree.filesystem_path);
-      if (identity) worktreeIdByPathKey.set(identity.canonicalPathKey, worktree.id);
-    }
-  }
-
-  const update = db.prepare(`
-    UPDATE sessions SET worktree_id = ?
-    WHERE id = ? AND worktree_id IS NULL
-  `);
-  for (const session of sessions) {
-    const identity = canonicalizeWorktreePath(session.work_dir);
-    const worktreeId = identity
-      ? worktreeIdByPathKey.get(identity.canonicalPathKey)
-      : undefined;
-    if (worktreeId) update.run(worktreeId, session.id);
-  }
+      AND EXISTS (
+        SELECT 1 FROM worktrees w
+        WHERE w.filesystem_path = sessions.work_dir
+           OR w.canonical_path_key = sessions.work_dir
+      )
+  `).run(...(projectId ? [projectId] : []));
 }
 
 /**
@@ -96,10 +65,9 @@ export function backfillCanonicalProjectViewMembership(
       )
   `).run(...(projectId ? [projectId] : []));
 
-  // A taskless legacy Session may have been launched in a linked checkout
-  // while retaining the Project from which it was opened. Its checkout path,
-  // when it resolves to an already registered Worktree, is stronger identity
-  // evidence than that representative Project.
+  // Same-spelling rows are safe to repair synchronously. Cross-environment
+  // paths remain null until authenticated canonical routing can translate the
+  // CLI-reported path in the user's configured agent environment.
   backfillStandaloneSessionsFromCheckoutPath(db, projectId);
 
   const standaloneFilter = projectId ? 'AND p.id = ?' : '';
