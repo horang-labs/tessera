@@ -4,10 +4,11 @@ import { startSettingsHarness } from './helpers/settings-dialog-harness.mjs';
 
 const harness = await startSettingsHarness();
 let context;
+let page;
 
 try {
   ({ context } = await harness.openSettingsPage({ viewport: 'desktop', fontScale: 1 }));
-  const page = context.pages()[0];
+  page = context.pages()[0];
   await page.addInitScript(() => {
     window.__mobileAccessStatus = {
       state: 'tailscale-missing',
@@ -21,8 +22,6 @@ try {
       value: {
         isElectron: true,
         platform: 'win32',
-        supportsTailscaleFirewallConfiguration: false,
-        getRemoteAccessAddressCandidates: async () => [],
         getMobileAccessStatus: async () => {
           if (window.__mobileAccessStatus.state === 'authorization-required') {
             window.__mobileAccessPolls += 1;
@@ -63,13 +62,20 @@ try {
   });
 
   await page.reload({ waitUntil: 'load' });
+  await page.addStyleTag({
+    content: 'nextjs-portal { display: none !important; pointer-events: none !important; }',
+  });
+  await page.evaluate(() => {
+    document.querySelectorAll('nextjs-portal').forEach((portal) => portal.remove());
+  });
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByTestId('settings-nav-remote-access').click();
 
   const addDevice = page.getByRole('button', { name: 'Add device' });
   await page.getByTestId('mobile-access-status').getByText('Tailscale missing').waitFor();
   assert.equal(await addDevice.isDisabled(), true);
-  await page.getByLabel('Advertised address').waitFor();
+  assert.equal(await page.getByLabel('Advertised address').count(), 0);
+  assert.equal(await page.getByText('Windows Firewall').count(), 0);
 
   await page.getByRole('button', { name: 'Install Tailscale' }).click();
   assert.deepEqual(await page.evaluate(() => window.__mobileAccessExternalUrls), [
@@ -77,7 +83,7 @@ try {
   ]);
 
   await page.getByRole('button', { name: 'Retry' }).click();
-  await page.getByTestId('mobile-access-status').getByText('Configuring').waitFor();
+  await page.getByTestId('mobile-access-status').getByRole('status').getByText('Configuring').waitFor();
   assert.equal(await addDevice.isDisabled(), true);
 
   await page.getByTestId('mobile-access-status').getByText('Authorization required').waitFor();
@@ -91,7 +97,7 @@ try {
   assert.equal(await addDevice.isEnabled(), true);
 
   await page.screenshot({
-    path: '/home/work/tmp/tessera-299-mobile-access-resumed.png',
+    path: '/home/work/tmp/tessera-301-serve-only-settings.png',
     fullPage: true,
   });
   await addDevice.click();
@@ -102,10 +108,12 @@ try {
     externalStepsOpened: true,
     addDeviceGatedUntilReady: true,
     pairingUsesServeOrigin: true,
-    manualAddressStillReachable: true,
+    manualAddressControlsAbsent: true,
+    firewallAutomationAbsent: true,
   }, null, 2));
 } catch (error) {
   console.error(error);
+  console.error('Next overlay:', await page?.locator('nextjs-portal').innerText().catch(() => 'none'));
   console.error(harness.logs());
   process.exitCode = 1;
 } finally {

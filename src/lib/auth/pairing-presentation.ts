@@ -1,6 +1,5 @@
 import { issuePairingToken, rotatePairingToken } from './device-registry';
-import { normalizeAdvertisedAddress } from './advertised-address';
-import { loadMachineSettings } from '../settings/machine-settings';
+import { loadOwnedMobileAccessOrigin } from '../mobile-access/mobile-access-state-store';
 
 export type PairingAction = 'issue' | 'rotate';
 
@@ -11,19 +10,16 @@ export interface PairingPresentation {
 }
 
 export class PairingPresentationError extends Error {
-  readonly code = 'address-required';
+  readonly code = 'mobile-access-required';
 
   constructor() {
-    super('An advertised address is required before pairing');
+    super('Mobile Connection Setup must be ready before pairing');
     this.name = 'PairingPresentationError';
   }
 }
 
-function buildPairingLink(advertisedAddress: unknown, token: string): string {
-  const address = normalizeAdvertisedAddress(advertisedAddress);
-  if (!address) throw new PairingPresentationError();
-
-  const pairingUrl = new URL('/pair', address.pairingBaseUrl);
+function buildPairingLink(origin: string, token: string): string {
+  const pairingUrl = new URL('/pair', origin);
   pairingUrl.hash = new URLSearchParams({ t: token }).toString();
   return pairingUrl.toString();
 }
@@ -31,15 +27,15 @@ function buildPairingLink(advertisedAddress: unknown, token: string): string {
 export async function createPairingPresentation(
   action: PairingAction,
 ): Promise<PairingPresentation> {
-  const machineSettings = await loadMachineSettings();
-  if (!machineSettings.advertisedAddress) throw new PairingPresentationError();
+  const mobileAccessOrigin = await loadOwnedMobileAccessOrigin();
+  if (!mobileAccessOrigin) throw new PairingPresentationError();
 
   const pairing = action === 'rotate'
     ? await rotatePairingToken()
     : await issuePairingToken();
 
   return {
-    pairingLink: buildPairingLink(machineSettings.advertisedAddress, pairing.token),
+    pairingLink: buildPairingLink(mobileAccessOrigin, pairing.token),
     createdAt: pairing.createdAt,
     expiresAt: pairing.expiresAt,
   };

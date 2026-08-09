@@ -7,6 +7,7 @@ import { chromium } from '@playwright/test';
 
 const port = Number(process.env.TESSERA_E2E_PORT ?? 34219);
 const origin = `http://127.0.0.1:${port}`;
+const pairingOrigin = 'https://desktop.tailnet.ts.net';
 const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-pair-page-e2e-'));
 const serverOutput = [];
 let server = null;
@@ -104,11 +105,19 @@ async function prepareCompletedApp() {
     method: 'PUT',
     body: JSON.stringify({
       setup: { completedAt: '2026-08-04T00:00:00.000Z', dismissedAt: null },
-      machineSettings: { advertisedAddress: origin },
     }),
   });
   const body = await response.text();
   assert.equal(response.status, 200, body);
+  await fs.writeFile(path.join(dataDir, 'mobile-access.json'), JSON.stringify({
+    schemaVersion: 1,
+    owner: 'tessera.mobile-access',
+    nodeDnsName: 'desktop.tailnet.ts.net',
+    origin: pairingOrigin,
+    servePort: 443,
+    mountPath: '/',
+    lastLoopbackTarget: origin,
+  }), { mode: 0o600 });
 }
 
 async function listPairingRequests() {

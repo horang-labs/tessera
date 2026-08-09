@@ -80,18 +80,6 @@ async function stopServer() {
 try {
   await startServer();
   const appSecret = (await fs.readFile(path.join(dataDir, 'auth', 'app-secret'), 'utf8')).trim();
-  const settingsResponse = await fetch(`${origin}/api/settings`, {
-    method: 'PUT',
-    headers: {
-      'content-type': 'application/json',
-      origin,
-      'x-tessera-app-secret': appSecret,
-    },
-    body: JSON.stringify({
-      machineSettings: { advertisedAddress: origin },
-    }),
-  });
-  assert.equal(settingsResponse.status, 200, await settingsResponse.text());
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
@@ -106,8 +94,8 @@ try {
       value: {
         isElectron: true,
         platform: 'linux',
-        supportsTailscaleFirewallConfiguration: false,
-        getRemoteAccessAddressCandidates: async () => [],
+        getMobileAccessStatus: async () => ({ state: 'ready', origin }),
+        startMobileAccessSetup: async () => ({ state: 'ready', origin }),
         createPairingCode: async () => ({
           ok: true,
           pairingLink: `${window.location.origin}/pair#t=${'x'.repeat(43)}`,

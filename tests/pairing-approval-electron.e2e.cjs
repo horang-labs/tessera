@@ -143,17 +143,6 @@ async function main() {
       fetch('/api/devices', { method: 'DELETE' }).then((response) => response.status)
     ));
     assert.equal(clearDevicesStatus, 200, 'Could not reset the isolated test device registry');
-    const saveAddressStatus = await electronPage.evaluate((advertisedAddress) => (
-      fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ machineSettings: { advertisedAddress } }),
-      }).then((response) => response.status)
-    ), origin);
-    assert.equal(saveAddressStatus, 200, 'Could not configure the isolated advertised address');
-    await electronPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await electronPage.waitForURL(/\/chat(?:$|\?)/, { timeout: 30_000 });
-
     mobileBrowser = await chromium.launch({
       channel: 'msedge',
       headless: true,

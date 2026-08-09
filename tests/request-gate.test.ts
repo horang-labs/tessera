@@ -13,6 +13,22 @@ const previousUsersFilePath = process.env.USERS_FILE_PATH;
 const previousPort = process.env.PORT;
 let appSecretModule: typeof import('../src/lib/auth/app-secret');
 
+async function saveOwnedMobileAccessOrigin(origin: string): Promise<void> {
+  const url = new URL(origin);
+  const { createMobileAccessStateStore, MOBILE_ACCESS_OWNER } = await import(
+    '../src/lib/mobile-access/mobile-access-state-store'
+  );
+  await createMobileAccessStateStore().save({
+    schemaVersion: 1,
+    owner: MOBILE_ACCESS_OWNER,
+    nodeDnsName: url.hostname,
+    origin: url.origin,
+    servePort: Number(url.port || '443'),
+    mountPath: '/',
+    lastLoopbackTarget: 'http://127.0.0.1:32123',
+  });
+}
+
 before(async () => {
   tempDir = await mkdtemp(path.join(os.tmpdir(), 'tessera-request-gate-'));
   process.env.TESSERA_DATA_DIR = tempDir;
@@ -39,6 +55,7 @@ before(async () => {
     ],
   }));
   appSecretModule = await import('../src/lib/auth/app-secret');
+  await saveOwnedMobileAccessOrigin('https://example.ts.net');
 });
 
 after(async () => {
@@ -82,110 +99,6 @@ function requestInput({
     headers,
   };
 }
-
-test('stores and reads the normalized advertised address through the settings API', async () => {
-  const { NextRequest } = await import('next/server');
-  const { GET, PUT } = await import('../src/app/api/settings/route');
-  const { MACHINE_SETTINGS_PATH } = await import('../src/lib/settings/machine-settings');
-  const secret = await appSecretModule.ensureAppSecret();
-  const headers = {
-    [appSecretModule.APP_SECRET_HEADER]: secret,
-    'content-type': 'application/json',
-    host: 'localhost:32123',
-    origin: 'http://localhost:32123',
-  };
-
-  const updateResponse = await PUT(new NextRequest('http://localhost:32123/api/settings', {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify({
-      machineSettings: {
-        advertisedAddress: 'https://example.ts.net:443/a/path?ignored=yes',
-      },
-    }),
-  }));
-  assert.equal(updateResponse.status, 200);
-  assert.deepEqual((await updateResponse.json()).machineSettings, {
-    advertisedAddress: 'https://example.ts.net',
-  });
-
-  const readResponse = await GET(new NextRequest('http://localhost:32123/api/settings', {
-    headers,
-  }));
-  assert.equal(readResponse.status, 200);
-  assert.deepEqual((await readResponse.json()).machineSettings, {
-    advertisedAddress: 'https://example.ts.net',
-  });
-  assert.equal(MACHINE_SETTINGS_PATH, path.join(tempDir, 'remote-access.json'));
-  assert.equal((await stat(MACHINE_SETTINGS_PATH)).mode & 0o777, 0o600);
-});
-
-test('rejects an invalid advertised address without replacing the stored value', async () => {
-  const { NextRequest } = await import('next/server');
-  const { PUT } = await import('../src/app/api/settings/route');
-  const { loadMachineSettings } = await import('../src/lib/settings/machine-settings');
-  const secret = await appSecretModule.ensureAppSecret();
-  const response = await PUT(new NextRequest('http://localhost:32123/api/settings', {
-    method: 'PUT',
-    headers: {
-      [appSecretModule.APP_SECRET_HEADER]: secret,
-      'content-type': 'application/json',
-      host: 'localhost:32123',
-      origin: 'http://localhost:32123',
-    },
-    body: JSON.stringify({
-      machineSettings: { advertisedAddress: 'ftp://example.ts.net' },
-    }),
-  }));
-
-  assert.equal(response.status, 400);
-  assert.deepEqual(await loadMachineSettings(), {
-    advertisedAddress: 'https://example.ts.net',
-  });
-});
-
-test('ignores remote-access settings from a device while saving its other settings', async () => {
-  const { NextRequest } = await import('next/server');
-  const { PUT } = await import('../src/app/api/settings/route');
-  const {
-    clearDeviceRegistry,
-  } = await import('../src/lib/auth/device-registry');
-  const { loadMachineSettings, saveMachineSettings } = await import(
-    '../src/lib/settings/machine-settings'
-  );
-  await clearDeviceRegistry();
-  await saveMachineSettings({ advertisedAddress: 'https://local-only.example' });
-  const { device } = await pairApprovedDevice('Remote phone');
-  process.env.TESSERA_ELECTRON_AUTH_BYPASS = '1';
-  let response: Response;
-  try {
-    response = await PUT(new NextRequest('http://localhost:32123/api/settings', {
-      method: 'PUT',
-      headers: {
-        cookie: `device=${device.token}`,
-        'content-type': 'application/json',
-        host: 'localhost:32123',
-        origin: 'http://localhost:32123',
-      },
-      body: JSON.stringify({
-        fontSize: 1.1875,
-        machineSettings: { advertisedAddress: 'ftp://would-fail-for-the-app.example' },
-      }),
-    }));
-  } finally {
-    delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
-  }
-
-  assert.equal(response.status, 200);
-  const body = await response.json();
-  assert.equal(body.settings.fontSize, 1.1875);
-  assert.deepEqual(body.machineSettings, {
-    advertisedAddress: 'https://local-only.example',
-  });
-  assert.deepEqual(await loadMachineSettings(), {
-    advertisedAddress: 'https://local-only.example',
-  });
-});
 
 test('rejects an unauthenticated HTTP route even when the legacy Electron bypass flag is set', async () => {
   const { NextRequest } = await import('next/server');
@@ -248,9 +161,7 @@ test('rejects a state-changing settings request from a disallowed Origin during 
         host: 'localhost:32123',
         origin: 'http://localhost:45678',
       },
-      body: JSON.stringify({
-        machineSettings: { advertisedAddress: 'https://rejected.example.com' },
-      }),
+      body: JSON.stringify({ fontSize: 1.125 }),
     }));
 
     assert.equal(response.status, 403);
@@ -757,10 +668,9 @@ test('shows a link-only pairing response to an authenticated loopback web browse
   const { clearDeviceRegistry } = await import('../src/lib/auth/device-registry');
   const { ensureRSAKeys } = await import('../src/lib/auth/keys');
   const { generateToken } = await import('../src/lib/auth/jwt');
-  const { saveMachineSettings } = await import('../src/lib/settings/machine-settings');
   await clearDeviceRegistry();
   await ensureRSAKeys();
-  await saveMachineSettings({ advertisedAddress: 'https://web-mode.example' });
+  await saveOwnedMobileAccessOrigin('https://web-mode.example');
   const jwt = await generateToken('persisted-user', 'persisted');
   delete process.env.TESSERA_ELECTRON_RUNTIME;
 
@@ -841,13 +751,10 @@ test('rejects a credentialed WebSocket upgrade from outside the Origin allowlist
   );
 });
 
-test('accepts the normalized advertised Origin for WebSocket upgrades', async () => {
+test('accepts the owned Serve Origin for WebSocket upgrades', async () => {
   const secret = await appSecretModule.ensureAppSecret();
   const { evaluateRequest } = await import('../src/lib/auth/request-gate');
-  const { saveMachineSettings } = await import('../src/lib/settings/machine-settings');
-  await saveMachineSettings({
-    advertisedAddress: 'https://example.ts.net:443/a/path',
-  });
+  await saveOwnedMobileAccessOrigin('https://example.ts.net');
 
   assert.deepEqual(
     await evaluateRequest(requestInput({
@@ -859,29 +766,28 @@ test('accepts the normalized advertised Origin for WebSocket upgrades', async ()
   );
 });
 
-test('direct Tailscale and LAN paths remain behind the HTTP and WebSocket gates', async () => {
+test('Serve traffic remains behind the HTTP and WebSocket gates without enabling direct paths', async () => {
   const {
     clearDeviceRegistry,
   } = await import('../src/lib/auth/device-registry');
   const { evaluateRequest } = await import('../src/lib/auth/request-gate');
-  const { saveMachineSettings } = await import('../src/lib/settings/machine-settings');
-  const tailscaleOrigin = 'http://100.103.66.17:32123';
+  const serveOrigin = 'https://desktop.tailnet.ts.net';
   await clearDeviceRegistry();
-  await saveMachineSettings({ advertisedAddress: tailscaleOrigin });
+  await saveOwnedMobileAccessOrigin(serveOrigin);
   const { device } = await pairApprovedDevice('Tailscale phone');
 
   assert.deepEqual(
     await evaluateRequest(requestInput({
-      host: '100.103.66.17:32123',
-      origin: tailscaleOrigin,
+      host: 'desktop.tailnet.ts.net',
+      origin: serveOrigin,
     })),
     { allow: false, reason: 'unauthorized', status: 401 },
   );
   assert.deepEqual(
     await evaluateRequest(requestInput({
       purpose: 'ws-upgrade',
-      host: '100.103.66.17:32123',
-      origin: tailscaleOrigin,
+      host: 'desktop.tailnet.ts.net',
+      origin: serveOrigin,
     })),
     { allow: false, reason: 'unauthorized', wsCloseCode: 1008 },
   );
@@ -896,14 +802,14 @@ test('direct Tailscale and LAN paths remain behind the HTTP and WebSocket gates'
 
   const deviceCookies = { device: device.token };
   assert.equal((await evaluateRequest(requestInput({
-    host: '100.103.66.17:32123',
-    origin: tailscaleOrigin,
+    host: 'desktop.tailnet.ts.net',
+    origin: serveOrigin,
     cookies: deviceCookies,
   }))).allow, true);
   assert.equal((await evaluateRequest(requestInput({
     purpose: 'ws-upgrade',
-    host: '100.103.66.17:32123',
-    origin: tailscaleOrigin,
+    host: 'desktop.tailnet.ts.net',
+    origin: serveOrigin,
     cookies: deviceCookies,
   }))).allow, true);
 });

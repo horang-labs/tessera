@@ -13,7 +13,6 @@ import {
 import { fork, ChildProcess, spawnSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { networkInterfaces } from 'node:os';
 import QRCode from 'qrcode';
 import {
   createTray,
@@ -38,15 +37,12 @@ import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { isPairingDecision } from '../src/lib/auth/pairing-contract';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
 import { registerAppSecretHeader } from './app-secret-header';
-import { configureTailscaleFirewall } from './windows-firewall';
-import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
-import { buildRemoteAccessAddressCandidates } from './network-addresses';
 import { TailscaleCliAdapter } from './tailscale-cli-adapter';
 import {
   MobileAccessCoordinator,
   type MobileAccessStatus,
 } from '../src/lib/mobile-access/mobile-access-coordinator';
-import { FileMobileAccessStateStore } from '../src/lib/mobile-access/mobile-access-state-store';
+import { createMobileAccessStateStore } from '../src/lib/mobile-access/mobile-access-state-store';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -679,8 +675,7 @@ if (process.env.TESSERA_DISABLE_GPU === '1') {
   app.commandLine.appendSwitch('max-active-webgl-contexts', '128');
 }
 
-// App windows keep a stable localhost origin even though the packaged Windows
-// server also listens on external IPv4 interfaces for direct Tailscale access.
+// App windows keep a stable localhost origin on the loopback-only backend.
 // On hosts where connecting to ::1 stalls (observed ~210ms per connect with WSL /
 // VPN network stacks), every fresh renderer connection pays that penalty. Pin
 // localhost to IPv4 in Chromium's resolver; keeping the literal "localhost" URL
@@ -968,25 +963,6 @@ async function checkMobileAccessHealth(origin: string): Promise<void> {
   });
   if (!response.ok) {
     throw new Error(`Tessera health check returned HTTP ${response.status}`);
-  }
-}
-
-async function publishMobileAccessPairingOrigin(origin: string): Promise<void> {
-  if (!serverPort || !electronAppSecret) throw new Error('The Tessera server is unavailable');
-  const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
-  const loopbackOrigin = `http://127.0.0.1:${serverPort}`;
-  const response = await fetch(`${loopbackOrigin}/api/settings`, {
-    method: 'PUT',
-    headers: {
-      [APP_SECRET_HEADER]: electronAppSecret,
-      'content-type': 'application/json',
-      origin: loopbackOrigin,
-    },
-    body: JSON.stringify({ machineSettings: { advertisedAddress: origin } }),
-    signal: AbortSignal.timeout(MOBILE_ACCESS_HEALTH_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`Could not publish the mobile access origin (HTTP ${response.status})`);
   }
 }
 
@@ -1582,9 +1558,6 @@ function broadcastPopoutState(): void {
 registerRendererConsoleBridge();
 
 ipcMain.handle('get-server-port', () => serverPort);
-ipcMain.handle('get-remote-access-address-candidates', () => (
-  buildRemoteAccessAddressCandidates(networkInterfaces(), serverPort)
-));
 ipcMain.handle('get-mobile-access-status', () => (
   mobileAccessCoordinator?.getStatus() ?? unavailableMobileAccessStatus()
 ));
@@ -1592,19 +1565,6 @@ ipcMain.handle('start-mobile-access-setup', () => (
   mobileAccessCoordinator?.setup({ loopbackPort: serverPort })
     ?? unavailableMobileAccessStatus()
 ));
-ipcMain.on('supports-tailscale-firewall-configuration', (event) => {
-  event.returnValue = supportsTailscaleFirewallConfiguration();
-});
-ipcMain.handle('configure-tailscale-firewall', () => {
-  if (!supportsTailscaleFirewallConfiguration()) {
-    return {
-      ok: false,
-      code: 'unsupported',
-      error: 'Firewall configuration is disabled outside the packaged product server',
-    };
-  }
-  return configureTailscaleFirewall({ port: serverPort });
-});
 ipcMain.handle('create-pairing-code', (_event, action: unknown) => {
   if (action !== 'issue' && action !== 'rotate') {
     return { ok: false, code: 'invalid-action', error: 'Invalid pairing action' };
@@ -1848,9 +1808,8 @@ app.whenReady().then(async () => {
     electronAppSecret = await registerAppSecretHeader(port);
     mobileAccessCoordinator = new MobileAccessCoordinator({
       adapter: new TailscaleCliAdapter(),
-      stateStore: new FileMobileAccessStateStore(getTesseraDataPath('mobile-access.json')),
+      stateStore: createMobileAccessStateStore(),
       checkHealth: checkMobileAccessHealth,
-      publishPairingOrigin: publishMobileAccessPairingOrigin,
       openExternal: async (url) => { await shell.openExternal(url); },
     });
     await mobileAccessCoordinator.reconcileOnLaunch({ loopbackPort: port });
