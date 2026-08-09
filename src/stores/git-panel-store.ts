@@ -106,10 +106,18 @@ export const useGitPanelStore = create<GitPanelStoreState>((set) => ({
       ) {
         return state;
       }
-      const currentDelivery =
-        provisionalDelivery
-        ?? state.deliveryByWorktree[worktreeKey]
-        ?? emptyDeliveryState();
+      const canonicalDelivery =
+        state.deliveryByWorktree[worktreeKey] ?? emptyDeliveryState();
+      // Before the first snapshot the only editable delivery field is the
+      // message. Merge that edit into the already-shared owner; adopting the
+      // provisional entry wholesale would erase another surface's exclusions,
+      // pending lock, and retained failure.
+      const currentDelivery = provisionalDelivery
+        ? {
+          ...canonicalDelivery,
+          commitMessage: provisionalDelivery.commitMessage,
+        }
+        : canonicalDelivery;
       const nextDelivery = reconcileDeliveryState(currentDelivery, data);
       const deliveryByWorktree = { ...state.deliveryByWorktree };
       delete deliveryByWorktree[provisionalKey];

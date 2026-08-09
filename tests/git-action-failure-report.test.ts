@@ -196,7 +196,7 @@ test('the worktree owner keeps the failure until the next action or dismiss', ()
     controller,
     /setWorktreeActionFailure\(\s*worktreeKey,\s*describeGitRequestFailure\(/,
   );
-  // Cleared when the next action starts — `markPending` is the one place every
+  // Cleared when the next action starts — the store's `markPending` is the one
   // action passes through — and on dismiss. A session switch deliberately does
   // not clear a report owned by the same canonical worktree (#311).
   assert.match(store, /actionFailure: pendingVerb \? null : current\.actionFailure/);

@@ -95,6 +95,7 @@ try {
   });
   const first = await createSession(sharedRepo, 'shared one');
   const second = await createSession(path.join(sharedRepo, 'nested'), 'shared two');
+  const late = await createSession(sharedRepo, 'shared late');
   const outsider = await createSession(otherRepo, 'other tree');
 
   browser = await chromium.launch({ headless: true });
@@ -136,11 +137,28 @@ try {
   await page.getByTestId('git-commit-message').waitFor({ state: 'visible' });
   await assert.rejects(page.getByTestId('git-commit-message').fill('locked'), /disabled/);
 
+  let finishSnapshot;
+  await page.route(`**/api/sessions/${late}/git`, async (route) => {
+    await new Promise((resolve) => { finishSnapshot = resolve; });
+    await route.continue();
+  });
+  await page.getByTestId(`collection-chat-${late}`).first().click();
+  for (let tries = 0; tries < 100 && !finishSnapshot; tries += 1) {
+    await page.waitForTimeout(50);
+  }
+  assert.ok(finishSnapshot, 'the late session should request its first Git snapshot');
+  await page.getByTestId('git-commit-message').fill('typed before identity');
+  finishSnapshot();
+  await page.getByTestId('git-commit-file-checkbox-a.txt').waitFor();
+  assert.equal(await page.getByTestId('git-commit-message').inputValue(), 'typed before identity');
+  assert.equal(await page.getByTestId('git-commit-file-checkbox-a.txt').isChecked(), false);
+  assert.equal(await page.getByTestId('git-commit-message').isEnabled(), false);
+
   await openSession(page, outsider);
   assert.equal(await page.getByTestId('git-commit-message').inputValue(), '');
   assert.equal(await page.getByTestId('git-commit-message').isEnabled(), true);
   await openSession(page, first);
-  assert.equal(await page.getByTestId('git-commit-message').inputValue(), 'updated by second');
+  assert.equal(await page.getByTestId('git-commit-message').inputValue(), 'typed before identity');
   assert.equal(await page.getByTestId('git-commit-message').isEnabled(), false);
 
   finishAction();
@@ -149,7 +167,7 @@ try {
   await page.screenshot({ path: artifact });
   await page.getByTestId('tab-bar-git-toggle').click();
   await openPanel(page);
-  assert.equal(await page.getByTestId('git-commit-message').inputValue(), 'updated by second');
+  assert.equal(await page.getByTestId('git-commit-message').inputValue(), 'typed before identity');
   await page.getByTestId('git-action-failure-banner').waitFor();
   await openSession(page, outsider);
   assert.equal(await page.getByTestId('git-action-failure-banner').count(), 0);

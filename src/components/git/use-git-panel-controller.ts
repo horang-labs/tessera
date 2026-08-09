@@ -211,12 +211,6 @@ export function useGitPanelController(sessionId: string | null) {
    */
   const pendingHere = delivery?.pendingVerb ?? null;
 
-  const markPending = useCallback(
-    (ownerKey: string, verb: GitPendingVerb | null): void => {
-      markWorktreePending(ownerKey, verb);
-    },
-    [markWorktreePending],
-  );
   /**
    * The question standing between a press and a push to the default branch, or
    * null when there is nothing to ask (§8). It is also the dialog's open state:
@@ -798,13 +792,13 @@ export function useGitPanelController(sessionId: string | null) {
     // the panel has moved to another session by then.
     const ownerKey = worktreeKey;
 
-    markPending(ownerKey, "commit");
+    markWorktreePending(ownerKey, "commit");
     try {
       await requestCommit();
     } finally {
-      markPending(ownerKey, null);
+      markWorktreePending(ownerKey, null);
     }
-  }, [markPending, pendingHere, requestCommit, worktreeKey]);
+  }, [markWorktreePending, pendingHere, requestCommit, worktreeKey]);
 
   /**
    * The actions whose whole request is the verb: Push, Publish Branch — the same
@@ -879,13 +873,13 @@ export function useGitPanelController(sessionId: string | null) {
     if (!worktreeKey || pendingHere) return;
 
     const ownerKey = worktreeKey;
-    markPending(ownerKey, verb);
+    markWorktreePending(ownerKey, verb);
     try {
       await requestBranchAction(verb);
     } finally {
-      markPending(ownerKey, null);
+      markWorktreePending(ownerKey, null);
     }
-  }, [markPending, pendingHere, requestBranchAction, worktreeKey]);
+  }, [markWorktreePending, pendingHere, requestBranchAction, worktreeKey]);
 
   /**
    * The menu's one compound (§2): the commit selection goes in, and the branch
@@ -902,14 +896,14 @@ export function useGitPanelController(sessionId: string | null) {
     if (!worktreeKey || pendingHere) return;
 
     const ownerKey = worktreeKey;
-    markPending(ownerKey, "commit_push");
+    markWorktreePending(ownerKey, "commit_push");
     try {
       if (await requestCommit()) await requestBranchAction("push");
     } finally {
-      markPending(ownerKey, null);
+      markWorktreePending(ownerKey, null);
     }
   }, [
-    markPending,
+    markWorktreePending,
     pendingHere,
     requestBranchAction,
     requestCommit,
