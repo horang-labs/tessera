@@ -76,6 +76,13 @@ export interface I18nMessages {
       mobileSetupInstallAction: string;
       mobileSetupOpenSignInAction: string;
       mobileSetupOpenAuthorizationAction: string;
+      mobileSetupMissingHelp: string;
+      mobileSetupSignInHelp: string;
+      mobileSetupAuthorizationHelp: string;
+      mobileSetupMachineAuthorizationHelp: string;
+      mobileSetupUnavailableHelp: string;
+      mobileSetupConflictHelp: string;
+      mobileSetupRetryHelp: string;
       mobileSetupFailed: string;
       warningTitle: string;
       warningDescription: string;

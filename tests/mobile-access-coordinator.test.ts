@@ -46,6 +46,7 @@ function createHarness(options: {
   node?: TailscaleNodeStatus;
   serve?: TailscaleServeStatus;
   configureResult?: TailscaleConfigureResult;
+  configureError?: Error | null;
   configureGate?: Promise<void>;
 } = {}) {
   const calls: string[] = [];
@@ -59,6 +60,7 @@ function createHarness(options: {
   let serve = structuredClone(options.serve ?? emptyServe());
   let configureResult: TailscaleConfigureResult = options.configureResult
     ?? { state: 'configured' };
+  let configureError = options.configureError ?? null;
 
   const adapter: TailscaleAdapter = {
     async inspectNode() {
@@ -76,6 +78,7 @@ function createHarness(options: {
     async configureServe(endpoint) {
       calls.push(`configure:${endpoint.port}`);
       await options.configureGate;
+      if (configureError) throw configureError;
       if (configureResult.state === 'authorization-required') return configureResult;
       const endpointKey = `background:web:${endpoint.dnsName}:${endpoint.port}:/`;
       serve.endpoints = [
@@ -116,6 +119,7 @@ function createHarness(options: {
     opened,
     store,
     setConfigureResult(value: TailscaleConfigureResult) { configureResult = value; },
+    setConfigureError(value: Error | null) { configureError = value; },
     setNode(value: TailscaleNodeStatus) { node = value; },
     setServe(value: TailscaleServeStatus) { serve = structuredClone(value); },
     serve: () => structuredClone(serve),
@@ -143,7 +147,17 @@ test('status distinguishes missing, sign-in, unavailable, and unsupported Tailsc
   const stopped = createHarness({ node: { state: 'stopped' } });
   assert.deepEqual(await stopped.coordinator.getStatus(), {
     state: 'temporarily-unavailable',
+    reason: 'stopped',
     message: 'Tailscale is stopped',
+  });
+
+  const awaitingMachineAuthorization = createHarness({
+    node: { state: 'needs-machine-authorization' },
+  });
+  assert.deepEqual(await awaitingMachineAuthorization.coordinator.getStatus(), {
+    state: 'temporarily-unavailable',
+    reason: 'machine-authorization',
+    message: 'This Tailscale device is awaiting administrator approval',
   });
 
   const unsupported = createHarness({
@@ -278,6 +292,54 @@ test('443 conflict selects the first free candidate and preserves unrelated Serv
   assert.deepEqual(after, unrelatedResources);
 });
 
+test('foreign TCP ownership on 443 forces the first high-port fallback', async () => {
+  const harness = createHarness({
+    serve: {
+      endpoints: [],
+      occupiedPorts: [443],
+      resources: [{
+        key: 'background:tcp:443',
+        value: '{"TCPForward":"127.0.0.1:9000"}',
+      }],
+    },
+  });
+
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'ready',
+    origin: `https://${DNS_NAME}:${MOBILE_ACCESS_HTTPS_PORT_CANDIDATES[0]}`,
+  });
+  assert.equal(harness.calls.includes('configure:443'), false);
+  assert.equal(harness.calls.includes(`configure:${MOBILE_ACCESS_HTTPS_PORT_CANDIDATES[0]}`), true);
+});
+
+test('a retained high port is revalidated before setup resumes', async () => {
+  const [retainedPort] = MOBILE_ACCESS_HTTPS_PORT_CANDIDATES;
+  const harness = createHarness({
+    serve: {
+      endpoints: [],
+      occupiedPorts: [retainedPort],
+      resources: [{
+        key: `background:tcp:${retainedPort}`,
+        value: '{"TCPForward":"127.0.0.1:9000"}',
+      }],
+    },
+  });
+  harness.store.state = {
+    schemaVersion: 1,
+    owner: MOBILE_ACCESS_OWNER,
+    phase: 'setup',
+    loopbackPort: LOOPBACK_PORT,
+    selectedServePort: retainedPort,
+    nodeDnsName: DNS_NAME,
+  };
+
+  assert.deepEqual(await harness.coordinator.getStatus(), {
+    state: 'ownership-conflict',
+    message: `Tailscale HTTPS port ${retainedPort} is no longer safe to configure`,
+  });
+  assert.equal(harness.calls.some((call) => call.startsWith('configure:')), false);
+});
+
 test('setup reports ownership conflict when every deterministic candidate is occupied', async () => {
   const resources = [
     { key: 'background:tcp:443', value: '{"HTTPS":true}' },
@@ -322,6 +384,26 @@ test('unsupported Serve inspection fails closed without mutation', async () => {
     message: 'unsupported Serve field: FutureConfig',
   });
   assert.equal(configureCount, 0);
+});
+
+test('a command timeout becomes retryable and resumes without publishing partial setup', async () => {
+  const harness = createHarness({
+    configureError: new Error('Tailscale command timed out after 15000ms'),
+  });
+
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'retryable-failure',
+    message: 'Tailscale command timed out after 15000ms',
+  });
+  assert.equal(harness.calls.some((call) => call.startsWith('publish:')), false);
+  assert.equal(harness.store.state && 'phase' in harness.store.state, true);
+
+  harness.setConfigureError(null);
+  assert.deepEqual(await harness.coordinator.getStatus(), {
+    state: 'ready',
+    origin: `https://${DNS_NAME}`,
+  });
+  assert.equal(harness.calls.filter((call) => call.startsWith('publish:')).length, 1);
 });
 
 test('Windows persistence applies current-user ACLs and retains a selected high port', async () => {

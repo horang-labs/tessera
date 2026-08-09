@@ -70,9 +70,17 @@ export function parseTailscaleNodeStatus(raw: string): TailscaleNodeStatus {
     : null;
   const rawDnsName = typeof self?.DNSName === 'string' ? self.DNSName : '';
   const dnsName = rawDnsName.replace(/\.+$/, '') || null;
-  const certDomains = Array.isArray(status.CertDomains)
-    ? status.CertDomains.filter((value): value is string => typeof value === 'string')
-    : [];
+  if (
+    status.CertDomains !== undefined
+    && status.CertDomains !== null
+    && (
+      !Array.isArray(status.CertDomains)
+      || status.CertDomains.some((value) => typeof value !== 'string')
+    )
+  ) {
+    throw new Error('Tailscale returned invalid CertDomains');
+  }
+  const certDomains = status.CertDomains ?? [];
 
   if (!dnsName) return { state: 'unsupported', backendState };
   return {
@@ -320,18 +328,39 @@ export function createCommandRunner(executable: string, timeoutMs = 15_000): Com
     let stoppedForAuthorization = false;
     let timedOut = false;
     let outputExceeded = false;
+    let settled = false;
     const maxBuffer = 1024 * 1024;
+    let timer: NodeJS.Timeout;
+
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+
+    const succeed = (result: TailscaleCommandResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const terminate = () => {
+      child.kill('SIGKILL');
+    };
 
     const stopIfNeeded = () => {
       if (stdout.length + stderr.length > maxBuffer) {
         outputExceeded = true;
-        child.kill();
+        terminate();
+        fail(new TailscaleCommandError('Tailscale command output exceeded 1 MiB'));
         return;
       }
       authorizationUrl = authorizationUrlFrom(`${stdout}\n${stderr}`);
       if (options.stopOnAuthorizationUrl && authorizationUrl && !child.killed) {
         stoppedForAuthorization = true;
-        child.kill();
+        terminate();
       }
     };
     child.stdout.setEncoding('utf8');
@@ -345,31 +374,30 @@ export function createCommandRunner(executable: string, timeoutMs = 15_000): Com
       stopIfNeeded();
     });
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      terminate();
+      fail(new TailscaleCommandError(`Tailscale command timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     timer.unref?.();
 
     child.once('error', (error: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      reject(new TailscaleCommandError(error.message, error.code));
+      fail(new TailscaleCommandError(error.message, error.code));
     });
     child.once('close', (code, signal) => {
-      clearTimeout(timer);
       if (outputExceeded) {
-        reject(new TailscaleCommandError('Tailscale command output exceeded 1 MiB'));
+        fail(new TailscaleCommandError('Tailscale command output exceeded 1 MiB'));
         return;
       }
       if (timedOut) {
-        reject(new TailscaleCommandError(`Tailscale command timed out after ${timeoutMs}ms`));
+        fail(new TailscaleCommandError(`Tailscale command timed out after ${timeoutMs}ms`));
         return;
       }
       if (stoppedForAuthorization || code === 0) {
-        resolve({ stdout, stderr, ...(authorizationUrl ? { authorizationUrl } : {}) });
+        succeed({ stdout, stderr, ...(authorizationUrl ? { authorizationUrl } : {}) });
         return;
       }
-      reject(new TailscaleCommandError(
+      fail(new TailscaleCommandError(
         stderr.trim() || stdout.trim() || `Tailscale exited with ${signal ?? code}`,
       ));
     });

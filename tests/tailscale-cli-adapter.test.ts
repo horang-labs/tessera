@@ -94,12 +94,31 @@ test('command execution terminates authorization waits and enforces a bounded ti
     runner(['-e', 'setInterval(() => {}, 1000)']),
     /timed out after 250ms/,
   );
+
+  const stubbornRunner = createCommandRunner(process.execPath, 250);
+  const startedAt = Date.now();
+  await assert.rejects(
+    stubbornRunner([
+      '-e',
+      "process.on('SIGTERM', () => {}); setTimeout(() => process.exit(0), 2000)",
+    ]),
+    /timed out after 250ms/,
+  );
+  assert.ok(Date.now() - startedAt < 1000, 'timeout must not wait for a SIGTERM-resistant child');
 });
 
 test('unknown Serve configuration shapes fail closed', () => {
   assert.throws(() => parseTailscaleServeStatus(JSON.stringify({
     FutureConfig: { enabled: true },
   }), 'desktop.tailnet.ts.net'), /unsupported Serve field: FutureConfig/);
+});
+
+test('malformed Running node status fails closed', () => {
+  assert.throws(() => parseTailscaleNodeStatus(JSON.stringify({
+    BackendState: 'Running',
+    Self: { DNSName: 'desktop.tailnet.ts.net.' },
+    CertDomains: { future: true },
+  })), /invalid CertDomains/);
 });
 
 test('the adapter classifies sign-in and preserves unrelated Serve resources', () => {

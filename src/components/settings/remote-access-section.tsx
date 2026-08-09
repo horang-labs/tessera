@@ -470,6 +470,23 @@ export default function RemoteAccessSection() {
         && mobileAccessStatus.authorizationUrl
         ? t('settings.remoteAccess.mobileSetupOpenAuthorizationAction')
         : null;
+  const mobileAccessHelp = mobileAccessStatus?.state === 'tailscale-missing'
+    ? t('settings.remoteAccess.mobileSetupMissingHelp')
+    : mobileAccessStatus?.state === 'sign-in-required'
+      ? t('settings.remoteAccess.mobileSetupSignInHelp')
+      : mobileAccessStatus?.state === 'authorization-required'
+        ? t('settings.remoteAccess.mobileSetupAuthorizationHelp')
+        : mobileAccessStatus?.state === 'temporarily-unavailable'
+          ? t(mobileAccessStatus.reason === 'machine-authorization'
+            ? 'settings.remoteAccess.mobileSetupMachineAuthorizationHelp'
+            : 'settings.remoteAccess.mobileSetupUnavailableHelp')
+          : mobileAccessStatus?.state === 'ownership-conflict'
+            ? t('settings.remoteAccess.mobileSetupConflictHelp')
+            : mobileAccessStatus?.state === 'retryable-failure'
+              ? t('settings.remoteAccess.mobileSetupRetryHelp')
+              : null;
+  const mobileAccessHelpIsError = mobileAccessStatus?.state === 'ownership-conflict'
+    || mobileAccessStatus?.state === 'retryable-failure';
 
   const handleSaveAddress = async () => {
     let normalizedAddress: string | null;
@@ -703,10 +720,17 @@ export default function RemoteAccessSection() {
             <code className="mt-3 block truncate text-xs text-(--status-success-text)">
               {mobileAccessStatus.origin}
             </code>
-          ) : mobileAccessStatus?.state === 'ownership-conflict'
-            || mobileAccessStatus?.state === 'retryable-failure' ? (
-            <p role="alert" className="mt-3 text-xs text-(--status-error-text)">
-              {t('settings.remoteAccess.mobileSetupFailed')}
+          ) : mobileAccessHelp ? (
+            <p
+              role={mobileAccessHelpIsError ? 'alert' : undefined}
+              className={cn(
+                'mt-3 text-xs leading-5',
+                mobileAccessHelpIsError
+                  ? 'text-(--status-error-text)'
+                  : 'text-(--text-muted)',
+              )}
+            >
+              {mobileAccessHelp}
             </p>
           ) : null}
         </div>

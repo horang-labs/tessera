@@ -45,7 +45,11 @@ export type MobileAccessStatus =
   | { state: 'sign-in-required'; authorizationUrl?: string }
   | { state: 'authorization-required'; authorizationUrl?: string }
   | { state: 'configuring' }
-  | { state: 'temporarily-unavailable'; message: string }
+  | {
+    state: 'temporarily-unavailable';
+    reason: 'machine-authorization' | 'stopped' | 'starting';
+    message: string;
+  }
   | { state: 'ownership-conflict'; message: string }
   | { state: 'retryable-failure'; message: string }
   | { state: 'ready'; origin: string };
@@ -101,6 +105,25 @@ function rootResourceKey(dnsName: string, port: number): string {
 
 function rootIsOccupied(status: TailscaleServeStatus, dnsName: string, port: number): boolean {
   return status.resources.some((resource) => resource.key === rootResourceKey(dnsName, port));
+}
+
+function portCanHostOwnedHttpsRoot(status: TailscaleServeStatus, port: number): boolean {
+  if (!status.occupiedPorts.includes(port)) return true;
+  const tcp = status.resources.find((resource) => (
+    resource.key === `background:tcp:${port}`
+  ));
+  if (tcp?.value !== '{"HTTPS":true}') return false;
+
+  return !status.resources.some((resource) => (
+    resource.key.startsWith('background:allow-funnel:')
+      && resource.key.endsWith(`:${port}`)
+    || resource.key.startsWith('foreground:')
+      && (
+        resource.key.endsWith(`:tcp:${port}`)
+        || resource.key.includes(`:${port}:/`)
+        || resource.key.endsWith(`:${port}`)
+      )
+  ));
 }
 
 function unrelatedResources(
@@ -237,7 +260,9 @@ export class MobileAccessCoordinator {
       if (servePort === null) {
         return this.remember({
           state: 'ownership-conflict',
-          message: 'No safe Tailscale HTTPS port is available',
+          message: progress.selectedServePort === undefined
+            ? 'No safe Tailscale HTTPS port is available'
+            : `Tailscale HTTPS port ${progress.selectedServePort} is no longer safe to configure`,
         });
       }
 
@@ -372,12 +397,21 @@ export class MobileAccessCoordinator {
       case 'needs-machine-authorization':
         return {
           state: 'temporarily-unavailable',
+          reason: 'machine-authorization',
           message: 'This Tailscale device is awaiting administrator approval',
         };
       case 'stopped':
-        return { state: 'temporarily-unavailable', message: 'Tailscale is stopped' };
+        return {
+          state: 'temporarily-unavailable',
+          reason: 'stopped',
+          message: 'Tailscale is stopped',
+        };
       case 'starting':
-        return { state: 'temporarily-unavailable', message: 'Tailscale is starting' };
+        return {
+          state: 'temporarily-unavailable',
+          reason: 'starting',
+          message: 'Tailscale is starting',
+        };
       case 'unsupported':
         return {
           state: 'retryable-failure',
@@ -394,11 +428,27 @@ export class MobileAccessCoordinator {
     loopbackTarget: string,
     progress: MobileAccessSetupProgress,
   ): number | null {
-    if (progress.selectedServePort !== undefined) return progress.selectedServePort;
+    if (progress.selectedServePort !== undefined) {
+      const retainedPort = progress.selectedServePort;
+      const retainedEndpoint = endpointAt(serve, dnsName, retainedPort);
+      const ownsRetainedRoot = exactEndpoint(
+        retainedEndpoint,
+        this.endpointFor(dnsName, retainedPort, loopbackTarget),
+      ) || progress.previousLoopbackTarget !== undefined && exactEndpoint(
+        retainedEndpoint,
+        this.endpointFor(dnsName, retainedPort, progress.previousLoopbackTarget),
+      );
+      if (!portCanHostOwnedHttpsRoot(serve, retainedPort)) return null;
+      if (rootIsOccupied(serve, dnsName, retainedPort) && !ownsRetainedRoot) return null;
+      return retainedPort;
+    }
 
     const preferred = this.endpointFor(dnsName, 443, loopbackTarget);
     const existingPreferred = endpointAt(serve, dnsName, 443);
-    if (!rootIsOccupied(serve, dnsName, 443) || exactEndpoint(existingPreferred, preferred)) {
+    if (
+      exactEndpoint(existingPreferred, preferred)
+      || !rootIsOccupied(serve, dnsName, 443) && portCanHostOwnedHttpsRoot(serve, 443)
+    ) {
       return 443;
     }
     return MOBILE_ACCESS_HTTPS_PORT_CANDIDATES.find((port) => (
