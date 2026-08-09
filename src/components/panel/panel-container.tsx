@@ -16,6 +16,7 @@ import { MemoryFileTab } from '@/components/memory/memory-file-tab';
 import { TerminalPanel } from '@/components/terminal/terminal-panel';
 import { WorktreeOverview } from '@/components/worktree/worktree-overview';
 import { useSessionStore } from '@/stores/session-store';
+import { useTaskStore } from '@/stores/task-store';
 import {
   parseMemoryFileSessionId,
   parseWorkspaceExplorerSessionId,
@@ -53,6 +54,14 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
       .map((project) => project.projectWorktree)
       .find((candidate) => candidate?.id === worktreeId) ?? null;
   });
+  const linkedWorktree = useTaskStore((state) => {
+    if (!worktreeId) return null;
+    for (const tasks of Object.values(state.tasksByProject)) {
+      const task = tasks.find((candidate) => candidate.worktreeId === worktreeId);
+      if (task) return task;
+    }
+    return state.tasks.find((candidate) => candidate.worktreeId === worktreeId) ?? null;
+  });
 
   const content = (() => {
     if (terminalId) {
@@ -83,6 +92,15 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
           displayPath={worktree.displayPath}
           onNewSession={() => usePanelStore.getState().startWorktreeCreation(panelId, 'chat')}
           onNewWorktree={() => usePanelStore.getState().startWorktreeCreation(panelId, 'task')}
+        />
+      );
+    }
+    if (worktreeId && linkedWorktree?.workDir) {
+      return (
+        <WorktreeOverview
+          branch={linkedWorktree.worktreeBranch ?? null}
+          displayPath={linkedWorktree.workDir}
+          label="Linked Worktree"
         />
       );
     }

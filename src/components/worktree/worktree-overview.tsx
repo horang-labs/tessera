@@ -1,10 +1,11 @@
 import { GitBranch, GitFork, MessageSquarePlus } from 'lucide-react';
 
-export function WorktreeOverview({ branch, displayPath, onNewSession, onNewWorktree }: {
+export function WorktreeOverview({ branch, displayPath, label, onNewSession, onNewWorktree }: {
   branch: string | null;
   displayPath: string;
-  onNewSession: () => void;
-  onNewWorktree: () => void;
+  label?: string;
+  onNewSession?: () => void;
+  onNewWorktree?: () => void;
 }) {
   return (
     <div className="flex h-full items-center justify-center bg-(--chat-bg) p-8" data-testid="worktree-overview">
@@ -14,7 +15,7 @@ export function WorktreeOverview({ branch, displayPath, onNewSession, onNewWorkt
             <GitBranch className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-base font-semibold text-(--text-primary)">Project Worktree</h2>
+            <h2 className="text-base font-semibold text-(--text-primary)">{label ?? 'Project Worktree'}</h2>
             <p className="text-xs text-(--text-muted)">Current checkout</p>
           </div>
         </div>
@@ -28,16 +29,22 @@ export function WorktreeOverview({ branch, displayPath, onNewSession, onNewWorkt
             <dd className="mt-1 break-all font-mono text-(--text-primary)">{displayPath}</dd>
           </div>
         </dl>
-        <div className="mt-6 flex flex-wrap gap-2">
-          <button type="button" onClick={onNewSession} className="inline-flex items-center gap-2 rounded-md bg-(--accent) px-3 py-2 text-sm font-medium text-white">
-            <MessageSquarePlus className="h-4 w-4" />
-            New Session
-          </button>
-          <button type="button" onClick={onNewWorktree} className="inline-flex items-center gap-2 rounded-md border border-(--input-border) px-3 py-2 text-sm font-medium text-(--text-primary) hover:bg-(--sidebar-hover)">
-            <GitFork className="h-4 w-4" />
-            New Worktree
-          </button>
-        </div>
+        {(onNewSession || onNewWorktree) && (
+          <div className="mt-6 flex flex-wrap gap-2">
+            {onNewSession && (
+              <button type="button" onClick={onNewSession} className="inline-flex items-center gap-2 rounded-md bg-(--accent) px-3 py-2 text-sm font-medium text-white">
+                <MessageSquarePlus className="h-4 w-4" />
+                New Session
+              </button>
+            )}
+            {onNewWorktree && (
+              <button type="button" onClick={onNewWorktree} className="inline-flex items-center gap-2 rounded-md border border-(--input-border) px-3 py-2 text-sm font-medium text-(--text-primary) hover:bg-(--sidebar-hover)">
+                <GitFork className="h-4 w-4" />
+                New Worktree
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -33,6 +33,7 @@ const UpdateNotifier = dynamic(
 import { SelectionActionBar } from "./selection-action-bar";
 import { usePanelStore, selectActiveTab } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
+import { useTaskStore } from "@/stores/task-store";
 import { TabBar } from "@/components/tab/tab-bar";
 import { TabPanelHost } from "@/components/tab/tab-panel-host";
 import { ElectronTitlebarThemeSync } from "@/components/layout/electron-titlebar";
@@ -52,6 +53,7 @@ import {
 import { activateSessionPanel } from "@/lib/session/focus-session-panel";
 import { resolveSessionTabOpenMode } from "@/lib/terminal/terminal-preview-policy";
 import { useEffectiveViewMode } from "@/hooks/use-effective-view-mode";
+import { findCompositeWorktreeId } from "@/lib/worktrees/linked-worktree-presentation";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -98,6 +100,7 @@ function getKanbanScrollArea(): HTMLDivElement | null {
 export function ChatLayout() {
   const { t } = useI18n();
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const activeTabId = useTabStore((state) => state.activeTabId);
   // The stored view mode, which is what the persisted sidebar width is keyed by.
   // What is on screen is `renderedViewMode` below — a phone shows the list
   // whatever this says, and must not write that back.
@@ -109,13 +112,24 @@ export function ChatLayout() {
     (state) => state.settings.kanbanSessionOpenMode,
   );
   const activePanelSessionId = usePanelStore((state) => {
-    const activeTabData = selectActiveTab(state);
+    const activeTabData = state.tabPanels[activeTabId];
     return activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
   });
   const activePanelWorktreeId = usePanelStore((state) => {
-    const activeTabData = selectActiveTab(state);
+    const activeTabData = state.tabPanels[activeTabId];
     return activeTabData?.panels[activeTabData.activePanelId]?.worktreeId ?? null;
   });
+  const activeTabProjectDir = useTabStore((state) =>
+    state.tabs.find((tab) => tab.id === activeTabId)?.projectDir ?? null
+  );
+  const compositeWorktreeId = useTaskStore((state) =>
+    findCompositeWorktreeId(
+      activeTabProjectDir
+        ? state.tasksByProject[activeTabProjectDir] ?? []
+        : state.tasks,
+      activePanelSessionId,
+    )
+  );
   const isKanbanPeekMode = renderedViewMode === 'board' && kanbanSessionOpenMode === 'peek';
   const activeGitSessionId = isKanbanPeekMode && selectedBoardSessionId
     ? selectedBoardSessionId
@@ -123,6 +137,9 @@ export function ChatLayout() {
         activePanelSessionId,
         activeSessionId,
       });
+  const activeGitWorktreeId = isKanbanPeekMode && selectedBoardSessionId
+    ? null
+    : activePanelWorktreeId ?? compositeWorktreeId;
 
   const markSessionAsRead = useNotificationStore(
     (state) => state.markSessionAsRead,
@@ -598,8 +615,8 @@ export function ChatLayout() {
                 </div>
               )}
               <GitPanel
-                sessionId={activeGitSessionId}
-                worktreeId={activeGitSessionId ? null : activePanelWorktreeId}
+                sessionId={activeGitWorktreeId ? null : activeGitSessionId}
+                worktreeId={activeGitWorktreeId}
                 width={isCompactViewport ? "100vw" : gitPanelWidth}
                 className={cn(
                   isCompactViewport

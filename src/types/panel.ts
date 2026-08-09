@@ -2,7 +2,10 @@
 export interface Panel {
   readonly id: string;
   sessionId: string | null;
-  /** A canonical Worktree target selected without synthesizing a Session. */
+  /**
+   * Canonical Worktree target for Git/Files. When sessionId is null it also
+   * selects the Worktree overview.
+   */
   worktreeId?: string | null;
   /** Creation screen requested by a Worktree overview action. */
   creationMode?: 'chat' | 'task' | null;
