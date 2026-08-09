@@ -15,7 +15,7 @@ import {
   GitPullRequest,
   LoaderCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -24,10 +24,17 @@ import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { useI18n } from "@/lib/i18n";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
+import { deriveGitConflictRecovery } from "@/lib/git/git-conflict-recovery";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
 import type { GitPendingVerb } from "./use-git-panel-controller";
-import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
+import type {
+  GitChangedFile,
+  GitConflictOperation,
+  GitDiffData,
+  GitPanelData,
+} from "@/types/git";
+import { useGitStore } from "@/stores/git-store";
 import { isCurrentTaskPr } from '@/types/task-pr-status';
 import { GitActionMenu } from "./git-action-menu";
 import { GitActionFailureBanner } from "./git-action-failure-banner";
@@ -665,6 +672,7 @@ export function GitPanelContentSection({
   onOpenReadOnlyFile: (file: GitChangedFile) => void;
 }) {
   const { t } = useI18n();
+  const recovery = deriveGitConflictRecovery(data);
   const [contextMenu, setContextMenu] = useState<{
     absolutePath: string;
     canOpenFile: boolean;
@@ -735,7 +743,13 @@ export function GitPanelContentSection({
             />
           ) : null}
 
-          {loading || error || !data ? null : (
+          {loading || error || !data ? null : recovery ? (
+            <GitConflictRecoverySection
+              data={data}
+              onOpenDiffFile={onOpenDiffFile}
+              setSelectedPath={setSelectedPath}
+            />
+          ) : (
             changedFileCount === 0 ? (
               <EmptyPanelMessage
                 title={t("gitPanel.empty.cleanTitle")}
@@ -917,5 +931,114 @@ export function GitPanelContentSection({
       />
     ) : null}
     </>
+  );
+}
+
+const CONFLICT_OPERATION_LABEL_KEY: Record<
+  GitConflictOperation,
+  | "gitPanel.conflict.mergeOperation"
+  | "gitPanel.conflict.rebaseOperation"
+  | "gitPanel.conflict.cherryPickOperation"
+> = {
+  merge: "gitPanel.conflict.mergeOperation",
+  rebase: "gitPanel.conflict.rebaseOperation",
+  cherry_pick: "gitPanel.conflict.cherryPickOperation",
+};
+
+export function GitConflictRecoverySection({
+  data,
+  onOpenDiffFile,
+  setSelectedPath,
+}: {
+  data: GitPanelData;
+  onOpenDiffFile: (file: GitChangedFile) => void;
+  setSelectedPath: (path: string | null) => void;
+}) {
+  const { t } = useI18n();
+  const recovery = deriveGitConflictRecovery(data);
+  const focusRequest = useGitStore((state) => state.conflictRecoveryFocusRequest);
+  const recoveryRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (focusRequest > 0) recoveryRef.current?.focus();
+  }, [focusRequest]);
+
+  if (!recovery) return null;
+
+  const operation = t(CONFLICT_OPERATION_LABEL_KEY[recovery.operation]);
+
+  return (
+    <section
+      ref={recoveryRef}
+      tabIndex={-1}
+      aria-labelledby="git-conflict-recovery-title"
+      data-testid="git-conflict-recovery"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-(--status-warning-border) bg-(--status-warning-bg) outline-none focus-visible:ring-2 focus-visible:ring-(--accent)"
+    >
+      <div className="border-b border-(--status-warning-border) px-3 py-2.5">
+        <div className="flex items-start gap-2">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-(--status-warning-text)" />
+          <div className="min-w-0">
+            <h2
+              id="git-conflict-recovery-title"
+              className="text-xs font-semibold text-(--text-primary)"
+            >
+              {t("gitPanel.conflict.recoveryTitle")}
+            </h2>
+            <p className="mt-0.5 text-[11px] leading-4 text-(--text-secondary)">
+              {t("gitPanel.conflict.operationInProgress", { operation })}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-(--text-muted)">
+        <span>{t("gitPanel.conflict.unresolvedFiles")}</span>
+        <span className="font-mono tabular-nums">
+          {recovery.unresolvedFiles.length}{recovery.unresolvedFilesTruncated ? '+' : ''}
+        </span>
+      </div>
+
+      {recovery.unresolvedFilesTruncated ? (
+        <p
+          data-testid="git-conflict-files-truncated"
+          className="px-3 pb-2 text-[11px] leading-4 text-(--status-warning-text)"
+        >
+          {t("gitPanel.conflict.unresolvedFilesTruncated")}
+        </p>
+      ) : null}
+
+      {recovery.unresolvedFiles.length === 0 && !recovery.unresolvedFilesTruncated ? (
+        <p className="px-3 pb-3 text-[11px] leading-4 text-(--text-muted)">
+          {t("gitPanel.conflict.noUnresolvedFiles")}
+        </p>
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col pb-2">
+            {recovery.unresolvedFiles.map((file) => (
+              <button
+                key={file.path}
+                type="button"
+                onClick={() => {
+                  setSelectedPath(file.path);
+                  onOpenDiffFile(file);
+                }}
+                data-testid={`git-conflict-file-${file.path}`}
+                className="group flex min-w-0 items-center gap-2 border-l-2 border-l-transparent px-3 py-2 text-left text-(--text-secondary) transition-colors hover:border-l-(--accent) hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              >
+                <FileBadge file={file} />
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                  {file.path}
+                </span>
+                <span className="shrink-0 text-[10px] text-(--text-muted) group-hover:text-(--text-primary)">
+                  {t("gitPanel.conflict.openDiff")}
+                </span>
+                <GitCompare className="h-3.5 w-3.5 shrink-0" />
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
+      )}
+    </section>
   );
 }

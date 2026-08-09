@@ -25,7 +25,7 @@ import {
   TAB_SCROLL_GUTTER,
   resolveTabScrollReveal,
 } from '@/lib/tab/tab-scroll-reveal';
-import { GitDesktopCommitControl } from '@/components/git/git-desktop-commit-control';
+import { GitDesktopDeliveryControl } from '@/components/git/git-desktop-commit-control';
 
 const TAB_SCROLL_MIN_STEP = 180;
 
@@ -669,7 +669,7 @@ export const TabBar = memo(function TabBar() {
         data-testid="tab-bar-new-tab-drop-zone"
       />
 
-      {!isPhoneViewport ? <GitDesktopCommitControl /> : null}
+      {!isPhoneViewport ? <GitDesktopDeliveryControl /> : null}
 
       {/* Right panel toggle — anchored to the right with a clear panel affordance */}
       <button

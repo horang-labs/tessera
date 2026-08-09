@@ -4,7 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   GitWorkingTreeDiffStatButton,
-  supportsDesktopCommitControl,
+  supportsDesktopDeliveryControl,
 } from '../src/components/git/git-desktop-commit-control';
 import type { GitPanelData } from '../src/types/git';
 
@@ -36,14 +36,14 @@ test('the desktop diff target exposes the whole worktree stat without relying on
 });
 
 test('only complete dirty commit states opt into the desktop control', () => {
-  assert.equal(supportsDesktopCommitControl(DIRTY_DATA, 'commit'), true);
-  assert.equal(supportsDesktopCommitControl(DIRTY_DATA, 'conflict'), false);
+  assert.equal(supportsDesktopDeliveryControl(DIRTY_DATA, 'commit'), true);
+  assert.equal(supportsDesktopDeliveryControl(DIRTY_DATA, 'conflict'), true);
   assert.equal(
-    supportsDesktopCommitControl({ ...DIRTY_DATA, changedFilesTruncated: true }, 'commit'),
+    supportsDesktopDeliveryControl({ ...DIRTY_DATA, changedFilesTruncated: true }, 'commit'),
     false,
   );
   assert.equal(
-    supportsDesktopCommitControl({ ...DIRTY_DATA, diffStats: null }, 'commit'),
+    supportsDesktopDeliveryControl({ ...DIRTY_DATA, diffStats: null }, 'commit'),
     false,
   );
 });

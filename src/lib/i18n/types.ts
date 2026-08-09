@@ -1156,6 +1156,16 @@ export interface I18nMessages {
       alreadyOpen: string;
     };
     conflict: {
+      resolve: string;
+      recoveryTitle: string;
+      mergeOperation: string;
+      rebaseOperation: string;
+      cherryPickOperation: string;
+      operationInProgress: string;
+      unresolvedFiles: string;
+      unresolvedFilesTruncated: string;
+      noUnresolvedFiles: string;
+      openDiff: string;
       mergeInProgress: string;
       rebaseInProgress: string;
       cherryPickInProgress: string;

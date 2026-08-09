@@ -252,7 +252,7 @@ test('committing rotates the same button from Commit to Push', () => {
   assert.equal(committed.kind, 'push');
 });
 
-test('a conflict outranks the uncommitted changes it produced', () => {
+test('a conflict outranks dirty state with an enabled recovery path', () => {
   // A stopped merge leaves a tree full of conflicted files, so the dirty rung
   // would otherwise claim it and offer a commit Git refuses (§9). The conflict
   // rung sits above it for exactly that reason.
@@ -263,25 +263,24 @@ test('a conflict outranks the uncommitted changes it produced', () => {
   });
 
   assert.equal(action.kind, 'conflict');
-  assert.equal(action.enabled, false);
-  assert.equal(action.disabledReasonKey, 'gitPanel.conflict.mergeInProgress');
+  assert.equal(action.action, 'resolve_conflicts');
+  assert.equal(action.enabled, true);
+  assert.equal(action.labelKey, 'gitPanel.conflict.resolve');
+  assert.equal(action.disabledReasonKey, null);
 });
 
-test('the blocked rung names the operation the worktree is actually in', () => {
+test('every supported conflict operation derives the same recovery navigation', () => {
   const rebase = derivePrimaryGitAction({ ...SYNCED, conflictOperation: 'rebase' });
   const cherryPick = derivePrimaryGitAction({
     ...SYNCED,
     conflictOperation: 'cherry_pick',
   });
 
-  assert.equal(rebase.disabledReasonKey, 'gitPanel.conflict.rebaseInProgress');
-  assert.equal(
-    cherryPick.disabledReasonKey,
-    'gitPanel.conflict.cherryPickInProgress',
-  );
+  assert.equal(rebase.action, 'resolve_conflicts');
+  assert.equal(cherryPick.action, 'resolve_conflicts');
 });
 
-test('a conflict blocks the branch rungs too, not only the dirty one', () => {
+test('a conflict recovery path outranks the branch rungs too', () => {
   // Nothing below the conflict rung is reachable while one is in progress: a
   // clean-looking tree mid-rebase would otherwise be offered a push.
   const action = derivePrimaryGitAction({
@@ -291,7 +290,7 @@ test('a conflict blocks the branch rungs too, not only the dirty one', () => {
   });
 
   assert.equal(action.kind, 'conflict');
-  assert.equal(action.enabled, false);
+  assert.equal(action.enabled, true);
 });
 
 test('aborting rotates the button back to a normal action', () => {
