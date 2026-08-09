@@ -19,7 +19,7 @@ import {
   GitPanelContentSection,
   GitPanelSummarySection,
 } from "./git-panel-sections";
-import { useGitPanelController } from "./use-git-panel-controller";
+import { useSharedGitPanelController } from "./git-panel-controller-context";
 import { GitDefaultBranchConfirmDialog } from "./git-default-branch-confirm-dialog";
 import {
   openWorkspaceFileTab,
@@ -83,7 +83,7 @@ export function GitPanel({
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === "win32";
   const isLinuxElectron = electronPlatform === "linux";
-  const controller = useGitPanelController(sessionId);
+  const controller = useSharedGitPanelController();
   // The selection lives in the store so a preparation badge can send the user
   // straight to the Scripts tab.
   const activePanelTab = useGitStore((state) => state.panelTab);

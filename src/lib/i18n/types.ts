@@ -1075,6 +1075,15 @@ export interface I18nMessages {
     commit: {
       messageLabel: string;
       messagePlaceholder: string;
+      composerTitle: string;
+      composerLabel: string;
+      openComposer: string;
+      closeComposer: string;
+      reviewFiles: string;
+      changedFiles: string;
+      diffStatLabel: string;
+      menuLabel: string;
+      worktreeFallback: string;
       selectionSummary: string;
       includeFile: string;
       button: string;

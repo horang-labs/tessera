@@ -22,6 +22,7 @@ import type { GitPendingVerb } from "./use-git-panel-controller";
  * that could not answer leaves the commit path exactly as it was.
  */
 export function GitCommitForm({
+  children,
   pendingVerb,
   generateError,
   generating,
@@ -33,6 +34,7 @@ export function GitCommitForm({
   primaryAction,
   totals,
 }: {
+  children?: ReactNode;
   /**
    * Whatever is running against this working directory, or null — not only this
    * form's own commit. A pull started from the menu holds the same `index.lock`
@@ -77,6 +79,7 @@ export function GitCommitForm({
         data-testid="git-commit-message"
         className="min-h-[3.5rem] w-full resize-y rounded-md border border-(--divider) bg-(--sidebar-bg) px-2 py-1.5 text-[12px] leading-5 text-(--text-primary) outline-none placeholder:text-(--text-muted) focus:border-(--accent) disabled:opacity-60"
       />
+      {children}
       <div className="flex items-center justify-between gap-2">
         <span
           className="min-w-0 truncate font-mono text-[10px] text-(--text-muted) tabular-nums"
