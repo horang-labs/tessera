@@ -179,7 +179,6 @@ export class MobileAccessCoordinator {
     adapter: TailscaleAdapter;
     stateStore: MobileAccessStateStore;
     checkHealth(origin: string): Promise<void>;
-    publishPairingOrigin(origin: string): Promise<void>;
     openExternal(url: string): Promise<void>;
   }) {}
 
@@ -231,7 +230,6 @@ export class MobileAccessCoordinator {
         return this.status;
       }
       await this.dependencies.checkHealth(persisted.origin);
-      await this.dependencies.publishPairingOrigin(persisted.origin);
       this.status = { state: 'ready', origin: persisted.origin };
     } catch (error) {
       this.status = retryableFailure(error);
@@ -449,7 +447,6 @@ export class MobileAccessCoordinator {
       };
       await this.dependencies.stateStore.save(ownership);
       this.configuredConnection = true;
-      await this.dependencies.publishPairingOrigin(origin);
       return this.remember({ state: 'ready', origin });
     } catch (error) {
       return this.remember(retryableFailure(error));

@@ -1,6 +1,5 @@
 import { getServerPort } from '../server-port';
-import { loadMachineSettings } from '../settings/machine-settings';
-import { normalizeAdvertisedAddress } from './advertised-address';
+import { loadOwnedMobileAccessOrigin } from '../mobile-access/mobile-access-state-store';
 
 const SAFE_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -14,14 +13,14 @@ export function requiresOriginCheck(input: {
 
 export async function getAllowedOrigins(): Promise<Set<string>> {
   const port = getServerPort();
-  const machineSettings = await loadMachineSettings();
+  const mobileAccessOrigin = await loadOwnedMobileAccessOrigin();
   const origins = new Set([
     `http://localhost:${port}`,
     `http://127.0.0.1:${port}`,
   ]);
 
-  if (machineSettings.advertisedAddress) {
-    origins.add(machineSettings.advertisedAddress);
+  if (mobileAccessOrigin) {
+    origins.add(mobileAccessOrigin);
   }
 
   return origins;
@@ -36,7 +35,12 @@ export async function isOriginAllowed(input: {
 
   let normalizedOrigin: string | null;
   try {
-    normalizedOrigin = normalizeAdvertisedAddress(input.origin)?.origin ?? null;
+    const url = new URL(input.origin);
+    normalizedOrigin = (
+      (url.protocol === 'http:' || url.protocol === 'https:')
+      && url.username === ''
+      && url.password === ''
+    ) ? url.origin : null;
   } catch {
     return false;
   }

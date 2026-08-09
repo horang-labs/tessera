@@ -6,6 +6,8 @@ import {
   type WindowsPathRestrictor,
 } from '../filesystem/owner-only-path';
 
+import { getTesseraDataPath } from '../tessera-data-dir';
+
 export const MOBILE_ACCESS_OWNER = 'tessera.mobile-access';
 
 export interface MobileAccessOwnership {
@@ -47,6 +49,19 @@ function isValidPort(value: unknown): value is number {
     && value <= 65_535;
 }
 
+function isValidOwnedOrigin(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && url.username === ''
+      && url.password === ''
+      && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
 function isMobileAccessPersistedState(value: unknown): value is MobileAccessPersistedState {
   if (!value || typeof value !== 'object') return false;
   const state = value as Partial<MobileAccessOwnership & MobileAccessSetupProgress>;
@@ -61,7 +76,7 @@ function isMobileAccessPersistedState(value: unknown): value is MobileAccessPers
       );
   }
   return typeof state.nodeDnsName === 'string'
-    && typeof state.origin === 'string'
+    && isValidOwnedOrigin(state.origin)
     && isValidPort(state.servePort)
     && state.mountPath === '/'
     && typeof state.lastLoopbackTarget === 'string';
@@ -118,4 +133,13 @@ export class FileMobileAccessStateStore implements MobileAccessStateStore {
       restrictWindowsPath: this.restrictWindowsPath,
     });
   }
+}
+
+export function createMobileAccessStateStore(): FileMobileAccessStateStore {
+  return new FileMobileAccessStateStore(getTesseraDataPath('mobile-access.json'));
+}
+
+export async function loadOwnedMobileAccessOrigin(): Promise<string | null> {
+  const state = await createMobileAccessStateStore().load();
+  return state && !('phase' in state) ? state.origin : null;
 }

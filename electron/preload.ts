@@ -13,16 +13,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('renderer-console-log', { level, text }),
   notifyRendererConsoleBridgeReady: () =>
     ipcRenderer.send('renderer-console-bridge-ready'),
-  supportsTailscaleFirewallConfiguration:
-    ipcRenderer.sendSync('supports-tailscale-firewall-configuration'),
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
-  getRemoteAccessAddressCandidates: () =>
-    ipcRenderer.invoke('get-remote-access-address-candidates'),
   getMobileAccessStatus: () =>
     ipcRenderer.invoke('get-mobile-access-status') as Promise<MobileAccessStatus>,
   startMobileAccessSetup: () =>
     ipcRenderer.invoke('start-mobile-access-setup') as Promise<MobileAccessStatus>,
-  configureTailscaleFirewall: () => ipcRenderer.invoke('configure-tailscale-firewall'),
   createPairingCode: (action: 'issue' | 'rotate') =>
     ipcRenderer.invoke('create-pairing-code', action),
   listPairingRequests: () => ipcRenderer.invoke('list-pairing-requests'),

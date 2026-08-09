@@ -134,7 +134,6 @@ function createHarness(options: {
     adapter,
     stateStore: store,
     async checkHealth(origin) { calls.push(`health:${origin}`); },
-    async publishPairingOrigin(origin) { calls.push(`publish:${origin}`); },
     async openExternal(url) { opened.push(url); },
   });
 
@@ -395,7 +394,6 @@ test('setup exposes configuring and verifies fresh Serve, node, and HTTPS health
     'inspect-node',
     'inspect-serve',
     `health:https://${DNS_NAME}`,
-    `publish:https://${DNS_NAME}`,
   ]);
 });
 
@@ -579,7 +577,6 @@ test('unsupported Serve inspection fails closed without mutation', async () => {
     },
     stateStore: new MemoryStateStore(),
     async checkHealth() {},
-    async publishPairingOrigin() {},
     async openExternal() {},
   });
 
@@ -590,7 +587,7 @@ test('unsupported Serve inspection fails closed without mutation', async () => {
   assert.equal(configureCount, 0);
 });
 
-test('a command timeout becomes retryable and resumes without publishing partial setup', async () => {
+test('a command timeout becomes retryable and resumes without completing partial setup', async () => {
   const harness = createHarness({
     configureError: new Error('Tailscale command timed out after 15000ms'),
   });
@@ -599,7 +596,6 @@ test('a command timeout becomes retryable and resumes without publishing partial
     state: 'retryable-failure',
     message: 'Tailscale command timed out after 15000ms',
   });
-  assert.equal(harness.calls.some((call) => call.startsWith('publish:')), false);
   assert.equal(harness.store.state && 'phase' in harness.store.state, true);
 
   harness.setConfigureError(null);
@@ -607,7 +603,7 @@ test('a command timeout becomes retryable and resumes without publishing partial
     state: 'ready',
     origin: `https://${DNS_NAME}`,
   });
-  assert.equal(harness.calls.filter((call) => call.startsWith('publish:')).length, 1);
+  assert.equal(harness.store.state && !('phase' in harness.store.state), true);
 });
 
 test('Windows persistence applies current-user ACLs and retains a selected high port', async () => {

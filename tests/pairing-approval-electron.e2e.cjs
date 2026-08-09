@@ -111,8 +111,11 @@ async function main() {
   const repo = path.resolve(process.argv[2] ?? '');
   const cdpUrl = readOption('cdp');
   const remoteOriginOption = readOption('remote-origin');
-  if (!repo || !cdpUrl) {
-    throw new Error('Usage: pairing-approval-electron.e2e.cjs <repo> --cdp=<url>');
+  if (!repo || !cdpUrl || !remoteOriginOption) {
+    throw new Error(
+      'Usage: pairing-approval-electron.e2e.cjs <repo> --cdp=<url> '
+      + '--remote-origin=<owned Serve HTTPS origin>',
+    );
   }
 
   const { chromium } = require(path.join(repo, 'node_modules', '@playwright', 'test'));
@@ -135,25 +138,12 @@ async function main() {
       '32123',
       'Refusing to clear devices or run pairing E2E against the normal Tessera instance',
     );
-    const origin = remoteOriginOption
-      ? new URL(remoteOriginOption).origin
-      : `http://127.0.0.1:${electronUrl.port}`;
-    assert.equal(new URL(origin).port, electronUrl.port);
+    const origin = new URL(remoteOriginOption).origin;
+    assert.equal(new URL(origin).protocol, 'https:');
     const clearDevicesStatus = await electronPage.evaluate(() => (
       fetch('/api/devices', { method: 'DELETE' }).then((response) => response.status)
     ));
     assert.equal(clearDevicesStatus, 200, 'Could not reset the isolated test device registry');
-    const saveAddressStatus = await electronPage.evaluate((advertisedAddress) => (
-      fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ machineSettings: { advertisedAddress } }),
-      }).then((response) => response.status)
-    ), origin);
-    assert.equal(saveAddressStatus, 200, 'Could not configure the isolated advertised address');
-    await electronPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await electronPage.waitForURL(/\/chat(?:$|\?)/, { timeout: 30_000 });
-
     mobileBrowser = await chromium.launch({
       channel: 'msedge',
       headless: true,
@@ -217,9 +207,7 @@ async function main() {
     await expiringMobile.context.close();
 
     process.stdout.write(`${JSON.stringify({
-      topology: remoteOriginOption
-        ? 'packaged-windows-electron-with-mobile-emulated-edge-over-advertised-network'
-        : 'packaged-windows-electron-with-mobile-emulated-edge-over-loopback',
+      topology: 'packaged-windows-electron-with-mobile-emulated-edge-over-tailscale-serve',
       renderer: { title: rendererTitle, origin, pathname: electronUrl.pathname },
       approval: 'passed',
       localApprovalUi: 'passed',
