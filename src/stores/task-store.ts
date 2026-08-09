@@ -494,22 +494,20 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       toast.error('This Worktree has no canonical identity and cannot be deleted safely.');
       return false;
     }
-    const projectId = existingTask?.projectId;
+    const affectedProjectIds = Object.entries(get().tasksByProject)
+      .filter(([, tasks]) => tasks.some((task) => task.id === id))
+      .map(([projectId]) => projectId);
     const linkedSessionIds = existingTask?.sessions.map((session) => session.id) ?? [];
 
-    if (projectId) {
-      const previousProjectTasks = get().getTasksForProject(projectId);
-      const nextProjectTasks = previousProjectTasks.filter((task) => task.id !== id);
-
-      set((state) => ({
-        ...updateProjectCache(
-          state,
+    set((state) => ({
+      tasks: state.tasks.filter((task) => task.id !== id),
+      tasksByProject: Object.fromEntries(
+        Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
           projectId,
-          nextProjectTasks,
-          state.currentProjectId === projectId
-        ),
-      }));
-    }
+          tasks.filter((task) => task.id !== id),
+        ]),
+      ),
+    }));
     if (linkedSessionIds.length > 0) {
       for (const sessionId of linkedSessionIds) {
         useSessionStore.getState().removeSession(sessionId);
@@ -522,16 +520,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         const body = await res.json().catch(() => ({})) as { error?: string };
         toast.error(body.error ?? 'Failed to delete Worktree');
         await useSessionStore.getState().loadProjects();
-        if (projectId)
-          await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
+        await Promise.all(affectedProjectIds.map((projectId) => get().loadTasks(projectId, {
+          setCurrent: get().currentProjectId === projectId,
+        })));
         return false;
       }
       return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to delete Worktree');
       await useSessionStore.getState().loadProjects();
-      if (projectId)
-        await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
+      await Promise.all(affectedProjectIds.map((projectId) => get().loadTasks(projectId, {
+        setCurrent: get().currentProjectId === projectId,
+      })));
       return false;
     }
   },
@@ -540,21 +540,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const existingTask = get().getTask(id);
     if (!existingTask) return false;
 
-    const projectId = existingTask.projectId;
-    const previousProjectTasks = get().getTasksForProject(projectId);
+    const affectedProjectIds = Object.entries(get().tasksByProject)
+      .filter(([, tasks]) => tasks.some((task) => task.id === id))
+      .map(([projectId]) => projectId);
     const linkedSessionIds = existingTask.sessions.map((session) => session.id);
     const archivedAt = archived ? new Date().toISOString() : undefined;
 
+    const patchTasks = (tasks: TaskEntity[]) => archived
+      ? tasks.filter((task) => task.id !== id)
+      : tasks.map((task) => task.id === id ? { ...task, archived, archivedAt } : task);
     set((state) => ({
-      ...updateProjectCache(
-        state,
-        projectId,
-        archived
-          ? previousProjectTasks.filter((task) => task.id !== id)
-          : previousProjectTasks.map((task) =>
-              task.id === id ? { ...task, archived, archivedAt } : task
-            ),
-        state.currentProjectId === projectId
+      tasks: patchTasks(state.tasks),
+      tasksByProject: Object.fromEntries(
+        Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
+          projectId,
+          patchTasks(tasks),
+        ]),
       ),
     }));
 
@@ -583,15 +584,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       }
       return true;
     } catch {
-      set((state) => ({
-        ...updateProjectCache(
-          state,
-          projectId,
-          previousProjectTasks,
-          state.currentProjectId === projectId
-        ),
-      }));
       await useSessionStore.getState().loadProjects();
+      await Promise.all(affectedProjectIds.map((projectId) => get().loadTasks(projectId, {
+        setCurrent: get().currentProjectId === projectId,
+      })));
       return false;
     }
   },

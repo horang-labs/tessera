@@ -8,6 +8,7 @@ const originalFetch = globalThis.fetch;
 function task(projectId: string, projectViewId: string): TaskEntity {
   return {
     id: 'shared-worktree',
+    worktreeId: 'wt_shared',
     projectId,
     projectViewId,
     title: 'Shared Worktree',
@@ -19,13 +20,7 @@ function task(projectId: string, projectViewId: string): TaskEntity {
   };
 }
 
-test.afterEach(() => {
-  globalThis.fetch = originalFetch;
-  useTaskStore.setState(useTaskStore.getInitialState(), true);
-});
-
-test('canonical Task mutations update every cached Project appearance without leaking Collections', async () => {
-  globalThis.fetch = async () => new Response('{}', { status: 200 });
+function seedAppearances(): void {
   const inA = task('project-a', 'project-a');
   const inC = task('project-a', 'project-c');
   useTaskStore.setState({
@@ -36,6 +31,16 @@ test('canonical Task mutations update every cached Project appearance without le
     loaded: true,
     loadedProjects: { 'project-a': true, 'project-c': true },
   }, true);
+}
+
+test.afterEach(() => {
+  globalThis.fetch = originalFetch;
+  useTaskStore.setState(useTaskStore.getInitialState(), true);
+});
+
+test('canonical Task mutations update every cached Project appearance without leaking Collections', async () => {
+  globalThis.fetch = async () => new Response('{}', { status: 200 });
+  seedAppearances();
 
   assert.equal(await useTaskStore.getState().updateTask('shared-worktree', {
     title: 'Renamed everywhere',
@@ -58,4 +63,28 @@ test('canonical Task mutations update every cached Project appearance without le
   assert.equal(useTaskStore.getState().tasksByProject['project-a'][0]?.collectionId, 'collection-a');
   assert.equal(useTaskStore.getState().tasksByProject['project-c'][0]?.collectionId, undefined);
   assert.equal(useTaskStore.getState().tasks[0]?.projectViewId, 'project-c');
+});
+
+test('archive removes every cached Project appearance', async () => {
+  globalThis.fetch = async () => new Response('{}', { status: 200 });
+  seedAppearances();
+
+  assert.equal(await useTaskStore.getState().toggleTaskArchive('shared-worktree', true), true);
+  assert.deepEqual(useTaskStore.getState().tasks, []);
+  assert.deepEqual(useTaskStore.getState().tasksByProject, {
+    'project-a': [],
+    'project-c': [],
+  });
+});
+
+test('Worktree deletion removes every cached Project appearance', async () => {
+  globalThis.fetch = async () => new Response('{}', { status: 200 });
+  seedAppearances();
+
+  assert.equal(await useTaskStore.getState().deleteWorktree('shared-worktree'), true);
+  assert.deepEqual(useTaskStore.getState().tasks, []);
+  assert.deepEqual(useTaskStore.getState().tasksByProject, {
+    'project-a': [],
+    'project-c': [],
+  });
 });
