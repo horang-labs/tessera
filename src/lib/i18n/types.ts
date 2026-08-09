@@ -636,6 +636,9 @@ export interface I18nMessages {
       label: string;
       placeholder: string;
       send: string;
+      attachImage: string;
+      attachingImage: string;
+      imageAttachFailed: string;
       keyEscape: string;
       keyShiftTab: string;
       keyUp: string;

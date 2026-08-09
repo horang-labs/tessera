@@ -33,6 +33,7 @@ import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs
 // viewport boundary the bar is conditional on.
 const DESKTOP_VIEWPORT = { width: 1000, height: 900 };
 const REPRO_TERMINAL_ID = 'dev-terminal-input-bar-repro';
+const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+X3sXWQAAAABJRU5ErkJggg==';
 
 // The five keys and the bytes a keyboard would put on the wire for each. Written out as
 // literals on purpose: importing them from the module under test would make this assert
@@ -89,6 +90,7 @@ server.stderr.on('data', (chunk) => {
 
 let browser;
 let appSecret;
+let uploadedImageFilename;
 try {
   appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
@@ -98,6 +100,7 @@ try {
   await testTheBarIsAbsentFromTheDesktopTree(browser, appOrigin);
   await testKeyboardOwnershipFollowsThePhoneBreakpoint(browser, appOrigin);
   await testSubmittedTextLeavesForThePtyBracketedPasteWrapped(browser, appOrigin);
+  await testSelectedImageUploadsAndPastesWithoutEnter(browser, appOrigin);
   await testEachKeyLeavesForThePtyAsItsOwnSequence(browser, appOrigin);
 } catch (error) {
   if (serverOutput) process.stderr.write(`\n--- isolated server output ---\n${serverOutput}\n`);
@@ -113,6 +116,12 @@ try {
   }
   await waitForExit(server, 5_000);
   await fs.rm(dataDir, { recursive: true, force: true });
+  if (uploadedImageFilename) {
+    await fs.rm(
+      path.join(os.tmpdir(), 'tessera-uploads', 'electron-local-user', uploadedImageFilename),
+      { force: true },
+    );
+  }
 }
 
 console.log('mobile terminal input bar e2e passed');
@@ -173,6 +182,28 @@ async function testTheBarIsPresentAtAPhoneViewport(browserInstance, origin) {
           + ` (left ${keyBox.x}px, right ${keyBox.x + keyBox.width}px)`,
       );
     }
+
+    const attachButton = page.getByTestId('terminal-input-bar-attach-image');
+    const attachBox = await attachButton.boundingBox();
+    assert.ok(attachBox, 'the image attachment button should be measurable');
+    assert.ok(
+      attachBox.width >= 44 && attachBox.height >= 44,
+      `the image attachment button must be a 44px touch target`
+        + ` (${Math.round(attachBox.width)}x${Math.round(attachBox.height)})`,
+    );
+    assert.ok(
+      attachBox.x >= -1 && attachBox.x + attachBox.width <= PHONE_VIEWPORT.width + 1,
+      'the image attachment button must stay on screen',
+    );
+
+    const imageInput = page.getByTestId('terminal-input-bar-image-input');
+    assert.equal(
+      await imageInput.getAttribute('accept'),
+      'image/png,image/jpeg,image/gif,image/webp',
+      'the picker should advertise only the supported terminal image formats',
+    );
+    assert.equal(await imageInput.getAttribute('multiple'), null, 'the picker must select one image');
+    assert.equal(await imageInput.getAttribute('capture'), null, 'the picker must not force the camera');
 
     // The whole reason the bar exists: a real element a tap can focus, unlike xterm's
     // helper textarea. Focus is not the soft keyboard — that part is device-only — but a
@@ -327,6 +358,71 @@ async function testSubmittedTextLeavesForThePtyBracketedPasteWrapped(browserInst
       ),
       false,
       'the send button must not programmatically reopen the Phone keyboard',
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+async function testSelectedImageUploadsAndPastesWithoutEnter(browserInstance, origin) {
+  const { context, page } = await createPhonePage(browserInstance);
+
+  try {
+    await openRepro(page, origin);
+    await takeTerminalInput(page);
+
+    const imageInput = page.getByTestId('terminal-input-bar-image-input');
+    const uploadResponsePromise = page.waitForResponse(
+      (response) => response.url().endsWith('/api/upload')
+        && response.request().method() === 'POST',
+      { timeout: 10_000 },
+    );
+    await imageInput.setInputFiles({
+      name: 'phone-upload.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(PNG_BASE64, 'base64'),
+    });
+
+    const uploadResponse = await uploadResponsePromise;
+    assert.equal(uploadResponse.status(), 200, 'the image upload should succeed');
+    const { path: uploadedPath } = await uploadResponse.json();
+    assert.equal(typeof uploadedPath, 'string');
+    uploadedImageFilename = uploadedPath.split(/[\\/]/).at(-1);
+
+    const imageInputBytes = await waitForTerminalInput(page);
+    assert.match(
+      uploadedPath,
+      /tessera-uploads[\\/].+phone-upload\.png/,
+      'the selected image should upload to an agent-visible path',
+    );
+    assert.ok(
+      imageInputBytes === uploadedPath
+        || imageInputBytes === `\x1b[200~${uploadedPath}\x1b[201~`,
+      'the PTY should receive exactly the uploaded path, with only optional bracketed-paste wrapping',
+    );
+    assert.equal(
+      imageInputBytes.includes('\r'),
+      false,
+      'attaching an image must leave submission to the separate Enter button',
+    );
+    assert.equal(
+      await page.getByTestId('terminal-input-bar-attach-image').getAttribute('aria-busy'),
+      'false',
+      'the attachment button should return to idle after delivery',
+    );
+
+    await takeTerminalInput(page);
+    await imageInput.setInputFiles({
+      name: 'unsupported.heic',
+      mimeType: 'image/heic',
+      buffer: Buffer.from('not-a-supported-image'),
+    });
+    await page.getByTestId('terminal-input-bar-error').waitFor({ state: 'visible' });
+    await page.waitForTimeout(100);
+    assert.deepEqual(
+      await page.evaluate(() => window.__tesseraTerminalFrames?.take() ?? []),
+      [],
+      'an unsupported image must not emit PTY input',
     );
   } finally {
     await context.close();

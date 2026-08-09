@@ -15,6 +15,28 @@ export type TerminalClipboardPayload =
 
 export type TerminalClipboardPasteResult = 'text' | 'image' | 'empty';
 
+const TERMINAL_IMAGE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+] as const;
+
+type TerminalImageMimeType = typeof TERMINAL_IMAGE_MIME_TYPES[number];
+
+const TERMINAL_IMAGE_EXTENSION_MIME_TYPES: Record<string, TerminalImageMimeType> = {
+  gif: 'image/gif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+const MAX_TERMINAL_IMAGE_SIZE_BYTES = 20 * 1024 * 1024;
+
+/** Shared by the Phone picker and its authoritative upload-side validation. */
+export const TERMINAL_IMAGE_FILE_ACCEPT = TERMINAL_IMAGE_MIME_TYPES.join(',');
+
 interface TerminalClipboardPasteDependencies {
   paste(data: string): void;
   uploadImage(image: TerminalClipboardImage): Promise<string>;
@@ -64,11 +86,16 @@ async function parseUploadResponse(response: Response): Promise<string> {
 }
 
 export async function uploadTerminalClipboardFile(file: File): Promise<string> {
-  if (!file.type.startsWith('image/')) {
-    throw new Error('Only clipboard images can be pasted into the terminal.');
+  const mimeType = TERMINAL_IMAGE_MIME_TYPES.includes(file.type as TerminalImageMimeType)
+    ? file.type as TerminalImageMimeType
+    : file.type
+      ? null
+      : TERMINAL_IMAGE_EXTENSION_MIME_TYPES[file.name.split('.').pop()?.toLowerCase() ?? ''] ?? null;
+  if (!mimeType) {
+    throw new Error('Terminal images must be PNG, JPEG, GIF, or WebP.');
   }
-  if (file.size > 20 * 1024 * 1024) {
-    throw new Error('Clipboard image is too large to paste into the terminal.');
+  if (file.size > MAX_TERMINAL_IMAGE_SIZE_BYTES) {
+    throw new Error('Terminal image is too large to paste into the terminal.');
   }
   const formData = new FormData();
   formData.append('file', file);

@@ -1,19 +1,22 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { SendHorizontal } from 'lucide-react';
+import { ImagePlus, Loader2, SendHorizontal } from 'lucide-react';
 import {
   TERMINAL_INPUT_BAR_KEYS,
   terminalInputBarKeySequence,
   terminalInputBarTextPayload,
 } from '@/lib/terminal/terminal-input-bar-input';
 import type { TerminalNamedKey } from '@/lib/terminal/session-control-input';
+import { TERMINAL_IMAGE_FILE_ACCEPT } from '@/lib/terminal/terminal-clipboard-paste';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 
 interface TerminalInputBarProps {
   onSend: (data: string) => boolean;
+  onAttachImage: (file: File) => Promise<boolean>;
   /**
    * Whether this bar's tab is the one on screen.
    *
@@ -45,14 +48,21 @@ interface TerminalInputBarProps {
  * has finished by the time the user taps send, so the browser's own
  * composition handling is all that is needed.
  */
-export function TerminalInputBar({ onSend, isTabActive = true }: TerminalInputBarProps) {
+export function TerminalInputBar({
+  onSend,
+  onAttachImage,
+  isTabActive = true,
+}: TerminalInputBarProps) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
-  const [didFail, setDidFail] = useState(false);
+  const [failure, setFailure] = useState<'send' | 'image' | null>(null);
+  const [isAttachingImage, setIsAttachingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageAttachmentInFlightRef = useRef(false);
 
   const send = useCallback((data: string) => {
     const delivered = onSend(data);
-    setDidFail(!delivered);
+    setFailure(delivered ? null : 'send');
     return delivered;
   }, [onSend]);
 
@@ -68,6 +78,25 @@ export function TerminalInputBar({ onSend, isTabActive = true }: TerminalInputBa
   const handleKey = useCallback((key: TerminalNamedKey) => {
     send(terminalInputBarKeySequence(key));
   }, [send]);
+
+  const handleImageSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file || imageAttachmentInFlightRef.current) return;
+
+    imageAttachmentInFlightRef.current = true;
+    setIsAttachingImage(true);
+    setFailure(null);
+    try {
+      const delivered = await onAttachImage(file);
+      setFailure(delivered ? null : 'image');
+    } catch {
+      setFailure('image');
+    } finally {
+      imageAttachmentInFlightRef.current = false;
+      setIsAttachingImage(false);
+    }
+  }, [onAttachImage]);
 
   return (
     <div
@@ -106,7 +135,42 @@ export function TerminalInputBar({ onSend, isTabActive = true }: TerminalInputBa
           </button>
         ))}
       </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={TERMINAL_IMAGE_FILE_ACCEPT}
+        className="hidden"
+        onChange={handleImageSelect}
+        disabled={isAttachingImage}
+        tabIndex={-1}
+        data-testid="terminal-input-bar-image-input"
+      />
       <div className="mt-2 flex items-end gap-1">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isAttachingImage}
+          aria-label={t(
+            isAttachingImage
+              ? 'chat.terminalInputBar.attachingImage'
+              : 'chat.terminalInputBar.attachImage',
+          )}
+          title={t(
+            isAttachingImage
+              ? 'chat.terminalInputBar.attachingImage'
+              : 'chat.terminalInputBar.attachImage',
+          )}
+          aria-busy={isAttachingImage}
+          data-testid="terminal-input-bar-attach-image"
+          className={cn(
+            'flex shrink-0 items-center justify-center rounded border border-(--divider) bg-(--chat-header-bg) text-(--text-primary) disabled:opacity-40 active:bg-black/10 dark:active:bg-white/15',
+            PHONE_TOUCH_TARGET,
+          )}
+        >
+          {isAttachingImage
+            ? <span className="animate-spin"><Loader2 className="h-4 w-4" /></span>
+            : <ImagePlus className="h-4 w-4" />}
+        </button>
         <textarea
           value={text}
           onChange={(event) => setText(event.target.value)}
@@ -139,13 +203,17 @@ export function TerminalInputBar({ onSend, isTabActive = true }: TerminalInputBa
           <SendHorizontal className="h-4 w-4" />
         </button>
       </div>
-      {didFail && (
+      {failure && (
         <p
           role="status"
           data-testid="terminal-input-bar-error"
           className="mt-1 text-xs text-(--text-secondary)"
         >
-          {t('chat.terminalSendFailed')}
+          {t(
+            failure === 'image'
+              ? 'chat.terminalInputBar.imageAttachFailed'
+              : 'chat.terminalSendFailed',
+          )}
         </p>
       )}
     </div>
