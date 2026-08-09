@@ -9,7 +9,7 @@ Issue #286 makes the checkout opened by a Project a canonical, selectable Worktr
 - Added Project Worktree metadata to the Projects API. The live branch is read from Git administrative files during normal Project refresh; no continuous watcher and no Git child process per rendered row were added.
 - Added a real Worktree target to panel state, a branch-icon Project Worktree row, and a minimal center overview with current branch, path, New Session, and New Worktree actions.
 - Added direct Worktree Git and Files API routes and routed the right panel by Worktree identity when no Session exists. Existing Session routes and project-owned fields remain available.
-- Added real SQLite/Git integration coverage, rendered component/store routing coverage, and a 133-line browser e2e covering sidebar selection, center overview, sessionless Git/Files, and reload persistence.
+- Added real SQLite/Git integration coverage, rendered component/store routing coverage, and a 138-line browser e2e covering sidebar selection, center overview, sessionless Git/Files, and reload persistence.
 
 ## Implementation skill and TDD
 
@@ -29,14 +29,44 @@ Each seam was then implemented to GREEN. The post-review e2e was coverage harden
 
 - `gh issue view 286 --repo horang-labs/tessera` — could not render because GitHub's Projects Classic GraphQL field is retired. `gh api repos/horang-labs/tessera/issues/286 --jq '{title,body,html_url}'` successfully retrieved the complete issue instead.
 - `npm ci` — installed 1,042 packages. npm reported 46 dependency audit findings; no dependency or lockfile changes were made.
-- `npx tsx --test tests/project-worktree-root.test.ts tests/project-worktree-target.test.tsx tests/worktree-identity-persistence.test.ts tests/worktree-identity-migration.test.ts tests/git-panel-poll-refresh.test.ts tests/workspace-file-scan.test.ts tests/tab-new-tab.test.ts tests/tab-session-open.test.ts` — 36 passed, 0 failed; final duration 2,481 ms.
-- `node tests/project-worktree-selection.e2e.mjs` — passed: Project Worktree selection, direct Git/Files routing, and reload persistence. The new e2e is 133 lines and terminates only its own isolated server process group.
+- `npx tsx --test tests/project-worktree-root.test.ts tests/project-worktree-target.test.tsx tests/worktree-identity-persistence.test.ts tests/worktree-identity-migration.test.ts tests/git-panel-poll-refresh.test.ts tests/workspace-file-scan.test.ts tests/tab-new-tab.test.ts tests/tab-session-open.test.ts` — 36 passed, 0 failed; post-fix duration 2,496.696 ms.
+- `node tests/project-worktree-selection.e2e.mjs` — passed three consecutive fresh runs after the deterministic-fixture fix. The e2e is 138 lines and terminates only its own isolated server process group.
 - `npx tsc --noEmit` — exit 0, no diagnostics.
 - `npm run lint` — exit 0, 0 errors. Three pre-existing warnings remain in `preview-markdown.tsx`, `use-virtual-message-list.ts`, and `spawn-cli-runtime.ts`; no warning is in changed code.
 - `git diff --check` — no whitespace errors.
-- `graphify update .` — code-only AST update completed; final graph: 9,895 nodes, 26,339 edges, 370 communities. Generated graph files are ignored and did not enter the commit.
+- `graphify update .` — post-fix code-only AST update completed; final graph: 9,907 nodes, 26,350 edges, 411 communities. Generated graph files are ignored and did not enter the commit.
 
 The full test suite was deliberately not run because the ticket explicitly forbids a full-suite run in a child worktree; the orchestrator owns that decision after integration.
+
+## Orchestrator discrepancy and deterministic e2e fix
+
+The orchestrator reopened completion after a fresh `node tests/project-worktree-selection.e2e.mjs` exited 1 at line 118:
+
+```text
+locator.waitFor: Timeout 30000ms exceeded
+- waiting for getByText('Changed files', { exact: true }) to be visible
+```
+
+The same command reproduced the exact failure locally on the first clean run. Tagged diagnostic output showed that this was not a request race: `/api/worktrees/<id>/git` repeatedly returned 200 in 0.7–1.3 seconds and the rendered panel contained `DIFF 0`, `No local changes`, and `This worktree has no changed files.` A differential run passed as soon as the e2e source itself was modified. The original e2e had therefore passed before commit only because its own uncommitted file made the repository dirty; on the orchestrator's clean checkout, waiting exclusively for `Changed files` was impossible.
+
+Commit `87e91a8eef35c74d4a76fcf7b1e4c7e65ae5a291` fixes the test deterministically without weakening its rendered assertions:
+
+- each run creates a unique, non-ignored untracked file using the fresh data-directory suffix and `flag: "wx"`;
+- the Git panel must render both exact `Changed files` text and that exact fixture filename;
+- the Files panel must still render `Workspace files` and `README.md`;
+- `finally` removes the exact fixture path, closes the exact browser/server, and removes the isolated data directory.
+
+Exact post-fix repetition:
+
+```sh
+for run_no in 1 2 3; do
+  echo "FRESH RUN $run_no START"
+  node tests/project-worktree-selection.e2e.mjs || exit $?
+  echo "FRESH RUN $run_no PASS"
+done
+```
+
+Measured result: fresh runs 1, 2, and 3 all printed `Project Worktree selection, direct Git/Files routing, and reload persistence passed.` and `FRESH RUN <n> PASS`; no fixture or server was left behind.
 
 ## Runtime verification
 
@@ -89,7 +119,7 @@ The reviewer reported two findings:
 Disposition:
 
 - Finding 1 was not treated as an acceptance gap. The ticket asks for a minimal Worktree experience and direct Files operation; the Worktree Files panel directly reads and browses the checkout with zero Sessions. Migrating the separate special file-tab/watch lifecycle would expand the ticket beyond its stated criteria.
-- Finding 2 was valid and was applied as `tests/project-worktree-selection.e2e.mjs`; it exercises the actual rendered row, target persistence, center actions, direct Git route, and direct Files route with zero Sessions.
+- Finding 2 was valid and was applied as `tests/project-worktree-selection.e2e.mjs`; it exercises the actual rendered row, target persistence, center actions, direct Git route, and direct Files route with zero Sessions. The orchestrator discrepancy temporarily reopened this disposition because the test depended on a dirty checkout. Commit `87e91a8` removes that dependency and proves the same assertions on three consecutive clean-HEAD runs.
 
 Review summary: Standards reported 1 finding, rejected as conflicting with the ticket's explicit compatibility requirement. Spec reported 2 findings; 1 was fixed and 1 was adjudicated outside the minimal acceptance scope. No accepted review finding remains unresolved.
 
@@ -97,6 +127,7 @@ Review summary: Standards reported 1 finding, rejected as conflicting with the t
 
 - `38b83b3d0e6dc2867c06a261e44f0d0a7ea64f69` — implementation and TDD coverage.
 - `2741cebaa4b6fe4b6409b29d8538a9e3df0a5b07` — valid review finding: rendered target-selection e2e.
+- `87e91a8eef35c74d4a76fcf7b1e4c7e65ae5a291` — deterministic Git fixture and exact rendered fixture assertion for clean checkouts.
 
 ## Deliberately left out / not verified
 
