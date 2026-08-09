@@ -153,6 +153,16 @@ export interface I18nMessages {
       allDevicesDisconnected: string;
       noDevicesTitle: string;
       noDevicesDescription: string;
+      pushTitle: string;
+      pushDescription: string;
+      pushGlobalLabel: string;
+      pushChecking: string;
+      pushInstallRequired: string;
+      pushDenied: string;
+      pushFailed: string;
+      pushDeviceEnabled: string;
+      pushEnableDevice: string;
+      pushDisableDevice: string;
     };
     notifications: string;
     sound: string;

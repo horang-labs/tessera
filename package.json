@@ -123,6 +123,7 @@
     "tailwind-merge": "^3.4.0",
     "tinykeys": "^3.0.0",
     "uuid": "^11.1.1",
+    "web-push": "^3.6.7",
     "ws": "^8.16.0",
     "zod": "^3.22.0",
     "zustand": "^5.0.0"
@@ -137,6 +138,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/web-push": "^3.6.4",
     "@types/ws": "^8.5.10",
     "@vercel/nft": "^1.5.0",
     "autoprefixer": "^10.4.0",

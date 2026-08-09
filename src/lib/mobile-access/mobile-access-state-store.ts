@@ -1,7 +1,10 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
+import {
+  makePathOwnerOnly,
+  restrictWindowsPathToCurrentUser,
+  type WindowsPathRestrictor,
+} from '../filesystem/owner-only-path';
 
 export const MOBILE_ACCESS_OWNER = 'tessera.mobile-access';
 
@@ -22,39 +25,7 @@ export interface MobileAccessStateStore {
 
 interface FileMobileAccessStateStoreOptions {
   platform?: NodeJS.Platform;
-  restrictWindowsPath?(targetPath: string, directory: boolean): Promise<void>;
-}
-
-const execFileAsync = promisify(execFile);
-const WINDOWS_PRIVATE_ACL_SCRIPT = [
-  '$targetPath = $env:TESSERA_MOBILE_ACCESS_ACL_TARGET',
-  '$directoryFlag = $env:TESSERA_MOBILE_ACCESS_ACL_DIRECTORY',
-  '$currentAccount = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name',
-  '$item = Get-Item -LiteralPath $targetPath -Force',
-  '$acl = $item.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)',
-  '$acl.SetAccessRuleProtection($true, $false)',
-  'foreach ($entry in @($acl.Access)) { $acl.PurgeAccessRules($entry.IdentityReference) }',
-  '$inheritance = if ($directoryFlag -eq "1") { [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit } else { [System.Security.AccessControl.InheritanceFlags]::None }',
-  '$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($currentAccount, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)',
-  '$acl.SetAccessRule($rule)',
-  '$item.SetAccessControl($acl)',
-].join('; ');
-
-async function restrictWindowsPath(targetPath: string, directory: boolean): Promise<void> {
-  await execFileAsync('powershell.exe', [
-    '-NoLogo',
-    '-NoProfile',
-    '-NonInteractive',
-    '-Command',
-    WINDOWS_PRIVATE_ACL_SCRIPT,
-  ], {
-    env: {
-      ...process.env,
-      TESSERA_MOBILE_ACCESS_ACL_TARGET: targetPath,
-      TESSERA_MOBILE_ACCESS_ACL_DIRECTORY: directory ? '1' : '0',
-    },
-    windowsHide: true,
-  });
+  restrictWindowsPath?: WindowsPathRestrictor;
 }
 
 function isMobileAccessOwnership(value: unknown): value is MobileAccessOwnership {
@@ -78,7 +49,7 @@ export class FileMobileAccessStateStore implements MobileAccessStateStore {
     options: FileMobileAccessStateStoreOptions = {},
   ) {
     this.platform = options.platform ?? process.platform;
-    this.restrictWindowsPath = options.restrictWindowsPath ?? restrictWindowsPath;
+    this.restrictWindowsPath = options.restrictWindowsPath ?? restrictWindowsPathToCurrentUser;
   }
 
   async load(): Promise<MobileAccessOwnership | null> {
@@ -115,10 +86,9 @@ export class FileMobileAccessStateStore implements MobileAccessStateStore {
   }
 
   private async makeOwnerOnly(targetPath: string, directory: boolean): Promise<void> {
-    if (this.platform === 'win32') {
-      await this.restrictWindowsPath(targetPath, directory);
-      return;
-    }
-    await fs.chmod(targetPath, directory ? 0o700 : 0o600);
+    await makePathOwnerOnly(targetPath, directory, {
+      platform: this.platform,
+      restrictWindowsPath: this.restrictWindowsPath,
+    });
   }
 }

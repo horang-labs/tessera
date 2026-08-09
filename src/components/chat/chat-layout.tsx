@@ -143,6 +143,7 @@ export function ChatLayout() {
 
   // BR-PERSIST-001: persist tab/panel state with a short debounce.
   const persistDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openedNotificationSessionRef = useRef<string | null>(null);
   const kanbanScrollAnchorRef = useRef<{ rightEdge: number; atEnd: boolean } | null>(null);
   const [viewportWidth, setViewportWidth] = useState(getViewportWidth);
   const initiallyHasProjects = projects.length > 0;
@@ -172,6 +173,24 @@ export function ChatLayout() {
   useEffect(function loadUserSettings() {
     void loadSettings();
   }, [loadSettings]);
+
+  useEffect(function openSessionFromPushNotificationUrl() {
+    if (typeof window === 'undefined') return;
+    const sessionId = new URLSearchParams(window.location.search).get('session');
+    if (!sessionId || openedNotificationSessionRef.current === sessionId) return;
+    const session = useSessionStore.getState().getSession(sessionId);
+    if (!session) return;
+
+    openedNotificationSessionRef.current = sessionId;
+    const tabStore = useTabStore.getState();
+    const location = tabStore.findSessionLocation(sessionId);
+    if (location) {
+      activateSessionPanel(sessionId, { location });
+    } else {
+      tabStore.openPreview(sessionId);
+    }
+    useSessionStore.getState().setActiveSession(sessionId);
+  }, [projects]);
 
   useEffect(function preloadElectronSettingsPanel() {
     if (typeof window === "undefined") return;

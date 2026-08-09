@@ -74,6 +74,8 @@ export interface UserSettings {
   notifications: {
     soundEnabled: boolean;
     showToast: boolean;
+    /** Deliver completed-session notifications to registered Paired Devices. */
+    pushEnabled: boolean;
     /** Optional LLM replacement for the deterministic title shown immediately. */
     aiTitleRefinement: boolean;
   };
