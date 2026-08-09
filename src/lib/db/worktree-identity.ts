@@ -121,10 +121,18 @@ export function readExactOneHopBranchRename(
   try {
     const renamePrefix = 'Branch: renamed refs/heads/';
     const separator = ' to refs/heads/';
-    const entries = fs.readFileSync(reflogPath, 'utf8')
+    const lines = fs.readFileSync(reflogPath, 'utf8')
       .split('\n')
-      .filter(Boolean)
-      .map((line) => ({ line, message: line.slice(line.indexOf('\t') + 1) }));
+      .filter(Boolean);
+    const reflogHeader = /^[0-9a-f]{40,64} [0-9a-f]{40,64} .+ <[^>]+> \d+ [+-]\d{4}$/;
+    if (lines.some((line) => {
+      const tabIndex = line.indexOf('\t');
+      return tabIndex <= 0 || !reflogHeader.test(line.slice(0, tabIndex));
+    })) return undefined;
+    const entries = lines.map((line) => ({
+      line,
+      message: line.slice(line.indexOf('\t') + 1),
+    }));
     const messages = entries.map(({ message }) => message);
     const hasCompleteStart = messages[0]?.startsWith('commit (initial):')
       || messages[0]?.startsWith('branch: Created from ')

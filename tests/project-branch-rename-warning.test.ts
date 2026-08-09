@@ -153,4 +153,14 @@ test('unavailable reflog history does not speculate about a real rename', async 
   assert.deepEqual(result.sessions, []);
   assert.equal(result.branchRenameWarning, undefined);
   assert.equal(sessions.getSession('expired-session')?.scope_branch, 'main');
+
+  fs.writeFileSync(reflog, [
+    'commit (initial): synthetic message without a reflog header',
+    'Branch: renamed refs/heads/main to refs/heads/renamed-without-history',
+  ].join('\n'));
+  assert.equal(
+    projection.getProjectViewProjection('expired-project').branchRenameWarning,
+    undefined,
+    'malformed message-only records are not exact rename evidence',
+  );
 });

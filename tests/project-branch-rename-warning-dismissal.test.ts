@@ -9,7 +9,7 @@ const localStorage = {
   removeItem: (key: string) => { stored.delete(key); },
 };
 
-function apiProject(previousBranch: string, currentBranch: string, eventId: string) {
+function apiProject(previousBranch: string, currentBranch: string, eventId?: string) {
   return {
     encodedDir: '/repo',
     displayName: 'Repo',
@@ -21,7 +21,9 @@ function apiProject(previousBranch: string, currentBranch: string, eventId: stri
       displayPath: '/repo',
       currentBranch,
     },
-    branchRenameWarning: { previousBranch, currentBranch, eventId },
+    branchRenameWarning: eventId
+      ? { previousBranch, currentBranch, eventId }
+      : undefined,
     sessions: [],
     totalSessions: 0,
     countByStatus: {},
@@ -64,4 +66,14 @@ test('dismissal hides only the same one-time branch rename warning across reload
     currentBranch: 'renamed',
     eventId: 'rename-event-2',
   });
+
+  responseProject = apiProject('main', 'unrelated');
+  useSessionStore.getState().updateProjectWorktreeBranch('wt_root', 'unrelated');
+  assert.equal(
+    useSessionStore.getState().projects[0].branchRenameWarning,
+    undefined,
+    'stale rename evidence must clear synchronously when the observed branch changes',
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(useSessionStore.getState().projects[0].branchRenameWarning, undefined);
 });

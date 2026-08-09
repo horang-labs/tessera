@@ -514,6 +514,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         project.projectWorktree?.id === worktreeId
           ? {
               ...project,
+              branchRenameWarning:
+                project.projectWorktree.currentBranch === branch
+                  ? project.branchRenameWarning
+                  : undefined,
               projectWorktree: {
                 ...project.projectWorktree,
                 currentBranch: branch,

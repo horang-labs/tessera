@@ -1,6 +1,7 @@
 import { AlertTriangle, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import type { ProjectBranchRenameWarning } from '@/lib/projects/branch-rename-warning';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 
 export function BranchRenameWarning({
   warning,
@@ -32,7 +33,7 @@ export function BranchRenameWarning({
       <button
         type="button"
         onClick={onDismiss}
-        className="-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] hover:text-(--text-primary) focus-visible:bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] focus-visible:text-(--text-primary)"
+        className={`-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] hover:text-(--text-primary) focus-visible:bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] focus-visible:text-(--text-primary) ${PHONE_TOUCH_TARGET}`}
         aria-label={t('sidebar.dismissBranchRenameWarning')}
         title={t('sidebar.dismissBranchRenameWarning')}
         data-testid="branch-rename-warning-dismiss"

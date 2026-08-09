@@ -121,6 +121,15 @@ try {
   assert.match(warningText, /not (moved|changed)/i);
   await page.screenshot({ path: screenshotPath, fullPage: true });
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  const expandSidebar = page.getByTestId('tab-bar-sidebar-toggle');
+  if (await expandSidebar.count()) await expandSidebar.click();
+  await warning.waitFor();
+  const dismissBox = await page.getByTestId('branch-rename-warning-dismiss').boundingBox();
+  assert.ok(dismissBox && dismissBox.width >= 44 && dismissBox.height >= 44,
+    'the phone dismiss control must retain a 44px touch target');
+  await page.setViewportSize({ width: 1280, height: 800 });
+
   await page.getByTestId('project-worktree-row').click();
   await page.getByRole('button', { name: 'New Session', exact: true }).waitFor();
   await page.getByTestId('branch-rename-warning-dismiss').click();
