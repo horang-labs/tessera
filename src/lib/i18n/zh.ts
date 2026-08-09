@@ -151,6 +151,7 @@ export const zh: I18nMessages = {
       deviceCount: '{{count}} / {{max}} 台设备',
       capacityReachedDescription: '{{max}} 个设备名额已全部使用。请先断开一个设备，再配对新设备。',
       connectedNow: '当前已连接',
+      pushStatusEnabled: '推送已启用',
       registeredAt: '注册时间',
       lastSeenAt: '最后连接',
       neverConnected: '尚未连接',

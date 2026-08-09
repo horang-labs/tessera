@@ -151,6 +151,7 @@ export const ko: I18nMessages = {
       deviceCount: '{{count}} / {{max}}대',
       capacityReachedDescription: '기기 {{max}}대가 모두 등록돼 있습니다. 새 기기를 페어링하려면 기존 기기 하나를 끊으세요.',
       connectedNow: '지금 접속 중',
+      pushStatusEnabled: '푸시 켜짐',
       registeredAt: '등록',
       lastSeenAt: '마지막 접속',
       neverConnected: '아직 없음',

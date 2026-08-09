@@ -151,6 +151,7 @@ export const en: I18nMessages = {
       deviceCount: '{{count}} / {{max}} devices',
       capacityReachedDescription: 'All {{max}} device slots are in use. Disconnect a device before pairing another one.',
       connectedNow: 'Connected now',
+      pushStatusEnabled: 'Push enabled',
       registeredAt: 'Registered',
       lastSeenAt: 'Last connected',
       neverConnected: 'Not yet',

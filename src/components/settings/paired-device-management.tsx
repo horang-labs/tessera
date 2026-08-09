@@ -1,7 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CircleOff, LoaderCircle, RefreshCw, ShieldOff, Smartphone, Unplug } from 'lucide-react';
+import {
+  BellRing,
+  CircleOff,
+  LoaderCircle,
+  RefreshCw,
+  ShieldOff,
+  Smartphone,
+  Unplug,
+} from 'lucide-react';
 import { AsyncConfirmDialog } from '@/components/ui/async-confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
@@ -16,6 +24,7 @@ interface PairedDeviceSummary {
   registeredAt: string;
   lastSeenAt: string | null;
   connected: boolean;
+  hasPushSubscription: boolean;
 }
 
 interface DeviceListResponse {
@@ -36,7 +45,8 @@ function isPairedDeviceSummary(value: unknown): value is PairedDeviceSummary {
     && typeof device.name === 'string'
     && typeof device.registeredAt === 'string'
     && (device.lastSeenAt === null || typeof device.lastSeenAt === 'string')
-    && typeof device.connected === 'boolean';
+    && typeof device.connected === 'boolean'
+    && typeof device.hasPushSubscription === 'boolean';
 }
 
 async function requestDeviceList(signal?: AbortSignal): Promise<DeviceListResponse> {
@@ -256,6 +266,15 @@ export default function PairedDeviceManagement() {
                         >
                           <span className="h-1.5 w-1.5 rounded-full bg-current shadow-[0_0_0_3px_var(--status-success-bg)]" aria-hidden="true" />
                           {t('settings.remoteAccess.connectedNow')}
+                        </span>
+                      ) : null}
+                      {device.hasPushSubscription ? (
+                        <span
+                          data-testid={`paired-device-${device.id}-push-status`}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-(--divider) bg-(--chat-bg) px-2 py-0.5 text-[11px] font-semibold text-(--text-secondary)"
+                        >
+                          <BellRing className="h-3 w-3" aria-hidden="true" />
+                          {t('settings.remoteAccess.pushStatusEnabled')}
                         </span>
                       ) : null}
                     </div>
