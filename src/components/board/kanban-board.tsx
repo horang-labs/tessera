@@ -20,9 +20,9 @@ import {
 import { getKanbanMultiSessionDragIds, setKanbanChatDragData } from '@/lib/dnd/panel-session-drag';
 import {
   collectKanbanScopeData,
-  filterKanbanTasks,
   getKanbanScopeProjectIds,
   resolveKanbanScope,
+  selectKanbanProjectionItems,
 } from '@/lib/kanban/board-scope';
 import { WORKFLOW_STATUS_ORDER } from '@/types/task-entity';
 import type { WorkflowStatus, TaskEntity } from '@/types/task-entity';
@@ -62,7 +62,7 @@ import { buildTaskChildSession } from '@/lib/session/task-child-session';
  *   [Filter bar: All | collection1 | collection2 | ...]
  *   [Todo] [Doing] [Review] [Done] | [Chat col]
  *
- * - Chat column: sessions that have no taskId (pure chat sessions)
+ * - Chat cards: direct Sessions from the active Project View projection
  * - Workflow columns: tasks grouped by workflowStatus
  * - Collection filter: narrows both chat and task items by collectionId
  */
@@ -375,12 +375,15 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return scopeData.tasks.filter((task) => task.projectId === portfolioProjectFilter);
   }, [isAllProjects, portfolioProjectFilter, scopeData.tasks]);
 
-  // Standalone chat sessions: no taskId, not archived. Chats without a
-  // workflowStatus stay in the Chat column; positioned chats render below
-  // tasks in the matching workflow column.
-  const chatSessions = useMemo(() => {
-    return allSessions.filter((s) => !s.taskId && !s.archived);
-  }, [allSessions]);
+  // The selected Project projection already separates direct Sessions from
+  // immediate linked Worktrees. Do not infer that distinction again from the
+  // canonical Session's taskId: the same Session is a linked child in A and a
+  // direct Chat in C.
+  const projectionItems = useMemo(
+    () => selectKanbanProjectionItems({ sessions: allSessions, tasks }, activeCollectionFilter),
+    [activeCollectionFilter, allSessions, tasks],
+  );
+  const chatSessions = projectionItems.chats;
 
   // Apply collection filter
   const filteredChats = useMemo(() => {
@@ -416,13 +419,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return map;
   }, [activeCollectionFilter, chatSessions]);
 
-  const visibleTaskSessions = useMemo(() => {
-    return allSessions.filter((s) => s.taskId && !s.archived);
-  }, [allSessions]);
-
-  const filteredTasks = useMemo(() => {
-    return filterKanbanTasks(tasks, visibleTaskSessions, activeCollectionFilter);
-  }, [tasks, activeCollectionFilter, visibleTaskSessions]);
+  const filteredTasks = projectionItems.tasks;
 
   useEffect(() => {
     if (!activeCollectionFilter) return;
@@ -469,20 +466,18 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return map;
   }, [filteredTasks]);
 
-  // Build a map of taskId -> sessions for expansion
   const sessionsByTaskId = useMemo(() => {
     const map: Record<string, UnifiedSession[]> = {};
-    for (const s of visibleTaskSessions) {
-      if (s.taskId) {
-        if (!map[s.taskId]) map[s.taskId] = [];
-        map[s.taskId].push(s);
-      }
+    for (const session of allSessions) {
+      if (!session.taskId) continue;
+      const taskSessions = map[session.taskId] ?? [];
+      taskSessions.push(session);
+      map[session.taskId] = taskSessions;
     }
     return map;
-  }, [visibleTaskSessions]);
+  }, [allSessions]);
 
   const mergedTasksByStatus = useMemo(() => {
-    const liveSessions = Object.values(sessionsByTaskId).flat();
     const map: Record<WorkflowStatus, TaskEntity[]> = {
       todo: [],
       in_progress: [],
@@ -491,11 +486,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
     };
 
     for (const status of WORKFLOW_STATUS_ORDER) {
-      map[status] = mergeTasksWithLiveSessions(tasksByStatus[status], liveSessions);
+      map[status] = mergeTasksWithLiveSessions(tasksByStatus[status], allSessions);
     }
 
     return map;
-  }, [sessionsByTaskId, tasksByStatus]);
+  }, [allSessions, tasksByStatus]);
 
   // Compute ordered IDs for Shift+Click range select
   const orderedIds = useMemo(() => {

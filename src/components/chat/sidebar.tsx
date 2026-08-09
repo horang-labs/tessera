@@ -629,6 +629,7 @@ export function Sidebar() {
       projects: scopedProjects,
       tasksByProject,
       limit: 8,
+      originOnly: isAllMode,
     });
   }, [isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
 

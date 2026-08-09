@@ -104,7 +104,7 @@ function CollectionLabel({
 }
 
 // ============================================================
-// KanbanChatCard -- card for chat sessions (no task association)
+// KanbanChatCard -- card for direct Sessions in the active Project View
 // ============================================================
 
 interface KanbanChatCardProps {

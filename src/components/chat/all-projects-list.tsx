@@ -18,6 +18,10 @@ import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  getSessionOriginProjectId,
+  getTaskOriginProjectRepresentation,
+} from '@/lib/projects/origin-project-representation';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -53,12 +57,16 @@ export function AllProjectsList({
 }: AllProjectsListProps) {
   const projects = useSessionStore((state) => state.projects);
   const visibleProjects = useMemo(() => {
-    if (!isRunningFilterActive) return projects;
-    return projects.filter((project) =>
-      project.sessions.some((session) =>
-        !session.archived && resolveSessionRuntimePresentation(session).showRunning
+    const originProjects = projects.map((project) => ({
+      ...project,
+      sessions: project.sessions.filter((session) =>
+        getSessionOriginProjectId(session) === project.encodedDir
       ),
-    );
+    }));
+    if (!isRunningFilterActive) return originProjects;
+    return originProjects.filter((project) => project.sessions.some((session) =>
+      !session.archived && resolveSessionRuntimePresentation(session).showRunning
+    ));
   }, [isRunningFilterActive, projects]);
 
   return (
@@ -112,7 +120,15 @@ function AllProjectSection({
   const collectionsLoaded = useCollectionStore((state) => state.loadedProjects[project.encodedDir] ?? false);
   const collectionsLoading = useCollectionStore((state) => state.loadingProjectIds[project.encodedDir] ?? false);
   const loadTasks = useTaskStore((state) => state.loadTasks);
-  const projectTasks = useTaskStore((state) => state.tasksByProject[project.encodedDir] ?? EMPTY_TASKS);
+  const cachedProjectTasks = useTaskStore(
+    (state) => state.tasksByProject[project.encodedDir] ?? EMPTY_TASKS,
+  );
+  const projectTasks = useMemo(
+    () => cachedProjectTasks
+      .filter((task) => task.projectId === project.encodedDir)
+      .map(getTaskOriginProjectRepresentation),
+    [cachedProjectTasks, project.encodedDir],
+  );
   const tasksLoaded = useTaskStore((state) => state.loadedProjects[project.encodedDir] ?? false);
   const tasksLoading = useTaskStore((state) => state.loadingProjectIds[project.encodedDir] ?? false);
   const collapsedCollections = useBoardStore((state) => state.collapsedCollections);
@@ -139,16 +155,6 @@ function AllProjectSection({
     handleGroupDrop,
   } = useCollectionDnd();
 
-  const hasMissingTaskData = useMemo(() => {
-    if (projectTasks.length === 0)
-      return project.sessions.some((session) => !session.archived && !!session.taskId);
-
-    const knownTaskIds = new Set(projectTasks.map((task) => task.id));
-    return project.sessions.some(
-      (session) => !session.archived && !!session.taskId && !knownTaskIds.has(session.taskId)
-    );
-  }, [project.sessions, projectTasks]);
-
   useEffect(() => {
     if (!isExpanded) return;
     if (isRunningFilterActive) return;
@@ -159,9 +165,9 @@ function AllProjectSection({
 
   useEffect(() => {
     if (!isExpanded) return;
-    if (tasksLoaded && !hasMissingTaskData) return;
+    if (tasksLoaded) return;
     void loadTasks(project.encodedDir, { setCurrent: false });
-  }, [hasMissingTaskData, isExpanded, loadTasks, project.encodedDir, tasksLoaded]);
+  }, [isExpanded, loadTasks, project.encodedDir, tasksLoaded]);
 
   const collectionGroups = useMemo(
     () => buildProjectCollectionGroups(project, collections, projectTasks),
