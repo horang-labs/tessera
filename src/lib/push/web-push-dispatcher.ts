@@ -1,13 +1,15 @@
 import webPush from 'web-push';
 import logger from '@/lib/logger';
+import {
+  deletePairedDevicePushSubscription,
+  listPairedDevicePushSubscriptions,
+} from '@/lib/auth/paired-device-lifecycle';
 import { SettingsManager } from '@/lib/settings/manager';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { ensureVapidIdentity } from './vapid-identity';
-import {
-  deleteDevicePushSubscription,
-  listDevicePushSubscriptions,
-  type DevicePushSubscription,
-  type StoredDevicePushSubscription,
+import type {
+  DevicePushSubscription,
+  StoredDevicePushSubscription,
 } from './device-push-subscription-store';
 
 const MAX_PUSH_PAYLOAD_BYTES = 2_048;
@@ -151,7 +153,7 @@ async function sendNotification(
 
 export const scheduleWebPushForTransportMessage = createWebPushDispatcher({
   loadSettings: (userId) => SettingsManager.load(userId, { silent: true }),
-  listSubscriptions: listDevicePushSubscriptions,
-  deleteSubscription: deleteDevicePushSubscription,
+  listSubscriptions: listPairedDevicePushSubscriptions,
+  deleteSubscription: deletePairedDevicePushSubscription,
   sendNotification,
 });

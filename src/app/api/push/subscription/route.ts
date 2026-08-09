@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import {
   deletePairedDevicePushSubscription,
+  getPairedDevicePushSubscription,
   replacePairedDevicePushSubscription,
-} from '@/lib/auth/device-revocation';
+} from '@/lib/auth/paired-device-lifecycle';
 import {
-  getDevicePushSubscription,
   isDevicePushSubscription,
 } from '@/lib/push/device-push-subscription-store';
 import { ensureVapidIdentity } from '@/lib/push/vapid-identity';
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 
   const [identity, subscription] = await Promise.all([
     ensureVapidIdentity(),
-    getDevicePushSubscription(auth.deviceId),
+    getPairedDevicePushSubscription(auth.deviceId),
   ]);
   return NextResponse.json({
     vapidPublicKey: identity.publicKey,

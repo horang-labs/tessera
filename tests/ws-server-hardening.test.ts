@@ -13,6 +13,7 @@ import {
   MAX_WS_CONNECTIONS,
   WebSocketServer as TesseraWebSocketServer,
   WS_MAX_PAYLOAD_BYTES,
+  wsServer,
 } from '../src/lib/ws/server';
 
 async function listen(server: Server): Promise<number> {
@@ -233,7 +234,7 @@ test('force-terminates an unauthenticated peer even when the legacy Electron byp
   }
 });
 
-test('force-terminates every open connection authenticated by a revoked device', async () => {
+test('revoking a device removes its subscription, credential, and open connection together', async () => {
   delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
   const previousDataDir = process.env.TESSERA_DATA_DIR;
   const previousElectronRuntime = process.env.TESSERA_ELECTRON_RUNTIME;
@@ -243,10 +244,22 @@ test('force-terminates every open connection authenticated by a revoked device',
   process.env.TESSERA_ELECTRON_RUNTIME = '1';
   process.env.PORT = '3100';
   const registry = await import('../src/lib/auth/device-registry');
+  const subscriptions = await import('../src/lib/push/device-push-subscription-store');
+  const { replacePairedDevicePushSubscription } = await import(
+    '../src/lib/auth/paired-device-lifecycle'
+  );
+  const { revokePairedDevice } = await import('../src/lib/auth/device-revocation');
+  const { evaluateRequest } = await import('../src/lib/auth/request-gate');
+  await subscriptions.clearDevicePushSubscriptions();
   await registry.clearDeviceRegistry();
   const { device } = await pairApprovedDevice('Revoked phone');
+  await replacePairedDevicePushSubscription(device.id, {
+    endpoint: 'https://push.example.test/revoked-device',
+    expirationTime: null,
+    keys: { p256dh: 'revoked-public-key', auth: 'revoked-auth-key' },
+  });
   const httpServer = createServer();
-  const transport = new TesseraWebSocketServer({ heartbeatIntervalMs: 60_000 });
+  const transport = wsServer;
   const port = await listen(httpServer);
   transport.start(httpServer);
   const client = await openDeviceWebSocket(port, device.token);
@@ -258,10 +271,19 @@ test('force-terminates every open connection authenticated by a revoked device',
       deviceId,
     })), [{ kind: 'device', deviceId: device.id }]);
     const closed = once(client, 'close');
-    assert.equal(transport.disconnectDevice(device.id), 1);
+    assert.deepEqual(await revokePairedDevice(device.id), {
+      revokedDevices: 1,
+      disconnectedConnections: 1,
+    });
     const [closeCode] = await closed;
     assert.equal(closeCode, 1006);
     await waitFor(() => transport.listConnections().length === 0);
+    assert.equal(await subscriptions.getDevicePushSubscription(device.id), null);
+    assert.deepEqual(await evaluateRequest({
+      purpose: 'http', method: 'GET', rawUrl: '/api/push/subscription',
+      host: 'localhost:3100', origin: 'http://localhost:3100',
+      cookies: { device: device.token }, headers: {},
+    }), { allow: false, reason: 'unauthorized', status: 401 });
   } finally {
     await closeServer(transport, httpServer, [client]);
     if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
