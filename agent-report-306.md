@@ -197,6 +197,19 @@ No findings.
 Initial summary: Standards 1 finding (worst: packaged runtime evidence was not durably
 recorded); Spec 0 findings.
 
+Both read-only agents then re-reviewed the updated `git diff 5c00c0f...HEAD` in parallel.
+Final results:
+
+### Standards final
+
+No findings.
+
+### Spec final
+
+No findings.
+
+Final summary: Standards 0 findings; Spec 0 findings.
+
 ## Not verified and deliberately left out
 
 - A real owned Tailscale Serve endpoint was not repointed to the isolated server, because
