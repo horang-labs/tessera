@@ -5,7 +5,18 @@ import path from 'node:path';
 import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 import { startDevServer } from './helpers/dev-server.mjs';
 
-const app = await startDevServer({ dataDirPrefix: 'tessera-web-push-e2e-' });
+const app = await startDevServer({
+  dataDirPrefix: 'tessera-web-push-e2e-',
+  seed: (dataDir) => fs.writeFile(path.join(dataDir, 'mobile-access.json'), JSON.stringify({
+    schemaVersion: 1,
+    owner: 'tessera.mobile-access',
+    nodeDnsName: 'push.test.ts.net',
+    origin: 'https://push.test.ts.net',
+    servePort: 443,
+    mountPath: '/',
+    lastLoopbackTarget: 'http://127.0.0.1:32123',
+  }), { mode: 0o600 }),
+});
 const browser = await launchPhoneBrowser();
 const artifacts = process.env.TESSERA_E2E_ARTIFACT_DIR
   ?? path.join(os.homedir(), 'tmp', 'tessera-web-push-e2e');

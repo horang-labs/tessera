@@ -32,12 +32,13 @@ import {
   acquireElectronInstanceLock,
   configureElectronTestInstance,
   resolveElectronServerPort,
+  resolveElectronTestTailscaleExecutable,
 } from '../src/lib/electron-test-instance';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { isPairingDecision } from '../src/lib/auth/pairing-contract';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
 import { registerAppSecretHeader } from './app-secret-header';
-import { TailscaleCliAdapter } from './tailscale-cli-adapter';
+import { createCommandRunner, TailscaleCliAdapter } from './tailscale-cli-adapter';
 import {
   MobileAccessCoordinator,
   type MobileAccessStatus,
@@ -1833,8 +1834,11 @@ app.whenReady().then(async () => {
   try {
     const port = await startServer();
     electronAppSecret = await registerAppSecretHeader(port);
+    const testTailscaleExecutable = resolveElectronTestTailscaleExecutable(electronTestInstance);
     mobileAccessCoordinator = new MobileAccessCoordinator({
-      adapter: new TailscaleCliAdapter(),
+      adapter: new TailscaleCliAdapter(
+        testTailscaleExecutable ? createCommandRunner(testTailscaleExecutable) : undefined,
+      ),
       stateStore: createMobileAccessStateStore(),
       checkHealth: checkMobileAccessHealth,
       openExternal: async (url) => { await shell.openExternal(url); },
