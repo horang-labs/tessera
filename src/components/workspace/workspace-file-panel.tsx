@@ -157,7 +157,13 @@ function EmptyState({
   );
 }
 
-export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) {
+export function WorkspaceFilePanel({
+  sessionId,
+  worktreeId = null,
+}: {
+  sessionId: string | null;
+  worktreeId?: string | null;
+}) {
   const isDocumentVisible = useDocumentVisibility();
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
@@ -174,7 +180,11 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     symlinks,
     truncated,
     workDir,
-  } = useWorkspaceFileList(sessionId);
+  } = useWorkspaceFileList(
+    worktreeId
+      ? { kind: 'worktree', id: worktreeId }
+      : sessionId,
+  );
 
   useWorkspaceFilesLiveSync({
     enabled: Boolean(sessionId) && isDocumentVisible,
@@ -353,7 +363,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     );
   }
 
-  if (!sessionId) {
+  if (!sessionId && !worktreeId) {
     return (
       <EmptyState
         title="No worktree selected"

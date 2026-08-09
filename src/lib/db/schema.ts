@@ -4,12 +4,20 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 
 export const CREATE_TABLES = `
 CREATE TABLE IF NOT EXISTS _meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worktrees (
+  id                 TEXT PRIMARY KEY,
+  filesystem_path    TEXT,
+  canonical_path_key TEXT UNIQUE,
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -21,6 +29,7 @@ CREATE TABLE IF NOT EXISTS projects (
   sort_order    INTEGER NOT NULL DEFAULT 0,
   preparation_script TEXT,
   preparation_after_script TEXT,
+  project_worktree_id TEXT,
   registered_at TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );

@@ -7,6 +7,7 @@ import {
 import { resolvePathForHostFilesystem } from "@/lib/filesystem/host-path";
 import * as dbSessions from "@/lib/db/sessions";
 import * as dbTasks from "@/lib/db/tasks";
+import * as dbWorktrees from '@/lib/db/worktrees';
 import { getCachedSessionPr } from "@/lib/github/session-pr-sync";
 import {
   computeWorktreeFileDiffStats,
@@ -1032,6 +1033,38 @@ export async function getGitPanelData(
   userId?: string,
 ): Promise<GitPanelData> {
   const sessionContext = await resolveSessionContext(sessionId);
+  return buildGitPanelData(sessionId, sessionContext, userId);
+}
+
+export async function getWorktreeGitPanelData(
+  worktreeId: string,
+  userId?: string,
+): Promise<GitPanelData> {
+  const worktree = dbWorktrees.getWorktree(worktreeId);
+  if (!worktree) {
+    throw new GitPanelError('session_not_found', 'Worktree not found', 404);
+  }
+  if (!worktree.filesystemPath) {
+    throw new GitPanelError('missing_work_dir', 'Worktree has no checkout path', 422);
+  }
+  return buildGitPanelData(
+    worktreeId,
+    {
+      workDir: worktree.filesystemPath,
+      taskId: null,
+      worktreeBranch: worktree.currentBranch,
+    },
+    userId,
+    worktreeId,
+  );
+}
+
+async function buildGitPanelData(
+  targetId: string,
+  sessionContext: GitSessionContext,
+  userId?: string,
+  worktreeId?: string,
+): Promise<GitPanelData> {
   const { workDir } = sessionContext;
   const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const {
@@ -1056,9 +1089,9 @@ export async function getGitPanelData(
   // PR detection can invoke remote git and gh commands. Keep the initial panel
   // read local-only and use the last cached result; the focus/turn-end/poller
   // refresh paths populate this cache and broadcast the updated panel state.
-  const bareSessionPr = sessionContext.taskId
+  const bareSessionPr = sessionContext.taskId || worktreeId
     ? null
-    : getCachedSessionPr(sessionId) ?? null;
+    : getCachedSessionPr(targetId) ?? null;
   // §9: a filesystem probe rather than a Git command, so it adds no process to
   // this read. `repoRoot` rather than `workDir` because the marker files live
   // beside the worktree's own git directory, and `workDir` is allowed to be a
@@ -1081,7 +1114,8 @@ export async function getGitPanelData(
   const github = resolveGitHubPanelState(remoteUrl, prSummary);
 
   return {
-    sessionId,
+    sessionId: targetId,
+    ...(worktreeId ? { worktreeId } : {}),
     ...(sessionContext.taskId ? { taskId: sessionContext.taskId } : {}),
     workDir,
     repoRoot,

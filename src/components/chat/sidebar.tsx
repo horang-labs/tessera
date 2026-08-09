@@ -50,6 +50,7 @@ import { buildRecentWorkItems } from '@/lib/chat/recent-work';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -285,6 +286,10 @@ export function Sidebar() {
     const tab = selectActiveTab(state);
     return tab?.panels[tab.activePanelId]?.sessionId ?? null;
   });
+  const activePanelWorktreeId = usePanelStore((state) => {
+    const tab = selectActiveTab(state);
+    return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
+  });
   const visibleSessionId = activePanelSessionId ?? activeSessionId;
   const selectionSessionId = getSessionSelectionId(visibleSessionId);
 
@@ -510,6 +515,14 @@ export function Sidebar() {
   const selectedProject = useMemo(() => {
     return findSidebarProject(projects, selectedProjectDir);
   }, [projects, selectedProjectDir]);
+
+  const handleProjectWorktreeSelect = useCallback(() => {
+    const projectWorktree = selectedProject?.projectWorktree;
+    if (!projectWorktree || !activePanelId) return;
+    usePanelStore.getState().assignWorktree(activePanelId, projectWorktree.id);
+    const tabId = usePanelStore.getState().activeTabId;
+    if (tabId) useTabStore.getState().setTabProject(tabId, selectedProject.encodedDir);
+  }, [activePanelId, selectedProject]);
 
   const collectionGroups = useMemo(() => {
     if (!selectedProject) return null;
@@ -747,6 +760,14 @@ export function Sidebar() {
           )
         ) : visibleCollectionGroups && selectedProject ? (
           <>
+            {selectedProject.projectWorktree ? (
+              <ProjectWorktreeRow
+                active={activePanelWorktreeId === selectedProject.projectWorktree.id}
+                branch={selectedProject.projectWorktree.currentBranch}
+                label="Project Worktree"
+                onSelect={handleProjectWorktreeSelect}
+              />
+            ) : null}
             {isRunningFilterActive && runningFlatItems.tasks.length + runningFlatItems.chats.length === 0 ? (
               <SidebarRunningFilterEmpty label={t('status.noRunningProcesses')} />
             ) : isRunningFilterActive ? (

@@ -44,6 +44,7 @@ export interface SessionState {
 
   // Actions - Project loading
   loadProjects: () => Promise<void>;
+  updateProjectWorktreeBranch: (worktreeId: string, branch: string | null) => void;
   loadMoreSessions: (encodedDir: string) => Promise<void>;
   loadMoreByStatusGroup: (encodedDir: string, statusGroup: string) => Promise<void>;
 
@@ -377,6 +378,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           displayName: p.displayName,
           decodedPath: p.decodedPath,
           displayPath: p.displayPath,
+          projectWorktree: p.projectWorktree,
           isCurrent: p.isCurrent,
           hasPreparationScript: p.hasPreparationScript,
           sessions,
@@ -451,6 +453,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (err) {
       console.error('Failed to load projects:', err);
     }
+  },
+
+  updateProjectWorktreeBranch: (worktreeId, branch) => {
+    set((state) => ({
+      projects: state.projects.map((project) =>
+        project.projectWorktree?.id === worktreeId
+          ? {
+              ...project,
+              projectWorktree: {
+                ...project.projectWorktree,
+                currentBranch: branch,
+              },
+            }
+          : project,
+      ),
+    }));
   },
 
   loadMoreSessions: async (encodedDir: string) => {

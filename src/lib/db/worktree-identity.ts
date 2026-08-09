@@ -1,7 +1,61 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+
+export interface CanonicalWorktreePath {
+  filesystemPath: string;
+  canonicalPathKey: string;
+}
 
 export function generatePublicWorktreeId(): string {
   return `wt_${randomUUID().replaceAll('-', '')}`;
+}
+
+export function canonicalizeWorktreePath(
+  filesystemPath: string,
+): CanonicalWorktreePath | null {
+  const trimmed = filesystemPath.trim();
+  if (!trimmed) return null;
+  const pathModule = /^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\')
+    ? path.win32
+    : path;
+  let resolved = pathModule.resolve(trimmed);
+  try {
+    resolved = fs.realpathSync.native(resolved);
+  } catch {
+    // A pending or externally missing checkout retains a stable normalized key.
+  }
+  const normalized = pathModule.normalize(resolved);
+  return {
+    filesystemPath: normalized,
+    canonicalPathKey: pathModule === path.win32 ? normalized.toLowerCase() : normalized,
+  };
+}
+
+export function isGitCheckoutPath(filesystemPath: string): boolean {
+  const identity = canonicalizeWorktreePath(filesystemPath);
+  return Boolean(identity && fs.existsSync(path.join(identity.filesystemPath, '.git')));
+}
+
+export function readWorktreeCurrentBranch(filesystemPath: string): string | null {
+  const identity = canonicalizeWorktreePath(filesystemPath);
+  if (!identity) return null;
+  const dotGitPath = path.join(identity.filesystemPath, '.git');
+  let gitDir = dotGitPath;
+  try {
+    if (fs.statSync(dotGitPath).isFile()) {
+      const pointer = fs.readFileSync(dotGitPath, 'utf8').trim();
+      const match = pointer.match(/^gitdir:\s*(.+)$/i);
+      if (!match) return null;
+      gitDir = path.resolve(identity.filesystemPath, match[1]);
+    }
+    const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    return head.startsWith('ref: refs/heads/')
+      ? head.slice('ref: refs/heads/'.length)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Temporary compatibility policy for parents that have not stored a path yet. */

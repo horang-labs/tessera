@@ -77,6 +77,8 @@ export interface GitHubPanelState {
 
 export interface GitPanelData {
   sessionId: string;
+  /** Present when the panel read targeted a canonical Worktree directly. */
+  worktreeId?: string;
   taskId?: string;
   workDir: string;
   repoRoot: string;

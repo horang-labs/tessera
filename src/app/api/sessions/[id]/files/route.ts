@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'fs/promises';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
 import { getDb } from '@/lib/db/database';
 import { resolveSessionWorkspaceFilesystemRoot } from '@/lib/session/session-workspace-root';
-import { workspaceFileWatchManager } from '@/lib/workspace-files/workspace-file-watch-manager';
-import { walkWorkspaceFiles } from '@/lib/workspace-files/workspace-file-scan';
+import { readWorkspaceRootFiles } from '@/lib/workspace-files/read-workspace-root';
 
 interface SessionRef {
   sessionId: string;
@@ -67,51 +65,9 @@ export async function GET(
     });
   }
 
-  try {
-    const stat = await fs.stat(root);
-    if (!stat.isDirectory()) {
-      return NextResponse.json({
-        files: [],
-        symlinks: [],
-        chats: refs.chats,
-        tasks: refs.tasks,
-        truncated: false,
-        reason: 'not-a-directory',
-        workDir: root,
-      });
-    }
-  } catch {
-    return NextResponse.json({
-      files: [],
-      symlinks: [],
-      chats: refs.chats,
-      tasks: refs.tasks,
-      truncated: false,
-      reason: 'unreadable',
-      workDir: root,
-    });
-  }
-
-  try {
-    const result = await workspaceFileWatchManager.ensureSnapshotForRoot(root)
-      ?? await walkWorkspaceFiles(root);
-    return NextResponse.json({
-      files: result.files,
-      symlinks: result.symlinks,
-      chats: refs.chats,
-      tasks: refs.tasks,
-      truncated: result.truncated,
-      workDir: root,
-    });
-  } catch {
-    return NextResponse.json({
-      files: [],
-      symlinks: [],
-      chats: refs.chats,
-      tasks: refs.tasks,
-      truncated: false,
-      reason: 'walk-failed',
-      workDir: root,
-    });
-  }
+  return NextResponse.json({
+    ...await readWorkspaceRootFiles(root),
+    chats: refs.chats,
+    tasks: refs.tasks,
+  });
 }

@@ -68,12 +68,14 @@ function GitPanelTabButton({
 
 export function GitPanel({
   sessionId,
+  worktreeId = null,
   width,
   className,
   closeLabel,
   onClose,
 }: {
   sessionId: string | null;
+  worktreeId?: string | null;
   width: number | string;
   className?: string;
   closeLabel?: string;
@@ -83,7 +85,7 @@ export function GitPanel({
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === "win32";
   const isLinuxElectron = electronPlatform === "linux";
-  const controller = useGitPanelController(sessionId);
+  const controller = useGitPanelController(sessionId, worktreeId);
   // The selection lives in the store so a preparation badge can send the user
   // straight to the Scripts tab.
   const activePanelTab = useGitStore((state) => state.panelTab);
@@ -302,7 +304,11 @@ export function GitPanel({
 
       {effectivePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
-          <WorkspaceFilePanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+          <WorkspaceFilePanel
+            key={sessionId ?? worktreeId ?? "no-target"}
+            sessionId={sessionId}
+            worktreeId={worktreeId}
+          />
         </div>
       ) : effectivePanelTab === "scripts" ? (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -316,6 +322,7 @@ export function GitPanel({
         <>
           <GitPanelContentSection
             sessionId={sessionId}
+            targetSelected={Boolean(sessionId || worktreeId)}
             data={controller.data}
             loading={controller.loading}
             error={controller.error}

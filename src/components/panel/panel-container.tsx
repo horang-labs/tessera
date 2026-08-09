@@ -14,6 +14,8 @@ import { WorkspaceExplorerTab } from '@/components/workspace/workspace-explorer-
 import { WorkspaceFileTab } from '@/components/workspace/workspace-file-tab';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
 import { TerminalPanel } from '@/components/terminal/terminal-panel';
+import { WorktreeOverview } from '@/components/worktree/worktree-overview';
+import { useSessionStore } from '@/stores/session-store';
 import {
   parseMemoryFileSessionId,
   parseWorkspaceExplorerSessionId,
@@ -42,6 +44,15 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
   const terminalCwd = usePanelStore(
     (state) => state.tabPanels[tabId]?.panels[panelId]?.terminalCwd ?? null,
   );
+  const worktreeId = usePanelStore(
+    (state) => state.tabPanels[tabId]?.panels[panelId]?.worktreeId ?? null,
+  );
+  const worktree = useSessionStore((state) => {
+    if (!worktreeId) return null;
+    return state.projects
+      .map((project) => project.projectWorktree)
+      .find((candidate) => candidate?.id === worktreeId) ?? null;
+  });
 
   const content = (() => {
     if (terminalId) {
@@ -65,6 +76,16 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
       if (memoryRef) return <MemoryFileTab key={sessionId} memoryRef={memoryRef} panelId={panelId} />;
     }
     if (sessionId) return <ChatArea sessionId={sessionId} panelId={panelId} />;
+    if (worktreeId && worktree) {
+      return (
+        <WorktreeOverview
+          branch={worktree.currentBranch}
+          displayPath={worktree.displayPath}
+          onNewSession={() => usePanelStore.getState().startWorktreeCreation(panelId, 'chat')}
+          onNewWorktree={() => usePanelStore.getState().startWorktreeCreation(panelId, 'task')}
+        />
+      );
+    }
     return <EmptyPanelState panelId={panelId} />;
   })();
 
