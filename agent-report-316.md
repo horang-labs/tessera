@@ -16,7 +16,7 @@ Git action menus and default-branch confirmation now use one safe-area-aware pho
 - `src/components/git/git-action-menu.tsx` uses that sheet on phone, preserves the desktop anchored menu, and shares one action-item derivation between both surfaces.
 - `src/components/git/git-default-branch-confirm-dialog.tsx` keeps the desktop dialog and renders the same confirmation as a touch-sized phone sheet.
 - `src/hooks/use-phone-overlay-navigation.ts` gives each phone overlay one same-URL history entry and coordinates explicit dismissal, Back, Escape, Strict Mode cleanup, and follow-up actions.
-- `tests/git-phone-delivery.e2e.mjs` drives a real Git fixture, bare remote, isolated development server, and 360x776 Chromium viewport through every phone acceptance path plus a desktop non-regression check.
+- `tests/git-phone-delivery.e2e.mjs` drives the visible 360x776 phone journey and desktop non-regression; `tests/helpers/git-phone-delivery.mjs` owns only reusable fixture, route, geometry, screenshot, and held-request mechanics.
 
 ## Test-driven development record
 
@@ -35,6 +35,8 @@ The action test also exposed that a held Push on `main` must accept the existing
 - `node tests/git-phone-delivery.e2e.mjs`
   - Passed with `{"artifactDir":"/home/work/tmp/tessera-ticket-316","changedFiles":101}`.
   - Covered exactly four 44px header controls, `99+`, stable icon and pending progress, dirty composer/no autofocus, persisted non-Git-tab reopening, distinct totals, fixed action while files scroll, both safe-area sheets, disabled reasons, accessible names, two-level Escape and Back, Commit-to-Push rederivation in place, pending state after panel close, and desktop menu non-regression.
+- `test "$(wc -l < tests/git-phone-delivery.e2e.mjs)" -le 190 && wc -l tests/git-phone-delivery.e2e.mjs tests/helpers/git-phone-delivery.mjs`
+  - Passed: the E2E is 160 lines and its assertion-free support module is 138 lines.
 - `npx tsx --test tests/git-default-branch-confirmation.test.ts tests/git-desktop-commit-control.test.tsx tests/git-primary-action.test.ts tests/git-action-menu.test.ts tests/git-conflict-recovery.test.ts tests/git-conflict-handoff.test.ts`
   - 77 passed, 0 failed, 0 skipped.
 - `node tests/git-worktree-delivery-state.e2e.mjs`
@@ -49,9 +51,9 @@ The action test also exposed that a held Push on `main` must accept the existing
 Screenshots (WSL paths for user handoff):
 
 - `\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-ticket-316\phone-fixed-composer.png` — SHA-256 `b4038aa80374f7bfcbc7aee1ef7502ab69ad3a006eb0f4271302a855eeb64e25`
-- `\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-ticket-316\phone-action-sheet.png` — SHA-256 `31e9403d582f16d8deccf2ebf7c83a7634a0db20a7cc6548f3c5c144bf5a50fa`
-- `\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-ticket-316\phone-default-confirmation.png` — SHA-256 `3e3604c7281cbc89cf83bc468d9039a6a1857218f3939949c08e0d3dc6176daa`
-- `\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-ticket-316\phone-pending-badge.png` — SHA-256 `47e7907f7666161cbf8fe14f8dd369b5dd9fe2a8135b49e822455a650805ad92`
+- `\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-ticket-316\phone-action-sheet.png` — SHA-256 `efdd2bedbfee9a288e01744d402f4dfe0478d84d5bdb034ab5ba023e2ec0f7dc`
+- `\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-ticket-316\phone-default-confirmation.png` — SHA-256 `e657a48a312acaf98eccb52deac9948eec5896da5d56ca9bf06cb522defb7234`
+- `\\wsl.localhost\Ubuntu-24.04\home\work\tmp\tessera-ticket-316\phone-pending-badge.png` — SHA-256 `adac4569eef6d968604f72bbac8dc782536d32a3e0e20bb3242df8a312fcac22`
 
 No full repository suite was run, per the issue instruction. No isolated Windows Electron build was needed: this change is renderer-only and introduces no Windows-server, CLI, filesystem, process, or network-boundary behavior. The isolated WSL development server plus Chromium test exercises the relevant topology with a real Git repository and remote.
 
@@ -76,11 +78,14 @@ Final Spec recheck: no findings and no scope creep.
 
 Initial summary: Standards 2 judgement-call findings (worst: duplicated sheet behavior); Spec 1 finding (worst: dirty phone entry could omit the composer). Final summary: Standards 0 findings; Spec 0 findings.
 
+The root orchestrator then caught the wave's E2E-size rule: the original file was 231 lines. Reusable mechanics were extracted without moving any of its 18 pass/fail assertions or changing the interaction sequence. A final two-axis recheck confirmed the 160-line E2E and 138-line assertion-free helper preserve all coverage, with Standards 0 findings and Spec 0 findings.
+
 ## Commits and final implementation SHA
 
 - `5d5ffa2acee5f5110ec793d06833e6ed14837ad2` — `feat(git): complete phone delivery UI`
 - `2250e0e84dc4f8a851d89b5cf081f9970b2676a5` — `fix(git): reopen phone delivery on Git`
+- `46dc07c104ac43b9ea52a9057e21e0771e6f7807` — `test(git): keep phone delivery E2E focused`
 
-Final implementation SHA: `2250e0e84dc4f8a851d89b5cf081f9970b2676a5`.
+Final implementation SHA: `46dc07c104ac43b9ea52a9057e21e0771e6f7807`.
 
 This report is committed separately as the final branch commit; its SHA is necessarily reported in the final handoff because a commit cannot contain its own hash.
