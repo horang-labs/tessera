@@ -260,11 +260,11 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
         )}
       >
         {/* Left: Channel-style title */}
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden max-sm:gap-1">
         {isProcessing ? (
           <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-(--success)/30 border-t-(--success) animate-spin" />
         ) : (
-          <Hash className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <Hash className="h-3.5 w-3.5 shrink-0 text-(--text-muted) max-sm:hidden" />
         )}
 
         {isAwaitingUser ? (
@@ -310,19 +310,19 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
             </button>
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:gap-1">
             <button
               type="button"
               draggable
               onClick={handleTitleButtonClick}
               onDragStart={handleTitleDragStart}
               onDragEnd={handleTitleDragEnd}
-              className="group flex h-full min-w-0 flex-1 cursor-grab items-center gap-1.5 text-left active:cursor-grabbing"
+              className="group flex h-full min-w-0 flex-1 cursor-grab items-center gap-1.5 text-left active:cursor-grabbing max-sm:gap-1"
               data-testid="panel-title-drag-handle"
             >
               <ProviderBadge
                 providerId={session.provider}
-                className="h-5 rounded-md px-2 text-[10px] leading-none"
+                className="h-5 rounded-md px-2 text-[10px] leading-none max-sm:px-1"
                 // "Claude Code" is 71px of a row that has 107px left once the
                 // four 44px targets are placed. The mark alone still says
                 // which provider this is, and what it gives back is the only
@@ -331,7 +331,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                 fullLabel={!session.provider || session.provider === 'claude-code'}
               />
 
-              <span className="flex min-w-0 shrink items-center gap-1">
+              <span className="flex min-w-0 shrink items-center gap-1 max-sm:flex-1">
                 <h2
                   ref={titleRef}
                   className={cn(
@@ -355,11 +355,12 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
 
               {session.worktreeBranch && (
                 <>
-                  <span className="h-3 w-px shrink-0 bg-(--divider) opacity-70" aria-hidden="true" />
+                  <span className="h-3 w-px shrink-0 bg-(--divider) opacity-70 max-sm:hidden" aria-hidden="true" />
                   <span
                     className={cn(
                       'inline-flex min-w-0 max-w-[min(18rem,35vw)] shrink items-center gap-1',
                       'text-[11px] font-normal leading-none text-(--text-secondary)',
+                      'max-sm:hidden',
                       session.worktreeDeletedAt && 'text-(--status-error-text)'
                     )}
                     title={branchTitle}
@@ -386,7 +387,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
         {/* Right: actions */}
         <div
           className={cn(
-            'flex shrink-0 items-center gap-2',
+            'ml-auto flex shrink-0 items-center gap-2',
             // Dropping the gap at Phone viewport does not bring the glyphs
             // closer together: each sits centred in 44px, so two neighbours
             // are ~26px apart where the 18px boxes used to be 8px apart. The

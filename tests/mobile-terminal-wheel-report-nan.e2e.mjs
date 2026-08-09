@@ -158,19 +158,21 @@ async function testPatchLeavesAnAlreadyPatchedBundleAlone() {
   }
 }
 
-// An upgrade that renames or fixes the code upstream must leave the bundle untouched rather
-// than half-rewritten. Renaming the method is what such an upgrade looks like from outside.
+// An upgrade that renames or fixes the code upstream must leave the bundle untouched and
+// fail closed. Renaming the method is what such an upgrade looks like from outside.
 async function testPatchLeavesABundleWithoutTheTargetAlone() {
   const fixture = await createBundleFixture(
     (source) => source.replaceAll('getMouseReportCoords', 'getMouseReportPosition'),
   );
 
   try {
-    const { stderr } = await run(
+    const failure = await run(
       process.execPath,
       [path.join(repoRoot, PATCH_SCRIPT)],
       { cwd: fixture.dir },
-    );
+    ).then(() => null, (error) => error);
+
+    assert.ok(failure, 'an unrecognised xterm bundle must fail the patch step');
 
     for (const relative of BUNDLE_FILES) {
       assert.equal(
@@ -180,9 +182,9 @@ async function testPatchLeavesABundleWithoutTheTargetAlone() {
       );
     }
     assert.match(
-      stderr,
+      failure.stderr ?? '',
       /not found/,
-      'skipping a bundle it no longer recognises must be said out loud',
+      'the reason an unrecognised bundle failed must be said out loud',
     );
   } finally {
     await fs.rm(fixture.dir, { recursive: true, force: true });

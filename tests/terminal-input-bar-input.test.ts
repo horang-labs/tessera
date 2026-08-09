@@ -18,13 +18,13 @@ test('the named-key table carries shift-tab as CSI Z', () => {
   assert.equal(terminalNamedKeySequence('shift-tab'), '\x1b[Z');
 });
 
-// The six keys are a decision, not a convenience list (#243, spec #241 decision 4). Tab
+// The five keys are a decision, not a convenience list. Tab
 // would be a dead button on a buffered bar and the phone owns the caret, so left/right
-// and tab are deliberately absent — assert the absence, or the decision erodes silently.
-test('the bar offers exactly the six decided keys, in the decided order', () => {
+// and Ctrl+C are deliberately absent — assert the absence, or the decision erodes silently.
+test('the bar offers exactly the five decided keys, in the decided order', () => {
   assert.deepEqual(
     TERMINAL_INPUT_BAR_KEYS.map((key) => key.namedKey),
-    ['escape', 'shift-tab', 'up', 'down', 'enter', 'ctrl-c'],
+    ['escape', 'shift-tab', 'up', 'down', 'enter'],
   );
 });
 
@@ -39,7 +39,6 @@ test('each bar key sends the byte sequence a keyboard would', () => {
     up: '\x1b[A',
     down: '\x1b[B',
     enter: '\r',
-    'ctrl-c': '\x03',
   });
 });
 

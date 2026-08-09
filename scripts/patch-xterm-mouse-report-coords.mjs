@@ -1,7 +1,7 @@
 // Stops @xterm/xterm from sending a mouse report whose coordinates are not numbers.
-// Like patch-xterm-touch-scroll.mjs and patch-xterm-webgl-atlas.mjs, this is idempotent
-// and no-ops when its target string is absent (e.g. after an upgrade that renames or fixes
-// it upstream) so a changed bundle is never corrupted.
+// Like patch-xterm-touch-scroll.mjs and patch-xterm-webgl-atlas.mjs, this is idempotent.
+// An unrecognised or missing target fails closed: silently shipping an
+// unverified xterm bundle would re-open the PTY corruption this patch prevents.
 //
 // Both shipped bundles are patched: bundlers that honor the package's `module` field
 // (Next.js webpack — the one the app actually loads) resolve lib/xterm.mjs, while `main`
@@ -74,28 +74,44 @@ const TARGETS = [
   },
 ];
 
+const plannedWrites = [];
+const failures = [];
+
 for (const target of TARGETS) {
-  if (!existsSync(target.file)) continue;
-
-  let src = readFileSync(target.file, 'utf8');
-  let changed = false;
-
-  for (const patch of target.patches) {
-    if (src.includes(patch.replace) && !src.includes(patch.find)) {
-      continue; // already applied
-    }
-    if (!src.includes(patch.find)) {
-      console.warn(
-        `[patch-xterm-mouse-report-coords] target for "${patch.name}" not found — xterm version likely changed. Skipping.`,
-      );
-      continue;
-    }
-    src = src.replace(patch.find, patch.replace);
-    changed = true;
-    console.log(`[patch-xterm-mouse-report-coords] applied: ${patch.name}`);
+  if (!existsSync(target.file)) {
+    failures.push(`expected bundle not found: ${target.file}`);
+    continue;
   }
 
-  if (changed) {
-    writeFileSync(target.file, src);
+  const original = readFileSync(target.file, 'utf8');
+  let patched = original;
+  const applied = [];
+
+  for (const patch of target.patches) {
+    if (patched.includes(patch.replace) && !patched.includes(patch.find)) {
+      continue; // already applied
+    }
+    if (!patched.includes(patch.find)) {
+      failures.push(`target for "${patch.name}" not found in ${target.file}`);
+      continue;
+    }
+    patched = patched.replace(patch.find, patch.replace);
+    applied.push(patch.name);
+  }
+
+  if (patched !== original) plannedWrites.push({ ...target, source: patched, applied });
+}
+
+if (failures.length > 0) {
+  for (const failure of failures) {
+    console.error(`[patch-xterm-mouse-report-coords] ${failure}`);
+  }
+  throw new Error('Refusing to continue with an unverified xterm mouse-coordinate patch.');
+}
+
+for (const planned of plannedWrites) {
+  writeFileSync(planned.file, planned.source);
+  for (const name of planned.applied) {
+    console.log(`[patch-xterm-mouse-report-coords] applied: ${name}`);
   }
 }

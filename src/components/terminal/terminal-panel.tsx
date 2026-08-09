@@ -155,6 +155,17 @@ export function TerminalPanel({
     appearanceMode === 'dark',
     appearanceMode === 'dark' ? darkThemePreset : lightThemePreset,
   );
+  const handleInputBarSend = useCallback(
+    (data: string) => surface.sendUserInput(data),
+    [surface],
+  );
+  const handleTerminalPointerDown = useCallback(() => {
+    if (!isPhoneViewport) return;
+    const activeElement = containerRef.current?.ownerDocument.activeElement;
+    if (activeElement?.getAttribute('data-terminal-input-owner') === 'input-bar') {
+      (activeElement as HTMLElement).blur();
+    }
+  }, [isPhoneViewport]);
 
   useEffect(() => {
     surface.setTheme(
@@ -170,6 +181,11 @@ export function TerminalPanel({
   useEffect(() => {
     surface.setFontSize(terminalFontSize);
   }, [surface, terminalFontSize]);
+
+  useEffect(() => {
+    surface.setKeyboardOwner(isPhoneViewport ? 'input-bar' : 'xterm');
+    return () => surface.setKeyboardOwner('xterm');
+  }, [isPhoneViewport, surface]);
 
   useEffect(() => {
     surface.setInputListener(handleTerminalInput);
@@ -258,7 +274,7 @@ export function TerminalPanel({
     void surface.ensureConnected().then((connected) => {
       if (connected && isPanelActive) surface.activate();
     });
-  }, [connectionStatus, isPanelActive, isTabActive, surface]);
+  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, surface]);
 
   const canRestart = status === 'exited' || status === 'error';
   const handleThemeRestart = useCallback(() => {
@@ -310,7 +326,10 @@ export function TerminalPanel({
           </Button>
         </div>
       )}
-      <div className="relative min-h-0 flex-1 overflow-hidden p-2">
+      <div
+        className="relative min-h-0 flex-1 overflow-hidden p-2"
+        onPointerDownCapture={handleTerminalPointerDown}
+      >
         <div ref={containerRef} className="h-full min-w-0 overflow-hidden" />
         {status === 'starting' && startupOverlay ? (
           <div className="absolute inset-0 z-10">{startupOverlay}</div>
@@ -358,10 +377,11 @@ export function TerminalPanel({
       {/* Conditional render for the viewport, never `display: none`: a desktop tree must
           not contain the bar at all. Being on an inactive tab is the other question and
           takes the other answer — the bar stays mounted and drops out of layout, so a
-          draft survives a tab switch (#262). The terminal above is not told about either:
-          the bar writes to the PTY through the registry, and the surface stays exactly as
-          it was. */}
-      {isPhoneViewport && <TerminalInputBar terminalId={terminalId} isTabActive={isTabActive} />}
+          draft survives a tab switch (#262). The surface receives the same Phone state so
+          xterm keeps touch/pointer behavior but yields keyboard ownership to this bar. */}
+      {isPhoneViewport && (
+        <TerminalInputBar onSend={handleInputBarSend} isTabActive={isTabActive} />
+      )}
     </div>
   );
 }

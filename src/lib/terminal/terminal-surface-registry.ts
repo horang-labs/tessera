@@ -69,6 +69,10 @@ import {
 } from './terminal-mouse-wheel';
 import { activateTesseraTerminalUnicodeProvider } from './terminal-unicode-provider';
 import { buildTerminalSnapshotReplay } from './terminal-snapshot-replay';
+import {
+  sanitizeXtermGeneratedData,
+  type TerminalKeyboardOwner,
+} from './terminal-input-policy';
 
 export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
 
@@ -107,6 +111,7 @@ type XtermLike = TerminalScrollTarget & {
   options: { theme?: ITheme; fontSize?: number };
   unicode: IUnicodeHandling;
   modes: { sendFocusMode: boolean };
+  textarea?: HTMLTextAreaElement;
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
   attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean): void;
   element?: HTMLElement;
@@ -123,6 +128,13 @@ type XtermLike = TerminalScrollTarget & {
   onData(callback: (data: string) => void): { dispose(): void };
   onScroll(callback: (viewportY: number) => void): { dispose(): void };
   dispose(): void;
+};
+
+type XtermTextareaState = {
+  readOnly: boolean;
+  tabIndex: number;
+  inputMode: string | null;
+  inert: boolean;
 };
 
 type FitAddonLike = {
@@ -343,6 +355,8 @@ export class TerminalSurface {
   private onInput: (() => void) | null = null;
   private terminalInputOriginArmed = false;
   private terminalInputOriginEpoch = 0;
+  private keyboardOwner: TerminalKeyboardOwner = 'xterm';
+  private xtermTextareaState: XtermTextareaState | null = null;
   private disposed = false;
   private autoConnect = true;
   private sessionWasPresent = false;
@@ -423,6 +437,16 @@ export class TerminalSurface {
 
   setInputListener(listener: (() => void) | null): void {
     this.onInput = listener;
+  }
+
+  setKeyboardOwner(owner: TerminalKeyboardOwner): void {
+    if (this.keyboardOwner === owner) return;
+    this.keyboardOwner = owner;
+    if (owner === 'input-bar') {
+      this.terminalInputOriginArmed = false;
+      this.terminalInputOriginEpoch += 1;
+    }
+    this.applyKeyboardOwnership();
   }
 
   async mount(host: HTMLElement): Promise<void> {
@@ -543,6 +567,13 @@ export class TerminalSurface {
       || this.state.status === 'exited'
     ) return false;
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
+  }
+
+  /** Sends input that came from an explicit user-facing control. */
+  sendUserInput(data: string): boolean {
+    const delivered = this.sendInput(data);
+    if (delivered) this.notifyTerminalInput();
+    return delivered;
   }
 
   /**
@@ -759,7 +790,7 @@ export class TerminalSurface {
     requestAnimationFrame(() => {
       if (!this.isMountedHostVisible()) return;
       this.requestStableFit(true);
-      this.terminal?.focus();
+      if (this.keyboardOwner === 'xterm') this.terminal?.focus();
     });
   }
 
@@ -848,6 +879,7 @@ export class TerminalSurface {
     this.fitAddon = null;
     this.terminal?.dispose();
     this.terminal = null;
+    this.xtermTextareaState = null;
     this.root?.remove();
     this.root = null;
   }
@@ -946,6 +978,7 @@ export class TerminalSurface {
       this.root = root;
       this.terminal = terminal;
       this.fitAddon = fitAddon;
+      this.applyKeyboardOwnership();
       const scrollController = new TerminalScrollController(terminal);
       this.scrollController = scrollController;
       this.unsubscribeScrollController = scrollController.subscribe(() => {
@@ -962,6 +995,10 @@ export class TerminalSurface {
         // App-level shortcuts must bubble to the window listener instead of
         // being cancelled by xterm or encoded into PTY input.
         if (isGlobalShortcutKeydown(event)) return false;
+
+        // On a phone the visible input bar owns software and hardware keyboard input.
+        // Returning false leaves xterm's parser and pointer/touch reporting enabled.
+        if (this.keyboardOwner === 'input-bar') return false;
 
         if (
           event.type === 'keydown'
@@ -1040,6 +1077,17 @@ export class TerminalSurface {
           this.terminalInputOriginArmed = false;
           this.notifyTerminalInput();
         }
+        if (this.keyboardOwner === 'input-bar') {
+          const sanitized = sanitizeXtermGeneratedData(data);
+          if (sanitized.droppedMouseReports > 0) {
+            console.warn('[terminal] Dropped malformed xterm mouse report', {
+              terminalId: this.actualTerminalId,
+              count: sanitized.droppedMouseReports,
+            });
+          }
+          if (sanitized.data) this.sendInput(sanitized.data);
+          return;
+        }
         this.sendInput(data);
       });
       this.scrollDisposable = terminal.onScroll(() => {
@@ -1048,6 +1096,11 @@ export class TerminalSurface {
       });
       this.syncScrollStateFromController();
       this.pasteListener = (event) => {
+        if (this.keyboardOwner === 'input-bar') {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (this.consumeNativePasteSuppression(event)) return;
         if (event.clipboardData?.getData('text/plain')) {
           this.armTerminalInputOrigin();
@@ -1065,7 +1118,7 @@ export class TerminalSurface {
       };
       root.addEventListener('paste', this.pasteListener, true);
       this.compositionEndListener = (event) => {
-        if (event.data) this.notifyTerminalInput();
+        if (this.keyboardOwner === 'xterm' && event.data) this.notifyTerminalInput();
       };
       root.addEventListener('compositionend', this.compositionEndListener, true);
     } catch (error) {
@@ -1108,6 +1161,36 @@ export class TerminalSurface {
 
   private notifyTerminalInput(): void {
     this.onInput?.();
+  }
+
+  private applyKeyboardOwnership(): void {
+    const textarea = this.terminal?.textarea;
+    if (!textarea) return;
+
+    if (!this.xtermTextareaState) {
+      this.xtermTextareaState = {
+        readOnly: textarea.readOnly,
+        tabIndex: textarea.tabIndex,
+        inputMode: textarea.getAttribute('inputmode'),
+        inert: textarea.inert,
+      };
+    }
+
+    if (this.keyboardOwner === 'input-bar') {
+      if (textarea.ownerDocument.activeElement === textarea) textarea.blur();
+      textarea.readOnly = true;
+      textarea.tabIndex = -1;
+      textarea.setAttribute('inputmode', 'none');
+      textarea.inert = true;
+      return;
+    }
+
+    const baseline = this.xtermTextareaState;
+    textarea.readOnly = baseline.readOnly;
+    textarea.tabIndex = baseline.tabIndex;
+    textarea.inert = baseline.inert;
+    if (baseline.inputMode === null) textarea.removeAttribute('inputmode');
+    else textarea.setAttribute('inputmode', baseline.inputMode);
   }
 
   private armNativePasteSuppression(): void {

@@ -106,7 +106,12 @@ export function ExecutionModeSelector({
                 aria-describedby={disabled ? `${generatedName}-${mode}-reason` : undefined}
               />
               <span className="min-w-0">
-                <span className={cn('block truncate font-medium', compact ? 'text-[9px]' : 'text-[10px]')}>
+                <span
+                  className={cn(
+                    'block font-medium',
+                    compact ? 'truncate text-[9px]' : 'whitespace-nowrap text-[10px]',
+                  )}
+                >
                   {label}
                 </span>
               </span>

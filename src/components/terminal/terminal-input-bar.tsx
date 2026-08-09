@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SendHorizontal } from 'lucide-react';
 import {
@@ -8,13 +8,12 @@ import {
   terminalInputBarKeySequence,
   terminalInputBarTextPayload,
 } from '@/lib/terminal/terminal-input-bar-input';
-import { sendInputToTerminal } from '@/lib/terminal/terminal-surface-registry';
 import type { TerminalNamedKey } from '@/lib/terminal/session-control-input';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 
 interface TerminalInputBarProps {
-  terminalId: string;
+  onSend: (data: string) => boolean;
   /**
    * Whether this bar's tab is the one on screen.
    *
@@ -37,26 +36,25 @@ interface TerminalInputBarProps {
  * keyboard for a programmatic `focus()` on it. A real, visible field is the whole point:
  * the browser raises the keyboard for a tap on a real textarea and for nothing else.
  *
- * The bar sits below the terminal and the terminal knows nothing about it. It writes to
- * the PTY through the same registry send path the chat overlay and the file-path insert
- * already use, and it touches no xterm option.
+ * The bar sits below the terminal and owns keyboard input at a Phone viewport. Its panel
+ * binds it to the exact surface it belongs to, so that surface retains a preview only after
+ * bytes were delivered. The terminal surface keeps pointer and touch ownership.
  *
  * It is **buffered**: what is typed goes out on submit, not per keystroke. That is also
  * what makes Hangul and every other composed script work without help — a composition
  * has finished by the time the user taps send, so the browser's own
  * composition handling is all that is needed.
  */
-export function TerminalInputBar({ terminalId, isTabActive = true }: TerminalInputBarProps) {
+export function TerminalInputBar({ onSend, isTabActive = true }: TerminalInputBarProps) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
   const [didFail, setDidFail] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const send = useCallback((data: string) => {
-    const delivered = sendInputToTerminal(terminalId, data);
+    const delivered = onSend(data);
     setDidFail(!delivered);
     return delivered;
-  }, [terminalId]);
+  }, [onSend]);
 
   const handleSubmit = useCallback(() => {
     const payload = terminalInputBarTextPayload(text);
@@ -65,13 +63,9 @@ export function TerminalInputBar({ terminalId, isTabActive = true }: TerminalInp
     // terminal must not also lose what the user typed — retyping it on a phone is the
     // expensive part.
     if (send(payload)) setText('');
-    textareaRef.current?.focus();
   }, [send, text]);
 
   const handleKey = useCallback((key: TerminalNamedKey) => {
-    // Ctrl+C included, deliberately without a confirmation step: its purpose is stopping
-    // something already going wrong, and a dialog in front of it defeats that. A misfire
-    // costs one interrupted turn; an unreachable Ctrl+C costs the session.
     send(terminalInputBarKeySequence(key));
   }, [send]);
 
@@ -86,8 +80,7 @@ export function TerminalInputBar({ terminalId, isTabActive = true }: TerminalInp
       aria-label={t('chat.terminalInputBar.label')}
     >
       {/* The keys sit against the terminal, so pressing one lands next to the prompt it
-          answers. 44px targets with 4px gaps take 284px of the 344px a 360px screen
-          leaves inside this padding.
+          answers. 44px targets remain large enough to use without crowding the row.
 
           The size comes from PHONE_TOUCH_TARGET rather than `h-11 min-w-11`, which this
           bar shipped with. `rem` resolves against a root font the user scales, so those
@@ -115,13 +108,13 @@ export function TerminalInputBar({ terminalId, isTabActive = true }: TerminalInp
       </div>
       <div className="mt-2 flex items-end gap-1">
         <textarea
-          ref={textareaRef}
           value={text}
           onChange={(event) => setText(event.target.value)}
           rows={1}
           placeholder={t('chat.terminalInputBar.placeholder')}
           aria-label={t('chat.terminalInputBar.placeholder')}
           data-testid="terminal-input-bar-textarea"
+          data-terminal-input-owner="input-bar"
           // min-w-0 so the textarea yields instead of pushing send off the screen
           // (#251) — so this takes the height floor only, never a width one.
           className={cn(
