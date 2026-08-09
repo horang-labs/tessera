@@ -10,6 +10,8 @@ const run = promisify(execFile);
 const port = Number(process.env.TESSERA_E2E_PORT ?? 34286);
 const origin = `http://127.0.0.1:${port}`;
 const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "tessera-project-root-e2e-"));
+const gitFixtureName = `project-worktree-e2e-${path.basename(dataDir)}.txt`;
+const gitFixturePath = path.join(process.cwd(), gitFixtureName);
 const currentBranch = (await run("git", ["branch", "--show-current"])).stdout.trim();
 const serverOutput = [];
 let server;
@@ -77,6 +79,7 @@ async function stopServer() {
 }
 
 try {
+  await fs.writeFile(gitFixturePath, "Project Worktree e2e Git fixture.\n", { flag: "wx" });
   await startServer();
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
@@ -116,6 +119,7 @@ try {
   await page.getByTestId("tab-bar-git-toggle").click();
   await page.getByRole("tab", { name: "Git" }).click();
   await page.getByText("Changed files", { exact: true }).waitFor({ timeout: 30_000 });
+  await page.getByText(gitFixtureName, { exact: true }).waitFor();
   assert.equal(await page.getByText("No worktree selected", { exact: true }).count(), 0);
 
   await page.getByRole("tab", { name: "Files" }).click();
@@ -129,5 +133,6 @@ try {
 } finally {
   await browser?.close();
   await stopServer();
+  await fs.rm(gitFixturePath, { force: true });
   await fs.rm(dataDir, { recursive: true, force: true });
 }
