@@ -7,7 +7,7 @@
 // that matter most and they are settled by holding a phone, not by this suite.
 //
 // What this file can prove is the other half: that the bar is in the tree at a Phone
-// viewport and absent above one, and that typed text and each of the six keys leave the
+// viewport and absent above one, and that typed text and each of the five keys leave the
 // browser addressed to that terminal as the exact bytes. The seam is the outgoing
 // WebSocket frame — the last point the browser owns before the bytes are the server's,
 // and the closest a browser test gets to the PTY. It is captured by wrapping
@@ -34,7 +34,7 @@ import { PHONE_VIEWPORT, createPhoneContext } from './helpers/phone-viewport.mjs
 const DESKTOP_VIEWPORT = { width: 1000, height: 900 };
 const REPRO_TERMINAL_ID = 'dev-terminal-input-bar-repro';
 
-// The six keys and the bytes a keyboard would put on the wire for each. Written out as
+// The five keys and the bytes a keyboard would put on the wire for each. Written out as
 // literals on purpose: importing them from the module under test would make this assert
 // that the code equals itself.
 const KEY_SEQUENCES = [
@@ -43,7 +43,6 @@ const KEY_SEQUENCES = [
   ['up', '\x1b[A'],
   ['down', '\x1b[B'],
   ['enter', '\r'],
-  ['ctrl-c', '\x03'],
 ];
 
 const repoRoot = path.resolve(new URL('..', import.meta.url).pathname);
@@ -95,10 +94,11 @@ try {
 
   browser = await launchPhoneBrowser();
   await testTheBarIsPresentAtAPhoneViewport(browser, appOrigin);
+  await testTerminalGestureDismissesTheInputBarKeyboard(browser, appOrigin);
   await testTheBarIsAbsentFromTheDesktopTree(browser, appOrigin);
+  await testKeyboardOwnershipFollowsThePhoneBreakpoint(browser, appOrigin);
   await testSubmittedTextLeavesForThePtyBracketedPasteWrapped(browser, appOrigin);
   await testEachKeyLeavesForThePtyAsItsOwnSequence(browser, appOrigin);
-  await testCtrlCLeavesForThePtyWithNoInterveningDialog(browser, appOrigin);
 } catch (error) {
   if (serverOutput) process.stderr.write(`\n--- isolated server output ---\n${serverOutput}\n`);
   throw error;
@@ -134,6 +134,29 @@ async function testTheBarIsPresentAtAPhoneViewport(browserInstance, origin) {
         + ` (left ${barBox.x}px, right ${barBox.x + barBox.width}px)`,
     );
 
+    await page.locator('.xterm-helper-textarea').waitFor({ state: 'attached', timeout: 30_000 });
+    assert.deepEqual(
+      await xtermTextareaPolicy(page),
+      { readOnly: true, tabIndex: -1, inputMode: 'none', inert: true },
+      'the phone input bar must make xterm keyboard input inert',
+    );
+
+    await takeTerminalInput(page);
+    await page.locator('.xterm-screen').tap();
+    await page.evaluate(() => document.querySelector('.xterm-helper-textarea')?.focus());
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea')),
+      false,
+      'tapping or programmatically focusing the terminal must not focus its inert textarea',
+    );
+    await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(100);
+    assert.deepEqual(
+      await page.evaluate(() => window.__tesseraTerminalFrames?.take() ?? []),
+      [],
+      'a hardware key over the phone terminal must not become PTY input',
+    );
+
     // Every control has to be tappable, which is the reason the key set is six and not
     // nineteen. A control that overflows the screen is the send-button defect again.
     for (const [namedKey] of KEY_SEQUENCES) {
@@ -159,6 +182,89 @@ async function testTheBarIsPresentAtAPhoneViewport(browserInstance, origin) {
       await page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? null),
       'terminal-input-bar-textarea',
       'tapping the bar must focus a real, tappable input element',
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+async function testKeyboardOwnershipFollowsThePhoneBreakpoint(browserInstance, origin) {
+  const { context, page } = await createPhonePage(browserInstance);
+
+  try {
+    await openRepro(page, origin);
+    await page.locator('.xterm-helper-textarea').waitFor({ state: 'attached', timeout: 30_000 });
+
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await page.getByTestId('terminal-input-bar').waitFor({ state: 'detached', timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const textarea = document.querySelector('.xterm-helper-textarea');
+      return textarea instanceof HTMLTextAreaElement
+        && !textarea.readOnly
+        && textarea.tabIndex === 0
+        && textarea.getAttribute('inputmode') === null
+        && !textarea.inert;
+    });
+
+    await takeTerminalInput(page);
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.press('ArrowDown');
+    assert.match(
+      await waitForTerminalInput(page),
+      /^\x1b(?:\[|O)B$/,
+      'desktop restoration must return direct keyboard encoding to xterm',
+    );
+
+    await page.setViewportSize(PHONE_VIEWPORT);
+    await page.getByTestId('terminal-input-bar').waitFor({ state: 'visible', timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const textarea = document.querySelector('.xterm-helper-textarea');
+      return textarea instanceof HTMLTextAreaElement
+        && textarea.readOnly
+        && textarea.tabIndex === -1
+        && textarea.getAttribute('inputmode') === 'none'
+        && textarea.inert;
+    });
+
+    await takeTerminalInput(page);
+    await page.evaluate(() => document.querySelector('.xterm-helper-textarea')?.focus());
+    await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(100);
+    assert.deepEqual(
+      await page.evaluate(() => window.__tesseraTerminalFrames?.take() ?? []),
+      [],
+      'returning to a Phone viewport must reclaim keyboard ownership for the bar',
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+async function testTerminalGestureDismissesTheInputBarKeyboard(browserInstance, origin) {
+  const { context, page } = await createPhonePage(browserInstance);
+
+  try {
+    await openRepro(page, origin);
+    const input = page.getByTestId('terminal-input-bar-textarea');
+    await input.tap();
+    assert.equal(
+      await input.evaluate((element) => document.activeElement === element),
+      true,
+      'tapping the visible input component must focus it',
+    );
+
+    await page.locator('.xterm-screen').dispatchEvent('pointerdown', {
+      pointerType: 'touch',
+      pointerId: 1,
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+    });
+
+    assert.equal(
+      await input.evaluate((element) => document.activeElement === element),
+      false,
+      'starting a terminal scroll gesture must dismiss the visible input keyboard',
     );
   } finally {
     await context.close();
@@ -202,18 +308,25 @@ async function testSubmittedTextLeavesForThePtyBracketedPasteWrapped(browserInst
     await openRepro(page, origin);
     await takeTerminalInput(page);
 
-    await page.getByTestId('terminal-input-bar-textarea').fill('run the tests');
+    await page.getByTestId('terminal-input-bar-textarea').fill('run NaN tests');
     await page.getByTestId('terminal-input-bar-send').tap();
 
     assert.equal(
       await waitForTerminalInput(page),
-      '\x1b[200~run the tests\x1b[201~',
-      'submitted text must go out to the PTY wrapped in bracketed paste',
+      '\x1b[200~run NaN tests\x1b[201~',
+      'submitted text, including literal NaN, must go out wrapped in bracketed paste',
     );
     assert.equal(
       await page.getByTestId('terminal-input-bar-textarea').inputValue(),
       '',
       'a delivered submit should leave the bar empty for the next one',
+    );
+    assert.equal(
+      await page.getByTestId('terminal-input-bar-textarea').evaluate(
+        (element) => document.activeElement === element,
+      ),
+      false,
+      'the send button must not programmatically reopen the Phone keyboard',
     );
   } finally {
     await context.close();
@@ -236,33 +349,6 @@ async function testEachKeyLeavesForThePtyAsItsOwnSequence(browserInstance, origi
         `the ${namedKey} key must go out to the PTY as ${JSON.stringify(sequence)}`,
       );
     }
-  } finally {
-    await context.close();
-  }
-}
-
-// Ctrl+C answers a session that has stopped answering Esc. A dialog in front of it costs
-// the taps the user does not have, so the absence of one is the criterion, not an
-// omission.
-async function testCtrlCLeavesForThePtyWithNoInterveningDialog(browserInstance, origin) {
-  const { context, page } = await createPhonePage(browserInstance);
-
-  try {
-    await openRepro(page, origin);
-    await takeTerminalInput(page);
-
-    await page.getByTestId('terminal-input-bar-key-ctrl-c').tap();
-
-    assert.equal(
-      await waitForTerminalInput(page),
-      '\x03',
-      'Ctrl+C must go out to the PTY on the first tap',
-    );
-    assert.equal(
-      await page.locator('[role="dialog"], [role="alertdialog"]').count(),
-      0,
-      'nothing may stand between the Ctrl+C tap and the PTY',
-    );
   } finally {
     await context.close();
   }
@@ -331,6 +417,19 @@ async function openRepro(page, origin) {
     () => (window.__tesseraTerminalFrames?.sentCount() ?? 0) > 0,
     { timeout: 60_000 },
   );
+}
+
+async function xtermTextareaPolicy(page) {
+  return page.evaluate(() => {
+    const textarea = document.querySelector('.xterm-helper-textarea');
+    if (!(textarea instanceof HTMLTextAreaElement)) return null;
+    return {
+      readOnly: textarea.readOnly,
+      tabIndex: textarea.tabIndex,
+      inputMode: textarea.getAttribute('inputmode'),
+      inert: textarea.inert,
+    };
+  });
 }
 
 // Runs before any application script: replaces `WebSocket.prototype.send` so every

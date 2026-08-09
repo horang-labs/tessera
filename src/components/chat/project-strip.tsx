@@ -175,7 +175,10 @@ export function ProjectStrip({
       <div className="w-6 mx-auto border-t border-(--divider)" />
 
       {/* Project icon list */}
-      <ScrollArea className="flex-1">
+      <ScrollArea
+        className="min-h-0 flex-1 overflow-x-hidden overscroll-contain scrollbar-none"
+        data-testid="project-strip-scroll-area"
+      >
         <div className="flex flex-col items-center gap-1 py-1">
           {projects.map((p, index) => {
             const color = getProjectColor(p.displayName);
@@ -220,7 +223,7 @@ export function ProjectStrip({
                   )}
                   {letter}
                   {runningCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-green-500 text-white text-[9px] flex items-center justify-center px-0.5 font-bold leading-none">
+                    <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-green-500 text-white text-[9px] flex items-center justify-center px-0.5 font-bold leading-none max-sm:right-1 max-sm:top-1">
                       {runningCount > 9 ? '9+' : runningCount}
                     </span>
                   )}

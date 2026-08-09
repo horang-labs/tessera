@@ -23,12 +23,10 @@ export interface TerminalInputBarKey {
 }
 
 /**
- * The six keys, in the order they sit on the bar (spec #241 decision 4).
+ * The five keys, in the order they sit on the bar.
  *
  * Esc, the arrows and Enter answer a provider's permission prompt, the flow a phone was
  * blocked on. Shift+Tab cycles permission mode, which has no other route from a phone.
- * Ctrl+C is last because a session that has stopped answering Esc is a real state, and
- * without it the only remaining move is closing the tab and losing the session.
  *
  * Tab and the left/right arrows are deliberately absent, not forgotten: the bar is
  * buffered, so nothing has reached the PTY for Tab to complete, and the bar is a real
@@ -41,7 +39,6 @@ export const TERMINAL_INPUT_BAR_KEYS: readonly TerminalInputBarKey[] = [
   { namedKey: 'up', label: '↑', labelKey: 'chat.terminalInputBar.keyUp' },
   { namedKey: 'down', label: '↓', labelKey: 'chat.terminalInputBar.keyDown' },
   { namedKey: 'enter', label: '⏎', labelKey: 'chat.terminalInputBar.keyEnter' },
-  { namedKey: 'ctrl-c', label: '^C', labelKey: 'chat.terminalInputBar.keyCtrlC' },
 ];
 
 export function terminalInputBarKeySequence(key: TerminalNamedKey): string {

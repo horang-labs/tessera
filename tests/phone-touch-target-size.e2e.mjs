@@ -95,7 +95,7 @@ const HEADER_CONTROLS = CONTROLS.filter((control) => control.surface === 'sessio
  * is no desktop counterpart to measure.
  */
 const INPUT_BAR_CONTROLS = [
-  ...['escape', 'shift-tab', 'up', 'down', 'enter', 'ctrl-c'].map((namedKey) => ({
+  ...['escape', 'shift-tab', 'up', 'down', 'enter'].map((namedKey) => ({
     testId: `terminal-input-bar-key-${namedKey}`,
     label: `named key ${namedKey}`,
   })),
@@ -501,9 +501,7 @@ async function capture(page, name) {
  *
  * Three separate claims, because they fail separately: the boxes are big
  * enough; the four header icons are still four distinct targets rather than
- * one overlapping pile; and the header row still fits, with the provider chip
- * and the session title on screen. The last is the one that would show a
- * "fix" that simply pushed the title out of the viewport.
+ * one overlapping pile; and the editable provider/title identity remains visible.
  */
 async function phase1() {
   const { context, page } = await openPhonePage();
@@ -534,8 +532,8 @@ async function phase1() {
 
     results.push(`phase 1: ${describe(boxes)}`);
     results.push(
-      `phase 1: what the header row had left — provider chip ${round(header.badge.width)}px,`
-      + ` session title ${round(header.title.width)}px`,
+      `phase 1: provider chip ${round(header.badge.width)}px, editable session title`
+      + ` ${round(header.title.width)}px`,
     );
   } finally {
     await context.close();
@@ -565,8 +563,8 @@ function assertHeaderTargetsAreDistinct(boxes) {
 
 /**
  * The header still fits its 360px row: nothing is pushed past the right edge,
- * the row does not become a horizontal scroller, and the two things the row
- * exists to tell you — which provider, which session — are still on screen.
+ * the row does not become a horizontal scroller, and the provider/title group
+ * remains visible as the session's edit entry point.
  */
 /** The header row's own geometry: the chip, the title, and what clips them. */
 function measureHeaderRow(page) {
@@ -625,23 +623,15 @@ async function assertHeaderStillFits(page, boxes) {
 
   assert.ok(header.badge, 'the provider chip was not found in the header');
   assert.ok(header.title, 'the session title was not found in the header');
+  assert.ok(header.titleButton, 'the title group was not found in the header');
   assert.ok(
     header.badge.width > 0 && header.badge.right <= PHONE_VIEWPORT.width + 0.5,
     `the provider chip left the ${PHONE_VIEWPORT.width}px row: ${geometry}`,
   );
   assert.ok(
-    header.title.width > 0 && header.title.right <= PHONE_VIEWPORT.width + 0.5,
-    `the session title left the ${PHONE_VIEWPORT.width}px row: ${geometry}`,
-  );
-  // A width the row can be squeezed down to and still say which session this
-  // is. `width > 0` is not that: the first arrangement of four 44px targets
-  // left the title 22px, which shows a character and an ellipsis. It measures
-  // 44px now, so this floor has slack for a different font without letting the
-  // title be spent again.
-  assert.ok(
-    header.title.width >= MIN_READABLE_TITLE,
-    `the session title was squeezed to ${round(header.title.width)}px, under the`
-      + ` ${MIN_READABLE_TITLE}px it needs to name a session: ${geometry}`,
+    header.title.width >= MIN_READABLE_TITLE
+      && header.title.right <= PHONE_VIEWPORT.width + 0.5,
+    `the editable session title has only ${round(header.title.width)}px: ${geometry}`,
   );
   assert.ok(header.overflow, 'the chat view was not measurable');
   assert.ok(
@@ -649,7 +639,6 @@ async function assertHeaderStillFits(page, boxes) {
     'the chat view was pushed wider than its own box by the enlarged header'
       + ` (content ${header.overflow.scrollWidth}px in ${header.overflow.clientWidth}px)`,
   );
-
   return header;
 }
 
