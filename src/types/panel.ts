@@ -61,8 +61,8 @@ export interface PanelStoreActions {
   graftTabIntoActiveTab(sourceTabId: string, targetPanelId: string, edge: PanelDropEdge): string | null;
   closePanel(panelId: string): void;
   closePanelInTab(tabId: string, panelId: string): void;
-  assignSession(panelId: string, sessionId: string | null): void;
-  assignSessionInTab(tabId: string, panelId: string, sessionId: string | null): void;
+  assignSession(panelId: string, sessionId: string | null, worktreeId?: string | null): void;
+  assignSessionInTab(tabId: string, panelId: string, sessionId: string | null, worktreeId?: string | null): void;
   assignWorktree(panelId: string, worktreeId: string): void;
   startWorktreeCreation(panelId: string, mode: 'chat' | 'task'): void;
   rebindSession(previousSessionId: string, sessionId: string): void;

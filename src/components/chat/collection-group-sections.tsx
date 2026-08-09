@@ -909,6 +909,15 @@ export function TaskItemRow({
     const unifiedSession = toLinkedWorktreeSession(task, session);
     useSessionStore.getState().upsertSession(unifiedSession);
     await open(unifiedSession);
+    const location = useTabStore.getState().findSessionLocation(unifiedSession.id);
+    if (location && task.worktreeId) {
+      usePanelStore.getState().assignSessionInTab(
+        location.tabId,
+        location.panelId,
+        unifiedSession.id,
+        task.worktreeId,
+      );
+    }
   }, [task]);
 
   const handleClick = useCallback(

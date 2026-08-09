@@ -491,11 +491,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     useSessionStore.getState().setActiveSession(sessionId);
   },
 
-  assignSession: (panelId, sessionId) => {
-    get().assignSessionInTab(get().activeTabId, panelId, sessionId);
+  assignSession: (panelId, sessionId, worktreeId) => {
+    get().assignSessionInTab(get().activeTabId, panelId, sessionId, worktreeId);
   },
 
-  assignSessionInTab: (tabId, panelId, sessionId) => {
+  assignSessionInTab: (tabId, panelId, sessionId, worktreeId) => {
     const state = get();
     const tabData = state.tabPanels[tabId];
     if (!tabData) return;
@@ -522,7 +522,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
       [panelId]: {
         ...tabData.panels[panelId],
         sessionId,
-        worktreeId: null,
+        worktreeId: worktreeId ?? null,
         creationMode: null,
         terminalId: null,
         terminalSessionId: null,

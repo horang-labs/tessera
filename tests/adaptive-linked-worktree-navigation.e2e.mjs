@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { chromium } from "@playwright/test";
-
 const run = promisify(execFile);
 const port = Number(process.env.TESSERA_E2E_PORT ?? 34291);
 const origin = `http://127.0.0.1:${port}`;
@@ -18,7 +17,6 @@ const created = [];
 let server;
 let browser;
 let authCookie = "";
-
 function cleanEnv() {
   const env = { ...process.env };
   for (const key of ["ELECTRON_RUN_AS_NODE", "ELECTRON_CHILD", "TESSERA_APP_ROOT", "TESSERA_ELECTRON_SERVER", "TESSERA_PRODUCTION_DB", "TESSERA_HOOK_PORT", "TESSERA_PANE_TOKEN", "TESSERA_SESSION_ID"]) delete env[key];
@@ -140,6 +138,9 @@ try {
   await page.getByRole("tab", { name: "Files" }).click();
   assert.equal((await zeroFilesResponse).ok(), true);
 
+  await page.getByTestId("project-strip-all").click();
+  await page.getByTestId(`all-project-section-${project.encodedDir}`).locator(":scope > div").first().click();
+  await oneRow.waitFor();
   await oneRow.click();
   await page.locator('[data-testid="message-input-row"]:visible').waitFor({ timeout: 30_000 });
   await page.locator(`[data-testid="git-panel"][data-worktree-target="${one.worktreeId}"]`).waitFor();
@@ -155,6 +156,8 @@ try {
   assert.ok(worktreeRequests.some((url) => url.includes(`/api/worktrees/${one.worktreeId}/files`)));
   await page.screenshot({ path: path.join(evidenceDir, "desktop-composite-files.png"), fullPage: true });
 
+  await page.getByTestId(`project-strip-${project.encodedDir}`).click();
+  await manyRow.waitFor();
   await manyRow.click();
   await page.getByTestId("worktree-overview").getByText("Linked Worktree", { exact: true }).waitFor();
   await page.getByRole("tab", { name: "Git" }).click();
@@ -164,12 +167,9 @@ try {
   await page.locator('[data-testid="message-input-row"]:visible').waitFor();
   await page.getByTestId(`project-strip-${many.path}`).click();
   const directMany = page.locator(`[data-testid="collection-chat-${many.sessions[0].sessionId}"]`).first();
-  await directMany.waitFor();
-  assert.equal(await directMany.locator('[data-testid*="bubble-"]').count(), 1);
-  await directMany.click();
-  await page.locator('[data-testid="message-input-row"]:visible').waitFor();
-  await page.getByTestId(`project-strip-${project.encodedDir}`).click();
-  await page.locator(`[data-testid="collection-subsession-${many.sessions[0].sessionId}"]`).waitFor();
+  await directMany.waitFor(); assert.equal(await directMany.locator('[data-testid*="bubble-"]').count(), 1);
+  await directMany.click(); await page.locator('[data-testid="message-input-row"]:visible').waitFor();
+  await page.getByTestId(`project-strip-${project.encodedDir}`).click(); await page.locator(`[data-testid="collection-subsession-${many.sessions[0].sessionId}"]`).waitFor();
 
   for (const row of [zeroRow, oneRow, manyRow]) {
     await row.hover();
