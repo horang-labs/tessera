@@ -357,13 +357,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const task: TaskEntity = data.task;
 
       set((state) => {
-        const projectTasks = [task, ...(state.tasksByProject[task.projectId] ?? [])];
+        const projectTasks = [task, ...(state.tasksByProject[task.projectViewId] ?? [])];
         return {
           ...updateProjectCache(
             state,
-            task.projectId,
+            task.projectViewId,
             projectTasks,
-            state.currentProjectId === task.projectId
+            state.currentProjectId === task.projectViewId
           ),
         };
       });
@@ -376,7 +376,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   updateTask: async (id, patch) => {
     const existingTask = get().getTask(id);
-    const projectId = existingTask?.projectId;
+    const originProjectId = existingTask?.projectId;
+    const affectedProjectIds = Object.entries(get().tasksByProject)
+      .filter(([, tasks]) => tasks.some((task) => task.id === id))
+      .map(([projectId]) => projectId);
     const linkedSessionId = patch.title && existingTask?.sessions.length === 1
       ? existingTask.sessions[0].id
       : null;
@@ -394,21 +397,29 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       ? useSessionStore.getState().getSession(linkedSessionId)
       : undefined;
 
-    if (projectId) {
-      const previousProjectTasks = get().getTasksForProject(projectId);
-      const nextProjectTasks = previousProjectTasks.map((task) =>
-        task.id === id ? applyTaskPatch(task, patch) : task
-      );
-
-      set((state) => ({
-        ...updateProjectCache(
-          state,
-          projectId,
-          nextProjectTasks,
-          state.currentProjectId === projectId
+    const canonicalPatch = { ...patch };
+    delete canonicalPatch.collectionId;
+    set((state) => {
+      const patchList = (tasks: TaskEntity[], includeOriginCollection: boolean) =>
+        tasks.map((task) => task.id === id
+          ? applyTaskPatch(task, includeOriginCollection ? patch : canonicalPatch)
+          : task);
+      return {
+        tasks: patchList(state.tasks, state.currentProjectId === originProjectId),
+        tasksByProject: Object.fromEntries(
+          Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
+            projectId,
+            patchList(tasks, projectId === originProjectId),
+          ]),
         ),
-      }));
-    }
+      };
+    });
+
+    const reloadAffectedProjectViews = async () => {
+      await Promise.all(affectedProjectIds.map((projectId) => get().loadTasks(projectId, {
+        setCurrent: get().currentProjectId === projectId,
+      })));
+    };
 
     if (shouldSyncWorkflowStatus && previousSessionWorkflowStatus) {
       useSessionStore.getState().syncTaskWorkflowStatus(
@@ -450,8 +461,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         if (shouldSyncCollectionId) {
           useSessionStore.getState().syncTaskCollectionId(id, previousCollectionId ?? null);
         }
-        if (projectId)
-          await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
+        await reloadAffectedProjectViews();
         return false;
       }
       return true;
@@ -473,8 +483,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       if (shouldSyncCollectionId) {
         useSessionStore.getState().syncTaskCollectionId(id, previousCollectionId ?? null);
       }
-      if (projectId)
-        await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
+      await reloadAffectedProjectViews();
       return false;
     }
   },
@@ -590,7 +599,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   reorderTasks: (orderedIds, explicitProjectId) => {
     const projectId =
       explicitProjectId ??
-      get().getTask(orderedIds[0])?.projectId ??
+      get().getTask(orderedIds[0])?.projectViewId ??
       get().currentProjectId;
 
     if (!projectId) return;
@@ -790,13 +799,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   addPendingTask: (task) => {
     set((state) => {
-      const projectTasks = [task, ...(state.tasksByProject[task.projectId] ?? [])];
+      const projectTasks = [task, ...(state.tasksByProject[task.projectViewId] ?? [])];
       return {
         ...updateProjectCache(
           state,
-          task.projectId,
+          task.projectViewId,
           projectTasks,
-          state.currentProjectId === task.projectId
+          state.currentProjectId === task.projectViewId
         ),
       };
     });
@@ -835,9 +844,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         }
       }
       // Insert the real task into its server-reported project bucket.
-      const targetBucket = nextByProject[realTask.projectId] ?? [];
+      const targetBucket = nextByProject[realTask.projectViewId] ?? [];
       const withoutDupe = targetBucket.filter((task) => task.id !== realTask.id);
-      nextByProject[realTask.projectId] = [realTask, ...withoutDupe];
+      nextByProject[realTask.projectViewId] = [realTask, ...withoutDupe];
 
       // Keep `tasks` (exposed to current-project subscribers) in sync.
       const nextTasks =
@@ -852,7 +861,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         tasks: nextTasks,
         loadedProjects: {
           ...state.loadedProjects,
-          [realTask.projectId]: true,
+          [realTask.projectViewId]: true,
         },
       };
     });
