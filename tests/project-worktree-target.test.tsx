@@ -55,6 +55,15 @@ test('selecting a Worktree stores a real Worktree target without a placeholder S
   );
 });
 
+test('a composite panel stores its Session and owning Worktree together', () => {
+  const state = usePanelStore.getState();
+  state.assignSessionInTab(state.activeTabId, 'worktree-panel', 'session-composite', 'wt-composite');
+
+  const panel = usePanelStore.getState().tabPanels[state.activeTabId]?.panels['worktree-panel'];
+  assert.equal(panel?.sessionId, 'session-composite');
+  assert.equal(panel?.worktreeId, 'wt-composite');
+});
+
 test('sessionless Git and Files reads route by canonical Worktree identity', () => {
   const target = { kind: 'worktree', id: 'wt_project_root' } as const;
   assert.equal(gitPanelReadPath(target), '/api/worktrees/wt_project_root/git');

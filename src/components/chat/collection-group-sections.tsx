@@ -10,7 +10,6 @@ import {
   ExternalLink,
   FolderGit2,
   FolderInput,
-  GitBranch,
   MessageSquare,
   Pencil,
   Plus,
@@ -37,6 +36,8 @@ import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
+import { usePanelStore } from '@/stores/panel-store';
+import { useTabStore } from '@/stores/tab-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
 import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
@@ -64,6 +65,8 @@ import {
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { getLinkedWorktreeDensity, toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
+import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -476,6 +479,7 @@ export function CollectionContextMenu({
 
 function SubSessionRow({
   sess,
+  task,
   activeSessionId,
   collectionId,
   onSessionClick,
@@ -489,6 +493,7 @@ function SubSessionRow({
   reorder,
 }: {
   sess: TaskSession;
+  task: TaskEntity;
   activeSessionId: string | null;
   collectionId: string | null;
   reorder?: ReturnType<typeof useSubSessionReorder>;
@@ -528,16 +533,14 @@ function SubSessionRow({
     return false;
   });
   const asUnifiedSession = useCallback(
-    () =>
-      ({
-        id: sess.id,
-        title: sess.title,
-        lastModified: sess.lastModified,
-        isRunning: liveSession?.isRunning ?? sess.isRunning,
-        kind: liveSession?.kind ?? sess.kind,
-      }) as UnifiedSession,
-    [liveSession, sess],
+    () => toLinkedWorktreeSession(task, sess, liveSession),
+    [liveSession, sess, task],
   );
+  const openSession = useCallback(() => {
+    const session = asUnifiedSession();
+    useSessionStore.getState().upsertSession(session);
+    return session;
+  }, [asUnifiedSession]);
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     event.preventDefault();
@@ -602,12 +605,12 @@ function SubSessionRow({
       onClick={(event) => {
         if (isRenaming) return;
         event.stopPropagation();
-        onSessionClick(asUnifiedSession(), event);
+        onSessionClick(openSession(), event);
       }}
       onDoubleClick={(event) => {
         if (isRenaming) return;
         event.stopPropagation();
-        onSessionDoubleClick?.(asUnifiedSession());
+        onSessionDoubleClick?.(openSession());
       }}
       onContextMenu={(event) => {
         if (isRenaming) return;
@@ -773,17 +776,27 @@ export function TaskItemRow({
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<DOMRect | null>(null);
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
-  const isMultiSession = task.sessions.length > 1;
+  const density = getLinkedWorktreeDensity(task.sessions);
+  const isExpanded = density === 'expanded';
   const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
-  const isTaskActive = !isMultiSession && task.sessions.length === 1 && task.sessions[0].id === activeSessionId;
+  const activeTabId = useTabStore((state) => state.activeTabId);
+  const activeWorktreeId = usePanelStore((state) => {
+    const tab = state.tabPanels[activeTabId];
+    return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
+  });
+  const isTaskActive = density === 'composite'
+    ? task.sessions[0]?.id === activeSessionId
+    : Boolean(task.worktreeId && task.worktreeId === activeWorktreeId);
   const isPending = task.isPending === true;
   const primarySessionId = task.sessions[0]?.id;
   const isGeneratingTitle = useSessionStore((state) =>
     primarySessionId ? state.generatingTitleIds.has(primarySessionId) : false,
   );
   const isSelected = useSelectionStore((state) =>
-    primarySessionId ? state.selectedIds.has(primarySessionId) : false,
+    density === 'composite' && primarySessionId
+      ? state.selectedIds.has(primarySessionId)
+      : false,
   );
   const hoverActionFadeStyle = getSidebarHoverActionFadeStyle(
     getSidebarActionSurface({ isActive: isTaskActive, isSelected }),
@@ -832,7 +845,9 @@ export function TaskItemRow({
     onRenameComplete,
   });
   const canCollectionDnd = !disableDnd && !isRenaming && !isPending;
-  const canPanelSessionDnd = Boolean(allowPanelSessionDnd && primarySessionId && !isRenaming && !isPending);
+  const canPanelSessionDnd = Boolean(
+    density === 'composite' && allowPanelSessionDnd && primarySessionId && !isRenaming && !isPending,
+  );
   const canDrag = canCollectionDnd || canPanelSessionDnd;
   const titleFadeStyle: React.CSSProperties | undefined = isHovered && !isRenaming
     ? {
@@ -874,39 +889,57 @@ export function TaskItemRow({
     onDragStart(event);
   }, [disableDnd, onDragStart, primarySessionId]);
 
-  const handleClick = useCallback(
-    (event: React.MouseEvent) => {
-      if (isRenaming) return;
-      const session = task.sessions[0];
-      if (!session) return;
-      onSessionClick(
-        {
-          id: session.id,
-          title: session.title,
-          lastModified: session.lastModified,
-          isRunning: session.isRunning,
-          kind: session.kind,
-        } as UnifiedSession,
-        event,
-      );
-    },
-    [isRenaming, onSessionClick, task.sessions],
-  );
+  const selectWorktree = useCallback(() => {
+    if (!task.worktreeId) return;
+    const panelStore = usePanelStore.getState();
+    const tabId = useTabStore.getState().activeTabId;
+    const tab = panelStore.tabPanels[tabId];
+    if (!tab) return;
+    stepAsidePhoneSidebar();
+    panelStore.setActiveTabId(tabId);
+    panelStore.assignWorktree(tab.activePanelId, task.worktreeId);
+    useTabStore.getState().setTabProject(tabId, task.projectId);
+  }, [task.projectId, task.worktreeId]);
 
-  const handleDoubleClick = useCallback(() => {
-    if (isRenaming) return;
+  const openPrimarySession = useCallback(async (
+    open: (session: UnifiedSession) => void | Promise<void>,
+  ) => {
     const session = task.sessions[0];
     if (!session) return;
-    onSessionDoubleClick?.(
-      {
-        id: session.id,
-        title: session.title,
-        lastModified: session.lastModified,
-        isRunning: session.isRunning,
-        kind: session.kind,
-      } as UnifiedSession,
-    );
-  }, [isRenaming, onSessionDoubleClick, task.sessions]);
+    const unifiedSession = toLinkedWorktreeSession(task, session);
+    useSessionStore.getState().upsertSession(unifiedSession);
+    await open(unifiedSession);
+    const location = useTabStore.getState().findSessionLocation(unifiedSession.id);
+    if (location && task.worktreeId) {
+      usePanelStore.getState().assignSessionInTab(
+        location.tabId,
+        location.panelId,
+        unifiedSession.id,
+        task.worktreeId,
+      );
+    }
+  }, [task]);
+
+  const handleClick = useCallback(
+    async (event: React.MouseEvent) => {
+      if (isRenaming) return;
+      if (density !== 'composite') {
+        selectWorktree();
+        return;
+      }
+      await openPrimarySession((session) => onSessionClick(session, event));
+    },
+    [density, isRenaming, onSessionClick, openPrimarySession, selectWorktree],
+  );
+
+  const handleDoubleClick = useCallback(async () => {
+    if (isRenaming) return;
+    if (density !== 'composite') {
+      selectWorktree();
+      return;
+    }
+    await openPrimarySession((session) => onSessionDoubleClick?.(session));
+  }, [density, isRenaming, onSessionDoubleClick, openPrimarySession, selectWorktree]);
 
   // Worktree mark (git branch icon + PR-mismatch / missing badges). Rendered on
   // the leading side when provider icons are off (it's the task's primary mark),
@@ -915,11 +948,13 @@ export function TaskItemRow({
   // status dot; only the leading placement carries it (trailing gets it on the
   // provider mark instead).
   const renderWorktreeMark = (showStatus: boolean, className?: string, Icon: LucideIcon = FolderGit2) => {
-    if (!task.worktreeBranch) return null;
+    if (!task.worktreeId && !task.worktreeBranch) return null;
+    const branchLabel = task.worktreeBranch ?? 'unknown';
     return (
       <span
-        title={task.worktreeMissing ? t('task.worktree.missing', { branch: task.worktreeBranch }) : task.worktreeBranch}
+        title={task.worktreeMissing ? t('task.worktree.missing', { branch: branchLabel }) : branchLabel}
         className={cn('relative flex shrink-0 items-center', className)}
+        data-testid={`collection-task-worktree-icon-${task.id}`}
       >
         <Icon
           className={cn(
@@ -1005,10 +1040,13 @@ export function TaskItemRow({
           onContextMenu(event, 'task', task.id, task.collectionId ?? null);
         }}
         data-session-id={task.sessions[0]?.id}
+        data-worktree-id={task.worktreeId}
+        data-linked-worktree-density={density}
+        aria-current={isTaskActive ? 'true' : undefined}
         data-testid={`collection-task-${task.id}`}
       >
         <span className="flex shrink-0 items-center">
-          {showProviderIcons ? (
+          {showProviderIcons && primarySessionId ? (
             <span className="relative flex shrink-0 items-center">
               <ProviderLogoMark
                 providerId={task.sessions[0]?.provider}
@@ -1026,7 +1064,7 @@ export function TaskItemRow({
                 surface="sidebar"
               />
             </span>
-          ) : task.worktreeBranch ? (
+          ) : task.worktreeId || task.worktreeBranch ? (
             renderWorktreeMark(true)
           ) : hasTaskStatus ? (
             <span className="relative flex w-3.5 shrink-0 items-center justify-center">
@@ -1089,7 +1127,7 @@ export function TaskItemRow({
             )}
           >
             <DiffStatsBadge stats={task.diffStats} />
-            {showProviderIcons && renderWorktreeMark(false, undefined, GitBranch)}
+            {showProviderIcons && renderWorktreeMark(false)}
           </span>
         )}
 
@@ -1162,7 +1200,7 @@ export function TaskItemRow({
         </div>
       </div>
 
-      {isMultiSession && (
+      {isExpanded && (
         <div
           className="relative ml-[30px] pl-3"
           onDragOver={(event) => {
@@ -1184,6 +1222,7 @@ export function TaskItemRow({
             <SubSessionRow
               key={session.id}
               sess={session}
+              task={task}
               activeSessionId={activeSessionId}
               collectionId={task.collectionId ?? null}
               onSessionClick={onSessionClick}
