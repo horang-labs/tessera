@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { removeArchivedTaskWorktree } from '@/lib/archive/archive-service';
+import { removeArchivedWorktreeById } from '@/lib/archive/archive-service';
 import logger from '@/lib/logger';
 import { isTerminalHandoffConflictError } from '@/lib/terminal/terminal-handoff-lock';
 
@@ -12,22 +12,19 @@ export async function DELETE(
   if ('response' in auth) return auth.response;
 
   const { id } = await params;
-  if (!id || id.includes('..') || id.includes('/')) {
-    return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
+  if (!id.startsWith('wt_') || id.includes('/') || id.includes('..')) {
+    return NextResponse.json({ error: 'Invalid Worktree ID' }, { status: 400 });
   }
 
   try {
-    await removeArchivedTaskWorktree(id, auth.userId);
+    await removeArchivedWorktreeById(id, auth.userId);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to delete worktree';
+    const message = error instanceof Error ? error.message : 'Failed to delete Worktree';
     const handoffConflict = isTerminalHandoffConflictError(error);
-    logger.warn({ taskId: id, error: message }, 'Failed to delete archived task worktree');
+    logger.warn({ worktreeId: id, error: message }, 'Failed to delete archived Worktree');
     return NextResponse.json(
-      {
-        error: message,
-        ...(handoffConflict ? { code: error.code } : {}),
-      },
+      { error: message, ...(handoffConflict ? { code: error.code } : {}) },
       { status: handoffConflict ? 409 : 400 },
     );
   }

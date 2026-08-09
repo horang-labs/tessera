@@ -3,6 +3,7 @@ import path from 'path';
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import * as dbTasks from '@/lib/db/tasks';
+import * as dbWorktrees from '@/lib/db/worktrees';
 import {
   closeSessionRuntimes,
   getActiveSessionIds,
@@ -42,6 +43,7 @@ export interface ArchiveItem {
   updatedAt: string;
   createdAt: string;
   workDir?: string;
+  worktreeId?: string;
   worktreeBranch?: string;
   worktreeManaged: boolean;
   worktreeDeletedAt?: string;
@@ -184,6 +186,7 @@ async function mapChat(row: SessionRow): Promise<ArchiveItem> {
     updatedAt: row.updated_at,
     createdAt: row.created_at,
     workDir: workDir ?? undefined,
+    worktreeId: row.worktree_id ?? undefined,
     worktreeBranch: worktreeBranch ?? undefined,
     worktreeManaged,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
@@ -215,6 +218,7 @@ async function mapTask(task: TaskEntity): Promise<ArchiveItem> {
     updatedAt: task.updatedAt,
     createdAt: task.createdAt,
     workDir: task.workDir,
+    worktreeId: task.worktreeId,
     worktreeBranch: task.worktreeBranch,
     worktreeManaged,
     worktreeDeletedAt: task.worktreeDeletedAt,
@@ -364,7 +368,6 @@ export async function permanentlyDeleteArchivedTask(userId: string, taskId: stri
   if (!task.archived) {
     throw new Error('Task is not archived');
   }
-
   for (const session of task.sessions) {
     await sessionOrchestrator.deleteSession(userId, session.id);
   }
@@ -372,17 +375,17 @@ export async function permanentlyDeleteArchivedTask(userId: string, taskId: stri
   dbTasks.deleteTask(taskId);
 }
 
-export async function removeArchivedTaskWorktree(taskId: string, userId?: string): Promise<void> {
+export async function removeArchivedWorktreeById(worktreeId: string, userId?: string): Promise<void> {
   const { items } = await listArchiveItems();
-  const item = items.find((entry) => entry.kind === 'task' && entry.id === taskId);
+  const item = items.find((entry) => entry.worktreeId === worktreeId && !entry.sharedWorktree);
   if (!item) {
-    throw new Error('Archived task not found');
+    throw new Error('Archived Worktree not found');
   }
   if (!item.archivedAt) {
-    throw new Error('Task is not archived');
+    throw new Error('Worktree is not archived');
   }
   if (!item.workDir) {
-    throw new Error('Task has no worktree to delete');
+    throw new Error('Worktree has no checkout to delete');
   }
   if (item.worktreeDeletedAt || item.worktreeStatus === 'deleted') {
     throw new Error('Worktree already deleted');
@@ -390,6 +393,7 @@ export async function removeArchivedTaskWorktree(taskId: string, userId?: string
   if (!item.worktreeManaged) {
     throw new Error('Worktree is not managed by this app');
   }
+  assertWorktreeDeletionAllowed(worktreeId);
   const activeIds = getActiveSessionIds();
   if (item.sessions.some((session) => activeIds.has(session.id))) {
     throw new Error('Cannot delete worktree while sessions are running');
@@ -400,7 +404,7 @@ export async function removeArchivedTaskWorktree(taskId: string, userId?: string
     true,
   );
   if (!removed) {
-    throw new Error('Failed to remove worktree');
+    throw new Error('Worktree is unavailable; canonical records were preserved');
   }
 }
 
@@ -415,10 +419,13 @@ export async function removeArchivedWorktrees(
   });
   const activeIds = getActiveSessionIds();
   const runGit = await createArchiveGitRunner(userId);
+  const visitedWorktreeIds = new Set<string>();
 
   for (const item of items) {
     if (
-      !item.workDir
+      !item.worktreeId
+      || visitedWorktreeIds.has(item.worktreeId)
+      || !item.workDir
       || item.worktreeStatus !== 'present'
       || !item.worktreeManaged
       || item.sharedWorktree
@@ -427,8 +434,10 @@ export async function removeArchivedWorktrees(
       result.skipped += 1;
       continue;
     }
+    visitedWorktreeIds.add(item.worktreeId);
 
     try {
+      assertWorktreeDeletionAllowed(item.worktreeId);
       const removed = await removeArchivedWorktree(item, runGit);
       if (removed) {
         result.removed += 1;
@@ -450,12 +459,18 @@ async function removeArchivedWorktree(
   runGit?: GitRunner,
   throwOnHandoffConflict = false,
 ): Promise<boolean> {
-  if (!item.workDir || !item.archivedAt || item.worktreeDeletedAt) return false;
+  if (!item.worktreeId || !item.archivedAt || item.worktreeDeletedAt) return false;
   if (!item.worktreeManaged) return false;
   if (item.sharedWorktree) return false;
   if (item.worktreeStatus === 'deleted') return false;
 
-  const acquired = beginTesseraSessionOperations(item.sessions.map((session) => session.id));
+  const worktree = dbWorktrees.getWorktree(item.worktreeId);
+  if (!worktree?.filesystemPath || !(await pathExists(worktree.filesystemPath))) {
+    return false;
+  }
+
+  const sessionIds = dbWorktrees.getSessionIdsForWorktree(item.worktreeId);
+  const acquired = beginTesseraSessionOperations(sessionIds);
   if (!acquired) {
     if (throwOnHandoffConflict) {
       throw new TerminalHandoffConflictError();
@@ -465,7 +480,7 @@ async function removeArchivedWorktree(
 
   try {
     const activeIds = getActiveSessionIds();
-    if (item.sessions.some((session) => activeIds.has(session.id))) {
+    if (sessionIds.some((sessionId) => activeIds.has(sessionId))) {
       return false;
     }
 
@@ -476,24 +491,28 @@ async function removeArchivedWorktree(
         throw new Error('Failed to resolve source project for managed worktree cleanup');
       }
       try {
-        // Retention runs on a timer with no user attached, so the environment
-        // comes off the paths: asking the setting would answer 'native' for
-        // everyone, which cannot remove a WSL worktree.
+        const gitRunner = runGit ?? createGitRunner(await resolveGitEnvironment({
+          inferFromPaths: [sourceProjectDir, worktree.filesystemPath],
+        }));
+        // Project visibility can change while an environment-specific runner
+        // is resolved, so enforce the identity guard at the destructive edge.
+        assertWorktreeDeletionAllowed(item.worktreeId);
+        // Cleanup can run without a user attached, so the environment comes
+        // from the paths; a native fallback cannot remove a WSL worktree.
         await removeManagedWorktree(
           sourceProjectDir,
-          item.workDir,
-          runGit ?? createGitRunner(await resolveGitEnvironment({
-            inferFromPaths: [sourceProjectDir, item.workDir],
-          })),
+          worktree.filesystemPath,
+          gitRunner,
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const worktreeStillExists = await pathExists(item.workDir);
+        const worktreeStillExists = await pathExists(worktree.filesystemPath);
         if (!isStaleManagedWorktreeRemovalError(message) && worktreeStillExists) {
           throw error;
         }
         if (worktreeStillExists) {
-          await fs.rm(await resolvePathForHostFilesystem(item.workDir), {
+          assertWorktreeDeletionAllowed(item.worktreeId);
+          await fs.rm(await resolvePathForHostFilesystem(worktree.filesystemPath), {
             recursive: true,
             force: true,
           });
@@ -501,15 +520,20 @@ async function removeArchivedWorktree(
       }
     }
 
-    if (item.kind === 'task') {
-      dbTasks.setTaskWorktreeDeletedAt(item.id, deletedAt);
-    } else {
-      dbSessions.setSessionWorktreeDeletedAt(item.id, deletedAt);
-    }
+    dbWorktrees.markWorktreeDeleted(item.worktreeId, deletedAt);
     return true;
   } finally {
     endTesseraSessionOperations(acquired);
   }
+}
+
+function assertWorktreeDeletionAllowed(worktreeId: string): void {
+  const project = dbWorktrees.getVisibleProjectWorktreeViews(worktreeId)[0];
+  if (!project) return;
+  throw new Error(
+    `Cannot delete this Worktree because it is the Project Worktree of visible Project "${project.displayName}". `
+    + 'The relevant Project must be removed or hidden before deletion can proceed.',
+  );
 }
 
 export async function pruneExpiredArchivedWorktrees(
@@ -519,14 +543,23 @@ export async function pruneExpiredArchivedWorktrees(
   const result: RetentionResult = { removed: 0, skipped: 0, errors: [] };
   const { items } = await listArchiveItems();
   const runGit = await createArchiveGitRunner(userId);
+  const visitedWorktreeIds = new Set<string>();
 
   for (const item of items) {
-    if (!item.workDir || item.sharedWorktree || !isExpired(item.archivedAt, retentionDays)) {
+    if (
+      !item.worktreeId
+      || visitedWorktreeIds.has(item.worktreeId)
+      || !item.workDir
+      || item.sharedWorktree
+      || !isExpired(item.archivedAt, retentionDays)
+    ) {
       result.skipped += 1;
       continue;
     }
+    visitedWorktreeIds.add(item.worktreeId);
 
     try {
+      assertWorktreeDeletionAllowed(item.worktreeId);
       const removed = await removeArchivedWorktree(item, runGit);
       if (removed) {
         result.removed += 1;

@@ -283,11 +283,49 @@ test('deleting the last child Session leaves its parent Worktree checkout intact
     worktreeManaged: true,
   });
 
+  const { archiveSession } = await import('@/lib/session/session-archive');
+  const { restoreArchivedChat } = await import('@/lib/archive/archive-service');
+  await archiveSession('delete-last-child', true);
+  assert.equal(fs.existsSync(worktreePath), true);
+  assert.deepEqual(tasks.getTask('delete-parent-task')?.sessions, []);
+  assert.equal(tasks.getTask('delete-parent-task')?.workDir, worktreePath);
+  await restoreArchivedChat('delete-last-child');
+
   await sessionOrchestrator.deleteSession('delete-user', 'delete-last-child');
 
   assert.equal(fs.existsSync(worktreePath), true);
   assert.deepEqual(tasks.getTask('delete-parent-task')?.sessions, []);
   assert.equal(tasks.getTask('delete-parent-task')?.workDir, worktreePath);
+});
+
+test('deleting the final standalone Session leaves its managed Worktree checkout intact', async () => {
+  const { projects, sessions } = await modules();
+  const { sessionOrchestrator } = await import('@/lib/session/session-orchestrator');
+  const sourcePath = path.join(dataDir, 'delete-standalone-source');
+  const worktreePath = path.join(dataDir, 'delete-standalone-worktree');
+  fs.mkdirSync(sourcePath, { recursive: true });
+  execFileSync('git', ['init', '-b', 'main'], { cwd: sourcePath, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: sourcePath });
+  execFileSync('git', ['config', 'user.name', 'Tessera Test'], { cwd: sourcePath });
+  fs.writeFileSync(path.join(sourcePath, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: sourcePath });
+  execFileSync('git', ['commit', '-m', 'base'], { cwd: sourcePath, stdio: 'ignore' });
+  execFileSync('git', ['worktree', 'add', '-b', 'feature/delete-standalone', worktreePath], {
+    cwd: sourcePath,
+    stdio: 'ignore',
+  });
+
+  projects.registerProject(sourcePath, sourcePath, 'delete-standalone-source');
+  sessions.createSession('delete-standalone', sourcePath, 'Delete standalone', 'claude-code', {
+    workDir: worktreePath,
+    worktreeBranch: 'feature/delete-standalone',
+    worktreeManaged: true,
+  });
+
+  await sessionOrchestrator.deleteSession('delete-user', 'delete-standalone');
+
+  assert.equal(fs.existsSync(worktreePath), true);
+  assert.equal(sessions.getSession('delete-standalone'), undefined);
 });
 
 test('an archived child Session uses its parent checkout for status and restore', async () => {

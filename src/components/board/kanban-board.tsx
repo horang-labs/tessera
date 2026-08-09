@@ -41,7 +41,6 @@ import {
 } from '@/hooks/use-worktree-preparation';
 import { DeleteSessionDialog } from '@/components/chat/delete-session-dialog';
 import { DeleteTaskDialog } from '@/components/chat/delete-task-dialog';
-import { MoveProjectDialog } from '@/components/chat/move-project-dialog';
 import { wsClient } from '@/lib/ws/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import {
@@ -787,19 +786,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
     await generateTitle(taskId);
   }, [generateTitle]);
 
-  // Move to project dialog
-  const [moveSessionTarget, setMoveSessionTarget] = useState<UnifiedSession | null>(null);
-  const handleCardMoveToProject = useCallback((taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
-    if (session) setMoveSessionTarget(session);
-  }, []);
-
-  const handleMoveConfirm = useCallback((targetProjectId: string) => {
-    if (!moveSessionTarget) return;
-    useSessionStore.getState().moveSession(moveSessionTarget.id, targetProjectId);
-    setMoveSessionTarget(null);
-  }, [moveSessionTarget]);
-
   const handleCardStopProcess = useCallback((taskId: string) => {
     wsClient.stopSession(taskId);
     useSessionStore.getState().clearUnreadCount(taskId);
@@ -1058,7 +1044,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
               onSessionDelete={handleCardDelete}
               onSessionOpenInNewTab={handleCardOpenInNewTab}
               onSessionGenerateTitle={handleCardGenerateTitle}
-              onSessionMoveToProject={handleCardMoveToProject}
               onSessionStopProcess={handleCardStopProcess}
               renamingTaskId={renamingTaskId}
               onTaskRenameComplete={handleTaskRenameComplete}
@@ -1098,7 +1083,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
             onCardDelete={handleCardDelete}
             onCardOpenInNewTab={handleCardOpenInNewTab}
             onCardGenerateTitle={handleCardGenerateTitle}
-            onCardMoveToProject={handleCardMoveToProject}
             onCardMoveToCollection={handleChatMoveToCollection}
             onCardStopProcess={handleCardStopProcess}
           />
@@ -1148,14 +1132,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
         isOpen={taskToDelete !== null}
         onConfirm={handleConfirmTaskDelete}
         onCancel={() => setTaskToDelete(null)}
-      />
-
-      {/* Move to project dialog */}
-      <MoveProjectDialog
-        session={moveSessionTarget}
-        isOpen={moveSessionTarget !== null}
-        onConfirm={handleMoveConfirm}
-        onCancel={() => setMoveSessionTarget(null)}
       />
 
     </div>

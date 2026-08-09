@@ -9,7 +9,6 @@ import {
   CircleStop,
   ExternalLink,
   FolderGit2,
-  FolderInput,
   GitBranch,
   MessageSquare,
   Pencil,
@@ -237,7 +236,6 @@ export function CollectionContextMenu({
   onArchive,
   onOpenInNewTab,
   onGenerateTitle,
-  onMoveToProject,
   onStopProcess,
   onStatusChange,
   onRunPreparation,
@@ -250,7 +248,6 @@ export function CollectionContextMenu({
   onArchive?: () => void;
   onOpenInNewTab?: () => void;
   onGenerateTitle?: () => void;
-  onMoveToProject?: () => void;
   onStopProcess?: () => void;
   onStatusChange?: (status: string) => void;
   /** Runs the project's preparation script again on this task's worktree. */
@@ -435,21 +432,6 @@ export function CollectionContextMenu({
           <button className={menuItemClass} onClick={() => { onOpenInNewTab(); onClose(); }}>
             <ExternalLink className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>Open in New Tab</span>
-          </button>
-        )}
-
-        {onMoveToProject && (
-          <button
-            className={cn(menuItemClass, menu.isRunning && 'pointer-events-none opacity-40')}
-            onClick={() => {
-              if (!menu.isRunning) {
-                onMoveToProject();
-                onClose();
-              }
-            }}
-          >
-            <FolderInput className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-            <span>Move to Project</span>
           </button>
         )}
 

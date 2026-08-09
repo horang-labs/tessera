@@ -12,6 +12,12 @@ process.env.TESSERA_PRODUCTION_DB = '1';
 const git = (cwd: string, args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
+test.after(async () => {
+  const { processManager } = await import('@/lib/cli/process-manager');
+  await processManager.cleanup();
+  fs.rmSync(testRoot, { recursive: true, force: true });
+});
+
 test('a linked Worktree opens as an independent Project without changing canonical origins', async () => {
   const [database, projects, projection, sessions, persistence, tasks] = await Promise.all([
     import('@/lib/db/database'),
@@ -96,10 +102,9 @@ test('a linked Worktree opens as an independent Project without changing canonic
       .find((session) => session.id === 'session-c')?.title,
     'Renamed once',
   );
-  sessions.updateSession('session-c', {
-    archived: 1,
-    archived_at: new Date().toISOString(),
-  });
+  const { archiveSession } = await import('@/lib/session/session-archive');
+  const archiveService = await import('@/lib/archive/archive-service');
+  await archiveSession('session-c', true);
   assert.equal(
     projection.getProjectViewProjection('project-a').linkedWorktrees[0].sessions
       .some((session) => session.id === 'session-c'),
@@ -110,7 +115,39 @@ test('a linked Worktree opens as an independent Project without changing canonic
       .some((session) => session.id === 'session-c'),
     false,
   );
-  sessions.updateSession('session-c', { archived: 0, archived_at: null });
+  await archiveService.restoreArchivedChat('session-c');
+
+  persistence.persistCreatedSessionRecord({
+    sessionId: 'session-c-delete',
+    resolvedWorkDir: linkedCPath,
+    parentProjectId: 'project-a',
+    taskId: 'linked-c',
+    title: 'Delete From Either View',
+    providerId: 'claude-code',
+    executionMode: 'gui',
+    worktreeBranch: 'feature/c',
+  });
+  assert.ok(
+    projection.getProjectViewProjection('project-a').linkedWorktrees[0].sessions
+      .some((session) => session.id === 'session-c-delete'),
+  );
+  assert.ok(
+    projection.getProjectViewProjection('project-c').sessions
+      .some((session) => session.id === 'session-c-delete'),
+  );
+  const { sessionOrchestrator } = await import('@/lib/session/session-orchestrator');
+  await sessionOrchestrator.deleteSession('projection-user', 'session-c-delete');
+  assert.equal(
+    projection.getProjectViewProjection('project-a').linkedWorktrees[0].sessions
+      .some((session) => session.id === 'session-c-delete'),
+    false,
+  );
+  assert.equal(
+    projection.getProjectViewProjection('project-c').sessions
+      .some((session) => session.id === 'session-c-delete'),
+    false,
+  );
+  assert.equal(fs.existsSync(linkedCPath), true);
 
   git(rootAPath, ['worktree', 'add', '-b', 'feature/d', descendantDPath]);
   tasks.createTask({

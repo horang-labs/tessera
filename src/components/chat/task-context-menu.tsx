@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, CircleStop, Pencil, RefreshCw, Trash2, ExternalLink, FolderInput, Sparkles } from 'lucide-react';
+import { Archive, ArchiveRestore, CircleStop, Pencil, RefreshCw, Trash2, ExternalLink, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
@@ -28,7 +28,6 @@ export interface TaskContextMenuProps {
   onDelete: () => void;
   onOpenInNewTab?: () => void;
   onGenerateTitle?: () => void;
-  onMoveToProject?: () => void;
   onStopProcess?: () => void;
   /** Runs the project's preparation script again on this task's worktree. */
   onRunPreparation?: () => void;
@@ -55,7 +54,6 @@ export function TaskContextMenu({
   onDelete,
   onOpenInNewTab,
   onGenerateTitle,
-  onMoveToProject,
   onStopProcess,
   onRunPreparation,
   onClose,
@@ -78,7 +76,6 @@ export function TaskContextMenu({
       : 0;
     const optionalItems = (isRunning && onStopProcess ? 1 : 0)
       + (onMoveToCollection ? 1 : 0)
-      + (onMoveToProject ? 1 : 0)
       + (onGenerateTitle ? 1 : 0)
       + (onOpenInNewTab ? 1 : 0);
     const statusSectionHeight = statusCount > 0 ? 20 + statusCount * ITEM_HEIGHT + 8 : 0;
@@ -112,7 +109,6 @@ export function TaskContextMenu({
     isRunning,
     onGenerateTitle,
     onMoveToCollection,
-    onMoveToProject,
     onOpenInNewTab,
     onStatusChange,
     onStopProcess,
@@ -209,12 +205,6 @@ export function TaskContextMenu({
     onMoveToCollection?.(collectionId);
     onClose();
   }, [onClose, onMoveToCollection]);
-
-  const handleMoveToProject = useCallback(() => {
-    if (isRunning) return;
-    onMoveToProject?.();
-    onClose();
-  }, [isRunning, onClose, onMoveToProject]);
 
   const handleStopProcess = useCallback(() => {
     onStopProcess?.();
@@ -375,20 +365,6 @@ export function TaskContextMenu({
         >
           <ExternalLink className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
           <span>{t('task.contextMenu.openInNewTab' as Parameters<typeof t>[0])}</span>
-        </button>
-      )}
-
-      {onMoveToProject && (
-        <button
-          role="menuitem"
-          className={cn(menuItemClass, isRunning && 'opacity-40 pointer-events-none')}
-          onClick={handleMoveToProject}
-          disabled={isRunning}
-          title={isRunning ? t('task.contextMenu.cannotMoveRunning' as Parameters<typeof t>[0]) : undefined}
-          data-testid="ctx-move-to-project"
-        >
-          <FolderInput className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
-          <span>{t('task.contextMenu.moveToProject' as Parameters<typeof t>[0])}</span>
         </button>
       )}
 
