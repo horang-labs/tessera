@@ -5,7 +5,7 @@
 import { getDb } from './database';
 import logger from '../logger';
 import type { WorkflowStatus, TaskEntity, TaskSession } from '@/types/task-entity';
-import { createPendingWorktree, resolveCanonicalWorktree } from './worktrees';
+import { createPendingWorktree, getWorktree, resolveCanonicalWorktree } from './worktrees';
 import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
 import { readPreparationStatus } from '@/lib/projects/preparation-status-policy';
 import { extractSessionKind } from './sessions';
@@ -23,6 +23,9 @@ export interface TaskRow {
   workflow_status: string;
   worktree_branch: string | null;
   worktree_path: string | null;
+  creation_scope_worktree_id: string | null;
+  creation_scope_branch: string | null;
+  start_point: string | null;
   archived: number;
   archived_at: string | null;
   worktree_deleted_at: string | null;
@@ -65,6 +68,16 @@ interface SessionForTask {
   provider: string;
   provider_state: string | null;
   updated_at: string;
+}
+
+export interface WorktreeCreationScope {
+  originWorktreeId: string;
+  branch: string;
+}
+
+interface WorktreeViewScope {
+  originWorktreeId: string;
+  branch: string | null;
 }
 
 export interface ArchivedTaskQueryOptions {
@@ -125,12 +138,22 @@ function mapRowToEntity(
   const parentWorkDir = resolveEffectiveWorktreeCheckout(row).path;
   return {
     id: row.id,
+    worktreeId: row.public_worktree_id,
     projectId: row.project_id,
     title: row.title,
     collectionId: row.collection_id ?? undefined,
     workflowStatus: row.workflow_status as WorkflowStatus,
     worktreeBranch: row.worktree_branch ?? undefined,
     workDir: parentWorkDir ?? sessionData.workDir,
+    ...(row.creation_scope_worktree_id && row.creation_scope_branch
+      ? {
+          creationScope: {
+            originWorktreeId: row.creation_scope_worktree_id,
+            branch: row.creation_scope_branch,
+          },
+        }
+      : {}),
+    ...(row.start_point ? { startPoint: row.start_point } : {}),
     worktreeManaged: parentWorkDir ? true : sessionData.worktreeManaged,
     archived: !!row.archived,
     archivedAt: row.archived_at ?? undefined,
@@ -161,15 +184,35 @@ function mapRowToEntity(
 function loadTaskSessions(
   taskId: string,
   activeSessionIds: Set<string>,
-  options: { includeArchived?: boolean } = {}
+  options: {
+    includeArchived?: boolean;
+    worktreeProjection?: { worktreeId: string; currentBranch: string | null };
+  } = {}
 ): { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean } {
   const db = getDb();
+  const ownership = options.worktreeProjection
+    ? { sql: '(task_id = ? OR worktree_id = ?)', params: [taskId, options.worktreeProjection.worktreeId] }
+    : { sql: 'task_id = ?', params: [taskId] };
+  const branchScope = options.worktreeProjection
+    ? {
+        sql: `AND (
+          scope_branch IS NULL
+          OR (? IS NOT NULL AND scope_branch = ?)
+        )`,
+        params: [
+          options.worktreeProjection.currentBranch,
+          options.worktreeProjection.currentBranch,
+        ],
+      }
+    : { sql: '', params: [] };
   const rows = db.prepare(`
     SELECT id, title, provider, provider_state, created_at, updated_at, work_dir, worktree_managed, archived, sort_order
     FROM sessions
-    WHERE task_id = ? AND deleted = 0
+    WHERE ${ownership.sql}
+      AND deleted = 0
+      ${branchScope.sql}
     ORDER BY sort_order ASC, created_at DESC
-  `).all(taskId) as (SessionForTask & {
+  `).all(...ownership.params, ...branchScope.params) as (SessionForTask & {
     work_dir?: string | null;
     worktree_managed?: number | null;
     archived?: number | null;
@@ -209,18 +252,51 @@ function loadTaskSessions(
 export function getTasks(
   projectId: string,
   activeSessionIds: Set<string> = new Set(),
-  options: { includeArchived?: boolean } = {}
+  options: { includeArchived?: boolean; viewScope?: WorktreeViewScope } = {}
 ): TaskEntity[] {
   const db = getDb();
+  const where = options.viewScope
+    ? {
+        sql: `(
+          (
+            creation_scope_worktree_id = ?
+            AND ? IS NOT NULL
+            AND creation_scope_branch = ?
+          )
+          OR (creation_scope_worktree_id IS NULL AND project_id = ?)
+        )`,
+        params: [
+          options.viewScope.originWorktreeId,
+          options.viewScope.branch,
+          options.viewScope.branch,
+          projectId,
+        ],
+      }
+    : { sql: 'project_id = ?', params: [projectId] };
   const rows = db.prepare(`
     SELECT * FROM tasks
-    WHERE project_id = ? ${options.includeArchived ? '' : 'AND archived = 0'}
+    WHERE ${where.sql} ${options.includeArchived ? '' : 'AND archived = 0'}
     ORDER BY sort_order ASC, created_at DESC
-  `).all(projectId) as TaskRow[];
+  `).all(...where.params) as TaskRow[];
 
-  return rows.map((row) =>
-    mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds))
-  );
+  return rows.map((row) => {
+    return mapRowToEntity(
+      row,
+      loadTaskSessions(
+        row.id,
+        activeSessionIds,
+        options.viewScope
+          ? {
+              worktreeProjection: {
+                worktreeId: row.public_worktree_id,
+                currentBranch: getWorktree(row.public_worktree_id)?.currentBranch
+                  ?? row.worktree_branch,
+              },
+            }
+          : {},
+      ),
+    );
+  });
 }
 
 /**
@@ -236,7 +312,11 @@ export function getTask(
   if (!row) return undefined;
   return mapRowToEntity(
     row,
-    loadTaskSessions(id, activeSessionIds, { includeArchived: options.includeArchivedSessions })
+    loadTaskSessions(
+      id,
+      activeSessionIds,
+      { includeArchived: options.includeArchivedSessions },
+    )
   );
 }
 
@@ -266,7 +346,14 @@ export function getArchivedTasks(
   // archived individually before the task itself was — they are no longer
   // listed as standalone chat entries, so the task entry has to show them.
   return rows.map((row) =>
-    mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds, { includeArchived: true }))
+    mapRowToEntity(
+      row,
+      loadTaskSessions(
+        row.id,
+        activeSessionIds,
+        { includeArchived: true },
+      ),
+    )
   );
 }
 
@@ -292,6 +379,8 @@ export function createTask(params: {
   workflowStatus?: WorkflowStatus;
   worktreeBranch?: string;
   worktreePath?: string;
+  creationScope?: WorktreeCreationScope;
+  startPoint?: string;
 }): string {
   const db = getDb();
   const now = new Date().toISOString();
@@ -301,9 +390,10 @@ export function createTask(params: {
   db.prepare(`
     INSERT INTO tasks (
       id, public_worktree_id, project_id, title, collection_id, workflow_status,
-      worktree_branch, worktree_path, created_at, updated_at
+      worktree_branch, worktree_path, creation_scope_worktree_id,
+      creation_scope_branch, start_point, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.id,
     publicWorktreeId,
@@ -313,6 +403,9 @@ export function createTask(params: {
     params.workflowStatus ?? 'todo',
     params.worktreeBranch ?? null,
     params.worktreePath ?? null,
+    params.creationScope?.originWorktreeId ?? null,
+    params.creationScope?.branch ?? null,
+    params.startPoint ?? null,
     now,
     now,
   );
@@ -322,7 +415,12 @@ export function createTask(params: {
 
 export function setTaskWorktreeCheckout(
   id: string,
-  checkout: { branch: string; path: string },
+  checkout: {
+    branch: string;
+    path: string;
+    creationScope?: WorktreeCreationScope;
+    startPoint?: string;
+  },
 ): void {
   const now = new Date().toISOString();
   const db = getDb();
@@ -335,9 +433,28 @@ export function setTaskWorktreeCheckout(
   db.prepare(`
     UPDATE tasks
     SET public_worktree_id = COALESCE(?, public_worktree_id),
-        worktree_branch = ?, worktree_path = ?, updated_at = ?
+        worktree_branch = ?, worktree_path = ?,
+        creation_scope_worktree_id = CASE
+          WHEN creation_scope_worktree_id IS NULL THEN ?
+          ELSE creation_scope_worktree_id
+        END,
+        creation_scope_branch = CASE
+          WHEN creation_scope_worktree_id IS NULL THEN ?
+          ELSE creation_scope_branch
+        END,
+        start_point = COALESCE(start_point, ?),
+        updated_at = ?
     WHERE id = ?
-  `).run(worktreeId ?? null, checkout.branch, checkout.path, now, id);
+  `).run(
+    worktreeId ?? null,
+    checkout.branch,
+    checkout.path,
+    checkout.creationScope?.originWorktreeId ?? null,
+    checkout.creationScope?.branch ?? null,
+    checkout.startPoint ?? null,
+    now,
+    id,
+  );
 }
 
 /**
@@ -642,7 +759,13 @@ export function getTaskBySessionId(
     WHERE s.id = ? AND s.deleted = 0
   `).get(sessionId) as TaskRow | undefined;
   if (!row) return undefined;
-  return mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds));
+  return mapRowToEntity(
+    row,
+    loadTaskSessions(
+      row.id,
+      activeSessionIds,
+    ),
+  );
 }
 
 /**

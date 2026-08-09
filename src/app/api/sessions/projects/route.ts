@@ -74,6 +74,7 @@ export async function GET(req: NextRequest) {
     const projectResults = projects.map((project) => {
       const { projectWorktree, ...result } = getProjectViewProjection(project.id, {
         limitPerStatus,
+        activeSessionIds,
       });
 
       const mapped = result.sessions.map((row) => ({

@@ -8,6 +8,7 @@ import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import { broadcastTaskMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 import { pathExists } from '@/lib/filesystem/path-exists';
+import { getProjectViewWorktrees } from '@/lib/projects/project-view-projection';
 
 /**
  * GET /api/tasks?projectId=xxx
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const activeSessionIds = getActiveSessionIds(userId);
-    const rawTasks = dbTasks.getTasks(projectId, activeSessionIds);
+    const rawTasks = getProjectViewWorktrees(projectId, activeSessionIds);
     const worktreePresence = await Promise.all(
       rawTasks.map(async (task) => ({
         id: task.id,

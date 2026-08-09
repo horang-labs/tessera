@@ -570,22 +570,16 @@ function projectViewWhere(
 
   return {
     sql: `(
-      (s.task_id IS NOT NULL AND s.project_id = ?)
-      OR (
-        s.task_id IS NULL
+      (
+        COALESCE(s.worktree_id, t.public_worktree_id) = ?
         AND (
-          (
-            s.worktree_id = ?
-            AND (
-              s.scope_branch IS NULL
-              OR (? IS NOT NULL AND s.scope_branch = ?)
-            )
-          )
-          OR (s.worktree_id IS NULL AND s.project_id = ?)
+          s.scope_branch IS NULL
+          OR (? IS NOT NULL AND s.scope_branch = ?)
         )
       )
+      OR (s.task_id IS NULL AND s.worktree_id IS NULL AND s.project_id = ?)
     )`,
-    params: [projectId, scope.worktreeId, scope.currentBranch, scope.currentBranch, projectId],
+    params: [scope.worktreeId, scope.currentBranch, scope.currentBranch, projectId],
   };
 }
 

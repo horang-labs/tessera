@@ -1,5 +1,6 @@
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
+import * as dbTasks from '@/lib/db/tasks';
 
 function getViewScope(projectId: string): dbSessions.ProjectViewSessionScope | undefined {
   const projectWorktree = dbProjects.getProjectWorktree(projectId);
@@ -14,7 +15,7 @@ function getViewScope(projectId: string): dbSessions.ProjectViewSessionScope | u
  */
 export function getProjectViewProjection(
   projectId: string,
-  options: { limitPerStatus?: number } = {},
+  options: { limitPerStatus?: number; activeSessionIds?: Set<string> } = {},
 ) {
   const projectWorktree = dbProjects.getProjectWorktree(projectId);
   const result = dbSessions.getSessionsByProjectGrouped(projectId, {
@@ -23,7 +24,23 @@ export function getProjectViewProjection(
       ? { worktreeId: projectWorktree.id, currentBranch: projectWorktree.currentBranch }
       : undefined,
   });
-  return { projectWorktree, ...result };
+  const linkedWorktrees = getProjectViewWorktrees(projectId, options.activeSessionIds);
+  return { projectWorktree, linkedWorktrees, ...result };
+}
+
+export function getProjectViewWorktrees(
+  projectId: string,
+  activeSessionIds: Set<string> = new Set(),
+) {
+  const projectWorktree = dbProjects.getProjectWorktree(projectId);
+  return projectWorktree
+    ? dbTasks.getTasks(projectId, activeSessionIds, {
+        viewScope: {
+          originWorktreeId: projectWorktree.id,
+          branch: projectWorktree.currentBranch,
+        },
+      })
+    : dbTasks.getTasks(projectId, activeSessionIds);
 }
 
 export function getProjectViewSessions(
