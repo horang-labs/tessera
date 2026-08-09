@@ -8,6 +8,7 @@ import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
 import { hasPreparationScript } from '@/lib/projects/preparation-script-policy';
+import { getProjectViewProjection } from '@/lib/projects/project-view-projection';
 import {
   isElectronAppRuntimeProjectPath,
   shouldAutoRegisterCurrentProject,
@@ -71,11 +72,13 @@ export async function GET(req: NextRequest) {
 
     // Build project groups with sessions (per-status limit)
     const projectResults = projects.map((project) => {
-      const projectWorktree = dbProjects.getProjectWorktree(project.id);
-      const result = dbSessions.getSessionsByProjectGrouped(project.id, { limitPerStatus });
+      const { projectWorktree, ...result } = getProjectViewProjection(project.id, {
+        limitPerStatus,
+      });
 
       const mapped = result.sessions.map((row) => ({
         ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
+        projectDir: project.id,
         lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
@@ -117,6 +120,8 @@ export async function GET(req: NextRequest) {
         sessions,
         totalSessions: result.totalCount,
         countByStatus: result.countByStatus,
+        cursorByStatus: result.cursorByStatus,
+        nextCursor: result.nextCursor,
       };
     });
 

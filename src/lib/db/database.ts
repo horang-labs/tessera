@@ -225,6 +225,8 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'worktree_id', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'scope_branch', 'TEXT');
   addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
   addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
   addPreparationStatusColumns(db);
@@ -1042,6 +1044,12 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
   if (fromVersion < 34) {
     ensureCanonicalWorktreeRegistry(db);
     logger.info('Migration v34 applied: canonical Worktrees and Project roots added');
+  }
+
+  if (fromVersion < 35) {
+    addColumnIfMissing(db, 'sessions', 'worktree_id', 'TEXT');
+    addColumnIfMissing(db, 'sessions', 'scope_branch', 'TEXT');
+    logger.info('Migration v35 applied: immutable Session Worktree and branch scope');
   }
 }
 

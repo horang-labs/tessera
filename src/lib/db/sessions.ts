@@ -25,6 +25,8 @@ export interface SessionRow {
   work_dir: string | null;
   worktree_branch: string | null;
   worktree_managed?: number;
+  worktree_id: string | null;
+  scope_branch: string | null;
   archived: number; // 0 | 1
   archived_at: string | null;
   worktree_deleted_at: string | null;
@@ -41,6 +43,17 @@ export interface SessionQueryResult {
   sessions: SessionRow[];
   totalCount: number;
   nextCursor: string | null;
+}
+
+interface SessionCursor {
+  sortOrder: number;
+  projectId: string;
+  sessionId: string;
+}
+
+export interface ProjectViewSessionScope {
+  worktreeId: string;
+  currentBranch: string | null;
 }
 
 export interface SessionWorktreeContext {
@@ -85,6 +98,66 @@ const ACTIVE_SESSION_SCOPE_SQL = `
   AND s.archived = 0
   AND (s.task_id IS NULL OR COALESCE(t.archived, 0) = 0)
 `;
+
+function encodeSessionCursor(row: SessionRow): string {
+  return Buffer.from(JSON.stringify({
+    sortOrder: row.sort_order,
+    projectId: row.project_id,
+    sessionId: row.id,
+  } satisfies SessionCursor)).toString('base64url');
+}
+
+function decodeSessionCursor(cursor: string): SessionCursor | number | null {
+  if (/^\d+$/.test(cursor)) return Number(cursor);
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Partial<SessionCursor>;
+    if (
+      Number.isSafeInteger(parsed.sortOrder)
+      && typeof parsed.projectId === 'string'
+      && parsed.projectId.length > 0
+      && typeof parsed.sessionId === 'string'
+      && parsed.sessionId.length > 0
+    ) {
+      return parsed as SessionCursor;
+    }
+  } catch {
+    // Invalid cursors are rejected by the API and by query entry points below.
+  }
+  return null;
+}
+
+export function isValidSessionCursor(cursor: string): boolean {
+  return decodeSessionCursor(cursor) !== null;
+}
+
+function cursorPredicate(cursor: string): { sql: string; params: unknown[] } {
+  const decoded = decodeSessionCursor(cursor);
+  if (decoded === null) throw new Error('Invalid session cursor');
+  if (typeof decoded === 'number') {
+    return { sql: 's.sort_order > ?', params: [decoded] };
+  }
+  return {
+    sql: `(
+      s.sort_order > ?
+      OR (
+        s.sort_order = ?
+        AND (
+          s.project_id > ?
+          OR (s.project_id = ? AND s.id > ?)
+        )
+      )
+    )`,
+    params: [
+      decoded.sortOrder,
+      decoded.sortOrder,
+      decoded.projectId,
+      decoded.projectId,
+      decoded.sessionId,
+    ],
+  };
+}
+
+const SESSION_CURSOR_ORDER_SQL = 's.sort_order ASC, s.project_id ASC, s.id ASC';
 
 export interface ArchivedSessionQueryOptions {
   query?: string;
@@ -143,6 +216,8 @@ export function createSession(
     workDir?: string;
     worktreeBranch?: string;
     worktreeManaged?: boolean;
+    worktreeId?: string;
+    scopeBranch?: string;
     taskId?: string;
     collectionId?: string;
     model?: string;
@@ -177,9 +252,10 @@ export function createSession(
   db.prepare(`
     INSERT INTO sessions (
       id, project_id, title, provider, provider_state, model, reasoning_effort, service_tier, work_dir, worktree_branch, worktree_managed,
+      worktree_id, scope_branch,
       task_id, collection_id, sort_order, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     id,
     projectId,
@@ -192,6 +268,8 @@ export function createSession(
     resolvedWorkDir ?? null,
     resolvedWorktreeBranch ?? null,
     resolvedWorktreeManaged ? 1 : 0,
+    options.worktreeId ?? null,
+    options.scopeBranch ?? null,
     options.taskId ?? null,
     options.collectionId ?? null,
     now,
@@ -484,47 +562,76 @@ export function countArchivedChatSessions(projectId?: string, query?: string): n
   return row?.cnt ?? 0;
 }
 
+function projectViewWhere(
+  projectId: string,
+  scope?: ProjectViewSessionScope,
+): { sql: string; params: unknown[] } {
+  if (!scope) return { sql: 's.project_id = ?', params: [projectId] };
+
+  return {
+    sql: `(
+      (s.task_id IS NOT NULL AND s.project_id = ?)
+      OR (
+        s.task_id IS NULL
+        AND (
+          (
+            s.worktree_id = ?
+            AND (
+              s.scope_branch IS NULL
+              OR (? IS NOT NULL AND s.scope_branch = ?)
+            )
+          )
+          OR (s.worktree_id IS NULL AND s.project_id = ?)
+        )
+      )
+    )`,
+    params: [projectId, scope.worktreeId, scope.currentBranch, scope.currentBranch, projectId],
+  };
+}
+
 export function setSessionWorktreeDeletedAt(id: string, deletedAt: string): void {
   updateSession(id, { worktree_deleted_at: deletedAt });
 }
 
 /**
  * Get sessions for a project with cursor-based pagination.
- * Cursor is the updated_at timestamp of the last session in the previous page.
+ * Cursor records the project-local order plus stable cross-project tie-breakers.
  */
 export function getSessionsByProject(
   projectId: string,
-  options: { limit?: number; cursor?: string } = {}
+  options: { limit?: number; cursor?: string; viewScope?: ProjectViewSessionScope } = {}
 ): SessionQueryResult {
   const db = getDb();
   const limit = options.limit ?? 20;
+  const where = projectViewWhere(projectId, options.viewScope);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt
     FROM sessions s
     LEFT JOIN tasks t ON t.id = s.task_id
-    WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL}
-  `).get(projectId) as { cnt: number };
+    WHERE ${where.sql} AND ${ACTIVE_SESSION_SCOPE_SQL}
+  `).get(...where.params) as { cnt: number };
 
   let sessions: SessionRow[];
   if (options.cursor) {
+    const cursor = cursorPredicate(options.cursor);
     sessions = db.prepare(`
       ${SESSION_SELECT_WITH_TASK}
-      WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL} AND s.sort_order > ?
-      ORDER BY s.sort_order ASC
+      WHERE ${where.sql} AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${cursor.sql}
+      ORDER BY ${SESSION_CURSOR_ORDER_SQL}
       LIMIT ?
-    `).all(projectId, parseInt(options.cursor, 10), limit) as SessionRow[];
+    `).all(...where.params, ...cursor.params, limit) as SessionRow[];
   } else {
     sessions = db.prepare(`
       ${SESSION_SELECT_WITH_TASK}
-      WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL}
-      ORDER BY s.sort_order ASC
+      WHERE ${where.sql} AND ${ACTIVE_SESSION_SCOPE_SQL}
+      ORDER BY ${SESSION_CURSOR_ORDER_SQL}
       LIMIT ?
-    `).all(projectId, limit) as SessionRow[];
+    `).all(...where.params, limit) as SessionRow[];
   }
 
   const nextCursor = sessions.length === limit
-    ? String(sessions[sessions.length - 1].sort_order)
+    ? encodeSessionCursor(sessions[sessions.length - 1])
     : null;
 
   return {
@@ -539,19 +646,26 @@ export function getSessionsByProject(
  */
 export function getSessionsByProjectGrouped(
   projectId: string,
-  options: { limitPerStatus?: number } = {}
-): { sessions: SessionRow[]; totalCount: number; countByStatus: Record<string, number> } {
+  options: { limitPerStatus?: number; viewScope?: ProjectViewSessionScope } = {}
+): {
+  sessions: SessionRow[];
+  totalCount: number;
+  countByStatus: Record<string, number>;
+  cursorByStatus: Record<string, string | null>;
+  nextCursor: string | null;
+} {
   const db = getDb();
   const limitPerStatus = options.limitPerStatus ?? 20;
+  const where = projectViewWhere(projectId, options.viewScope);
 
   // Get counts per status (exclude archived and soft-deleted)
   const statusCounts = db.prepare(`
     SELECT ${SESSION_STATUS_GROUP_SQL} AS status_group, COUNT(*) as cnt
     FROM sessions s
     LEFT JOIN tasks t ON t.id = s.task_id
-    WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL}
+    WHERE ${where.sql} AND ${ACTIVE_SESSION_SCOPE_SQL}
     GROUP BY status_group
-  `).all(projectId) as { status_group: string; cnt: number }[];
+  `).all(...where.params) as { status_group: string; cnt: number }[];
 
   const countByStatus: Record<string, number> = {};
   let totalCount = 0;
@@ -563,26 +677,54 @@ export function getSessionsByProjectGrouped(
   // Get top N sessions per status using UNION ALL
   const statuses = statusCounts.map(r => r.status_group);
   if (statuses.length === 0) {
-    return { sessions: [], totalCount: 0, countByStatus };
+    return {
+      sessions: [],
+      totalCount: 0,
+      countByStatus,
+      cursorByStatus: {},
+      nextCursor: null,
+    };
   }
 
   const unions = statuses.map(() =>
     `SELECT * FROM (
       ${SESSION_SELECT_WITH_TASK}
-      WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${SESSION_STATUS_GROUP_SQL} = ?
-      ORDER BY s.sort_order ASC
+      WHERE ${where.sql} AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${SESSION_STATUS_GROUP_SQL} = ?
+      ORDER BY ${SESSION_CURSOR_ORDER_SQL}
       LIMIT ?
     )`
   ).join(' UNION ALL ');
 
   const params: unknown[] = [];
   for (const status of statuses) {
-    params.push(projectId, status, limitPerStatus);
+    params.push(...where.params, status, limitPerStatus);
   }
 
   const sessions = db.prepare(unions).all(...params) as SessionRow[];
 
-  return { sessions, totalCount, countByStatus };
+  const cursorByStatus: Record<string, string | null> = {};
+  for (const status of statuses) {
+    const statusSessions = sessions.filter((row) => (
+      row.task_id === null
+        ? (row.workflow_status ?? 'chat')
+        : (row.workflow_status ?? 'todo')
+    ) === status);
+    cursorByStatus[status] = statusSessions.length > 0
+      && statusSessions.length < countByStatus[status]
+      ? encodeSessionCursor(statusSessions[statusSessions.length - 1])
+      : null;
+  }
+
+  const lastSession = [...sessions].sort((left, right) => (
+    left.sort_order - right.sort_order
+    || left.project_id.localeCompare(right.project_id)
+    || left.id.localeCompare(right.id)
+  )).at(-1);
+  const nextCursor = lastSession && sessions.length < totalCount
+    ? encodeSessionCursor(lastSession)
+    : null;
+
+  return { sessions, totalCount, countByStatus, cursorByStatus, nextCursor };
 }
 
 /**
@@ -591,37 +733,39 @@ export function getSessionsByProjectGrouped(
 export function getSessionsByStatus(
   projectId: string,
   statusGroup: string,
-  options: { limit?: number; cursor?: string } = {}
+  options: { limit?: number; cursor?: string; viewScope?: ProjectViewSessionScope } = {}
 ): { sessions: SessionRow[]; totalCount: number; nextCursor: string | null } {
   const db = getDb();
   const limit = options.limit ?? 20;
+  const where = projectViewWhere(projectId, options.viewScope);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt
     FROM sessions s
     LEFT JOIN tasks t ON t.id = s.task_id
-    WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${SESSION_STATUS_GROUP_SQL} = ?
-  `).get(projectId, statusGroup) as { cnt: number };
+    WHERE ${where.sql} AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${SESSION_STATUS_GROUP_SQL} = ?
+  `).get(...where.params, statusGroup) as { cnt: number };
 
   let sessions: SessionRow[];
   if (options.cursor) {
+    const cursor = cursorPredicate(options.cursor);
     sessions = db.prepare(`
       ${SESSION_SELECT_WITH_TASK}
-      WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${SESSION_STATUS_GROUP_SQL} = ? AND s.sort_order > ?
-      ORDER BY s.sort_order ASC
+      WHERE ${where.sql} AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${SESSION_STATUS_GROUP_SQL} = ? AND ${cursor.sql}
+      ORDER BY ${SESSION_CURSOR_ORDER_SQL}
       LIMIT ?
-    `).all(projectId, statusGroup, parseInt(options.cursor, 10), limit) as SessionRow[];
+    `).all(...where.params, statusGroup, ...cursor.params, limit) as SessionRow[];
   } else {
     sessions = db.prepare(`
       ${SESSION_SELECT_WITH_TASK}
-      WHERE s.project_id = ? AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${SESSION_STATUS_GROUP_SQL} = ?
-      ORDER BY s.sort_order ASC
+      WHERE ${where.sql} AND ${ACTIVE_SESSION_SCOPE_SQL} AND ${SESSION_STATUS_GROUP_SQL} = ?
+      ORDER BY ${SESSION_CURSOR_ORDER_SQL}
       LIMIT ?
-    `).all(projectId, statusGroup, limit) as SessionRow[];
+    `).all(...where.params, statusGroup, limit) as SessionRow[];
   }
 
   const nextCursor = sessions.length === limit
-    ? String(sessions[sessions.length - 1].sort_order)
+    ? encodeSessionCursor(sessions[sessions.length - 1])
     : null;
 
   return { sessions, totalCount: countRow.cnt, nextCursor };
@@ -654,6 +798,8 @@ export function mapSessionRowToApi(
     workDir: row.work_dir ?? undefined,
     workflowStatus: row.workflow_status ?? undefined,
     worktreeBranch: row.worktree_branch ?? undefined,
+    worktreeId: row.worktree_id ?? undefined,
+    scopeBranch: row.scope_branch ?? undefined,
     archived: !!row.archived,
     archivedAt: row.archived_at ?? undefined,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
