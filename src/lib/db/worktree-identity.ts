@@ -124,7 +124,10 @@ export function readExactOneHopBranchRename(
     const lines = fs.readFileSync(reflogPath, 'utf8')
       .split('\n')
       .filter(Boolean);
-    const reflogHeader = /^[0-9a-f]{40,64} [0-9a-f]{40,64} .+ <[^>]+> \d+ [+-]\d{4}$/;
+    const objectId = '(?:[0-9a-f]{40}|[0-9a-f]{64})';
+    const reflogHeader = new RegExp(
+      `^${objectId} ${objectId} .+ <[^>]*> \\d+ [+-]\\d{4}$`,
+    );
     if (lines.some((line) => {
       const tabIndex = line.indexOf('\t');
       return tabIndex <= 0 || !reflogHeader.test(line.slice(0, tabIndex));

@@ -12,11 +12,11 @@ process.env.TESSERA_PRODUCTION_DB = '1';
 const git = (cwd: string, args: string[]) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
-function createRepository(name: string): string {
+function createRepository(name: string, email = 'test@example.com'): string {
   const repository = path.join(testRoot, name);
   fs.mkdirSync(repository, { recursive: true });
   git(repository, ['init', '-b', 'main']);
-  git(repository, ['config', 'user.email', 'test@example.com']);
+  git(repository, ['config', 'user.email', email]);
   git(repository, ['config', 'user.name', 'Tessera Test']);
   fs.writeFileSync(path.join(repository, 'README.md'), `${name}\n`);
   git(repository, ['add', 'README.md']);
@@ -127,6 +127,28 @@ test('a branch mismatch without rename evidence uses ordinary exact-name filteri
   const result = projection.getProjectViewProjection('mismatch-project');
   assert.deepEqual(result.sessions, []);
   assert.equal(result.branchRenameWarning, undefined);
+});
+
+test('a valid reflog with an empty committer email still proves a direct rename', async () => {
+  const [projects, projection, sessions] = await Promise.all([
+    import('@/lib/db/projects'),
+    import('@/lib/projects/project-view-projection'),
+    import('@/lib/db/sessions'),
+  ]);
+  const repository = createRepository('empty-email', '');
+  projects.registerProject('empty-email-project', repository, 'Empty email');
+  const root = projects.getProjectWorktree('empty-email-project');
+  assert.ok(root);
+  sessions.createSession('empty-email-session', 'empty-email-project', 'Hidden', 'codex', {
+    workDir: repository,
+    worktreeId: root.id,
+    scopeBranch: 'main',
+  });
+  git(repository, ['branch', '-m', 'renamed-empty-email']);
+
+  const warning = projection.getProjectViewProjection('empty-email-project').branchRenameWarning;
+  assert.equal(warning?.previousBranch, 'main');
+  assert.equal(warning?.currentBranch, 'renamed-empty-email');
 });
 
 test('unavailable reflog history does not speculate about a real rename', async () => {
