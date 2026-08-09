@@ -95,6 +95,12 @@ export interface TabStoreState {
   currentProjectDir: string | null;
 }
 
+export interface SessionSurfaceLocation {
+  tabId: string;
+  panelId: string;
+  projectDir: string | null;
+}
+
 /**
  * tab-store의 액션 인터페이스
  */
@@ -197,6 +203,18 @@ export interface TabStoreActions {
    * @returns 탭+패널 위치 또는 null (찾지 못한 경우)
    */
   findSessionLocation(sessionId: string): { tabId: string; panelId: string } | null;
+
+  /**
+   * 현재 표시 범위와 숨겨진 프로젝트 스냅샷을 함께 검색한다.
+   * 표시 중인 탭은 panel-store의 live 데이터를 항상 우선한다.
+   */
+  findSessionSurface(sessionId: string): SessionSurfaceLocation | null;
+
+  /**
+   * 실행 중인 PTY의 소유권을 이전 세션에서 새 세션으로 옮긴다.
+   * `/clear` 중 현재 범위가 바뀌어도 원래 탭과 패널 ID를 보존한다.
+   */
+  rebindSessionSurface(previousSessionIds: readonly string[], sessionId: string): boolean;
 
   /**
    * 세션의 화면을 정리한다. 단일 패널 탭은 닫고, 분할 탭은 해당 패널만 제거한다.

@@ -10,6 +10,7 @@ import type {
   PersistedTabStoreV1,
   PersistedTabStoreV2,
   PersistedTabStoreV3,
+  SessionSurfaceLocation,
 } from '@/types/tab';
 import { TAB_STORE_KEY, LRU_LIMIT } from '@/types/tab';
 import { DEBUG_DIAGNOSTICS } from '@/lib/debug-diagnostics';
@@ -190,6 +191,104 @@ function getVisibleTabs(
     ...globalTabs,
     ...(projectDir ? getStateTabs(projectStates[projectDir]) : []),
   ];
+}
+
+function findSessionPanelId(tabData: TabPanelData | undefined, sessionId: string): string | null {
+  if (!tabData) return null;
+  for (const [panelId, panel] of Object.entries(tabData.panels)) {
+    if (panel.sessionId === sessionId) return panelId;
+  }
+  return null;
+}
+
+function findSessionSurfaceInState(
+  state: TabStoreState,
+  panelStore: ReturnType<typeof usePanelStore.getState>,
+  sessionId: string,
+): SessionSurfaceLocation | null {
+  for (const tab of state.tabs) {
+    const panelId = findSessionPanelId(panelStore.tabPanels[tab.id], sessionId);
+    if (panelId) return { tabId: tab.id, panelId, projectDir: tab.projectDir };
+  }
+
+  const materializedTabIds = new Set(state.tabs.map((tab) => tab.id));
+  const findInScopedState = (scopedState: ProjectTabState | null): SessionSurfaceLocation | null => {
+    if (!scopedState) return null;
+    for (const tab of scopedState.tabs) {
+      if (materializedTabIds.has(tab.id)) continue;
+      const panelId = findSessionPanelId(scopedState.tabPanelSnapshots?.[tab.id], sessionId);
+      if (panelId) return { tabId: tab.id, panelId, projectDir: tab.projectDir };
+    }
+    return null;
+  };
+
+  const globalLocation = findInScopedState(state.globalTabState);
+  if (globalLocation) return globalLocation;
+  for (const projectState of Object.values(state.projectTabStates)) {
+    const location = findInScopedState(projectState);
+    if (location) return location;
+  }
+  return null;
+}
+
+function transferReboundInTabData(
+  tabData: TabPanelData,
+  tabId: string,
+  source: SessionSurfaceLocation,
+  sourceSessionId: string,
+  supersededSessionIds: ReadonlySet<string>,
+  sessionId: string,
+): TabPanelData {
+  let changed = false;
+  const panels = Object.fromEntries(Object.entries(tabData.panels).map(([panelId, panel]) => {
+    if (tabId === source.tabId && panelId === source.panelId && panel.sessionId === sourceSessionId) {
+      changed = true;
+      return [panelId, { ...panel, sessionId }];
+    }
+    if (
+      panel.sessionId === sessionId
+      || (panel.sessionId !== null && supersededSessionIds.has(panel.sessionId))
+    ) {
+      changed = true;
+      return [panelId, {
+        ...panel,
+        sessionId: null,
+        terminalId: null,
+        terminalSessionId: null,
+        terminalCwd: null,
+      }];
+    }
+    return [panelId, panel];
+  }));
+  return changed ? { ...tabData, panels } : tabData;
+}
+
+function transferReboundInScopedState(
+  scopedState: ProjectTabState | null,
+  materializedTabIds: Set<string>,
+  source: SessionSurfaceLocation,
+  sourceSessionId: string,
+  supersededSessionIds: ReadonlySet<string>,
+  sessionId: string,
+): ProjectTabState | null {
+  if (!scopedState?.tabPanelSnapshots) return scopedState;
+  let changed = false;
+  const tabPanelSnapshots = Object.fromEntries(
+    Object.entries(scopedState.tabPanelSnapshots).map(([tabId, tabData]) => {
+      if (materializedTabIds.has(tabId)) return [tabId, tabData];
+      const nextTabData = transferReboundInTabData(
+        tabData,
+        tabId,
+        source,
+        sourceSessionId,
+        supersededSessionIds,
+        sessionId,
+      );
+      if (nextTabData !== tabData) changed = true;
+      return [tabId, nextTabData];
+    }),
+  );
+  return changed ? { ...scopedState, tabPanelSnapshots } : scopedState;
 }
 
 function chooseActiveTabId(
@@ -858,6 +957,78 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     }
 
     return null;
+  },
+
+  findSessionSurface: (sessionId: string): SessionSurfaceLocation | null => {
+    return findSessionSurfaceInState(get(), usePanelStore.getState(), sessionId);
+  },
+
+  rebindSessionSurface: (previousSessionIds: readonly string[], sessionId: string): boolean => {
+    const supersededSessionIds = new Set(
+      previousSessionIds.filter((previousSessionId) => previousSessionId !== sessionId),
+    );
+    if (supersededSessionIds.size === 0) return true;
+
+    const state = get();
+    const panelStore = usePanelStore.getState();
+    let source: SessionSurfaceLocation | null = null;
+    let sourceSessionId: string | null = null;
+    for (const previousSessionId of supersededSessionIds) {
+      const candidate = findSessionSurfaceInState(state, panelStore, previousSessionId);
+      if (!candidate) continue;
+      source = candidate;
+      sourceSessionId = previousSessionId;
+      break;
+    }
+    if (!source || !sourceSessionId) return false;
+
+    const materializedTabIds = new Set(state.tabs.map((tab) => tab.id));
+    let liveChanged = false;
+    const tabPanels = Object.fromEntries(Object.entries(panelStore.tabPanels).map(([tabId, tabData]) => {
+      const nextTabData = transferReboundInTabData(
+        tabData,
+        tabId,
+        source,
+        sourceSessionId,
+        supersededSessionIds,
+        sessionId,
+      );
+      if (nextTabData !== tabData) liveChanged = true;
+      return [tabId, nextTabData];
+    }));
+    if (liveChanged) usePanelStore.setState({ tabPanels });
+
+    let scopedChanged = false;
+    const projectTabStates = Object.fromEntries(
+      Object.entries(state.projectTabStates).map(([projectDir, projectState]) => {
+        const nextProjectState = transferReboundInScopedState(
+          projectState,
+          materializedTabIds,
+          source,
+          sourceSessionId,
+          supersededSessionIds,
+          sessionId,
+        );
+        if (nextProjectState !== projectState) scopedChanged = true;
+        return [projectDir, nextProjectState];
+      }),
+    ) as Record<string, ProjectTabState>;
+    const globalTabState = transferReboundInScopedState(
+      state.globalTabState,
+      materializedTabIds,
+      source,
+      sourceSessionId,
+      supersededSessionIds,
+      sessionId,
+    );
+    if (globalTabState !== state.globalTabState) scopedChanged = true;
+    if (scopedChanged) set({ projectTabStates, globalTabState });
+
+    const activeSessionId = useSessionStore.getState().activeSessionId;
+    if (activeSessionId && supersededSessionIds.has(activeSessionId)) {
+      useSessionStore.getState().setActiveSession(sessionId);
+    }
+    return true;
   },
 
   retireSessionSurface: (sessionId: string): void => {

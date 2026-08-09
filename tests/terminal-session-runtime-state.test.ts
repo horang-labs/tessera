@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test, { beforeEach } from 'node:test';
 import { handleIncomingServerMessage } from '@/lib/ws/client-message-handlers';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
+import { resetPendingTerminalReboundsForTests } from '@/lib/terminal/terminal-session-rebound-reservations';
 import { isTurnInFlight, useChatStore } from '@/stores/chat-store';
+import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
@@ -61,8 +64,34 @@ function receive(msg: ServerTransportMessage): void {
   });
 }
 
+function countSessionSurfaces(sessionId: string): number {
+  const tabState = useTabStore.getState();
+  const panelState = usePanelStore.getState();
+  let count = 0;
+  for (const tab of tabState.tabs) {
+    for (const panel of Object.values(panelState.tabPanels[tab.id]?.panels ?? {})) {
+      if (panel.sessionId === sessionId) count += 1;
+    }
+  }
+
+  const materializedTabIds = new Set(tabState.tabs.map((tab) => tab.id));
+  const scopedStates = [tabState.globalTabState, ...Object.values(tabState.projectTabStates)];
+  for (const scopedState of scopedStates) {
+    if (!scopedState) continue;
+    for (const tab of scopedState.tabs) {
+      if (materializedTabIds.has(tab.id)) continue;
+      for (const panel of Object.values(scopedState.tabPanelSnapshots?.[tab.id]?.panels ?? {})) {
+        if (panel.sessionId === sessionId) count += 1;
+      }
+    }
+  }
+  return count;
+}
+
 beforeEach(() => {
+  resetPendingTerminalReboundsForTests();
   useChatStore.setState({ turnInFlightBySession: {} });
+  useBoardStore.setState({ selectedProjectDir: null, peekFileDirty: false });
   useTerminalSessionStore.setState({ bySessionId: {} });
   useSessionStore.setState({
     ...useSessionStore.getInitialState(),
@@ -75,7 +104,14 @@ beforeEach(() => {
     tasksByProject: {},
     currentProjectId: null,
   });
-  useTabStore.setState({ tabs: [], activeTabId: null, lruTabIds: [] });
+  useTabStore.setState({
+    tabs: [],
+    activeTabId: null,
+    lruTabIds: [],
+    projectTabStates: {},
+    globalTabState: null,
+    currentProjectDir: null,
+  });
   usePanelStore.setState({ activeTabId: null, tabPanels: {} });
 });
 
@@ -143,7 +179,6 @@ test('PTY turn start pins an open preview tab', () => {
       },
     },
   });
-
   receive({
     type: 'terminal_session_runtime',
     sessionId: SESSION_ID,
@@ -271,7 +306,6 @@ test('PTY runtime exit closes a retained single-panel session tab', () => {
       },
     },
   });
-
   receive({
     type: 'terminal_session_runtime',
     sessionId: SESSION_ID,
@@ -479,6 +513,265 @@ test('PTY session rebound waits for the child menu row before switching the visi
   assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
 });
 
+test('pending PTY rebound reserves the child from active-session bridge assignment', async (t) => {
+  const childSessionId = 'terminal-session-reserved-child';
+  const sourceTabId = 'reserved-source-tab';
+  const sourcePanelId = 'reserved-source-panel';
+  const emptyTabId = 'reserved-empty-tab';
+  const emptyPanelId = 'reserved-empty-panel';
+  let releaseLoad!: () => void;
+  const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+  const originalLoadProjects = useSessionStore.getState().loadProjects;
+  t.after(() => useSessionStore.setState({ loadProjects: originalLoadProjects }));
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true))],
+    loadProjects: async () => {
+      await loadGate;
+      useSessionStore.setState({
+        projects: [project(terminalSession(SESSION_ID), terminalSession(childSessionId, true))],
+      });
+    },
+  });
+  useTabStore.setState({
+    tabs: [
+      { id: sourceTabId, projectDir: '/workspace', title: null, isPreview: false },
+      { id: emptyTabId, projectDir: '/workspace', title: null, isPreview: false },
+    ],
+    activeTabId: emptyTabId,
+    lruTabIds: [emptyTabId, sourceTabId],
+    currentProjectDir: '/workspace',
+  });
+  usePanelStore.setState({
+    activeTabId: emptyTabId,
+    tabPanels: {
+      [sourceTabId]: {
+        layout: { type: 'leaf', panelId: sourcePanelId },
+        panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: SESSION_ID } },
+        activePanelId: sourcePanelId,
+      },
+      [emptyTabId]: {
+        layout: { type: 'leaf', panelId: emptyPanelId },
+        panels: { [emptyPanelId]: { id: emptyPanelId, sessionId: null } },
+        activePanelId: emptyPanelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  });
+  useSessionStore.getState().setActiveSession(childSessionId);
+
+  assert.equal(reconcileActiveSessionSurface(childSessionId), 'reserved');
+  assert.equal(
+    usePanelStore.getState().tabPanels[emptyTabId].panels[emptyPanelId].sessionId,
+    null,
+  );
+
+  releaseLoad();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    useTabStore.getState().findSessionLocation(childSessionId),
+    { tabId: sourceTabId, panelId: sourcePanelId },
+  );
+  assert.equal(
+    usePanelStore.getState().tabPanels[emptyTabId].panels[emptyPanelId].sessionId,
+    null,
+  );
+  assert.equal(countSessionSurfaces(childSessionId), 1);
+});
+
+test('PTY rebound transfers a child from a raced empty tab back to its hidden source tab', () => {
+  const childSessionId = 'terminal-session-hidden-source-child';
+  const sourceTabId = 'hidden-source-tab';
+  const sourcePanelId = 'hidden-source-panel';
+  const racedTabId = 'raced-destination-tab';
+  const racedPanelId = 'raced-destination-panel';
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID), terminalSession(childSessionId, true))],
+    activeSessionId: childSessionId,
+  });
+  useTabStore.setState({
+    tabs: [{ id: racedTabId, projectDir: '/project-b', title: null, isPreview: false }],
+    activeTabId: racedTabId,
+    lruTabIds: [racedTabId],
+    projectTabStates: {
+      '/project-a': {
+        tabs: [{ id: sourceTabId, projectDir: '/project-a', title: null, isPreview: false }],
+        activeTabId: sourceTabId,
+        lruTabIds: [sourceTabId],
+        tabPanelSnapshots: {
+          [sourceTabId]: {
+            layout: { type: 'leaf', panelId: sourcePanelId },
+            panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: SESSION_ID } },
+            activePanelId: sourcePanelId,
+          },
+        },
+      },
+    },
+    globalTabState: null,
+    currentProjectDir: '/project-b',
+  });
+  usePanelStore.setState({
+    activeTabId: racedTabId,
+    tabPanels: {
+      [racedTabId]: {
+        layout: { type: 'leaf', panelId: racedPanelId },
+        panels: {
+          [racedPanelId]: {
+            id: racedPanelId,
+            sessionId: childSessionId,
+            terminalId: null,
+            terminalSessionId: null,
+            terminalCwd: null,
+          },
+        },
+        activePanelId: racedPanelId,
+      },
+    },
+  });
+  useBoardStore.setState({ selectedProjectDir: '/project-b' });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  });
+
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-a');
+  assert.equal(useBoardStore.getState().selectedProjectDir, '/project-a');
+  assert.equal(useTabStore.getState().activeTabId, sourceTabId);
+  assert.deepEqual(
+    useTabStore.getState().findSessionLocation(childSessionId),
+    { tabId: sourceTabId, panelId: sourcePanelId },
+  );
+  assert.equal(countSessionSurfaces(childSessionId), 1);
+  assert.equal(
+    useTabStore.getState().projectTabStates['/project-b']
+      ?.tabPanelSnapshots?.[racedTabId]?.panels[racedPanelId]?.sessionId,
+    null,
+  );
+});
+
+test('hidden session reconciliation defers when unsaved peek changes refuse the project switch', (t) => {
+  const childSessionId = 'terminal-session-dirty-peek-child';
+  const sourceTabId = 'dirty-peek-source-tab';
+  const sourcePanelId = 'dirty-peek-source-panel';
+  const currentTabId = 'dirty-peek-current-tab';
+  const currentPanelId = 'dirty-peek-current-panel';
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { confirm: () => false },
+  });
+  t.after(() => {
+    if (originalWindow) {
+      Object.defineProperty(globalThis, 'window', originalWindow);
+    } else {
+      delete (globalThis as { window?: Window }).window;
+    }
+  });
+  useTabStore.setState({
+    tabs: [{ id: currentTabId, projectDir: '/project-b', title: null, isPreview: false }],
+    activeTabId: currentTabId,
+    lruTabIds: [currentTabId],
+    projectTabStates: {
+      '/project-a': {
+        tabs: [{ id: sourceTabId, projectDir: '/project-a', title: null, isPreview: false }],
+        activeTabId: sourceTabId,
+        lruTabIds: [sourceTabId],
+        tabPanelSnapshots: {
+          [sourceTabId]: {
+            layout: { type: 'leaf', panelId: sourcePanelId },
+            panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: childSessionId } },
+            activePanelId: sourcePanelId,
+          },
+        },
+      },
+    },
+    currentProjectDir: '/project-b',
+  });
+  usePanelStore.setState({
+    activeTabId: currentTabId,
+    tabPanels: {
+      [currentTabId]: {
+        layout: { type: 'leaf', panelId: currentPanelId },
+        panels: { [currentPanelId]: { id: currentPanelId, sessionId: null } },
+        activePanelId: currentPanelId,
+      },
+    },
+  });
+  useBoardStore.setState({ selectedProjectDir: '/project-b', peekFileDirty: true });
+
+  assert.equal(reconcileActiveSessionSurface(childSessionId), 'deferred');
+  assert.equal(useBoardStore.getState().selectedProjectDir, '/project-b');
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-b');
+  assert.equal(
+    usePanelStore.getState().tabPanels[currentTabId].panels[currentPanelId].sessionId,
+    null,
+  );
+  assert.deepEqual(useTabStore.getState().findSessionSurface(childSessionId), {
+    tabId: sourceTabId,
+    panelId: sourcePanelId,
+    projectDir: '/project-a',
+  });
+});
+
+test('hidden session reconciliation can retry after project selection initializes', () => {
+  const childSessionId = 'terminal-session-project-init-child';
+  const sourceTabId = 'project-init-source-tab';
+  const sourcePanelId = 'project-init-source-panel';
+  const currentTabId = 'project-init-current-tab';
+  const currentPanelId = 'project-init-current-panel';
+  useTabStore.setState({
+    tabs: [{ id: currentTabId, projectDir: '/project-b', title: null, isPreview: false }],
+    activeTabId: currentTabId,
+    lruTabIds: [currentTabId],
+    projectTabStates: {
+      '/project-a': {
+        tabs: [{ id: sourceTabId, projectDir: '/project-a', title: null, isPreview: false }],
+        activeTabId: sourceTabId,
+        lruTabIds: [sourceTabId],
+        tabPanelSnapshots: {
+          [sourceTabId]: {
+            layout: { type: 'leaf', panelId: sourcePanelId },
+            panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: childSessionId } },
+            activePanelId: sourcePanelId,
+          },
+        },
+      },
+    },
+    currentProjectDir: '/project-b',
+  });
+  usePanelStore.setState({
+    activeTabId: currentTabId,
+    tabPanels: {
+      [currentTabId]: {
+        layout: { type: 'leaf', panelId: currentPanelId },
+        panels: { [currentPanelId]: { id: currentPanelId, sessionId: null } },
+        activePanelId: currentPanelId,
+      },
+    },
+  });
+
+  assert.equal(reconcileActiveSessionSurface(childSessionId), 'deferred');
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-b');
+
+  useBoardStore.setState({ selectedProjectDir: '/project-b' });
+  assert.equal(reconcileActiveSessionSurface(childSessionId), 'activated');
+  assert.equal(useBoardStore.getState().selectedProjectDir, '/project-a');
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-a');
+  assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), {
+    tabId: sourceTabId,
+    panelId: sourcePanelId,
+  });
+});
+
 test('PTY runtime snapshot repairs a rebound missed while the client was disconnected', () => {
   const childSessionId = 'terminal-session-reconnected-child';
   const tabId = 'reconnected-rebound-tab';
@@ -514,6 +807,65 @@ test('PTY runtime snapshot repairs a rebound missed while the client was disconn
 
   assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), true);
   assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
+});
+
+test('reconnect snapshot coalesces chained rebound sources before transferring the panel', () => {
+  const middleSessionId = 'snapshot-chain-middle';
+  const finalSessionId = 'snapshot-chain-final';
+  const sourceTabId = 'snapshot-chain-source-tab';
+  const sourcePanelId = 'snapshot-chain-source-panel';
+  const racedTabId = 'snapshot-chain-raced-tab';
+  const racedPanelId = 'snapshot-chain-raced-panel';
+  const terminalId = `session-${SESSION_ID}`;
+  useSessionStore.setState({
+    projects: [project(
+      terminalSession(SESSION_ID),
+      terminalSession(middleSessionId),
+      terminalSession(finalSessionId, true),
+    )],
+  });
+  useTabStore.setState({
+    tabs: [
+      { id: racedTabId, projectDir: '/workspace', title: null, isPreview: false },
+      { id: sourceTabId, projectDir: '/workspace', title: null, isPreview: false },
+    ],
+    activeTabId: sourceTabId,
+    lruTabIds: [sourceTabId, racedTabId],
+  });
+  usePanelStore.setState({
+    activeTabId: sourceTabId,
+    tabPanels: {
+      [racedTabId]: {
+        layout: { type: 'leaf', panelId: racedPanelId },
+        panels: { [racedPanelId]: { id: racedPanelId, sessionId: middleSessionId } },
+        activePanelId: racedPanelId,
+      },
+      [sourceTabId]: {
+        layout: { type: 'leaf', panelId: sourcePanelId },
+        panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: SESSION_ID } },
+        activePanelId: sourcePanelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_runtime_snapshot',
+    activeSessionIds: [finalSessionId],
+    reboundSessions: [
+      { previousSessionId: SESSION_ID, sessionId: finalSessionId, terminalId },
+      { previousSessionId: middleSessionId, sessionId: finalSessionId, terminalId },
+    ],
+  });
+
+  assert.deepEqual(useTabStore.getState().findSessionLocation(finalSessionId), {
+    tabId: sourceTabId,
+    panelId: sourcePanelId,
+  });
+  assert.equal(
+    usePanelStore.getState().tabPanels[racedTabId].panels[racedPanelId].sessionId,
+    null,
+  );
+  assert.equal(countSessionSurfaces(finalSessionId), 1);
 });
 
 test('delayed reconnect rebound keeps the source panel until the child row loads', async (t) => {
@@ -617,6 +969,8 @@ test('rapid chained rebounds apply only the latest child when loads resolve in r
   const finalSessionId = 'rebound-final';
   const tabId = 'rebound-chain-tab';
   const panelId = 'rebound-chain-panel';
+  const racedTabId = 'rebound-chain-raced-tab';
+  const racedPanelId = 'rebound-chain-raced-panel';
   let releaseFirst!: () => void;
   let releaseSecond!: () => void;
   const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -639,9 +993,12 @@ test('rapid chained rebounds apply only the latest child when loads resolve in r
     },
   });
   useTabStore.setState({
-    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    tabs: [
+      { id: tabId, projectDir: '/workspace', title: null, isPreview: false },
+      { id: racedTabId, projectDir: '/workspace', title: null, isPreview: false },
+    ],
     activeTabId: tabId,
-    lruTabIds: [tabId],
+    lruTabIds: [tabId, racedTabId],
   });
   usePanelStore.setState({
     activeTabId: tabId,
@@ -650,6 +1007,11 @@ test('rapid chained rebounds apply only the latest child when loads resolve in r
         layout: { type: 'leaf', panelId },
         panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
         activePanelId: panelId,
+      },
+      [racedTabId]: {
+        layout: { type: 'leaf', panelId: racedPanelId },
+        panels: { [racedPanelId]: { id: racedPanelId, sessionId: middleSessionId } },
+        activePanelId: racedPanelId,
       },
     },
   });
@@ -675,6 +1037,10 @@ test('rapid chained rebounds apply only the latest child when loads resolve in r
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(useTabStore.getState().findSessionLocation(finalSessionId), { tabId, panelId });
   assert.equal(useTabStore.getState().findSessionLocation(middleSessionId), null);
+  assert.equal(
+    usePanelStore.getState().tabPanels[racedTabId].panels[racedPanelId].sessionId,
+    null,
+  );
 });
 
 test('starting the fork parent in another terminal does not cancel the original terminal rebound', async (t) => {

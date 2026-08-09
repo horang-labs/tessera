@@ -50,6 +50,7 @@ import {
   resolveVisibleWorkspaceSessionId,
 } from "@/lib/session/active-workspace-session";
 import { activateSessionPanel } from "@/lib/session/focus-session-panel";
+import { reconcileActiveSessionSurface } from "@/lib/session/reconcile-active-session-surface";
 import { resolveSessionTabOpenMode } from "@/lib/terminal/terminal-preview-policy";
 import { useEffectiveViewMode } from "@/hooks/use-effective-view-mode";
 
@@ -407,32 +408,9 @@ export function ChatLayout() {
   useEffect(
     function bridgeActiveSessionToPanel() {
       if (!activeSessionId) return;
-
-      const panelState = usePanelStore.getState();
-      const activeTabData = selectActiveTab(panelState);
-
-      const currentPanelSessionId =
-        activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
-      if (activeSessionId === currentPanelSessionId) {
-        useTabStore.getState().syncTabProjectFromSession(panelState.activeTabId, activeSessionId);
-        return;
-      }
-
-      let location: { tabId: string; panelId: string } | null = null;
-      try {
-        location = useTabStore.getState().findSessionLocation(activeSessionId);
-      } catch {
-        return;
-      }
-      if (location !== null) {
-        activateSessionPanel(activeSessionId, { location });
-        return;
-      }
-
-      panelState.assignSession(activeTabData?.activePanelId ?? '', activeSessionId);
-      useTabStore.getState().syncTabProjectFromSession(panelState.activeTabId, activeSessionId);
+      reconcileActiveSessionSurface(activeSessionId);
     },
-    [activeSessionId],
+    [activeSessionId, selectedProjectDir],
   );
 
   // When the last popout board window closes, refresh tasks/collections in the

@@ -17,7 +17,6 @@ import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
 import { useNotificationStore } from '@/stores/notification-store';
-import { usePanelStore } from '@/stores/panel-store';
 import { useRateLimitStore } from '@/stores/rate-limit-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -33,6 +32,17 @@ import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
+import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
+import {
+  completePendingTerminalRebound,
+  getPendingTerminalRebound,
+  isPendingTerminalReboundSource,
+  listPendingTerminalReboundDestinations,
+  recordPendingTerminalRebound,
+  removePendingTerminalReboundSource,
+  retainPendingTerminalRebounds,
+  takePendingTerminalReboundsForDestination,
+} from '@/lib/terminal/terminal-session-rebound-reservations';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
@@ -40,13 +50,6 @@ interface HandleIncomingServerMessageOptions {
   cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null) => void>;
   wasReconnect: boolean;
 }
-
-interface PendingTerminalRebound {
-  destinationSessionId: string;
-  sourceSessionIds: Set<string>;
-}
-
-const pendingTerminalRebounds = new Map<string, PendingTerminalRebound>();
 
 /**
  * Server rejections of a manual /compact. Each one means no compaction started,
@@ -208,23 +211,22 @@ export function handleIncomingServerMessage({
       const authoritativeReboundTerminalIds = new Set(
         (msg.reboundSessions ?? []).map((rebound) => rebound.terminalId),
       );
-      for (const terminalId of pendingTerminalRebounds.keys()) {
-        if (!authoritativeReboundTerminalIds.has(terminalId)) {
-          pendingTerminalRebounds.delete(terminalId);
-        }
-      }
+      retainPendingTerminalRebounds(authoritativeReboundTerminalIds);
       for (const rebound of msg.reboundSessions ?? []) {
-        applyTerminalSessionRebound(
+        recordTerminalSessionRebound(
           rebound.terminalId,
           rebound.previousSessionId,
           rebound.sessionId,
         );
       }
+      for (const terminalId of authoritativeReboundTerminalIds) {
+        applyOrLoadPendingTerminalRebound(terminalId);
+      }
       sessionStore.applyTerminalRuntimeSnapshot(msg.activeSessionIds);
       const activeTerminalIds = new Set(msg.activeSessionIds);
-      for (const pending of [...pendingTerminalRebounds.values()]) {
-        if (!activeTerminalIds.has(pending.destinationSessionId)) {
-          cancelPendingTerminalReboundsForDestination(pending.destinationSessionId);
+      for (const destinationSessionId of listPendingTerminalReboundDestinations()) {
+        if (!activeTerminalIds.has(destinationSessionId)) {
+          cancelPendingTerminalReboundsForDestination(destinationSessionId);
         }
       }
       for (const sessionId of msg.activeSessionIds) {
@@ -464,17 +466,22 @@ function applyTerminalSessionRebound(
   previousSessionId: string,
   sessionId: string,
 ): void {
+  recordTerminalSessionRebound(terminalId, previousSessionId, sessionId);
+  applyOrLoadPendingTerminalRebound(terminalId);
+}
+
+function recordTerminalSessionRebound(
+  terminalId: string,
+  previousSessionId: string,
+  sessionId: string,
+): void {
+  recordPendingTerminalRebound(terminalId, previousSessionId, sessionId);
   const terminalStore = useTerminalSessionStore.getState();
   terminalStore.rebindSessionState(previousSessionId, sessionId, terminalId);
   useSessionStore.getState().setSessionRunning(previousSessionId, false);
+}
 
-  const pending = pendingTerminalRebounds.get(terminalId) ?? {
-    destinationSessionId: sessionId,
-    sourceSessionIds: new Set<string>(),
-  };
-  pending.sourceSessionIds.add(previousSessionId);
-  pending.destinationSessionId = sessionId;
-  pendingTerminalRebounds.set(terminalId, pending);
+function applyOrLoadPendingTerminalRebound(terminalId: string): void {
   if (tryApplyPendingTerminalRebound(terminalId)) {
     return;
   }
@@ -485,7 +492,7 @@ function applyTerminalSessionRebound(
 }
 
 function tryApplyPendingTerminalRebound(terminalId: string): boolean {
-  const pending = pendingTerminalRebounds.get(terminalId);
+  const pending = getPendingTerminalRebound(terminalId);
   if (!pending) return true;
   const terminalState = useTerminalSessionStore.getState()
     .bySessionId[pending.destinationSessionId];
@@ -496,34 +503,24 @@ function tryApplyPendingTerminalRebound(terminalId: string): boolean {
   const sessionStore = useSessionStore.getState();
   if (!sessionStore.getSession(pending.destinationSessionId)) return false;
 
-  for (const sourceSessionId of pending.sourceSessionIds) {
-    usePanelStore.getState().rebindSession(sourceSessionId, pending.destinationSessionId);
-  }
+  useTabStore.getState().rebindSessionSurface(
+    [...pending.sourceSessionIds],
+    pending.destinationSessionId,
+  );
   sessionStore.setSessionRunning(pending.destinationSessionId, true);
-  pendingTerminalRebounds.delete(terminalId);
+  completePendingTerminalRebound(terminalId);
+  if (useSessionStore.getState().activeSessionId === pending.destinationSessionId) {
+    reconcileActiveSessionSurface(pending.destinationSessionId);
+  }
   return true;
 }
 
 function cancelPendingTerminalReboundsForDestination(sessionId: string): void {
-  for (const [terminalId, pending] of pendingTerminalRebounds) {
-    if (pending.destinationSessionId !== sessionId) continue;
-    pendingTerminalRebounds.delete(terminalId);
+  for (const { pending } of takePendingTerminalReboundsForDestination(sessionId)) {
     for (const sourceSessionId of pending.sourceSessionIds) {
       retireStoppedTerminalSessionSurface(sourceSessionId);
     }
   }
-}
-
-function isPendingTerminalReboundSource(sessionId: string): boolean {
-  return [...pendingTerminalRebounds.values()]
-    .some((pending) => pending.sourceSessionIds.has(sessionId));
-}
-
-function removePendingTerminalReboundSource(terminalId: string, sessionId: string): void {
-  const pending = pendingTerminalRebounds.get(terminalId);
-  if (!pending) return;
-  pending.sourceSessionIds.delete(sessionId);
-  if (pending.sourceSessionIds.size === 0) pendingTerminalRebounds.delete(terminalId);
 }
 
 function retireStoppedTerminalSessionSurface(sessionId: string): void {
