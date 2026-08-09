@@ -1,12 +1,17 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GitCommitHorizontal, X } from "lucide-react";
 import { useAnchoredPopover } from "@/hooks/use-anchored-popover";
+import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
 import { useI18n } from "@/lib/i18n";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import { cn } from "@/lib/utils";
+import {
+  ANCHORED_VIEWPORT_MARGIN,
+  resolveAnchoredAlignedLeft,
+} from "@/lib/ui/anchored-viewport";
 import { useGitStore } from "@/stores/git-store";
 import type { GitPanelData } from "@/types/git";
 import type { WorktreeDiffStats } from "@/types/worktree-diff-stats";
@@ -24,7 +29,6 @@ interface ComposerPosition {
   maxHeight: number;
 }
 
-const VIEWPORT_GUTTER = 8;
 const COMPOSER_WIDTH = 376;
 
 export function supportsDesktopCommitControl(
@@ -120,17 +124,7 @@ function GitDesktopCommitControlView({
     || data.repoName
     || t("gitPanel.commit.worktreeFallback");
 
-  useEffect(
-    function closeComposerOnEscape() {
-      if (!composerOpen) return;
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (event.key === "Escape") closeComposer();
-      };
-      document.addEventListener("keydown", handleKeyDown);
-      return () => document.removeEventListener("keydown", handleKeyDown);
-    },
-    [closeComposer, composerOpen],
-  );
+  useCloseOnEscape(closeComposer, { enabled: composerOpen });
 
   const openChangedFiles = useCallback(() => {
     closeComposer();
@@ -168,6 +162,7 @@ function GitDesktopCommitControlView({
         aria-haspopup="dialog"
         aria-expanded={composerOpen}
         aria-controls="desktop-commit-composer"
+        aria-busy={controller.pendingVerb !== null}
         aria-label={t("gitPanel.commit.openComposer", { worktree: worktreeName })}
         title={t("gitPanel.commit.openComposer", { worktree: worktreeName })}
         data-testid="desktop-commit-primary"
@@ -191,6 +186,7 @@ function GitDesktopCommitControlView({
         pending={controller.pendingVerb !== null}
         commitDraftBlocked={controller.commitDraftBlocked}
         onRun={(id) => void controller.runMenuAction(id)}
+        onBeforeOpen={closeComposer}
         triggerAriaLabel={t("gitPanel.commit.menuLabel", { worktree: worktreeName })}
         triggerTestId="desktop-commit-menu-trigger"
         menuTestId="desktop-commit-action-menu"
@@ -295,15 +291,19 @@ function GitDesktopCommitControlView({
 
 function calculateComposerPosition(trigger: HTMLElement): ComposerPosition {
   const rect = trigger.getBoundingClientRect();
-  const width = Math.min(COMPOSER_WIDTH, window.innerWidth - VIEWPORT_GUTTER * 2);
+  const width = Math.min(
+    COMPOSER_WIDTH,
+    Math.max(0, window.innerWidth - ANCHORED_VIEWPORT_MARGIN * 2),
+  );
   const top = rect.bottom + 6;
   return {
     top,
-    left: Math.max(
-      VIEWPORT_GUTTER,
-      Math.min(rect.right - width, window.innerWidth - width - VIEWPORT_GUTTER),
-    ),
+    left: resolveAnchoredAlignedLeft({
+      anchorRight: rect.right,
+      elementWidth: width,
+      viewportWidth: window.innerWidth,
+    }),
     width,
-    maxHeight: Math.max(240, window.innerHeight - top - VIEWPORT_GUTTER),
+    maxHeight: Math.max(0, window.innerHeight - top - ANCHORED_VIEWPORT_MARGIN),
   };
 }

@@ -45,6 +45,7 @@ try {
   await git(['commit', '-m', 'seed']);
   await fs.writeFile(path.join(repo, 'a.txt'), 'dirty a\nextra a\n');
   await fs.writeFile(path.join(repo, 'b.txt'), 'dirty b\n');
+  await fs.mkdir(path.join(repo, 'nested'));
 
   runtime = await startDevServer({
     dataDirPrefix: 'tessera-desktop-commit-data-',
@@ -67,6 +68,18 @@ try {
     }),
   });
   const sessionId = created.sessionId ?? created.session?.id ?? created.id;
+  const secondCreated = await api('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({
+      workDir: path.join(repo, 'nested'),
+      parentProjectId: repo,
+      providerId: 'claude-code',
+      executionMode: 'gui',
+      hasCustomTitle: true,
+      title: 'same worktree second',
+    }),
+  });
+  const secondSessionId = secondCreated.sessionId ?? secondCreated.session?.id ?? secondCreated.id;
 
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -84,6 +97,11 @@ try {
   await control.waitFor({ timeout: 60_000 });
   await page.getByRole('button', { name: /open commit composer/i }).waitFor();
   await page.getByRole('button', { name: /more git actions for repo/i }).waitFor();
+  await page.getByRole('button', { name: /open commit composer/i }).click();
+  await page.getByRole('button', { name: /more git actions for repo/i }).click();
+  await page.getByTestId('desktop-commit-composer').waitFor({ state: 'detached' });
+  await page.getByTestId('desktop-commit-action-menu').waitFor();
+  await page.getByRole('button', { name: /more git actions for repo/i }).click();
   await page.getByRole('button', { name: /open changed files: 3 additions, 2 deletions/i }).click();
   await page.getByTestId('git-panel').waitFor();
   await page.getByText('Changed files', { exact: true }).waitFor();
@@ -100,9 +118,18 @@ try {
   await fs.mkdir(artifactDir, { recursive: true });
   await page.screenshot({ path: artifact });
 
+  await page.getByTestId(`collection-chat-${secondSessionId}`).first().click();
+  await page.getByRole('button', { name: /open commit composer/i }).click();
+  assert.equal(await composer.getByTestId('git-commit-message').inputValue(), 'shared compact draft');
+  assert.equal(await composer.getByTestId('desktop-commit-file-checkbox-a.txt').isChecked(), false);
+  await composer.getByTestId('git-commit-message').fill('shared from second');
+  await page.getByTestId(`collection-chat-${sessionId}`).first().click();
+  await page.getByRole('button', { name: /open commit composer/i }).click();
+  assert.equal(await composer.getByTestId('git-commit-message').inputValue(), 'shared from second');
+
   await composer.getByRole('button', { name: /review files/i }).click();
   await page.getByTestId('git-panel').waitFor();
-  assert.equal(await page.getByTestId('git-commit-message').inputValue(), 'shared compact draft');
+  assert.equal(await page.getByTestId('git-commit-message').inputValue(), 'shared from second');
   assert.equal(await page.getByTestId('git-commit-file-checkbox-a.txt').isChecked(), false);
   await page.getByTestId('git-commit-message').fill('commit b only');
   await page.getByTestId('tab-bar-git-toggle').click();

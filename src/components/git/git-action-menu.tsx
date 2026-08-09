@@ -24,6 +24,7 @@ export function GitActionMenu({
   pending,
   commitDraftBlocked,
   onRun,
+  onBeforeOpen,
   menuTestId = "git-action-menu",
   triggerAriaLabel,
   triggerClassName,
@@ -34,6 +35,7 @@ export function GitActionMenu({
   pending: boolean;
   commitDraftBlocked: boolean;
   onRun: (id: GitMenuActionId) => void;
+  onBeforeOpen?: () => void;
   menuTestId?: string;
   triggerAriaLabel?: string;
   triggerClassName?: string;
@@ -61,13 +63,17 @@ export function GitActionMenu({
         type="button"
         onClick={() => {
           if (open) return close();
+          onBeforeOpen?.();
           updatePosition();
           setOpen(true);
         }}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-busy={pending}
         aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")}
-        title={pending ? t("gitPanel.menu.pending") : t("gitPanel.menu.label")}
+        title={pending
+          ? t("gitPanel.menu.pending")
+          : (triggerAriaLabel ?? t("gitPanel.menu.label"))}
         data-testid={triggerTestId}
         className={cn(
           "flex h-7 w-6 items-center justify-center rounded-md border border-(--divider) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
