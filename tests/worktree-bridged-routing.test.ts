@@ -194,4 +194,16 @@ test('canonical reconciliation preserves immutable Worktree Creation Scope', asy
     creation_scope_branch: 'feature/c',
   });
   assert.equal(worktrees.getWorktree(duplicateId), undefined);
+
+  const unrelatedId = worktrees.createPendingWorktree('wt_unrelated_scope');
+  tasks.createTask({
+    id: 'unrelated-scope-task',
+    projectId: 'duplicate-scope-project',
+    title: 'Unrelated scope',
+    creationScope: { originWorktreeId: unrelatedId, branch: 'feature/c' },
+  });
+  database.getDb().prepare('DELETE FROM worktrees WHERE id = ?').run(unrelatedId);
+  assert.throws(() => database.getDb().prepare(`
+    UPDATE tasks SET creation_scope_worktree_id = ? WHERE id = 'unrelated-scope-task'
+  `).run(canonicalId), /Worktree Creation Scope is immutable/);
 });

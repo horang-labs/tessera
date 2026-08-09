@@ -84,9 +84,18 @@ export function resolveCanonicalWorktree(
         `).run(existing.id, duplicate.id);
         db.prepare('DELETE FROM worktrees WHERE id = ?').run(duplicate.id);
         db.prepare(`
+          INSERT INTO worktree_identity_reconciliation_authorizations (
+            old_worktree_id, new_worktree_id
+          ) VALUES (?, ?)
+        `).run(duplicate.id, existing.id);
+        db.prepare(`
           UPDATE tasks SET creation_scope_worktree_id = ?
           WHERE creation_scope_worktree_id = ?
         `).run(existing.id, duplicate.id);
+        db.prepare(`
+          DELETE FROM worktree_identity_reconciliation_authorizations
+          WHERE old_worktree_id = ? AND new_worktree_id = ?
+        `).run(duplicate.id, existing.id);
       }
       if (
         existing.filesystem_path !== identity.filesystemPath

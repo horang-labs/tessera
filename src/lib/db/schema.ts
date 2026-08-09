@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS worktrees (
   updated_at         TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS worktree_identity_reconciliation_authorizations (
+  old_worktree_id TEXT NOT NULL,
+  new_worktree_id TEXT NOT NULL,
+  PRIMARY KEY (old_worktree_id, new_worktree_id)
+);
+
 CREATE TABLE IF NOT EXISTS projects (
   id            TEXT PRIMARY KEY,
   decoded_path  TEXT NOT NULL,

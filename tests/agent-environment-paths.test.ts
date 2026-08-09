@@ -72,11 +72,9 @@ test('a failed distro probe is not cached for the process lifetime', () => {
 });
 
 test('WSL home discovery never guesses from Windows user identity', () => {
-  const discovery = pathEnvironmentSource.match(
-    /async function resolveBestWslHomeCandidate\([\s\S]*?\n\}/,
-  )?.[0] ?? '';
-  assert.doesNotMatch(discovery, /USERNAME|USERPROFILE|homedir|getWindowsUsernameCandidates/);
+  assert.doesNotMatch(pathEnvironmentSource, /resolveBestWslHomeCandidate/);
   assert.match(pathEnvironmentSource, /\['-d', distroName, '-e', 'sh', '-c', script\]/);
+  assert.match(pathEnvironmentSource, /printf .*\$HOME/);
 });
 
 /**
