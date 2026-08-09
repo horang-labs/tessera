@@ -15,6 +15,42 @@ function asArray(value) {
   return value == null ? [] : Array.isArray(value) ? value : [value];
 }
 
+function loadOwnedInstance(sessionId, cdpUrl) {
+  assert.match(sessionId, /^[A-Za-z0-9][A-Za-z0-9._-]{0,49}$/);
+  const testRoot = path.join(process.env.LOCALAPPDATA, 'TesseraTestInstances');
+  const manifestPath = path.join(testRoot, 'sessions', `${sessionId}.json`);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8').replace(/^\uFEFF/, ''));
+  assert.equal(manifest.schemaVersion, 2);
+  assert.equal(manifest.sessionId, sessionId);
+
+  const instance = asArray(manifest.instances).find((candidate) => candidate.cdpUrl === cdpUrl);
+  assert.ok(instance?.ready, 'CDP URL does not belong to a ready launcher-owned instance');
+  const expectedRoot = path.join(testRoot, instance.instanceId);
+  assert.equal(path.resolve(instance.instanceRoot).toLowerCase(), expectedRoot.toLowerCase());
+  assert.equal(path.resolve(instance.dataDir).toLowerCase(), path.join(expectedRoot, 'data').toLowerCase());
+  assert.match(instance.ownerToken, /^[a-f0-9]{32}$/);
+
+  const processScript = `
+    $process = Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(instance.electronProcessId)}'
+    $cdpOwner = Get-NetTCPConnection -State Listen -LocalPort ${Number(instance.cdpPort)} |
+      Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1') } |
+      Select-Object -First 1 -ExpandProperty OwningProcess
+    [pscustomobject]@{
+      ExecutablePath = $process.ExecutablePath
+      CommandLine = $process.CommandLine
+      CdpOwner = $cdpOwner
+    } | ConvertTo-Json -Compress
+  `;
+  const processInfo = JSON.parse(execFileSync('powershell.exe', [
+    '-NoProfile', '-Command', processScript,
+  ], { encoding: 'utf8' }));
+  assert.equal(processInfo.CdpOwner, Number(instance.electronProcessId));
+  assert.equal(processInfo.ExecutablePath.toLowerCase(), manifest.executable.toLowerCase());
+  assert.match(processInfo.CommandLine, new RegExp(`--tessera-test-owner=${instance.ownerToken}`));
+  assert.match(processInfo.CommandLine, new RegExp(`--remote-debugging-port=${instance.cdpPort}`));
+  return instance;
+}
+
 function inspectWindowsBindings(port) {
   const script = `
     $listeners = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction Stop |
@@ -80,14 +116,13 @@ function websocketClose(repo, port, serveOrigin) {
 async function main() {
   const repo = path.resolve(process.argv[2] ?? '');
   const cdpUrl = readOption('cdp');
-  const dataDir = readOption('data-dir');
+  const sessionId = readOption('session-id');
   const serveOrigin = new URL(readOption('serve-origin') ?? '').origin;
-  if (!repo || !cdpUrl || !dataDir || !serveOrigin.startsWith('https://')) {
-    throw new Error(
-      'Usage: electron-serve-only-security.e2e.cjs <repo> --cdp=<url> '
-      + '--data-dir=<isolated Windows path> --serve-origin=<HTTPS origin>',
-    );
+  if (!repo || !cdpUrl || !sessionId || !serveOrigin.startsWith('https://')) {
+    throw new Error('Usage: electron-serve-only-security.e2e.cjs <repo> --cdp=<url> '
+      + '--session-id=<launcher session> --serve-origin=<HTTPS origin>');
   }
+  const instance = loadOwnedInstance(sessionId, cdpUrl);
 
   const { chromium } = require(path.join(repo, 'node_modules', '@playwright', 'test'));
   const browser = await chromium.connectOverCDP(cdpUrl);
@@ -99,6 +134,8 @@ async function main() {
     const electronUrl = new URL(page.url());
     assert.equal(electronUrl.pathname, '/chat');
     const port = Number(electronUrl.port);
+    assert.notEqual(port, 32123, 'Refusing to test against the installed Tessera backend');
+    assert.equal(port, Number(instance.serverPort));
 
     const bindings = inspectWindowsBindings(port);
     const listeners = asArray(bindings.Listeners);
@@ -109,7 +146,7 @@ async function main() {
     assert.equal(probes.some((probe) => probe.Address !== '127.0.0.1' && probe.Connected), false);
 
     const serveUrl = new URL(serveOrigin);
-    fs.writeFileSync(path.join(dataDir, 'mobile-access.json'), JSON.stringify({
+    fs.writeFileSync(path.join(instance.dataDir, 'mobile-access.json'), JSON.stringify({
       schemaVersion: 1,
       owner: 'tessera.mobile-access',
       nodeDnsName: serveUrl.hostname,
