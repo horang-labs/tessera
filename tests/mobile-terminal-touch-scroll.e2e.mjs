@@ -93,6 +93,7 @@ try {
   await testAltScreenTouchDragInjectsNoArrowKeys(browser, appOrigin);
   await testWheelReportingTouchDragStillReportsWheel(browser, appOrigin);
   await testScrollbackTouchDragStillScrollsTheViewport(browser, appOrigin);
+  await testTouchScrolledViewportStaysPinnedDuringLiveOutput(browser, appOrigin);
 } catch (error) {
   if (serverOutput) process.stderr.write(`\n--- isolated server output ---\n${serverOutput}\n`);
   throw error;
@@ -294,6 +295,49 @@ async function testScrollbackTouchDragStillScrollsTheViewport(browserInstance, o
       captured,
       '',
       `scrolling scrollback must send the PTY nothing, got ${JSON.stringify(captured)}`,
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+// A reader who moves into history while the agent is answering owns that viewport.
+// xterm already preserves it; this phase also passes the next chunk through Tessera's
+// production capture/restore wrapper, where a stale follow-output intent used to win.
+async function testTouchScrolledViewportStaysPinnedDuringLiveOutput(browserInstance, origin) {
+  const { context, page } = await createPhonePage(browserInstance);
+
+  try {
+    await openRepro(page, origin);
+    await writeOutput(page, scrollbackFixture(200));
+    await ptyInputDuringTouchDrag(page, { deltaY: 240 });
+
+    const afterTouch = await repro(page, 'metrics');
+    assert.ok(
+      afterTouch && afterTouch.viewportY < afterTouch.baseY,
+      `touch must leave the viewport in history, got ${JSON.stringify(afterTouch)}`,
+    );
+
+    await writeOutput(page, '\r\nDIRECT_XTERM_OUTPUT\r\n');
+    const afterDirectOutput = await repro(page, 'metrics');
+    assert.ok(
+      afterDirectOutput && afterDirectOutput.viewportY < afterDirectOutput.baseY,
+      `xterm alone should preserve the reader's viewport, got ${JSON.stringify(afterDirectOutput)}`,
+    );
+
+    const accepted = await page.evaluate(
+      () => window.__tesseraTerminalScrollRepro?.writeLiveOutput('\r\nLIVE_OUTPUT\r\n') ?? false,
+    );
+    assert.equal(accepted, true, 'the production live-output path should accept output');
+    await page.waitForTimeout(250);
+
+    const afterLiveOutput = await repro(page, 'metrics');
+    assert.ok(
+      afterLiveOutput && afterLiveOutput.viewportY < afterLiveOutput.baseY,
+      'new PTY output must not force a touch-scrolled viewport to the bottom; '
+        + `afterTouch=${JSON.stringify(afterTouch)} `
+        + `afterDirectOutput=${JSON.stringify(afterDirectOutput)} `
+        + `afterLiveOutput=${JSON.stringify(afterLiveOutput)}`,
     );
   } finally {
     await context.close();

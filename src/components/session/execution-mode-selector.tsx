@@ -61,7 +61,7 @@ export function ExecutionModeSelector({
           'gap-0.5 rounded-lg border border-(--divider) p-0.5',
           compact
             ? 'grid w-full grid-cols-2 bg-[color-mix(in_srgb,var(--input-bg)_78%,var(--sidebar-bg))]'
-            : 'inline-flex max-w-full bg-(--sidebar-bg)',
+            : 'grid w-full grid-cols-1 bg-(--sidebar-bg) sm:inline-flex sm:w-auto sm:max-w-full',
         )}
         role="radiogroup"
       >
@@ -82,6 +82,7 @@ export function ExecutionModeSelector({
                 'relative flex min-w-0 items-center rounded-md border transition-colors',
                 mini ? 'gap-1 px-1.5 py-1' : 'gap-1.5',
                 !mini && (compact ? 'px-1.5 py-1.5' : 'px-1.5 py-1'),
+                !compact && 'w-full sm:w-auto',
                 checked
                   ? compact
                     ? 'border-transparent bg-[color-mix(in_srgb,var(--accent)_14%,var(--input-bg))] text-(--text-primary)'
@@ -105,7 +106,7 @@ export function ExecutionModeSelector({
                 aria-label={mini ? fullLabel : undefined}
                 aria-describedby={disabled ? `${generatedName}-${mode}-reason` : undefined}
               />
-              <span className="min-w-0">
+              <span className="min-w-0 flex-1">
                 <span
                   className={cn(
                     'block font-medium',

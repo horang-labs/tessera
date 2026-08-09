@@ -55,13 +55,13 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { chromium } from '@playwright/test';
 import {
   PHONE_VIEWPORT,
   PHONE_VIEWPORT_ADDRESS_BAR_HIDDEN,
   createPhoneContext,
   createPhoneContextWithAddressBarHidden,
 } from './helpers/phone-viewport.mjs';
+import { launchPhoneBrowser } from './helpers/phone-browser.mjs';
 
 /** A pointer-driven window, which is what must not regress. */
 const DESKTOP_VIEWPORT = { width: 1280, height: 900 };
@@ -131,9 +131,6 @@ const SECTIONS = [
   { id: 'git', content: 'settings-section-git' },
 ];
 
-// Headful only: a headless run renders through SwiftShader and reports emulated
-// device metrics, which invented one defect in this wave already (#256).
-const headless = false;
 const artifactDir = process.env.TESSERA_E2E_ARTIFACT_DIR
   ?? path.join(os.tmpdir(), 'tessera-settings-nav-e2e');
 const selectedPhases = process.env.TESSERA_E2E_PHASES
@@ -929,7 +926,7 @@ const phases = [
 try {
   await fs.mkdir(artifactDir, { recursive: true });
   await startServer();
-  browser = await chromium.launch({ headless });
+  browser = await launchPhoneBrowser();
   for (const [name, phase] of phases) {
     if (selectedPhases && !selectedPhases.has(name)) continue;
     await phase();
