@@ -15,6 +15,7 @@ test('the packaged backend contract has one loopback listener', () => {
   assert.match(serverChild, /const hostname = LOOPBACK_SERVER_HOST/);
   assert.match(serverChild, /server\.listen\(port, hostname/);
   assert.doesNotMatch(serverChild, /directListeners|networkInterfaces|0\.0\.0\.0/);
+  assert.doesNotMatch(source('electron/main.ts'), /TESSERA_ELECTRON_PACKAGED/);
 });
 
 test('Electron exposes only Serve setup for remote transport', () => {
