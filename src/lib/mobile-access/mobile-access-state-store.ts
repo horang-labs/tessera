@@ -1,5 +1,7 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 export const MOBILE_ACCESS_OWNER = 'tessera.mobile-access';
 
@@ -18,6 +20,43 @@ export interface MobileAccessStateStore {
   save(ownership: MobileAccessOwnership): Promise<void>;
 }
 
+interface FileMobileAccessStateStoreOptions {
+  platform?: NodeJS.Platform;
+  restrictWindowsPath?(targetPath: string, directory: boolean): Promise<void>;
+}
+
+const execFileAsync = promisify(execFile);
+const WINDOWS_PRIVATE_ACL_SCRIPT = [
+  '$targetPath = $env:TESSERA_MOBILE_ACCESS_ACL_TARGET',
+  '$directoryFlag = $env:TESSERA_MOBILE_ACCESS_ACL_DIRECTORY',
+  '$currentAccount = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name',
+  '$item = Get-Item -LiteralPath $targetPath -Force',
+  '$acl = $item.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)',
+  '$acl.SetAccessRuleProtection($true, $false)',
+  'foreach ($entry in @($acl.Access)) { $acl.PurgeAccessRules($entry.IdentityReference) }',
+  '$inheritance = if ($directoryFlag -eq "1") { [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit } else { [System.Security.AccessControl.InheritanceFlags]::None }',
+  '$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($currentAccount, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)',
+  '$acl.SetAccessRule($rule)',
+  '$item.SetAccessControl($acl)',
+].join('; ');
+
+async function restrictWindowsPath(targetPath: string, directory: boolean): Promise<void> {
+  await execFileAsync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    WINDOWS_PRIVATE_ACL_SCRIPT,
+  ], {
+    env: {
+      ...process.env,
+      TESSERA_MOBILE_ACCESS_ACL_TARGET: targetPath,
+      TESSERA_MOBILE_ACCESS_ACL_DIRECTORY: directory ? '1' : '0',
+    },
+    windowsHide: true,
+  });
+}
+
 function isMobileAccessOwnership(value: unknown): value is MobileAccessOwnership {
   if (!value || typeof value !== 'object') return false;
   const ownership = value as Partial<MobileAccessOwnership>;
@@ -31,7 +70,16 @@ function isMobileAccessOwnership(value: unknown): value is MobileAccessOwnership
 }
 
 export class FileMobileAccessStateStore implements MobileAccessStateStore {
-  constructor(private readonly filePath: string) {}
+  private readonly platform: NodeJS.Platform;
+  private readonly restrictWindowsPath: (targetPath: string, directory: boolean) => Promise<void>;
+
+  constructor(
+    private readonly filePath: string,
+    options: FileMobileAccessStateStoreOptions = {},
+  ) {
+    this.platform = options.platform ?? process.platform;
+    this.restrictWindowsPath = options.restrictWindowsPath ?? restrictWindowsPath;
+  }
 
   async load(): Promise<MobileAccessOwnership | null> {
     try {
@@ -51,17 +99,26 @@ export class FileMobileAccessStateStore implements MobileAccessStateStore {
     );
 
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-    await fs.chmod(directory, 0o700);
+    await this.makeOwnerOnly(directory, true);
     try {
       await fs.writeFile(tempPath, JSON.stringify(ownership, null, 2), {
         encoding: 'utf8',
         mode: 0o600,
       });
+      await this.makeOwnerOnly(tempPath, false);
       await fs.rename(tempPath, this.filePath);
-      await fs.chmod(this.filePath, 0o600);
+      await this.makeOwnerOnly(this.filePath, false);
     } catch (error) {
       await fs.unlink(tempPath).catch(() => undefined);
       throw error;
     }
+  }
+
+  private async makeOwnerOnly(targetPath: string, directory: boolean): Promise<void> {
+    if (this.platform === 'win32') {
+      await this.restrictWindowsPath(targetPath, directory);
+      return;
+    }
+    await fs.chmod(targetPath, directory ? 0o700 : 0o600);
   }
 }

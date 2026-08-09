@@ -66,7 +66,14 @@ function ownsEndpoint(
   return ownership?.owner === MOBILE_ACCESS_OWNER
     && ownership.nodeDnsName === endpoint.dnsName
     && ownership.servePort === endpoint.port
-    && ownership.mountPath === endpoint.mountPath;
+    && ownership.mountPath === endpoint.mountPath
+    && ownership.origin === `https://${endpoint.dnsName}`
+    && exactEndpoint(endpoint, {
+      dnsName: ownership.nodeDnsName,
+      port: ownership.servePort,
+      mountPath: ownership.mountPath,
+      proxyTarget: ownership.lastLoopbackTarget,
+    });
 }
 
 export class MobileAccessCoordinator {
@@ -106,6 +113,7 @@ export class MobileAccessCoordinator {
         );
       }
       await this.dependencies.checkHealth(ownership.origin);
+      await this.dependencies.publishPairingOrigin(ownership.origin);
       this.status = { state: 'ready', origin: ownership.origin };
     } catch (error) {
       this.status = this.failureStatus(error);
@@ -134,7 +142,7 @@ export class MobileAccessCoordinator {
         this.dependencies.stateStore.load(),
       ]);
 
-      if (existingEndpoint && !ownsEndpoint(ownership, endpoint)) {
+      if (existingEndpoint && !ownsEndpoint(ownership, existingEndpoint)) {
         throw new MobileAccessSetupError(
           'serve-root-in-use',
           'Tailscale HTTPS port 443 root is already in use',
