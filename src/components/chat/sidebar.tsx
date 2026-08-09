@@ -366,7 +366,7 @@ export function Sidebar() {
   }, []);
 
   const handleTaskEntityDelete = useCallback((taskId: string) => {
-    void useTaskStore.getState().deleteTask(taskId);
+    void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
   const handleTaskArchive = useCallback((taskId: string) => {

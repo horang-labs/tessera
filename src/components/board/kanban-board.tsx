@@ -769,7 +769,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   const handleConfirmTaskDelete = useCallback(async () => {
     if (!taskToDelete) return;
-    await useTaskStore.getState().deleteTask(taskToDelete.id);
+    await useTaskStore.getState().deleteWorktree(taskToDelete.id);
     setTaskToDelete(null);
   }, [taskToDelete]);
 

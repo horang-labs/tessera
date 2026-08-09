@@ -208,7 +208,7 @@ function AllProjectSection({
   }, []);
 
   const handleTaskDelete = useCallback((taskId: string) => {
-    void useTaskStore.getState().deleteTask(taskId);
+    void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
   const handleTaskStatusChange = useCallback((taskId: string, status: string) => {

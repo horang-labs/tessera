@@ -65,8 +65,8 @@ interface TaskState {
       summary?: string;
     }
   ) => Promise<boolean>;
-  /** Delete a task (optimistic) */
-  deleteTask: (id: string) => Promise<{ deletedSessionCount: number } | null>;
+  /** Delete a Worktree checkout while retaining its archived canonical records. */
+  deleteWorktree: (taskId: string) => Promise<boolean>;
   /** Archive/restore a task and all child sessions as one unit */
   toggleTaskArchive: (id: string, archived: boolean) => Promise<boolean>;
   /** Reorder tasks (optimistic + server sync) */
@@ -479,11 +479,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
   },
 
-  deleteTask: async (id) => {
+  deleteWorktree: async (id) => {
     const existingTask = get().getTask(id);
     if (!existingTask?.worktreeId) {
       toast.error('This Worktree has no canonical identity and cannot be deleted safely.');
-      return null;
+      return false;
     }
     const projectId = existingTask?.projectId;
     const linkedSessionIds = existingTask?.sessions.map((session) => session.id) ?? [];
@@ -515,15 +515,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         await useSessionStore.getState().loadProjects();
         if (projectId)
           await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
-        return null;
+        return false;
       }
-      return { deletedSessionCount: 0 };
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to delete Worktree');
       await useSessionStore.getState().loadProjects();
       if (projectId)
         await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
-      return null;
+      return false;
     }
   },
 
