@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildTailscaleServeOffArguments,
   buildTailscaleServeArguments,
   createCommandRunner,
   parseTailscaleNodeStatus,
@@ -80,6 +81,41 @@ test('the adapter uses only scoped Serve commands and surfaces HTTPS consent', a
   ]]);
   assert.equal(calls.flat().includes('funnel'), false);
   assert.equal(calls.flat().includes('reset'), false);
+});
+
+test('the adapter turns off only the exact owned HTTPS root', async () => {
+  assert.deepEqual(buildTailscaleServeOffArguments(10_443, '/'), [
+    'serve',
+    '--bg',
+    '--yes',
+    '--https=10443',
+    '--set-path=/',
+    'off',
+  ]);
+
+  const calls: string[][] = [];
+  const adapter = new TailscaleCliAdapter(async (arguments_) => {
+    calls.push(arguments_);
+    return { stdout: '', stderr: '' };
+  });
+  await adapter.removeServe({
+    dnsName: 'desktop.tailnet.ts.net',
+    port: 10_443,
+    mountPath: '/',
+    proxyTarget: 'http://127.0.0.1:32123',
+    scope: 'background',
+  });
+
+  assert.deepEqual(calls, [[
+    'serve',
+    '--bg',
+    '--yes',
+    '--https=10443',
+    '--set-path=/',
+    'off',
+  ]]);
+  assert.equal(calls.flat().includes('reset'), false);
+  assert.equal(calls.flat().includes('funnel'), false);
 });
 
 test('command execution terminates authorization waits and enforces a bounded timeout', async () => {

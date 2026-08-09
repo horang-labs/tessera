@@ -14,6 +14,10 @@ export interface DeviceRevocationResult {
   disconnectedConnections: number;
 }
 
+interface RevokeAllPairedDevicesOptions {
+  afterTrustCleared?: () => Promise<void>;
+}
+
 export async function revokePairedDevice(
   deviceId: string,
 ): Promise<DeviceRevocationResult> {
@@ -36,7 +40,9 @@ export async function revokePairedDevice(
   });
 }
 
-export async function revokeAllPairedDevices(): Promise<DeviceRevocationResult> {
+export async function revokeAllPairedDevices(
+  options: RevokeAllPairedDevicesOptions = {},
+): Promise<DeviceRevocationResult> {
   return withPairedDeviceLifecycle(async () => {
     const subscriptions = await listDevicePushSubscriptions();
     await clearDevicePushSubscriptions();
@@ -53,6 +59,7 @@ export async function revokeAllPairedDevices(): Promise<DeviceRevocationResult> 
     for (const deviceId of revokedDeviceIds) {
       disconnectedConnections += wsServer.disconnectDevice(deviceId);
     }
+    await options.afterTrustCleared?.();
     return {
       revokedDevices: revokedDeviceIds.length,
       disconnectedConnections,

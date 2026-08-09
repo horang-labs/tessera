@@ -37,6 +37,7 @@ export interface TailscaleAdapter {
   requestSignIn(): Promise<string | null>;
   inspectServe(nodeDnsName: string): Promise<TailscaleServeStatus>;
   configureServe(endpoint: TailscaleServeEndpoint): Promise<TailscaleConfigureResult>;
+  removeServe(endpoint: TailscaleServeEndpoint): Promise<void>;
 }
 
 export type MobileAccessStatus =
@@ -57,6 +58,10 @@ export type MobileAccessStatus =
   }
   | { state: 'retryable-failure'; message: string }
   | { state: 'ready'; origin: string };
+
+export type MobileAccessRemovalResult =
+  | { ok: true; status: { state: 'not-configured' } }
+  | { ok: false; error: string };
 
 export const MOBILE_ACCESS_HTTPS_PORT_CANDIDATES = [10_443, 11_443, 12_443, 13_443] as const;
 
@@ -134,10 +139,16 @@ function unrelatedResources(
   status: TailscaleServeStatus,
   endpoint: TailscaleServeEndpoint,
 ): Array<{ key: string; value: string }> {
-  const ignored = new Set([
-    `background:tcp:${endpoint.port}`,
-    rootResourceKey(endpoint.dnsName, endpoint.port),
-  ]);
+  const ownedRootKey = rootResourceKey(endpoint.dnsName, endpoint.port);
+  const sharedHttpsPort = status.resources.some((resource) => (
+    resource.key !== ownedRootKey
+    && (
+      resource.key.startsWith(`background:web:${endpoint.dnsName}:${endpoint.port}:`)
+      || resource.key === `background:allow-funnel:${endpoint.dnsName}:${endpoint.port}`
+    )
+  ));
+  const ignored = new Set([ownedRootKey]);
+  if (!sharedHttpsPort) ignored.add(`background:tcp:${endpoint.port}`);
   return status.resources.filter((resource) => (
     !ignored.has(resource.key) && !resource.key.endsWith(':etag')
   ));
@@ -173,6 +184,7 @@ export class MobileAccessCoordinator {
   private status: MobileAccessStatus = { state: 'not-configured' };
   private configuredConnection = false;
   private setupPromise: Promise<MobileAccessStatus> | null = null;
+  private removalPromise: Promise<MobileAccessRemovalResult> | null = null;
   private readonly openedAuthorizationUrls = new Set<string>();
 
   constructor(private readonly dependencies: {
@@ -180,6 +192,7 @@ export class MobileAccessCoordinator {
     stateStore: MobileAccessStateStore;
     checkHealth(origin: string): Promise<void>;
     openExternal(url: string): Promise<void>;
+    clearLocalState(): Promise<void>;
   }) {}
 
   hasConfiguredConnection(): boolean {
@@ -335,6 +348,95 @@ export class MobileAccessCoordinator {
       this.setupPromise = null;
     });
     return this.setupPromise;
+  }
+
+  remove(): Promise<MobileAccessRemovalResult> {
+    if (this.removalPromise) return this.removalPromise;
+    this.removalPromise = this.runRemoval().finally(() => {
+      this.removalPromise = null;
+    });
+    return this.removalPromise;
+  }
+
+  private async runRemoval(): Promise<MobileAccessRemovalResult> {
+    try {
+      const persisted = await this.dependencies.stateStore.load();
+      if (!persisted || isSetupProgress(persisted)) {
+        return { ok: false, error: 'No verified Tessera-owned endpoint is available to remove' };
+      }
+      this.configuredConnection = true;
+
+      const node = await this.dependencies.adapter.inspectNode();
+      if (node.state !== 'running') {
+        const status = this.statusForConfiguredNode(node);
+        return {
+          ok: false,
+          error: 'message' in status ? status.message : 'Tailscale is unavailable',
+        };
+      }
+      if (node.dnsName !== persisted.nodeDnsName) {
+        return {
+          ok: false,
+          error: 'The Tailscale node or tailnet domain changed',
+        };
+      }
+
+      const expected = this.endpointFor(
+        persisted.nodeDnsName,
+        persisted.servePort,
+        persisted.lastLoopbackTarget,
+      );
+      const before = await this.dependencies.adapter.inspectServe(node.dnsName);
+      const existing = endpointAt(before, node.dnsName, persisted.servePort);
+      const rootOccupied = rootIsOccupied(before, node.dnsName, persisted.servePort);
+      if ((existing && !exactEndpoint(existing, expected)) || (rootOccupied && !existing)) {
+        return {
+          ok: false,
+          error: 'The Tessera-owned Tailscale Serve endpoint changed',
+        };
+      }
+
+      if (existing) {
+        const unrelatedBefore = unrelatedResources(before, expected);
+        await this.dependencies.adapter.removeServe(expected);
+        const [verifiedNode, verifiedServe] = await Promise.all([
+          this.dependencies.adapter.inspectNode(),
+          this.dependencies.adapter.inspectServe(node.dnsName),
+        ]);
+        if (verifiedNode.state !== 'running' || verifiedNode.dnsName !== node.dnsName) {
+          return {
+            ok: false,
+            error: 'Tailscale became unavailable before endpoint removal could be verified',
+          };
+        }
+        if (!sameResources(unrelatedBefore, unrelatedResources(verifiedServe, expected))) {
+          return {
+            ok: false,
+            error: 'Unrelated Tailscale Serve or Funnel configuration changed',
+          };
+        }
+        if (
+          endpointAt(verifiedServe, node.dnsName, persisted.servePort)
+          || rootIsOccupied(verifiedServe, node.dnsName, persisted.servePort)
+        ) {
+          return {
+            ok: false,
+            error: 'Tailscale Serve endpoint removal could not be verified',
+          };
+        }
+      }
+
+      await this.dependencies.clearLocalState();
+      await this.dependencies.stateStore.clear();
+      this.configuredConnection = false;
+      this.status = { state: 'not-configured' };
+      return { ok: true, status: this.status };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private async runSetup(loopbackPort: number): Promise<MobileAccessStatus> {

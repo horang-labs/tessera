@@ -58,6 +58,13 @@ export class FileVapidIdentityStore {
     return this.pending;
   }
 
+  async clear(): Promise<void> {
+    await this.pending?.catch(() => undefined);
+    await fs.unlink(this.identityPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
+
   private async loadOrCreate(): Promise<VapidIdentity> {
     const directory = path.dirname(this.identityPath);
     try {
@@ -113,4 +120,14 @@ export function ensureVapidIdentity(): Promise<VapidIdentity> {
     storesByPath.set(identityPath, store);
   }
   return store.ensure();
+}
+
+export function clearVapidIdentity(): Promise<void> {
+  const identityPath = getVapidIdentityPath();
+  let store = storesByPath.get(identityPath);
+  if (!store) {
+    store = new FileVapidIdentityStore(identityPath);
+    storesByPath.set(identityPath, store);
+  }
+  return store.clear();
 }

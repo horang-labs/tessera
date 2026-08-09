@@ -35,6 +35,7 @@ export type MobileAccessPersistedState = MobileAccessOwnership | MobileAccessSet
 export interface MobileAccessStateStore {
   load(): Promise<MobileAccessPersistedState | null>;
   save(state: MobileAccessPersistedState): Promise<void>;
+  clear(): Promise<void>;
 }
 
 interface FileMobileAccessStateStoreOptions {
@@ -125,6 +126,12 @@ export class FileMobileAccessStateStore implements MobileAccessStateStore {
       await fs.unlink(tempPath).catch(() => undefined);
       throw error;
     }
+  }
+
+  async clear(): Promise<void> {
+    await fs.unlink(this.filePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
   }
 
   private async makeOwnerOnly(targetPath: string, directory: boolean): Promise<void> {

@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { PairingDecision } from '../src/lib/auth/pairing-contract';
-import type { MobileAccessStatus } from '../src/lib/mobile-access/mobile-access-coordinator';
+import type {
+  MobileAccessRemovalResult,
+  MobileAccessStatus,
+} from '../src/lib/mobile-access/mobile-access-coordinator';
 import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -18,6 +21,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-mobile-access-status') as Promise<MobileAccessStatus>,
   startMobileAccessSetup: () =>
     ipcRenderer.invoke('start-mobile-access-setup') as Promise<MobileAccessStatus>,
+  removeMobileAccess: () =>
+    ipcRenderer.invoke('remove-mobile-access') as Promise<MobileAccessRemovalResult>,
   createPairingCode: (action: 'issue' | 'rotate') =>
     ipcRenderer.invoke('create-pairing-code', action),
   listPairingRequests: () => ipcRenderer.invoke('list-pairing-requests'),

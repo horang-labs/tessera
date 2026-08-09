@@ -6,6 +6,7 @@ import test, { after, before, beforeEach } from 'node:test';
 import { NextRequest } from 'next/server';
 import { WebSocket } from 'ws';
 import { pairApprovedDevice } from './helpers/approved-device';
+import { pushApplicationServerKeyMatches } from '../src/lib/push/browser-push';
 
 let tempDir: string;
 const previousDataDir = process.env.TESSERA_DATA_DIR;
@@ -53,6 +54,19 @@ test('one installation atomically persists one owner-only VAPID identity', async
   assert.match(first.privateKey, /^[A-Za-z0-9_-]+$/);
   assert.equal((await stat(getVapidIdentityPath())).mode & 0o777, 0o600);
   assert.equal((await stat(path.dirname(getVapidIdentityPath()))).mode & 0o777, 0o700);
+});
+
+test('a fresh mobile setup rejects a browser subscription from the removed VAPID identity', () => {
+  const currentKey = new Uint8Array([1, 2, 3, 4]);
+  assert.equal(
+    pushApplicationServerKeyMatches(new Uint8Array([1, 2, 3, 4]).buffer, currentKey),
+    true,
+  );
+  assert.equal(
+    pushApplicationServerKeyMatches(new Uint8Array([4, 3, 2, 1]).buffer, currentKey),
+    false,
+  );
+  assert.equal(pushApplicationServerKeyMatches(null, currentKey), false);
 });
 
 test('Windows VAPID persistence applies current-user ACLs before atomic publication', async () => {
@@ -243,6 +257,52 @@ test('device list status and revocation keep subscriptions bound to device trust
     disconnectedConnections: 0,
   });
   assert.deepEqual(await listDevicePushSubscriptions(), []);
+});
+
+test('only the installation app can invoke complete mobile-access local cleanup', async () => {
+  const { device } = await pairApprovedDevice('Removal phone');
+  const { replaceDevicePushSubscription, listDevicePushSubscriptions } = await import(
+    '../src/lib/push/device-push-subscription-store'
+  );
+  const { ensureVapidIdentity, getVapidIdentityPath } = await import(
+    '../src/lib/push/vapid-identity'
+  );
+  const { ensureAppSecret, APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+  const { listDevices } = await import('../src/lib/auth/device-registry');
+  const route = await import('../src/app/api/mobile-access/local-state/route');
+  await replaceDevicePushSubscription(device.id, {
+    endpoint: 'https://push.example.test/removal', expirationTime: null,
+    keys: { p256dh: 'removal-public-key', auth: 'removal-auth-key' },
+  });
+  await ensureVapidIdentity();
+  const origin = 'http://localhost:32123';
+
+  const denied = await route.DELETE(new NextRequest(`${origin}/api/mobile-access/local-state`, {
+    method: 'DELETE',
+    headers: { cookie: `device=${device.token}`, host: 'localhost:32123', origin },
+  }));
+  assert.equal(denied.status, 403);
+  assert.equal((await listDevices()).length, 1);
+
+  const appSecret = await ensureAppSecret();
+  const removed = await route.DELETE(new NextRequest(`${origin}/api/mobile-access/local-state`, {
+    method: 'DELETE',
+    headers: { [APP_SECRET_HEADER]: appSecret, host: 'localhost:32123', origin },
+  }));
+  assert.equal(removed.status, 200);
+  assert.deepEqual(await removed.json(), {
+    success: true,
+    revokedDevices: 1,
+    disconnectedConnections: 0,
+  });
+  assert.deepEqual(await listDevices(), []);
+  assert.deepEqual(await listDevicePushSubscriptions(), []);
+  await assert.rejects(stat(getVapidIdentityPath()), { code: 'ENOENT' });
+  const { getPairedDevicePushConfiguration } = await import(
+    '../src/lib/auth/paired-device-lifecycle'
+  );
+  assert.equal(await getPairedDevicePushConfiguration(device.id), null);
+  await assert.rejects(stat(getVapidIdentityPath()), { code: 'ENOENT' });
 });
 
 test('revocation wins over a Push registration that authenticated before its body arrived', async () => {
@@ -660,4 +720,45 @@ test('expired and permanently rejected endpoints are deleted while transient fai
     { deviceId: 'expired-device', endpoint: expired.endpoint },
     { deviceId: 'rejected-device', endpoint: rejected.endpoint },
   ]);
+});
+
+test('a dispatch holds the paired-device lifecycle until notification delivery settles', async () => {
+  const { withPairedDeviceLifecycle } = await import(
+    '../src/lib/auth/paired-device-lifecycle-lock'
+  );
+  const { createWebPushDispatcher } = await import('../src/lib/push/web-push-dispatcher');
+  let markSendStarted!: () => void;
+  let releaseSend!: () => void;
+  const sendStarted = new Promise<void>((resolve) => { markSendStarted = resolve; });
+  const sendGate = new Promise<void>((resolve) => { releaseSend = resolve; });
+  const dispatch = createWebPushDispatcher({
+    loadSettings: async () => ({ notifications: { pushEnabled: true } }),
+    listSubscriptions: async () => [{
+      deviceId: 'racing-device',
+      subscription: {
+        endpoint: 'https://push.example.test/racing', expirationTime: null,
+        keys: { p256dh: 'public', auth: 'auth' },
+      },
+    }],
+    deleteSubscription: async () => false,
+    sendNotification: async () => {
+      markSendStarted();
+      await sendGate;
+    },
+    runWithLifecycle: withPairedDeviceLifecycle,
+  });
+
+  dispatch('user-1', {
+    type: 'notification', sessionId: 's1', event: 'completed', eventId: 'event-race',
+    message: 'done', preview: '',
+  });
+  await sendStarted;
+  let removalEntered = false;
+  const removal = withPairedDeviceLifecycle(async () => { removalEntered = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(removalEntered, false);
+
+  releaseSend();
+  await removal;
+  assert.equal(removalEntered, true);
 });

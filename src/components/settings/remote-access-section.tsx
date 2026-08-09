@@ -11,9 +11,11 @@ import {
   QrCode,
   RadioTower,
   RefreshCw,
+  ShieldOff,
   ShieldCheck,
   X,
 } from 'lucide-react';
+import { AsyncConfirmDialog } from '@/components/ui/async-confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { formatPairingTimeRemaining } from '@/components/pairing/pairing-time';
 import {
@@ -24,7 +26,10 @@ import {
 } from '@/lib/auth/pairing-contract';
 import { useI18n } from '@/lib/i18n';
 import { getIntlLocale } from '@/lib/i18n/locale-map';
-import type { MobileAccessStatus } from '@/lib/mobile-access/mobile-access-coordinator';
+import type {
+  MobileAccessRemovalResult,
+  MobileAccessStatus,
+} from '@/lib/mobile-access/mobile-access-coordinator';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
 import PairedDeviceManagement from './paired-device-management';
@@ -92,6 +97,7 @@ type ElectronPairingApi = {
   isElectron?: boolean;
   getMobileAccessStatus?: () => Promise<MobileAccessStatus>;
   startMobileAccessSetup?: () => Promise<MobileAccessStatus>;
+  removeMobileAccess?: () => Promise<MobileAccessRemovalResult>;
   openExternalUrl?: (url: string) => Promise<unknown>;
   createPairingCode?: (action: 'issue' | 'rotate') => Promise<ElectronPairingResult>;
   listPairingRequests?: () => Promise<ElectronPairingRequestListResult>;
@@ -150,6 +156,8 @@ export default function RemoteAccessSection() {
   const [pairingRequests, setPairingRequests] = useState<PairingRequest[]>([]);
   const [pairingRequestsFailed, setPairingRequestsFailed] = useState(false);
   const [decidingRequestId, setDecidingRequestId] = useState<string | null>(null);
+  const [removalOpen, setRemovalOpen] = useState(false);
+  const [removalFailed, setRemovalFailed] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(function loadMobileAccessStatus() {
@@ -270,7 +278,8 @@ export default function RemoteAccessSection() {
   const hasMobileAccessCoordinator = Boolean(
     electronApi?.isElectron
     && electronApi.getMobileAccessStatus
-    && electronApi.startMobileAccessSetup,
+    && electronApi.startMobileAccessSetup
+    && electronApi.removeMobileAccess,
   );
   const canAddDevice = Boolean(
     hasMobileAccessCoordinator && mobileAccessStatus?.state === 'ready',
@@ -304,6 +313,24 @@ export default function RemoteAccessSection() {
         ? mobileAccessStatus.authorizationUrl
         : undefined;
     if (url) void electronApi.openExternalUrl(url);
+  };
+
+  const handleMobileAccessRemoval = async () => {
+    if (!electronApi?.removeMobileAccess) return;
+    setRemovalFailed(false);
+    const result = await electronApi.removeMobileAccess();
+    if (!result.ok) {
+      setRemovalFailed(true);
+      return;
+    }
+
+    setMobileAccessStatus(result.status);
+    setPresentation(null);
+    setPairingRequests([]);
+    knownPairingRequestIds.current.clear();
+    setPairingError(null);
+    setRemovalOpen(false);
+    showToast(t('settings.remoteAccess.mobileRemovalSucceeded'), 'success');
   };
 
   const mobileAccessStatusLabel = mobileAccessStatus?.state === 'ready'
@@ -518,7 +545,21 @@ export default function RemoteAccessSection() {
                         : t('settings.remoteAccess.mobileSetupRetryAction')}
                   </Button>
                 </div>
-              ) : null}
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-testid="mobile-access-remove"
+                  onClick={() => {
+                    setRemovalFailed(false);
+                    setRemovalOpen(true);
+                  }}
+                  className="border-(--status-error-border) text-(--status-error-text) hover:bg-(--status-error-bg)"
+                >
+                  <ShieldOff className="h-4 w-4" />
+                  {t('settings.remoteAccess.mobileRemovalAction')}
+                </Button>
+              )}
             </div>
           </div>
           {mobileAccessStatus?.state === 'ready' ? (
@@ -540,6 +581,41 @@ export default function RemoteAccessSection() {
           ) : null}
         </div>
       ) : null}
+
+      <AsyncConfirmDialog
+        open={removalOpen}
+        onCancel={() => setRemovalOpen(false)}
+        onConfirm={handleMobileAccessRemoval}
+        title={t('settings.remoteAccess.mobileRemovalTitle')}
+        icon={ShieldOff}
+        cancelLabel={t('common.cancel')}
+        confirmLabel={t('settings.remoteAccess.mobileRemovalConfirm')}
+        confirmingLabel={t('settings.remoteAccess.mobileRemoving')}
+        iconContainerClassName="bg-(--error)/10"
+        iconClassName="text-(--error)"
+        confirmButtonClassName="bg-(--error) text-white hover:bg-(--error)/90"
+        dialogTestId="mobile-access-remove-dialog"
+        confirmTestId="mobile-access-remove-confirm"
+        errorLogLabel="Mobile access removal error:"
+        description={(
+          <div className="space-y-2">
+            <p className="text-(--text-primary)">
+              {t('settings.remoteAccess.mobileRemovalDescription')}
+            </p>
+            <p className="text-sm text-(--text-muted)">
+              {t('settings.remoteAccess.mobileRemovalWarning')}
+            </p>
+            {removalFailed ? (
+              <p
+                role="alert"
+                className="rounded-lg border border-(--status-error-border) bg-(--status-error-bg) px-3 py-2 text-sm text-(--status-error-text)"
+              >
+                {t('settings.remoteAccess.mobileRemovalFailed')}
+              </p>
+            ) : null}
+          </div>
+        )}
+      />
 
       <div className="border-t border-(--divider) pt-5">
         {!presentation ? (

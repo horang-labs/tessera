@@ -20,6 +20,15 @@ export function vapidPublicKeyBytes(publicKey: string): Uint8Array<ArrayBuffer> 
   return bytes;
 }
 
+export function pushApplicationServerKeyMatches(
+  subscriptionKey: ArrayBuffer | null,
+  expectedKey: Uint8Array,
+): boolean {
+  if (!subscriptionKey || subscriptionKey.byteLength !== expectedKey.byteLength) return false;
+  const currentKey = new Uint8Array(subscriptionKey);
+  return currentKey.every((value, index) => value === expectedKey[index]);
+}
+
 export async function requestPushPermission(): Promise<NotificationPermission> {
   return Notification.requestPermission();
 }

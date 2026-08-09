@@ -16,6 +16,7 @@ try {
     };
     window.__mobileAccessExternalUrls = [];
     window.__mobileAccessPolls = 0;
+    window.__mobileAccessRemovalAttempts = 0;
     const storage = new Map();
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
@@ -41,6 +42,14 @@ try {
             authorizationUrl: 'https://login.tailscale.com/admin/feature/serve',
           };
           return window.__mobileAccessStatus;
+        },
+        removeMobileAccess: async () => {
+          window.__mobileAccessRemovalAttempts += 1;
+          if (window.__mobileAccessRemovalAttempts === 1) {
+            return { ok: false, error: 'Tailscale Serve off failed' };
+          }
+          window.__mobileAccessStatus = { state: 'not-configured' };
+          return { ok: true, status: window.__mobileAccessStatus };
         },
         openExternalUrl: async (url) => {
           window.__mobileAccessExternalUrls.push(url);
@@ -95,19 +104,40 @@ try {
 
   await page.getByTestId('mobile-access-status').getByText('Ready').waitFor();
   assert.equal(await addDevice.isEnabled(), true);
+  const pushGlobal = page.getByTestId('push-global-enabled');
+  assert.equal(await pushGlobal.isChecked(), true);
+
+  await page.getByTestId('mobile-access-remove').click();
+  const removalDialog = page.getByTestId('mobile-access-remove-dialog');
+  await removalDialog.waitFor();
+  await removalDialog.getByText(/Every Paired Device will be disconnected/).waitFor();
+  await removalDialog.getByText(/paired again/).waitFor();
+  await removalDialog.getByText(/notification permission again/).waitFor();
 
   await page.screenshot({
-    path: '/home/work/tmp/tessera-301-serve-only-settings.png',
+    path: '/home/work/tmp/tessera-307-mobile-removal-confirmation.png',
     fullPage: true,
   });
-  await addDevice.click();
-  await page.getByText('https://desktop.tailnet.ts.net/pair#t=').waitFor();
+
+  await page.getByTestId('mobile-access-remove-confirm').click();
+  await removalDialog.getByRole('alert').waitFor();
+  assert.equal(await addDevice.isEnabled(), true);
+  assert.equal(await pushGlobal.isChecked(), true);
+
+  await page.getByTestId('mobile-access-remove-confirm').click();
+  await removalDialog.waitFor({ state: 'hidden' });
+  await page.getByTestId('mobile-access-status').getByText('Not configured').waitFor();
+  assert.equal(await addDevice.isDisabled(), true);
+  assert.equal(await pushGlobal.isChecked(), true);
 
   console.log(JSON.stringify({
     statesVisible: ['Tailscale missing', 'Configuring', 'Authorization required', 'Ready'],
     externalStepsOpened: true,
     addDeviceGatedUntilReady: true,
-    pairingUsesServeOrigin: true,
+    removalConfirmationIsDestructive: true,
+    removalFailureIsRetryable: true,
+    successfulRemovalDisablesPairing: true,
+    globalPushSettingUnchanged: true,
     manualAddressControlsAbsent: true,
     firewallAutomationAbsent: true,
   }, null, 2));
