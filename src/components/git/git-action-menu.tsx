@@ -24,12 +24,20 @@ export function GitActionMenu({
   pending,
   commitDraftBlocked,
   onRun,
+  menuTestId = "git-action-menu",
+  triggerAriaLabel,
+  triggerClassName,
+  triggerTestId = "git-action-menu-trigger",
 }: {
   actions: readonly GitMenuAction[];
   /** An action is already running against this working directory. */
   pending: boolean;
   commitDraftBlocked: boolean;
   onRun: (id: GitMenuActionId) => void;
+  menuTestId?: string;
+  triggerAriaLabel?: string;
+  triggerClassName?: string;
+  triggerTestId?: string;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -58,10 +66,13 @@ export function GitActionMenu({
         }}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={t("gitPanel.menu.label")}
+        aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")}
         title={pending ? t("gitPanel.menu.pending") : t("gitPanel.menu.label")}
-        data-testid="git-action-menu-trigger"
-        className="flex h-7 w-6 items-center justify-center rounded-md border border-(--divider) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+        data-testid={triggerTestId}
+        className={cn(
+          "flex h-7 w-6 items-center justify-center rounded-md border border-(--divider) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+          triggerClassName,
+        )}
       >
         {/*
           Progress belongs at the button rather than in a toast (§7). A menu
@@ -79,7 +90,7 @@ export function GitActionMenu({
         <div
           ref={menuRef}
           role="menu"
-          data-testid="git-action-menu"
+          data-testid={menuTestId}
           style={{ position: "fixed", top: position.top, left: position.left, width: position.width }}
           className="z-50 overflow-hidden rounded-lg border border-(--divider) bg-(--sidebar-bg) py-1 shadow-lg"
         >

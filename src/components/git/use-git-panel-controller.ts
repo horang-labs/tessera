@@ -787,14 +787,14 @@ export function useGitPanelController(sessionId: string | null) {
   ]);
 
   const commitSelectedFiles = useCallback(async () => {
-    if (!worktreeKey || pendingHere) return;
+    if (!worktreeKey || pendingHere) return false;
     // Captured, so the entry cleared below is the one this action opened even if
     // the panel has moved to another session by then.
     const ownerKey = worktreeKey;
 
     markWorktreePending(ownerKey, "commit");
     try {
-      await requestCommit();
+      return await requestCommit();
     } finally {
       markWorktreePending(ownerKey, null);
     }
