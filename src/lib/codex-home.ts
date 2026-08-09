@@ -101,6 +101,25 @@ export function resolveCodexAccountHome(
  * was reported by a CLI in another environment (WSL guest, Windows host).
  */
 const CODEX_OVERLAY_PATH_PATTERN = /^(.*)[/\\]codex-overlay[/\\](session-[^/\\]+)[/\\](.+)$/;
+const SAFE_OVERLAY_TERMINAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * Returns the terminal that owned an overlay-backed rollout path. Codex stores
+ * this absolute path in its account database, so callers may need to recreate
+ * the overlay's `sessions` alias after the owning PTY has exited.
+ */
+export function extractCodexOverlayTerminalId(
+  transcriptPath: string,
+): string | undefined {
+  const match = transcriptPath.match(CODEX_OVERLAY_PATH_PATTERN);
+  if (!match) return undefined;
+  const [, , overlayName, relativePath] = match;
+  const [firstSegment] = relativePath.split(/[/\\]/, 1);
+  if (firstSegment !== 'sessions' || !SAFE_OVERLAY_TERMINAL_ID.test(overlayName)) {
+    return undefined;
+  }
+  return overlayName;
+}
 
 /**
  * Map a rollout path recorded under a per-session overlay home back to the real

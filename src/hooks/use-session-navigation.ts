@@ -4,7 +4,7 @@
  * React hook providing session navigation: view and switch.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useSessionStore } from '@/stores/session-store';
 import { useChatStore } from '@/stores/chat-store';
 import { toast } from '@/stores/notification-store';
@@ -20,6 +20,7 @@ export function useSessionNavigation() {
   const chatStore = useChatStore();
 
   const [isLoading, setIsLoading] = useState(false);
+  const loadingRequestCountRef = useRef(0);
 
   /**
    * Switch to a different session (already loaded)
@@ -51,7 +52,8 @@ export function useSessionNavigation() {
       }
 
       sessionStore.setLoadingSession(session.id);
-      setIsLoading(true);
+      loadingRequestCountRef.current += 1;
+      if (loadingRequestCountRef.current === 1) setIsLoading(true);
 
       try {
         const params = new URLSearchParams({
@@ -90,7 +92,8 @@ export function useSessionNavigation() {
         toast.error(i18n.t('errors.sessionLoadFailed'));
         console.error('View session error:', err);
       } finally {
-        setIsLoading(false);
+        loadingRequestCountRef.current = Math.max(0, loadingRequestCountRef.current - 1);
+        if (loadingRequestCountRef.current === 0) setIsLoading(false);
         sessionStore.setLoadingSession(null);
       }
     },

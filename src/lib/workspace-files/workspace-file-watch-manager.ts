@@ -15,6 +15,7 @@ import {
   workspaceRelativeDirname,
 } from "./workspace-file-scan";
 import {
+  buildInotifyExcludeRegex,
   type BridgeEvent,
   isWslDistroRunning,
   parseWslUncRoot,
@@ -691,6 +692,7 @@ export class WorkspaceFileWatchManager {
   private startBridge(entry: WorkspaceWatchEntry, wslRoot: WslUncRoot): void {
     const bridge = new WslInotifyBridge({
       root: wslRoot,
+      excludeRegex: buildInotifyExcludeRegex(wslRoot.posixPath),
       onEvent: (event) => this.handleBridgeEvent(entry, event),
       onEstablished: () => {
         if (this.entriesByRoot.get(entry.root) !== entry) return;

@@ -12,6 +12,7 @@ import {
   resolveClaudeBackgroundTerminalSessionFork,
   resolveClaudeJobsDir,
 } from '@/lib/cli/providers/claude-code/terminal-session-observer';
+import { createTerminalSessionArtifactObserver } from '@/lib/cli/providers/terminal-session-artifact-observer';
 
 /**
  * Forces the bridged topology (Windows server, WSL agent) the packaged app
@@ -23,6 +24,60 @@ function withBridgedPlatform(t: { after: (fn: () => void) => void }): void {
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
   t.after(() => Object.defineProperty(process, 'platform', original));
 }
+
+test('an unresolved artifact root cannot hold terminal launch readiness forever', async (t) => {
+  const observer = createTerminalSessionArtifactObserver({
+    root: new Promise<string>(() => {}),
+    readyTimeoutMs: 10,
+    matchesPath: () => false,
+    readCandidate: () => null,
+    currentProviderSessionId: () => undefined,
+    onObservation: () => {},
+  });
+  t.after(observer.dispose);
+  await observer.ready();
+});
+
+test('a parsed fork waits for the PTY identity to catch up before it is emitted', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-artifact-parent-race-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let currentProviderSessionId = 'thread-old';
+  let readCount = 0;
+  const observed: Array<Record<string, unknown>> = [];
+  const observer = createTerminalSessionArtifactObserver({
+    root,
+    matchesPath: (relativePath) => relativePath.endsWith('.jsonl'),
+    readCandidate: () => {
+      readCount += 1;
+      return {
+        activation: 'active',
+        providerSessionId: 'thread-child',
+        previousProviderSessionId: 'thread-parent',
+      };
+    },
+    currentProviderSessionId: () => currentProviderSessionId,
+    onObservation: (observation) => observed.push(observation),
+  });
+  t.after(observer.dispose);
+  await observer.ready();
+  fs.writeFileSync(path.join(root, 'rollout-child.jsonl'), '{}\n');
+
+  for (let attempt = 0; attempt < 500 && readCount === 0; attempt += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(readCount, 1);
+  assert.equal(observed.length, 0);
+
+  currentProviderSessionId = 'thread-parent';
+  for (let attempt = 0; attempt < 500 && observed.length === 0; attempt += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  assert.deepEqual(observed, [{
+    activation: 'active',
+    providerSessionId: 'thread-child',
+  }]);
+  assert.equal(readCount, 1, 'the parsed candidate should be rechecked without another file read');
+});
 
 test('Codex fork artifacts report the child identity before its first prompt', async (t) => {
   const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-observer-'));

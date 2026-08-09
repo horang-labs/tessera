@@ -222,6 +222,14 @@ test('single-panel terminal sessions omit only the redundant session header', ()
   assert.match(chatAreaSource, /search=\{\{/);
 });
 
+test('terminal Chat View shows transcript loading instead of an empty history surface', () => {
+  assert.match(chatAreaSource, /isLoading: isHistoryLoading/);
+  assert.match(
+    chatAreaSource,
+    /isLoading=\{isLoading \|\| isHistoryLoading\}/,
+  );
+});
+
 test('terminal text and image paste cross the Electron clipboard boundary through one explicit shortcut path', () => {
   assert.match(electronMainSource, /readTerminalClipboard\(clipboard\)/);
   assert.match(electronPreloadSource, /readTerminalClipboard:/);
