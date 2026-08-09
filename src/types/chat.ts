@@ -59,6 +59,12 @@ export interface ToolCallMessage extends BaseEnhancedMessage {
   agentContext?: AgentContextEvent[];
   /** True when output/toolUseResult were stripped for lazy loading (read-only sessions) */
   hasOutput?: boolean;
+  /** Latest live progress tick from the CLI (`tool_progress`) while running. */
+  toolProgress?: {
+    elapsedTimeSeconds: number;
+    heartbeat?: boolean;
+    taskId?: string;
+  };
 }
 
 // Thinking message (NEW)

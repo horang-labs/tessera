@@ -139,6 +139,16 @@ export function handleIncomingServerMessage({
       applySessionReplayEventsToStores(msg.sessionId, msg.events);
       return { wasReconnect };
 
+    case 'tool_progress':
+      // Live-only liveness tick for an in-flight tool card; not persisted,
+      // not a replay event — just patch the running card's progress.
+      chatStore.updateToolCallProgress(msg.sessionId, msg.toolUseId, {
+        elapsedTimeSeconds: msg.elapsedTimeSeconds,
+        ...(msg.heartbeat !== undefined ? { heartbeat: msg.heartbeat } : {}),
+        ...(msg.taskId !== undefined ? { taskId: msg.taskId } : {}),
+      });
+      return { wasReconnect };
+
     case 'notification':
       sessionStore.touchSessionActivity(msg.sessionId);
       handleNotificationMessage(msg, getVisibleWorkspaceSessionId(sessionStore.activeSessionId));

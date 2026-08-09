@@ -258,6 +258,9 @@ export class ClaudeCodeProtocolParser {
       case 'stream_event':
         results = this.handleStreamEvent(sessionId, msg);
         break;
+      case 'tool_progress':
+        results = this.handleToolProgress(sessionId, msg);
+        break;
       default: {
         if (KNOWN_IGNORED_MESSAGE_TYPES.has(msg.type)) {
           logger.debug('Ignoring known benign CLI message type', { sessionId, type: msg.type });
@@ -1233,6 +1236,55 @@ export class ClaudeCodeProtocolParser {
     }
 
     return results;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Handler: tool_progress
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Handle top-level `tool_progress` messages (CLI >= 2.1.x).
+   *
+   * The CLI emits these while a tool call is in flight: `bash_progress` /
+   * `powershell_progress` output ticks, 30s `tool_heartbeat`s for any long
+   * tool, and REPL/subagent-retry variants. They carry no result content —
+   * only liveness (`elapsed_time_seconds`, optional `task_id` / `heartbeat`)
+   * — so they are forwarded as a lightweight live-only `tool_progress` server
+   * message that updates the running tool card without touching history.
+   */
+  private handleToolProgress(sessionId: string, msg: CliMessage): ParsedMessage[] {
+    const raw = msg as any;
+    const toolUseId = raw.tool_use_id;
+
+    if (typeof toolUseId !== 'string' || !toolUseId) {
+      logger.debug('tool_progress without tool_use_id', { sessionId });
+      return [];
+    }
+
+    const elapsedTimeSeconds = typeof raw.elapsed_time_seconds === 'number'
+      ? raw.elapsed_time_seconds
+      : 0;
+
+    logger.debug('Tool progress received', {
+      sessionId,
+      toolUseId,
+      toolName: raw.tool_name,
+      elapsedTimeSeconds,
+      heartbeat: raw.heartbeat === true,
+    });
+
+    return [{
+      serverMessage: {
+        type: 'tool_progress',
+        sessionId,
+        toolUseId,
+        ...(typeof raw.tool_name === 'string' ? { toolName: raw.tool_name } : {}),
+        elapsedTimeSeconds,
+        ...(raw.heartbeat === true ? { heartbeat: true } : {}),
+        ...(typeof raw.task_id === 'string' ? { taskId: raw.task_id } : {}),
+        timestamp: new Date().toISOString(),
+      },
+    }];
   }
 
   // ---------------------------------------------------------------------------

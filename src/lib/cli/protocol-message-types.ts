@@ -58,7 +58,8 @@ export type CliMessage = {
     | 'tool_result'
     | 'control_request'
     | 'control_response'
-    | 'stream_event';
+    | 'stream_event'
+    | 'tool_progress';
   session_id: string;
   uuid: string;
   timestamp?: string;

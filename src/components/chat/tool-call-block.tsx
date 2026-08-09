@@ -13,7 +13,7 @@ import {
 } from './tool-call-block-utils';
 import { useToolCallOutput } from './use-tool-call-output';
 
-export { getToolIcon, getToolSummary, shortenToolName } from './tool-call-block-utils';
+export { getToolIcon, getToolSummary, shortenToolName, formatElapsedSeconds } from './tool-call-block-utils';
 
 interface ToolCallBlockProps extends Omit<ToolCallMessage, 'timestamp'> {
   defaultExpanded?: boolean;
@@ -33,6 +33,7 @@ export const ToolCallBlock = memo(function ToolCallBlock({
   hasOutput,
   sessionId,
   toolUseId: explicitToolUseId,
+  toolProgress,
   defaultExpanded,
   inGrid = false,
 }: ToolCallBlockProps) {
@@ -109,6 +110,7 @@ export const ToolCallBlock = memo(function ToolCallBlock({
           statusColor={statusColor}
           isError={isError}
           isRunning={isRunning}
+          elapsedSeconds={isRunning ? toolProgress?.elapsedTimeSeconds : undefined}
           onToggle={toggleExpand}
         />
       )}
