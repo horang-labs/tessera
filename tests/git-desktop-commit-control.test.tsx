@@ -4,9 +4,11 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   GitWorkingTreeDiffStatButton,
-  supportsDesktopDeliveryControl,
+  supportsDesktopGitControl,
 } from '../src/components/git/git-desktop-commit-control';
 import type { GitPanelData } from '../src/types/git';
+import { resolvePendingLabelKey } from '../src/components/git/git-primary-action';
+import { derivePrimaryGitAction } from '../src/lib/git/primary-git-action';
 
 const DIRTY_DATA = {
   changedFiles: [{ path: 'a.ts' }, { path: 'b.ts' }],
@@ -35,15 +37,32 @@ test('the desktop diff target exposes the whole worktree stat without relying on
   assert.match(html, />−4</);
 });
 
-test('only complete dirty commit states opt into the desktop control', () => {
-  assert.equal(supportsDesktopDeliveryControl(DIRTY_DATA, 'commit'), true);
-  assert.equal(supportsDesktopDeliveryControl(DIRTY_DATA, 'conflict'), true);
+test('every loaded worktree keeps the desktop Git control', () => {
+  assert.equal(supportsDesktopGitControl(DIRTY_DATA), true);
+  assert.equal(supportsDesktopGitControl({ ...DIRTY_DATA, changedFiles: [] }), true);
   assert.equal(
-    supportsDesktopDeliveryControl({ ...DIRTY_DATA, changedFilesTruncated: true }, 'commit'),
-    false,
+    supportsDesktopGitControl({ ...DIRTY_DATA, changedFilesTruncated: true }),
+    true,
   );
+  assert.equal(supportsDesktopGitControl(null), false);
+  assert.equal(supportsDesktopGitControl(null, true), true);
+});
+
+test('pending copy names the menu action actually running', () => {
+  const pull = derivePrimaryGitAction({
+    branch: 'feature/test',
+    upstream: 'origin/feature/test',
+    ahead: 0,
+    behind: 2,
+    changedFileCount: 0,
+    hasRemote: true,
+    pullRequest: 'none',
+    defaultBranch: 'main',
+    conflictOperation: null,
+  });
+
   assert.equal(
-    supportsDesktopDeliveryControl({ ...DIRTY_DATA, diffStats: null }, 'commit'),
-    false,
+    resolvePendingLabelKey(pull, 'publish' as never),
+    'gitPanel.push.publishButtonPending',
   );
 });

@@ -1111,6 +1111,7 @@ export interface I18nMessages {
       publishButton: string;
       publishButtonPending: string;
       nothingToPush: string;
+      pullFirst: string;
       successToast: string;
       successNoUpstreamToast: string;
       publishedToast: string;
@@ -1149,10 +1150,13 @@ export interface I18nMessages {
       failureToast: string;
       createButton: string;
       createButtonPending: string;
+      viewButton: string;
       defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
       noUpstream: string;
+      pullFirst: string;
+      pushFirst: string;
       alreadyOpen: string;
     };
     conflict: {
@@ -1179,13 +1183,16 @@ export interface I18nMessages {
       abortFailureToast: string;
     };
     primary: {
+      loading: string;
       stateUnknown: string;
       detachedHead: string;
       noRemote: string;
+      upToDate: string;
     };
     menu: {
       label: string;
       pending: string;
+      openSourceControl: string;
     };
     failure: {
       commitTitle: string;

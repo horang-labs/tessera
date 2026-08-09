@@ -2,11 +2,16 @@
 
 import React, { memo, useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { GitCommitHorizontal, TriangleAlert, X } from "lucide-react";
+import {
+  AlertCircle,
+  GitCommitHorizontal,
+  LoaderCircle,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { useAnchoredPopover } from "@/hooks/use-anchored-popover";
 import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
 import { useI18n } from "@/lib/i18n";
-import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import { cn } from "@/lib/utils";
 import {
   ANCHORED_VIEWPORT_MARGIN,
@@ -16,7 +21,10 @@ import { useGitStore } from "@/stores/git-store";
 import type { GitPanelData } from "@/types/git";
 import type { WorktreeDiffStats } from "@/types/worktree-diff-stats";
 import { GitActionMenu } from "./git-action-menu";
+import { GitActionFailureBanner } from "./git-action-failure-banner";
+import { GIT_FAILURE_TITLE_KEY } from "./git-action-report";
 import { GitCommitForm } from "./git-commit-form";
+import { resolvePendingLabelKey } from "./git-primary-action";
 import {
   useSharedGitPanelController,
   type GitPanelController,
@@ -31,22 +39,17 @@ interface ComposerPosition {
 
 const COMPOSER_WIDTH = 376;
 
-export function supportsDesktopDeliveryControl(
+export function supportsDesktopGitControl(
   data: GitPanelData | null,
-  actionKind: GitPrimaryAction["kind"],
+  hasActiveSession = false,
 ): boolean {
+  return Boolean(data || hasActiveSession);
+}
+
+function supportsCompactCommitComposer(data: GitPanelData): boolean {
   return Boolean(
-    data
-      && (
-        actionKind === "conflict"
-        || (
-          actionKind === "commit"
-          && data.changedFiles.length > 0
-          && !data.changedFilesTruncated
-          && data.diffStats
-          && data.diffStats.changedFiles > 0
-        )
-      ),
+    data.changedFiles.length > 0
+      && !data.changedFilesTruncated,
   );
 }
 
@@ -83,19 +86,14 @@ export function GitWorkingTreeDiffStatButton({
 export const GitDesktopDeliveryControl = memo(function GitDesktopDeliveryControl() {
   const controller = useSharedGitPanelController();
   const data = controller.data;
-  if (
-    !supportsDesktopDeliveryControl(data, controller.primaryAction.kind)
-    || !data
-  ) {
+  const stats = data?.diffStats ?? null;
+  if (!supportsDesktopGitControl(data, controller.hasActiveSession)) {
     return null;
   }
 
-  if (controller.primaryAction.kind === "conflict") {
+  if (data && controller.primaryAction.kind === "conflict") {
     return <GitDesktopConflictControl controller={controller} />;
   }
-
-  const stats = data.diffStats;
-  if (!stats) return null;
 
   return (
     <GitDesktopCommitControlView
@@ -147,8 +145,8 @@ function GitDesktopCommitControlView({
   stats,
 }: {
   controller: GitPanelController;
-  data: GitPanelData;
-  stats: WorktreeDiffStats;
+  data: GitPanelData | null;
+  stats: WorktreeDiffStats | null;
 }) {
   const { t } = useI18n();
   const [composerOpen, setComposerOpen] = useState(false);
@@ -156,6 +154,10 @@ function GitDesktopCommitControlView({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const closeComposer = useCallback(() => setComposerOpen(false), []);
+  const canOpenComposer =
+    data !== null
+    && controller.primaryAction.kind === "commit"
+    && supportsCompactCommitComposer(data);
   const { position, updatePosition } = useAnchoredPopover({
     isOpen: composerOpen,
     onClose: closeComposer,
@@ -165,8 +167,8 @@ function GitDesktopCommitControlView({
     calculatePosition: calculateComposerPosition,
   });
 
-  const worktreeName = data.worktreeName
-    || data.repoName
+  const worktreeName = data?.worktreeName
+    || data?.repoName
     || t("gitPanel.commit.worktreeFallback");
 
   useCloseOnEscape(closeComposer, { enabled: composerOpen });
@@ -177,9 +179,18 @@ function GitDesktopCommitControlView({
   }, [closeComposer]);
 
   const openComposer = useCallback(() => {
+    if (!canOpenComposer) {
+      openChangedFiles();
+      return;
+    }
     updatePosition();
     setComposerOpen(true);
-  }, [updatePosition]);
+  }, [canOpenComposer, openChangedFiles, updatePosition]);
+
+  const runPrimary = useCallback(() => {
+    if (controller.primaryAction.kind === "commit") return openComposer();
+    return controller.runPrimaryAction();
+  }, [controller, openComposer]);
 
   const commitFromComposer = useCallback(async () => {
     const committed = await controller.runPrimaryAction();
@@ -188,10 +199,25 @@ function GitDesktopCommitControlView({
 
   const composerLabel = t("gitPanel.commit.composerLabel", { worktree: worktreeName });
   const diffLabel = t("gitPanel.commit.diffStatLabel", {
-    added: stats.added,
-    removed: stats.removed,
-    files: stats.changedFiles,
+    added: stats?.added ?? 0,
+    removed: stats?.removed ?? 0,
+    files: stats?.changedFiles ?? 0,
   });
+  const pending = controller.pendingVerb !== null;
+  const actionLabelKey = controller.pendingVerb
+    ? resolvePendingLabelKey(controller.primaryAction, controller.pendingVerb)
+    : controller.primaryAction.labelKey;
+  const actionLabelParams = controller.pendingVerb
+    ? undefined
+    : controller.primaryAction.labelParams;
+  const disabled = pending || !controller.primaryAction.enabled;
+  const disabledReason = controller.primaryAction.disabledReasonKey
+    ? t(controller.primaryAction.disabledReasonKey)
+    : undefined;
+  const actionLabel = t(actionLabelKey, actionLabelParams);
+  const accessibleActionLabel = disabledReason
+    ? `${actionLabel} — ${disabledReason}`
+    : actionLabel;
 
   return (
     <div
@@ -202,29 +228,59 @@ function GitDesktopCommitControlView({
       <button
         ref={triggerRef}
         type="button"
-        onClick={composerOpen ? closeComposer : openComposer}
-        disabled={controller.pendingVerb !== null}
-        aria-haspopup="dialog"
+        onClick={composerOpen ? closeComposer : runPrimary}
+        disabled={disabled}
+        aria-haspopup={canOpenComposer ? "dialog" : undefined}
         aria-expanded={composerOpen}
-        aria-controls="desktop-commit-composer"
-        aria-busy={controller.pendingVerb !== null}
-        aria-label={t("gitPanel.commit.openComposer", { worktree: worktreeName })}
-        title={t("gitPanel.commit.openComposer", { worktree: worktreeName })}
+        aria-controls={canOpenComposer ? "desktop-commit-composer" : undefined}
+        aria-busy={pending}
+        aria-label={accessibleActionLabel}
+        title={disabledReason ?? actionLabel}
         data-testid="desktop-commit-primary"
+        data-git-action={controller.primaryAction.kind}
         className={cn(
           "flex h-full shrink-0 items-center gap-1.5 px-3 text-xs font-semibold transition-colors hover:bg-(--sidebar-hover) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent) disabled:cursor-wait disabled:opacity-60",
           composerOpen && "bg-(--accent)/14 text-(--accent)",
         )}
       >
-        <GitCommitHorizontal className="h-3.5 w-3.5" />
-        <span>{t(controller.pendingVerb ? "gitPanel.commit.buttonPending" : "gitPanel.commit.button")}</span>
+        {pending ? (
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <GitCommitHorizontal className="h-3.5 w-3.5" />
+        )}
+        <span>{actionLabel}</span>
       </button>
 
-      <GitWorkingTreeDiffStatButton
-        accessibleLabel={diffLabel}
-        onOpen={openChangedFiles}
-        stats={stats}
-      />
+      {stats && stats.changedFiles > 0 ? (
+        <GitWorkingTreeDiffStatButton
+          accessibleLabel={diffLabel}
+          onOpen={openChangedFiles}
+          stats={stats}
+        />
+      ) : null}
+
+      {controller.actionFailure ? (
+        <details
+          className="relative flex h-full shrink-0 items-stretch border-l border-(--divider)"
+          data-testid="desktop-git-action-failure"
+        >
+          <summary
+            className="flex h-full cursor-pointer list-none items-center gap-1.5 px-2 text-[11px] font-semibold text-(--status-error-text) transition-colors hover:bg-(--sidebar-hover) [&::-webkit-details-marker]:hidden"
+            title={t(GIT_FAILURE_TITLE_KEY[controller.actionFailure.verb])}
+          >
+            <AlertCircle className="h-3.5 w-3.5" />
+            <span className="hidden 2xl:inline">
+              {t(GIT_FAILURE_TITLE_KEY[controller.actionFailure.verb])}
+            </span>
+          </summary>
+          <div className="absolute right-0 top-[calc(100%+6px)] z-60 w-[min(24rem,calc(100vw-16px))]">
+            <GitActionFailureBanner
+              report={controller.actionFailure}
+              onDismiss={controller.dismissActionFailure}
+            />
+          </div>
+        </details>
+      ) : null}
 
       <GitActionMenu
         actions={controller.menuActions}
@@ -238,7 +294,7 @@ function GitDesktopCommitControlView({
         triggerClassName="h-full w-8 rounded-none border-0 border-l border-(--divider)"
       />
 
-      {composerOpen && position && typeof document !== "undefined"
+      {composerOpen && canOpenComposer && position && typeof document !== "undefined"
         ? createPortal(
           <div
             id="desktop-commit-composer"
@@ -298,7 +354,7 @@ function GitDesktopCommitControlView({
                   <p className="border-b border-(--divider) px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-(--text-muted)">
                     {t("gitPanel.commit.changedFiles")}
                   </p>
-                  {data.changedFiles.map((file) => (
+                  {(data?.changedFiles ?? []).map((file) => (
                     <label
                       key={file.path}
                       className="flex cursor-pointer items-center gap-2 border-b border-(--divider)/60 px-2 py-1.5 last:border-b-0 hover:bg-(--sidebar-hover)"
