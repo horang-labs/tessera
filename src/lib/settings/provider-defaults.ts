@@ -554,6 +554,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     notifications: {
       soundEnabled: true,
       showToast: true,
+      pushEnabled: true,
       aiTitleRefinement: true,
     },
     translate: {
@@ -679,6 +680,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     notifications: {
       soundEnabled: raw?.notifications?.soundEnabled ?? defaults.notifications.soundEnabled,
       showToast: raw?.notifications?.showToast ?? defaults.notifications.showToast,
+      pushEnabled: raw?.notifications?.pushEnabled ?? defaults.notifications.pushEnabled,
       aiTitleRefinement:
         raw?.notifications?.aiTitleRefinement ?? defaults.notifications.aiTitleRefinement,
     },

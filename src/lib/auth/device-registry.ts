@@ -14,6 +14,7 @@ export type { PairingRequest, PairingRequestStatus } from './pairing-contract';
 const DEVICE_TOKEN_BYTES = 32;
 const TOKEN_LENGTH = 43;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const PUSH_KEY_PATTERN = /^[A-Za-z0-9_-]{8,256}$/;
 const MAX_CONSUMED_PAIRING_TOKENS = 16;
 const CONSUMED_PAIRING_TOKEN_RETENTION_MS = 24 * 60 * 60 * 1000;
 const PAIRING_REQUEST_RETENTION_MS = 5 * 60 * 1000;
@@ -32,6 +33,7 @@ interface StoredDevice {
   name: string;
   registeredAt: string;
   lastSeenAt: string | null;
+  pushSubscription?: DevicePushSubscription | null;
 }
 
 interface StoredPairingToken {
@@ -64,6 +66,28 @@ export interface PairedDevice {
   name: string;
   registeredAt: string;
   lastSeenAt: string | null;
+}
+
+export interface DevicePushSubscription {
+  endpoint: string;
+  expirationTime: number | null;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+function copyDevicePushSubscription(
+  subscription: DevicePushSubscription,
+): DevicePushSubscription {
+  return {
+    endpoint: subscription.endpoint,
+    expirationTime: subscription.expirationTime,
+    keys: {
+      p256dh: subscription.keys.p256dh,
+      auth: subscription.keys.auth,
+    },
+  };
 }
 
 export interface IssuedPairingToken {
@@ -138,10 +162,40 @@ store.pairingRequests ??= new Map();
 function cloneState(state: RegistryState): RegistryState {
   return {
     version: 1,
-    devices: state.devices.map((device) => ({ ...device })),
+    devices: state.devices.map((device) => ({
+      ...device,
+      pushSubscription: device.pushSubscription
+        ? copyDevicePushSubscription(device.pushSubscription)
+        : null,
+    })),
     pairingToken: state.pairingToken ? { ...state.pairingToken } : null,
     consumedPairingTokens: state.consumedPairingTokens.map((token) => ({ ...token })),
   };
+}
+
+export function isDevicePushSubscription(value: unknown): value is DevicePushSubscription {
+  if (!value || typeof value !== 'object') return false;
+  const subscription = value as Partial<DevicePushSubscription>;
+  if (
+    typeof subscription.endpoint !== 'string'
+    || subscription.endpoint.length > 2_048
+    || !subscription.keys
+    || typeof subscription.keys.p256dh !== 'string'
+    || typeof subscription.keys.auth !== 'string'
+    || !PUSH_KEY_PATTERN.test(subscription.keys.p256dh)
+    || !PUSH_KEY_PATTERN.test(subscription.keys.auth)
+  ) return false;
+  try {
+    if (new URL(subscription.endpoint).protocol !== 'https:') return false;
+  } catch {
+    return false;
+  }
+  return subscription.expirationTime === null
+    || (
+      typeof subscription.expirationTime === 'number'
+      && Number.isFinite(subscription.expirationTime)
+      && subscription.expirationTime > 0
+    );
 }
 
 function isStoredDevice(value: unknown): value is StoredDevice {
@@ -160,6 +214,11 @@ function isStoredDevice(value: unknown): value is StoredDevice {
         typeof device.lastSeenAt === 'string'
         && Number.isFinite(Date.parse(device.lastSeenAt))
       )
+    )
+    && (
+      device.pushSubscription === undefined
+      || device.pushSubscription === null
+      || isDevicePushSubscription(device.pushSubscription)
     );
 }
 
@@ -629,6 +688,49 @@ export async function listDevices(): Promise<PairedDevice[]> {
   await store.mutationQueue;
   await ensureLoaded();
   return store.state.devices.map(publicDevice);
+}
+
+export async function getDevicePushSubscription(
+  deviceId: string,
+): Promise<DevicePushSubscription | null> {
+  await store.mutationQueue;
+  await ensureLoaded();
+  const subscription = store.state.devices.find((device) => device.id === deviceId)
+    ?.pushSubscription;
+  return subscription
+    ? copyDevicePushSubscription(subscription)
+    : null;
+}
+
+export async function listDevicePushSubscriptions(): Promise<DevicePushSubscription[]> {
+  await store.mutationQueue;
+  await ensureLoaded();
+  return store.state.devices.flatMap((device) => (
+    device.pushSubscription
+      ? [copyDevicePushSubscription(device.pushSubscription)]
+      : []
+  ));
+}
+
+export async function replaceDevicePushSubscription(
+  deviceId: string,
+  subscription: DevicePushSubscription,
+): Promise<boolean> {
+  return mutate((state) => {
+    const device = state.devices.find((candidate) => candidate.id === deviceId);
+    if (!device) return false;
+    device.pushSubscription = copyDevicePushSubscription(subscription);
+    return true;
+  }, (replaced) => replaced);
+}
+
+export async function deleteDevicePushSubscription(deviceId: string): Promise<boolean> {
+  return mutate((state) => {
+    const device = state.devices.find((candidate) => candidate.id === deviceId);
+    if (!device?.pushSubscription) return false;
+    device.pushSubscription = null;
+    return true;
+  }, (deleted) => deleted);
 }
 
 /**

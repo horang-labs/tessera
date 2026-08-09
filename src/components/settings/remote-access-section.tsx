@@ -31,6 +31,7 @@ import type { MobileAccessStatus } from '@/lib/mobile-access/mobile-access-coord
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
 import PairedDeviceManagement from './paired-device-management';
+import { PushNotificationControls } from '@/components/pwa/push-notification-controls';
 
 interface PairingPresentation {
   pairingLink: string;
@@ -650,6 +651,8 @@ export default function RemoteAccessSection() {
           </p>
         </div>
       </div>
+
+      <PushNotificationControls />
 
       {hasMobileAccessCoordinator ? (
         <div

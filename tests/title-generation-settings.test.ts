@@ -9,7 +9,7 @@ test('new installations refine the immediate local title with AI', () => {
 test('an explicit opt-out survives normalization', () => {
   assert.equal(
     normalizeUserSettings({
-      notifications: { soundEnabled: true, showToast: true, aiTitleRefinement: false },
+      notifications: { soundEnabled: true, showToast: true, pushEnabled: true, aiTitleRefinement: false },
     }).notifications.aiTitleRefinement,
     false,
   );
@@ -17,7 +17,7 @@ test('an explicit opt-out survives normalization', () => {
 
 test('AI refinement stays on when the option is explicitly enabled', () => {
   const settings = normalizeUserSettings({
-    notifications: { soundEnabled: true, showToast: true, aiTitleRefinement: true },
+    notifications: { soundEnabled: true, showToast: true, pushEnabled: true, aiTitleRefinement: true },
   });
 
   assert.equal(settings.notifications.aiTitleRefinement, true);

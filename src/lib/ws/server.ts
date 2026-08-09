@@ -33,6 +33,7 @@ import {
 } from './server-message-routing';
 import { WebSocketServerHeartbeat, WS_HEARTBEAT_INTERVAL_MS } from './server-heartbeat';
 import { isDeviceRegistered } from '../auth/device-registry';
+import { scheduleWebPushForTransportMessage } from '../push/web-push-dispatcher';
 
 // Supports five 5MiB image attachments after base64 expansion; lowering this
 // to a generic RPC-sized cap would break the existing composer contract.
@@ -41,10 +42,11 @@ export const MAX_WS_CONNECTIONS = 128;
 export const MAX_TCP_CONNECTIONS = MAX_WS_CONNECTIONS * 2;
 const WS_REJECTION_GRACE_MS = 1_000;
 
-interface WebSocketServerOptions {
+export interface WebSocketServerOptions {
   maxConnections?: number;
   heartbeatIntervalMs?: number;
   rejectionGraceMs?: number;
+  scheduleWebPush?: (userId: string, message: ServerTransportMessage) => void;
 }
 
 export interface WebSocketIdentity {
@@ -111,12 +113,14 @@ export class WebSocketServer {
   private readonly rejectionGraceMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeat: WebSocketServerHeartbeat;
+  private readonly scheduleWebPush: (userId: string, message: ServerTransportMessage) => void;
 
   constructor(options: WebSocketServerOptions = {}) {
     this.maxConnections = options.maxConnections ?? MAX_WS_CONNECTIONS;
     this.rejectionGraceMs = options.rejectionGraceMs ?? WS_REJECTION_GRACE_MS;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? WS_HEARTBEAT_INTERVAL_MS;
     this.heartbeat = new WebSocketServerHeartbeat(this.heartbeatIntervalMs);
+    this.scheduleWebPush = options.scheduleWebPush ?? scheduleWebPushForTransportMessage;
   }
 
   /**
@@ -250,6 +254,7 @@ export class WebSocketServer {
    */
   sendToUser(userId: string, message: ServerTransportMessage): void {
     sessionHistory.recordTransportMessage(message);
+    this.scheduleWebPush(userId, message);
 
     if (message.type === 'rate_limit_update') {
       const cachedByProvider = this.rateLimitCache.get(userId) ?? new Map();
