@@ -1111,6 +1111,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         .find((project) => project.encodedDir === projectDir)
         ?.sessions.find((session) => session.id === sessionId);
       if (projectedSession) return projectedSession;
+
+      // An open tab can outlive pagination or a branch projection refresh. Use
+      // another appearance only as the canonical payload; never leak its local
+      // Project or Collection placement into the requested Project view.
+      const canonicalSession = projects
+        .flatMap((project) => project.sessions)
+        .find((session) => session.id === sessionId)
+        ?? retainedSessions[sessionId];
+      return canonicalSession
+        ? { ...canonicalSession, projectDir, collectionId: undefined }
+        : undefined;
     }
     for (const project of projects) {
       const session = project.sessions.find((s) => s.id === sessionId);

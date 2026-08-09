@@ -130,3 +130,23 @@ test('reload restores each tab through its selected Project projection', () => {
   assert.equal(useTabStore.getState().activeTabId, tabA);
   assert.equal(useTabStore.getState().tabs[0].projectDir, 'project-a');
 });
+
+test('an explicit Project lookup never leaks another Project Collection placement', () => {
+  resetWorkspace();
+  const sessionInA = {
+    ...sharedSession,
+    collectionId: 'collection-a',
+  };
+  useSessionStore.setState({
+    ...useSessionStore.getInitialState(),
+    projects: [
+      { ...project('project-a'), sessions: [sessionInA] },
+      { ...project('project-c'), sessions: [] },
+    ],
+  });
+
+  const sessionInC = useSessionStore.getState().getSession(sharedSession.id, 'project-c');
+  assert.equal(sessionInC?.projectDir, 'project-c');
+  assert.equal(sessionInC?.collectionId, undefined);
+  assert.equal(sessionInC?.originProjectId, 'project-a');
+});

@@ -63,6 +63,13 @@ test('normal Kanban clicks open Peek without replacing the active tab session', 
   assert.match(leftPanelSource, /<SessionPeek[\s\S]*sessionId=\{peekSessionId \?\? peekFileRef!\.sourceSessionId\}/);
 });
 
+test('Project-scoped Peek resolves the Session through the selected Project view', () => {
+  assert.match(peekSource, /const selectedProjectDir = useBoardStore/);
+  assert.match(peekSource, /state\.getSession\(sessionId, projectViewDir\)/);
+  assert.match(peekSource, /projectViewDir=\{projectViewDir\}/);
+  assert.match(chatAreaSource, /projectViewDir\?: string \| null/);
+});
+
 test('Session Peek light-dismisses safely and hosts the shared GUI or PTY session surface', () => {
   assert.match(peekSource, /role="dialog"/);
   assert.match(peekSource, /aria-modal="true"/);

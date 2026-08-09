@@ -36,6 +36,7 @@ interface ChatAreaProps {
   sessionId: string;
   panelId: string;
   presentation?: 'panel' | 'peek';
+  projectViewDir?: string | null;
 }
 
 const PEEK_LOADING_DELAY_MS = 300;
@@ -44,6 +45,7 @@ export const ChatArea = memo(function ChatArea({
   sessionId,
   panelId,
   presentation = 'panel',
+  projectViewDir: explicitProjectViewDir,
 }: ChatAreaProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
@@ -64,9 +66,12 @@ export const ChatArea = memo(function ChatArea({
   const isPreviewTab = useTabStore(
     (state) => !isPeek && (state.tabs.find((tab) => tab.id === tabId)?.isPreview ?? false),
   );
-  const projectViewDir = useTabStore(
-    (state) => isPeek ? null : state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null,
+  const tabProjectViewDir = useTabStore(
+    (state) => state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null,
   );
+  const projectViewDir = explicitProjectViewDir === undefined
+    ? tabProjectViewDir
+    : explicitProjectViewDir;
   const { windowedMessages, hasMore, loadMore, isLoadingMore } =
     useWindowedMessages(sessionId);
   const isSinglePanel = usePanelStore(
