@@ -291,6 +291,8 @@ export type AppServerMessage =
       status: 'running' | 'completed' | 'input_required' | 'idle';
       hookEvent: string;
       preview?: string;
+      /** Present only on live delivery; cached connection replay bypasses Push. */
+      eventId?: string;
       /** Active child work prevents an Escape fallback from settling the turn. */
       hasWorkingSubagents?: boolean;
       /**

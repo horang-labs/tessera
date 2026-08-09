@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { after, before, beforeEach } from 'node:test';
 import { NextRequest } from 'next/server';
+import { WebSocket } from 'ws';
 import { pairApprovedDevice } from './helpers/approved-device';
 
 let tempDir: string;
@@ -246,9 +247,14 @@ test('all five Session Notification kinds schedule one bounded navigation-only P
 test('the server send-to-user seam creates or preserves an event ID before fan-out', async () => {
   const { WebSocketServer } = await import('../src/lib/ws/server');
   const scheduled: unknown[] = [];
+  const websocketMessages: any[] = [];
   const server = new WebSocketServer({
     scheduleWebPush: (userId, message) => scheduled.push({ userId, message }),
   });
+  (server as any).connections.set('user-1', new Set([{
+    readyState: WebSocket.OPEN,
+    send: (payload: string) => websocketMessages.push(JSON.parse(payload)),
+  }]));
   const generated = {
     type: 'notification' as const,
     sessionId: 'session-1',
@@ -268,8 +274,47 @@ test('the server send-to-user seam creates or preserves an event ID before fan-o
   server.sendToUser('user-1', preserved);
 
   assert.equal(scheduled.length, 2);
-  assert.match((scheduled[0] as any).message.eventId, /^[0-9a-f-]{36}$/);
+  assert.equal(websocketMessages.length, 2);
+  assert.match(websocketMessages[0].eventId, /^[0-9a-f-]{36}$/);
+  assert.equal((scheduled[0] as any).message.eventId, websocketMessages[0].eventId);
   assert.equal((scheduled[1] as any).message.eventId, 'upstream-event-id');
+  assert.equal(websocketMessages[1].eventId, 'upstream-event-id');
+});
+
+test('a live terminal input-required state is eligible but its cached copy is not replayed to Push', async () => {
+  const { createWebPushDispatcher } = await import('../src/lib/push/web-push-dispatcher');
+  const sent: string[] = [];
+  const dispatch = createWebPushDispatcher({
+    loadSettings: async () => ({ notifications: { pushEnabled: true } }),
+    listSubscriptions: async () => [{
+      endpoint: 'https://push.example.test/terminal', expirationTime: null,
+      keys: { p256dh: 'public', auth: 'auth' },
+    }],
+    sendNotification: async (_subscription, payload) => { sent.push(payload); },
+  });
+  const state = {
+    type: 'session_state' as const,
+    sessionId: 'terminal-session',
+    terminalId: 'terminal-1',
+    status: 'input_required' as const,
+    hookEvent: 'PermissionRequest',
+    preview: 'Terminal approval required',
+    stateAt: 123,
+  };
+
+  dispatch('user-1', { ...state, eventId: 'terminal-live-event' });
+  dispatch('user-1', state);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(sent.length, 1);
+  assert.deepEqual(JSON.parse(sent[0]), {
+    kind: 'input_required',
+    eventId: 'terminal-live-event',
+    title: 'Input required.',
+    preview: 'Terminal approval required',
+    sessionId: 'terminal-session',
+    url: '/chat?session=terminal-session',
+  });
 });
 
 test('non-Session Notification transport and replay messages never schedule Push', async () => {

@@ -11,8 +11,6 @@ import {
 } from '@/lib/chat/session-client-effects';
 import { serverMessageToReplayEvents } from '@/lib/chat/server-message-to-replay-events';
 import { useChatStore } from '@/stores/chat-store';
-import { useBoardStore } from '@/stores/board-store';
-import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
@@ -20,7 +18,6 @@ import { useNotificationStore } from '@/stores/notification-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useRateLimitStore } from '@/stores/rate-limit-store';
 import { useSessionStore } from '@/stores/session-store';
-import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionPrStore } from '@/stores/session-pr-store';
 import { useSkillAnalysisStore } from '@/stores/skill-analysis-store';
 import { useTaskStore } from '@/stores/task-store';
@@ -32,7 +29,6 @@ import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
-import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 import {
   describeSessionNotification,
   sessionNotificationUrl,
@@ -63,21 +59,6 @@ const COMPACT_REQUEST_ERROR_CODES = new Set([
   'session_compact_unavailable',
   'session_compact_failed',
 ]);
-
-function getVisibleWorkspaceSessionId(activeSessionId: string | null): string | null {
-  const boardState = useBoardStore.getState();
-  const settingsState = useSettingsStore.getState();
-  return resolveVisibleWorkspaceSessionId({
-    activeSessionId,
-    peekSessionId: boardState.peekSessionId,
-    // The rendered mode, so this agrees with what chat-layout passes for the
-    // same screen — a phone renders the list and has no peek layout.
-    isKanbanPeekLayout:
-      getRenderedViewMode() === 'board'
-      && settingsState.settings.kanbanSessionOpenMode === 'peek'
-      && !settingsState.sidebarCollapsed,
-  });
-}
 
 export function handleIncomingServerMessage({
   msg,
@@ -175,10 +156,7 @@ export function handleIncomingServerMessage({
         if (location) useTabStore.getState().pinTab(location.tabId);
       }
       if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
-        handleTerminalSessionStateMessage(
-          msg,
-          getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
-        );
+        handleTerminalSessionStateMessage(msg);
       }
       return { wasReconnect };
     }
@@ -623,26 +601,8 @@ function handleNotificationMessage(
 
 function handleTerminalSessionStateMessage(
   msg: Extract<ServerTransportMessage, { type: 'session_state' }>,
-  activeSessionId: string | null,
 ): void {
-  const notificationStore = useNotificationStore.getState();
-  if (msg.sessionId === activeSessionId) {
-    notificationStore.playSound();
-    return;
-  }
-
-  const added = notificationStore.addNotification({
-    sessionId: msg.sessionId,
-    type: msg.status === 'completed' ? 'completed' : 'input_required',
-    preview: msg.preview
-      ?? (msg.status === 'completed'
-        ? 'Terminal task completed'
-        : 'Terminal is waiting for input'),
-    dedupKey: msg.stateAt != null
-      ? `${msg.sessionId}:${msg.status}:${msg.stateAt}`
-      : undefined,
-  });
-  if (added) useSessionStore.getState().incrementUnreadCount(msg.sessionId);
+  presentWebSocketSessionNotification(msg);
 }
 
 function handleInteractivePromptMessage(
@@ -655,13 +615,18 @@ function handleInteractivePromptMessage(
 }
 
 function presentWebSocketSessionNotification(
-  msg: Extract<ServerTransportMessage, { type: 'notification' | 'interactive_prompt' }>,
+  msg: Extract<ServerTransportMessage, {
+    type: 'notification' | 'interactive_prompt' | 'session_state';
+  }>,
 ): void {
   const description = describeSessionNotification(msg);
   if (!description) return;
   presentSessionNotificationOnPage({
     ...description,
-    eventId: msg.eventId ?? uuidv4(),
+    eventId: msg.eventId
+      ?? (msg.type === 'session_state' && msg.stateAt != null
+        ? `${msg.sessionId}:${msg.status}:${msg.stateAt}`
+        : uuidv4()),
     url: sessionNotificationUrl(description.sessionId, description.promptId),
     source: 'websocket',
     ...(msg.type === 'notification' && msg.actions ? { actions: msg.actions } : {}),

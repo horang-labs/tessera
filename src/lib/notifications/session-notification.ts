@@ -66,6 +66,19 @@ function nonEmpty(value: unknown): string | null {
 export function describeSessionNotification(
   message: ServerTransportMessage,
 ): SessionNotificationDescription | null {
+  if (message.type === 'session_state'
+    && (message.status === 'completed' || message.status === 'input_required')) {
+    const kind = message.status;
+    const fallback = SESSION_NOTIFICATION_FALLBACKS[kind];
+    return {
+      kind,
+      sessionId: message.sessionId,
+      title: fallback.title,
+      preview: nonEmpty(message.preview)
+        ?? (kind === 'completed' ? 'Terminal task completed' : 'Terminal is waiting for input'),
+    };
+  }
+
   if (message.type === 'notification') {
     const kind = message.event;
     const fallback = SESSION_NOTIFICATION_FALLBACKS[kind];

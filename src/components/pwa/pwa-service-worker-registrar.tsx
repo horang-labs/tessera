@@ -2,8 +2,7 @@
 
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
-import { isSessionNotificationPayload } from '@/lib/notifications/session-notification';
-import { presentSessionNotificationOnPage } from '@/lib/notifications/session-notification-presentation';
+import { presentServiceWorkerSessionNotification } from '@/lib/notifications/session-notification-presentation';
 
 export function PwaServiceWorkerRegistrar() {
   const pathname = usePathname();
@@ -12,12 +11,7 @@ export function PwaServiceWorkerRegistrar() {
     if (!('serviceWorker' in navigator)) return;
     let cancelled = false;
     const receiveSessionNotification = (event: MessageEvent) => {
-      if (event.data?.type !== 'tessera-session-notification') return;
-      if (!isSessionNotificationPayload(event.data.notification)) return;
-      presentSessionNotificationOnPage({
-        ...event.data.notification,
-        source: 'service-worker',
-      });
+      presentServiceWorkerSessionNotification(event.data);
     };
     navigator.serviceWorker.addEventListener('message', receiveSessionNotification);
 

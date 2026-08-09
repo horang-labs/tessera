@@ -6,6 +6,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { NotificationAction } from '@/types/notification';
 import type { SessionNotificationPayload } from './session-notification';
+import { isSessionNotificationPayload } from './session-notification';
 
 const MAX_RECENT_SESSION_NOTIFICATION_EVENTS = 100;
 
@@ -74,3 +75,14 @@ export const presentSessionNotificationOnPage = createSessionNotificationPresent
     if (added) useSessionStore.getState().incrementUnreadCount(notification.sessionId);
   },
 });
+
+export function presentServiceWorkerSessionNotification(message: unknown): boolean {
+  if (!message || typeof message !== 'object') return false;
+  const envelope = message as { type?: unknown; notification?: unknown };
+  if (envelope.type !== 'tessera-session-notification'
+    || !isSessionNotificationPayload(envelope.notification)) return false;
+  return presentSessionNotificationOnPage({
+    ...envelope.notification,
+    source: 'service-worker',
+  });
+}

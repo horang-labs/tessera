@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createSessionNotificationPresenter,
+  presentServiceWorkerSessionNotification,
   type PageSessionNotification,
 } from '../src/lib/notifications/session-notification-presentation';
+import { handleIncomingServerMessage } from '../src/lib/ws/client-message-handlers';
+import { useNotificationStore } from '../src/stores/notification-store';
 
 function notification(eventId: string, source: PageSessionNotification['source']) {
   return {
@@ -49,4 +52,46 @@ test('the bounded recent-event set eventually admits an evicted event ID', () =>
   assert.deepEqual(presented.map(({ eventId }) => eventId), [
     'event-1', 'event-2', 'event-3', 'event-1',
   ]);
+});
+
+test('the actual WebSocket and service-worker page entrypoints deduplicate in either order', () => {
+  for (const sourceOrder of [
+    ['service-worker', 'websocket'],
+    ['websocket', 'service-worker'],
+  ] as const) {
+    useNotificationStore.setState({ notifications: [], soundTrigger: 0 });
+    const eventId = `entrypoint-${sourceOrder[0]}`;
+    const payload = {
+      kind: 'input_required' as const,
+      eventId,
+      title: 'Input required.',
+      preview: 'The session is waiting for input.',
+      sessionId: 'entrypoint-session',
+      url: '/chat?session=entrypoint-session',
+    };
+    const websocketMessage = {
+      type: 'notification' as const,
+      event: 'input_required' as const,
+      eventId,
+      message: 'Input required.',
+      preview: payload.preview,
+      sessionId: payload.sessionId,
+    };
+    const arrive = {
+      'service-worker': () => presentServiceWorkerSessionNotification({
+        type: 'tessera-session-notification', notification: payload,
+      }),
+      websocket: () => handleIncomingServerMessage({
+        msg: websocketMessage,
+        providersListCallbacks: new Map(),
+        cliStatusCallbacks: new Map(),
+        wasReconnect: false,
+      }),
+    };
+
+    arrive[sourceOrder[0]]();
+    arrive[sourceOrder[1]]();
+    assert.equal(useNotificationStore.getState().notifications.length, 1);
+    assert.equal(useNotificationStore.getState().notifications[0].dedupKey, eventId);
+  }
 });
