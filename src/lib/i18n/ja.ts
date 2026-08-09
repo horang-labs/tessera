@@ -101,6 +101,7 @@ export const ja: I18nMessages = {
       mobileSetupMachineAuthorizationHelp: 'Tailscale 管理者にこのデバイスの承認を依頼してから、再試行してください。',
       mobileSetupUnavailableHelp: 'Tailscale を起動するか、起動完了を待ってから再試行してください。',
       mobileSetupConflictHelp: '既存のエンドポイントの所有権を確認できません。競合する設定を復元または移動してから再試行してください。',
+      mobileSetupOriginChangedHelp: 'Tailscale ノードまたは tailnet ドメインが変更されました。既存のモバイル接続を削除してから、再度設定してください。',
       mobileSetupRetryHelp: 'モバイルアクセスを公開せず安全に停止しました。原因を解決してから再試行してください。',
       mobileSetupFailed: '設定できませんでした。ローカルのデスクトップアクセスは引き続き利用できます。',
       warningTitle: 'デスクトップアプリはすべての IPv4 インターフェースで待ち受けます',

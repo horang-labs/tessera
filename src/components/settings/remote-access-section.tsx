@@ -482,7 +482,9 @@ export default function RemoteAccessSection() {
             ? 'settings.remoteAccess.mobileSetupMachineAuthorizationHelp'
             : 'settings.remoteAccess.mobileSetupUnavailableHelp')
           : mobileAccessStatus?.state === 'ownership-conflict'
-            ? t('settings.remoteAccess.mobileSetupConflictHelp')
+            ? t(mobileAccessStatus.reason === 'origin-changed'
+              ? 'settings.remoteAccess.mobileSetupOriginChangedHelp'
+              : 'settings.remoteAccess.mobileSetupConflictHelp')
             : mobileAccessStatus?.state === 'retryable-failure'
               ? t('settings.remoteAccess.mobileSetupRetryHelp')
               : null;

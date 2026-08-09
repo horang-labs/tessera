@@ -47,10 +47,14 @@ export type MobileAccessStatus =
   | { state: 'configuring' }
   | {
     state: 'temporarily-unavailable';
-    reason: 'machine-authorization' | 'stopped' | 'starting';
+    reason: 'missing' | 'signed-out' | 'machine-authorization' | 'stopped' | 'starting';
     message: string;
   }
-  | { state: 'ownership-conflict'; message: string }
+  | {
+    state: 'ownership-conflict';
+    reason?: 'origin-changed';
+    message: string;
+  }
   | { state: 'retryable-failure'; message: string }
   | { state: 'ready'; origin: string };
 
@@ -157,6 +161,14 @@ function retryableFailure(error: unknown): MobileAccessStatus {
   };
 }
 
+function originChangedStatus(): MobileAccessStatus {
+  return {
+    state: 'ownership-conflict',
+    reason: 'origin-changed',
+    message: 'The Tailscale node or tailnet domain changed. Remove the mobile connection, then set it up again.',
+  };
+}
+
 export class MobileAccessCoordinator {
   private status: MobileAccessStatus = { state: 'not-configured' };
   private setupPromise: Promise<MobileAccessStatus> | null = null;
@@ -189,14 +201,11 @@ export class MobileAccessCoordinator {
     try {
       const node = await this.dependencies.adapter.inspectNode();
       if (node.state !== 'running') {
-        this.status = this.statusForNode(node);
+        this.status = this.statusForConfiguredNode(node);
         return this.status;
       }
       if (node.dnsName !== persisted.nodeDnsName) {
-        this.status = {
-          state: 'ownership-conflict',
-          message: 'The configured Tailscale node changed',
-        };
+        this.status = originChangedStatus();
         return this.status;
       }
       const serve = await this.dependencies.adapter.inspectServe(node.dnsName);
@@ -223,6 +232,96 @@ export class MobileAccessCoordinator {
       this.status = retryableFailure(error);
     }
     return this.status;
+  }
+
+  async reconcileOnLaunch(
+    { loopbackPort }: { loopbackPort: number },
+  ): Promise<MobileAccessStatus> {
+    try {
+      const persisted = await this.dependencies.stateStore.load();
+      if (!persisted || isSetupProgress(persisted)) return this.status;
+
+      const node = await this.dependencies.adapter.inspectNode();
+      if (node.state !== 'running') {
+        return this.remember(this.statusForConfiguredNode(node));
+      }
+      if (node.dnsName !== persisted.nodeDnsName) {
+        return this.remember(originChangedStatus());
+      }
+
+      const serve = await this.dependencies.adapter.inspectServe(node.dnsName);
+      const expected = this.endpointFor(
+        node.dnsName,
+        persisted.servePort,
+        `http://127.0.0.1:${loopbackPort}`,
+      );
+      const existing = endpointAt(serve, node.dnsName, persisted.servePort);
+      const previous = this.endpointFor(
+        node.dnsName,
+        persisted.servePort,
+        persisted.lastLoopbackTarget,
+      );
+      const endpointIsFree = !existing
+        && !rootIsOccupied(serve, node.dnsName, persisted.servePort)
+        && portCanHostOwnedHttpsRoot(serve, persisted.servePort);
+      if (
+        !exactEndpoint(existing, expected)
+        && !exactEndpoint(existing, previous)
+        && !endpointIsFree
+      ) {
+        return this.remember({
+          state: 'ownership-conflict',
+          message: 'The Tessera-owned Tailscale Serve endpoint changed',
+        });
+      }
+
+      if (!exactEndpoint(existing, expected)) {
+        const unrelatedBefore = unrelatedResources(serve, expected);
+        const result = await this.dependencies.adapter.configureServe(expected);
+        if (result.state === 'authorization-required') {
+          return this.remember({
+            state: 'authorization-required',
+            authorizationUrl: result.authorizationUrl,
+          });
+        }
+        const [verifiedNode, verifiedServe] = await Promise.all([
+          this.dependencies.adapter.inspectNode(),
+          this.dependencies.adapter.inspectServe(node.dnsName),
+        ]);
+        if (!sameResources(unrelatedBefore, unrelatedResources(verifiedServe, expected))) {
+          return this.remember({
+            state: 'retryable-failure',
+            message: 'Unrelated Tailscale Serve or Funnel configuration changed',
+          });
+        }
+        if (verifiedNode.state !== 'running') {
+          return this.remember(this.statusForConfiguredNode(verifiedNode));
+        }
+        if (verifiedNode.dnsName !== node.dnsName) {
+          return this.remember(originChangedStatus());
+        }
+        if (!exactEndpoint(
+          endpointAt(verifiedServe, node.dnsName, persisted.servePort),
+          expected,
+        )) {
+          return this.remember({
+            state: 'retryable-failure',
+            message: 'Tailscale Serve did not retain the Tessera endpoint',
+          });
+        }
+        if (persisted.lastLoopbackTarget !== expected.proxyTarget) {
+          await this.dependencies.stateStore.save({
+            ...persisted,
+            lastLoopbackTarget: expected.proxyTarget,
+          });
+        }
+      }
+
+      await this.dependencies.checkHealth(persisted.origin);
+      return this.remember({ state: 'ready', origin: persisted.origin });
+    } catch (error) {
+      return this.remember(retryableFailure(error));
+    }
   }
 
   setup({ loopbackPort }: { loopbackPort: number }): Promise<MobileAccessStatus> {
@@ -420,6 +519,24 @@ export class MobileAccessCoordinator {
       case 'running':
         return { state: 'not-configured' };
     }
+  }
+
+  private statusForConfiguredNode(node: TailscaleNodeStatus): MobileAccessStatus {
+    if (node.state === 'missing') {
+      return {
+        state: 'temporarily-unavailable',
+        reason: 'missing',
+        message: 'Tailscale is not installed',
+      };
+    }
+    if (node.state === 'needs-login') {
+      return {
+        state: 'temporarily-unavailable',
+        reason: 'signed-out',
+        message: 'Tailscale is signed out',
+      };
+    }
+    return this.statusForNode(node);
   }
 
   private selectServePort(

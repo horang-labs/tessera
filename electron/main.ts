@@ -1853,6 +1853,7 @@ app.whenReady().then(async () => {
       publishPairingOrigin: publishMobileAccessPairingOrigin,
       openExternal: async (url) => { await shell.openExternal(url); },
     });
+    await mobileAccessCoordinator.reconcileOnLaunch({ loopbackPort: port });
     mainWindow = createWindow(port);
     createTray(mainWindow, requestAppQuit, {
       closeBehavior: windowsCloseBehavior,

@@ -101,6 +101,7 @@ export const zh: I18nMessages = {
       mobileSetupMachineAuthorizationHelp: '请让 Tailscale 管理员批准此设备，然后重试。',
       mobileSetupUnavailableHelp: '启动 Tailscale 或等待其启动完成，然后重试。',
       mobileSetupConflictHelp: 'Tessera 无法确认现有端点的所有权。请恢复或移动冲突配置后重试。',
+      mobileSetupOriginChangedHelp: 'Tailscale 节点或 tailnet 域已更改。请移除现有移动连接，然后重新设置。',
       mobileSetupRetryHelp: '设置已安全停止，且未发布移动访问。解决问题后重试。',
       mobileSetupFailed: '设置失败。本地桌面访问仍可继续使用。',
       warningTitle: '桌面应用会监听所有 IPv4 接口',
