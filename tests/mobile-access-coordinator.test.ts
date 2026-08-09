@@ -288,6 +288,15 @@ test('configured mobile access is temporarily unavailable while Tailscale cannot
   }
 });
 
+test('launch recognizes persisted mobile configuration while Tailscale is unavailable', async () => {
+  const harness = createHarness({ node: { state: 'stopped' } });
+  rememberCompletedSetup(harness.store);
+
+  await harness.coordinator.reconcileOnLaunch({ loopbackPort: LOOPBACK_PORT });
+
+  assert.equal(harness.coordinator.hasConfiguredConnection(), true);
+});
+
 test('launch reconciliation requires removal and fresh setup when the public origin changed', async () => {
   const harness = createHarness({
     node: { state: 'running', dnsName: 'desktop.changed-tailnet.ts.net', httpsReady: true },
@@ -388,6 +397,20 @@ test('setup exposes configuring and verifies fresh Serve, node, and HTTPS health
     `health:https://${DNS_NAME}`,
     `publish:https://${DNS_NAME}`,
   ]);
+});
+
+test('mobile connection becomes configured only after setup persists verified ownership', async () => {
+  let releaseConfigure!: () => void;
+  const configureGate = new Promise<void>((resolve) => { releaseConfigure = resolve; });
+  const harness = createHarness({ configureGate });
+
+  const setup = harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.coordinator.hasConfiguredConnection(), false);
+
+  releaseConfigure();
+  assert.deepEqual(await setup, { state: 'ready', origin: `https://${DNS_NAME}` });
+  assert.equal(harness.coordinator.hasConfiguredConnection(), true);
 });
 
 test('HTTPS consent opens externally and resumes on the retained port', async () => {

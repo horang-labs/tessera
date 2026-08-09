@@ -37,3 +37,10 @@ test('Electron refreshes remote device status before deciding whether quit is de
   assert.match(mainSource, /requestTerminalSummary\(\),\n\s+refreshRemoteAccessStatus\(\),/);
   assert.match(mainSource, /buildQuitConfirmation\([\s\S]*remoteAccessStatus,/);
 });
+
+test('Electron quit confirmation includes configured Mobile Connection availability', () => {
+  assert.match(
+    mainSource,
+    /buildQuitConfirmation\([\s\S]*remoteAccessStatus,\n\s+mobileAccessCoordinator\?\.hasConfiguredConnection\(\) \?\? false,/,
+  );
+});

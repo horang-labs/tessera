@@ -46,9 +46,21 @@ test('quit proceeds without a new prompt when no terminal or remote device is ac
     buildQuitConfirmation('en', 0, {
       registeredDeviceCount: 2,
       connectedDeviceCount: 0,
-    }),
+    }, false),
     null,
   );
+});
+
+test('configured mobile access warns that quitting stops mobile access and Push', () => {
+  const confirmation = buildQuitConfirmation('en', 0, {
+    registeredDeviceCount: 0,
+    connectedDeviceCount: 0,
+  }, true);
+
+  assert.ok(confirmation);
+  assert.match(confirmation.message, /mobile access/i);
+  assert.match(confirmation.detail, /Push/);
+  assert.match(confirmation.detail, /relaunch/i);
 });
 
 test('transient polling failures retain the last verified remote status', () => {
@@ -79,9 +91,11 @@ test('terminal warning remains active and combines with remote connection risk',
   assert.ok(terminalOnly);
   assert.equal(terminalOnly.message, 'Quit 2 active terminals?');
 
-  const combined = buildQuitConfirmation('en', 2, enabledStatus);
+  const combined = buildQuitConfirmation('en', 2, enabledStatus, true);
   assert.ok(combined);
-  assert.match(combined.message, /1 remote device/);
+  assert.match(combined.message, /mobile access/i);
+  assert.match(combined.detail, /Push/);
+  assert.match(combined.detail, /disconnect the remote device/);
   assert.match(combined.detail, /2 active terminals/);
 });
 
@@ -93,7 +107,7 @@ test('native Electron messages cover every language supported by Tessera', () =>
 
   for (const language of ['en', 'ko', 'zh', 'ja'] as const) {
     const label = formatRemoteAccessTrayLabel(language, enabledStatus);
-    const confirmation = buildQuitConfirmation(language, 1, enabledStatus);
+    const confirmation = buildQuitConfirmation(language, 1, enabledStatus, true);
     assert.ok(label.length > 0);
     assert.ok(confirmation);
     assert.equal(confirmation.buttons.length, 2);

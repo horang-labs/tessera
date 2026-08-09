@@ -1056,6 +1056,7 @@ async function confirmAppQuit(activeCount: number): Promise<boolean> {
     resolveElectronLanguage(app.getLocale()),
     activeCount,
     remoteAccessStatus,
+    mobileAccessCoordinator?.hasConfiguredConnection() ?? false,
   );
   if (!copy) return true;
 
