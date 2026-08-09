@@ -455,8 +455,7 @@ function applyTerminalSessionRebound(
   sessionId: string,
 ): void {
   const terminalStore = useTerminalSessionStore.getState();
-  terminalStore.markRuntimeStopped(previousSessionId);
-  terminalStore.markRuntimeStarted(sessionId);
+  terminalStore.rebindSessionState(previousSessionId, sessionId, terminalId);
   useSessionStore.getState().setSessionRunning(previousSessionId, false);
 
   const pending = pendingTerminalRebounds.get(terminalId) ?? {

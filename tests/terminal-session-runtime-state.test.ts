@@ -404,6 +404,33 @@ test('PTY session rebound keeps the panel and transfers its session ownership at
   assert.equal(useSessionStore.getState().getSession(childSessionId)?.isRunning, true);
 });
 
+test('PTY session rebound transfers an in-flight turn to the destination menu row', () => {
+  const childSessionId = 'terminal-session-processing-child';
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true), terminalSession(childSessionId))],
+  });
+
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  });
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  } as ServerTransportMessage);
+
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[childSessionId]?.status,
+    'running',
+    'the spinner must follow the live PTY when provider discovery replaces the menu row',
+  );
+});
+
 test('PTY session rebound waits for the child menu row before switching the visible panel', async (t) => {
   const childSessionId = 'terminal-session-delayed-child';
   const tabId = 'delayed-rebound-tab';
