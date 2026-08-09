@@ -22,7 +22,11 @@ import {
   uninstallDiffStatsSafetySweep,
 } from '../git/diff-stats-safety-sweep-runner';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
-import { bindTerminalRuntimeSender, terminalManager } from '../terminal/shared-terminal-manager';
+import {
+  bindTerminalRuntimeSender,
+  terminalManager,
+  type TerminalRuntimeSendOptions,
+} from '../terminal/shared-terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import { getGeneratingTitleSessionIds } from './title-generation-state';
 import {
@@ -143,8 +147,8 @@ export class WebSocketServer {
     protocolAdapter.setSendToUser((userId, message) => {
       this.sendToUser(userId, message);
     });
-    bindTerminalRuntimeSender((userId, message) => {
-      this.sendToUser(userId, message);
+    bindTerminalRuntimeSender((userId, message, options) => {
+      this.sendToUser(userId, message, options);
     });
 
     // Relay worktree diff-stats updates to connected users
@@ -253,13 +257,17 @@ export class WebSocketServer {
   /**
    * Send message to a specific user (broadcasts to all their connections)
    */
-  sendToUser(userId: string, message: ServerTransportMessage): void {
-    const deliveryMessage = describeSessionNotification(message)
+  sendToUser(
+    userId: string,
+    message: ServerTransportMessage,
+    options: TerminalRuntimeSendOptions = {},
+  ): void {
+    const deliveryMessage = !options.replay && describeSessionNotification(message)
       && !('eventId' in message && message.eventId)
       ? { ...message, eventId: randomUUID() }
       : message;
     sessionHistory.recordTransportMessage(deliveryMessage);
-    this.scheduleWebPush(userId, deliveryMessage);
+    if (!options.replay) this.scheduleWebPush(userId, deliveryMessage);
 
     if (deliveryMessage.type === 'rate_limit_update') {
       const cachedByProvider = this.rateLimitCache.get(userId) ?? new Map();

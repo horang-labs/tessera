@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before, beforeEach } from 'node:test';
@@ -279,6 +279,53 @@ test('the server send-to-user seam creates or preserves an event ID before fan-o
   assert.equal((scheduled[0] as any).message.eventId, websocketMessages[0].eventId);
   assert.equal((scheduled[1] as any).message.eventId, 'upstream-event-id');
   assert.equal(websocketMessages[1].eventId, 'upstream-event-id');
+});
+
+test('the server fan-out seam sends cached terminal state without creating a Push event', async () => {
+  const { WebSocketServer } = await import('../src/lib/ws/server');
+  const scheduled: unknown[] = [];
+  const websocketMessages: any[] = [];
+  const server = new WebSocketServer({
+    scheduleWebPush: (userId, message) => scheduled.push({ userId, message }),
+  });
+  (server as any).connections.set('user-1', new Set([{
+    readyState: WebSocket.OPEN,
+    send: (payload: string) => websocketMessages.push(JSON.parse(payload)),
+  }]));
+
+  server.sendToUser('user-1', {
+    type: 'session_state',
+    sessionId: 'terminal-session',
+    terminalId: 'terminal-1',
+    status: 'input_required',
+    hookEvent: 'PermissionRequest',
+    preview: 'Cached terminal approval',
+    stateAt: 123,
+  }, { replay: true });
+
+  assert.equal(scheduled.length, 0);
+  assert.equal(websocketMessages.length, 1);
+  assert.equal(websocketMessages[0].eventId, undefined);
+});
+
+test('terminal runtime restart marks its cached state at the replay-aware fan-out seam', async () => {
+  const sharedManagerSource = await readFile(
+    new URL('../src/lib/terminal/shared-terminal-manager.ts', import.meta.url),
+    'utf8',
+  );
+  const serverSource = await readFile(
+    new URL('../src/lib/ws/server.ts', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    sharedManagerSource,
+    /sendToUser\?\.\(userId, lastState, \{ replay: true \}\)/,
+  );
+  assert.match(
+    serverSource,
+    /bindTerminalRuntimeSender\(\(userId, message, options\)[\s\S]*this\.sendToUser\(userId, message, options\)/,
+  );
 });
 
 test('a live terminal input-required state is eligible but its cached copy is not replayed to Push', async () => {
