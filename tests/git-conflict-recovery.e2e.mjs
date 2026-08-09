@@ -139,6 +139,11 @@ try {
   const statusBeforeHandoff = (await git(['status', '--porcelain=v2'])).stdout;
   const headBeforeHandoff = (await git(['rev-parse', 'HEAD'])).stdout;
   const indexBeforeHandoff = await fs.readFile(path.join(repo, '.git', 'index'));
+  const conflictFileBeforeHandoff = await fs.readFile(path.join(repo, 'conflict.txt'));
+  const deleteModifyBeforeHandoff = await fs.readFile(path.join(repo, 'delete-modify.txt'));
+  const sequencerBeforeHandoff = await Promise.all(
+    ['MERGE_HEAD', 'MERGE_MSG', 'ORIG_HEAD'].map((name) => fs.readFile(path.join(repo, '.git', name))),
+  );
   const messagesBeforeHandoff = await page.getByTestId('user-message-row').count();
   await recovery.getByTestId('git-conflict-resolve-with-ai').click();
   const composer = page.locator(`textarea[data-session-input="${sessionId}"]`);
@@ -155,6 +160,12 @@ try {
   assert.equal((await git(['status', '--porcelain=v2'])).stdout, statusBeforeHandoff);
   assert.equal((await git(['rev-parse', 'HEAD'])).stdout, headBeforeHandoff);
   assert.deepEqual(await fs.readFile(path.join(repo, '.git', 'index')), indexBeforeHandoff);
+  assert.deepEqual(await fs.readFile(path.join(repo, 'conflict.txt')), conflictFileBeforeHandoff);
+  assert.deepEqual(await fs.readFile(path.join(repo, 'delete-modify.txt')), deleteModifyBeforeHandoff);
+  assert.deepEqual(
+    await Promise.all(['MERGE_HEAD', 'MERGE_MSG', 'ORIG_HEAD'].map((name) => fs.readFile(path.join(repo, '.git', name)))),
+    sequencerBeforeHandoff,
+  );
   await fs.mkdir(artifactDir, { recursive: true });
   await page.screenshot({ path: artifact });
 

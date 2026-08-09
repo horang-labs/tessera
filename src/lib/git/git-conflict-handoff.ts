@@ -1,13 +1,8 @@
 import { deriveGitConflictRecovery } from '@/lib/git/git-conflict-recovery';
 import type { GitPanelRead } from '@/lib/git/git-panel-read';
-import type { UnifiedSession } from '@/types/chat';
+import { MESSAGE_INPUT_MAX_CHARS } from '@/lib/chat/message-input-limits';
+import type { ConnectionStatus, UnifiedSession } from '@/types/chat';
 import type { GitPanelData } from '@/types/git';
-
-const CONFLICT_HANDOFF_PROVIDERS: ReadonlySet<string> = new Set([
-  'claude-code',
-  'codex',
-  'opencode',
-]);
 
 export type GitConflictHandoffResult =
   | { kind: 'ready'; data: GitPanelData; request: string }
@@ -18,19 +13,23 @@ export type GitConflictHandoffResult =
 export function deriveGitConflictHandoffAvailability(
   data: GitPanelData | null | undefined,
   session: UnifiedSession | null | undefined,
+  connectionStatus: ConnectionStatus,
 ): boolean {
   const recovery = deriveGitConflictRecovery(data);
   return Boolean(
     data
     && session
     && data.sessionId === session.id
-    && CONFLICT_HANDOFF_PROVIDERS.has(session.provider?.trim() ?? '')
+    && session.provider?.trim()
     && session.kind !== 'terminal'
     && !session.archived
     && !session.isReadOnly
+    && session.status !== 'error'
+    && connectionStatus === 'connected'
     && recovery
     && !recovery.unresolvedFilesTruncated
-    && recovery.unresolvedFiles.length > 0,
+    && recovery.unresolvedFiles.length > 0
+    && buildGitConflictResolutionRequest(data).length <= MESSAGE_INPUT_MAX_CHARS,
   );
 }
 
@@ -60,9 +59,10 @@ export function buildGitConflictResolutionRequest(data: GitPanelData): string {
 export async function revalidateGitConflictHandoff(
   expected: GitPanelData,
   session: UnifiedSession | null | undefined,
+  connectionStatus: ConnectionStatus,
   readLatest: () => Promise<GitPanelRead>,
 ): Promise<GitConflictHandoffResult> {
-  if (!deriveGitConflictHandoffAvailability(expected, session)) {
+  if (!deriveGitConflictHandoffAvailability(expected, session, connectionStatus)) {
     return { kind: 'unavailable' };
   }
 
@@ -71,7 +71,7 @@ export async function revalidateGitConflictHandoff(
   if (latest.kind === 'failed') return latest;
 
   if (
-    !deriveGitConflictHandoffAvailability(latest.data, session)
+    !deriveGitConflictHandoffAvailability(latest.data, session, connectionStatus)
     || conflictFingerprint(latest.data) !== conflictFingerprint(expected)
   ) {
     return { kind: 'stale', data: latest.data };

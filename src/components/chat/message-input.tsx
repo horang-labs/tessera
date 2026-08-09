@@ -118,6 +118,7 @@ import {
   isReservedCodexSlashCommandName,
 } from '@/lib/chat/codex-slash-command-registry';
 import { dispatchCodexNativeUiAction } from '@/lib/chat/codex-native-command-events';
+import { MESSAGE_INPUT_MAX_CHARS } from '@/lib/chat/message-input-limits';
 import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import {
   MessageInputAttachmentStrip,
@@ -331,7 +332,6 @@ export function MessageInput({
     setInputValue: setInputValueFromProgrammaticEdit,
     t,
   });
-  const MAX_CHARS = 10000;
   const MAX_ROWS = 5;
 
   useEffect(() => {
@@ -1519,7 +1519,7 @@ export function MessageInput({
     }
   };
 
-  const remainingChars = MAX_CHARS - inputValue.length;
+  const remainingChars = MESSAGE_INPUT_MAX_CHARS - inputValue.length;
   const isOverLimit = remainingChars < 0;
   const hasContent = inputValue.trim().length > 0 || attachments.length > 0 || hasSessionRefs;
   const canSubmit = hasContent || !!skillPicker.selectedSkill;

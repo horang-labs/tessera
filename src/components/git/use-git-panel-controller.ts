@@ -262,6 +262,7 @@ export function useGitPanelController(sessionId: string | null) {
   const sessionSnapshot = useSessionStore((state) =>
     sessionId ? state.getSession(sessionId) : undefined,
   );
+  const connectionStatus = useChatStore((state) => state.connectionStatus);
   const taskSnapshot = useTaskStore((state) =>
     sessionId ? state.getTaskBySessionId(sessionId) : undefined,
   );
@@ -700,6 +701,7 @@ export function useGitPanelController(sessionId: string | null) {
   const conflictHandoffAvailable = deriveGitConflictHandoffAvailability(
     panelData,
     sessionSnapshot,
+    connectionStatus,
   );
 
   const prepareConflictHandoff = useCallback(async (): Promise<void> => {
@@ -710,6 +712,7 @@ export function useGitPanelController(sessionId: string | null) {
       const result = await revalidateGitConflictHandoff(
         panelData,
         sessionSnapshot,
+        connectionStatus,
         () => readGitPanelState(sessionId),
       );
 
@@ -736,6 +739,7 @@ export function useGitPanelController(sessionId: string | null) {
     }
   }, [
     applyGitPanelData,
+    connectionStatus,
     panelData,
     preparingConflictHandoff,
     sessionId,

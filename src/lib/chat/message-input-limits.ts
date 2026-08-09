@@ -1,0 +1,1 @@
+export const MESSAGE_INPUT_MAX_CHARS = 10_000;
