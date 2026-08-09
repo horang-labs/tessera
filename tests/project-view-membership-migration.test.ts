@@ -15,7 +15,9 @@ test('v37 migration replaces Project-owned membership with canonical Worktree id
     await fs.mkdir(dataDir, { recursive: true });
     await fs.mkdir(repository, { recursive: true });
     execFileSync('git', ['init', '-b', 'main', repository], { stdio: 'ignore' });
-    await writeV37Fixture(dataDir, repository);
+    const linkedRepository = path.join(root, 'linked-repository');
+    await fs.mkdir(linkedRepository, { recursive: true });
+    await writeV37Fixture(dataDir, repository, linkedRepository);
 
     await runDatabaseStartup(dataDir);
     const firstStartup = await readMembership(dataDir);
@@ -23,6 +25,7 @@ test('v37 migration replaces Project-owned membership with canonical Worktree id
     assert.match(firstStartup.projectWorktreeId, /^wt_/);
     assert.deepEqual(firstStartup.sessions, [
       { id: 'direct-session', worktree_id: firstStartup.projectWorktreeId, scope_branch: null },
+      { id: 'legacy-linked-session', worktree_id: 'wt_linked', scope_branch: null },
       { id: 'task-session', worktree_id: 'wt_linked', scope_branch: null },
     ]);
     assert.deepEqual(firstStartup.task, {
@@ -37,7 +40,11 @@ test('v37 migration replaces Project-owned membership with canonical Worktree id
   }
 });
 
-async function writeV37Fixture(dataDir: string, repository: string): Promise<void> {
+async function writeV37Fixture(
+  dataDir: string,
+  repository: string,
+  linkedRepository: string,
+): Promise<void> {
   const SqlJs = await initSqlJs();
   const db = new SqlJs.Database();
   db.exec(CREATE_TABLES);
@@ -49,17 +56,30 @@ async function writeV37Fixture(dataDir: string, repository: string): Promise<voi
     ) VALUES ('project-a', ?, 'Project A', 1, 0, ?, ?)
   `, [repository, timestamp, timestamp]);
   db.run(`
+    INSERT INTO worktrees (
+      id, filesystem_path, canonical_path_key, created_at, updated_at
+    ) VALUES ('wt_linked', ?, ?, ?, ?)
+  `, [linkedRepository, linkedRepository, timestamp, timestamp]);
+  db.run(`
     INSERT INTO tasks (
       id, public_worktree_id, project_id, title, workflow_status, created_at, updated_at
     ) VALUES ('linked-task', 'wt_linked', 'project-a', 'Linked', 'todo', ?, ?)
   `, [timestamp, timestamp]);
   const insertSession = db.prepare(`
     INSERT INTO sessions (
-      id, project_id, title, provider, task_id, created_at, updated_at
-    ) VALUES (?, 'project-a', ?, 'codex', ?, ?, ?)
+      id, project_id, title, provider, work_dir, task_id, created_at, updated_at
+    ) VALUES (?, 'project-a', ?, 'codex', ?, ?, ?, ?)
   `);
-  insertSession.run(['direct-session', 'Direct', null, timestamp, timestamp]);
-  insertSession.run(['task-session', 'Task child', 'linked-task', timestamp, timestamp]);
+  insertSession.run(['direct-session', 'Direct', null, null, timestamp, timestamp]);
+  insertSession.run([
+    'legacy-linked-session',
+    'Legacy linked',
+    linkedRepository,
+    null,
+    timestamp,
+    timestamp,
+  ]);
+  insertSession.run(['task-session', 'Task child', linkedRepository, 'linked-task', timestamp, timestamp]);
   insertSession.free();
   await fs.writeFile(path.join(dataDir, 'tessera.db'), Buffer.from(db.export()));
   db.close();

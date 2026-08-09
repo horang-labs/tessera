@@ -149,6 +149,7 @@ function fallbackTaskItemsFromSessions(
     const task: TaskEntity = {
       id: taskId,
       projectId: project.encodedDir,
+      projectViewId: project.encodedDir,
       title: recentSession.title,
       collectionId: recentSession.collectionId,
       workflowStatus: recentSession.workflowStatus ?? 'todo',

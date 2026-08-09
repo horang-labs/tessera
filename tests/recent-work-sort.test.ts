@@ -187,6 +187,7 @@ test('global Recent Work represents a projected Session once through its origin 
   const originTask: TaskEntity = {
     id: 'linked-c',
     projectId: 'project-a',
+    projectViewId: 'project-a',
     title: 'Linked C',
     workflowStatus: 'todo',
     sortOrder: 0,

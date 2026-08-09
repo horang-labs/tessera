@@ -73,8 +73,8 @@ export function useSessionCrud() {
         const taskStore = useTaskStore.getState();
         const task = taskStore.getTaskBySessionId(sessionId);
         if (task) {
-          taskStore.loadTasks(task.projectId, {
-            setCurrent: taskStore.currentProjectId === task.projectId,
+          taskStore.loadTasks(task.projectViewId, {
+            setCurrent: taskStore.currentProjectId === task.projectViewId,
           });
         }
       });

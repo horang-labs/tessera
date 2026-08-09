@@ -37,6 +37,7 @@ function worktreeTask(workDir: string): TaskEntity {
   return {
     id: 'task-mobile',
     projectId: 'tessera-project',
+    projectViewId: 'tessera-project',
     title: 'Mobile feature',
     workflowStatus: 'todo',
     worktreeBranch: 'feature/mobile',
@@ -89,7 +90,8 @@ test('a session-bound terminal never borrows an unrelated explicit or selected p
   useBoardStore.setState({ selectedProjectDir: unrelatedProject });
   useSessionStore.getState().addSession({
     id: 'session-without-workspace',
-    projectId: 'tessera-project',
+    projectDir: 'tessera-project',
+    originProjectId: 'tessera-project',
     title: 'Missing workspace',
     status: 'starting',
     provider: 'codex',

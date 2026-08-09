@@ -880,8 +880,8 @@ export function TaskItemRow({
     stepAsidePhoneSidebar();
     panelStore.setActiveTabId(tabId);
     panelStore.assignWorktree(tab.activePanelId, task.worktreeId);
-    useTabStore.getState().setTabProject(tabId, task.projectId);
-  }, [task.projectId, task.worktreeId]);
+    useTabStore.getState().setTabProject(tabId, task.projectViewId);
+  }, [task.projectViewId, task.worktreeId]);
 
   const openPrimarySession = useCallback(async (
     open: (session: UnifiedSession) => void | Promise<void>,

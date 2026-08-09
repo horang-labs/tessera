@@ -52,6 +52,7 @@ function projectSessions<T extends { sessions: dbSessions.SessionRow[] }>(
 }
 
 function projectWorktrees(
+  projectViewId: string,
   membership: ProjectViewMembership,
   activeSessionIds: Set<string>,
   projectCollectionIds: Set<string>,
@@ -60,6 +61,7 @@ function projectWorktrees(
 
   return worktrees.map((worktree) => ({
     ...worktree,
+    projectViewId,
     collectionId:
       worktree.collectionId && projectCollectionIds.has(worktree.collectionId)
         ? worktree.collectionId
@@ -95,6 +97,7 @@ export function getProjectViewProjection(
     limitPerStatus: options.limitPerStatus,
   }), projectCollectionIds);
   const linkedWorktrees = projectWorktrees(
+    projectId,
     membership,
     options.activeSessionIds ?? new Set(),
     projectCollectionIds,
@@ -110,6 +113,7 @@ export function getProjectViewWorktrees(
   activeSessionIds: Set<string> = new Set(),
 ) {
   return projectWorktrees(
+    projectId,
     getViewMembership(projectId),
     activeSessionIds,
     getProjectCollectionIds(projectId),

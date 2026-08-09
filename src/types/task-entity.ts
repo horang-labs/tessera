@@ -42,6 +42,8 @@ export interface TaskEntity {
   worktreeId?: string;
   /** Stable representative origin Project; Project View membership comes from creationScope. */
   projectId: string;
+  /** Project View currently projecting this Worktree; never persisted as ownership. */
+  projectViewId: string;
   title: string;
   collectionId?: string;   // FK -> collections.id
   workflowStatus: WorkflowStatus;

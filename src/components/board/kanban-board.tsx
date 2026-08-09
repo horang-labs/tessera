@@ -851,7 +851,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
       }
 
       // Refresh task store and session store
-      await useTaskStore.getState().loadTasks(task.projectId);
+      await useTaskStore.getState().loadTasks(task.projectViewId);
       await useSessionStore.getState().loadProjects();
 
       void captureTelemetryEvent('session_created', {

@@ -30,6 +30,7 @@ const terminalSession = {
 const task = {
   id: 'task-a',
   projectId: 'project-a',
+  projectViewId: 'project-a',
   title: 'Task',
   workflowStatus: 'in_progress',
   sortOrder: 0,

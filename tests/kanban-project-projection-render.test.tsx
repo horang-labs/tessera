@@ -30,6 +30,7 @@ function sessionlessWorktree(): TaskEntity {
     id: 'descendant-d',
     worktreeId: 'wt_descendant_d',
     projectId: 'project-c',
+    projectViewId: 'project-c',
     title: 'Descendant D',
     workflowStatus: 'todo',
     worktreeBranch: 'feature/d',

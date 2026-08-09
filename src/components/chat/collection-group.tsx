@@ -97,7 +97,7 @@ async function createSessionInTask(
     );
     useTabStore.getState().syncTabProjectFromSession(latestPanelState.activeTabId, newSessionId);
 
-    await useTaskStore.getState().loadTasks(task.projectId);
+    await useTaskStore.getState().loadTasks(task.projectViewId);
     await useSessionStore.getState().loadProjects();
 
     void captureTelemetryEvent('session_created', {

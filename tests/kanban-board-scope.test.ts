@@ -46,6 +46,7 @@ function task(id: string, projectId: string): TaskEntity {
   return {
     id,
     projectId,
+    projectViewId: projectId,
     title: id,
     workflowStatus: 'todo',
     sortOrder: 0,

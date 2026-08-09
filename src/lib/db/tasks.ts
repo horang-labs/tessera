@@ -152,6 +152,7 @@ function mapRowToEntity(
     id: row.id,
     worktreeId: row.public_worktree_id,
     projectId: row.project_id,
+    projectViewId: row.project_id,
     title: row.title,
     collectionId: row.collection_id ?? undefined,
     workflowStatus: row.workflow_status as WorkflowStatus,
