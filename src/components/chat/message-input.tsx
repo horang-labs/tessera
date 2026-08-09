@@ -129,6 +129,7 @@ import type { SessionSpawnConfig } from '@/lib/ws/message-types';
 
 interface MessageInputProps {
   sessionId: string;
+  projectViewDir?: string | null;
   isDisabled: boolean;
   isReadOnly?: boolean;
   isStopped?: boolean;
@@ -140,6 +141,7 @@ const EMPTY_COLLECTIONS: Collection[] = [];
 
 export function MessageInput({
   sessionId,
+  projectViewDir,
   isDisabled,
   isReadOnly,
   isStopped,
@@ -234,7 +236,7 @@ export function MessageInput({
     hasConversationHistory(state.messages.get(sessionId))
   );
   const addMessage = useChatStore((state) => state.addMessage);
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useSessionStore((state) => state.getSession(sessionId, projectViewDir));
   const updateSessionRuntimeConfig = useSessionStore((state) => state.updateSessionRuntimeConfig);
   const projects = useSessionStore((state) => state.projects);
   const sessionStatus = session && 'status' in session ? session.status : 'running';

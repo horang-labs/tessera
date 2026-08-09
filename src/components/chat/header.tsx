@@ -41,6 +41,7 @@ import { resolveSessionBranchPresentation } from '@/lib/session/session-branch-p
 interface HeaderProps {
   sessionId: string;
   panelId: string;
+  projectViewDir?: string | null;
   isSinglePanel?: boolean;
   search?: {
     isOpen: boolean;
@@ -56,11 +57,11 @@ interface HeaderProps {
   };
 }
 
-export function Header({ sessionId, panelId, isSinglePanel = false, search }: HeaderProps) {
+export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search }: HeaderProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
   const session = useSessionStore((state) =>
-    state.getSession(sessionId)
+    state.getSession(sessionId, projectViewDir)
   );
   const liveWorktreeBranch = useSessionStore((state) => {
     if (!session?.worktreeId) return null;
