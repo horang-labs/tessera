@@ -103,8 +103,12 @@ npx tsx --test tests/request-gate.test.ts
 ```
 
 All 29 assertions printed `ok`, but the existing runner kept an open handle and did not
-terminate. It was interrupted after the completed TAP output, so the command exit was 130 and
-is not reported as a passing command.
+terminate. An interrupt was sent after the completed TAP output, producing exit 130 in the
+original PTY, but its process tree remained live and the command is not reported as passing.
+Final handoff cleanup identified the exact ticket-owned tree by parent session, command, and
+working directory, then stopped only PIDs `2809256`, `2809151`, `2809124`, `2809111`,
+`2809110`, and `2809038` with `SIGTERM`. All six exited without escalation. Ports `32124` and
+`9337` remained closed; no issue-298 test, server, browser, or Electron runtime remained.
 
 ```text
 npx tsc --noEmit
