@@ -2,6 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import { useGitPanelController } from "./use-git-panel-controller";
+import { GitDefaultBranchConfirmDialog } from "./git-default-branch-confirm-dialog";
 
 export type GitPanelController = ReturnType<typeof useGitPanelController>;
 
@@ -18,6 +19,11 @@ export function GitPanelControllerProvider({
   return (
     <GitPanelControllerContext.Provider value={controller}>
       {children}
+      <GitDefaultBranchConfirmDialog
+        confirmation={controller.pushConfirmation}
+        onCancel={controller.cancelPrimaryAction}
+        onConfirm={() => void controller.confirmPrimaryAction()}
+      />
     </GitPanelControllerContext.Provider>
   );
 }

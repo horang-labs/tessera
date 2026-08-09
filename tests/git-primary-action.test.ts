@@ -45,11 +45,13 @@ const SYNCED: GitStateSnapshot = {
   conflictOperation: null,
 };
 
-test('state that is not known yet holds a disabled Commit frame', () => {
+test('state that is not known yet holds a disabled loading frame', () => {
   const action = derivePrimaryGitAction(null);
 
-  assert.equal(action.kind, 'commit');
+  assert.equal(action.kind, 'loading');
+  assert.equal(action.action, null);
   assert.equal(action.enabled, false);
+  assert.equal(action.labelKey, 'gitPanel.primary.loading');
   // Folding unknown into "nothing to do" is what makes the button flash through
   // an action the user did not press on every session switch (ADR 0007).
   assert.notEqual(action.disabledReasonKey, null);
@@ -68,7 +70,8 @@ test('a clean branch that is ahead offers Push, without the user choosing it', (
   assert.equal(action.kind, 'push');
   assert.equal(action.action, 'push');
   assert.equal(action.enabled, true);
-  assert.equal(action.labelKey, 'gitPanel.push.button');
+  assert.equal(action.labelKey, 'gitPanel.push.buttonCount');
+  assert.deepEqual(action.labelParams, { count: 2 });
 });
 
 test('a branch with no upstream is offered as Publish Branch, not as Push', () => {
@@ -120,12 +123,18 @@ test('a branch with no upstream is not offered a pull it cannot run', () => {
   assert.equal(action.kind, 'publish');
 });
 
-test('a clean branch with nothing ahead offers a Push it says is empty', () => {
-  const action = derivePrimaryGitAction(SYNCED);
+test('a resolved default branch with nothing to deliver is Up to date', () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    branch: 'dev',
+    upstream: 'origin/dev',
+    pullRequest: 'none',
+  });
 
-  assert.equal(action.kind, 'push');
+  assert.equal(action.kind, 'up_to_date');
   assert.equal(action.enabled, false);
-  assert.equal(action.disabledReasonKey, 'gitPanel.push.nothingToPush');
+  assert.equal(action.labelKey, 'gitPanel.primary.upToDate');
+  assert.equal(action.disabledReasonKey, null);
 });
 
 test('a synced branch with no pull request offers Create PR', () => {
@@ -137,11 +146,13 @@ test('a synced branch with no pull request offers Create PR', () => {
   assert.equal(action.labelKey, 'gitPanel.pr.createButton');
 });
 
-test('a branch that already has a pull request is not offered another', () => {
+test('a pushed branch with an open pull request offers View PR', () => {
   const action = derivePrimaryGitAction(SYNCED);
 
-  assert.notEqual(action.kind, 'create_pr');
-  assert.equal(action.enabled, false);
+  assert.equal(action.kind, 'view_pr');
+  assert.equal(action.action, 'view_pr');
+  assert.equal(action.enabled, true);
+  assert.equal(action.labelKey, 'gitPanel.pr.viewButton');
 });
 
 test('a repository that cannot host a pull request says why, rather than offering one', () => {
@@ -194,7 +205,7 @@ test('Create PR waits until the branch is synced in both directions', () => {
   assert.equal(synced.kind, 'create_pr');
 });
 
-test('the default branch is not offered a pull request it would open against itself', () => {
+test('the default branch is never offered a pull request against itself', () => {
   const action = derivePrimaryGitAction({
     ...SYNCED,
     branch: 'dev',
@@ -202,8 +213,8 @@ test('the default branch is not offered a pull request it would open against its
     pullRequest: 'none',
   });
 
+  assert.equal(action.kind, 'up_to_date');
   assert.equal(action.enabled, false);
-  assert.equal(action.disabledReasonKey, 'gitPanel.pr.defaultBranch');
 });
 
 test('a repository that never resolved a default branch still offers Create PR', () => {
@@ -233,6 +244,7 @@ test('a repository with no remote cannot publish, and says so', () => {
 test('a detached HEAD is not offered a push it has no branch for', () => {
   const detached = derivePrimaryGitAction({ ...SYNCED, branch: null, ahead: 2 });
 
+  assert.equal(detached.kind, 'publish');
   assert.equal(detached.enabled, false);
   assert.equal(detached.disabledReasonKey, 'gitPanel.primary.detachedHead');
   // Committing a detached HEAD is a normal thing to do, so that rung stands.
@@ -240,6 +252,14 @@ test('a detached HEAD is not offered a push it has no branch for', () => {
     derivePrimaryGitAction({ ...SYNCED, branch: null, changedFileCount: 1 }).enabled,
     true,
   );
+});
+
+test('a missing remote keeps the blocked Publish face even with stale upstream data', () => {
+  const action = derivePrimaryGitAction({ ...SYNCED, hasRemote: false });
+
+  assert.equal(action.kind, 'publish');
+  assert.equal(action.enabled, false);
+  assert.equal(action.disabledReasonKey, 'gitPanel.primary.noRemote');
 });
 
 test('committing rotates the same button from Commit to Push', () => {
@@ -305,7 +325,7 @@ test('aborting rotates the button back to a normal action', () => {
   const aborted = derivePrimaryGitAction(SYNCED);
 
   assert.equal(conflicted.kind, 'conflict');
-  assert.equal(aborted.kind, 'push');
+  assert.equal(aborted.kind, 'view_pr');
 });
 
 test('a panel with no state yet is the unknown rung, not a clean tree', () => {

@@ -1167,6 +1167,7 @@ export const en: I18nMessages = {
       failureToast: 'Creating the pull request failed · {{origin}} — {{reason}}',
       createButton: 'Create PR',
       createButtonPending: 'Creating PR…',
+      viewButton: 'View PR',
       defaultBranch: 'A pull request needs a branch other than the default one',
       statusUnknown: 'Checking GitHub for a pull request…',
       unavailable: 'A pull request needs a GitHub remote and a signed-in gh CLI',
@@ -1190,13 +1191,16 @@ export const en: I18nMessages = {
       abortFailureToast: 'Abort failed · {{origin}} — {{reason}}',
     },
     primary: {
+      loading: 'Git',
       stateUnknown: 'Reading git state…',
       detachedHead: 'HEAD is detached — check out a branch to push',
       noRemote: 'This repository has no remote to push to',
+      upToDate: 'Up to date',
     },
     menu: {
       label: 'All git actions',
       pending: 'A git action is already running',
+      openSourceControl: 'Open Source Control',
     },
     failure: {
       commitTitle: 'Commit failed',

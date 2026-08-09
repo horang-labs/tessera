@@ -1167,6 +1167,7 @@ export const ja: I18nMessages = {
       failureToast: 'プルリクエストの作成に失敗しました · {{origin}} — {{reason}}',
       createButton: 'PR を作成',
       createButtonPending: 'PR を作成中…',
+      viewButton: 'PR を表示',
       defaultBranch: 'プルリクエストはデフォルトブランチ以外から作成してください',
       statusUnknown: 'GitHub のプルリクエストを確認中…',
       unavailable: 'プルリクエストには GitHub リモートとログイン済みの gh CLI が必要です',
@@ -1187,13 +1188,16 @@ export const ja: I18nMessages = {
       abortFailureToast: '中止に失敗しました · {{origin}} — {{reason}}',
     },
     primary: {
+      loading: 'Git',
       stateUnknown: 'git の状態を読み込み中…',
       detachedHead: 'HEAD が分離されています — プッシュするにはブランチをチェックアウトしてください',
       noRemote: 'このリポジトリにはプッシュ先のリモートがありません',
+      upToDate: '最新',
     },
     menu: {
       label: 'すべての git 操作',
       pending: '実行中の git 操作があります',
+      openSourceControl: 'ソース管理を開く',
     },
     failure: {
       commitTitle: 'コミットに失敗しました',

@@ -14,7 +14,7 @@ import type { GitPendingVerb } from "./use-git-panel-controller";
  * moment saying "Pulling…" would be naming an action nobody pressed — the same
  * thing ADR 0007 refuses for the resting label.
  */
-function resolvePendingLabelKey(
+export function resolvePendingLabelKey(
   action: GitPrimaryAction,
   verb: GitPendingVerb,
 ): string {
@@ -22,12 +22,11 @@ function resolvePendingLabelKey(
   if (verb === "commit_push") return "gitPanel.commitPush.buttonPending";
   if (verb === "pull") return "gitPanel.pull.buttonPending";
   if (verb === "create_pr") return "gitPanel.pr.createButtonPending";
+  if (verb === "publish") return "gitPanel.push.publishButtonPending";
   // The abort is only ever started from the menu, and only ever on the conflict
   // rung, where this button is the one that cannot be pressed. It still holds
   // the spinner, because §7 puts progress at the button rather than in a toast.
   if (verb === "abort") return "gitPanel.conflict.abortPending";
-  // Push and Publish Branch are one action, and only the ladder knows which
-  // word this repository's state calls for.
   return action.kind === "publish"
     ? "gitPanel.push.publishButtonPending"
     : "gitPanel.push.buttonPending";

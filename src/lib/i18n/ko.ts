@@ -1174,6 +1174,7 @@ export const ko: I18nMessages = {
       failureToast: '풀 리퀘스트 생성 실패 · {{origin}} — {{reason}}',
       createButton: 'PR 생성',
       createButtonPending: 'PR 생성 중…',
+      viewButton: 'PR 보기',
       defaultBranch: '풀 리퀘스트는 기본 브랜치가 아닌 브랜치에서 만들 수 있습니다',
       statusUnknown: 'GitHub에서 풀 리퀘스트를 확인하는 중…',
       unavailable: '풀 리퀘스트를 만들려면 GitHub 리모트와 로그인된 gh CLI가 필요합니다',
@@ -1194,13 +1195,16 @@ export const ko: I18nMessages = {
       abortFailureToast: '중단 실패 · {{origin}} — {{reason}}',
     },
     primary: {
+      loading: 'Git',
       stateUnknown: 'git 상태를 읽는 중…',
       detachedHead: 'HEAD가 분리되어 있습니다 — 푸시하려면 브랜치를 체크아웃하세요',
       noRemote: '이 저장소에는 푸시할 리모트가 없습니다',
+      upToDate: '최신 상태',
     },
     menu: {
       label: '모든 git 작업',
       pending: '이미 실행 중인 git 작업이 있습니다',
+      openSourceControl: '소스 제어 열기',
     },
     failure: {
       commitTitle: '커밋 실패',

@@ -24,12 +24,15 @@ import { isCurrentTaskPr } from '@/types/task-pr-status';
  * a worktree whose commit cannot run must not be offered one to write.
  */
 export type GitPrimaryActionKind =
+  | 'loading'
   | 'commit'
   | 'conflict'
   | 'push'
   | 'publish'
   | 'pull'
-  | 'create_pr';
+  | 'create_pr'
+  | 'view_pr'
+  | 'up_to_date';
 
 /**
  * What the panel knows about a pull request for this branch. `unknown` is a
@@ -80,11 +83,15 @@ export interface GitStateSnapshot {
 }
 
 export type GitPrimaryActionLabelKey =
+  | 'gitPanel.primary.loading'
   | 'gitPanel.commit.button'
   | 'gitPanel.push.button'
+  | 'gitPanel.push.buttonCount'
   | 'gitPanel.push.publishButton'
   | 'gitPanel.pull.button'
-  | 'gitPanel.pr.createButton';
+  | 'gitPanel.pr.createButton'
+  | 'gitPanel.pr.viewButton'
+  | 'gitPanel.primary.upToDate';
 
 export type GitPrimaryActionPendingLabelKey =
   | 'gitPanel.commit.buttonPending'
@@ -108,7 +115,7 @@ export type GitPrimaryActionReasonKey =
 export interface GitPrimaryAction {
   kind: GitPrimaryActionKind;
   /** What the action route is asked to run. */
-  action: 'commit' | 'push' | 'pull' | 'create_pr';
+  action: 'commit' | 'push' | 'pull' | 'create_pr' | 'view_pr' | null;
   enabled: boolean;
   labelKey: GitPrimaryActionLabelKey;
   /**
@@ -191,7 +198,7 @@ function readPullRequestReadiness(panel: GitPanelData): GitPullRequestReadiness 
 export function derivePrimaryGitAction(
   snapshot: GitStateSnapshot | null,
 ): GitPrimaryAction {
-  if (!snapshot) return commitAction(false, 'gitPanel.primary.stateUnknown');
+  if (!snapshot) return loadingAction();
 
   // Above everything, including the dirty rung (§9). A stopped merge leaves a
   // tree full of conflicted files, so the rung below would claim it and offer a
@@ -204,6 +211,7 @@ export function derivePrimaryGitAction(
   if (snapshot.changedFileCount > 0) return commitAction(true, null);
 
   const blocked = describeRemoteObstacle(snapshot);
+  if (blocked) return publishAction(false, blocked);
 
   // Above the ahead rung, and only ever with an upstream to pull from: a branch
   // that is behind cannot fast-forward its own push anyway, and one that has
@@ -212,31 +220,65 @@ export function derivePrimaryGitAction(
     return pullAction(snapshot.behind);
   }
 
-  if (!snapshot.upstream) return publishAction(!blocked, blocked);
-  if (blocked) return pushAction(false, blocked);
+  if (!snapshot.upstream) return publishAction(true, null);
   // An uncounted branch gets the push rung rather than dropping through it. The
   // rung below says "there is nothing left to push", and this is precisely the
   // state where that cannot be established: pushing is idempotent, so offering
   // it costs a branch that was already in sync nothing, while skipping it would
   // hide commits that never reached the remote.
-  if (snapshot.ahead === null || snapshot.ahead > 0) return pushAction(true, null);
-
-  // Committed, pushed and tracking: the only step of delivery left is the pull
-  // request (§3). A branch that already has one drops through to the push rung,
-  // which says there is nothing to do — the panel reflects the pull request it
-  // has rather than offering to open a second one.
-  if (snapshot.pullRequest === 'exists') {
-    return pushAction(false, 'gitPanel.push.nothingToPush');
+  if (snapshot.ahead === null || snapshot.ahead > 0) {
+    return pushAction(true, null, snapshot.ahead ?? undefined);
   }
 
-  // Nothing merges into itself. Only when the panel actually resolved a default
-  // branch: a clone whose `origin/HEAD` never resolved reports null, and not
-  // knowing is not a reason to withhold the action.
+  // Committed, pushed and tracking: the only step of delivery left is the pull
+  // request (§3). A branch that already has one points at that destination.
+  if (snapshot.pullRequest === 'exists') {
+    return viewPullRequestAction();
+  }
+
+  // Nothing merges into itself. A resolved default branch with no other work is
+  // already up to date; a clone whose `origin/HEAD` never resolved reports null,
+  // and not knowing is not a reason to withhold Create PR.
   if (snapshot.defaultBranch && snapshot.branch === snapshot.defaultBranch) {
-    return createPullRequestAction('none', 'gitPanel.pr.defaultBranch');
+    return upToDateAction();
   }
 
   return createPullRequestAction(snapshot.pullRequest);
+}
+
+function loadingAction(): GitPrimaryAction {
+  return {
+    kind: 'loading',
+    action: null,
+    enabled: false,
+    labelKey: 'gitPanel.primary.loading',
+    pendingLabelKey: 'gitPanel.commit.buttonPending',
+    disabledReasonKey: 'gitPanel.primary.stateUnknown',
+  };
+}
+
+function upToDateAction(): GitPrimaryAction {
+  return {
+    kind: 'up_to_date',
+    action: null,
+    enabled: false,
+    labelKey: 'gitPanel.primary.upToDate',
+    pendingLabelKey: 'gitPanel.commit.buttonPending',
+    disabledReasonKey: null,
+  };
+}
+
+function viewPullRequestAction(): GitPrimaryAction {
+  return {
+    kind: 'view_pr',
+    action: 'view_pr',
+    enabled: true,
+    labelKey: 'gitPanel.pr.viewButton',
+    // Viewing is local navigation and never enters pending state, but keeping a
+    // complete action shape lets every primary surface render one model.
+    pendingLabelKey: 'gitPanel.pr.createButtonPending',
+    disabledReasonKey: null,
+  };
 }
 
 /** What stops this branch reaching a remote at all, before counting commits. */
@@ -294,12 +336,14 @@ function conflictAction(operation: GitConflictOperation): GitPrimaryAction {
 function pushAction(
   enabled: boolean,
   disabledReasonKey: GitPrimaryActionReasonKey | null,
+  count?: number,
 ): GitPrimaryAction {
   return {
     kind: 'push',
     action: 'push',
     enabled,
-    labelKey: 'gitPanel.push.button',
+    labelKey: count === undefined ? 'gitPanel.push.button' : 'gitPanel.push.buttonCount',
+    ...(count === undefined ? {} : { labelParams: { count } }),
     pendingLabelKey: 'gitPanel.push.buttonPending',
     disabledReasonKey,
   };

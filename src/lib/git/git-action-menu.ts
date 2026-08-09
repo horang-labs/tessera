@@ -33,16 +33,16 @@ export const GIT_MENU_ACTION_IDS = [
   'push',
   'pull',
   'create_pr',
+  'open_source_control',
 ] as const;
 
 /**
- * A delivery action — the set the menu's memory promotes from. The escape is not
- * in here: a remembered abort would put a destructive action at the top of the
- * menu the next time a conflict happened, which is not the workflow §4 promotes.
+ * The fixed delivery actions. Conflict Recovery's escape is appended only while
+ * an operation is active; the delivery entries themselves never move.
  */
 export type GitDeliveryMenuActionId = (typeof GIT_MENU_ACTION_IDS)[number];
 
-/** What the panel is asked to run, and the stable name the menu remembers. */
+/** What the panel is asked to run in the menu's stable slot order. */
 export type GitMenuActionId = GitDeliveryMenuActionId | 'abort';
 
 /**
@@ -50,7 +50,7 @@ export type GitMenuActionId = GitDeliveryMenuActionId | 'abort';
  * upstream yet — the same action under a different word (§2), which is why it is
  * a face rather than an entry of its own.
  */
-export type GitMenuActionKind = GitMenuActionId | 'publish';
+export type GitMenuActionKind = GitMenuActionId | 'publish' | 'view_pr';
 
 export type GitMenuActionLabelKey =
   | 'gitPanel.commit.button'
@@ -63,6 +63,8 @@ export type GitMenuActionLabelKey =
   | 'gitPanel.pull.menuButton'
   | 'gitPanel.pull.button'
   | 'gitPanel.pr.createButton'
+  | 'gitPanel.pr.viewButton'
+  | 'gitPanel.menu.openSourceControl'
   | 'gitPanel.conflict.abortMerge'
   | 'gitPanel.conflict.abortRebase'
   | 'gitPanel.conflict.abortCherryPick';
@@ -102,38 +104,16 @@ const RESTING_LABEL_KEY: Record<GitDeliveryMenuActionId, GitMenuActionLabelKey> 
   push: 'gitPanel.push.button',
   pull: 'gitPanel.pull.menuButton',
   create_pr: 'gitPanel.pr.createButton',
+  open_source_control: 'gitPanel.menu.openSourceControl',
 };
-
-export interface GitActionMenuOptions {
-  /**
-   * The action chosen last time, lifted to the top of the menu (§4), so a
-   * workflow repeated all day is not re-selected from the middle of the list
-   * every time.
-   *
-   * Position only. A promoted action that cannot run right now stays promoted
-   * and stays disabled — sinking it back would be the menu changing shape,
-   * which is exactly what §4 rules out.
-   */
-  promoted?: GitDeliveryMenuActionId | null;
-}
 
 export function deriveGitActionMenu(
   snapshot: GitStateSnapshot | null,
-  options: GitActionMenuOptions = {},
 ): GitMenuAction[] {
   const actions = GIT_MENU_ACTION_IDS.map((id) => describeMenuAction(id, snapshot));
-  const promoted = actions.findIndex((action) => action.id === options.promoted);
-  // -1 covers both "nothing remembered" and a name this version no longer has —
-  // an unreadable memory is not a reason to draw a different menu.
-  const ordered = promoted <= 0
-    ? actions
-    : [actions[promoted]!, ...actions.filter((_, index) => index !== promoted)];
-
-  // Appended after the promotion rather than before it, so the escape stays at
-  // the end of the menu whatever the user last reached for (§9).
   return snapshot?.conflictOperation
-    ? [...ordered, describeAbort(snapshot.conflictOperation)]
-    : ordered;
+    ? [...actions, describeAbort(snapshot.conflictOperation)]
+    : actions;
 }
 
 function describeMenuAction(
@@ -154,7 +134,18 @@ function describeMenuAction(
   if (id === 'push') return describePush(snapshot);
   if (id === 'pull') return describePull(snapshot);
   if (id === 'create_pr') return describeCreatePullRequest(snapshot);
+  if (id === 'open_source_control') return describeOpenSourceControl();
   return describeCommitPush(snapshot);
+}
+
+function describeOpenSourceControl(): GitMenuAction {
+  return {
+    id: 'open_source_control',
+    kind: 'open_source_control',
+    enabled: true,
+    labelKey: 'gitPanel.menu.openSourceControl',
+    disabledReasonKey: null,
+  };
 }
 
 /**
@@ -265,13 +256,23 @@ function describeAbort(operation: GitConflictOperation): GitMenuAction {
 function describePush(snapshot: GitStateSnapshot): GitMenuAction {
   const blocked = describeRemoteObstacle(snapshot);
 
+  if (blocked) {
+    return {
+      id: 'push',
+      kind: 'publish',
+      enabled: false,
+      labelKey: 'gitPanel.push.publishButton',
+      disabledReasonKey: blocked,
+    };
+  }
+
   if (!snapshot.upstream) {
     return {
       id: 'push',
       kind: 'publish',
-      enabled: !blocked,
+      enabled: true,
       labelKey: 'gitPanel.push.publishButton',
-      disabledReasonKey: blocked,
+      disabledReasonKey: null,
     };
   }
 
@@ -283,11 +284,11 @@ function describePush(snapshot: GitStateSnapshot): GitMenuAction {
   return {
     id: 'push',
     kind: 'push',
-    enabled: !blocked && ahead,
+    enabled: ahead,
     labelKey: count !== null ? 'gitPanel.push.buttonCount' : 'gitPanel.push.button',
     ...(count !== null ? { labelParams: { count } } : {}),
     disabledReasonKey:
-      blocked ?? (ahead ? null : 'gitPanel.push.nothingToPush'),
+      ahead ? null : 'gitPanel.push.nothingToPush',
   };
 }
 
@@ -329,6 +330,16 @@ function describePull(snapshot: GitStateSnapshot): GitMenuAction {
  * branch, and only then does what GitHub says about the branch matter.
  */
 function describeCreatePullRequest(snapshot: GitStateSnapshot): GitMenuAction {
+  if (snapshot.pullRequest === 'exists') {
+    return {
+      id: 'create_pr',
+      kind: 'view_pr',
+      enabled: true,
+      labelKey: 'gitPanel.pr.viewButton',
+      disabledReasonKey: null,
+    };
+  }
+
   const blocked = describeRemoteObstacle(snapshot)
     ?? (snapshot.upstream ? null : 'gitPanel.pr.noUpstream')
     ?? (snapshot.defaultBranch && snapshot.branch === snapshot.defaultBranch

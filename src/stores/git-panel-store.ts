@@ -5,7 +5,7 @@ import type {
 } from '@/components/git/git-action-report';
 import type { GitPanelData } from '@/types/git';
 
-export type GitPendingVerb = GitActionVerb | 'commit_push';
+export type GitPendingVerb = GitActionVerb | 'commit_push' | 'publish';
 
 export interface WorktreeGitDeliveryState {
   commitMessage: string;

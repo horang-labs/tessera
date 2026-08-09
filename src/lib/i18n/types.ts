@@ -1149,6 +1149,7 @@ export interface I18nMessages {
       failureToast: string;
       createButton: string;
       createButtonPending: string;
+      viewButton: string;
       defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
@@ -1169,13 +1170,16 @@ export interface I18nMessages {
       abortFailureToast: string;
     };
     primary: {
+      loading: string;
       stateUnknown: string;
       detachedHead: string;
       noRemote: string;
+      upToDate: string;
     };
     menu: {
       label: string;
       pending: string;
+      openSourceControl: string;
     };
     failure: {
       commitTitle: string;

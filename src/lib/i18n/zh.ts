@@ -1167,6 +1167,7 @@ export const zh: I18nMessages = {
       failureToast: '创建拉取请求失败 · {{origin}} — {{reason}}',
       createButton: '创建 PR',
       createButtonPending: '正在创建 PR…',
+      viewButton: '查看 PR',
       defaultBranch: '拉取请求需要在非默认分支上创建',
       statusUnknown: '正在向 GitHub 确认拉取请求…',
       unavailable: '创建拉取请求需要 GitHub 远程仓库和已登录的 gh CLI',
@@ -1187,13 +1188,16 @@ export const zh: I18nMessages = {
       abortFailureToast: '中止失败 · {{origin}} — {{reason}}',
     },
     primary: {
+      loading: 'Git',
       stateUnknown: '正在读取 git 状态…',
       detachedHead: 'HEAD 处于分离状态 — 请先检出分支再推送',
       noRemote: '此仓库没有可推送的远程',
+      upToDate: '已是最新',
     },
     menu: {
       label: '全部 git 操作',
       pending: '已有 git 操作正在执行',
+      openSourceControl: '打开源代码管理',
     },
     failure: {
       commitTitle: '提交失败',

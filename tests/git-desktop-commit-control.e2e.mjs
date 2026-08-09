@@ -95,9 +95,9 @@ try {
 
   const control = page.getByTestId('desktop-commit-control');
   await control.waitFor({ timeout: 60_000 });
-  await page.getByRole('button', { name: /open commit composer/i }).waitFor();
+  await page.getByTestId('desktop-commit-primary').waitFor();
   await page.getByRole('button', { name: /more git actions for repo/i }).waitFor();
-  await page.getByRole('button', { name: /open commit composer/i }).click();
+  await page.getByTestId('desktop-commit-primary').click();
   await page.getByRole('button', { name: /more git actions for repo/i }).click();
   await page.getByTestId('desktop-commit-composer').waitFor({ state: 'detached' });
   await page.getByTestId('desktop-commit-action-menu').waitFor();
@@ -107,7 +107,7 @@ try {
   await page.getByText('Changed files', { exact: true }).waitFor();
   await page.getByTestId('tab-bar-git-toggle').click();
 
-  await page.getByRole('button', { name: /open commit composer/i }).click();
+  await page.getByTestId('desktop-commit-primary').click();
   const composer = page.getByTestId('desktop-commit-composer');
   await composer.waitFor();
   assert.equal((await git(['rev-parse', 'HEAD'])).stdout.trim().length, 40);
@@ -119,12 +119,12 @@ try {
   await page.screenshot({ path: artifact });
 
   await page.getByTestId(`collection-chat-${secondSessionId}`).first().click();
-  await page.getByRole('button', { name: /open commit composer/i }).click();
+  await page.getByTestId('desktop-commit-primary').click();
   assert.equal(await composer.getByTestId('git-commit-message').inputValue(), 'shared compact draft');
   assert.equal(await composer.getByTestId('desktop-commit-file-checkbox-a.txt').isChecked(), false);
   await composer.getByTestId('git-commit-message').fill('shared from second');
   await page.getByTestId(`collection-chat-${sessionId}`).first().click();
-  await page.getByRole('button', { name: /open commit composer/i }).click();
+  await page.getByTestId('desktop-commit-primary').click();
   assert.equal(await composer.getByTestId('git-commit-message').inputValue(), 'shared from second');
 
   await composer.getByRole('button', { name: /review files/i }).click();
@@ -133,7 +133,7 @@ try {
   assert.equal(await page.getByTestId('git-commit-file-checkbox-a.txt').isChecked(), false);
   await page.getByTestId('git-commit-message').fill('commit b only');
   await page.getByTestId('tab-bar-git-toggle').click();
-  await page.getByRole('button', { name: /open commit composer/i }).click();
+  await page.getByTestId('desktop-commit-primary').click();
   assert.equal(await composer.getByTestId('git-commit-message').inputValue(), 'commit b only');
 
   await page.route('**/git/commit-message', (route) => route.fulfill({
@@ -158,12 +158,12 @@ try {
   assert.equal((await git(['log', '-1', '--pretty=%s'])).stdout.trim(), 'manual still works');
   assert.equal((await git(['status', '--short'])).stdout.trim(), 'M a.txt');
 
-  await page.getByRole('button', { name: /open commit composer/i }).click();
+  await page.getByTestId('desktop-commit-primary').click();
   assert.equal(await composer.getByTestId('git-commit-message').inputValue(), '');
   assert.equal(await composer.getByTestId('desktop-commit-file-checkbox-a.txt').isChecked(), true);
   await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 900, height: 700 });
-  await page.getByRole('button', { name: /open commit composer/i }).waitFor();
+  await page.getByTestId('desktop-commit-primary').waitFor();
   await page.getByTestId('tab-bar-git-toggle').waitFor();
   assert.equal(await page.getByTestId('desktop-commit-diff-stat').isVisible(), false);
   console.log(JSON.stringify({ artifact, committed: ['b.txt'], mediumWidth: 900 }));

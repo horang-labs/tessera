@@ -74,6 +74,7 @@ test('Push counts the commits it would send, and wears Publish without an upstre
 
 test('nothing reaches a remote from a detached HEAD or a repository without one', () => {
   const detached = entry({ ...SYNCED, branch: null, ahead: 2 }, 'push');
+  assert.equal(detached.kind, 'publish');
   assert.equal(detached.enabled, false);
   assert.equal(detached.disabledReasonKey, 'gitPanel.primary.detachedHead');
 
@@ -82,6 +83,7 @@ test('nothing reaches a remote from a detached HEAD or a repository without one'
     'push',
   );
   assert.equal(remoteless.enabled, false);
+  assert.equal(remoteless.kind, 'publish');
   assert.equal(remoteless.disabledReasonKey, 'gitPanel.primary.noRemote');
 });
 
@@ -107,8 +109,10 @@ test('Create PR names each of the things that can stand in its way', () => {
   assert.equal(ready.disabledReasonKey, null);
 
   const already = entry(SYNCED, 'create_pr');
-  assert.equal(already.enabled, false);
-  assert.equal(already.disabledReasonKey, 'gitPanel.pr.alreadyOpen');
+  assert.equal(already.kind, 'view_pr');
+  assert.equal(already.enabled, true);
+  assert.equal(already.labelKey, 'gitPanel.pr.viewButton');
+  assert.equal(already.disabledReasonKey, null);
 
   const unpublished = entry(
     { ...SYNCED, upstream: null, pullRequest: 'none' },
@@ -226,48 +230,6 @@ test('the abort sits after the delivery actions, which keep their order', () => 
   assert.deepEqual(ids, [...GIT_MENU_ACTION_IDS, 'abort']);
 });
 
-test('the abort is never promoted over the actions the user actually chose', () => {
-  // The memory is a preference for a workflow (§4). An escape hatch that jumped
-  // to the top of the menu because it was the last thing pressed would put a
-  // destructive action under the cursor on the next conflict.
-  const [first] = deriveGitActionMenu(CONFLICTED, {
-    promoted: 'abort' as never,
-  });
-
-  assert.equal(first?.id, 'commit');
-});
-
-test('the remembered choice is promoted to the top, and nothing else moves', () => {
-  const promoted = deriveGitActionMenu(SYNCED, { promoted: 'commit_push' })
-    .map((item) => item.id);
-
-  assert.deepEqual(promoted, ['commit_push', 'commit', 'push', 'pull', 'create_pr']);
-});
-
-test('a promotion the menu does not recognise leaves the order alone', () => {
-  // What comes back from storage a version later, or from a hand-edited key.
-  const stale = deriveGitActionMenu(SYNCED, {
-    promoted: 'force_push' as never,
-  }).map((item) => item.id);
-
-  assert.deepEqual(stale, [...GIT_MENU_ACTION_IDS]);
-  assert.deepEqual(
-    deriveGitActionMenu(SYNCED, { promoted: null }).map((item) => item.id),
-    [...GIT_MENU_ACTION_IDS],
-  );
-});
-
-test('a promoted action that cannot run is still promoted, and still disabled', () => {
-  // Promotion is about position, not about permission: an action that jumped
-  // its own queue and then silently sank back would be a menu that changes
-  // shape, which is the one thing §4 rules out.
-  const [first] = deriveGitActionMenu(SYNCED, { promoted: 'pull' });
-
-  assert.equal(first?.id, 'pull');
-  assert.equal(first?.enabled, false);
-  assert.equal(first?.disabledReasonKey, 'gitPanel.pull.nothingToPull');
-});
-
 /** Enough snapshots to reach every label and every reason the menu can name. */
 const COVERING_SNAPSHOTS: (GitStateSnapshot | null)[] = [
   null,
@@ -342,71 +304,6 @@ test('every count the menu carries survives being rendered, in every locale', as
   await i18n.changeLanguage('en');
 });
 
-/**
- * A `window` with nothing but the storage on it, which is all the memory module
- * reaches for. Restored by the caller, because these tests share a process.
- */
-function withFakeStorage(seed: Record<string, string>): () => void {
-  const store = new Map(Object.entries(seed));
-  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
-
-  Object.defineProperty(globalThis, 'window', {
-    configurable: true,
-    writable: true,
-    value: {
-      localStorage: {
-        getItem: (key: string) => store.get(key) ?? null,
-        setItem: (key: string, value: string) => void store.set(key, value),
-        removeItem: (key: string) => void store.delete(key),
-      },
-    },
-  });
-
-  return () => {
-    if (original) Object.defineProperty(globalThis, 'window', original);
-    else delete (globalThis as { window?: unknown }).window;
-  };
-}
-
-test('the last chosen action is remembered, and comes back on the next visit', async () => {
-  const restore = withFakeStorage({});
-  try {
-    const memory = await import('@/lib/git/git-action-memory');
-    assert.equal(memory.readRememberedGitAction(), null);
-
-    memory.rememberGitAction('commit_push');
-    assert.equal(memory.readRememberedGitAction(), 'commit_push');
-  } finally {
-    restore();
-  }
-});
-
-test('a remembered action this version no longer has is read as nothing', async () => {
-  const memory = await import('@/lib/git/git-action-memory');
-  const restore = withFakeStorage({
-    [memory.GIT_ACTION_MEMORY_KEY]: 'force_push',
-  });
-  try {
-    assert.equal(memory.readRememberedGitAction(), null);
-  } finally {
-    restore();
-  }
-});
-
-test('with no window there is nothing to remember and nothing to read', async () => {
-  // Server-rendered, where the panel is drawn before any storage exists. The
-  // menu still has to come back in its resting order rather than throwing.
-  const memory = await import('@/lib/git/git-action-memory');
-
-  assert.equal(readsWithoutWindow(memory.readRememberedGitAction), null);
-  assert.doesNotThrow(() => memory.rememberGitAction('pull'));
-});
-
-function readsWithoutWindow<T>(read: () => T): T {
-  assert.equal(typeof (globalThis as { window?: unknown }).window, 'undefined');
-  return read();
-}
-
 test('state that is not known yet disables every action, and says so', () => {
   for (const entry of deriveGitActionMenu(null)) {
     assert.equal(entry.enabled, false, `${entry.id} is offered on unknown state`);
@@ -418,6 +315,14 @@ test('state that is not known yet disables every action, and says so', () => {
 });
 
 test('the menu lists every action, in the same order, whatever the state', () => {
+  assert.deepEqual(GIT_MENU_ACTION_IDS, [
+    'commit',
+    'commit_push',
+    'push',
+    'pull',
+    'create_pr',
+    'open_source_control',
+  ]);
   // Every state except a conflict, which appends the one entry that cannot be
   // drawn without one — covered above.
   const snapshots: (GitStateSnapshot | null)[] = [

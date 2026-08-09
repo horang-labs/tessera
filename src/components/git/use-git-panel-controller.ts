@@ -10,6 +10,7 @@ import {
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
+import { useGitStore } from "@/stores/git-store";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
@@ -32,13 +33,8 @@ import {
 } from "@/lib/git/default-branch-confirmation";
 import {
   deriveGitActionMenu,
-  type GitDeliveryMenuActionId,
   type GitMenuActionId,
 } from "@/lib/git/git-action-menu";
-import {
-  readRememberedGitAction,
-  rememberGitAction,
-} from "@/lib/git/git-action-memory";
 import { startGitPanelPolling } from "@/lib/git/git-panel-poll";
 import { readGitPanelState } from "@/lib/git/git-panel-read";
 import {
@@ -221,20 +217,10 @@ export function useGitPanelController(sessionId: string | null) {
    * alone would not say which.
    */
   const [pushConfirmation, setPushConfirmation] = useState<
-    (GitDefaultBranchConfirmation & { intent: "push" | "commit_push" }) | null
+    (GitDefaultBranchConfirmation & {
+      intent: "push" | "publish" | "commit_push";
+    }) | null
   >(null);
-  /**
-   * The menu entry chosen last, lifted to the top of the menu on later visits
-   * (§4). Read after mount rather than while rendering: the panel is rendered on
-   * the server too, where there is no storage to read and the answer would
-   * differ from the client's.
-   */
-  const [rememberedAction, setRememberedAction] =
-    useState<GitDeliveryMenuActionId | null>(null);
-
-  useEffect(() => {
-    setRememberedAction(readRememberedGitAction());
-  }, []);
   const [generatingMessage, setGeneratingMessage] = useState(false);
   // A generation failure stays here rather than in a toast: it belongs to the
   // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
@@ -689,6 +675,20 @@ export function useGitPanelController(sessionId: string | null) {
     () => derivePrimaryGitAction(stateSnapshot),
     [stateSnapshot],
   );
+  const pullRequestUrl =
+    panelData?.prStatus?.url ?? panelData?.github.pullRequest?.url ?? null;
+  const viewPullRequest = useCallback(() => {
+    if (!pullRequestUrl || typeof window === "undefined") return;
+    void captureTelemetryEvent("git_action_triggered", {
+      source: "git_panel",
+      action: "open_external",
+      target: "pull_request",
+      has_worktree: Boolean(data?.worktreePath),
+      has_changes: Boolean(panelData?.changedFiles.length),
+      has_pr: true,
+    });
+    window.open(pullRequestUrl, "_blank", "noopener,noreferrer");
+  }, [data?.worktreePath, panelData?.changedFiles.length, pullRequestUrl]);
 
   // A toast is raised the same way whichever layer refused, and the draft
   // survives every failure so the same button is itself the retry.
@@ -869,11 +869,14 @@ export function useGitPanelController(sessionId: string | null) {
     ],
   );
 
-  const runBranchAction = useCallback(async (verb: GitBranchActionVerb) => {
+  const runBranchAction = useCallback(async (
+    verb: GitBranchActionVerb,
+    pendingVerb: GitPendingVerb = verb,
+  ) => {
     if (!worktreeKey || pendingHere) return;
 
     const ownerKey = worktreeKey;
-    markWorktreePending(ownerKey, verb);
+    markWorktreePending(ownerKey, pendingVerb);
     try {
       await requestBranchAction(verb);
     } finally {
@@ -914,6 +917,8 @@ export function useGitPanelController(sessionId: string | null) {
   const runPrimaryAction = useCallback(() => {
     if (!primaryAction.enabled) return;
     if (primaryAction.action === "commit") return commitSelectedFiles();
+    if (primaryAction.action === "view_pr") return viewPullRequest();
+    if (!primaryAction.action) return;
     // §8: a push at the default branch is asked about before anything runs,
     // and the panel is left exactly as it was until the answer comes back.
     // Returns null for anything that is not a push, so pull and create_pr pass
@@ -923,11 +928,17 @@ export function useGitPanelController(sessionId: string | null) {
       stateSnapshot,
     );
     if (confirmation) {
-      setPushConfirmation({ ...confirmation, intent: "push" });
+      setPushConfirmation({
+        ...confirmation,
+        intent: primaryAction.kind === "publish" ? "publish" : "push",
+      });
       return;
     }
-    return runBranchAction(primaryAction.action);
-  }, [commitSelectedFiles, primaryAction, runBranchAction, stateSnapshot]);
+    return runBranchAction(
+      primaryAction.action,
+      primaryAction.kind === "publish" ? "publish" : primaryAction.action,
+    );
+  }, [commitSelectedFiles, primaryAction, runBranchAction, stateSnapshot, viewPullRequest]);
 
   /**
    * The menu, derived independently of the ladder over the same snapshot (§4).
@@ -935,8 +946,8 @@ export function useGitPanelController(sessionId: string | null) {
    * and what the rest say about why they cannot.
    */
   const menuActions = useMemo(
-    () => deriveGitActionMenu(stateSnapshot, { promoted: rememberedAction }),
-    [rememberedAction, stateSnapshot],
+    () => deriveGitActionMenu(stateSnapshot),
+    [stateSnapshot],
   );
 
   /**
@@ -952,18 +963,14 @@ export function useGitPanelController(sessionId: string | null) {
     if (!chosen?.enabled) return;
     if ((id === "commit" || id === "commit_push") && commitDraftBlocked) return;
 
-    // §9's escape runs without being remembered. It is not a workflow the user
-    // repeats, and promoting it would put a destructive entry at the top of the
-    // menu the next time a worktree got stuck.
+    // §9's escape is not a delivery step and only exists during recovery.
     if (id === "abort") return runBranchAction("abort");
 
-    // Remembered on the press rather than on the outcome: what §4 promotes is
-    // the workflow the user reaches for, and a push that failed is still the
-    // one they will reach for next.
-    rememberGitAction(id);
-    setRememberedAction(id);
-
     if (id === "commit") return commitSelectedFiles();
+    if (id === "open_source_control") {
+      return useGitStore.getState().openTab("git");
+    }
+    if (chosen.kind === "view_pr") return viewPullRequest();
 
     // §8 stands in front of the menu exactly as it stands in front of the
     // button. Null for everything that does not push.
@@ -974,13 +981,17 @@ export function useGitPanelController(sessionId: string | null) {
     if (confirmation) {
       setPushConfirmation({
         ...confirmation,
-        intent: id === "commit_push" ? "commit_push" : "push",
+        intent: id === "commit_push"
+          ? "commit_push"
+          : chosen.kind === "publish"
+            ? "publish"
+            : "push",
       });
       return;
     }
 
     if (id === "commit_push") return runCommitAndPush();
-    return runBranchAction(id);
+    return runBranchAction(id, chosen.kind === "publish" ? "publish" : id);
   }, [
     commitDraftBlocked,
     commitSelectedFiles,
@@ -988,6 +999,7 @@ export function useGitPanelController(sessionId: string | null) {
     runBranchAction,
     runCommitAndPush,
     stateSnapshot,
+    viewPullRequest,
   ]);
 
   /** Answering yes runs the action the confirmation was raised for, and nothing else. */
@@ -998,7 +1010,8 @@ export function useGitPanelController(sessionId: string | null) {
     // belongs at the button (§7), which is where the pending label already is.
     // The intent is read off the confirmation rather than off the ladder or the
     // menu, both of which may have moved while the dialog was open.
-    return intent === "commit_push" ? runCommitAndPush() : runBranchAction("push");
+    if (intent === "commit_push") return runCommitAndPush();
+    return runBranchAction("push", intent);
   }, [pushConfirmation, runBranchAction, runCommitAndPush]);
 
   const cancelPrimaryAction = useCallback(() => setPushConfirmation(null), []);
@@ -1112,6 +1125,7 @@ export function useGitPanelController(sessionId: string | null) {
 
 
   return {
+    hasActiveSession: Boolean(sessionId),
     changedFileCount,
     commitMessage,
     commitTotals,
