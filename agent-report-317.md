@@ -51,9 +51,11 @@ All servers were launched by the isolated helper after inspecting inherited Tess
 | Root `npx tsc --noEmit` plus targeted ESLint | PASS. |
 | Root red/green `node tests/git-delivery-accessibility.e2e.mjs` | Before `6b15149`, deterministic failure after a synthetic anchored-menu scroll: expected `commit_push`, focus reset to `commit`. After the fix: PASS with `[1440,900,360]` and keyboard `true`. |
 | `wc -l tests/git-delivery-accessibility.e2e.mjs` | 164 lines after the root regression, below the requested 190-line target. |
-| Final root `graphify update .` | PASS; 10,089 nodes, 26,774 edges, 385 communities. Graphify warned that the community set changed since the 429 saved labels and renamed 177 communities by their hub; graph integrity/output generation still completed. |
+| Final integration `graphify update .` | PASS; 10,089 nodes, 26,774 edges, 389 communities. Graphify warned that the community set changed since the 426 saved labels and renamed 185 communities by their hub; graph integrity/output generation still completed. |
 
-The whole repository suite was deliberately not run; the root orchestrator owns the final integrated suite.
+The child deliberately did not run the whole repository suite. The root's final integrated run executed all 281 unit/contract files with Node 22 `--test-force-exit`: 1,732 tests, 1,717 pass, 13 fail, 2 skip. A detached baseline worktree at pre-wave `b83c679` reproduced the same 13 failures; the wave initially added two stale narrow-refspec expectation failures, and integration commit `d86b494` updated those tests to #313's non-speculative unknown-state contract. The final integrated result therefore has zero wave-introduced full-suite regressions. Full TypeScript passed; full ESLint passed with zero errors and three pre-existing warnings.
+
+The root also reran all five Git-delivery browser journeys sequentially on integrated HEAD. Accessibility/breakpoints, six-step ladder and compound partial failure, same-worktree sharing/isolation, conflict recovery/AI handoff, and phone delivery all passed.
 
 ## Browser breakpoint and screenshot evidence
 
@@ -113,6 +115,7 @@ Initial Spec review: four findings—ladder stopped before Publish/Create PR/Vie
 - Implementation and initial evidence: `d9bb0a4` (`fix(git): harden integrated delivery journey`)
 - Review fixes and expanded evidence: `dd1605d48f719866b92cac23752baac85a3216fc` (`fix(git): close integrated delivery review gaps`)
 - Root-discovered reposition focus race and regression: `6b15149ce6e3b76c1d67b3c715df86297798f450` (`fix(git): preserve action menu focus on reposition`)
+- Root integration-only stale expectation cleanup: `d86b494` (`test(git): align narrow refspec with unknown ladder`)
 - This report is committed separately; its containing SHA is available with `git log -1 --format=%H -- agent-report-317.md` and is reported to the root after creation (a commit cannot contain its own SHA without a self-reference cycle).
 
 ## Deliberately excluded scope
