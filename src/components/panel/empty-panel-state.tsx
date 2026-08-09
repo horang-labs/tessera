@@ -250,6 +250,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     if (mode === 'chat') {
       await createSession({
         workDir: activeProject.decodedPath,
+        parentProjectId: activeProject.encodedDir,
         providerId: selectedProvider,
         collectionId: selectedCollectionId ?? undefined,
         executionMode,

@@ -212,6 +212,10 @@ export interface UnifiedSession {
    * Undefined when no worktree is linked.
    */
   worktreeBranch?: string;
+  /** Canonical Worktree that owns this Session. */
+  worktreeId?: string;
+  /** Immutable branch-at-creation metadata used only by Project view projection. */
+  scopeBranch?: string;
   /** Working directory used by this session or managed worktree. */
   workDir?: string;
 
@@ -288,7 +292,7 @@ export interface ProjectGroup {
   allLoaded: boolean;
   /** Number of sessions loaded from API so far (for offset calculation) */
   loadedCount: number;
-  /** Cursor for next page of sessions (mtime ISO of oldest loaded session) */
+  /** Opaque cursor for the next page of sessions */
   nextCursor: string | null;
   /** Index tracking how many times "Load More" has been clicked (for progressive batch sizing) */
   loadBatchIndex: number;

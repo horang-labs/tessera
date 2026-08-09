@@ -9,6 +9,10 @@ import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
+import {
+  getProjectViewSessions,
+  getProjectViewSessionsByStatus,
+} from '@/lib/projects/project-view-projection';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -22,7 +26,7 @@ function maxActivityTimestamp(left: string, right: string | null): string {
  *
  * Query Parameters:
  *   - limit: Maximum sessions to return (default: 20, min: 1, max: 100)
- *   - cursor: sort_order cursor for pagination
+ *   - cursor: opaque stable cursor for pagination
  */
 export async function GET(
   req: NextRequest,
@@ -57,9 +61,9 @@ export async function GET(
       );
     }
 
-    if (cursor && !/^\d+$/.test(cursor)) {
+    if (cursor && !dbSessions.isValidSessionCursor(cursor)) {
       return NextResponse.json(
-        { error: 'Invalid cursor format: must be a numeric sort_order cursor' },
+        { error: 'Invalid cursor format' },
         { status: 400 }
       );
     }
@@ -69,11 +73,12 @@ export async function GET(
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
 
     const result = statusGroup
-      ? dbSessions.getSessionsByStatus(encodedDir, statusGroup, { limit, cursor })
-      : dbSessions.getSessionsByProject(encodedDir, { limit, cursor });
+      ? getProjectViewSessionsByStatus(encodedDir, statusGroup, { limit, cursor })
+      : getProjectViewSessions(encodedDir, { limit, cursor });
 
     const mapped = result.sessions.map((row) => ({
       ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
+      projectDir: encodedDir,
       lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
       ...(runtimeConfigs.get(row.id) ?? {}),
     }));

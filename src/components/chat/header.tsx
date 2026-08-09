@@ -36,6 +36,7 @@ import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
+import { resolveSessionBranchPresentation } from '@/lib/session/session-branch-presentation';
 
 interface HeaderProps {
   sessionId: string;
@@ -61,6 +62,12 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const session = useSessionStore((state) =>
     state.getSession(sessionId)
   );
+  const liveWorktreeBranch = useSessionStore((state) => {
+    if (!session?.worktreeId) return null;
+    return state.projects
+      .map((project) => project.projectWorktree)
+      .find((worktree) => worktree?.id === session.worktreeId)?.currentBranch ?? null;
+  });
   const dragSessionId = session?.id ?? null;
   const taskId = session?.taskId;
   const linkedTask = useTaskStore((state) =>
@@ -217,9 +224,18 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
     wsClient.stopSession(sessionId);
   }, [sessionId]);
 
-  const branchTitle = session?.worktreeBranch
-    ? `${t('chat.branchLabel')}: ${session.worktreeBranch}${
-        session.worktreeDeletedAt ? ` · ${t('chat.worktreeDeleted')}` : ''
+  const branchPresentation = resolveSessionBranchPresentation({
+    worktreeBranch: session?.worktreeBranch,
+    scopeBranch: session?.scopeBranch,
+    liveBranch: liveWorktreeBranch,
+  });
+  const branchTitle = branchPresentation
+    ? `${t(branchPresentation.labelKind === 'scope' ? 'chat.sessionScopeLabel' : 'chat.branchLabel')}: ${branchPresentation.branch}${
+        branchPresentation.liveBranch
+          ? ` · ${t('chat.currentBranchLabel')}: ${branchPresentation.liveBranch}`
+          : ''
+      }${branchPresentation.labelKind === 'scope' ? ` · ${t('chat.presentationScopeHint')}` : ''}${
+        session?.worktreeDeletedAt ? ` · ${t('chat.worktreeDeleted')}` : ''
       }`
     : undefined;
 
@@ -353,21 +369,32 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                 />
               </span>
 
-              {session.worktreeBranch && (
+              {branchPresentation && (
                 <>
                   <span className="h-3 w-px shrink-0 bg-(--divider) opacity-70" aria-hidden="true" />
                   <span
                     className={cn(
                       'inline-flex min-w-0 max-w-[min(18rem,35vw)] shrink items-center gap-1',
                       'text-[11px] font-normal leading-none text-(--text-secondary)',
-                      session.worktreeDeletedAt && 'text-(--status-error-text)'
+                      (session.worktreeDeletedAt || branchPresentation.mismatch)
+                        && 'text-(--status-error-text)'
                     )}
                     title={branchTitle}
                     aria-label={branchTitle}
                     data-testid="header-branch-chip"
                   >
                     <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    <span className="min-w-0 truncate">{session.worktreeBranch}</span>
+                    <span className="min-w-0 truncate">
+                      {branchPresentation.labelKind === 'scope'
+                        ? `${t('chat.sessionScopeLabel')}: `
+                        : ''}
+                      {branchPresentation.branch}
+                    </span>
+                    {branchPresentation.mismatch && branchPresentation.liveBranch ? (
+                      <span className="min-w-0 truncate">
+                        · {t('chat.currentBranchLabel')}: {branchPresentation.liveBranch}
+                      </span>
+                    ) : null}
                   </span>
                 </>
               )}

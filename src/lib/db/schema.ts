@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 34;
+export const SCHEMA_VERSION = 35;
 
 export const CREATE_TABLES = `
 CREATE TABLE IF NOT EXISTS _meta (
@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   work_dir         TEXT,
   worktree_branch  TEXT,
   worktree_managed INTEGER NOT NULL DEFAULT 0,
+  worktree_id      TEXT,
+  scope_branch     TEXT,
   archived         INTEGER NOT NULL DEFAULT 0,
   archived_at      TEXT,
   worktree_deleted_at TEXT,
@@ -158,6 +160,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_sort_order
 
 CREATE INDEX IF NOT EXISTS idx_sessions_task
   ON sessions(task_id);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_worktree_scope
+  ON sessions(worktree_id, scope_branch);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_collection
   ON sessions(collection_id);

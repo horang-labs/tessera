@@ -212,6 +212,8 @@ export function useSessionCrud() {
           archived: false,
           sortOrder: 0,
           worktreeBranch,
+          worktreeId: result.worktreeId,
+          scopeBranch: result.scopeBranch,
           kind: result.kind,
           provider: result.provider,
           model: result.model,
