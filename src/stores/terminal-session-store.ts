@@ -25,6 +25,12 @@ interface TerminalSessionStore {
   bySessionId: Record<string, TerminalSessionState>;
   /** Returns false when the server replayed an identical cached state. */
   applySessionState: (msg: SessionStateMessage) => boolean;
+  /** Move a live turn with the PTY when provider discovery replaces its session row. */
+  rebindSessionState: (
+    previousSessionId: string,
+    sessionId: string,
+    terminalId: string,
+  ) => void;
   markRuntimeStopped: (sessionId: string) => void;
   markRuntimeStarted: (sessionId: string) => void;
   clearSession: (sessionId: string) => void;
@@ -89,6 +95,51 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
     }));
     return true;
   },
+  rebindSessionState: (previousSessionId, sessionId, terminalId) =>
+    set((prev) => {
+      const previous = prev.bySessionId[previousSessionId];
+      const destination = prev.bySessionId[sessionId];
+      const carriesActiveTurn = previous
+        && !previous.runtimeExited
+        && (previous.status === 'running' || previous.status === 'input_required');
+      const updatedAt = Date.now();
+      const bySessionId = { ...prev.bySessionId };
+
+      // The old row no longer owns this runtime. Keep a tombstone so a delayed
+      // hook cannot resurrect it after the menu and panel have moved.
+      bySessionId[previousSessionId] = previous
+        ? {
+            ...previous,
+            ...(carriesActiveTurn
+              ? { status: 'idle' as const, hookEvent: 'RuntimeRebound' }
+              : {}),
+            runtimeExited: true,
+            updatedAt,
+          }
+        : {
+            status: 'idle',
+            hookEvent: 'RuntimeRebound',
+            terminalId,
+            runtimeExited: true,
+            updatedAt,
+          };
+
+      if (carriesActiveTurn) {
+        const reboundState: TerminalSessionState = {
+          ...previous,
+          terminalId,
+          updatedAt,
+        };
+        delete reboundState.runtimeExited;
+        bySessionId[sessionId] = reboundState;
+      } else if (destination?.runtimeExited) {
+        const startedDestination = { ...destination, updatedAt };
+        delete startedDestination.runtimeExited;
+        bySessionId[sessionId] = startedDestination;
+      }
+
+      return { bySessionId };
+    }),
   markRuntimeStopped: (sessionId) =>
     set((prev) => {
       const current = prev.bySessionId[sessionId];
