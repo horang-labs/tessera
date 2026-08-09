@@ -85,7 +85,7 @@ export interface SessionState {
   ) => void;
   setCreatingSession: (sessionId: string | null) => void;
   setLoadingSession: (sessionId: string | null) => void;
-  getSession: (sessionId: string) => UnifiedSession | undefined;
+  getSession: (sessionId: string, projectDir?: string | null) => UnifiedSession | undefined;
 
   // Unread count actions (for FEAT-002)
   incrementUnreadCount: (sessionId: string) => void;
@@ -1132,8 +1132,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    */
   setLoadingSession: (sessionId) => set({ loadingSessionId: sessionId }),
 
-  getSession: (sessionId: string): UnifiedSession | undefined => {
+  getSession: (sessionId: string, projectDir?: string | null): UnifiedSession | undefined => {
     const { projects, retainedSessions } = get();
+    if (projectDir) {
+      const projectedSession = projects
+        .find((project) => project.encodedDir === projectDir)
+        ?.sessions.find((session) => session.id === sessionId);
+      if (projectedSession) return projectedSession;
+
+      // An open tab can outlive pagination or a branch projection refresh. Use
+      // another appearance only as the canonical payload; never leak its local
+      // Project or Collection placement into the requested Project view.
+      const canonicalSession = projects
+        .flatMap((project) => project.sessions)
+        .find((session) => session.id === sessionId)
+        ?? retainedSessions[sessionId];
+      return canonicalSession
+        ? { ...canonicalSession, projectDir, collectionId: undefined }
+        : undefined;
+    }
     for (const project of projects) {
       const session = project.sessions.find((s) => s.id === sessionId);
       if (session) return session;

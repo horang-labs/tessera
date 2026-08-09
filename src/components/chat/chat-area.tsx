@@ -36,6 +36,7 @@ interface ChatAreaProps {
   sessionId: string;
   panelId: string;
   presentation?: 'panel' | 'peek';
+  projectViewDir?: string | null;
 }
 
 const PEEK_LOADING_DELAY_MS = 300;
@@ -44,6 +45,7 @@ export const ChatArea = memo(function ChatArea({
   sessionId,
   panelId,
   presentation = 'panel',
+  projectViewDir: explicitProjectViewDir,
 }: ChatAreaProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
@@ -64,6 +66,12 @@ export const ChatArea = memo(function ChatArea({
   const isPreviewTab = useTabStore(
     (state) => !isPeek && (state.tabs.find((tab) => tab.id === tabId)?.isPreview ?? false),
   );
+  const tabProjectViewDir = useTabStore(
+    (state) => state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null,
+  );
+  const projectViewDir = explicitProjectViewDir === undefined
+    ? tabProjectViewDir
+    : explicitProjectViewDir;
   const { windowedMessages, hasMore, loadMore, isLoadingMore } =
     useWindowedMessages(sessionId);
   const isSinglePanel = usePanelStore(
@@ -71,7 +79,7 @@ export const ChatArea = memo(function ChatArea({
       || Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length <= 1,
   );
 
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useSessionStore((state) => state.getSession(sessionId, projectViewDir));
   // 생성 중(낙관적 temp 세션): 서버 세션이 아직 없어서 PTY attach가 불가능하다 —
   // TerminalPanel을 붙이면 존재하지 않는 세션으로 terminal_create가 나가 에러가 뜬다.
   // 전역 creatingSessionId 슬롯은 동시 생성 시 덮여서 믿을 수 없다 — temp- 접두가
@@ -220,6 +228,7 @@ export const ChatArea = memo(function ChatArea({
         <Header
           sessionId={sessionId}
           panelId={panelId}
+          projectViewDir={projectViewDir}
           isSinglePanel={isSinglePanel}
           search={{
             isOpen: messageSearch.isSearchOpen,
@@ -266,6 +275,7 @@ export const ChatArea = memo(function ChatArea({
             messages={windowedMessages}
             isLoading={isLoading}
             sessionId={sessionId}
+            projectViewDir={projectViewDir}
             hasMore={hasMore}
             onLoadMore={loadMore}
             isLoadingMore={isLoadingMore}
@@ -293,6 +303,7 @@ export const ChatArea = memo(function ChatArea({
                 messages={windowedMessages}
                 isLoading={isLoading}
                 sessionId={sessionId}
+                projectViewDir={projectViewDir}
                 hasMore={hasMore}
                 onLoadMore={loadMore}
                 isLoadingMore={isLoadingMore}
@@ -325,6 +336,7 @@ export const ChatArea = memo(function ChatArea({
 
           <MessageInput
             sessionId={sessionId}
+            projectViewDir={projectViewDir}
             isDisabled={isInputDisabled}
             isReadOnly={isReadOnly}
             isStopped={isStopped}

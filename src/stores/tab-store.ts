@@ -148,12 +148,12 @@ function inferPersistedTabProjectDir(t: PersistedTab, fallbackProjectDir: string
 function inferTabProjectDir(initialSessionId: string | null | undefined, currentProjectDir: string | null): string | null {
   const sourceSessionId = initialSessionId ? getSpecialSessionSourceSessionId(initialSessionId) : null;
   if (sourceSessionId) {
-    return useSessionStore.getState().getSession(sourceSessionId)?.projectDir ?? null;
+    return useSessionStore.getState().getSession(sourceSessionId, currentProjectDir)?.projectDir ?? null;
   }
   if (initialSessionId && isSpecialSession(initialSessionId)) return null;
 
   if (initialSessionId) {
-    const session = useSessionStore.getState().getSession(initialSessionId);
+    const session = useSessionStore.getState().getSession(initialSessionId, currentProjectDir);
     if (session?.projectDir) return session.projectDir;
   }
 

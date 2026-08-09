@@ -44,6 +44,7 @@ interface MessageListProps {
   messages: EnhancedMessage[];
   isLoading: boolean;
   sessionId: string;
+  projectViewDir?: string | null;
   hasMore: boolean;
   onLoadMore: () => Promise<void> | void;
   isLoadingMore: boolean;
@@ -123,6 +124,7 @@ function MessageListSessionView({
   messages,
   isLoading,
   sessionId,
+  projectViewDir,
   hasMore,
   onLoadMore,
   isLoadingMore,
@@ -142,7 +144,7 @@ function MessageListSessionView({
   const [isInjectingFork, setIsInjectingFork] = useState(false);
   const forkAnchorRef = useRef<HTMLElement | null>(null);
   const messagesRef = useRef(messages);
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useSessionStore((state) => state.getSession(sessionId, projectViewDir));
   const projects = useSessionStore((state) => state.projects);
   const providerId = session?.provider;
   const { sendMessage } = useWebSocket();
