@@ -6,7 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from '@playwright/test';
-import { startDevServer } from './helpers/dev-server.mjs';
+import {
+  addBrowserAuthCookie,
+  seedBrowserUser,
+  startDevServer,
+} from './helpers/dev-server.mjs';
 
 const run = promisify(execFile);
 const externalCdp = process.env.TESSERA_E2E_CDP_URL ?? null;
@@ -68,6 +72,7 @@ try {
     runtime = await startDevServer({
       dataDirPrefix: 'tessera-conflict-recovery-data-',
       env: { TESSERA_ELECTRON_AUTH_BYPASS: '1' },
+      seed: seedBrowserUser,
     });
   } else {
     runtime = {
@@ -103,6 +108,7 @@ try {
       viewport: { width: 1440, height: 900 },
       extraHTTPHeaders: { 'x-tessera-app-secret': runtime.appSecret },
     });
+  if (!externalCdp) await addBrowserAuthCookie(context, runtime);
   const page = externalCdp ? context.pages()[0] : await context.newPage();
   await page.goto(`${runtime.origin}/chat`, { waitUntil: 'load', timeout: 120_000 });
   await page.evaluate((project) => {
@@ -152,13 +158,10 @@ try {
     contentType: 'application/json',
     body: JSON.stringify(handoffSnapshot),
   }));
-  await page.waitForFunction(() => {
-    const button = document.querySelector('[data-testid="git-conflict-resolve-with-ai"]');
-    if (!(button instanceof HTMLButtonElement)) return false;
-    button.click();
-    return true;
-  });
   const composer = page.locator(`textarea[data-session-input="${sessionId}"]`);
+  const handoff = page.getByTestId('git-conflict-resolve-with-ai');
+  await handoff.waitFor({ state: 'visible', timeout: 30_000 });
+  await handoff.click();
   await page.waitForFunction(
     (targetSessionId) => document.querySelector(`textarea[data-session-input="${targetSessionId}"]`)?.value.includes('Operation: merge'),
     sessionId,

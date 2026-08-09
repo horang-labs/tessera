@@ -5,7 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
-import { startDevServer } from './helpers/dev-server.mjs';
+import {
+  addBrowserAuthCookie,
+  seedBrowserUser,
+  startDevServer,
+} from './helpers/dev-server.mjs';
 
 const execFileAsync = promisify(execFile);
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-git-ladder-'));
@@ -81,6 +85,7 @@ try {
   runtime = await startDevServer({
     dataDirPrefix: 'tessera-git-ladder-data-',
     env: { TESSERA_ELECTRON_AUTH_BYPASS: '1' },
+    seed: seedBrowserUser,
   });
   await api('/api/settings', { method: 'PUT', body: JSON.stringify({ agentEnvironment: 'wsl' }) });
   await api('/api/projects', { method: 'POST', body: JSON.stringify({ folderPath: repo }) });
@@ -92,6 +97,7 @@ try {
     viewport: { width: 1440, height: 900 },
     extraHTTPHeaders: { 'x-tessera-app-secret': runtime.appSecret },
   });
+  await addBrowserAuthCookie(context, runtime);
   await context.addInitScript((project) => localStorage.setItem('ccw:selectedProjectDir', project), repo);
   const page = await context.newPage();
   await page.goto(`${runtime.origin}/chat`, { waitUntil: 'load', timeout: 120_000 });

@@ -17,6 +17,7 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import jwt from 'jsonwebtoken';
 
 /** The host app's own session, which must not leak into the server under test. */
 const HOST_SESSION_KEYS = [
@@ -130,4 +131,30 @@ export async function putSettings({ origin, appSecret }, settings) {
     body: JSON.stringify(settings),
   });
   assert.equal(response.ok, true, `could not write settings: ${await response.text()}`);
+}
+
+/** Seed and authenticate a real browser user when an E2E needs the WebSocket. */
+export async function seedBrowserUser(dataDir, {
+  id = 'e2e-browser-user',
+  username = 'e2e',
+} = {}) {
+  const now = new Date().toISOString();
+  await fs.writeFile(path.join(dataDir, 'users.json'), JSON.stringify({
+    users: [{ id, username, passwordHash: 'unused', createdAt: now, lastLoginAt: now }],
+  }, null, 2), 'utf8');
+}
+
+export async function addBrowserAuthCookie(context, { dataDir }, {
+  id = 'e2e-browser-user',
+  username = 'e2e',
+} = {}) {
+  const privateKey = await fs.readFile(path.join(dataDir, 'auth', 'private.pem'), 'utf8');
+  const token = jwt.sign(
+    { sub: id, username, iss: 'tessera', aud: 'tessera-users' },
+    privateKey,
+    { algorithm: 'RS256', expiresIn: 3600 },
+  );
+  await context.addCookies([
+    { name: 'jwt', value: token, domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
+  ]);
 }

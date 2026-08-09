@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronDown, LoaderCircle } from "lucide-react";
 import { PhoneBottomSheet } from "@/components/ui/phone-bottom-sheet";
 import { useAnchoredPopover } from "@/hooks/use-anchored-popover";
@@ -57,8 +57,15 @@ export function GitActionMenu({
     open,
     onBack: close,
   });
-  useCloseOnEscape(dismissPhoneMenu, {
-    enabled: isPhoneViewport && open,
+  const dismissMenu = useCallback(() => {
+    if (isPhoneViewport) {
+      return dismissPhoneMenu(() => triggerRef.current?.focus());
+    }
+    close();
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }, [close, dismissPhoneMenu, isPhoneViewport]);
+  useCloseOnEscape(dismissMenu, {
+    enabled: open,
     capture: true,
   });
   const { position, updatePosition } = useAnchoredPopover({
@@ -69,6 +76,31 @@ export function GitActionMenu({
     popoverRef: menuRef,
     calculatePosition: calculateMenuPosition,
   });
+  useEffect(() => {
+    if (!open || (!isPhoneViewport && !position)) return;
+    const frame = requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isPhoneViewport, open, position]);
+
+  const handleMenuKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'),
+    );
+    if (items.length === 0) return;
+    event.preventDefault();
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+          ? (current + 1) % items.length
+          : (current <= 0 ? items.length : current) - 1;
+    items[next]?.focus();
+  }, []);
 
   return (
     <div ref={containerRef} className="relative shrink-0">
@@ -117,7 +149,13 @@ export function GitActionMenu({
           handleClassName="mb-2"
           onDismiss={dismissPhoneMenu}
         >
-          <div role="menu" aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")} data-testid={menuTestId}>
+          <div
+            ref={menuRef}
+            role="menu"
+            aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")}
+            data-testid={menuTestId}
+            onKeyDown={handleMenuKeyDown}
+          >
             <GitActionMenuItems
               actions={actions}
               commitDraftBlocked={commitDraftBlocked}
@@ -132,6 +170,7 @@ export function GitActionMenu({
           ref={menuRef}
           role="menu"
           data-testid={menuTestId}
+          onKeyDown={handleMenuKeyDown}
           style={{ position: "fixed", top: position.top, left: position.left, width: position.width }}
           className="z-50 overflow-hidden rounded-lg border border-(--divider) bg-(--sidebar-bg) py-1 shadow-lg"
         >

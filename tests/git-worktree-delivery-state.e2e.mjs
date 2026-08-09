@@ -6,7 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from '@playwright/test';
-import { startDevServer } from './helpers/dev-server.mjs';
+import {
+  addBrowserAuthCookie,
+  seedBrowserUser,
+  startDevServer,
+} from './helpers/dev-server.mjs';
 
 const run = promisify(execFile);
 const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-git-owner-'));
@@ -84,6 +88,7 @@ try {
   runtime = await startDevServer({
     dataDirPrefix: 'tessera-git-owner-data-',
     env: { TESSERA_ELECTRON_AUTH_BYPASS: '1' },
+    seed: seedBrowserUser,
   });
   await api('/api/settings', {
     method: 'PUT',
@@ -103,6 +108,7 @@ try {
     viewport: { width: 1280, height: 800 },
     extraHTTPHeaders: { 'x-tessera-app-secret': runtime.appSecret },
   });
+  await addBrowserAuthCookie(context, runtime);
   await context.addInitScript((project) => {
     localStorage.setItem('ccw:selectedProjectDir', project);
   }, sharedRepo);
