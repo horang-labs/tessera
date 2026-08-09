@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   collectKanbanScopeData,
-  filterKanbanTasks,
+  filterKanbanTasksByCollection,
   resolveKanbanScope,
   selectKanbanProjectionItems,
 } from '@/lib/kanban/board-scope';
@@ -100,6 +100,14 @@ test('selected Project treats projected direct Sessions as Chats and linked Work
   const directSession = session('direct-c', 'project-c');
   directSession.originProjectId = 'project-c';
   const descendant = task('descendant-d', 'project-c');
+  descendant.sessions = [{
+    id: 'descendant-session',
+    originProjectId: 'project-c',
+    title: 'descendant-session',
+    lastModified: '2026-07-14T00:00:00.000Z',
+    isRunning: false,
+    sortOrder: 0,
+  }];
 
   const scope = resolveKanbanScope('project-c', [
     project('project-c', [canonicalLinkedSession, directSession]),
@@ -187,7 +195,7 @@ test('kanban trusts branch-scoped linked Worktree children and keeps zero-sessio
     isRunning: false,
   }];
 
-  assert.deepEqual(filterKanbanTasks(
+  assert.deepEqual(filterKanbanTasksByCollection(
     [task('zero-session-task', 'alpha'), visibleTask, hiddenTask],
     null,
   ).map((item) => item.id), [

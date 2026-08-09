@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildOriginProjectRepresentation,
   getCanonicalRunningSessionRepresentatives,
+  originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
@@ -69,7 +70,7 @@ test('global representation keeps canonical items only at their origin Project',
       originProjectId: 'project-a',
       title: 'shared',
       lastModified: timestamp,
-      isRunning: false,
+      isRunning: true,
       sortOrder: 0,
     },
     {
@@ -95,6 +96,10 @@ test('global representation keeps canonical items only at their origin Project',
   ]);
   assert.deepEqual(representation.tasks.map((item) => item.id), ['linked-c']);
   assert.deepEqual(representation.tasks[0]?.sessions.map((item) => item.id), ['shared']);
+  assert.equal(originProjectContainsRunningSession(
+    representation.projects[0],
+    representation.tasksByProject['project-a'] ?? [],
+  ), true);
 });
 
 test('running navigation deduplicates canonical Sessions and targets the origin Project', () => {

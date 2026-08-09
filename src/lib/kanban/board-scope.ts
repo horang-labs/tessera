@@ -73,11 +73,11 @@ export function selectKanbanProjectionItems(
     chats: data.sessions.filter((session) =>
       !session.archived && (!collectionId || session.collectionId === collectionId)
     ),
-    tasks: filterKanbanTasks(data.tasks, collectionId),
+    tasks: filterKanbanTasksByCollection(data.tasks, collectionId),
   };
 }
 
-export function filterKanbanTasks(
+export function filterKanbanTasksByCollection(
   tasks: TaskEntity[],
   collectionId: string | null,
 ): TaskEntity[] {

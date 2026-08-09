@@ -387,14 +387,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   // Apply collection filter
   const filteredChats = useMemo(() => {
-    const baseChats = activeCollectionFilter
-      ? chatSessions.filter((s) => s.collectionId === activeCollectionFilter)
-      : chatSessions;
-    return baseChats
+    return chatSessions
       .filter((session) => !session.workflowStatus)
       .slice()
       .sort((a, b) => a.sortOrder - b.sortOrder);
-  }, [chatSessions, activeCollectionFilter]);
+  }, [chatSessions]);
 
   const workflowChatsByStatus = useMemo(() => {
     const map: Record<WorkflowStatus, UnifiedSession[]> = {
@@ -403,11 +400,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
       in_review: [],
       done: [],
     };
-    const baseChats = activeCollectionFilter
-      ? chatSessions.filter((s) => s.collectionId === activeCollectionFilter)
-      : chatSessions;
-
-    for (const session of baseChats) {
+    for (const session of chatSessions) {
       const status = session.workflowStatus;
       if (status && map[status]) {
         map[status].push(session);
@@ -417,7 +410,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
       map[status].sort((a, b) => a.sortOrder - b.sortOrder);
     }
     return map;
-  }, [activeCollectionFilter, chatSessions]);
+  }, [chatSessions]);
 
   const filteredTasks = projectionItems.tasks;
 

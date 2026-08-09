@@ -1,5 +1,6 @@
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 
 export function getSessionOriginProjectId(session: UnifiedSession): string {
   return session.originProjectId ?? session.projectDir;
@@ -11,6 +12,17 @@ export function getTaskOriginProjectRepresentation(task: TaskEntity): TaskEntity
     (session) => (session.originProjectId ?? task.projectId) === task.projectId,
   );
   return sessions.length === task.sessions.length ? task : { ...task, sessions };
+}
+
+export function originProjectContainsRunningSession(
+  project: ProjectGroup,
+  tasks: TaskEntity[],
+): boolean {
+  return project.sessions.some((session) =>
+    !session.archived && resolveSessionRuntimePresentation(session).showRunning
+  ) || tasks.some((task) => task.sessions.some((session) =>
+    resolveSessionRuntimePresentation(session).showRunning
+  ));
 }
 
 /**
