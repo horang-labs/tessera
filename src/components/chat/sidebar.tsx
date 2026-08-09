@@ -318,6 +318,7 @@ export function Sidebar() {
   const tasksByProject = useTaskStore((state) => state.tasksByProject);
   const loadedTaskProjects = useTaskStore((state) => state.loadedProjects);
   const loadingTaskProjects = useTaskStore((state) => state.loadingProjectIds);
+  const allProjectsTaskLoadAttemptsRef = useRef(new Set<string>());
 
   // Load collections and tasks on mount / when selectedProject changes
   useEffect(() => {
@@ -332,12 +333,17 @@ export function Sidebar() {
   }, [selectedProjectDir]);
 
   useEffect(() => {
-    if (selectedProjectDir !== ALL_PROJECTS_SENTINEL) return;
+    if (selectedProjectDir !== ALL_PROJECTS_SENTINEL) {
+      allProjectsTaskLoadAttemptsRef.current.clear();
+      return;
+    }
     for (const projectId of getProjectIdsMissingTaskProjection(
       projects,
       loadedTaskProjects,
       loadingTaskProjects,
+      allProjectsTaskLoadAttemptsRef.current,
     )) {
+      allProjectsTaskLoadAttemptsRef.current.add(projectId);
       void useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
     }
   }, [loadedTaskProjects, loadingTaskProjects, projects, selectedProjectDir]);

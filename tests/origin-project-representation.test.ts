@@ -125,9 +125,16 @@ test('fresh global surfaces request every missing Project task projection', () =
     projects,
     { 'project-a': true },
     {},
+    new Set(),
   ), ['project-c']);
-  assert.deepEqual(getProjectIdsMissingTaskProjection(projects, {}, {}), [
+  assert.deepEqual(getProjectIdsMissingTaskProjection(projects, {}, {}, new Set()), [
     'project-a',
     'project-c',
   ]);
+  assert.deepEqual(getProjectIdsMissingTaskProjection(
+    projects,
+    {},
+    {},
+    new Set(['project-a', 'project-c']),
+  ), []);
 });
