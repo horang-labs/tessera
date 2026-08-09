@@ -18,6 +18,12 @@ export function useMenuNavigation(
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       items[(activeIndex - 1 + items.length) % items.length]?.focus();
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      items[0]?.focus();
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      items.at(-1)?.focus();
     }
   }, [itemSelector, menuRef]);
 }

@@ -133,6 +133,17 @@ try {
     await page.getByTestId('git-phone-pending-indicator').waitFor();
     assert.equal(await gitControl.getAttribute('aria-busy'), 'true');
     await page.getByTestId('git-phone-stable-icon').waitFor();
+    await gitControl.click();
+    await panel.getByTestId('git-action-menu-trigger').click();
+    const pendingMenu = page.getByTestId('git-action-menu-sheet');
+    await pendingMenu.waitFor();
+    assert.equal(await pendingMenu.getByRole('menuitem').evaluateAll((items) => (
+      items.every((item) => item.getAttribute('aria-disabled') === 'true')
+    )), true);
+    await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
+    await page.keyboard.press('Escape');
+    await pendingMenu.waitFor({ state: 'detached' });
+    await panel.getByTestId('git-panel-close-btn').click();
     await captureGitPhoneScreenshot(page, artifactDir, 'phone-pending-badge.png');
     releaseAction();
     await page.waitForFunction(() => document.querySelector('[data-testid="tab-bar-git-toggle"]')

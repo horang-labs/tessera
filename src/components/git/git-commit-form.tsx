@@ -22,6 +22,7 @@ import type { GitPendingVerb } from "./use-git-panel-controller";
  * that could not answer leaves the commit path exactly as it was.
  */
 export function GitCommitForm({
+  autoFocus = false,
   children,
   pendingVerb,
   generateError,
@@ -34,6 +35,8 @@ export function GitCommitForm({
   primaryAction,
   totals,
 }: {
+  /** Focus only modal desktop composers; the phone panel deliberately opens without it. */
+  autoFocus?: boolean;
   children?: ReactNode;
   /**
    * Whatever is running against this working directory, or null — not only this
@@ -70,6 +73,7 @@ export function GitCommitForm({
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-(--divider) bg-(--chat-bg) p-2">
       <textarea
+        autoFocus={autoFocus}
         value={message}
         onChange={(event) => onMessageChange(event.target.value)}
         disabled={busy || generating}

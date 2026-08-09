@@ -81,7 +81,7 @@ export function measureActionSheet(sheet) {
     paddingBottom: parseFloat(getComputedStyle(element).paddingBottom),
     rows: Array.from(element.querySelectorAll('[role="menuitem"]'))
       .map((row) => row.getBoundingClientRect().height),
-    disabledReasons: Array.from(element.querySelectorAll('button:disabled span:last-child'))
+    disabledReasons: Array.from(element.querySelectorAll('button[aria-disabled="true"] span:last-child'))
       .map((span) => span.textContent?.trim()).filter(Boolean),
   }));
 }

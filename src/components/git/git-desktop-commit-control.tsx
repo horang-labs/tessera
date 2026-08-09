@@ -340,6 +340,7 @@ function GitDesktopCommitControlView({
 
             <div className="min-h-0 overflow-y-auto p-2.5">
               <GitCommitForm
+                autoFocus
                 pendingVerb={controller.pendingVerb}
                 generateError={controller.generateMessageError}
                 generating={controller.generatingMessage}

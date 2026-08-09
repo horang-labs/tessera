@@ -5,7 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
-import { startDevServer } from './helpers/dev-server.mjs';
+import {
+  addBrowserAuthCookie,
+  seedBrowserUser,
+  startDevServer,
+} from './helpers/dev-server.mjs';
 
 const execFileAsync = promisify(execFile);
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-git-ladder-'));
@@ -81,6 +85,7 @@ try {
   runtime = await startDevServer({
     dataDirPrefix: 'tessera-git-ladder-data-',
     env: { TESSERA_ELECTRON_AUTH_BYPASS: '1' },
+    seed: seedBrowserUser,
   });
   await api('/api/settings', { method: 'PUT', body: JSON.stringify({ agentEnvironment: 'wsl' }) });
   await api('/api/projects', { method: 'POST', body: JSON.stringify({ folderPath: repo }) });
@@ -92,6 +97,7 @@ try {
     viewport: { width: 1440, height: 900 },
     extraHTTPHeaders: { 'x-tessera-app-secret': runtime.appSecret },
   });
+  await addBrowserAuthCookie(context, runtime);
   await context.addInitScript((project) => localStorage.setItem('ccw:selectedProjectDir', project), repo);
   const page = await context.newPage();
   await page.goto(`${runtime.origin}/chat`, { waitUntil: 'load', timeout: 120_000 });
@@ -151,8 +157,93 @@ try {
   await page.getByTestId(`collection-chat-${sharedSessionId}`).first().click();
   const sharedBlocked = await waitForAction(page, 'create_pr', 'Create PR');
   assert.equal(await sharedBlocked.isDisabled(), true);
+  await page.getByTestId(`collection-chat-${sessionId}`).first().click();
+
+  await git(['checkout', '-b', 'feature/unpublished']);
+  await api(`/api/sessions/${sessionId}/refresh-git`, { method: 'POST' });
+  const publish = await waitForAction(page, 'publish', 'Publish Branch');
+  await publish.click();
+  await waitForAction(page, 'create_pr', 'Create PR');
+  assert.match((await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).stdout,
+    /origin\/feature\/unpublished/);
+
+  const panelUrl = `${runtime.origin}/api/sessions/${sessionId}/git`;
+  const actionUrl = `${panelUrl}/action`;
+  const baseSnapshot = await api(`/api/sessions/${sessionId}/git`);
+  let controlledSnapshot = {
+    ...baseSnapshot,
+    branch: 'feature/unpublished',
+    upstream: 'origin/feature/unpublished',
+    ahead: 0,
+    behind: 0,
+    defaultBranch: 'main',
+    changedFiles: [],
+    changedFilesTotal: 0,
+    prStatus: undefined,
+    prStatusKnown: true,
+    prUnsupported: false,
+    github: {
+      available: true,
+      reasonCode: 'no_pull_request',
+      reason: null,
+      pullRequest: null,
+    },
+  };
+  await page.route(panelUrl, (route) => route.fulfill({ status: 200, json: controlledSnapshot }));
+  const observedActions = [];
+  await page.route(actionUrl, (route) => {
+    const body = route.request().postDataJSON();
+    observedActions.push(body);
+    controlledSnapshot = {
+      ...controlledSnapshot,
+      prStatus: {
+        number: 317,
+        url: 'https://github.com/horang-labs/tessera/pull/317',
+        state: 'open',
+        relation: 'current',
+        lastSynced: '2026-08-10T00:00:00.000Z',
+      },
+    };
+    return route.fulfill({
+      status: 200,
+      json: {
+        ok: true,
+        outcome: {
+          action: 'create_pr',
+          disposition: 'created',
+          branch: 'feature/unpublished',
+          url: controlledSnapshot.prStatus.url,
+          number: 317,
+          baseBranch: 'main',
+        },
+      },
+    });
+  });
+  await page.reload({ waitUntil: 'load', timeout: 120_000 });
+  await page.getByTestId(`collection-chat-${sessionId}`).first().click();
+  const createPr = await waitForAction(page, 'create_pr', 'Create PR');
+  assert.equal(await createPr.isDisabled(), false);
+  await createPr.click();
+  assert.deepEqual(observedActions, [{ action: 'create_pr' }]);
+  await page.reload({ waitUntil: 'load', timeout: 120_000 });
+  await page.getByTestId(`collection-chat-${sessionId}`).first().click();
+  const viewPr = await waitForAction(page, 'view_pr', 'View PR');
+  await page.evaluate(() => {
+    window.__openedGitPullRequest = null;
+    window.open = (url) => {
+      window.__openedGitPullRequest = String(url);
+      return null;
+    };
+  });
+  await viewPr.click();
+  assert.equal(await page.evaluate(() => window.__openedGitPullRequest), controlledSnapshot.prStatus.url);
   assert.equal((await git(['status', '--porcelain'])).stdout.trim(), '');
-  console.log(JSON.stringify({ artifact, ladder: ['commit', 'pull', 'push', 'create_pr'], partialFailure: true, sharedOwner: true }));
+  console.log(JSON.stringify({
+    artifact,
+    ladder: ['commit', 'pull', 'push', 'publish', 'create_pr', 'view_pr'],
+    partialFailure: true,
+    sharedOwner: true,
+  }));
 } finally {
   await browser?.close().catch(() => {});
   await runtime?.stop().catch(() => {});

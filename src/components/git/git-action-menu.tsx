@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, LoaderCircle } from "lucide-react";
 import { PhoneBottomSheet } from "@/components/ui/phone-bottom-sheet";
 import { useAnchoredPopover } from "@/hooks/use-anchored-popover";
@@ -8,6 +8,7 @@ import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
 import { usePhoneOverlayNavigation } from "@/hooks/use-phone-overlay-navigation";
 import { usePhoneViewport } from "@/hooks/use-phone-viewport";
 import { useI18n } from "@/lib/i18n";
+import { useMenuNavigation } from "@/hooks/use-menu-navigation";
 import { cn } from "@/lib/utils";
 import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
 
@@ -57,8 +58,15 @@ export function GitActionMenu({
     open,
     onBack: close,
   });
-  useCloseOnEscape(dismissPhoneMenu, {
-    enabled: isPhoneViewport && open,
+  const dismissMenu = useCallback(() => {
+    if (isPhoneViewport) {
+      return dismissPhoneMenu(() => triggerRef.current?.focus());
+    }
+    close();
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }, [close, dismissPhoneMenu, isPhoneViewport]);
+  useCloseOnEscape(dismissMenu, {
+    enabled: open,
     capture: true,
   });
   const { position, updatePosition } = useAnchoredPopover({
@@ -69,6 +77,15 @@ export function GitActionMenu({
     popoverRef: menuRef,
     calculatePosition: calculateMenuPosition,
   });
+  const hasPosition = position !== null;
+  useEffect(() => {
+    if (!open || (!isPhoneViewport && !hasPosition)) return;
+    const frame = requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [hasPosition, isPhoneViewport, open]);
+  const handleMenuKeyDown = useMenuNavigation(menuRef);
 
   return (
     <div ref={containerRef} className="relative shrink-0">
@@ -117,7 +134,13 @@ export function GitActionMenu({
           handleClassName="mb-2"
           onDismiss={dismissPhoneMenu}
         >
-          <div role="menu" aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")} data-testid={menuTestId}>
+          <div
+            ref={menuRef}
+            role="menu"
+            aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")}
+            data-testid={menuTestId}
+            onKeyDown={handleMenuKeyDown}
+          >
             <GitActionMenuItems
               actions={actions}
               commitDraftBlocked={commitDraftBlocked}
@@ -131,7 +154,9 @@ export function GitActionMenu({
         <div
           ref={menuRef}
           role="menu"
+          aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")}
           data-testid={menuTestId}
+          onKeyDown={handleMenuKeyDown}
           style={{ position: "fixed", top: position.top, left: position.left, width: position.width }}
           className="z-50 overflow-hidden rounded-lg border border-(--divider) bg-(--sidebar-bg) py-1 shadow-lg"
         >
@@ -206,8 +231,10 @@ function GitActionMenuItem({
     <button
       type="button"
       role="menuitem"
-      onClick={onRun}
-      disabled={disabled}
+      onClick={() => {
+        if (!disabled) onRun();
+      }}
+      aria-disabled={disabled}
       title={reason ?? undefined}
       data-testid={`git-action-menu-item-${action.id}`}
       data-git-action={action.kind}
