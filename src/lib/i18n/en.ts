@@ -1174,6 +1174,15 @@ export const en: I18nMessages = {
       alreadyOpen: 'This branch already has a pull request',
     },
     conflict: {
+      resolve: 'Resolve conflicts',
+      recoveryTitle: 'Conflict Recovery',
+      mergeOperation: 'Merge',
+      rebaseOperation: 'Rebase',
+      cherryPickOperation: 'Cherry-pick',
+      operationInProgress: '{{operation}} in progress',
+      unresolvedFiles: 'Unresolved files',
+      noUnresolvedFiles: 'No unresolved paths remain. Finish in the terminal or abort from the menu.',
+      openDiff: 'Review diff',
       // Kept to about the width of the longest reason beside it: the panel's
       // reason line truncates, and the words that say what is wrong have to
       // survive that.

@@ -2,7 +2,7 @@
 
 import React, { memo, useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { GitCommitHorizontal, X } from "lucide-react";
+import { GitCommitHorizontal, TriangleAlert, X } from "lucide-react";
 import { useAnchoredPopover } from "@/hooks/use-anchored-popover";
 import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
 import { useI18n } from "@/lib/i18n";
@@ -31,17 +31,22 @@ interface ComposerPosition {
 
 const COMPOSER_WIDTH = 376;
 
-export function supportsDesktopCommitControl(
+export function supportsDesktopDeliveryControl(
   data: GitPanelData | null,
   actionKind: GitPrimaryAction["kind"],
 ): boolean {
   return Boolean(
     data
-      && actionKind === "commit"
-      && data.changedFiles.length > 0
-      && !data.changedFilesTruncated
-      && data.diffStats
-      && data.diffStats.changedFiles > 0,
+      && (
+        actionKind === "conflict"
+        || (
+          actionKind === "commit"
+          && data.changedFiles.length > 0
+          && !data.changedFilesTruncated
+          && data.diffStats
+          && data.diffStats.changedFiles > 0
+        )
+      ),
   );
 }
 
@@ -75,17 +80,22 @@ export function GitWorkingTreeDiffStatButton({
   );
 }
 
-export const GitDesktopCommitControl = memo(function GitDesktopCommitControl() {
+export const GitDesktopDeliveryControl = memo(function GitDesktopDeliveryControl() {
   const controller = useSharedGitPanelController();
   const data = controller.data;
-  const stats = data?.diffStats ?? null;
   if (
-    !supportsDesktopCommitControl(data, controller.primaryAction.kind)
+    !supportsDesktopDeliveryControl(data, controller.primaryAction.kind)
     || !data
-    || !stats
   ) {
     return null;
   }
+
+  if (controller.primaryAction.kind === "conflict") {
+    return <GitDesktopConflictControl controller={controller} />;
+  }
+
+  const stats = data.diffStats;
+  if (!stats) return null;
 
   return (
     <GitDesktopCommitControlView
@@ -95,6 +105,41 @@ export const GitDesktopCommitControl = memo(function GitDesktopCommitControl() {
     />
   );
 });
+
+function GitDesktopConflictControl({
+  controller,
+}: {
+  controller: GitPanelController;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div
+      data-testid="desktop-conflict-control"
+      className="electron-no-drag hidden h-full shrink-0 items-stretch border-l border-(--divider) sm:flex"
+    >
+      <button
+        type="button"
+        onClick={() => void controller.runPrimaryAction()}
+        data-testid="desktop-conflict-primary"
+        className="flex h-full shrink-0 items-center gap-1.5 px-3 text-xs font-semibold text-(--status-warning-text) transition-colors hover:bg-(--sidebar-hover) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent)"
+      >
+        <TriangleAlert className="h-3.5 w-3.5" />
+        <span>{t("gitPanel.conflict.resolve")}</span>
+      </button>
+
+      <GitActionMenu
+        actions={controller.menuActions}
+        pending={controller.pendingVerb !== null}
+        commitDraftBlocked={controller.commitDraftBlocked}
+        onRun={(id) => void controller.runMenuAction(id)}
+        triggerTestId="desktop-conflict-menu-trigger"
+        menuTestId="desktop-conflict-action-menu"
+        triggerClassName="h-full w-8 rounded-none border-0 border-l border-(--divider)"
+      />
+    </div>
+  );
+}
 
 function GitDesktopCommitControlView({
   controller,

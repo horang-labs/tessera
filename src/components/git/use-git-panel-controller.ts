@@ -10,6 +10,7 @@ import {
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
+import { useGitStore } from "@/stores/git-store";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
@@ -913,6 +914,10 @@ export function useGitPanelController(sessionId: string | null) {
   /** The one button. Which verb it runs is the ladder's answer, not the user's. */
   const runPrimaryAction = useCallback(() => {
     if (!primaryAction.enabled) return;
+    if (primaryAction.action === "resolve_conflicts") {
+      useGitStore.getState().openConflictRecovery();
+      return;
+    }
     if (primaryAction.action === "commit") return commitSelectedFiles();
     // §8: a push at the default branch is asked about before anything runs,
     // and the panel is left exactly as it was until the answer comes back.

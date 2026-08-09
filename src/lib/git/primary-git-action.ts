@@ -17,11 +17,11 @@ import { isCurrentTaskPr } from '@/types/task-pr-status';
 /**
  * What the button says. `publish` and `push` run the same action (§2).
  *
- * `conflict` is the one kind that runs nothing: it is the commit path held
- * closed while a merge, rebase or cherry-pick is unfinished (§9). It is a kind
- * of its own rather than a disabled `commit` because the surfaces around the
- * button read the kind to decide whether to draw the commit form under it, and
- * a worktree whose commit cannot run must not be offered one to write.
+ * `conflict` is the one kind whose action is navigation: it opens recovery
+ * while a merge, rebase or cherry-pick is unfinished. It is a kind of its own
+ * rather than a disabled `commit` because the surfaces around the button read
+ * the kind to decide whether to draw the commit form under it, and a worktree
+ * whose commit cannot run must not be offered one to write.
  */
 export type GitPrimaryActionKind =
   | 'commit'
@@ -81,6 +81,7 @@ export interface GitStateSnapshot {
 
 export type GitPrimaryActionLabelKey =
   | 'gitPanel.commit.button'
+  | 'gitPanel.conflict.resolve'
   | 'gitPanel.push.button'
   | 'gitPanel.push.publishButton'
   | 'gitPanel.pull.button'
@@ -107,8 +108,8 @@ export type GitPrimaryActionReasonKey =
 
 export interface GitPrimaryAction {
   kind: GitPrimaryActionKind;
-  /** What the action route is asked to run. */
-  action: 'commit' | 'push' | 'pull' | 'create_pr';
+  /** The intent invoked; delivery intents use the route, recovery navigates. */
+  action: 'commit' | 'push' | 'pull' | 'create_pr' | 'resolve_conflicts';
   enabled: boolean;
   labelKey: GitPrimaryActionLabelKey;
   /**
@@ -196,8 +197,9 @@ export function derivePrimaryGitAction(
   // Above everything, including the dirty rung (§9). A stopped merge leaves a
   // tree full of conflicted files, so the rung below would claim it and offer a
   // commit Git refuses; and nothing further down the ladder can run either while
-  // the sequencer holds the worktree. The way out is the abort in the menu.
-  if (snapshot.conflictOperation) return conflictAction(snapshot.conflictOperation);
+  // the sequencer holds the worktree. Recovery is the primary path; the menu
+  // retains the matching abort as the explicit destructive escape.
+  if (snapshot.conflictOperation) return conflictAction();
 
   // The dirty rung comes next, and it is the one rung a detached HEAD keeps:
   // committing without a branch is ordinary, pushing without one is not.
@@ -263,31 +265,18 @@ function commitAction(
 }
 
 /**
- * The commit path, held closed for as long as the worktree is in the middle of
- * something (§9). It keeps the Commit label rather than borrowing the abort's,
- * because what the button offers has not changed — it is the same rung, and the
- * reason beside it says what is standing in front of it and what to do about it.
- *
- * Resolving the conflict is still the editor's or the terminal's job. What the
- * panel guarantees is that the user is told, is offered nothing that cannot
- * work, and can always get out through the menu.
+ * Recovery outranks every delivery rung. It is navigation, not a Git command:
+ * the press opens the full panel on the unresolved paths, while the matching
+ * abort remains the explicit destructive action in the adjacent menu.
  */
-const CONFLICT_REASON_KEY: Record<GitConflictOperation, GitPrimaryActionReasonKey> = {
-  merge: 'gitPanel.conflict.mergeInProgress',
-  rebase: 'gitPanel.conflict.rebaseInProgress',
-  cherry_pick: 'gitPanel.conflict.cherryPickInProgress',
-};
-
-function conflictAction(operation: GitConflictOperation): GitPrimaryAction {
+function conflictAction(): GitPrimaryAction {
   return {
     kind: 'conflict',
-    // Never dispatched — the rung is disabled and `runPrimaryAction` refuses a
-    // disabled rung before it reads this. It names the path being blocked.
-    action: 'commit',
-    enabled: false,
-    labelKey: 'gitPanel.commit.button',
+    action: 'resolve_conflicts',
+    enabled: true,
+    labelKey: 'gitPanel.conflict.resolve',
     pendingLabelKey: 'gitPanel.commit.buttonPending',
-    disabledReasonKey: CONFLICT_REASON_KEY[operation],
+    disabledReasonKey: null,
   };
 }
 
