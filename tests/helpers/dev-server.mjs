@@ -25,6 +25,7 @@ const HOST_SESSION_KEYS = [
   'TESSERA_PRODUCTION_DB', 'TESSERA_HOOK_PORT', 'TESSERA_PANE_TOKEN', 'TESSERA_SESSION_ID',
   'TESSERA_PROJECT_ID', 'TESSERA_WORKTREE_ID', '__CFBundleIdentifier',
 ];
+const DEFAULT_BROWSER_IDENTITY = Object.freeze({ id: 'e2e-browser-user', username: 'e2e' });
 
 async function reservePort() {
   const listener = net.createServer();
@@ -134,20 +135,20 @@ export async function putSettings({ origin, appSecret }, settings) {
 }
 
 /** Seed and authenticate a real browser user when an E2E needs the WebSocket. */
-export async function seedBrowserUser(dataDir, {
-  id = 'e2e-browser-user',
-  username = 'e2e',
-} = {}) {
+export async function seedBrowserUser(dataDir, identity = DEFAULT_BROWSER_IDENTITY) {
+  const { id, username } = identity;
   const now = new Date().toISOString();
   await fs.writeFile(path.join(dataDir, 'users.json'), JSON.stringify({
     users: [{ id, username, passwordHash: 'unused', createdAt: now, lastLoginAt: now }],
   }, null, 2), 'utf8');
 }
 
-export async function addBrowserAuthCookie(context, { dataDir }, {
-  id = 'e2e-browser-user',
-  username = 'e2e',
-} = {}) {
+export async function addBrowserAuthCookie(
+  context,
+  { dataDir },
+  identity = DEFAULT_BROWSER_IDENTITY,
+) {
+  const { id, username } = identity;
   const privateKey = await fs.readFile(path.join(dataDir, 'auth', 'private.pem'), 'utf8');
   const token = jwt.sign(
     { sub: id, username, iss: 'tessera', aud: 'tessera-users' },

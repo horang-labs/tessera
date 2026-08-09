@@ -1,10 +1,10 @@
 /** Issue #317: the integrated Git delivery UI is keyboard-readable at every breakpoint. */
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
 import {
+  captureGitPhoneScreenshot,
   createGitPhoneDeliveryFixture,
   openGitPhoneDeliveryPage,
 } from './helpers/git-phone-delivery.mjs';
@@ -26,11 +26,6 @@ async function openAt(viewport, hasTouch = false) {
 
 async function focusedTestId(page) {
   return page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
-}
-
-async function capture(page, filename) {
-  await fs.mkdir(artifactDir, { recursive: true });
-  await page.screenshot({ path: path.join(artifactDir, filename) });
 }
 
 try {
@@ -61,11 +56,17 @@ try {
     await page.keyboard.press('Enter');
     const menu = page.getByTestId('desktop-commit-action-menu');
     await menu.waitFor();
-    const enabledItems = menu.getByRole('menuitem').locator(':not(:disabled)');
-    assert.ok(await enabledItems.count());
+    assert.match(await menu.getAttribute('aria-label'), /git actions/i);
+    assert.ok(await menu.getByRole('menuitem').count());
     await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menuitem');
     const firstFocused = await focusedTestId(page);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await focusedTestId(page), 'git-action-menu-item-push');
+    assert.equal(await page.getByTestId('git-action-menu-item-push').getAttribute('aria-disabled'), 'true');
+    await page.keyboard.press('Enter');
+    await menu.waitFor();
     await page.keyboard.press('End');
     const lastFocused = await focusedTestId(page);
     assert.notEqual(lastFocused, firstFocused);
@@ -73,7 +74,7 @@ try {
     assert.equal(await focusedTestId(page), firstFocused);
     for (const item of await menu.getByRole('menuitem').all()) {
       assert.ok((await item.innerText()).trim());
-      if (await item.isDisabled()) assert.ok(await item.getAttribute('title'));
+      if (await item.getAttribute('aria-disabled') === 'true') assert.ok(await item.getAttribute('title'));
     }
     await page.keyboard.press('Escape');
     await menu.waitFor({ state: 'detached' });
@@ -86,7 +87,7 @@ try {
     await diffStat.focus();
     await page.keyboard.press('Enter');
     await page.getByTestId('git-panel').waitFor();
-    await capture(page, 'desktop-git-delivery.png');
+    await captureGitPhoneScreenshot(page, artifactDir, 'desktop-git-delivery.png');
     await page.keyboard.press('Escape');
 
     await page.setViewportSize({ width: 900, height: 700 });
@@ -101,7 +102,7 @@ try {
     assert.equal(mediumControls.length, 2);
     assert.ok(mediumControls.every(({ width }) => width > 0));
     assert.ok(mediumControls[0].right <= mediumControls[1].left + 1);
-    await capture(page, 'medium-git-delivery.png');
+    await captureGitPhoneScreenshot(page, artifactDir, 'medium-git-delivery.png');
   } finally {
     await desktop.page.unrouteAll({ behavior: 'ignoreErrors' });
     await desktop.context.close();
@@ -130,7 +131,7 @@ try {
     await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menuitem');
     assert.ok(await sheet.getByRole('menu').getAttribute('aria-label'));
-    await capture(page, 'phone-git-delivery.png');
+    await captureGitPhoneScreenshot(page, artifactDir, 'phone-git-delivery.png');
     await page.keyboard.press('Escape');
     await sheet.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'git-action-menu-trigger');

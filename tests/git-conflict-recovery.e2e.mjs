@@ -172,6 +172,8 @@ try {
   assert.match(request, /"conflict\.txt"/);
   assert.match(request, /"delete-modify\.txt"/);
   assert.doesNotMatch(request, /note\.txt|<<<<<<<|=======|>>>>>>>/);
+  await composer.fill(`${request}\n\nUser review note`);
+  assert.match(await composer.inputValue(), /User review note$/);
   assert.equal(await page.getByTestId('user-message-row').count(), messagesBeforeHandoff);
   assert.equal((await git(['status', '--porcelain=v2'])).stdout, statusBeforeHandoff);
   assert.equal((await git(['rev-parse', 'HEAD'])).stdout, headBeforeHandoff);
