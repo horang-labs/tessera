@@ -5,7 +5,7 @@ import { CheckCircle, XCircle, Loader2, ChevronDown, ChevronUp, Wrench } from 'l
 import type { ToolCallMessage } from '@/types/chat';
 import { useChatStore } from '@/stores/chat-store';
 import { cn } from '@/lib/utils';
-import { getToolIcon, getToolSummary, shortenToolName } from './tool-call-block';
+import { getToolIcon, getToolSummary, shortenToolName, formatElapsedSeconds } from './tool-call-block';
 import { TOOL_STATUS_TEXT } from './tool-call-block-utils';
 import { ToolCallDetailPanel } from './tool-call-detail-panel';
 import { MESSAGE_BODY_OFFSET_CLASS } from './message-layout';
@@ -192,7 +192,15 @@ function CompactRow({
       <span className="text-[11px] text-(--text-muted) truncate font-mono flex-1 min-w-0">
         {getToolSummary(toolName, toolParams, toolCall.toolKind, toolDisplay) || '\u00A0'}
       </span>
-      <div className="shrink-0">
+      <div className="shrink-0 flex items-center gap-1.5">
+        {isRunning && toolCall.toolProgress && (
+          <span
+            className="text-[10px] font-mono tabular-nums text-(--text-muted)"
+            data-testid="tool-call-elapsed"
+          >
+            {formatElapsedSeconds(toolCall.toolProgress.elapsedTimeSeconds)}
+          </span>
+        )}
         {isLoading && <Loader2 className="w-2.5 h-2.5 text-(--accent) animate-spin" />}
         {!isLoading && isRunning && <Loader2 className="w-2.5 h-2.5 text-(--accent) animate-spin" />}
         {!isLoading && status === 'completed' && <CheckCircle className={`w-2.5 h-2.5 ${TOOL_STATUS_TEXT.completed}`} />}

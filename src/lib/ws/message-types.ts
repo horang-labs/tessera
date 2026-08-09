@@ -299,6 +299,25 @@ export type AppServerMessage =
       stateAt?: number;
     }
   | {
+      /**
+       * Live-only liveness tick for an in-flight tool call (Claude Code
+       * `tool_progress` stdout messages). Deliberately NOT replay-transported
+       * and NOT persisted to session history — heartbeats fire every 30s and
+       * would bloat the transcript; on replay the card just shows the final
+       * tool_call status.
+       */
+      type: 'tool_progress';
+      sessionId: string;
+      toolUseId: string;
+      toolName?: string;
+      elapsedTimeSeconds: number;
+      /** True for the 30s keep-alive heartbeat variant (vs output-driven ticks). */
+      heartbeat?: boolean;
+      /** Background task id, present on bash/powershell progress ticks. */
+      taskId?: string;
+      timestamp: string;
+    }
+  | {
       type: 'terminal_session_runtime';
       sessionId: string;
       terminalId: string;
