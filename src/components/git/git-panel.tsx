@@ -29,6 +29,11 @@ import { MemoryPanel } from "@/components/memory/memory-panel";
 import { cn } from "@/lib/utils";
 import { PHONE_TOUCH_TARGET } from "@/lib/ui/touch-target";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
+import { usePhoneViewport } from "@/hooks/use-phone-viewport";
+import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
+import { usePhoneOverlayNavigation } from "@/hooks/use-phone-overlay-navigation";
+
+const NOOP = () => {};
 
 /**
  * Every tab says what it is.
@@ -82,6 +87,7 @@ export function GitPanel({
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === "win32";
   const isLinuxElectron = electronPlatform === "linux";
+  const isPhoneViewport = usePhoneViewport();
   const controller = useSharedGitPanelController();
   // The selection lives in the store so a preparation badge can send the user
   // straight to the Scripts tab.
@@ -89,6 +95,14 @@ export function GitPanel({
   const setActivePanelTab = useGitStore((state) => state.setPanelTab);
   const openedTelemetryRef = useRef(false);
   const resolvedCloseLabel = closeLabel ?? t("chat.closeGitPanel");
+  const dismissPhonePanel = usePhoneOverlayNavigation({
+    enabled: isPhoneViewport && Boolean(onClose),
+    open: Boolean(onClose),
+    onBack: onClose ?? NOOP,
+  });
+  useCloseOnEscape(dismissPhonePanel, {
+    enabled: isPhoneViewport && Boolean(onClose),
+  });
 
   const sessionProvider = useSessionStore((state) =>
     sessionId ? state.getSession(sessionId)?.provider?.trim() ?? null : null,
@@ -217,6 +231,26 @@ export function GitPanel({
     sessionId,
   ]);
 
+  const summarySection = (
+    <GitPanelSummarySection
+      data={controller.data}
+      loading={controller.loading}
+      error={controller.error}
+      changedFileCount={controller.changedFileCount}
+      onCopyBranch={controller.copyBranch}
+      onCopyWorktreePath={controller.copyWorktreePath}
+      onOpenExternal={controller.openExternal}
+      showDetails={effectivePanelTab === "git"}
+    />
+  );
+  const commitsSection = (
+    <GitPanelCommitsSection
+      data={controller.data}
+      loading={controller.loading}
+      error={controller.error}
+    />
+  );
+
   return (
     <aside
       className={cn(
@@ -272,7 +306,7 @@ export function GitPanel({
         {onClose ? (
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => dismissPhonePanel()}
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
               PHONE_TOUCH_TARGET,
@@ -286,18 +320,10 @@ export function GitPanel({
         ) : null}
       </div>
 
-      {effectivePanelTab === "scripts" ? null : (
-      <GitPanelSummarySection
-        data={controller.data}
-        loading={controller.loading}
-        error={controller.error}
-        changedFileCount={controller.changedFileCount}
-        onCopyBranch={controller.copyBranch}
-        onCopyWorktreePath={controller.copyWorktreePath}
-        onOpenExternal={controller.openExternal}
-        showDetails={effectivePanelTab === "git"}
-      />
-      )}
+      {effectivePanelTab === "scripts"
+        || (isPhoneViewport && effectivePanelTab === "git")
+        ? null
+        : summarySection}
 
       {effectivePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
@@ -344,6 +370,10 @@ export function GitPanel({
               pendingVerb: controller.pendingVerb,
               onRun: () => void controller.runPrimaryAction(),
             }}
+            phoneScrollableContent={isPhoneViewport ? {
+              summary: summarySection,
+              commits: commitsSection,
+            } : undefined}
             menu={{
               actions: controller.menuActions,
               onRun: (id) => void controller.runMenuAction(id),
@@ -356,11 +386,7 @@ export function GitPanel({
             onOpenReadOnlyFile={openReadOnlyFile}
           />
 
-          <GitPanelCommitsSection
-            data={controller.data}
-            loading={controller.loading}
-            error={controller.error}
-          />
+          {isPhoneViewport ? null : commitsSection}
         </>
       )}
 

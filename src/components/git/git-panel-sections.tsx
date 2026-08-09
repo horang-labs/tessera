@@ -621,6 +621,7 @@ export function GitPanelContentSection({
   loading,
   menu,
   primary,
+  phoneScrollableContent,
   selectedPath,
   sessionId,
   setSelectedPath,
@@ -665,6 +666,11 @@ export function GitPanelContentSection({
     pendingVerb: GitPendingVerb | null;
     onRun: () => void;
   };
+  /** Phone-only content that joins the changed files in one scroll region. */
+  phoneScrollableContent?: {
+    summary: React.ReactNode;
+    commits: React.ReactNode;
+  };
   /** Every Git action, always, derived independently of the primary (§4). */
   menu: {
     actions: readonly GitMenuAction[];
@@ -698,9 +704,30 @@ export function GitPanelContentSection({
     />
   );
 
-  return (
+  const actionArea = primary.action.kind === "commit" || primary.action.kind === "loading" ? (
+    <GitCommitForm
+      pendingVerb={primary.pendingVerb}
+      generateError={commit.generateError}
+      generating={commit.generating}
+      menu={actionMenu}
+      message={commit.message}
+      onCommit={primary.onRun}
+      onGenerate={commit.onGenerate}
+      onMessageChange={commit.onMessageChange}
+      primaryAction={primary.action}
+      totals={commit.totals}
+    />
+  ) : (
+    <GitPrimaryActionBar
+      action={primary.action}
+      menu={actionMenu}
+      pendingVerb={primary.pendingVerb}
+      onRun={primary.onRun}
+    />
+  );
+
+  const contentBody = (
     <>
-    <div className="flex-1 overflow-hidden p-3">
       {!sessionId && !loading ? (
         <EmptyPanelMessage
           title={t("gitPanel.empty.noWorktreeTitle")}
@@ -709,34 +736,14 @@ export function GitPanelContentSection({
       ) : null}
 
       {!sessionId ? null : (
-        <div className="flex h-full flex-col gap-2">
+        <div className={cn("flex flex-col gap-2", !phoneScrollableContent && "h-full")}>
           {/*
             The primary action renders on every rung, including the ones where
             the panel below it has nothing to show — a clean tree still has a
             push to offer, and a session whose state has not arrived holds a
             disabled Commit rather than a gap (ADR 0007).
           */}
-          {primary.action.kind === "commit" || primary.action.kind === "loading" ? (
-            <GitCommitForm
-              pendingVerb={primary.pendingVerb}
-              generateError={commit.generateError}
-              generating={commit.generating}
-              menu={actionMenu}
-              message={commit.message}
-              onCommit={primary.onRun}
-              onGenerate={commit.onGenerate}
-              onMessageChange={commit.onMessageChange}
-              primaryAction={primary.action}
-              totals={commit.totals}
-            />
-          ) : (
-            <GitPrimaryActionBar
-              action={primary.action}
-              menu={actionMenu}
-              pendingVerb={primary.pendingVerb}
-              onRun={primary.onRun}
-            />
-          )}
+          {phoneScrollableContent ? null : actionArea}
 
           {/*
             Directly under the button that raised it, and outside the gate
@@ -776,7 +783,7 @@ export function GitPanelContentSection({
                       : changedFileCount}
                   </span>
                 </div>
-                <ScrollArea className="flex-1">
+                <ScrollArea className={cn(phoneScrollableContent ? "overflow-y-visible" : "flex-1")}>
                   <div className="flex flex-col">
                     {data.changedFiles.map((file) => {
                       const isSelected = file.path === selectedPath;
@@ -929,7 +936,34 @@ export function GitPanelContentSection({
           )}
         </div>
       )}
-    </div>
+    </>
+  );
+
+  return (
+    <>
+    {phoneScrollableContent ? (
+      <>
+        {sessionId ? (
+          <div
+            className="z-20 shrink-0 border-b border-(--chat-header-border) bg-(--sidebar-bg) px-3 py-3"
+            data-testid="git-panel-fixed-action"
+          >
+            {actionArea}
+          </div>
+        ) : null}
+        <ScrollArea
+          className="min-h-0 flex-1 overscroll-contain"
+          data-testid="git-panel-phone-scroll"
+        >
+          {phoneScrollableContent.summary}
+          <div className="p-3">{contentBody}</div>
+          {phoneScrollableContent.commits}
+          <div aria-hidden style={{ height: "env(safe-area-inset-bottom)" }} />
+        </ScrollArea>
+      </>
+    ) : (
+      <div className="flex-1 overflow-hidden p-3">{contentBody}</div>
+    )}
     {contextMenu ? (
       <WorkspaceFileContextMenu
         absolutePath={contextMenu.absolutePath}
