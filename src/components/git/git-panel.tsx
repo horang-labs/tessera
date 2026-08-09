@@ -324,6 +324,11 @@ export function GitPanel({
               report: controller.actionFailure,
               onDismiss: controller.dismissActionFailure,
             }}
+            conflictHandoff={{
+              available: controller.conflictHandoffAvailable,
+              pending: controller.preparingConflictHandoff,
+              onPrepare: () => void controller.prepareConflictHandoff(),
+            }}
             commit={{
               draftBlocked: controller.commitDraftBlocked,
               generateError: controller.generateMessageError,

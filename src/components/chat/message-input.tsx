@@ -148,6 +148,12 @@ export function MessageInput({
 }: MessageInputProps) {
   const { t } = useI18n();
   const setDraftInput = useChatStore((state) => state.setDraftInput);
+  const preparedAgentRequest = useChatStore((state) =>
+    state.preparedAgentRequests.get(sessionId),
+  );
+  const consumePreparedAgentRequest = useChatStore(
+    (state) => state.consumePreparedAgentRequest,
+  );
   const [inputValue, setInputValue] = useState(() => useChatStore.getState().getDraftInput(sessionId));
   const [deleteRequested, setDeleteRequested] = useState(false);
   // Attachment/reference/voice completion can update the local composer after a
@@ -327,6 +333,19 @@ export function MessageInput({
   });
   const MAX_CHARS = 10000;
   const MAX_ROWS = 5;
+
+  useEffect(() => {
+    if (!preparedAgentRequest) return;
+
+    setInputValue(preparedAgentRequest.text);
+    consumePreparedAgentRequest(sessionId, preparedAgentRequest.revision);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.setSelectionRange(preparedAgentRequest.text.length, preparedAgentRequest.text.length);
+      textarea.focus();
+    });
+  }, [consumePreparedAgentRequest, preparedAgentRequest, sessionId]);
 
   const isInputUnavailable = isReadOnly || isDisabled || isResuming;
   const isGenerating = sessionStatus === 'running' && (

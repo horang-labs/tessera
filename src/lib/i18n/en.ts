@@ -1184,6 +1184,13 @@ export const en: I18nMessages = {
       unresolvedFilesTruncated: 'More unresolved paths may exist. Review the complete status in the terminal.',
       noUnresolvedFiles: 'No unresolved paths remain. Finish in the terminal or abort from the menu.',
       openDiff: 'Review diff',
+      resolveWithAi: 'Resolve with AI',
+      aiPreparing: 'Preparing request…',
+      aiReviewBoundary: 'Prepares an editable request for this session. You review it before sending.',
+      aiPreparedToast: 'AI request prepared — review it before sending',
+      aiStaleToast: 'Conflict state changed — review the current unresolved files and try again',
+      aiUnavailableToast: 'This session is no longer available for AI conflict help',
+      aiFailureToast: 'Could not prepare the AI request — {{reason}}',
       // Kept to about the width of the longest reason beside it: the panel's
       // reason line truncates, and the words that say what is wrong have to
       // survive that.

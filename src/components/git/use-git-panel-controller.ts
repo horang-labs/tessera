@@ -11,6 +11,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
 import { useGitStore } from "@/stores/git-store";
+import { useChatStore } from "@/stores/chat-store";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
@@ -42,6 +43,10 @@ import {
 } from "@/lib/git/git-action-memory";
 import { startGitPanelPolling } from "@/lib/git/git-panel-poll";
 import { readGitPanelState } from "@/lib/git/git-panel-read";
+import {
+  deriveGitConflictHandoffAvailability,
+  revalidateGitConflictHandoff,
+} from "@/lib/git/git-conflict-handoff";
 import {
   describeGitActionFailure,
   describeGitActionOrigin,
@@ -237,6 +242,7 @@ export function useGitPanelController(sessionId: string | null) {
     setRememberedAction(readRememberedGitAction());
   }, []);
   const [generatingMessage, setGeneratingMessage] = useState(false);
+  const [preparingConflictHandoff, setPreparingConflictHandoff] = useState(false);
   // A generation failure stays here rather than in a toast: it belongs to the
   // generate button, and committing is still available (`docs/design/git-delivery.md` §6).
   const [generateMessageError, setGenerateMessageError] = useState<string | null>(
@@ -691,6 +697,52 @@ export function useGitPanelController(sessionId: string | null) {
     [stateSnapshot],
   );
 
+  const conflictHandoffAvailable = deriveGitConflictHandoffAvailability(
+    panelData,
+    sessionSnapshot,
+  );
+
+  const prepareConflictHandoff = useCallback(async (): Promise<void> => {
+    if (!sessionId || !panelData || preparingConflictHandoff) return;
+
+    setPreparingConflictHandoff(true);
+    try {
+      const result = await revalidateGitConflictHandoff(
+        panelData,
+        sessionSnapshot,
+        () => readGitPanelState(sessionId),
+      );
+
+      if (result.kind === "ready" || result.kind === "stale") {
+        applyGitPanelData(sessionId, result.data);
+      }
+
+      if (result.kind === "ready") {
+        useChatStore.getState().prepareAgentRequest(sessionId, result.request);
+        toast.success(t("gitPanel.conflict.aiPreparedToast"));
+        return;
+      }
+      if (result.kind === "stale") {
+        toast.warning(t("gitPanel.conflict.aiStaleToast"));
+        return;
+      }
+      if (result.kind === "unavailable") {
+        toast.error(t("gitPanel.conflict.aiUnavailableToast"));
+        return;
+      }
+      toast.error(t("gitPanel.conflict.aiFailureToast", { reason: result.message }));
+    } finally {
+      setPreparingConflictHandoff(false);
+    }
+  }, [
+    applyGitPanelData,
+    panelData,
+    preparingConflictHandoff,
+    sessionId,
+    sessionSnapshot,
+    t,
+  ]);
+
   // A toast is raised the same way whichever layer refused, and the draft
   // survives every failure so the same button is itself the retry.
   const reportAction = useCallback((toastReport: GitActionToast): void => {
@@ -1136,6 +1188,7 @@ export function useGitPanelController(sessionId: string | null) {
     actionFailure,
     dismissActionFailure,
     commitDraftBlocked,
+    conflictHandoffAvailable,
     copyBranch,
     copyFilePath,
     copyWorktreePath,
@@ -1152,6 +1205,8 @@ export function useGitPanelController(sessionId: string | null) {
     moveSelection,
     openExternal,
     primaryAction,
+    prepareConflictHandoff,
+    preparingConflictHandoff,
     menuActions,
     runMenuAction,
     runPrimaryAction,

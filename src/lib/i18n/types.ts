@@ -1166,6 +1166,13 @@ export interface I18nMessages {
       unresolvedFilesTruncated: string;
       noUnresolvedFiles: string;
       openDiff: string;
+      resolveWithAi: string;
+      aiPreparing: string;
+      aiReviewBoundary: string;
+      aiPreparedToast: string;
+      aiStaleToast: string;
+      aiUnavailableToast: string;
+      aiFailureToast: string;
       mergeInProgress: string;
       rebaseInProgress: string;
       cherryPickInProgress: string;

@@ -22,8 +22,8 @@ assert.ok(fixtureRoot, 'external Electron runs require TESSERA_E2E_FIXTURE_FS_RO
 const repo = path.join(fixtureRoot, 'repo');
 const repoAgentPath = process.env.TESSERA_E2E_REPO_AGENT_PATH ?? repo;
 const artifactDir = filesystemPath(process.env.TESSERA_E2E_ARTIFACT_DIR)
-  ?? path.join(os.homedir(), 'tmp', 'tessera-ticket-314');
-const artifact = path.join(artifactDir, 'conflict-recovery.png');
+  ?? path.join(os.homedir(), 'tmp', 'tessera-ticket-315');
+const artifact = path.join(artifactDir, 'conflict-handoff.png');
 let runtime;
 let browser;
 
@@ -136,6 +136,28 @@ try {
   assert.equal(await recovery.getByTestId('git-conflict-file-delete-modify.txt').count(), 1);
   assert.equal(await recovery.getByText('note.txt', { exact: true }).count(), 0);
 
+  const statusBeforeHandoff = (await git(['status', '--porcelain=v2'])).stdout;
+  const headBeforeHandoff = (await git(['rev-parse', 'HEAD'])).stdout;
+  const indexBeforeHandoff = await fs.readFile(path.join(repo, '.git', 'index'));
+  const messagesBeforeHandoff = await page.getByTestId('user-message-row').count();
+  await recovery.getByTestId('git-conflict-resolve-with-ai').click();
+  const composer = page.locator(`textarea[data-session-input="${sessionId}"]`);
+  await page.waitForFunction(
+    (targetSessionId) => document.querySelector(`textarea[data-session-input="${targetSessionId}"]`)?.value.includes('Operation: merge'),
+    sessionId,
+  );
+  const request = await composer.inputValue();
+  assert.match(request, /Operation: merge/);
+  assert.match(request, /"conflict\.txt"/);
+  assert.match(request, /"delete-modify\.txt"/);
+  assert.doesNotMatch(request, /note\.txt|<<<<<<<|=======|>>>>>>>/);
+  assert.equal(await page.getByTestId('user-message-row').count(), messagesBeforeHandoff);
+  assert.equal((await git(['status', '--porcelain=v2'])).stdout, statusBeforeHandoff);
+  assert.equal((await git(['rev-parse', 'HEAD'])).stdout, headBeforeHandoff);
+  assert.deepEqual(await fs.readFile(path.join(repo, '.git', 'index')), indexBeforeHandoff);
+  await fs.mkdir(artifactDir, { recursive: true });
+  await page.screenshot({ path: artifact });
+
   const panel = page.getByTestId('git-panel');
   await panel.getByTestId('git-action-menu-trigger').click();
   assert.equal(await panel.getByTestId('git-action-menu-item-commit').isDisabled(), true);
@@ -150,8 +172,10 @@ try {
   await recovery.getByTestId('git-conflict-file-conflict.txt').click();
   await page.getByText('Diff', { exact: true }).first().waitFor();
   assert.equal(await fs.readFile(path.join(repo, 'conflict.txt'), 'utf8'), beforeReview);
-  await fs.mkdir(artifactDir, { recursive: true });
-  await page.screenshot({ path: artifact });
+  await fs.writeFile(path.join(repo, 'conflict.txt'), 'resolved by agent\n');
+  await git(['add', 'conflict.txt']);
+  await recovery.getByTestId('git-conflict-file-conflict.txt').waitFor({ state: 'detached', timeout: 30_000 });
+  assert.equal(await recovery.getByTestId('git-conflict-file-delete-modify.txt').count(), 1);
 
   await page.getByTestId(`collection-chat-${sessionId}`).first().click();
   await page.getByTestId('git-conflict-recovery').waitFor();
@@ -173,7 +197,7 @@ try {
     409,
   );
   assert.equal(stale.error?.code ?? stale.code, 'no_conflict_in_progress');
-  console.log(JSON.stringify({ artifact, operation: 'merge', unresolved: 2, retrySucceeded: true }));
+  console.log(JSON.stringify({ artifact, operation: 'merge', preparedOnly: true, refreshedUnresolved: 1, retrySucceeded: true }));
 } finally {
   if (!externalCdp) await browser?.close().catch(() => {});
   await runtime?.stop?.().catch(() => {});
