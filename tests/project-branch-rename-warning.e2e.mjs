@@ -26,7 +26,11 @@ function project(previousBranch, currentBranch) {
       displayPath: '/rename-fixture',
       currentBranch,
     },
-    branchRenameWarning: { previousBranch, currentBranch },
+    branchRenameWarning: {
+      previousBranch,
+      currentBranch,
+      eventId: `${previousBranch}-to-${currentBranch}`,
+    },
     isCurrent: true,
     sessions: [],
     totalSessions: 0,

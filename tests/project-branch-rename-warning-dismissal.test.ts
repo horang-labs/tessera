@@ -9,7 +9,7 @@ const localStorage = {
   removeItem: (key: string) => { stored.delete(key); },
 };
 
-function apiProject(previousBranch: string, currentBranch: string) {
+function apiProject(previousBranch: string, currentBranch: string, eventId: string) {
   return {
     encodedDir: '/repo',
     displayName: 'Repo',
@@ -21,7 +21,7 @@ function apiProject(previousBranch: string, currentBranch: string) {
       displayPath: '/repo',
       currentBranch,
     },
-    branchRenameWarning: { previousBranch, currentBranch },
+    branchRenameWarning: { previousBranch, currentBranch, eventId },
     sessions: [],
     totalSessions: 0,
     countByStatus: {},
@@ -39,7 +39,7 @@ test('dismissal hides only the same one-time branch rename warning across reload
     delete (globalThis as { window?: unknown }).window;
     stored.clear();
   });
-  let responseProject = apiProject('main', 'renamed');
+  let responseProject = apiProject('main', 'renamed', 'rename-event-1');
   t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
     projects: [responseProject],
   }), { status: 200, headers: { 'content-type': 'application/json' } }));
@@ -49,6 +49,7 @@ test('dismissal hides only the same one-time branch rename warning across reload
   assert.deepEqual(useSessionStore.getState().projects[0].branchRenameWarning, {
     previousBranch: 'main',
     currentBranch: 'renamed',
+    eventId: 'rename-event-1',
   });
 
   useSessionStore.getState().dismissBranchRenameWarning('/repo');
@@ -56,10 +57,11 @@ test('dismissal hides only the same one-time branch rename warning across reload
   await useSessionStore.getState().loadProjects();
   assert.equal(useSessionStore.getState().projects[0].branchRenameWarning, undefined);
 
-  responseProject = apiProject('renamed', 'renamed-again');
+  responseProject = apiProject('main', 'renamed', 'rename-event-2');
   await useSessionStore.getState().loadProjects();
   assert.deepEqual(useSessionStore.getState().projects[0].branchRenameWarning, {
-    previousBranch: 'renamed',
-    currentBranch: 'renamed-again',
+    previousBranch: 'main',
+    currentBranch: 'renamed',
+    eventId: 'rename-event-2',
   });
 });

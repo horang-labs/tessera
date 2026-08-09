@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveWslDisplayPathAgainstWindowsHostedPath } from '@/lib/filesystem/path-environment';
 
 export interface CanonicalWorktreePath {
   filesystemPath: string;
@@ -38,24 +39,33 @@ export function isGitCheckoutPath(filesystemPath: string): boolean {
 }
 
 export function readWorktreeCurrentBranch(filesystemPath: string): string | null {
-  const identity = canonicalizeWorktreePath(filesystemPath);
-  if (!identity) return null;
-  const dotGitPath = path.join(identity.filesystemPath, '.git');
-  let gitDir = dotGitPath;
+  const directories = resolveWorktreeGitDirectories(filesystemPath);
+  if (!directories) return null;
   try {
-    if (fs.statSync(dotGitPath).isFile()) {
-      const pointer = fs.readFileSync(dotGitPath, 'utf8').trim();
-      const match = pointer.match(/^gitdir:\s*(.+)$/i);
-      if (!match) return null;
-      gitDir = path.resolve(identity.filesystemPath, match[1]);
-    }
-    const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    const pathModule = isWindowsStylePath(directories.gitDir) ? path.win32 : path;
+    const head = fs.readFileSync(pathModule.join(directories.gitDir, 'HEAD'), 'utf8').trim();
     return head.startsWith('ref: refs/heads/')
       ? head.slice('ref: refs/heads/'.length)
       : null;
   } catch {
     return null;
   }
+}
+
+function isWindowsStylePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\');
+}
+
+function resolveGitPointerPath(filesystemPath: string, pointerPath: string): string {
+  if (pointerPath.startsWith('/')) {
+    const bridgedPath = resolveWslDisplayPathAgainstWindowsHostedPath(
+      pointerPath,
+      filesystemPath,
+    );
+    if (bridgedPath) return bridgedPath;
+  }
+  const pathModule = isWindowsStylePath(filesystemPath) ? path.win32 : path;
+  return pathModule.resolve(filesystemPath, pointerPath);
 }
 
 function resolveWorktreeGitDirectories(filesystemPath: string): {
@@ -71,11 +81,12 @@ function resolveWorktreeGitDirectories(filesystemPath: string): {
       const pointer = fs.readFileSync(dotGitPath, 'utf8').trim();
       const match = pointer.match(/^gitdir:\s*(.+)$/i);
       if (!match) return null;
-      gitDir = path.resolve(identity.filesystemPath, match[1]);
+      gitDir = resolveGitPointerPath(identity.filesystemPath, match[1]);
     }
-    const commonDirPath = path.join(gitDir, 'commondir');
+    const pathModule = isWindowsStylePath(gitDir) ? path.win32 : path;
+    const commonDirPath = pathModule.join(gitDir, 'commondir');
     const commonGitDir = fs.existsSync(commonDirPath)
-      ? path.resolve(gitDir, fs.readFileSync(commonDirPath, 'utf8').trim())
+      ? pathModule.resolve(gitDir, fs.readFileSync(commonDirPath, 'utf8').trim())
       : gitDir;
     return { gitDir, commonGitDir };
   } catch {
@@ -94,10 +105,13 @@ function resolveWorktreeGitDirectories(filesystemPath: string): {
 export function readExactOneHopBranchRename(
   filesystemPath: string,
   currentBranch: string,
-): { previousBranch: string; currentBranch: string } | undefined {
+): { previousBranch: string; currentBranch: string; eventId: string } | undefined {
   const directories = resolveWorktreeGitDirectories(filesystemPath);
   if (!directories) return undefined;
-  const reflogPath = path.join(
+  const pathModule = isWindowsStylePath(directories.commonGitDir) ? path.win32 : path;
+  const branchParts = currentBranch.split('/');
+  if (branchParts.some((part) => !part || part === '.' || part === '..')) return undefined;
+  const reflogPath = pathModule.join(
     directories.commonGitDir,
     'logs',
     'refs',
@@ -107,14 +121,24 @@ export function readExactOneHopBranchRename(
   try {
     const renamePrefix = 'Branch: renamed refs/heads/';
     const separator = ' to refs/heads/';
-    const renameMessages = fs.readFileSync(reflogPath, 'utf8')
+    const entries = fs.readFileSync(reflogPath, 'utf8')
       .split('\n')
-      .map((line) => line.slice(line.indexOf('\t') + 1))
-      .filter((message) => message.startsWith(renamePrefix));
-    if (renameMessages.length !== 1) return undefined;
-    const names = renameMessages[0].slice(renamePrefix.length).split(separator);
+      .filter(Boolean)
+      .map((line) => ({ line, message: line.slice(line.indexOf('\t') + 1) }));
+    const messages = entries.map(({ message }) => message);
+    const hasCompleteStart = messages[0]?.startsWith('commit (initial):')
+      || messages[0]?.startsWith('branch: Created from ')
+      || messages[0]?.startsWith('clone: from ');
+    if (!hasCompleteStart) return undefined;
+    const renameEntries = entries.filter(({ message }) => message.startsWith(renamePrefix));
+    if (renameEntries.length !== 1) return undefined;
+    const names = renameEntries[0].message.slice(renamePrefix.length).split(separator);
     const rename = names.length === 2 && names[0] && names[1]
-      ? { previousBranch: names[0], currentBranch: names[1] }
+      ? {
+          previousBranch: names[0],
+          currentBranch: names[1],
+          eventId: createHash('sha256').update(renameEntries[0].line).digest('hex').slice(0, 16),
+        }
       : undefined;
     return rename?.currentBranch === currentBranch
       ? rename

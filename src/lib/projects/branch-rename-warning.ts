@@ -3,6 +3,8 @@ import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-stor
 export interface ProjectBranchRenameWarning {
   previousBranch: string;
   currentBranch: string;
+  /** Opaque identity for this exact reflog event; never used to mutate scope. */
+  eventId: string;
 }
 
 function dismissalStorageKey(
@@ -13,8 +15,9 @@ function dismissalStorageKey(
     projectId,
     warning.previousBranch,
     warning.currentBranch,
+    warning.eventId,
   ].map(encodeURIComponent).join(':');
-  return `tessera:branch-rename-warning:dismissed:v1:${identity}`;
+  return `tessera:branch-rename-warning:dismissed:v2:${identity}`;
 }
 
 export function isBranchRenameWarningDismissed(

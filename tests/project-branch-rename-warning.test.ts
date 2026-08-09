@@ -68,10 +68,9 @@ test('an exact direct rename warns without revealing or migrating hidden scope',
 
   assert.deepEqual(result.sessions, []);
   assert.deepEqual(result.linkedWorktrees, []);
-  assert.deepEqual(result.branchRenameWarning, {
-    previousBranch: 'main',
-    currentBranch: 'renamed',
-  });
+  assert.equal(result.branchRenameWarning?.previousBranch, 'main');
+  assert.equal(result.branchRenameWarning?.currentBranch, 'renamed');
+  assert.match(result.branchRenameWarning?.eventId ?? '', /^[a-f0-9]{16}$/);
   assert.equal(JSON.stringify(result).includes('old-session'), false);
   assert.equal(JSON.stringify(result).includes('old-worktree'), false);
   assert.equal(after, before, 'projection and rename inspection must not mutate the database');
@@ -81,11 +80,28 @@ test('an exact direct rename warns without revealing or migrating hidden scope',
     branch: 'main',
   });
 
+  fs.writeFileSync(path.join(repository, 'after-rename.txt'), 'intermediate history\n');
+  git(repository, ['add', 'after-rename.txt']);
+  git(repository, ['commit', '-m', 'after first rename']);
+  sessions.createSession('intermediate-session', 'direct-project', 'Intermediate', 'codex', {
+    workDir: repository,
+    worktreeId: root.id,
+    scopeBranch: 'renamed',
+  });
   git(repository, ['branch', '-m', 'renamed-again']);
   const multiHop = projection.getProjectViewProjection('direct-project');
   assert.equal(multiHop.branchRenameWarning, undefined);
   assert.deepEqual(multiHop.sessions, []);
   assert.deepEqual(multiHop.linkedWorktrees, []);
+
+  const reflog = path.join(repository, '.git', 'logs', 'refs', 'heads', 'renamed-again');
+  const survivingHistory = fs.readFileSync(reflog, 'utf8').trim().split('\n').slice(2).join('\n');
+  fs.writeFileSync(reflog, `${survivingHistory}\n`);
+  assert.equal(
+    projection.getProjectViewProjection('direct-project').branchRenameWarning,
+    undefined,
+    'a reflog truncated after an older rename cannot prove a one-hop history',
+  );
 });
 
 test('a branch mismatch without rename evidence uses ordinary exact-name filtering', async () => {
