@@ -93,6 +93,14 @@ try {
     assert.notEqual(await page.evaluate(() => document.activeElement?.getAttribute('data-testid')),
       'git-commit-message', 'opening a dirty panel summoned the commit textarea');
 
+    await panel.getByRole('tab', { name: 'Files', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await panel.waitFor({ state: 'detached' });
+    await gitControl.click();
+    await message.waitFor();
+    assert.equal(await panel.getByRole('tab', { name: 'Git', exact: true }).getAttribute('aria-selected'), 'true',
+      'the stable Git entry point reopened a different persisted panel tab');
+
     const tabBottom = await panel.getByRole('tablist', { name: /right panel/i })
       .evaluate((element) => element.getBoundingClientRect().bottom);
     const actionBefore = await fixedAction.boundingBox();

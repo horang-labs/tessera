@@ -112,7 +112,15 @@ export const TabBar = memo(function TabBar() {
   const toggleSidebar = useSettingsStore((state) => state.toggleSidebar);
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const toggleGitPanel = useGitStore((state) => state.toggle);
+  const openGitPanelTab = useGitStore((state) => state.openTab);
   const isPhoneViewport = usePhoneViewport();
+  const handlePhoneGitToggle = useCallback(() => {
+    if (gitPanelOpen) {
+      toggleGitPanel();
+      return;
+    }
+    openGitPanelTab('git');
+  }, [gitPanelOpen, openGitPanelTab, toggleGitPanel]);
 
   // Scrollable container ref
   const containerRef = useRef<HTMLDivElement>(null);
@@ -735,7 +743,7 @@ export const TabBar = memo(function TabBar() {
 
       {/* One stable Git entry point on phone; desktop keeps the panel affordance. */}
       {isPhoneViewport ? (
-        <GitPhonePanelToggle open={gitPanelOpen} onToggle={toggleGitPanel} />
+        <GitPhonePanelToggle open={gitPanelOpen} onToggle={handlePhoneGitToggle} />
       ) : (
         <button
         className={cn(
