@@ -108,6 +108,7 @@ type ElectronPairingApi = {
   getRemoteAccessAddressCandidates?: () => Promise<RemoteAccessAddressCandidate[]>;
   getMobileAccessStatus?: () => Promise<MobileAccessStatus>;
   startMobileAccessSetup?: () => Promise<MobileAccessStatus>;
+  openExternalUrl?: (url: string) => Promise<unknown>;
   createPairingCode?: (action: 'issue' | 'rotate') => Promise<ElectronPairingResult>;
   listPairingRequests?: () => Promise<ElectronPairingRequestListResult>;
   decidePairingRequest?: (
@@ -252,8 +253,8 @@ export default function RemoteAccessSection() {
       .catch(() => {
         if (!cancelled) {
           setMobileAccessStatus({
-            state: 'not-configured',
-            error: { code: 'setup-failed', message: 'Status unavailable' },
+            state: 'retryable-failure',
+            message: 'Status unavailable',
           });
         }
       });
@@ -261,6 +262,42 @@ export default function RemoteAccessSection() {
       cancelled = true;
     };
   }, []);
+
+  const mobileAccessState = mobileAccessStatus?.state;
+  useEffect(function resumeMobileAccessAfterAuthorization() {
+    if (
+      mobileAccessState !== 'sign-in-required'
+      && mobileAccessState !== 'authorization-required'
+    ) return;
+    const electronApi = getElectronPairingApi();
+    if (!electronApi?.getMobileAccessStatus) return;
+
+    let cancelled = false;
+    let refreshInFlight = false;
+    const refresh = async () => {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      try {
+        const status = await electronApi.getMobileAccessStatus?.();
+        if (!status || cancelled) return;
+        setMobileAccessStatus(status);
+        if (status.state === 'ready') {
+          setAddress(status.origin);
+          setSavedAddress(status.origin);
+          setPresentation(null);
+        }
+      } catch {
+        // Keep the actionable authorization state and try again on the next tick.
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+    const interval = window.setInterval(() => void refresh(), 1_000);
+    return function stopMobileAccessAuthorizationResume() {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [mobileAccessState]);
 
   useEffect(function tickPairingExpiry() {
     if (!presentation) return;
@@ -391,11 +428,65 @@ export default function RemoteAccessSection() {
       }
     } catch {
       setMobileAccessStatus({
-        state: 'not-configured',
-        error: { code: 'setup-failed', message: 'Setup failed' },
+        state: 'retryable-failure',
+        message: 'Setup failed',
       });
     }
   };
+
+  const handleMobileAccessExternalAction = () => {
+    if (!electronApi?.openExternalUrl || !mobileAccessStatus) return;
+    const url = mobileAccessStatus.state === 'tailscale-missing'
+      ? mobileAccessStatus.installUrl
+      : mobileAccessStatus.state === 'sign-in-required'
+        || mobileAccessStatus.state === 'authorization-required'
+        ? mobileAccessStatus.authorizationUrl
+        : undefined;
+    if (url) void electronApi.openExternalUrl(url);
+  };
+
+  const mobileAccessStatusLabel = mobileAccessStatus?.state === 'ready'
+    ? t('settings.remoteAccess.mobileSetupReady')
+    : mobileAccessStatus?.state === 'configuring'
+      ? t('settings.remoteAccess.mobileSetupConfiguring')
+      : mobileAccessStatus?.state === 'tailscale-missing'
+        ? t('settings.remoteAccess.mobileSetupMissing')
+        : mobileAccessStatus?.state === 'sign-in-required'
+          ? t('settings.remoteAccess.mobileSetupSignInRequired')
+          : mobileAccessStatus?.state === 'authorization-required'
+            ? t('settings.remoteAccess.mobileSetupAuthorizationRequired')
+            : mobileAccessStatus?.state === 'temporarily-unavailable'
+              ? t('settings.remoteAccess.mobileSetupTemporarilyUnavailable')
+              : mobileAccessStatus?.state === 'ownership-conflict'
+                ? t('settings.remoteAccess.mobileSetupOwnershipConflict')
+                : mobileAccessStatus?.state === 'retryable-failure'
+                  ? t('settings.remoteAccess.mobileSetupRetryableFailure')
+                  : t('settings.remoteAccess.mobileSetupNotConfigured');
+  const mobileAccessExternalLabel = mobileAccessStatus?.state === 'tailscale-missing'
+    ? t('settings.remoteAccess.mobileSetupInstallAction')
+    : mobileAccessStatus?.state === 'sign-in-required' && mobileAccessStatus.authorizationUrl
+      ? t('settings.remoteAccess.mobileSetupOpenSignInAction')
+      : mobileAccessStatus?.state === 'authorization-required'
+        && mobileAccessStatus.authorizationUrl
+        ? t('settings.remoteAccess.mobileSetupOpenAuthorizationAction')
+        : null;
+  const mobileAccessHelp = mobileAccessStatus?.state === 'tailscale-missing'
+    ? t('settings.remoteAccess.mobileSetupMissingHelp')
+    : mobileAccessStatus?.state === 'sign-in-required'
+      ? t('settings.remoteAccess.mobileSetupSignInHelp')
+      : mobileAccessStatus?.state === 'authorization-required'
+        ? t('settings.remoteAccess.mobileSetupAuthorizationHelp')
+        : mobileAccessStatus?.state === 'temporarily-unavailable'
+          ? t(mobileAccessStatus.reason === 'machine-authorization'
+            ? 'settings.remoteAccess.mobileSetupMachineAuthorizationHelp'
+            : 'settings.remoteAccess.mobileSetupUnavailableHelp')
+          : mobileAccessStatus?.state === 'ownership-conflict'
+            ? t('settings.remoteAccess.mobileSetupConflictHelp')
+            : mobileAccessStatus?.state === 'retryable-failure'
+              ? t('settings.remoteAccess.mobileSetupRetryHelp')
+              : null;
+  const mobileAccessHelpIsError = mobileAccessStatus?.state === 'ownership-conflict'
+    || mobileAccessStatus?.state === 'retryable-failure';
 
   const handleSaveAddress = async () => {
     let normalizedAddress: string | null;
@@ -589,29 +680,39 @@ export default function RemoteAccessSection() {
                 aria-live="polite"
                 className="text-xs font-medium text-(--text-secondary)"
               >
-                {mobileAccessStatus?.state === 'ready'
-                  ? t('settings.remoteAccess.mobileSetupReady')
-                  : mobileAccessStatus?.state === 'configuring'
-                    ? t('settings.remoteAccess.mobileSetupConfiguring')
-                    : t('settings.remoteAccess.mobileSetupNotConfigured')}
+                {mobileAccessStatusLabel}
               </span>
               {mobileAccessStatus?.state !== 'ready' ? (
-                <Button
-                  type="button"
-                  onClick={() => void handleMobileAccessSetup()}
-                  disabled={!mobileAccessStatus || mobileAccessStatus.state === 'configuring'}
-                >
-                  {mobileAccessStatus?.state === 'configuring' ? (
-                    <span className="animate-spin">
-                      <RefreshCw className="h-4 w-4" />
-                    </span>
-                  ) : (
-                    <RadioTower className="h-4 w-4" />
-                  )}
-                  {mobileAccessStatus?.state === 'configuring'
-                    ? t('settings.remoteAccess.mobileSetupConfiguring')
-                    : t('settings.remoteAccess.mobileSetupAction')}
-                </Button>
+                <div className="flex flex-wrap justify-end gap-2">
+                  {mobileAccessExternalLabel ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleMobileAccessExternalAction}
+                    >
+                      <Link2 className="h-4 w-4" />
+                      {mobileAccessExternalLabel}
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    onClick={() => void handleMobileAccessSetup()}
+                    disabled={!mobileAccessStatus || mobileAccessStatus.state === 'configuring'}
+                  >
+                    {mobileAccessStatus?.state === 'configuring' ? (
+                      <span className="animate-spin">
+                        <RefreshCw className="h-4 w-4" />
+                      </span>
+                    ) : (
+                      <RadioTower className="h-4 w-4" />
+                    )}
+                    {mobileAccessStatus?.state === 'configuring'
+                      ? t('settings.remoteAccess.mobileSetupConfiguring')
+                      : mobileAccessStatus?.state === 'not-configured'
+                        ? t('settings.remoteAccess.mobileSetupAction')
+                        : t('settings.remoteAccess.mobileSetupRetryAction')}
+                  </Button>
+                </div>
               ) : null}
             </div>
           </div>
@@ -619,9 +720,17 @@ export default function RemoteAccessSection() {
             <code className="mt-3 block truncate text-xs text-(--status-success-text)">
               {mobileAccessStatus.origin}
             </code>
-          ) : mobileAccessStatus?.state === 'not-configured' && mobileAccessStatus.error ? (
-            <p role="alert" className="mt-3 text-xs text-(--status-error-text)">
-              {t('settings.remoteAccess.mobileSetupFailed')}
+          ) : mobileAccessHelp ? (
+            <p
+              role={mobileAccessHelpIsError ? 'alert' : undefined}
+              className={cn(
+                'mt-3 text-xs leading-5',
+                mobileAccessHelpIsError
+                  ? 'text-(--status-error-text)'
+                  : 'text-(--text-muted)',
+              )}
+            >
+              {mobileAccessHelp}
             </p>
           ) : null}
         </div>

@@ -10,14 +10,26 @@ export interface MobileAccessOwnership {
   owner: typeof MOBILE_ACCESS_OWNER;
   nodeDnsName: string;
   origin: string;
-  servePort: 443;
+  servePort: number;
   mountPath: '/';
   lastLoopbackTarget: string;
 }
 
+export interface MobileAccessSetupProgress {
+  schemaVersion: 1;
+  owner: typeof MOBILE_ACCESS_OWNER;
+  phase: 'setup';
+  loopbackPort: number;
+  selectedServePort?: number;
+  nodeDnsName?: string;
+  previousLoopbackTarget?: string;
+}
+
+export type MobileAccessPersistedState = MobileAccessOwnership | MobileAccessSetupProgress;
+
 export interface MobileAccessStateStore {
-  load(): Promise<MobileAccessOwnership | null>;
-  save(ownership: MobileAccessOwnership): Promise<void>;
+  load(): Promise<MobileAccessPersistedState | null>;
+  save(state: MobileAccessPersistedState): Promise<void>;
 }
 
 interface FileMobileAccessStateStoreOptions {
@@ -57,16 +69,31 @@ async function restrictWindowsPath(targetPath: string, directory: boolean): Prom
   });
 }
 
-function isMobileAccessOwnership(value: unknown): value is MobileAccessOwnership {
+function isValidPort(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && value > 0
+    && value <= 65_535;
+}
+
+function isMobileAccessPersistedState(value: unknown): value is MobileAccessPersistedState {
   if (!value || typeof value !== 'object') return false;
-  const ownership = value as Partial<MobileAccessOwnership>;
-  return ownership.schemaVersion === 1
-    && ownership.owner === MOBILE_ACCESS_OWNER
-    && typeof ownership.nodeDnsName === 'string'
-    && typeof ownership.origin === 'string'
-    && ownership.servePort === 443
-    && ownership.mountPath === '/'
-    && typeof ownership.lastLoopbackTarget === 'string';
+  const state = value as Partial<MobileAccessOwnership & MobileAccessSetupProgress>;
+  if (state.schemaVersion !== 1 || state.owner !== MOBILE_ACCESS_OWNER) return false;
+  if (state.phase === 'setup') {
+    return isValidPort(state.loopbackPort)
+      && (state.selectedServePort === undefined || isValidPort(state.selectedServePort))
+      && (state.nodeDnsName === undefined || typeof state.nodeDnsName === 'string')
+      && (
+        state.previousLoopbackTarget === undefined
+        || typeof state.previousLoopbackTarget === 'string'
+      );
+  }
+  return typeof state.nodeDnsName === 'string'
+    && typeof state.origin === 'string'
+    && isValidPort(state.servePort)
+    && state.mountPath === '/'
+    && typeof state.lastLoopbackTarget === 'string';
 }
 
 export class FileMobileAccessStateStore implements MobileAccessStateStore {
@@ -81,17 +108,17 @@ export class FileMobileAccessStateStore implements MobileAccessStateStore {
     this.restrictWindowsPath = options.restrictWindowsPath ?? restrictWindowsPath;
   }
 
-  async load(): Promise<MobileAccessOwnership | null> {
+  async load(): Promise<MobileAccessPersistedState | null> {
     try {
       const value = JSON.parse(await fs.readFile(this.filePath, 'utf8')) as unknown;
-      return isMobileAccessOwnership(value) ? value : null;
+      return isMobileAccessPersistedState(value) ? value : null;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
       return null;
     }
   }
 
-  async save(ownership: MobileAccessOwnership): Promise<void> {
+  async save(state: MobileAccessPersistedState): Promise<void> {
     const directory = path.dirname(this.filePath);
     const tempPath = path.join(
       directory,
@@ -101,7 +128,7 @@ export class FileMobileAccessStateStore implements MobileAccessStateStore {
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
     await this.makeOwnerOnly(directory, true);
     try {
-      await fs.writeFile(tempPath, JSON.stringify(ownership, null, 2), {
+      await fs.writeFile(tempPath, JSON.stringify(state, null, 2), {
         encoding: 'utf8',
         mode: 0o600,
       });

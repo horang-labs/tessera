@@ -5,234 +5,408 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  MOBILE_ACCESS_HTTPS_PORT_CANDIDATES,
   MobileAccessCoordinator,
   type TailscaleAdapter,
+  type TailscaleConfigureResult,
   type TailscaleNodeStatus,
   type TailscaleServeEndpoint,
+  type TailscaleServeStatus,
 } from '../src/lib/mobile-access/mobile-access-coordinator';
 import {
   FileMobileAccessStateStore,
   MOBILE_ACCESS_OWNER,
-  type MobileAccessOwnership,
+  type MobileAccessPersistedState,
   type MobileAccessStateStore,
 } from '../src/lib/mobile-access/mobile-access-state-store';
 
-test('setup exposes configuring and reaches ready only after verified Serve and HTTPS health', async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'tessera-mobile-access-'));
-  const statePath = path.join(tempDir, 'machine', 'mobile-access.json');
-  const calls: string[] = [];
-  let configuredEndpoint: TailscaleServeEndpoint | null = null;
-  let releaseConfigure!: () => void;
-  const configureGate = new Promise<void>((resolve) => {
-    releaseConfigure = resolve;
-  });
+const DNS_NAME = 'desktop.tailnet.ts.net';
+const LOOPBACK_PORT = 32_123;
+const LOOPBACK_TARGET = `http://127.0.0.1:${LOOPBACK_PORT}`;
 
-  const node: TailscaleNodeStatus = {
-    connected: true,
-    dnsName: 'desktop.tailnet.ts.net',
+function emptyServe(): TailscaleServeStatus {
+  return { endpoints: [], occupiedPorts: [], resources: [] };
+}
+
+class MemoryStateStore implements MobileAccessStateStore {
+  state: MobileAccessPersistedState | null = null;
+  readonly saves: MobileAccessPersistedState[] = [];
+
+  async load(): Promise<MobileAccessPersistedState | null> {
+    return this.state ? structuredClone(this.state) : null;
+  }
+
+  async save(state: MobileAccessPersistedState): Promise<void> {
+    this.state = structuredClone(state);
+    this.saves.push(structuredClone(state));
+  }
+}
+
+function createHarness(options: {
+  node?: TailscaleNodeStatus;
+  serve?: TailscaleServeStatus;
+  configureResult?: TailscaleConfigureResult;
+  configureError?: Error | null;
+  configureGate?: Promise<void>;
+} = {}) {
+  const calls: string[] = [];
+  const opened: string[] = [];
+  const store = new MemoryStateStore();
+  let node: TailscaleNodeStatus = options.node ?? {
+    state: 'running',
+    dnsName: DNS_NAME,
     httpsReady: true,
   };
+  let serve = structuredClone(options.serve ?? emptyServe());
+  let configureResult: TailscaleConfigureResult = options.configureResult
+    ?? { state: 'configured' };
+  let configureError = options.configureError ?? null;
+
   const adapter: TailscaleAdapter = {
     async inspectNode() {
       calls.push('inspect-node');
-      return node;
+      return structuredClone(node);
+    },
+    async requestSignIn() {
+      calls.push('request-sign-in');
+      return 'https://login.tailscale.com/a/generated';
     },
     async inspectServe() {
       calls.push('inspect-serve');
-      return configuredEndpoint;
+      return structuredClone(serve);
     },
     async configureServe(endpoint) {
-      calls.push('configure-serve');
-      await configureGate;
-      configuredEndpoint = endpoint;
+      calls.push(`configure:${endpoint.port}`);
+      await options.configureGate;
+      if (configureError) throw configureError;
+      if (configureResult.state === 'authorization-required') return configureResult;
+      const endpointKey = `background:web:${endpoint.dnsName}:${endpoint.port}:/`;
+      serve.endpoints = [
+        ...serve.endpoints.filter((candidate) => !(
+          candidate.scope !== 'foreground'
+          && candidate.scope !== 'service'
+          && candidate.dnsName === endpoint.dnsName
+          && candidate.port === endpoint.port
+          && candidate.mountPath === '/'
+        )),
+        structuredClone(endpoint),
+      ];
+      serve.occupiedPorts = [...new Set([...serve.occupiedPorts, endpoint.port])]
+        .sort((left, right) => left - right);
+      serve.resources = [
+        ...serve.resources.filter((resource) => (
+          resource.key !== `background:tcp:${endpoint.port}`
+          && resource.key !== endpointKey
+        )),
+        { key: `background:tcp:${endpoint.port}`, value: '{"HTTPS":true}' },
+        { key: endpointKey, value: `{"Proxy":"${endpoint.proxyTarget}"}` },
+      ].sort((left, right) => left.key.localeCompare(right.key));
+      return configureResult;
     },
   };
   const coordinator = new MobileAccessCoordinator({
     adapter,
-    stateStore: new FileMobileAccessStateStore(statePath),
-    async checkHealth(origin) {
-      calls.push(`health:${origin}`);
-    },
-    async publishPairingOrigin(origin) {
-      calls.push(`publish:${origin}`);
-    },
+    stateStore: store,
+    async checkHealth(origin) { calls.push(`health:${origin}`); },
+    async publishPairingOrigin(origin) { calls.push(`publish:${origin}`); },
+    async openExternal(url) { opened.push(url); },
   });
 
-  try {
-    assert.deepEqual(await coordinator.getStatus(), { state: 'not-configured' });
-
-    const setup = coordinator.setup({ loopbackPort: 32_123 });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(await coordinator.getStatus(), { state: 'configuring' });
-
-    releaseConfigure();
-    assert.deepEqual(await setup, {
-      state: 'ready',
-      origin: 'https://desktop.tailnet.ts.net',
-    });
-
-    assert.deepEqual(calls, [
-      'inspect-node',
-      'inspect-serve',
-      'configure-serve',
-      'inspect-serve',
-      'health:https://desktop.tailnet.ts.net',
-      'publish:https://desktop.tailnet.ts.net',
-    ]);
-    assert.deepEqual(JSON.parse(await readFile(statePath, 'utf8')), {
-      schemaVersion: 1,
-      owner: MOBILE_ACCESS_OWNER,
-      nodeDnsName: 'desktop.tailnet.ts.net',
-      origin: 'https://desktop.tailnet.ts.net',
-      servePort: 443,
-      mountPath: '/',
-      lastLoopbackTarget: 'http://127.0.0.1:32123',
-    });
-    assert.equal((await stat(statePath)).mode & 0o777, 0o600);
-    assert.equal((await stat(path.dirname(statePath))).mode & 0o777, 0o700);
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('a failed HTTPS health check stays not configured without publishing pairing access', async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'tessera-mobile-access-failure-'));
-  const statePath = path.join(tempDir, 'mobile-access.json');
-  let configuredEndpoint: TailscaleServeEndpoint | null = null;
-  let publishCount = 0;
-  const coordinator = new MobileAccessCoordinator({
-    adapter: {
-      async inspectNode() {
-        return {
-          connected: true,
-          dnsName: 'desktop.tailnet.ts.net',
-          httpsReady: true,
-        };
-      },
-      async inspectServe() {
-        return configuredEndpoint;
-      },
-      async configureServe(endpoint) {
-        configuredEndpoint = endpoint;
-      },
-    },
-    stateStore: new FileMobileAccessStateStore(statePath),
-    async checkHealth() {
-      throw new Error('TLS endpoint did not reach Tessera');
-    },
-    async publishPairingOrigin() {
-      publishCount += 1;
-    },
-  });
-
-  try {
-    assert.deepEqual(await coordinator.setup({ loopbackPort: 32_123 }), {
-      state: 'not-configured',
-      error: {
-        code: 'setup-failed',
-        message: 'TLS endpoint did not reach Tessera',
-      },
-    });
-    assert.equal(publishCount, 0);
-    await assert.rejects(readFile(statePath), { code: 'ENOENT' });
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('restoring owned Serve republishes its pairing origin before reporting ready', async () => {
-  const ownership: MobileAccessOwnership = {
-    schemaVersion: 1,
-    owner: MOBILE_ACCESS_OWNER,
-    nodeDnsName: 'desktop.tailnet.ts.net',
-    origin: 'https://desktop.tailnet.ts.net',
-    servePort: 443,
-    mountPath: '/',
-    lastLoopbackTarget: 'http://127.0.0.1:32123',
+  return {
+    adapter,
+    calls,
+    coordinator,
+    opened,
+    store,
+    setConfigureResult(value: TailscaleConfigureResult) { configureResult = value; },
+    setConfigureError(value: Error | null) { configureError = value; },
+    setNode(value: TailscaleNodeStatus) { node = value; },
+    setServe(value: TailscaleServeStatus) { serve = structuredClone(value); },
+    serve: () => structuredClone(serve),
   };
-  let publishAttempts = 0;
-  const coordinator = new MobileAccessCoordinator({
-    adapter: {
-      async inspectNode() {
-        return { connected: true, dnsName: ownership.nodeDnsName, httpsReady: true };
-      },
-      async inspectServe() {
-        return {
-          dnsName: ownership.nodeDnsName,
-          port: 443,
-          mountPath: '/',
-          proxyTarget: ownership.lastLoopbackTarget,
-        };
-      },
-      async configureServe() {
-        assert.fail('restoring status must not reconfigure a verified endpoint');
-      },
-    },
-    stateStore: { async load() { return ownership; }, async save() {} },
-    async checkHealth() {},
-    async publishPairingOrigin() {
-      publishAttempts += 1;
-      if (publishAttempts === 1) throw new Error('settings publication failed');
-    },
+}
+
+test('status distinguishes missing, sign-in, unavailable, and unsupported Tailscale states', async () => {
+  const missing = createHarness({ node: { state: 'missing' } });
+  assert.deepEqual(await missing.coordinator.getStatus(), {
+    state: 'tailscale-missing',
+    installUrl: 'https://tailscale.com/download',
   });
 
-  assert.deepEqual(await coordinator.getStatus(), {
-    state: 'not-configured',
-    error: { code: 'setup-failed', message: 'settings publication failed' },
+  const signedOut = createHarness({
+    node: {
+      state: 'needs-login',
+      authorizationUrl: 'https://login.tailscale.com/a/existing',
+    },
   });
-  assert.deepEqual(await coordinator.getStatus(), {
+  assert.deepEqual(await signedOut.coordinator.getStatus(), {
+    state: 'sign-in-required',
+    authorizationUrl: 'https://login.tailscale.com/a/existing',
+  });
+
+  const stopped = createHarness({ node: { state: 'stopped' } });
+  assert.deepEqual(await stopped.coordinator.getStatus(), {
+    state: 'temporarily-unavailable',
+    reason: 'stopped',
+    message: 'Tailscale is stopped',
+  });
+
+  const awaitingMachineAuthorization = createHarness({
+    node: { state: 'needs-machine-authorization' },
+  });
+  assert.deepEqual(await awaitingMachineAuthorization.coordinator.getStatus(), {
+    state: 'temporarily-unavailable',
+    reason: 'machine-authorization',
+    message: 'This Tailscale device is awaiting administrator approval',
+  });
+
+  const unsupported = createHarness({
+    node: { state: 'unsupported', backendState: 'FutureState' },
+  });
+  assert.deepEqual(await unsupported.coordinator.getStatus(), {
+    state: 'retryable-failure',
+    message: 'Unsupported Tailscale state: FutureState',
+  });
+  assert.equal(missing.calls.includes('inspect-serve'), false);
+});
+
+test('sign-in URL opens once and persisted setup resumes without reopening settings', async () => {
+  const harness = createHarness({ node: { state: 'needs-login' } });
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'sign-in-required',
+    authorizationUrl: 'https://login.tailscale.com/a/generated',
+  });
+  assert.deepEqual(harness.opened, ['https://login.tailscale.com/a/generated']);
+  assert.equal(harness.store.state && 'phase' in harness.store.state, true);
+
+  harness.setNode({ state: 'running', dnsName: DNS_NAME, httpsReady: true });
+  assert.deepEqual(await harness.coordinator.getStatus(), {
     state: 'ready',
-    origin: ownership.origin,
+    origin: `https://${DNS_NAME}`,
   });
-  assert.equal(publishAttempts, 2);
+  assert.deepEqual(harness.opened, ['https://login.tailscale.com/a/generated']);
 });
 
-test('setup refuses to overwrite a Serve root that no longer matches persisted ownership', async () => {
-  const ownership: MobileAccessOwnership = {
+test('setup exposes configuring and verifies fresh Serve, node, and HTTPS health before ready', async () => {
+  let releaseConfigure!: () => void;
+  const configureGate = new Promise<void>((resolve) => { releaseConfigure = resolve; });
+  const harness = createHarness({ configureGate });
+
+  const setup = harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(await harness.coordinator.getStatus(), { state: 'configuring' });
+  releaseConfigure();
+
+  assert.deepEqual(await setup, { state: 'ready', origin: `https://${DNS_NAME}` });
+  assert.deepEqual(harness.calls, [
+    'inspect-node',
+    'inspect-serve',
+    'configure:443',
+    'inspect-node',
+    'inspect-serve',
+    `health:https://${DNS_NAME}`,
+    `publish:https://${DNS_NAME}`,
+  ]);
+});
+
+test('HTTPS consent opens externally and resumes on the retained port', async () => {
+  const consentUrl = 'https://login.tailscale.com/admin/feature/serve?node=example';
+  const occupied443: TailscaleServeStatus = {
+    endpoints: [{
+      dnsName: DNS_NAME,
+      port: 443,
+      mountPath: '/',
+      proxyTarget: 'http://127.0.0.1:9999',
+      scope: 'background',
+    }],
+    occupiedPorts: [443],
+    resources: [
+      { key: 'background:tcp:443', value: '{"HTTPS":true}' },
+      {
+        key: `background:web:${DNS_NAME}:443:/`,
+        value: '{"Proxy":"http://127.0.0.1:9999"}',
+      },
+    ],
+  };
+  const harness = createHarness({
+    node: { state: 'running', dnsName: DNS_NAME, httpsReady: false },
+    serve: occupied443,
+    configureResult: { state: 'authorization-required', authorizationUrl: consentUrl },
+  });
+
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'authorization-required',
+    authorizationUrl: consentUrl,
+  });
+  assert.deepEqual(harness.opened, [consentUrl]);
+  assert.equal(
+    harness.store.state && 'phase' in harness.store.state
+      ? harness.store.state.selectedServePort
+      : null,
+    MOBILE_ACCESS_HTTPS_PORT_CANDIDATES[0],
+  );
+
+  harness.setServe(emptyServe());
+  harness.setNode({ state: 'running', dnsName: DNS_NAME, httpsReady: true });
+  harness.setConfigureResult({ state: 'configured' });
+  assert.deepEqual(await harness.coordinator.getStatus(), {
+    state: 'ready',
+    origin: `https://${DNS_NAME}:${MOBILE_ACCESS_HTTPS_PORT_CANDIDATES[0]}`,
+  });
+  assert.deepEqual(harness.opened, [consentUrl]);
+});
+
+test('443 conflict selects the first free candidate and preserves unrelated Serve and Funnel state', async () => {
+  const [occupiedCandidate, expectedPort] = MOBILE_ACCESS_HTTPS_PORT_CANDIDATES;
+  const unrelatedResources = [
+    { key: 'background:allow-funnel:desktop.tailnet.ts.net:8080', value: 'true' },
+    { key: `background:tcp:${occupiedCandidate}`, value: '{"HTTP":true}' },
+    { key: 'background:tcp:443', value: '{"HTTPS":true}' },
+    { key: 'background:tcp:8080', value: '{"HTTP":true}' },
+    { key: `background:web:${DNS_NAME}:443:/`, value: '{"Text":"owned elsewhere"}' },
+    { key: `background:web:${DNS_NAME}:8080:/api`, value: '{"Proxy":"http://127.0.0.1:8080"}' },
+  ].sort((left, right) => left.key.localeCompare(right.key));
+  const harness = createHarness({
+    serve: {
+      endpoints: [{
+        dnsName: DNS_NAME,
+        port: 8080,
+        mountPath: '/api',
+        proxyTarget: 'http://127.0.0.1:8080',
+        scope: 'background',
+      }],
+      occupiedPorts: [443, 8080, occupiedCandidate],
+      resources: unrelatedResources,
+    },
+  });
+
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'ready',
+    origin: `https://${DNS_NAME}:${expectedPort}`,
+  });
+  assert.equal(harness.calls.includes(`configure:${expectedPort}`), true);
+  const after = harness.serve().resources.filter((resource) => (
+    resource.key !== `background:tcp:${expectedPort}`
+    && resource.key !== `background:web:${DNS_NAME}:${expectedPort}:/`
+  ));
+  assert.deepEqual(after, unrelatedResources);
+});
+
+test('foreign TCP ownership on 443 forces the first high-port fallback', async () => {
+  const harness = createHarness({
+    serve: {
+      endpoints: [],
+      occupiedPorts: [443],
+      resources: [{
+        key: 'background:tcp:443',
+        value: '{"TCPForward":"127.0.0.1:9000"}',
+      }],
+    },
+  });
+
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'ready',
+    origin: `https://${DNS_NAME}:${MOBILE_ACCESS_HTTPS_PORT_CANDIDATES[0]}`,
+  });
+  assert.equal(harness.calls.includes('configure:443'), false);
+  assert.equal(harness.calls.includes(`configure:${MOBILE_ACCESS_HTTPS_PORT_CANDIDATES[0]}`), true);
+});
+
+test('a retained high port is revalidated before setup resumes', async () => {
+  const [retainedPort] = MOBILE_ACCESS_HTTPS_PORT_CANDIDATES;
+  const harness = createHarness({
+    serve: {
+      endpoints: [],
+      occupiedPorts: [retainedPort],
+      resources: [{
+        key: `background:tcp:${retainedPort}`,
+        value: '{"TCPForward":"127.0.0.1:9000"}',
+      }],
+    },
+  });
+  harness.store.state = {
     schemaVersion: 1,
     owner: MOBILE_ACCESS_OWNER,
-    nodeDnsName: 'desktop.tailnet.ts.net',
-    origin: 'https://desktop.tailnet.ts.net',
-    servePort: 443,
-    mountPath: '/',
-    lastLoopbackTarget: 'http://127.0.0.1:32122',
+    phase: 'setup',
+    loopbackPort: LOOPBACK_PORT,
+    selectedServePort: retainedPort,
+    nodeDnsName: DNS_NAME,
   };
+
+  assert.deepEqual(await harness.coordinator.getStatus(), {
+    state: 'ownership-conflict',
+    message: `Tailscale HTTPS port ${retainedPort} is no longer safe to configure`,
+  });
+  assert.equal(harness.calls.some((call) => call.startsWith('configure:')), false);
+});
+
+test('setup reports ownership conflict when every deterministic candidate is occupied', async () => {
+  const resources = [
+    { key: 'background:tcp:443', value: '{"HTTPS":true}' },
+    { key: `background:web:${DNS_NAME}:443:/`, value: '{"Text":"foreign"}' },
+    ...MOBILE_ACCESS_HTTPS_PORT_CANDIDATES.map((port) => ({
+      key: `background:tcp:${port}`,
+      value: '{"HTTP":true}',
+    })),
+  ].sort((left, right) => left.key.localeCompare(right.key));
+  const harness = createHarness({
+    serve: {
+      endpoints: [],
+      occupiedPorts: [443, ...MOBILE_ACCESS_HTTPS_PORT_CANDIDATES],
+      resources,
+    },
+  });
+
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'ownership-conflict',
+    message: 'No safe Tailscale HTTPS port is available',
+  });
+  assert.equal(harness.calls.some((call) => call.startsWith('configure:')), false);
+});
+
+test('unsupported Serve inspection fails closed without mutation', async () => {
   let configureCount = 0;
-  const stateStore: MobileAccessStateStore = {
-    async load() { return ownership; },
-    async save() {},
-  };
   const coordinator = new MobileAccessCoordinator({
     adapter: {
-      async inspectNode() {
-        return { connected: true, dnsName: ownership.nodeDnsName, httpsReady: true };
-      },
-      async inspectServe() {
-        return {
-          dnsName: ownership.nodeDnsName,
-          port: 443,
-          mountPath: '/',
-          proxyTarget: 'http://127.0.0.1:9999',
-        };
-      },
-      async configureServe() { configureCount += 1; },
+      async inspectNode() { return { state: 'running', dnsName: DNS_NAME, httpsReady: true }; },
+      async requestSignIn() { return null; },
+      async inspectServe() { throw new Error('unsupported Serve field: FutureConfig'); },
+      async configureServe() { configureCount += 1; return { state: 'configured' }; },
     },
-    stateStore,
+    stateStore: new MemoryStateStore(),
     async checkHealth() {},
     async publishPairingOrigin() {},
+    async openExternal() {},
   });
 
-  assert.deepEqual(await coordinator.setup({ loopbackPort: 32_123 }), {
-    state: 'not-configured',
-    error: {
-      code: 'serve-root-in-use',
-      message: 'Tailscale HTTPS port 443 root is already in use',
-    },
+  assert.deepEqual(await coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'retryable-failure',
+    message: 'unsupported Serve field: FutureConfig',
   });
   assert.equal(configureCount, 0);
 });
 
-test('Windows persistence applies current-user ACLs before atomically publishing state', async () => {
+test('a command timeout becomes retryable and resumes without publishing partial setup', async () => {
+  const harness = createHarness({
+    configureError: new Error('Tailscale command timed out after 15000ms'),
+  });
+
+  assert.deepEqual(await harness.coordinator.setup({ loopbackPort: LOOPBACK_PORT }), {
+    state: 'retryable-failure',
+    message: 'Tailscale command timed out after 15000ms',
+  });
+  assert.equal(harness.calls.some((call) => call.startsWith('publish:')), false);
+  assert.equal(harness.store.state && 'phase' in harness.store.state, true);
+
+  harness.setConfigureError(null);
+  assert.deepEqual(await harness.coordinator.getStatus(), {
+    state: 'ready',
+    origin: `https://${DNS_NAME}`,
+  });
+  assert.equal(harness.calls.filter((call) => call.startsWith('publish:')).length, 1);
+});
+
+test('Windows persistence applies current-user ACLs and retains a selected high port', async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'tessera-mobile-access-acl-'));
   const statePath = path.join(tempDir, 'machine', 'mobile-access.json');
   const protectedPaths: Array<{ targetPath: string; directory: boolean }> = [];
@@ -242,24 +416,23 @@ test('Windows persistence applies current-user ACLs before atomically publishing
       protectedPaths.push({ targetPath, directory });
     },
   });
-  const ownership: MobileAccessOwnership = {
+  const state: MobileAccessPersistedState = {
     schemaVersion: 1,
     owner: MOBILE_ACCESS_OWNER,
-    nodeDnsName: 'desktop.tailnet.ts.net',
-    origin: 'https://desktop.tailnet.ts.net',
-    servePort: 443,
-    mountPath: '/',
-    lastLoopbackTarget: 'http://127.0.0.1:32123',
+    phase: 'setup',
+    loopbackPort: LOOPBACK_PORT,
+    selectedServePort: MOBILE_ACCESS_HTTPS_PORT_CANDIDATES[0],
+    nodeDnsName: DNS_NAME,
   };
 
   try {
-    await store.save(ownership);
+    await store.save(state);
+    assert.deepEqual(JSON.parse(await readFile(statePath, 'utf8')), state);
     assert.equal(protectedPaths[0]?.targetPath, path.dirname(statePath));
     assert.equal(protectedPaths[0]?.directory, true);
     assert.match(protectedPaths[1]?.targetPath ?? '', /\.mobile-access\..+\.tmp$/);
-    assert.equal(protectedPaths[1]?.directory, false);
     assert.equal(protectedPaths[2]?.targetPath, statePath);
-    assert.equal(protectedPaths[2]?.directory, false);
+    assert.equal((await stat(statePath)).isFile(), true);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

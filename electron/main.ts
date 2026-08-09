@@ -992,8 +992,8 @@ async function publishMobileAccessPairingOrigin(origin: string): Promise<void> {
 
 function unavailableMobileAccessStatus(): MobileAccessStatus {
   return {
-    state: 'not-configured',
-    error: { code: 'setup-failed', message: 'The Tessera server is unavailable' },
+    state: 'retryable-failure',
+    message: 'The Tessera server is unavailable',
   };
 }
 
@@ -1851,6 +1851,7 @@ app.whenReady().then(async () => {
       stateStore: new FileMobileAccessStateStore(getTesseraDataPath('mobile-access.json')),
       checkHealth: checkMobileAccessHealth,
       publishPairingOrigin: publishMobileAccessPairingOrigin,
+      openExternal: async (url) => { await shell.openExternal(url); },
     });
     mainWindow = createWindow(port);
     createTray(mainWindow, requestAppQuit, {
