@@ -49,6 +49,7 @@
     "!.next/types/**",
     "!.next/**/*.map",
     "public/sounds/",
+    "public/icons/",
     "assets/",
     "docs/assets/readme/",
     "next.config.mjs",

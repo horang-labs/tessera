@@ -5,6 +5,8 @@ import type { TFunction } from 'i18next';
 import { isPairingRequest, type PairingRequest } from '@/lib/auth/pairing-contract';
 import { useI18n } from '@/lib/i18n';
 import { formatPairingTimeRemaining } from './pairing-time';
+import { postPairingDestination } from '@/lib/pwa/install-guidance';
+import { TesseraMark } from '@/components/brand/tessera-mark';
 
 type PairingView =
   | 'requesting'
@@ -303,7 +305,10 @@ export function PairingClient() {
         }
         if (response.ok && body?.status === 'approved') {
           setView('approved');
-          redirectTimer = window.setTimeout(() => window.location.replace('/chat'), 700);
+          redirectTimer = window.setTimeout(
+            () => window.location.replace(postPairingDestination()),
+            700,
+          );
           return;
         }
         setView(viewForError(body?.code, response.status, body?.status));
@@ -424,17 +429,6 @@ export function PairingClient() {
         </footer>
       </section>
     </main>
-  );
-}
-
-function TesseraMark() {
-  return (
-    <span aria-hidden="true" className="grid h-7 w-7 grid-cols-2 gap-0.5 border border-(--input-border) bg-(--input-bg) p-1">
-      <span className="bg-(--accent)" />
-      <span className="bg-(--text-muted)" />
-      <span className="bg-(--text-muted)" />
-      <span className="bg-(--accent)" />
-    </span>
   );
 }
 

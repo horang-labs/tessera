@@ -1472,6 +1472,31 @@ export interface I18nMessages {
     showMore: string;
     showLess: string;
   };
+  pwaInstall: {
+    optional: string;
+    eyebrow: string;
+    checkingTitle: string;
+    checkingDetail: string;
+    readyTitle: string;
+    readyDetail: string;
+    installButton: string;
+    continueBrowser: string;
+    iosTitle: string;
+    iosDetail: string;
+    iosShare: string;
+    iosHomeScreen: string;
+    iosDone: string;
+    unsupportedIosTitle: string;
+    unsupportedIosDetail: string;
+    unsupportedIosBrowserTitle: string;
+    unsupportedIosBrowserDetail: string;
+    unsupportedTitle: string;
+    unsupportedDetail: string;
+    dismissedTitle: string;
+    dismissedDetail: string;
+    footerPrivate: string;
+    footerOptional: string;
+  };
   pairing: {
     deviceLink: string;
     requestingEyebrow: string;
