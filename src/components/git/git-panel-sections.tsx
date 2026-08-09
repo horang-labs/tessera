@@ -38,6 +38,7 @@ import { useGitStore } from "@/stores/git-store";
 import { isCurrentTaskPr } from '@/types/task-pr-status';
 import { GitActionMenu } from "./git-action-menu";
 import { GitActionFailureBanner } from "./git-action-failure-banner";
+import { GitConflictResolveWithAiButton } from "./git-conflict-ai-button";
 import type { GitActionFailureReport } from "./git-action-report";
 import { GitCommitForm } from "./git-commit-form";
 import { GitPrimaryActionBar } from "./git-primary-action";
@@ -613,6 +614,7 @@ export function GitPanelSummarySection({
 export function GitPanelContentSection({
   changedFileCount,
   commit,
+  conflictHandoff,
   data,
   error,
   failure,
@@ -638,6 +640,11 @@ export function GitPanelContentSection({
     onMessageChange: (value: string) => void;
     onToggleFile: (path: string) => void;
     totals: { files: number; added: number; removed: number };
+  };
+  conflictHandoff: {
+    available: boolean;
+    pending: boolean;
+    onPrepare: () => void;
   };
   data: GitPanelData | null;
   error: string | null;
@@ -746,6 +753,7 @@ export function GitPanelContentSection({
           {loading || error || !data ? null : recovery ? (
             <GitConflictRecoverySection
               data={data}
+              conflictHandoff={conflictHandoff}
               onOpenDiffFile={onOpenDiffFile}
               setSelectedPath={setSelectedPath}
             />
@@ -947,10 +955,16 @@ const CONFLICT_OPERATION_LABEL_KEY: Record<
 
 export function GitConflictRecoverySection({
   data,
+  conflictHandoff,
   onOpenDiffFile,
   setSelectedPath,
 }: {
   data: GitPanelData;
+  conflictHandoff: {
+    available: boolean;
+    pending: boolean;
+    onPrepare: () => void;
+  };
   onOpenDiffFile: (file: GitChangedFile) => void;
   setSelectedPath: (path: string | null) => void;
 }) {
@@ -991,6 +1005,16 @@ export function GitConflictRecoverySection({
           </div>
         </div>
       </div>
+
+      {conflictHandoff.available ? (
+        <GitConflictResolveWithAiButton
+          label={t("gitPanel.conflict.resolveWithAi")}
+          pendingLabel={t("gitPanel.conflict.aiPreparing")}
+          description={t("gitPanel.conflict.aiReviewBoundary")}
+          pending={conflictHandoff.pending}
+          onPrepare={conflictHandoff.onPrepare}
+        />
+      ) : null}
 
       <div className="flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-(--text-muted)">
         <span>{t("gitPanel.conflict.unresolvedFiles")}</span>
