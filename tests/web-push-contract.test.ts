@@ -721,3 +721,44 @@ test('expired and permanently rejected endpoints are deleted while transient fai
     { deviceId: 'rejected-device', endpoint: rejected.endpoint },
   ]);
 });
+
+test('a dispatch holds the paired-device lifecycle until notification delivery settles', async () => {
+  const { withPairedDeviceLifecycle } = await import(
+    '../src/lib/auth/paired-device-lifecycle-lock'
+  );
+  const { createWebPushDispatcher } = await import('../src/lib/push/web-push-dispatcher');
+  let markSendStarted!: () => void;
+  let releaseSend!: () => void;
+  const sendStarted = new Promise<void>((resolve) => { markSendStarted = resolve; });
+  const sendGate = new Promise<void>((resolve) => { releaseSend = resolve; });
+  const dispatch = createWebPushDispatcher({
+    loadSettings: async () => ({ notifications: { pushEnabled: true } }),
+    listSubscriptions: async () => [{
+      deviceId: 'racing-device',
+      subscription: {
+        endpoint: 'https://push.example.test/racing', expirationTime: null,
+        keys: { p256dh: 'public', auth: 'auth' },
+      },
+    }],
+    deleteSubscription: async () => false,
+    sendNotification: async () => {
+      markSendStarted();
+      await sendGate;
+    },
+    runWithLifecycle: withPairedDeviceLifecycle,
+  });
+
+  dispatch('user-1', {
+    type: 'notification', sessionId: 's1', event: 'completed', eventId: 'event-race',
+    message: 'done', preview: '',
+  });
+  await sendStarted;
+  let removalEntered = false;
+  const removal = withPairedDeviceLifecycle(async () => { removalEntered = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(removalEntered, false);
+
+  releaseSend();
+  await removal;
+  assert.equal(removalEntered, true);
+});

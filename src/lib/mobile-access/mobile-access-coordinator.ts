@@ -139,10 +139,16 @@ function unrelatedResources(
   status: TailscaleServeStatus,
   endpoint: TailscaleServeEndpoint,
 ): Array<{ key: string; value: string }> {
-  const ignored = new Set([
-    `background:tcp:${endpoint.port}`,
-    rootResourceKey(endpoint.dnsName, endpoint.port),
-  ]);
+  const ownedRootKey = rootResourceKey(endpoint.dnsName, endpoint.port);
+  const sharedHttpsPort = status.resources.some((resource) => (
+    resource.key !== ownedRootKey
+    && (
+      resource.key.startsWith(`background:web:${endpoint.dnsName}:${endpoint.port}:`)
+      || resource.key === `background:allow-funnel:${endpoint.dnsName}:${endpoint.port}`
+    )
+  ));
+  const ignored = new Set([ownedRootKey]);
+  if (!sharedHttpsPort) ignored.add(`background:tcp:${endpoint.port}`);
   return status.resources.filter((resource) => (
     !ignored.has(resource.key) && !resource.key.endsWith(':etag')
   ));

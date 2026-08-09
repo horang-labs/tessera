@@ -311,6 +311,7 @@ test('mobile connection removal clears every trust generation and active device 
   const { clearMobileAccessLocalState } = await import(
     '../src/lib/mobile-access/mobile-access-local-state'
   );
+  const { revokeAllPairedDevices } = await import('../src/lib/auth/device-revocation');
   const { evaluateRequest } = await import('../src/lib/auth/request-gate');
   await subscriptions.clearDevicePushSubscriptions();
   await registry.clearDeviceRegistry();
@@ -334,6 +335,7 @@ test('mobile connection removal clears every trust generation and active device 
   const port = await listen(httpServer);
   transport.start(httpServer);
   const client = await openDeviceWebSocket(port, device.token);
+  const clients = [client];
 
   try {
     await waitFor(() => transport.listConnections().length === 1);
@@ -355,8 +357,20 @@ test('mobile connection removal clears every trust generation and active device 
       host: 'localhost:3100', origin: 'http://localhost:3100',
       cookies: { device: device.token }, headers: {},
     }), { allow: false, reason: 'unauthorized', status: 401 });
+
+    const { device: cleanupFailureDevice } = await pairApprovedDevice('Cleanup failure phone');
+    const cleanupFailureClient = await openDeviceWebSocket(port, cleanupFailureDevice.token);
+    clients.push(cleanupFailureClient);
+    await waitFor(() => transport.listConnections().length === 1);
+    await assert.rejects(
+      revokeAllPairedDevices({
+        afterTrustCleared: async () => { throw new Error('VAPID delete failed'); },
+      }),
+      /VAPID delete failed/,
+    );
+    await waitFor(() => transport.listConnections().length === 0);
   } finally {
-    await closeServer(transport, httpServer, [client]);
+    await closeServer(transport, httpServer, clients);
     if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
     else process.env.TESSERA_DATA_DIR = previousDataDir;
     if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;

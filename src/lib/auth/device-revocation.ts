@@ -55,11 +55,11 @@ export async function revokeAllPairedDevices(
       )));
       throw error;
     }
-    await options.afterTrustCleared?.();
     let disconnectedConnections = 0;
     for (const deviceId of revokedDeviceIds) {
       disconnectedConnections += wsServer.disconnectDevice(deviceId);
     }
+    await options.afterTrustCleared?.();
     return {
       revokedDevices: revokedDeviceIds.length,
       disconnectedConnections,

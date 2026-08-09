@@ -1,9 +1,6 @@
 import webPush from 'web-push';
 import logger from '@/lib/logger';
-import {
-  deletePairedDevicePushSubscription,
-  listPairedDevicePushSubscriptions,
-} from '@/lib/auth/paired-device-lifecycle';
+import { withPairedDeviceLifecycle } from '@/lib/auth/paired-device-lifecycle-lock';
 import { SettingsManager } from '@/lib/settings/manager';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import {
@@ -15,6 +12,10 @@ import { ensureVapidIdentity } from './vapid-identity';
 import type {
   DevicePushSubscription,
   StoredDevicePushSubscription,
+} from './device-push-subscription-store';
+import {
+  deleteDevicePushSubscription,
+  listDevicePushSubscriptions,
 } from './device-push-subscription-store';
 
 const MAX_PUSH_PAYLOAD_BYTES = 2_048;
@@ -36,6 +37,7 @@ interface WebPushDispatcherDependencies {
     subscription: DevicePushSubscription,
     payload: string,
   ) => Promise<unknown>;
+  runWithLifecycle?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 function isPermanentlyRejectedEndpoint(error: unknown): boolean {
@@ -90,35 +92,39 @@ export function createWebPushDispatcher(dependencies: WebPushDispatcherDependenc
       const settings = await dependencies.loadSettings(userId);
       if (settings.notifications?.pushEnabled === false) return;
 
-      const subscriptions = await dependencies.listSubscriptions();
-      if (subscriptions.length === 0) return;
-      const payload = JSON.stringify(buildSessionNotificationPushPayload(
-        message as ServerTransportMessage & { eventId: string },
-      ));
+      const runWithLifecycle = dependencies.runWithLifecycle
+        ?? (<T>(operation: () => Promise<T>) => operation());
+      await runWithLifecycle(async () => {
+        const subscriptions = await dependencies.listSubscriptions();
+        if (subscriptions.length === 0) return;
+        const payload = JSON.stringify(buildSessionNotificationPushPayload(
+          message as ServerTransportMessage & { eventId: string },
+        ));
 
-      await Promise.all(subscriptions.map(async ({ deviceId, subscription }) => {
-        if (
-          subscription.expirationTime !== null
-          && subscription.expirationTime <= Date.now()
-        ) {
-          await dependencies.deleteSubscription(deviceId, subscription.endpoint);
-          logger.warn({ userId, deviceId }, 'Expired Web Push subscription removed');
-          return;
-        }
-        try {
-          await dependencies.sendNotification(subscription, payload);
-        } catch (error) {
-          if (isPermanentlyRejectedEndpoint(error)) {
+        await Promise.all(subscriptions.map(async ({ deviceId, subscription }) => {
+          if (
+            subscription.expirationTime !== null
+            && subscription.expirationTime <= Date.now()
+          ) {
             await dependencies.deleteSubscription(deviceId, subscription.endpoint);
-            logger.warn(
-              { error, userId, deviceId },
-              'Permanently rejected Web Push subscription removed',
-            );
+            logger.warn({ userId, deviceId }, 'Expired Web Push subscription removed');
             return;
           }
-          logger.warn({ error, userId }, 'Web Push delivery failed');
-        }
-      }));
+          try {
+            await dependencies.sendNotification(subscription, payload);
+          } catch (error) {
+            if (isPermanentlyRejectedEndpoint(error)) {
+              await dependencies.deleteSubscription(deviceId, subscription.endpoint);
+              logger.warn(
+                { error, userId, deviceId },
+                'Permanently rejected Web Push subscription removed',
+              );
+              return;
+            }
+            logger.warn({ error, userId }, 'Web Push delivery failed');
+          }
+        }));
+      });
     })().catch((error) => {
       logger.warn({ error, userId }, 'Web Push dispatch failed');
     });
@@ -136,7 +142,8 @@ async function sendNotification(
 
 export const scheduleWebPushForTransportMessage = createWebPushDispatcher({
   loadSettings: (userId) => SettingsManager.load(userId, { silent: true }),
-  listSubscriptions: listPairedDevicePushSubscriptions,
-  deleteSubscription: deletePairedDevicePushSubscription,
+  listSubscriptions: listDevicePushSubscriptions,
+  deleteSubscription: deleteDevicePushSubscription,
   sendNotification,
+  runWithLifecycle: withPairedDeviceLifecycle,
 });

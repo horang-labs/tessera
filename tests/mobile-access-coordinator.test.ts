@@ -81,6 +81,7 @@ function createHarness(options: {
   inspectServeGate?: Promise<void>;
   removeError?: Error | null;
   removeNoop?: boolean;
+  removeSharedTcp?: boolean;
   clearLocalStateError?: Error | null;
 } = {}) {
   const calls: string[] = [];
@@ -151,6 +152,11 @@ function createHarness(options: {
         && candidate.mountPath === endpoint.mountPath
       ));
       serve.resources = serve.resources.filter((resource) => resource.key !== endpointKey);
+      if (options.removeSharedTcp) {
+        serve.resources = serve.resources.filter((resource) => (
+          resource.key !== `background:tcp:${endpoint.port}`
+        ));
+      }
       const hasOtherResourceOnPort = serve.resources.some((resource) => (
         resource.key.startsWith(`background:web:${endpoint.dnsName}:${endpoint.port}:`)
       ));
@@ -359,6 +365,24 @@ test('removal turns off the exact owned root, preserves unrelated resources, and
   assert.equal(harness.store.state, null);
   assert.equal(harness.store.clears, 1);
   assert.equal(harness.coordinator.hasConfiguredConnection(), false);
+});
+
+test('removal fails verification if shared HTTPS port state changes', async () => {
+  const serve = ownedServe();
+  serve.resources.push({
+    key: `background:web:${DNS_NAME}:443:/other`,
+    value: '{"Text":"leave me"}',
+  });
+  serve.resources.sort((left, right) => left.key.localeCompare(right.key));
+  const harness = createHarness({ serve, removeSharedTcp: true });
+  rememberCompletedSetup(harness.store);
+
+  assert.deepEqual(await harness.coordinator.remove(), {
+    ok: false,
+    error: 'Unrelated Tailscale Serve or Funnel configuration changed',
+  });
+  assert.notEqual(harness.store.state, null);
+  assert.equal(harness.calls.includes('clear-local-state'), false);
 });
 
 test('removal accepts a verified already-absent endpoint and starts setup fresh afterward', async () => {
