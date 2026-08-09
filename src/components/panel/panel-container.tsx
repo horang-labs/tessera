@@ -17,6 +17,7 @@ import { TerminalPanel } from '@/components/terminal/terminal-panel';
 import { WorktreeOverview } from '@/components/worktree/worktree-overview';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
+import { useTabStore } from '@/stores/tab-store';
 import {
   parseMemoryFileSessionId,
   parseWorkspaceExplorerSessionId,
@@ -48,14 +49,25 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
   const worktreeId = usePanelStore(
     (state) => state.tabPanels[tabId]?.panels[panelId]?.worktreeId ?? null,
   );
+  const tabProjectDir = useTabStore(
+    (state) => state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null,
+  );
   const worktree = useSessionStore((state) => {
     if (!worktreeId) return null;
-    return state.projects
-      .map((project) => project.projectWorktree)
-      .find((candidate) => candidate?.id === worktreeId) ?? null;
+    const projects = tabProjectDir
+      ? state.projects.filter(
+          (project) => project.encodedDir === tabProjectDir || project.decodedPath === tabProjectDir,
+        )
+      : state.projects;
+    return projects.find((project) => project.projectWorktree?.id === worktreeId)?.projectWorktree ?? null;
   });
   const linkedWorktree = useTaskStore((state) => {
     if (!worktreeId) return null;
+    if (tabProjectDir) {
+      return state.tasksByProject[tabProjectDir]?.find(
+        (candidate) => candidate.worktreeId === worktreeId,
+      ) ?? null;
+    }
     for (const tasks of Object.values(state.tasksByProject)) {
       const task = tasks.find((candidate) => candidate.worktreeId === worktreeId);
       if (task) return task;

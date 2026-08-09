@@ -533,7 +533,7 @@ function SubSessionRow({
     return false;
   });
   const asUnifiedSession = useCallback(
-    () => liveSession ?? toLinkedWorktreeSession(task, sess),
+    () => toLinkedWorktreeSession(task, sess, liveSession),
     [liveSession, sess, task],
   );
   const openSession = useCallback(() => {
@@ -901,6 +901,16 @@ export function TaskItemRow({
     useTabStore.getState().setTabProject(tabId, task.projectId);
   }, [task.projectId, task.worktreeId]);
 
+  const openPrimarySession = useCallback(async (
+    open: (session: UnifiedSession) => void | Promise<void>,
+  ) => {
+    const session = task.sessions[0];
+    if (!session) return;
+    const unifiedSession = toLinkedWorktreeSession(task, session);
+    useSessionStore.getState().upsertSession(unifiedSession);
+    await open(unifiedSession);
+  }, [task]);
+
   const handleClick = useCallback(
     async (event: React.MouseEvent) => {
       if (isRenaming) return;
@@ -908,13 +918,9 @@ export function TaskItemRow({
         selectWorktree();
         return;
       }
-      const session = task.sessions[0];
-      if (!session) return;
-      const unifiedSession = toLinkedWorktreeSession(task, session);
-      useSessionStore.getState().upsertSession(unifiedSession);
-      await onSessionClick(unifiedSession, event);
+      await openPrimarySession((session) => onSessionClick(session, event));
     },
-    [density, isRenaming, onSessionClick, selectWorktree, task],
+    [density, isRenaming, onSessionClick, openPrimarySession, selectWorktree],
   );
 
   const handleDoubleClick = useCallback(async () => {
@@ -923,12 +929,8 @@ export function TaskItemRow({
       selectWorktree();
       return;
     }
-    const session = task.sessions[0];
-    if (!session) return;
-    const unifiedSession = toLinkedWorktreeSession(task, session);
-    useSessionStore.getState().upsertSession(unifiedSession);
-    await onSessionDoubleClick?.(unifiedSession);
-  }, [density, isRenaming, onSessionDoubleClick, selectWorktree, task]);
+    await openPrimarySession((session) => onSessionDoubleClick?.(session));
+  }, [density, isRenaming, onSessionDoubleClick, openPrimarySession, selectWorktree]);
 
   // Worktree mark (git branch icon + PR-mismatch / missing badges). Rendered on
   // the leading side when provider icons are off (it's the task's primary mark),

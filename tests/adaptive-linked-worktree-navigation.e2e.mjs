@@ -97,6 +97,7 @@ try {
   const zero = await createWorktree(project.encodedDir, 0);
   const one = await createWorktree(project.encodedDir, 1);
   const many = await createWorktree(project.encodedDir, 2);
+  await api("/api/projects", { folderPath: many.path });
   const direct = await api("/api/sessions", { workDir: process.cwd(), parentProjectId: project.encodedDir, providerId: "codex", executionMode: "gui", title: "Direct Project Session", hasCustomTitle: true });
   assert.ok((await api(`/api/worktrees/${one.worktreeId}/files`)).files.includes("marker-1.txt"));
   const projection = await api(`/api/tasks?projectId=${encodeURIComponent(project.encodedDir)}`);
@@ -121,12 +122,8 @@ try {
   const oneRow = page.locator(`[data-worktree-id="${one.worktreeId}"]`);
   const manyRow = page.locator(`[data-worktree-id="${many.worktreeId}"]`);
   await zeroRow.waitFor();
-  assert.equal(await zeroRow.getAttribute("data-linked-worktree-density"), "standalone");
-  assert.equal(await oneRow.getAttribute("data-linked-worktree-density"), "composite");
-  assert.equal(await manyRow.getAttribute("data-linked-worktree-density"), "expanded");
-  assert.equal(await zeroRow.locator('[data-testid^="collection-task-worktree-icon-"]').count(), 1);
-  assert.equal(await oneRow.locator('[data-testid^="collection-task-worktree-icon-"]').count(), 1);
-  assert.equal(await manyRow.locator('[data-testid^="collection-task-worktree-icon-"]').count(), 1);
+  assert.deepEqual(await Promise.all([zeroRow, oneRow, manyRow].map((row) => row.getAttribute("data-linked-worktree-density"))), ["standalone", "composite", "expanded"]);
+  assert.deepEqual(await Promise.all([zeroRow, oneRow, manyRow].map((row) => row.locator('[data-testid^="collection-task-worktree-icon-"]').count())), [1, 1, 1]);
   assert.equal(await manyRow.locator('[data-testid^="collection-subsession-"]').count(), 0);
   assert.equal(await page.locator(`[data-testid="collection-subsession-${many.sessions[0].sessionId}"]`).count(), 1);
   assert.equal(await page.locator(`[data-testid="collection-subsession-${many.sessions[1].sessionId}"]`).count(), 1);
@@ -165,6 +162,14 @@ try {
   assert.ok(worktreeRequests.some((url) => url.includes(`/api/worktrees/${many.worktreeId}/git`)));
   await page.locator(`[data-testid="collection-subsession-${many.sessions[0].sessionId}"]`).click();
   await page.locator('[data-testid="message-input-row"]:visible').waitFor();
+  await page.getByTestId(`project-strip-${many.path}`).click();
+  const directMany = page.locator(`[data-testid="collection-chat-${many.sessions[0].sessionId}"]`).first();
+  await directMany.waitFor();
+  assert.equal(await directMany.locator('[data-testid*="bubble-"]').count(), 1);
+  await directMany.click();
+  await page.locator('[data-testid="message-input-row"]:visible').waitFor();
+  await page.getByTestId(`project-strip-${project.encodedDir}`).click();
+  await page.locator(`[data-testid="collection-subsession-${many.sessions[0].sessionId}"]`).waitFor();
 
   for (const row of [zeroRow, oneRow, manyRow]) {
     await row.hover();

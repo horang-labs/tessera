@@ -31,8 +31,9 @@ export function findCompositeWorktreeId(
 export function toLinkedWorktreeSession(
   task: TaskEntity,
   session: TaskSession,
+  canonicalSession?: UnifiedSession,
 ): UnifiedSession {
-  return {
+  const projection: UnifiedSession = {
     id: session.id,
     title: session.title,
     projectDir: task.projectId,
@@ -50,5 +51,19 @@ export function toLinkedWorktreeSession(
     taskId: task.id,
     collectionId: task.collectionId,
     sortOrder: session.sortOrder,
+  };
+  if (!canonicalSession) return projection;
+
+  return {
+    ...projection,
+    ...canonicalSession,
+    projectDir: projection.projectDir,
+    workflowStatus: projection.workflowStatus,
+    worktreeBranch: projection.worktreeBranch,
+    worktreeId: projection.worktreeId,
+    workDir: projection.workDir,
+    taskId: projection.taskId,
+    collectionId: projection.collectionId,
+    sortOrder: projection.sortOrder,
   };
 }

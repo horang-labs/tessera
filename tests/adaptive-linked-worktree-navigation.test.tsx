@@ -52,6 +52,13 @@ test('projected child Sessions retain canonical Worktree and Project placement w
     { projectDir: opened.projectDir, taskId: opened.taskId, worktreeId: opened.worktreeId, workDir: opened.workDir },
     { projectDir: 'project-view', taskId: 'task-linked', worktreeId: 'wt-linked', workDir: '/repo/linked' },
   );
+  const directProjection = { ...opened, projectDir: 'imported-worktree', taskId: undefined, title: 'Canonical title' };
+  const nestedProjection = toLinkedWorktreeSession(linked, taskSession('child'), directProjection);
+  assert.equal(nestedProjection.title, 'Canonical title');
+  assert.deepEqual(
+    { projectDir: nestedProjection.projectDir, taskId: nestedProjection.taskId },
+    { projectDir: 'project-view', taskId: 'task-linked' },
+  );
 });
 
 test('linked Worktree overview names the canonical linked target', () => {
