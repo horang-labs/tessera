@@ -99,6 +99,7 @@ const INPUT_BAR_CONTROLS = [
     testId: `terminal-input-bar-key-${namedKey}`,
     label: `named key ${namedKey}`,
   })),
+  { testId: 'terminal-input-bar-attach-image', label: 'Attach image' },
   { testId: 'terminal-input-bar-send', label: 'Send to the terminal' },
   // Height only: it is `flex-1` and yields its width so the send button stays
   // on screen, which is #251's fix and must not be undone here.

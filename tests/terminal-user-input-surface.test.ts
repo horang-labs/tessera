@@ -47,3 +47,38 @@ test('user input notifies only the exact surface that owns the input bar', () =>
     second.dispose({ detach: false });
   }
 });
+
+test('user paste uses the exact surface paste path and notifies only after delivery', () => {
+  const first = createSurface('user-paste-owner:first');
+  const second = createSurface('user-paste-owner:second');
+  const pasted: string[] = [];
+  let firstNotifications = 0;
+  let secondNotifications = 0;
+
+  first.setInputListener(() => {
+    firstNotifications += 1;
+  });
+  second.setInputListener(() => {
+    secondNotifications += 1;
+  });
+  Reflect.set(first, 'terminal', {
+    paste: (data: string) => pasted.push(data),
+  });
+
+  try {
+    const imagePath = '/tmp/tessera-uploads/phone image.png';
+    assert.equal(first.pasteUserInput(imagePath), true);
+    assert.deepEqual(pasted, [imagePath]);
+    assert.equal(pasted[0].includes('\r'), false, 'image paste must not append Enter');
+    assert.equal(firstNotifications, 1);
+    assert.equal(secondNotifications, 0);
+
+    Reflect.set(first, 'terminal', null);
+    assert.equal(first.pasteUserInput('/tmp/unavailable.png'), false);
+    assert.equal(firstNotifications, 1, 'a rejected paste must not pin the preview');
+  } finally {
+    Reflect.set(first, 'terminal', null);
+    first.dispose({ detach: false });
+    second.dispose({ detach: false });
+  }
+});

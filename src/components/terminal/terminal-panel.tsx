@@ -26,6 +26,7 @@ import {
 } from '@/lib/terminal/terminal-surface-registry';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 import { TerminalInputBar } from '@/components/terminal/terminal-input-bar';
+import { uploadTerminalClipboardFile } from '@/lib/terminal/terminal-clipboard-paste';
 import { useIsDark } from '@/hooks/use-is-dark';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
@@ -159,6 +160,10 @@ export function TerminalPanel({
     (data: string) => surface.sendUserInput(data),
     [surface],
   );
+  const handleInputBarImage = useCallback(async (file: File) => {
+    const uploadedPath = await uploadTerminalClipboardFile(file);
+    return surface.pasteUserInput(uploadedPath);
+  }, [surface]);
   const handleTerminalPointerDown = useCallback(() => {
     if (!isPhoneViewport) return;
     const activeElement = containerRef.current?.ownerDocument.activeElement;
@@ -380,7 +385,11 @@ export function TerminalPanel({
           draft survives a tab switch (#262). The surface receives the same Phone state so
           xterm keeps touch/pointer behavior but yields keyboard ownership to this bar. */}
       {isPhoneViewport && (
-        <TerminalInputBar onSend={handleInputBarSend} isTabActive={isTabActive} />
+        <TerminalInputBar
+          onSend={handleInputBarSend}
+          onAttachImage={handleInputBarImage}
+          isTabActive={isTabActive}
+        />
       )}
     </div>
   );

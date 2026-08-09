@@ -18,13 +18,20 @@ const panelSource = fs.readFileSync(
 test('only explicit user input origins pin a PTY preview', () => {
   const sendInput = source.match(/sendInput\(data: string\): boolean \{[\s\S]*?\n  \}/)?.[0] ?? '';
   const sendUserInput = source.match(/sendUserInput\(data: string\): boolean \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  const pasteInput = source.match(/pasteInput\(data: string\): boolean \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  const pasteUserInput = source.match(/pasteUserInput\(data: string\): boolean \{[\s\S]*?\n  \}/)?.[0] ?? '';
   const onData = source.match(/terminal\.onData\(\(data\) => \{[\s\S]*?\n      \}\);/)?.[0] ?? '';
 
   assert.doesNotMatch(sendInput, /notifyTerminalInput|onInput/);
   assert.match(sendUserInput, /notifyTerminalInput/);
+  assert.doesNotMatch(pasteInput, /notifyTerminalInput|onInput/);
+  assert.match(pasteUserInput, /pasteInput/);
+  assert.match(pasteUserInput, /notifyTerminalInput/);
   assert.match(inputBarSource, /onSend\(data\)/);
   assert.match(panelSource, /surface\.sendUserInput\(data\)/);
+  assert.match(panelSource, /surface\.pasteUserInput\(uploadedPath\)/);
   assert.doesNotMatch(inputBarSource, /terminalId|sendUserInputToTerminal/);
+  assert.doesNotMatch(inputBarSource, /pasteInputToTerminal/);
   assert.match(onData, /if \(this\.terminalInputOriginArmed\)/);
   assert.match(source, /event\.type === 'keydown'.*!isModifierOnlyKey\(event\.key\)/s);
   assert.match(source, /clipboardData\?\.getData\('text\/plain'\)[\s\S]*armTerminalInputOrigin/);

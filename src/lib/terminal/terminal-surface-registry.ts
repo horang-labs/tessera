@@ -594,6 +594,13 @@ export class TerminalSurface {
     return true;
   }
 
+  /** Pastes data that came from an explicit user-facing control. */
+  pasteUserInput(data: string): boolean {
+    const delivered = this.pasteInput(data);
+    if (delivered) this.notifyTerminalInput();
+    return delivered;
+  }
+
   /** Ask the server to close only a runtime created by this preview token. */
   releasePreviewRuntime(): void {
     if (this.disposed) return;
