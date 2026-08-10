@@ -49,9 +49,10 @@ idle → entering-new / editing-existing → submitting → error-or-idle, porte
 ### `workspace-inline-input-row.tsx` (new) — the row and its focus lifecycle
 
 Focus lands a frame after mount (the click that opened the row is still settling its own
-focus). Enter commits, Esc abandons with no request at all, and a blur commits after
-150 ms — what Finder, VS Code and Orca all do. A stray blur cannot create anything,
-because an empty value and an unchanged rename both resolve to `cancel`.
+focus). Enter commits, Esc abandons with no request at all, and a blur commits — what
+Finder, VS Code and Orca all do. A stray blur cannot create anything, because an empty
+value and an unchanged rename both resolve to `cancel`. (The blur commit was initially
+deferred 150 ms; the Standards review showed why it cannot be — see below.)
 
 The row carries the error under the field (`workspace-inline-input-error`, `role="alert"`)
 and, for a rename of a file with unsaved edits, the warning wave 2's spec review asked for
@@ -60,8 +61,9 @@ moved rather than disappearing.
 
 ### `workspace-file-panel.tsx`
 
-- Header **New file** / **New folder** open a placeholder at the root; the per-folder
-  buttons open one inside that folder and expand it first.
+- **New file** / **New folder** open a placeholder at the right depth and expand the folder
+  first. (These began as header and per-row buttons; the user's mid-wave feedback moved them
+  onto the right-click menu — see "UX rework" below, which is the shipped shape.)
 - **Rename** on a row and a **double-click on the name text** are the same call. The
   hotspot is the name alone, so the icon, the chevron and the empty part of the row keep
   doing what they always did (open the file, toggle the folder).
@@ -121,6 +123,9 @@ $ npx tsx --test tests/workspace-inline-input-state.test.ts \
 # pass 102
 # fail 0
 ```
+
+After the review fixes and the UX rework this is **106 / 106** (three new state rules and
+three new contract tests); the final run is recorded at the end of this report.
 
 | File | Tests | Covers |
 |---|---|---|
