@@ -460,6 +460,33 @@ test('all five Session Notification kinds schedule one bounded navigation-only P
   assert.equal(fallback.preview, 'Your Tessera session completed.');
 });
 
+test('Session Notification Push uses a five-minute TTL with high urgency', async () => {
+  const { createWebPushDispatcher } = await import('../src/lib/push/web-push-dispatcher');
+  let sentOptions: unknown;
+  const dispatch = createWebPushDispatcher({
+    loadSettings: async () => ({ notifications: { pushEnabled: true } }),
+    listSubscriptions: async () => [{
+      deviceId: 'priority-device',
+      subscription: {
+        endpoint: 'https://push.example.test/priority', expirationTime: null,
+        keys: { p256dh: 'public', auth: 'auth' },
+      },
+    }],
+    deleteSubscription: async () => false,
+    sendNotification: async (_subscription, _payload, options) => {
+      sentOptions = options;
+    },
+  });
+
+  dispatch('user-1', {
+    type: 'notification', sessionId: 's1', event: 'completed', eventId: 'event-priority',
+    message: 'done', preview: '',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(sentOptions, { TTL: 300, urgency: 'high' });
+});
+
 test('the server send-to-user seam creates or preserves an event ID before fan-out', async () => {
   const { WebSocketServer } = await import('../src/lib/ws/server');
   const scheduled: unknown[] = [];

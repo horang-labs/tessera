@@ -1,4 +1,4 @@
-import webPush from 'web-push';
+import webPush, { type RequestOptions } from 'web-push';
 import logger from '@/lib/logger';
 import { withPairedDeviceLifecycle } from '@/lib/auth/paired-device-lifecycle-lock';
 import { SettingsManager } from '@/lib/settings/manager';
@@ -36,6 +36,7 @@ interface WebPushDispatcherDependencies {
   sendNotification: (
     subscription: DevicePushSubscription,
     payload: string,
+    options: RequestOptions,
   ) => Promise<unknown>;
   runWithLifecycle?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
@@ -111,7 +112,10 @@ export function createWebPushDispatcher(dependencies: WebPushDispatcherDependenc
             return;
           }
           try {
-            await dependencies.sendNotification(subscription, payload);
+            await dependencies.sendNotification(subscription, payload, {
+              TTL: 5 * 60,
+              urgency: 'high',
+            });
           } catch (error) {
             if (isPermanentlyRejectedEndpoint(error)) {
               await dependencies.deleteSubscription(deviceId, subscription.endpoint);
@@ -134,10 +138,11 @@ export function createWebPushDispatcher(dependencies: WebPushDispatcherDependenc
 async function sendNotification(
   subscription: DevicePushSubscription,
   payload: string,
+  options: RequestOptions,
 ): Promise<void> {
   const identity = await ensureVapidIdentity();
   webPush.setVapidDetails(VAPID_SUBJECT, identity.publicKey, identity.privateKey);
-  await webPush.sendNotification(subscription, payload, { TTL: 5 * 60 });
+  await webPush.sendNotification(subscription, payload, options);
 }
 
 export const scheduleWebPushForTransportMessage = createWebPushDispatcher({
