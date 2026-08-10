@@ -158,6 +158,17 @@ test('the rename gesture does not also re-open the file', () => {
   assert.match(filePanelSource, /if \(event\.key !== "F2"\) return;/);
 });
 
+test('a deferred folder toggle cannot fire under an input that just opened', () => {
+  // Clicking a folder's name arms a toggle for the double-click window. Opening
+  // any input before it fires would let it collapse the folder the row sits in,
+  // taking the half-typed name with it — so both entry points disarm it.
+  assert.match(filePanelSource, /function beginRename\(node: WorkspaceTreeNode\) \{\s*\n\s*clearDeferredToggle\(\);/);
+  assert.match(filePanelSource, /function beginNewEntry\(kind: "file" \| "folder", parentPath: string\) \{\s*\n\s*clearDeferredToggle\(\);/);
+  // And nothing reaches the hook's startNew around that guard.
+  const rawStartNew = filePanelSource.match(/inlineInput\.startNew\(/g) ?? [];
+  assert.equal(rawStartNew.length, 1, 'startNew is only called from beginNewEntry');
+});
+
 test('a watch reconcile cannot take the row being edited', () => {
   // The panel's live sync goes through the hook: while an input is open the
   // reload is held back and applied once, when the input closes.

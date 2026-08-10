@@ -151,6 +151,6 @@ test('the Files panel users actually reach carries the create actions', () => {
   // right-click menu in #322, off the row-hover strip.
   const contextMenuSource = read('../src/components/workspace/workspace-file-context-menu.tsx');
   assert.match(contextMenuSource, /data-testid="workspace-context-new-file"/);
-  assert.match(filePanelSource, /inlineInput\.startNew\("file", newEntryParentFor\(contextMenu\.node\)\)/);
+  assert.match(filePanelSource, /beginNewEntry\("file", newEntryParentFor\(contextMenu\.node\)\)/);
   assert.match(filePanelSource, /<WorkspaceFileContextMenu/);
 });

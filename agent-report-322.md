@@ -409,3 +409,39 @@ $ npx tsx --test <8 files>  → # tests 106  # pass 106  # fail 0
 Browser: header **New folder** opens a focused placeholder at the root and Enter creates
 `header-button-works/` on disk; a query for the row-strip testids still returns **0**
 (`shots/23`).
+
+## Spec axis, second pass (after `c287341`)
+
+The Spec reviewer re-read the branch at `c287341` and re-confirmed all eight AC items with
+file:line evidence, including the two it was asked to be adversarial about (the watch gate
+has no bypass; the inline error is reachable and re-submittable). It explicitly checked the
+generation stamp added in `c287341` and called it correct — both `open` and `close` bump it,
+and a stale reply is blocked on the success *and* the failure path.
+
+Two of its findings — the double-preview on a name double-click, and the inline input
+surviving a session switch — had already been fixed in `67e890a`, which the reviewer had
+not seen. Its "Enter on a focused row" gap is answered by the F2 binding in the same commit,
+for the reason recorded above.
+
+**One finding was new and real, fixed here.** A click on a folder's *name* arms a 500 ms
+deferred toggle. `beginRename` disarmed it; `startNew` did not. So: click a folder's name
+once, then open a new-entry input inside it before the window closes, and the timer collapses
+the folder — taking the placeholder row, and the half-typed name, with it. Both entry points
+now go through a guard (`beginRename`, `beginNewEntry`), and a contract test asserts that the
+hook's `startNew` has exactly one caller so a third entry point cannot reintroduce the gap.
+
+**Left as a recorded trade-off: Orca's focus-settle grace period.** Orca re-focuses rather
+than commits when a blur arrives before focus has settled (`FileExplorerRow.tsx:232-240`);
+`c287341` removed the timer that defence was built on, because the timer lost the commit
+outright when the row unmounted. The residual gap — a placeholder losing focus in the frames
+after it mounts would commit empty, which resolves to `cancel` and no request — needs
+something to steal focus, and nothing in this panel does: no menu opens over the input, and
+the right-click menu closes *before* the input is created. Not reproduced across either QA
+pass. The reviewer's framing is the honest one: the unmount loss is definitely fixed, and
+the ported hook's own defence is definitely absent.
+
+```
+$ npx tsc --noEmit          → exit 0
+$ npm run lint              → 0 errors, the same 3 untouched-file warnings
+$ npx tsx --test <8 files>  → # tests 107  # pass 107  # fail 0
+```

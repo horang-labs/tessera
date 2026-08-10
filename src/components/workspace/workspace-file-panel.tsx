@@ -460,6 +460,16 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     return node.path.split("/").slice(0, -1).join("/");
   }
 
+  /**
+   * Like `beginRename`, this disarms a toggle left over from a click on a
+   * folder's name: it would fire under the placeholder and collapse the folder
+   * the row is sitting in, taking the half-typed name with it.
+   */
+  function beginNewEntry(kind: "file" | "folder", parentPath: string) {
+    clearDeferredToggle();
+    inlineInput.startNew(kind, parentPath);
+  }
+
   function renderInlineInputRow(depth: number) {
     const input = inlineInput.input;
     if (!input) return null;
@@ -680,7 +690,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           <Tooltip content="New file">
             <button
               type="button"
-              onClick={() => inlineInput.startNew("file", "")}
+              onClick={() => beginNewEntry("file", "")}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
               aria-label="New file"
               data-testid="workspace-new-file"
@@ -691,7 +701,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           <Tooltip content="New folder">
             <button
               type="button"
-              onClick={() => inlineInput.startNew("folder", "")}
+              onClick={() => beginNewEntry("folder", "")}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
               aria-label="New folder"
               data-testid="workspace-new-folder"
@@ -777,8 +787,8 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             onDelete: contextMenu.node
               ? () => setDeleteRequest(deleteRequestFor(contextMenu.node!))
               : undefined,
-            onNewFile: () => inlineInput.startNew("file", newEntryParentFor(contextMenu.node)),
-            onNewFolder: () => inlineInput.startNew("folder", newEntryParentFor(contextMenu.node)),
+            onNewFile: () => beginNewEntry("file", newEntryParentFor(contextMenu.node)),
+            onNewFolder: () => beginNewEntry("folder", newEntryParentFor(contextMenu.node)),
             onRename: contextMenu.node
               ? () => beginRename(contextMenu.node!)
               : undefined,
