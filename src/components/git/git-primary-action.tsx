@@ -74,7 +74,7 @@ export function GitPrimaryActionButton({
       title={disabled ? reason : undefined}
       data-testid="git-primary-action-button"
       data-git-action={action.kind}
-      className="h-7 shrink-0 px-3 text-[11px]"
+      className="h-7 shrink-0 bg-blue-600 px-3 text-[11px] font-semibold text-white shadow-sm ring-1 ring-blue-700/40 hover:bg-blue-500 dark:bg-blue-500 dark:ring-blue-300/30 dark:hover:bg-blue-400"
     >
       {pendingVerb ? (
         <>
