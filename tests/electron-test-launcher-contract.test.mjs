@@ -19,9 +19,27 @@ test('isolated Electron launcher assigns a distinct packaged server port', () =>
   assert.match(launcherSource, /if \(\$cdp\.serverPort -ne \$testServerPort\)/);
 });
 
+test('launcher bind-probes ports and serializes allocation across concurrent sessions', () => {
+  assert.match(launcherSource, /function Test-TcpPortBindable/);
+  assert.match(launcherSource, /\[System\.Net\.Sockets\.TcpListener\]::new/);
+  assert.match(launcherSource, /\[System\.Net\.IPAddress\]::Loopback/);
+  assert.match(launcherSource, /\$listener\.Start\(\)/);
+  assert.match(
+    launcherSource,
+    /Test-TcpPortBindable -Port \$candidate/,
+  );
+  assert.doesNotMatch(launcherSource, /ConnectAsync\('127\.0\.0\.1', \$Port\)/);
+  assert.match(
+    launcherSource,
+    /Local\\TesseraElectronTestPortAllocation/,
+  );
+  assert.match(launcherSource, /\$portAllocationMutex\.WaitOne/);
+  assert.match(launcherSource, /\$portAllocationMutex\.ReleaseMutex\(\)/);
+});
+
 test('failed launches with no surviving process can still be cleaned by manifest', () => {
   assert.match(
     stopSource,
-    /\[AllowEmptyCollection\(\)\][\s\S]*\[array\]\$ProcessIds/,
+    /\[AllowNull\(\)\][\s\S]*\[AllowEmptyCollection\(\)\][\s\S]*\[array\]\$ProcessIds/,
   );
 });
