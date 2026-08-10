@@ -778,6 +778,7 @@ export async function routeClientTransportMessage({
 
     case 'subscribe_workspace_files':
       await workspaceFileWatchManager.subscribe({
+        agentEnvironment: await getAgentEnvironment(userId),
         connectionId,
         sendToUser,
         sessionId: message.sessionId,

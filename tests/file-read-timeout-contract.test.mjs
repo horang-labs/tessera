@@ -6,7 +6,9 @@ const fetchWithTimeoutSource = fs.readFileSync(new URL('../src/lib/api/fetch-wit
 const fileTabSource = fs.readFileSync(new URL('../src/components/workspace/workspace-file-tab.tsx', import.meta.url), 'utf8');
 const codeViewSource = fs.readFileSync(new URL('../src/components/workspace/workspace-code-view.tsx', import.meta.url), 'utf8');
 const fileRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/file/route.ts', import.meta.url), 'utf8');
+const fileReaderSource = fs.readFileSync(new URL('../src/lib/workspace-files/read-workspace-file.ts', import.meta.url), 'utf8');
 const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', import.meta.url), 'utf8');
+const gitRunnerSource = fs.readFileSync(new URL('../src/lib/worktrees/git-runner.ts', import.meta.url), 'utf8');
 const filePanelSource = fs.readFileSync(new URL('../src/components/workspace/workspace-file-panel.tsx', import.meta.url), 'utf8');
 const explorerTabSource = fs.readFileSync(new URL('../src/components/workspace/workspace-explorer-tab.tsx', import.meta.url), 'utf8');
 const fileListHookSource = fs.readFileSync(new URL('../src/hooks/use-workspace-file-list.ts', import.meta.url), 'utf8');
@@ -40,35 +42,34 @@ test('code view keeps the close button visible while loading and offers retry on
 });
 
 test('file route bounds every workspace fs operation with a deadline', () => {
-  assert.match(fileRouteSource, /function withFsDeadline/);
-  assert.match(fileRouteSource, /filesystem_timeout/);
-  assert.match(fileRouteSource, /504/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.realpath\(root\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.realpath\(candidatePath\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.stat\(absolutePath\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.readFile\(absolutePath\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.open\(absolutePath, "r"\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(handle\.read\(/);
-  assert.doesNotMatch(fileRouteSource, /await handle\.close\(\);/);
+  assert.match(fileRouteSource, /readWorkspaceFileResponse/);
+  assert.match(fileReaderSource, /function withFsDeadline/);
+  assert.match(fileReaderSource, /filesystem_timeout/);
+  assert.match(fileReaderSource, /504/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.realpath\(root\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.realpath\(candidatePath\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.stat\(absolutePath\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.readFile\(absolutePath\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.open\(absolutePath, ['"]r['"]\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(handle\.read\(/);
+  assert.doesNotMatch(fileReaderSource, /await handle\.close\(\);/);
 });
 
-test('git panel commands are killed after a timeout and never wait on a credential prompt', () => {
-  // The rejection must come from our own timer, not spawn's `timeout` option:
-  // a wedged grandchild holding the stdio pipes delays 'close' past the kill.
-  assert.match(gitPanelSource, /setTimeout\(\(\) => \{\s*reject\(new GitPanelError\(\s*"command_timeout"/);
-  assert.match(gitPanelSource, /process\.kill\(-child\.pid, "SIGKILL"\)/);
-  assert.match(gitPanelSource, /GIT_TERMINAL_PROMPT:\s*"0"/);
-  assert.match(gitPanelSource, /did not respond within/);
-  assert.doesNotMatch(gitPanelSource, /timeout:\s*COMMAND_TIMEOUT_MS/);
+test('git panel commands use the timeout-aware runner and never wait on a credential prompt', () => {
+  assert.match(gitPanelSource, /createGitRunner\(agentEnvironment, \{\s*timeoutMs: COMMAND_TIMEOUT_MS/);
+  assert.match(gitRunnerSource, /const killTimer = setTimeout/);
+  assert.match(gitRunnerSource, /killProcessGroup\(child\)/);
+  assert.match(gitRunnerSource, /process\.kill\(-child\.pid, 'SIGKILL'\)/);
+  assert.match(gitRunnerSource, /GIT_TERMINAL_PROMPT:\s*'0'/);
+  assert.match(gitRunnerSource, /did not respond within/);
 });
 
 test('a timed-out git command surfaces as 504 instead of degrading to an optional null', () => {
-  const optionalSource = gitPanelSource.match(/async function runOptionalCommand[\s\S]*?\n}/)?.[0] ?? '';
+  const optionalSource = gitPanelSource.match(/async function runOptionalGitCommand[\s\S]*?\n}/)?.[0] ?? '';
   assert.match(optionalSource, /error instanceof GitPanelError && error\.status === 504\) throw error/);
 });
 
 test('worktree diff stats git runner opts into the kill timer', () => {
-  const gitRunnerSource = fs.readFileSync(new URL('../src/lib/worktrees/git-runner.ts', import.meta.url), 'utf8');
   const diffStatsSource = fs.readFileSync(new URL('../src/lib/git/worktree-diff-stats.ts', import.meta.url), 'utf8');
   assert.match(gitRunnerSource, /timeoutMs\?/);
   assert.match(gitRunnerSource, /process\.kill\(-child\.pid, 'SIGKILL'\)/);

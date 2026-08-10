@@ -4,6 +4,7 @@ import { loadEnvConfig } from '@next/env';
 import { createServer } from 'http';
 import type { AddressInfo } from 'net';
 import { initDatabase } from './src/lib/db/database';
+import { bootstrapCanonicalWorktreeRegistry } from './src/lib/db/worktree-bootstrap';
 import { interruptRunningPreparations } from './src/lib/db/task-preparation';
 import { markServerShuttingDown } from './src/lib/server-lifecycle';
 import './src/lib/cli/providers/bootstrap';
@@ -35,6 +36,7 @@ import {
   type ControlRuntimeHost,
 } from './src/lib/control/runtime-host';
 import { attachRemoteAddressHeader } from './src/lib/http/remote-address-header';
+import { registerCurrentProjectAtStartup } from './src/lib/projects/current-project-registration';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -55,18 +57,23 @@ async function startServer() {
   await ensureRemoteModelConfigLoaded();
   await ensureRSAKeys();
   await ensureAppSecret();
-  prewarmCliStatusSnapshot('server');
   try {
     const userId = await resolveServerDefaultUserId();
     if (userId) {
-      const settings = await SettingsManager.load(userId);
+      const settings = await SettingsManager.load(userId, { strict: true });
+      const bootstrap = await bootstrapCanonicalWorktreeRegistry(settings.agentEnvironment);
+      if (bootstrap.status === 'completed') {
+        logger.info({ bootstrap }, 'Canonical Worktree registry bootstrapped');
+      }
       if (settings.autoDeleteArchivedWorktrees) {
         await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays);
       }
     }
   } catch (error) {
-    logger.warn({ error }, 'Archived worktree retention skipped during startup');
+    logger.warn({ error }, 'Default-user startup maintenance skipped');
   }
+  registerCurrentProjectAtStartup();
+  prewarmCliStatusSnapshot('server');
 
   // Create HTTP server first so Next.js can attach its HMR upgrade handler.
   // In Next.js 16, setupWebSocketHandler() auto-registers on options.httpServer

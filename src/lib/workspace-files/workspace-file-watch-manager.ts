@@ -3,6 +3,7 @@ import chokidar, { type FSWatcher } from "chokidar";
 import { getFilesystemPathModule } from "@/lib/filesystem/host-path";
 import logger from "@/lib/logger";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
+import type { AgentEnvironment } from "@/lib/settings/types";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
 import {
   applyMaxFiles,
@@ -136,6 +137,7 @@ export class WorkspaceFileWatchManager {
   private readonly rootBySessionId = new Map<string, string>();
 
   async subscribe(options: {
+    agentEnvironment: AgentEnvironment;
     connectionId: string;
     sendToUser: WsSendToUser;
     sessionId: string;
@@ -147,7 +149,10 @@ export class WorkspaceFileWatchManager {
       return;
     }
 
-    const root = await this.resolveRootForSession(options.sessionId);
+    const root = await this.resolveRootForSession(
+      options.sessionId,
+      options.agentEnvironment,
+    );
     if (this.closedConnectionIds.has(options.connectionId) || this.canceledSubscriberKeys.delete(key)) {
       return;
     }
@@ -325,9 +330,9 @@ export class WorkspaceFileWatchManager {
   }
 
   /** Fire-and-forget index prewarm for a Windows-hosted WSL workspace. */
-  warmSessionWorkspace(sessionId: string): void {
+  warmSessionWorkspace(sessionId: string, agentEnvironment: AgentEnvironment): void {
     void (async () => {
-      const root = await this.resolveRootForSession(sessionId);
+      const root = await this.resolveRootForSession(sessionId, agentEnvironment);
       if (!root || !isWindowsHostedWslRoot(root)) return;
       const entry = this.getOrCreateEntry(root);
       this.touchEntry(entry);
@@ -346,8 +351,13 @@ export class WorkspaceFileWatchManager {
     return applyMaxFiles(entry.files, entry.symlinks);
   }
 
-  private async resolveRootForSession(sessionId: string): Promise<string | null> {
-    const root = await resolveSessionWorkspaceFilesystemRoot(sessionId);
+  private async resolveRootForSession(
+    sessionId: string,
+    agentEnvironment: AgentEnvironment,
+  ): Promise<string | null> {
+    const root = await resolveSessionWorkspaceFilesystemRoot(sessionId, {
+      agentEnvironment,
+    });
     if (!root) return null;
     const canonicalRoot = await resolveCanonicalWorkspaceRoot(root);
     this.rootBySessionId.set(sessionId, canonicalRoot);

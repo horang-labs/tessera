@@ -3,6 +3,7 @@ import fs from 'fs';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
 import {
+  formatPathForAgentDisplay,
   getFilesystemPathBasename,
   resolveBrowsePath,
 } from '@/lib/filesystem/path-environment';
@@ -55,7 +56,12 @@ export async function POST(req: NextRequest) {
   }
 
   const displayName = getFilesystemPathBasename(resolvedPath);
-  dbProjects.registerProject(resolvedPath, resolvedPath, displayName);
+  dbProjects.registerProject(resolvedPath, resolvedPath, displayName, null, {
+    equivalentFilesystemPaths: [
+      folderPath,
+      formatPathForAgentDisplay(resolvedPath, settings.agentEnvironment),
+    ],
+  });
 
   return NextResponse.json({ ok: true, projectId: resolvedPath, displayName });
 }

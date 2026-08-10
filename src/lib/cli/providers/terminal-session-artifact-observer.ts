@@ -22,6 +22,12 @@ const NEW_DIRECTORY_SCAN_MAX_DEPTH = 4;
 const NEW_DIRECTORY_SCAN_ENTRY_BUDGET = 512;
 const NEW_DIRECTORY_SCAN_BASE_DELAY_MS = 50;
 
+export function getTerminalSessionArtifactWatchBackend(
+  root: string,
+): 'wsl-inotify' | 'chokidar' {
+  return parseWslUncRoot(root) ? 'wsl-inotify' : 'chokidar';
+}
+
 export function createTerminalSessionArtifactObserver(options: {
   /**
    * Where the provider drops its artifacts. Accepts a promise because across a
@@ -232,9 +238,11 @@ export function createTerminalSessionArtifactObserver(options: {
       markReady();
       if (errorReported) return;
       errorReported = true;
-      logger.warn({ error, root }, 'Provider session artifact watcher failed');
-      if (watcher === started) watcher = null;
+      // Chokidar can emit one error per descendant when an underlying watcher
+      // fails. Close on the first error so logging cannot starve the server.
+      watcher = null;
       void started.close();
+      logger.warn({ error, root }, 'Provider session artifact watcher failed');
     });
   };
 
@@ -251,9 +259,10 @@ export function createTerminalSessionArtifactObserver(options: {
       if (disposed) return;
       disposed = true;
       markReady();
-      void watcher?.close();
       wslBridge?.stop();
       wslBridge = null;
+      void watcher?.close();
+      watcher = null;
       for (const timer of retryTimers) clearTimeout(timer);
       retryTimers.clear();
       inspecting.clear();

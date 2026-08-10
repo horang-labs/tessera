@@ -103,7 +103,7 @@ export function useSessionResume() {
    * Used when user sends a message to a read-only session.
    */
   const resumeAndSend = useCallback(
-    async (sessionId: string, _projectDir: string, content: string | ContentBlock[], skillName?: string, displayContent?: string | ContentBlock[], options?: { forceTranslateInput?: boolean }) => {
+    async (sessionId: string, content: string | ContentBlock[], skillName?: string, displayContent?: string | ContentBlock[], options?: { forceTranslateInput?: boolean }) => {
       setIsResuming(true);
 
       try {

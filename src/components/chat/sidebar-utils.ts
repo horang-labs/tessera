@@ -1,6 +1,23 @@
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import type { CollectionGroupData } from '@/lib/chat/build-collection-groups';
 import type { ProjectGroup } from '@/types/chat';
+import type { TaskEntity } from '@/types/task-entity';
+
+const EMPTY_SIDEBAR_TASKS: TaskEntity[] = [];
+
+export function selectSidebarProjectTasks(
+  state: {
+    tasks: TaskEntity[];
+    tasksByProject: Record<string, TaskEntity[]>;
+  },
+  selectedProjectDir: string | null,
+): TaskEntity[] {
+  if (!selectedProjectDir || selectedProjectDir === ALL_PROJECTS_SENTINEL) {
+    return EMPTY_SIDEBAR_TASKS;
+  }
+
+  return state.tasksByProject[selectedProjectDir] ?? EMPTY_SIDEBAR_TASKS;
+}
 
 export function findSidebarProject(
   projects: ProjectGroup[],

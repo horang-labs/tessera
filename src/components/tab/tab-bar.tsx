@@ -27,6 +27,7 @@ import {
 } from '@/lib/tab/tab-scroll-reveal';
 import { GitDesktopDeliveryControl } from '@/components/git/git-desktop-commit-control';
 import { useSharedGitPanelController } from '@/components/git/git-panel-controller-context';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 
 const TAB_SCROLL_MIN_STEP = 180;
 
@@ -304,6 +305,7 @@ export const TabBar = memo(function TabBar() {
   // ---------------------------------------------------------------------------
 
   const handleAddTab = useCallback(function handleAddTab() {
+    useWorkspacePeekStore.getState().close();
     useTabStore.getState().openNewTab();
   }, []);
 
@@ -413,6 +415,7 @@ export const TabBar = memo(function TabBar() {
   }, []);
 
   const handleTabActivate = useCallback(function handleTabActivate(tabId: string) {
+    useWorkspacePeekStore.getState().close();
     const tabStore = useTabStore.getState();
     const panelStore = usePanelStore.getState();
     const targetPanelId = panelStore.tabPanels[tabId]?.activePanelId;

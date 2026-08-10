@@ -11,6 +11,7 @@ import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
+import { getCanonicalSessionRepresentatives } from '@/lib/projects/origin-project-representation';
 
 /** Number of messages loaded per API page. Used as the bloat threshold. */
 export const INITIAL_PAGE_SIZE = 25;
@@ -106,7 +107,7 @@ export function useSessionNavigation() {
 
     isLoading,
 
-    sessions: sessionStore.projects.flatMap((p) => p.sessions),
+    sessions: getCanonicalSessionRepresentatives(sessionStore.projects),
     activeSessionId: sessionStore.activeSessionId,
   };
 }

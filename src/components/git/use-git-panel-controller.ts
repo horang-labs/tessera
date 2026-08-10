@@ -55,6 +55,7 @@ import {
   extractGitPanelErrorMessage,
   summarizeGitFailure,
 } from "./git-panel-shared";
+import type { WorkspaceTarget } from '@/types/worktree';
 
 // Optimistic session IDs created by use-session-crud.ts before the server
 // responds with the real id. These never exist in the server DB, so any
@@ -142,11 +143,23 @@ function rememberPanelSessionCache(
   }
 }
 
-export function useGitPanelController(sessionId: string | null) {
+export function useGitPanelController(
+  sessionId: string | null,
+  worktreeId: string | null = null,
+) {
   const { t } = useI18n();
-  const initialCache = getPanelSessionCache(sessionId);
+  const target = useMemo<WorkspaceTarget | null>(
+    () => worktreeId
+      ? { kind: 'worktree', id: worktreeId }
+      : sessionId
+        ? { kind: 'session', id: sessionId }
+        : null,
+    [sessionId, worktreeId],
+  );
+  const targetKey = sessionId ?? (worktreeId ? `worktree:${worktreeId}` : null);
+  const initialCache = getPanelSessionCache(targetKey);
   const data = useGitPanelStore((state) =>
-    sessionId ? state.dataBySessionId[sessionId] ?? null : null,
+    targetKey ? state.dataBySessionId[targetKey] ?? null : null,
   );
   const applyGitPanelData = useGitPanelStore((state) => state.applyGitPanelData);
   // The unknown-state frame already permits typing before `data` exists. Keep
@@ -172,8 +185,8 @@ export function useGitPanelController(sessionId: string | null) {
     (state) => state.setActionFailure,
   );
   const [loading, setLoading] = useState(() => {
-    if (!sessionId || isTransientSessionId(sessionId)) return false;
-    return !useGitPanelStore.getState().dataBySessionId[sessionId];
+    if (!target || (sessionId && isTransientSessionId(sessionId))) return false;
+    return !useGitPanelStore.getState().dataBySessionId[targetKey!];
   });
   const [error, setError] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(
@@ -261,7 +274,7 @@ export function useGitPanelController(sessionId: string | null) {
   const loadPanel = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
 
-    if (!sessionId || isTransientSessionId(sessionId)) {
+    if (!target || !targetKey || (sessionId && isTransientSessionId(sessionId))) {
       setError(null);
       setLoading(false);
       return;
@@ -275,7 +288,7 @@ export function useGitPanelController(sessionId: string | null) {
     try {
       // The same read the poll makes (#239). Anything the panel can show on
       // mount, it can therefore show without one.
-      const result = await readGitPanelState(sessionId);
+      const result = await readGitPanelState(target);
 
       // Race: optimistic session id resolved on the client before the DB row is
       // visible. Stay quiet — the next sessionId change (or a retry via
@@ -287,12 +300,18 @@ export function useGitPanelController(sessionId: string | null) {
         return;
       }
 
-      applyGitPanelData(sessionId, result.data);
+      applyGitPanelData(targetKey, result.data);
+      if (worktreeId) {
+        useSessionStore.getState().updateProjectWorktreeBranch(
+          worktreeId,
+          result.data.detached ? null : result.data.branch,
+        );
+      }
       setError(null);
     } finally {
       setLoading(false);
     }
-  }, [applyGitPanelData, sessionId]);
+  }, [applyGitPanelData, sessionId, target, targetKey, worktreeId]);
 
   const loadChangedFiles = useCallback(async () => {
     if (!sessionId) return;
@@ -330,7 +349,7 @@ export function useGitPanelController(sessionId: string | null) {
   }, [applyGitPanelData, sessionId]);
 
   useEffect(() => {
-    const cached = getPanelSessionCache(sessionId);
+    const cached = getPanelSessionCache(targetKey);
 
     setError(null);
     setSelectedPath(cached?.selectedPath ?? null);
@@ -344,29 +363,29 @@ export function useGitPanelController(sessionId: string | null) {
     // ago; answering it here would push a different session's branch.
     setPushConfirmation(null);
 
-    if (!sessionId || isTransientSessionId(sessionId)) {
+    if (!target || !targetKey || (sessionId && isTransientSessionId(sessionId))) {
       setLoading(false);
       return;
     }
 
     const hasStoreData = Boolean(
-      useGitPanelStore.getState().dataBySessionId[sessionId],
+      useGitPanelStore.getState().dataBySessionId[targetKey],
     );
     setLoading(!hasStoreData);
 
     void loadPanel({ silent: hasStoreData });
-  }, [loadPanel, sessionId]);
+  }, [loadPanel, sessionId, target, targetKey]);
 
   useEffect(() => {
-    if (!sessionId) return;
-    rememberPanelSessionCache(sessionId, {
+    if (!targetKey) return;
+    rememberPanelSessionCache(targetKey, {
       diffCache,
       selectedPath,
     });
-  }, [diffCache, selectedPath, sessionId]);
+  }, [diffCache, selectedPath, targetKey]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!target) return;
     if (typeof document === "undefined") return;
 
     const refreshOnVisible = () => {
@@ -374,7 +393,7 @@ export function useGitPanelController(sessionId: string | null) {
       // Ask the server to re-probe git state + PR status (covers work done
       // outside Tessera — CLI push, external gh pr create, etc.). Don't await:
       // the WS broadcast and the loadPanel re-read below converge the UI.
-      if (!isTransientSessionId(sessionId)) {
+      if (sessionId && !isTransientSessionId(sessionId)) {
         void fetch(
           `/api/sessions/${encodeURIComponent(sessionId)}/refresh-git`,
           { method: "POST" },
@@ -391,7 +410,7 @@ export function useGitPanelController(sessionId: string | null) {
       document.removeEventListener("visibilitychange", refreshOnVisible);
       window.removeEventListener("focus", refreshOnVisible);
     };
-  }, [loadPanel, sessionId]);
+  }, [loadPanel, sessionId, target]);
 
   /**
    * The background refresh (#239). It reads the whole panel state rather than
@@ -401,15 +420,23 @@ export function useGitPanelController(sessionId: string | null) {
    * the push confirmation (§8), the pull rung and the pull-request rung.
    */
   useEffect(() => {
-    if (!sessionId || isTransientSessionId(sessionId)) return;
+    if (!target || !targetKey || (sessionId && isTransientSessionId(sessionId))) return;
     if (typeof document === "undefined" || typeof window === "undefined") return;
 
     return startGitPanelPolling({
-      sessionId,
-      apply: (data) => applyGitPanelData(sessionId, data),
+      target,
+      apply: (nextData) => {
+        applyGitPanelData(targetKey, nextData);
+        if (worktreeId) {
+          useSessionStore.getState().updateProjectWorktreeBranch(
+            worktreeId,
+            nextData.detached ? null : nextData.branch,
+          );
+        }
+      },
       isVisible: () => document.visibilityState === "visible",
     });
-  }, [applyGitPanelData, sessionId]);
+  }, [applyGitPanelData, sessionId, target, targetKey, worktreeId]);
 
   const panelData = useMemo<GitPanelData | null>(() => {
     if (!data) return null;
@@ -674,8 +701,8 @@ export function useGitPanelController(sessionId: string | null) {
    * through Publish Branch on every session switch (ADR 0007).
    */
   const stateSnapshot = useMemo<GitStateSnapshot | null>(
-    () => (loading || error ? null : gitStateSnapshotFromPanel(panelData)),
-    [error, loading, panelData],
+    () => (!sessionId || loading || error ? null : gitStateSnapshotFromPanel(panelData)),
+    [error, loading, panelData, sessionId],
   );
 
   const primaryAction = useMemo(

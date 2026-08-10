@@ -178,7 +178,6 @@ interface KanbanChatColumnProps {
   onCardDelete?: (taskId: string) => void;
   onCardOpenInNewTab?: (taskId: string) => void;
   onCardGenerateTitle?: (taskId: string) => void;
-  onCardMoveToProject?: (taskId: string) => void;
   onCardMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onCardStopProcess?: (taskId: string) => void;
 }
@@ -210,7 +209,6 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
   onCardDelete,
   onCardOpenInNewTab,
   onCardGenerateTitle,
-  onCardMoveToProject,
   onCardMoveToCollection,
   onCardStopProcess,
 }: KanbanChatColumnProps) {
@@ -313,7 +311,6 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
                     onDelete={onCardDelete}
                     onOpenInNewTab={onCardOpenInNewTab}
                     onGenerateTitle={onCardGenerateTitle}
-                    onMoveToProject={onCardMoveToProject}
                     onMoveToCollection={onCardMoveToCollection}
                     onStopProcess={onCardStopProcess}
                     collections={collectionsByProject[session.projectDir] ?? collections}
@@ -368,7 +365,6 @@ interface KanbanWorkflowColumnProps {
   onSessionDelete?: (sessionId: string) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
-  onSessionMoveToProject?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
   renamingTaskId?: string | null;
   onTaskRenameComplete?: (taskId: string) => void;
@@ -404,7 +400,6 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   onSessionDelete,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   renamingTaskId,
   onTaskRenameComplete,
@@ -632,7 +627,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
 
       if (task && task.workflowStatus === status && indicator) {
         const orderedIds = tasks
-          .filter((item) => item.projectId === task.projectId)
+          .filter((item) => item.projectViewId === task.projectViewId)
           .slice()
           .sort((a, b) => a.sortOrder - b.sortOrder)
           .map((item) => item.id);
@@ -642,7 +637,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         if (targetIdx !== -1) {
           const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
           filtered.splice(insertIdx, 0, taskId);
-          taskStore.reorderTasks(filtered, task.projectId);
+          taskStore.reorderTasks(filtered, task.projectViewId);
           boardStore.flashDrop(taskId);
         }
       } else if (task && task.workflowStatus !== status) {
@@ -788,7 +783,6 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     onSessionDelete={onSessionDelete}
                     onSessionOpenInNewTab={onSessionOpenInNewTab}
                     onSessionGenerateTitle={onSessionGenerateTitle}
-                    onSessionMoveToProject={onSessionMoveToProject}
                     onSessionStopProcess={onSessionStopProcess}
                     isRenameRequested={renamingTaskId === task.id}
                     onRenameComplete={() => onTaskRenameComplete?.(task.id)}
@@ -813,7 +807,6 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     onDelete={onSessionDelete}
                     onOpenInNewTab={onSessionOpenInNewTab}
                     onGenerateTitle={onSessionGenerateTitle}
-                    onMoveToProject={onSessionMoveToProject}
                     onMoveToCollection={(sessionId, collectionId) =>
                       useSessionStore.getState().updateSessionCollection(sessionId, collectionId)
                     }

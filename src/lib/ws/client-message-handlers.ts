@@ -46,8 +46,8 @@ import {
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
-  providersListCallbacks: Map<string, (providers: ProviderMeta[]) => void>;
-  cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null) => void>;
+  providersListCallbacks: Map<string, (providers: ProviderMeta[] | null) => void>;
+  cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null | undefined) => void>;
   wasReconnect: boolean;
 }
 
@@ -276,11 +276,14 @@ export function handleIncomingServerMessage({
     case 'error': {
       const errRequestId = 'requestId' in msg ? (msg as { requestId?: string }).requestId : undefined;
       if (errRequestId && providersListCallbacks.has(errRequestId)) {
-        providersListCallbacks.get(errRequestId)?.([]);
+        providersListCallbacks.get(errRequestId)?.(null);
         providersListCallbacks.delete(errRequestId);
       }
       if (errRequestId && cliStatusCallbacks.has(errRequestId)) {
-        cliStatusCallbacks.get(errRequestId)?.(null);
+        // `null` is reserved for an actual WebSocket disconnect. A request
+        // failure is `undefined` so the UI can keep its last good observation
+        // and report a probe error instead of claiming the socket disconnected.
+        cliStatusCallbacks.get(errRequestId)?.(undefined);
         cliStatusCallbacks.delete(errRequestId);
       }
       console.error('WebSocket error:', msg);
@@ -598,7 +601,8 @@ function addCreatedSession(
   sessionStore.addSession({
     id: msg.sessionId,
     title: i18n.t('chat.sessionDefaultTitle', { count: totalSessions + 1 }),
-    projectDir: msg.workDir,
+    projectDir: msg.projectId,
+    originProjectId: msg.projectId,
     workDir: msg.workDir,
     isRunning: false,
     hasStarted: false,

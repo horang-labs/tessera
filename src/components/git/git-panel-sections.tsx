@@ -624,6 +624,7 @@ export function GitPanelContentSection({
   phoneScrollableContent,
   selectedPath,
   sessionId,
+  targetSelected = Boolean(sessionId),
   setSelectedPath,
   onCopyFilePath,
   onOpenDiffFile,
@@ -678,6 +679,7 @@ export function GitPanelContentSection({
   };
   selectedPath: string | null;
   sessionId: string | null;
+  targetSelected?: boolean;
   setSelectedPath: (path: string | null) => void;
   onCopyFilePath: (relativePath: string) => void;
   onOpenDiffFile: (file: GitChangedFile) => void;
@@ -725,17 +727,18 @@ export function GitPanelContentSection({
       onRun={primary.onRun}
     />
   );
+  const hasTarget = targetSelected ?? Boolean(sessionId);
 
   const contentBody = (
     <>
-      {!sessionId && !loading ? (
+      {!hasTarget && !loading ? (
         <EmptyPanelMessage
           title={t("gitPanel.empty.noWorktreeTitle")}
           body={t("gitPanel.empty.noWorktreeBody")}
         />
       ) : null}
 
-      {!sessionId ? null : (
+      {!hasTarget ? null : (
         <div className={cn("flex flex-col gap-2", !phoneScrollableContent && "h-full")}>
           {/*
             The primary action renders on every rung, including the ones where

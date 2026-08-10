@@ -12,6 +12,7 @@ const chatLayout = read('../src/components/chat/chat-layout.tsx');
 const runningProcessPanel = read('../src/components/layout/running-process-panel.tsx');
 const notificationCenter = read('../src/components/notifications/notification-center.tsx');
 const toastContainer = read('../src/components/notifications/toast-container.tsx');
+const sessionNavigation = read('../src/hooks/use-session-navigation.ts');
 
 test('session activation helper selects tab, panel, and composer focus together', () => {
   assert.match(focusHelper, /export function activateSessionPanel/);
@@ -49,4 +50,11 @@ test('session-open surfaces activate the located panel instead of only activeSes
     assert.match(source, /activateSessionPanel\(/);
   }
   assert.doesNotMatch(chatLayout, /if \(location !== null\) return/);
+});
+
+test('global session-open surfaces resolve one canonical origin Project', () => {
+  assert.match(runningProcessPanel, /getCanonicalRunningSessionRepresentatives\(projects\)/);
+  assert.match(sessionNavigation, /getCanonicalSessionRepresentatives\(sessionStore\.projects\)/);
+  assert.match(notificationCenter, /getSessionOriginProjectId\(session\)/);
+  assert.match(toastContainer, /getSessionOriginProjectId\(session\)/);
 });

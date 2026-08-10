@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import logger from '@/lib/logger';
 import { archiveSession } from '@/lib/session/session-archive';
-import { pruneExpiredArchivedWorktrees, restoreArchivedChat } from '@/lib/archive/archive-service';
-import { SettingsManager } from '@/lib/settings/manager';
+import { restoreArchivedChat } from '@/lib/archive/archive-service';
 import { getSession } from '@/lib/db/sessions';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import {
@@ -58,13 +57,6 @@ export async function PATCH(
     const result = archived
       ? await archiveSession(sessionId, true, auth.userId)
       : (await restoreArchivedChat(sessionId, auth.userId), { ok: true, worktreeRemoved: false });
-
-    if (archived) {
-      const settings = await SettingsManager.load(auth.userId);
-      if (settings.autoDeleteArchivedWorktrees) {
-        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, auth.userId);
-      }
-    }
 
     logger.info({ sessionId, archived }, 'Session archive status updated');
 

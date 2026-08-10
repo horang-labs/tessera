@@ -3,7 +3,7 @@ import { useTabStore } from '@/stores/tab-store';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 
 /**
- * Move the project scope to the project owning `projectDir` before a session is opened.
+ * Move global navigation to the Session's representative origin Project before opening it.
  *
  * `findSessionLocation` only sees the tabs of the current scope, so opening a session
  * from another project without switching first both misses the tab it is already in and

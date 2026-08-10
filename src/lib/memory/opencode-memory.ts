@@ -121,7 +121,9 @@ export async function resolveOpenCodeRulesContext(
   const opencodeConfigDir = await resolveOpenCodeConfigDirForEnvironment(environment);
   return {
     opencodeConfigDir,
-    projectRoot: await resolveSessionWorkspaceFilesystemRoot(sessionId),
+    projectRoot: await resolveSessionWorkspaceFilesystemRoot(sessionId, {
+      agentEnvironment: environment,
+    }),
     exists: await directoryExists(opencodeConfigDir),
   };
 }

@@ -307,6 +307,7 @@ export function CollectionQuickCreateSheet({
     try {
       const sessionId = await createSession({
         workDir: projectDir,
+        parentProjectId: projectId,
         providerId: selectedProvider,
         collectionId: selectedCollection?.id,
         executionMode,
@@ -330,7 +331,7 @@ export function CollectionQuickCreateSheet({
     } finally {
       setSubmittingMode(null);
     }
-  }, [createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, selectedCollection?.id, selectedProvider, t]);
+  }, [createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, projectId, selectedCollection?.id, selectedProvider, t]);
 
   const handleCreateTask = useCallback(async () => {
     setError(null);

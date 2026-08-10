@@ -4,6 +4,16 @@ import {
   isAbsoluteFilesystemPath,
   resolvePathForHostFilesystem,
 } from '@/lib/filesystem/host-path';
+import { resolveAgentReportedPath } from '@/lib/filesystem/path-environment';
+import type { AgentEnvironment } from '@/lib/settings/types';
+
+interface SessionWorkspaceFilesystemOptions {
+  agentEnvironment: AgentEnvironment;
+  resolveAgentPath?: (
+    filesystemPath: string,
+    environment: AgentEnvironment,
+  ) => Promise<string>;
+}
 
 export function resolveSessionWorkspaceRoot(sessionId: string): string | null {
   const session = dbSessions.getSession(sessionId);
@@ -23,7 +33,15 @@ export function resolveSessionWorkspaceRoot(sessionId: string): string | null {
 
 export async function resolveSessionWorkspaceFilesystemRoot(
   sessionId: string,
+  options?: SessionWorkspaceFilesystemOptions,
 ): Promise<string | null> {
   const root = resolveSessionWorkspaceRoot(sessionId);
-  return root ? resolvePathForHostFilesystem(root) : null;
+  if (!root) return null;
+  if (options) {
+    return (options.resolveAgentPath ?? resolveAgentReportedPath)(
+      root,
+      options.agentEnvironment,
+    );
+  }
+  return resolvePathForHostFilesystem(root);
 }

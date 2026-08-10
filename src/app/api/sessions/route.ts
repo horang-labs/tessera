@@ -151,9 +151,14 @@ export async function POST(req: NextRequest) {
         originClientId: getOriginClientIdFromRequest(req),
       });
 
+      const persistedSession = dbSessions.getSession(result.sessionId);
+
       return NextResponse.json({
         ...result,
-        kind: dbSessions.extractSessionKind(dbSessions.getSession(result.sessionId)?.provider_state ?? null),
+        kind: dbSessions.extractSessionKind(persistedSession?.provider_state ?? null),
+        projectDir: persistedSession?.project_id,
+        worktreeId: persistedSession?.worktree_id ?? undefined,
+        scopeBranch: persistedSession?.scope_branch ?? undefined,
         provider: resolvedProviderId,
         model,
         reasoningEffort,

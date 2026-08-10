@@ -122,7 +122,8 @@ export function useWorktreeSession() {
         const now = new Date().toISOString();
         const placeholder: TaskEntity = {
           id: tempId,
-          projectId: storePlaceholderProjectId,
+          projectId,
+          projectViewId: storePlaceholderProjectId,
           title: taskTitle,
           collectionId,
           workflowStatus: workflowStatus ?? 'todo',

@@ -29,7 +29,12 @@ interface SqlJsStatement {
   free(): void;
 }
 import fs from 'fs';
-import { CREATE_INDEXES, CREATE_TABLES, SCHEMA_VERSION } from './schema';
+import {
+  CANONICAL_WORKTREE_BOOTSTRAP_META_KEY,
+  CREATE_INDEXES,
+  CREATE_TABLES,
+  SCHEMA_VERSION,
+} from './schema';
 import { resolveDatabaseLocation } from './location';
 import {
   generatePublicWorktreeId,
@@ -109,7 +114,7 @@ class DatabaseWrapper {
   _run(sql: string, params: unknown[]): { changes: number; lastInsertRowid: number } {
     this.db.run(sql, params as (string | number | null | Uint8Array)[]);
     const changes = this.db.getRowsModified();
-    if (!this.inTransaction) this.persist();
+    if (!this.inTransaction && changes > 0) this.persist();
     return { changes, lastInsertRowid: 0 };
   }
 
@@ -222,11 +227,15 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'worktree_id', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'scope_branch', 'TEXT');
   addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
   addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
   addPullRequestRevisionColumns(db);
   addPreparationStatusColumns(db);
   ensureWorktreeIdentityColumns(db);
+  ensureCanonicalWorktreeRegistry(db);
+  ensureWorktreeCreationScopeColumns(db);
 }
 
 /**
@@ -1041,6 +1050,40 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     backfillPullRequestRevisionColumns(db);
     logger.info('Migration v34 applied: PR revision relation and probe knownness added');
   }
+
+  // v34 is already released on dev for PR revision tracking. Worktree
+  // migrations therefore continue at v35 in the merged history.
+  if (fromVersion < 35) {
+    ensureCanonicalWorktreeRegistry(db);
+    logger.info('Migration v35 applied: canonical Worktrees and Project roots added');
+  }
+
+  if (fromVersion < 36) {
+    addColumnIfMissing(db, 'sessions', 'worktree_id', 'TEXT');
+    addColumnIfMissing(db, 'sessions', 'scope_branch', 'TEXT');
+    logger.info('Migration v36 applied: immutable Session Worktree and branch scope');
+  }
+
+  if (fromVersion < 37) {
+    ensureWorktreeCreationScopeColumns(db);
+    logger.info('Migration v37 applied: immutable Worktree creation scope and start point');
+  }
+
+  if (fromVersion < 38) {
+    ensureWorktreeCreationScopeColumns(db);
+    logger.info('Migration v38 applied: canonical Worktree identity reconciliation');
+  }
+
+  if (fromVersion < 39) {
+    ensureCanonicalWorktreeRegistry(db);
+    ensureWorktreeCreationScopeColumns(db);
+    markCanonicalWorktreeBootstrapPending(db);
+    // Databases produced by the feature branch can already be at v38 without
+    // dev's v34 PR columns. These calls are intentionally idempotent.
+    addPullRequestRevisionColumns(db);
+    backfillPullRequestRevisionColumns(db);
+    logger.info('Migration v39 applied: canonical Project View bootstrap pending and PR revision schema reconciled');
+  }
 }
 
 function addPullRequestRevisionColumns(db: DatabaseWrapper): void {
@@ -1067,6 +1110,82 @@ function backfillPullRequestRevisionColumns(db: DatabaseWrapper): void {
       AND pr_last_synced IS NOT NULL
       AND pr_status_known = 0
   `);
+}
+
+function markCanonicalWorktreeBootstrapPending(db: DatabaseWrapper): void {
+  db.prepare(`
+    INSERT OR IGNORE INTO _meta (key, value) VALUES (?, 'pending')
+  `).run(CANONICAL_WORKTREE_BOOTSTRAP_META_KEY);
+}
+
+function ensureWorktreeCreationScopeColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'creation_scope_worktree_id', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'creation_scope_branch', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'start_point', 'TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worktree_identity_reconciliation_authorizations (
+      old_worktree_id TEXT NOT NULL,
+      new_worktree_id TEXT NOT NULL,
+      PRIMARY KEY (old_worktree_id, new_worktree_id)
+    )
+  `);
+  const existingTrigger = db.prepare(`
+    SELECT sql FROM sqlite_master
+    WHERE type = 'trigger' AND name = 'trg_tasks_creation_scope_immutable'
+  `).get() as { sql: string | null } | undefined;
+  if (existingTrigger?.sql?.includes('worktree_identity_reconciliation_authorizations')) return;
+  db.exec(`
+    DROP TRIGGER IF EXISTS trg_tasks_creation_scope_immutable;
+    CREATE TRIGGER trg_tasks_creation_scope_immutable
+    BEFORE UPDATE OF creation_scope_worktree_id, creation_scope_branch ON tasks
+    FOR EACH ROW
+    WHEN OLD.creation_scope_worktree_id IS NOT NULL
+      AND (
+        NEW.creation_scope_branch IS NOT OLD.creation_scope_branch
+        OR (
+          NEW.creation_scope_worktree_id IS NOT OLD.creation_scope_worktree_id
+          AND NOT EXISTS (
+            SELECT 1 FROM worktree_identity_reconciliation_authorizations
+            WHERE old_worktree_id = OLD.creation_scope_worktree_id
+              AND new_worktree_id = NEW.creation_scope_worktree_id
+          )
+        )
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Worktree Creation Scope is immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tasks_start_point_immutable
+    BEFORE UPDATE OF start_point ON tasks
+    FOR EACH ROW
+    WHEN OLD.start_point IS NOT NULL AND NEW.start_point IS NOT OLD.start_point
+    BEGIN
+      SELECT RAISE(ABORT, 'Worktree Start Point is immutable');
+    END;
+  `);
+}
+
+function ensureCanonicalWorktreeRegistry(db: DatabaseWrapper): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worktrees (
+      id                 TEXT PRIMARY KEY,
+      filesystem_path    TEXT,
+      canonical_path_key TEXT UNIQUE,
+      created_at         TEXT NOT NULL,
+      updated_at         TEXT NOT NULL
+    )
+  `);
+  addColumnIfMissing(db, 'projects', 'project_worktree_id', 'TEXT');
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO worktrees (
+      id, filesystem_path, canonical_path_key, created_at, updated_at
+    )
+    SELECT public_worktree_id, NULL, NULL, ?, ?
+    FROM tasks
+    WHERE public_worktree_id IS NOT NULL AND public_worktree_id != ''
+  `).run(now, now);
 }
 
 function ensureWorktreeIdentityColumns(db: DatabaseWrapper): void {

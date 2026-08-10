@@ -47,6 +47,7 @@ function Wait-RecordedProcessesExit {
   param(
     [AllowNull()]
     [AllowEmptyCollection()]
+    [AllowNull()]
     [Parameter(Mandatory = $true)][array]$ProcessIds,
     [int]$TimeoutSeconds = 15
   )

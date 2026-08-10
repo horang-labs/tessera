@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
+import { workspaceTargetApiPath, type WorkspaceTarget } from "@/types/worktree";
 
 interface WorkspaceFilesResponse {
   files?: string[];
@@ -25,14 +26,18 @@ function sameStringArray(a: string[], b: string[]): boolean {
   return a.every((value, index) => value === b[index]);
 }
 
-export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileListState & {
+export function useWorkspaceFileList(
+  selected: string | WorkspaceTarget | null,
+): WorkspaceFileListState & {
   loadFiles: (options?: { signal?: AbortSignal; silent?: boolean }) => void;
   refreshFiles: () => void;
 } {
+  const targetKind = typeof selected === "string" ? "session" : selected?.kind;
+  const targetId = typeof selected === "string" ? selected : selected?.id;
   const [state, setState] = useState<WorkspaceFileListState>(() => ({
     error: null,
     files: [],
-    loading: Boolean(sessionId),
+    loading: Boolean(targetId),
     symlinks: [],
     truncated: false,
     workDir: null,
@@ -44,7 +49,7 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
     silent?: boolean;
   }) => {
     void (async () => {
-      if (!sessionId) {
+      if (!targetKind || !targetId) {
         setState({
           error: null,
           files: [],
@@ -70,8 +75,9 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
       }
 
       try {
+        const target: WorkspaceTarget = { kind: targetKind, id: targetId };
         const response = await fetchWithTimeout(
-          `/api/sessions/${encodeURIComponent(sessionId)}/files`,
+          workspaceFileListPath(target),
           { signal: options?.signal, retries: 1 },
         );
         const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
@@ -108,7 +114,7 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
             });
       }
     })();
-  }, [sessionId]);
+  }, [targetId, targetKind]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -125,4 +131,8 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
     loadFiles,
     refreshFiles,
   };
+}
+
+export function workspaceFileListPath(target: WorkspaceTarget): string {
+  return `${workspaceTargetApiPath(target)}/files`;
 }

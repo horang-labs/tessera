@@ -403,7 +403,7 @@ export function useCollectionDnd(): UseCollectionDndReturn {
         }
 
         const colTasks = taskStore
-          .getTasksForProject(draggingTask.projectId)
+          .getTasksForProject(draggingTask.projectViewId)
           .filter((t) => (t.collectionId ?? null) === (targetCollectionId ?? null))
           .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
         const ids = colTasks.map((t) => t.id);
@@ -412,7 +412,7 @@ export function useCollectionDnd(): UseCollectionDndReturn {
         if (targetIdx !== -1) {
           const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
           filtered.splice(insertIdx, 0, id);
-          taskStore.reorderTasks(filtered, draggingTask.projectId);
+          taskStore.reorderTasks(filtered, draggingTask.projectViewId);
           useBoardStore.getState().flashDrop(id);
         }
       } else {

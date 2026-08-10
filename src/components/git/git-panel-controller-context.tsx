@@ -11,11 +11,13 @@ const GitPanelControllerContext = createContext<GitPanelController | null>(null)
 export function GitPanelControllerProvider({
   children,
   sessionId,
+  worktreeId = null,
 }: {
   children: ReactNode;
   sessionId: string | null;
+  worktreeId?: string | null;
 }) {
-  const controller = useGitPanelController(sessionId);
+  const controller = useGitPanelController(sessionId, worktreeId);
   return (
     <GitPanelControllerContext.Provider value={controller}>
       {children}

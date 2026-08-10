@@ -104,7 +104,7 @@ function CollectionLabel({
 }
 
 // ============================================================
-// KanbanChatCard -- card for chat sessions (no task association)
+// KanbanChatCard -- card for direct Sessions in the active Project View
 // ============================================================
 
 interface KanbanChatCardProps {
@@ -124,7 +124,6 @@ interface KanbanChatCardProps {
   onDelete?: (taskId: string) => void;
   onOpenInNewTab?: (taskId: string) => void;
   onGenerateTitle?: (taskId: string) => void;
-  onMoveToProject?: (taskId: string) => void;
   onMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onStopProcess?: (sessionId: string) => void;
   collections?: Collection[];
@@ -147,7 +146,6 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   onDelete,
   onOpenInNewTab,
   onGenerateTitle,
-  onMoveToProject,
   onMoveToCollection,
   onStopProcess,
   collections: scopedCollections,
@@ -250,7 +248,6 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const handleDelete = useCallback(() => onDelete?.(session.id), [session.id, onDelete]);
   const handleOpenInNewTab = useCallback(() => onOpenInNewTab?.(session.id), [session.id, onOpenInNewTab]);
 
-  const handleMoveToProject = useCallback(() => onMoveToProject?.(session.id), [session.id, onMoveToProject]);
   const handleStopProcess = useCallback(() => onStopProcess?.(session.id), [session.id, onStopProcess]);
   const {
     isConfirmingArchive,
@@ -536,7 +533,6 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           onOpenInNewTab={handleOpenInNewTab}
           onGenerateTitle={onGenerateTitle ? () => onGenerateTitle(session.id) : undefined}
           isRunning={runtimePresentation.showRunning}
-          onMoveToProject={onMoveToProject ? handleMoveToProject : undefined}
           onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />
@@ -572,7 +568,6 @@ interface KanbanTaskCardProps {
   onSessionDelete?: (sessionId: string) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
-  onSessionMoveToProject?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
@@ -596,7 +591,6 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   onSessionDelete,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   isRenameRequested,
   onRenameComplete,
@@ -1238,7 +1232,6 @@ function KanbanSubSessionItem({
   onDelete,
   onOpenInNewTab,
   onGenerateTitle,
-  onMoveToProject,
   onStopProcess,
   reorder,
 }: {
@@ -1251,7 +1244,6 @@ function KanbanSubSessionItem({
   onDelete?: (sessionId: string) => void;
   onOpenInNewTab?: (sessionId: string) => void;
   onGenerateTitle?: (sessionId: string) => void;
-  onMoveToProject?: (sessionId: string) => void;
   onStopProcess?: (sessionId: string) => void;
 }) {
   const [isHovered, setIsHovered] = useState(false);
@@ -1282,7 +1274,6 @@ function KanbanSubSessionItem({
       onDelete ||
       onOpenInNewTab ||
       onGenerateTitle ||
-      onMoveToProject ||
       (runtimePresentation.canStop && onStopProcess),
   );
 
@@ -1323,7 +1314,6 @@ function KanbanSubSessionItem({
   const handleDelete = useCallback(() => onDelete?.(session.id), [onDelete, session.id]);
   const handleOpenInNewTab = useCallback(() => onOpenInNewTab?.(session.id), [onOpenInNewTab, session.id]);
   const handleGenerateTitle = useCallback(() => onGenerateTitle?.(session.id), [onGenerateTitle, session.id]);
-  const handleMoveToProject = useCallback(() => onMoveToProject?.(session.id), [onMoveToProject, session.id]);
   const handleStopProcess = useCallback(() => onStopProcess?.(session.id), [onStopProcess, session.id]);
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (isRenaming) {
@@ -1458,7 +1448,6 @@ function KanbanSubSessionItem({
           onOpenInNewTab={onOpenInNewTab ? handleOpenInNewTab : undefined}
           onGenerateTitle={onGenerateTitle ? handleGenerateTitle : undefined}
           isRunning={runtimePresentation.showRunning}
-          onMoveToProject={onMoveToProject ? handleMoveToProject : undefined}
           onStopProcess={runtimePresentation.canStop && onStopProcess ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />

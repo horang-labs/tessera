@@ -19,20 +19,19 @@ test('isolated Electron launcher assigns a distinct packaged server port', () =>
   assert.match(launcherSource, /if \(\$cdp\.serverPort -ne \$testServerPort\)/);
 });
 
-test('launcher bind-probes ports and serializes allocation across concurrent sessions', () => {
+test('port allocation bind-probes candidates, rejects live Chromium claims, and serializes launchers', () => {
   assert.match(launcherSource, /function Test-TcpPortBindable/);
   assert.match(launcherSource, /\[System\.Net\.Sockets\.TcpListener\]::new/);
   assert.match(launcherSource, /\[System\.Net\.IPAddress\]::Loopback/);
   assert.match(launcherSource, /\$listener\.Start\(\)/);
-  assert.match(
-    launcherSource,
-    /Test-TcpPortBindable -Port \$candidate/,
-  );
+  assert.match(launcherSource, /Test-TcpPortBindable -Port \$Port/);
   assert.doesNotMatch(launcherSource, /ConnectAsync\('127\.0\.0\.1', \$Port\)/);
-  assert.match(
-    launcherSource,
-    /Local\\TesseraElectronTestPortAllocation/,
-  );
+  assert.match(launcherSource, /function Test-TcpPortClaimed/);
+  assert.match(launcherSource, /--remote-debugging-port=\$Port/);
+  assert.match(launcherSource, /Get-CimInstance Win32_Process -ErrorAction Stop/);
+  assert.match(launcherSource, /Cannot verify whether TCP port \$Port is claimed/);
+  assert.match(launcherSource, /-not \(Test-TcpPortClaimed -Port \$candidate\)/);
+  assert.match(launcherSource, /Local\\TesseraElectronTestPortAllocation/);
   assert.match(launcherSource, /\$portAllocationMutex\.WaitOne/);
   assert.match(launcherSource, /\$portAllocationMutex\.ReleaseMutex\(\)/);
 });
@@ -40,6 +39,6 @@ test('launcher bind-probes ports and serializes allocation across concurrent ses
 test('failed launches with no surviving process can still be cleaned by manifest', () => {
   assert.match(
     stopSource,
-    /\[AllowNull\(\)\][\s\S]*\[AllowEmptyCollection\(\)\][\s\S]*\[array\]\$ProcessIds/,
+    /\[AllowEmptyCollection\(\)\][\s\S]*\[AllowNull\(\)\][\s\S]*\[array\]\$ProcessIds/,
   );
 });

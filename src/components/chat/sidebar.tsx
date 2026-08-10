@@ -12,7 +12,6 @@ import { useTabStore } from '@/stores/tab-store';
 import { CollectionGroup } from './collection-group';
 import { AllProjectsList } from './all-projects-list';
 import { RecentWorkSection } from './recent-work-section';
-import { MoveProjectDialog } from './move-project-dialog';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -45,11 +44,17 @@ import {
 import {
   buildSidebarOrderedSessionIds,
   findSidebarProject,
+  selectSidebarProjectTasks,
 } from './sidebar-utils';
 import { buildRecentWorkItems } from '@/lib/chat/recent-work';
+import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -275,6 +280,9 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 export function Sidebar() {
   const { t } = useI18n();
   const projects = useSessionStore((state) => state.projects);
+  const dismissBranchRenameWarning = useSessionStore(
+    (state) => state.dismissBranchRenameWarning,
+  );
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   const { deleteSession, renameSession, generateTitle } = useSessionCrud();
   const { viewSession } = useSessionNavigation();
@@ -285,8 +293,17 @@ export function Sidebar() {
     const tab = selectActiveTab(state);
     return tab?.panels[tab.activePanelId]?.sessionId ?? null;
   });
+  const activePanelWorktreeId = usePanelStore((state) => {
+    const tab = selectActiveTab(state);
+    return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
+  });
+  const peekWorktreeId = useWorkspacePeekStore(
+    (state) => state.target?.worktreeId ?? null,
+  );
   const visibleSessionId = activePanelSessionId ?? activeSessionId;
-  const selectionSessionId = getSessionSelectionId(visibleSessionId);
+  const selectionSessionId = peekWorktreeId
+    ? null
+    : getSessionSelectionId(visibleSessionId);
 
   // Board store — status group collapse state
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
@@ -308,8 +325,13 @@ export function Sidebar() {
       ? state.collectionsByProject?.[selectedProjectDir] ?? EMPTY_COLLECTIONS
       : EMPTY_COLLECTIONS,
   );
-  const tasks = useTaskStore((state) => state.tasks);
+  const tasks = useTaskStore((state) =>
+    selectSidebarProjectTasks(state, selectedProjectDir)
+  );
   const tasksByProject = useTaskStore((state) => state.tasksByProject);
+  const loadedTaskProjects = useTaskStore((state) => state.loadedProjects);
+  const loadingTaskProjects = useTaskStore((state) => state.loadingProjectIds);
+  const allProjectsTaskLoadAttemptsRef = useRef(new Set<string>());
 
   // Load collections and tasks on mount / when selectedProject changes
   useEffect(() => {
@@ -322,6 +344,22 @@ export function Sidebar() {
       useTaskStore.getState().loadTasks(selectedProjectDir);
     }
   }, [selectedProjectDir]);
+
+  useEffect(() => {
+    if (selectedProjectDir !== ALL_PROJECTS_SENTINEL) {
+      allProjectsTaskLoadAttemptsRef.current.clear();
+      return;
+    }
+    for (const projectId of getProjectIdsMissingTaskProjection(
+      projects,
+      loadedTaskProjects,
+      loadingTaskProjects,
+      allProjectsTaskLoadAttemptsRef.current,
+    )) {
+      allProjectsTaskLoadAttemptsRef.current.add(projectId);
+      void useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
+    }
+  }, [loadedTaskProjects, loadingTaskProjects, projects, selectedProjectDir]);
 
   // Collection DnD (item moves between collections + group reorder)
   const {
@@ -362,7 +400,7 @@ export function Sidebar() {
   }, []);
 
   const handleTaskEntityDelete = useCallback((taskId: string) => {
-    void useTaskStore.getState().deleteTask(taskId);
+    void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
   const handleTaskArchive = useCallback((taskId: string) => {
@@ -424,24 +462,12 @@ export function Sidebar() {
   }, [newCollectionLabel, resetCollectionComposer, selectedProjectDir]);
 
   const [isInitialized, setIsInitialized] = useState(false);
-  const [moveSessionTarget, setMoveSessionTarget] = useState<UnifiedSession | null>(null);
-
-  const handleTaskMoveToProject = useCallback((taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
-    if (session) setMoveSessionTarget(session);
-  }, []);
-
   const handleTaskStopProcess = useCallback((taskId: string) => {
     wsClient.stopSession(taskId);
     useSessionStore.getState().clearUnreadCount(taskId);
     wsClient.sendMarkAsRead(taskId);
   }, []);
 
-  const handleMoveConfirm = useCallback((targetProjectId: string) => {
-    if (!moveSessionTarget) return;
-    useSessionStore.getState().moveSession(moveSessionTarget.id, targetProjectId);
-    setMoveSessionTarget(null);
-  }, [moveSessionTarget]);
   const prevActivePanelIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -510,6 +536,16 @@ export function Sidebar() {
   const selectedProject = useMemo(() => {
     return findSidebarProject(projects, selectedProjectDir);
   }, [projects, selectedProjectDir]);
+
+  const handleProjectWorktreeSelect = useCallback(() => {
+    const projectWorktree = selectedProject?.projectWorktree;
+    if (!projectWorktree || !selectedProject) return;
+    stepAsidePhoneSidebar();
+    useWorkspacePeekStore.getState().openWorktree(
+      projectWorktree.id,
+      selectedProject.encodedDir,
+    );
+  }, [selectedProject]);
 
   const collectionGroups = useMemo(() => {
     if (!selectedProject) return null;
@@ -616,6 +652,7 @@ export function Sidebar() {
       projects: scopedProjects,
       tasksByProject,
       limit: 8,
+      originOnly: isAllMode,
     });
   }, [isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
 
@@ -725,7 +762,6 @@ export function Sidebar() {
                   onSessionArchive={handleTaskArchive}
                   onSessionOpenInNewTab={handleTaskOpenInNewTab}
                   onSessionGenerateTitle={handleTaskGenerateTitle}
-                  onSessionMoveToProject={handleTaskMoveToProject}
                   onSessionStopProcess={handleTaskStopProcess}
                 />
               )}
@@ -740,13 +776,30 @@ export function Sidebar() {
                 onSessionDelete={handleTaskDelete}
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
-                onSessionMoveToProject={handleTaskMoveToProject}
                 onSessionStopProcess={handleTaskStopProcess}
               />
             </>
           )
         ) : visibleCollectionGroups && selectedProject ? (
           <>
+            {selectedProject.projectWorktree ? (
+              <>
+                <ProjectWorktreeRow
+                  active={(peekWorktreeId ?? activePanelWorktreeId)
+                    === selectedProject.projectWorktree.id}
+                  branch={selectedProject.projectWorktree.currentBranch}
+                  name={selectedProject.displayName}
+                  displayPath={selectedProject.projectWorktree.displayPath}
+                  onSelect={handleProjectWorktreeSelect}
+                />
+                {selectedProject.branchRenameWarning ? (
+                  <BranchRenameWarning
+                    warning={selectedProject.branchRenameWarning}
+                    onDismiss={() => dismissBranchRenameWarning(selectedProject.encodedDir)}
+                  />
+                ) : null}
+              </>
+            ) : null}
             {isRunningFilterActive && runningFlatItems.tasks.length + runningFlatItems.chats.length === 0 ? (
               <SidebarRunningFilterEmpty label={t('status.noRunningProcesses')} />
             ) : isRunningFilterActive ? (
@@ -788,7 +841,6 @@ export function Sidebar() {
                 onSessionArchive={handleTaskArchive}
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
-                onSessionMoveToProject={handleTaskMoveToProject}
                 onSessionStopProcess={handleTaskStopProcess}
                 disableDnd
                 allowPanelSessionDnd
@@ -814,7 +866,6 @@ export function Sidebar() {
                     onSessionArchive={handleTaskArchive}
                     onSessionOpenInNewTab={handleTaskOpenInNewTab}
                     onSessionGenerateTitle={handleTaskGenerateTitle}
-                    onSessionMoveToProject={handleTaskMoveToProject}
                     onSessionStopProcess={handleTaskStopProcess}
                   />
                 )}
@@ -873,7 +924,6 @@ export function Sidebar() {
                       onSessionArchive={handleTaskArchive}
                       onSessionOpenInNewTab={handleTaskOpenInNewTab}
                       onSessionGenerateTitle={handleTaskGenerateTitle}
-                      onSessionMoveToProject={handleTaskMoveToProject}
                       onSessionStopProcess={handleTaskStopProcess}
                       disableDnd={isRunningFilterActive}
                     />
@@ -907,12 +957,6 @@ export function Sidebar() {
         onCancel={() => setSessionToDelete(null)}
       />
 
-      <MoveProjectDialog
-        session={moveSessionTarget}
-        isOpen={moveSessionTarget !== null}
-        onConfirm={handleMoveConfirm}
-        onCancel={() => setMoveSessionTarget(null)}
-      />
     </div>
   );
 }

@@ -246,6 +246,7 @@ export interface I18nMessages {
       loadingProviders: string;
       empty: string;
       disconnected: string;
+      checkFailed: string;
       active: string;
       refresh: string;
       refreshProviders: string;
@@ -594,6 +595,9 @@ export interface I18nMessages {
     dropSessionReference: string;
     closeSession: string;
     branchLabel: string;
+    sessionScopeLabel: string;
+    currentBranchLabel: string;
+    presentationScopeHint: string;
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
@@ -859,6 +863,7 @@ export interface I18nMessages {
     deleteTaskTitle: string;
     deleteTaskConfirm: string;
     deleteTaskChildSessions: string;
+    deleteTaskWarning: string;
     deleteWarning: string;
     deleteWorktreeWarning: string;
     deleteSession: string;
@@ -928,6 +933,9 @@ export interface I18nMessages {
     showMore: string;
     noSessions: string;
     dragSessionToReference: string;
+    branchRenameWarningTitle: string;
+    branchRenameWarningDescription: string;
+    dismissBranchRenameWarning: string;
   };
   status: {
     starting: string;
@@ -1467,17 +1475,7 @@ export interface I18nMessages {
       rename: string;
       delete: string;
       openInNewTab: string;
-      moveToProject: string;
-      cannotMoveRunning: string;
       generateTitle: string;
-    };
-    moveDialog: {
-      title: string;
-      subtitle: string;
-      currentProject: string;
-      noOtherProjects: string;
-      move: string;
-      movedFrom: string;
     };
     prMismatch: {
       reviewMissing: string;

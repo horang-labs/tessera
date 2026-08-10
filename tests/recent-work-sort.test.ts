@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildRecentWorkItems } from '../src/lib/chat/recent-work';
 import type { ProjectGroup, UnifiedSession } from '../src/types/chat';
+import type { TaskEntity } from '../src/types/task-entity';
 
 function makeSession(overrides: Partial<UnifiedSession> & Pick<UnifiedSession, 'id'>): UnifiedSession {
   return {
@@ -174,4 +175,46 @@ test('mixed running + completed: running tier (createdAt desc) above completed t
 
   // running tier first (runB created later => first), then completed tier by activity desc.
   assert.deepEqual(idsOf([doneOld, runA, doneNew, runB]), ['runB', 'runA', 'doneNew', 'doneOld']);
+});
+
+test('global Recent Work represents a projected Session once through its origin Task', () => {
+  const projected = makeSession({
+    id: 'session-c',
+    projectDir: 'project-c',
+    originProjectId: 'project-a',
+    taskId: 'linked-c',
+  });
+  const originTask: TaskEntity = {
+    id: 'linked-c',
+    projectId: 'project-a',
+    projectViewId: 'project-a',
+    title: 'Linked C',
+    workflowStatus: 'todo',
+    sortOrder: 0,
+    sessions: [{
+      id: projected.id,
+      originProjectId: 'project-a',
+      title: projected.title,
+      lastModified: projected.lastModified,
+      isRunning: false,
+      sortOrder: 0,
+    }],
+    createdAt: projected.createdAt,
+    updatedAt: projected.lastModified,
+  };
+  const projects = [
+    { ...makeProject([]), encodedDir: 'project-a', displayName: 'Project A' },
+    { ...makeProject([projected]), encodedDir: 'project-c', displayName: 'Project C' },
+  ];
+
+  const items = buildRecentWorkItems({
+    projects,
+    tasksByProject: { 'project-a': [originTask], 'project-c': [] },
+    limit: 8,
+    originOnly: true,
+  });
+
+  assert.deepEqual(items.map((item) => [item.id, item.projectId]), [
+    ['linked-c', 'project-a'],
+  ]);
 });

@@ -72,12 +72,14 @@ function GitPanelTabButton({
 
 export function GitPanel({
   sessionId,
+  worktreeId = null,
   width,
   className,
   closeLabel,
   onClose,
 }: {
   sessionId: string | null;
+  worktreeId?: string | null;
   width: number | string;
   className?: string;
   closeLabel?: string;
@@ -259,6 +261,8 @@ export function GitPanel({
       )}
       style={{ width: typeof width === "number" ? `${width}px` : width }}
       data-testid="git-panel"
+      data-session-target={sessionId ?? undefined}
+      data-worktree-target={worktreeId ?? undefined}
     >
       {isWindowsElectron || isLinuxElectron ? (
         <div className="electron-drag flex h-[40px] shrink-0 items-stretch justify-end border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)">
@@ -327,7 +331,11 @@ export function GitPanel({
 
       {effectivePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
-          <WorkspaceFilePanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+          <WorkspaceFilePanel
+            key={sessionId ?? worktreeId ?? "no-target"}
+            sessionId={sessionId}
+            worktreeId={worktreeId}
+          />
         </div>
       ) : effectivePanelTab === "scripts" ? (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -341,6 +349,7 @@ export function GitPanel({
         <>
           <GitPanelContentSection
             sessionId={sessionId}
+            targetSelected={Boolean(sessionId || worktreeId)}
             data={controller.data}
             loading={controller.loading}
             error={controller.error}

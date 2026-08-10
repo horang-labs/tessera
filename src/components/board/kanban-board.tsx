@@ -20,9 +20,9 @@ import {
 import { getKanbanMultiSessionDragIds, setKanbanChatDragData } from '@/lib/dnd/panel-session-drag';
 import {
   collectKanbanScopeData,
-  filterKanbanTasks,
   getKanbanScopeProjectIds,
   resolveKanbanScope,
+  selectKanbanProjectionItems,
 } from '@/lib/kanban/board-scope';
 import { WORKFLOW_STATUS_ORDER } from '@/types/task-entity';
 import type { WorkflowStatus, TaskEntity } from '@/types/task-entity';
@@ -41,7 +41,6 @@ import {
 } from '@/hooks/use-worktree-preparation';
 import { DeleteSessionDialog } from '@/components/chat/delete-session-dialog';
 import { DeleteTaskDialog } from '@/components/chat/delete-task-dialog';
-import { MoveProjectDialog } from '@/components/chat/move-project-dialog';
 import { wsClient } from '@/lib/ws/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import {
@@ -62,7 +61,7 @@ import { buildTaskChildSession } from '@/lib/session/task-child-session';
  *   [Filter bar: All | collection1 | collection2 | ...]
  *   [Todo] [Doing] [Review] [Done] | [Chat col]
  *
- * - Chat column: sessions that have no taskId (pure chat sessions)
+ * - Chat cards: direct Sessions from the active Project View projection
  * - Workflow columns: tasks grouped by workflowStatus
  * - Collection filter: narrows both chat and task items by collectionId
  */
@@ -375,23 +374,23 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return scopeData.tasks.filter((task) => task.projectId === portfolioProjectFilter);
   }, [isAllProjects, portfolioProjectFilter, scopeData.tasks]);
 
-  // Standalone chat sessions: no taskId, not archived. Chats without a
-  // workflowStatus stay in the Chat column; positioned chats render below
-  // tasks in the matching workflow column.
-  const chatSessions = useMemo(() => {
-    return allSessions.filter((s) => !s.taskId && !s.archived);
-  }, [allSessions]);
+  // The selected Project projection already separates direct Sessions from
+  // immediate linked Worktrees. Do not infer that distinction again from the
+  // canonical Session's taskId: the same Session is a linked child in A and a
+  // direct Chat in C.
+  const projectionItems = useMemo(
+    () => selectKanbanProjectionItems({ sessions: allSessions, tasks }, activeCollectionFilter),
+    [activeCollectionFilter, allSessions, tasks],
+  );
+  const chatSessions = projectionItems.chats;
 
   // Apply collection filter
   const filteredChats = useMemo(() => {
-    const baseChats = activeCollectionFilter
-      ? chatSessions.filter((s) => s.collectionId === activeCollectionFilter)
-      : chatSessions;
-    return baseChats
+    return chatSessions
       .filter((session) => !session.workflowStatus)
       .slice()
       .sort((a, b) => a.sortOrder - b.sortOrder);
-  }, [chatSessions, activeCollectionFilter]);
+  }, [chatSessions]);
 
   const workflowChatsByStatus = useMemo(() => {
     const map: Record<WorkflowStatus, UnifiedSession[]> = {
@@ -400,11 +399,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
       in_review: [],
       done: [],
     };
-    const baseChats = activeCollectionFilter
-      ? chatSessions.filter((s) => s.collectionId === activeCollectionFilter)
-      : chatSessions;
-
-    for (const session of baseChats) {
+    for (const session of chatSessions) {
       const status = session.workflowStatus;
       if (status && map[status]) {
         map[status].push(session);
@@ -414,15 +409,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
       map[status].sort((a, b) => a.sortOrder - b.sortOrder);
     }
     return map;
-  }, [activeCollectionFilter, chatSessions]);
+  }, [chatSessions]);
 
-  const visibleTaskSessions = useMemo(() => {
-    return allSessions.filter((s) => s.taskId && !s.archived);
-  }, [allSessions]);
-
-  const filteredTasks = useMemo(() => {
-    return filterKanbanTasks(tasks, visibleTaskSessions, activeCollectionFilter);
-  }, [tasks, activeCollectionFilter, visibleTaskSessions]);
+  const filteredTasks = projectionItems.tasks;
 
   useEffect(() => {
     if (!activeCollectionFilter) return;
@@ -469,20 +458,18 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return map;
   }, [filteredTasks]);
 
-  // Build a map of taskId -> sessions for expansion
   const sessionsByTaskId = useMemo(() => {
     const map: Record<string, UnifiedSession[]> = {};
-    for (const s of visibleTaskSessions) {
-      if (s.taskId) {
-        if (!map[s.taskId]) map[s.taskId] = [];
-        map[s.taskId].push(s);
-      }
+    for (const session of allSessions) {
+      if (!session.taskId) continue;
+      const taskSessions = map[session.taskId] ?? [];
+      taskSessions.push(session);
+      map[session.taskId] = taskSessions;
     }
     return map;
-  }, [visibleTaskSessions]);
+  }, [allSessions]);
 
   const mergedTasksByStatus = useMemo(() => {
-    const liveSessions = Object.values(sessionsByTaskId).flat();
     const map: Record<WorkflowStatus, TaskEntity[]> = {
       todo: [],
       in_progress: [],
@@ -491,11 +478,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
     };
 
     for (const status of WORKFLOW_STATUS_ORDER) {
-      map[status] = mergeTasksWithLiveSessions(tasksByStatus[status], liveSessions);
+      map[status] = mergeTasksWithLiveSessions(tasksByStatus[status], allSessions);
     }
 
     return map;
-  }, [sessionsByTaskId, tasksByStatus]);
+  }, [allSessions, tasksByStatus]);
 
   // Compute ordered IDs for Shift+Click range select
   const orderedIds = useMemo(() => {
@@ -770,7 +757,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   const handleConfirmTaskDelete = useCallback(async () => {
     if (!taskToDelete) return;
-    await useTaskStore.getState().deleteTask(taskToDelete.id);
+    await useTaskStore.getState().deleteWorktree(taskToDelete.id);
     setTaskToDelete(null);
   }, [taskToDelete]);
 
@@ -786,19 +773,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const handleCardGenerateTitle = useCallback(async (taskId: string) => {
     await generateTitle(taskId);
   }, [generateTitle]);
-
-  // Move to project dialog
-  const [moveSessionTarget, setMoveSessionTarget] = useState<UnifiedSession | null>(null);
-  const handleCardMoveToProject = useCallback((taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
-    if (session) setMoveSessionTarget(session);
-  }, []);
-
-  const handleMoveConfirm = useCallback((targetProjectId: string) => {
-    if (!moveSessionTarget) return;
-    useSessionStore.getState().moveSession(moveSessionTarget.id, targetProjectId);
-    setMoveSessionTarget(null);
-  }, [moveSessionTarget]);
 
   const handleCardStopProcess = useCallback((taskId: string) => {
     wsClient.stopSession(taskId);
@@ -816,9 +790,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
     handleSessionDoubleClick(session);
   }, [handleSessionDoubleClick, kanbanSessionOpenMode]);
 
-  // ── Add session to existing task (matching list view's addSessionToTask) ──
+  // ── Create a new canonical Session in an existing linked Worktree ──
 
-  const handleAddSessionToTask = useCallback(async (
+  const handleCreateSessionInTask = useCallback(async (
     task: TaskEntity,
     requestedProviderId?: string,
     requestedExecutionMode?: AgentExecutionMode,
@@ -877,7 +851,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
       }
 
       // Refresh task store and session store
-      await useTaskStore.getState().loadTasks(task.projectId);
+      await useTaskStore.getState().loadTasks(task.projectViewId);
       await useSessionStore.getState().loadProjects();
 
       void captureTelemetryEvent('session_created', {
@@ -1048,7 +1022,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
               onChatDragStart={handleChatDragStart}
               onChatDragEnd={handleChatDragEnd}
               onChatDragOver={handleChatSessionDragOver}
-              onAddSession={handleAddSessionToTask}
+              onAddSession={handleCreateSessionInTask}
               onTaskContextMenu={handleTaskContextMenu}
               onTaskRename={handleTaskRename}
               onChatArchive={handleCardArchive}
@@ -1058,7 +1032,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
               onSessionDelete={handleCardDelete}
               onSessionOpenInNewTab={handleCardOpenInNewTab}
               onSessionGenerateTitle={handleCardGenerateTitle}
-              onSessionMoveToProject={handleCardMoveToProject}
               onSessionStopProcess={handleCardStopProcess}
               renamingTaskId={renamingTaskId}
               onTaskRenameComplete={handleTaskRenameComplete}
@@ -1098,7 +1071,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
             onCardDelete={handleCardDelete}
             onCardOpenInNewTab={handleCardOpenInNewTab}
             onCardGenerateTitle={handleCardGenerateTitle}
-            onCardMoveToProject={handleCardMoveToProject}
             onCardMoveToCollection={handleChatMoveToCollection}
             onCardStopProcess={handleCardStopProcess}
           />
@@ -1148,14 +1120,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
         isOpen={taskToDelete !== null}
         onConfirm={handleConfirmTaskDelete}
         onCancel={() => setTaskToDelete(null)}
-      />
-
-      {/* Move to project dialog */}
-      <MoveProjectDialog
-        session={moveSessionTarget}
-        isOpen={moveSessionTarget !== null}
-        onConfirm={handleMoveConfirm}
-        onCancel={() => setMoveSessionTarget(null)}
       />
 
     </div>

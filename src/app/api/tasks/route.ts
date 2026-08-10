@@ -8,6 +8,8 @@ import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import { broadcastTaskMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 import { pathExists } from '@/lib/filesystem/path-exists';
+import { getProjectViewWorktrees } from '@/lib/projects/project-view-projection';
+import { getProjectWorktree } from '@/lib/db/projects';
 
 /**
  * GET /api/tasks?projectId=xxx
@@ -25,7 +27,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const activeSessionIds = getActiveSessionIds(userId);
-    const rawTasks = dbTasks.getTasks(projectId, activeSessionIds);
+    const rawTasks = getProjectViewWorktrees(projectId, activeSessionIds);
     const worktreePresence = await Promise.all(
       rawTasks.map(async (task) => ({
         id: task.id,
@@ -99,6 +101,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const id = generateTaskId();
+    const projectWorktree = getProjectWorktree(projectId.trim());
     dbTasks.createTask({
       id,
       projectId: projectId.trim(),
@@ -108,6 +111,12 @@ export async function POST(req: NextRequest) {
         : undefined,
       workflowStatus: typeof workflowStatus === 'string' ? workflowStatus as any : undefined,
       worktreeBranch: typeof worktreeBranch === 'string' ? worktreeBranch : undefined,
+      creationScope: projectWorktree
+        ? {
+            originWorktreeId: projectWorktree.id,
+            branch: projectWorktree.currentBranch,
+          }
+        : undefined,
     });
 
     const activeSessionIds = getActiveSessionIds();

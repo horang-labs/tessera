@@ -5,6 +5,8 @@
 import { normalizePreparationScript } from '@/lib/projects/preparation-script-policy';
 import type { PreparationPhase } from '@/lib/projects/preparation-status-policy';
 import { getDb } from './database';
+import { getWorktree, resolveCanonicalWorktree, type CanonicalWorktree } from './worktrees';
+import { backfillCanonicalProjectViewMembership } from '@/lib/projects/project-view-membership';
 
 export interface ProjectRow {
   id: string;
@@ -17,8 +19,13 @@ export interface ProjectRow {
   preparation_script: string | null;
   /** The `after` stage: what a worktree needs but an agent need not wait for. */
   preparation_after_script: string | null;
+  project_worktree_id: string | null;
   registered_at: string;
   updated_at: string;
+}
+
+interface RegisterProjectOptions {
+  equivalentFilesystemPaths?: readonly string[];
 }
 
 /**
@@ -30,17 +37,40 @@ export function registerProject(
   decodedPath: string,
   displayName: string,
   provider: string | null = null,
+  options: RegisterProjectOptions = {},
 ): void {
   const db = getDb();
   const now = new Date().toISOString();
+  const projectWorktree = resolveCanonicalWorktree(decodedPath, undefined, options);
   // New projects get sort_order = max + 1 (append to bottom of strip)
   const maxRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM projects WHERE visible = 1').get() as { max_order: number };
   const nextOrder = maxRow.max_order + 1;
   db.prepare(`
-    INSERT INTO projects (id, decoded_path, display_name, provider, visible, sort_order, registered_at, updated_at)
-    VALUES (?, ?, ?, ?, 1, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET visible = 1, updated_at = ?
-  `).run(id, decodedPath, displayName, provider, nextOrder, now, now, now);
+    INSERT INTO projects (
+      id, decoded_path, display_name, provider, visible, sort_order,
+      project_worktree_id, registered_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      visible = 1,
+      project_worktree_id = COALESCE(excluded.project_worktree_id, projects.project_worktree_id),
+      updated_at = excluded.updated_at
+  `).run(
+    id,
+    decodedPath,
+    displayName,
+    provider,
+    nextOrder,
+    projectWorktree?.id ?? null,
+    now,
+    now,
+  );
+  backfillCanonicalProjectViewMembership(db, id);
+}
+
+export function getProjectWorktree(projectId: string): CanonicalWorktree | undefined {
+  const row = getProject(projectId);
+  return row?.project_worktree_id ? getWorktree(row.project_worktree_id) : undefined;
 }
 
 /**

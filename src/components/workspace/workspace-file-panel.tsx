@@ -26,9 +26,12 @@ import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
 import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
 import {
+  openWorktreeFileTab,
   openWorkspaceFileTab,
+  previewWorktreeFileTab,
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import {
   copyText,
@@ -157,7 +160,13 @@ function EmptyState({
   );
 }
 
-export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) {
+export function WorkspaceFilePanel({
+  sessionId,
+  worktreeId = null,
+}: {
+  sessionId: string | null;
+  worktreeId?: string | null;
+}) {
   const isDocumentVisible = useDocumentVisibility();
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
@@ -174,7 +183,11 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     symlinks,
     truncated,
     workDir,
-  } = useWorkspaceFileList(sessionId);
+  } = useWorkspaceFileList(
+    worktreeId
+      ? { kind: 'worktree', id: worktreeId }
+      : sessionId,
+  );
 
   useWorkspaceFilesLiveSync({
     enabled: Boolean(sessionId) && isDocumentVisible,
@@ -293,15 +306,33 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
         <button
           type="button"
           onClick={() => {
-            if (!sessionId) return;
             setSelectedPath(node.path);
+            if (worktreeId) {
+              const peekTarget = useWorkspacePeekStore.getState().target;
+              previewWorktreeFileTab(
+                worktreeId,
+                node.path,
+                peekTarget?.worktreeId === worktreeId ? peekTarget.projectDir : null,
+              );
+              return;
+            }
+            if (!sessionId) return;
             previewWorkspaceFileTab(sessionId, "file", node.path, {
               preferKanbanPeek: true,
             });
           }}
           onDoubleClick={() => {
-            if (!sessionId) return;
             setSelectedPath(node.path);
+            if (worktreeId) {
+              const peekTarget = useWorkspacePeekStore.getState().target;
+              openWorktreeFileTab(
+                worktreeId,
+                node.path,
+                peekTarget?.worktreeId === worktreeId ? peekTarget.projectDir : null,
+              );
+              return;
+            }
+            if (!sessionId) return;
             openWorkspaceFileTab(sessionId, "file", node.path, {
               preferKanbanPeek: true,
             });
@@ -353,7 +384,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     );
   }
 
-  if (!sessionId) {
+  if (!sessionId && !worktreeId) {
     return (
       <EmptyState
         title="No worktree selected"

@@ -103,13 +103,34 @@ function Test-TcpPortBindable {
   )
   try {
     # A connect probe cannot distinguish a free port from a Windows-excluded
-    # port. Binding catches both an existing listener and WSAEACCES exclusions.
+    # port. Binding catches both a live listener and WSAEACCES exclusions.
     $listener.Start()
     return $true
   } catch {
     return $false
   } finally {
     $listener.Stop()
+  }
+}
+
+function Test-TcpPortClaimed {
+  param([Parameter(Mandatory = $true)][int]$Port)
+
+  if (-not (Test-TcpPortBindable -Port $Port)) {
+    return $true
+  }
+
+  # Chromium can retain a live process with an assigned debugging port while
+  # its endpoint is temporarily not listening. Reusing that command-line port
+  # makes the new instance start without a CDP owner and leaves a failed test
+  # process behind, so treat the live claim as occupied too.
+  $argument = "--remote-debugging-port=$Port"
+  try {
+    return $null -ne (Get-CimInstance Win32_Process -ErrorAction Stop |
+      Where-Object { $_.CommandLine -like "*$argument*" } |
+      Select-Object -First 1)
+  } catch {
+    throw "Cannot verify whether TCP port $Port is claimed by a live Chromium process"
   }
 }
 
@@ -122,7 +143,7 @@ function Find-AvailableTcpPort {
   )
 
   for ($candidate = $StartPort; $candidate -le 65535; $candidate += 1) {
-    if (-not $ReservedPorts.Contains($candidate) -and (Test-TcpPortBindable -Port $candidate)) {
+    if (-not $ReservedPorts.Contains($candidate) -and -not (Test-TcpPortClaimed -Port $candidate)) {
       $ReservedPorts.Add($candidate) | Out-Null
       return $candidate
     }

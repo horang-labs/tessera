@@ -1,10 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { AsyncConfirmDialog } from '@/components/ui/async-confirm-dialog';
 import { useI18n } from '@/lib/i18n';
-import { useSessionStore } from '@/stores/session-store';
 import type { UnifiedSession } from '@/types/chat';
 
 interface DeleteSessionDialogProps {
@@ -26,22 +24,6 @@ export function DeleteSessionDialog({
   onCancel,
 }: DeleteSessionDialogProps) {
   const { t } = useI18n();
-  const projects = useSessionStore((s) => s.projects);
-
-  // Check if this is the last session using the same worktree branch.
-  // Only show worktree deletion warning when no other session shares it.
-  const willDeleteWorktree = useMemo(() => {
-    if (!session?.worktreeBranch) return false;
-    const branch = session.worktreeBranch;
-    let count = 0;
-    for (const project of projects) {
-      for (const s of project.sessions) {
-        if (s.worktreeBranch === branch) count++;
-        if (count > 1) return false; // more than one session shares this branch
-      }
-    }
-    return count <= 1; // 0 or 1 means this is the last (or only) session
-  }, [session, projects]);
 
   if (!session) return null;
 
@@ -70,11 +52,6 @@ export function DeleteSessionDialog({
           <p className="text-(--text-muted) text-sm mt-2">
             {t('dialog.deleteWarning')}
           </p>
-          {willDeleteWorktree && (
-            <p className="text-(--text-muted) text-sm mt-2">
-              {t('dialog.deleteWorktreeWarning')}
-            </p>
-          )}
         </>
       )}
     />

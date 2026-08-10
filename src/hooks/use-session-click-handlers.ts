@@ -11,6 +11,7 @@ import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { resolveSessionTabOpenMode } from '@/lib/terminal/terminal-preview-policy';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import type { UnifiedSession } from '@/types/chat';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 
 interface PopoutElectronApi {
   isElectron?: boolean;
@@ -116,6 +117,7 @@ export function useSessionClickHandlers(options?: {
       // was tapped in is a full-screen overlay — so the session would open
       // behind it. The multi-select branches above return before this point:
       // they are not selections and leave the sidebar where it is.
+      useWorkspacePeekStore.getState().close();
       stepAsidePhoneSidebar();
 
       if (onOpenSession) {
@@ -154,6 +156,7 @@ export function useSessionClickHandlers(options?: {
       if (tryForwardClickToMainWindow(session.id, 'pin')) {
         return;
       }
+      useWorkspacePeekStore.getState().close();
       const tabStore = useTabStore.getState();
       const location = tabStore.findSessionLocation(session.id);
       if (location) {

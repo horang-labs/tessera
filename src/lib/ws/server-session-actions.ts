@@ -198,7 +198,7 @@ export async function createSessionFromWebSocket({
     });
     const resolvedWorkDir = workDir || process.cwd();
 
-    persistCreatedSessionRecord({
+    const persistedProject = persistCreatedSessionRecord({
       sessionId: result.sessionId,
       resolvedWorkDir,
       title: result.title,
@@ -213,6 +213,7 @@ export async function createSessionFromWebSocket({
       type: 'session_created',
       sessionId: result.sessionId,
       status: 'ready',
+      projectId: persistedProject.projectId,
       workDir: resolvedWorkDir,
       provider: resolvedProviderId,
       kind: dbSessions.extractSessionKind(dbSessions.getSession(result.sessionId)?.provider_state ?? null),

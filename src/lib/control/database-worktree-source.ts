@@ -6,11 +6,14 @@ import {
   readPreparationPhase,
   readPreparationStatus,
 } from '@/lib/projects/preparation-status-policy';
+import { getProjectViewWorktrees } from '@/lib/projects/project-view-projection';
+import type { TaskSession } from '@/types/task-entity';
 import type {
   ControlWorktreeRecord,
   ControlWorktreeSessionRecord,
   ControlWorktreeSource,
 } from './service';
+import type { WorktreeCreationScope } from '@/lib/db/tasks';
 
 interface WorktreeRow {
   public_worktree_id: string;
@@ -32,14 +35,14 @@ const WORKTREE_PROJECTION_SQL = `
 export function createDatabaseControlWorktreeSource(): ControlWorktreeSource {
   return {
     list: (projectId) => {
-      const rows = getDb().prepare(`
-        ${WORKTREE_PROJECTION_SQL}
-        WHERE project_id = ?
-          AND archived = 0
-          AND worktree_deleted_at IS NULL
-        ORDER BY sort_order ASC, created_at DESC, id ASC
-      `).all(projectId) as WorktreeRow[];
-      return rows.map(toControlWorktreeRecord);
+      return getProjectViewWorktrees(projectId).flatMap((task) => {
+        if (!task.worktreeId || task.worktreeDeletedAt) return [];
+        const row = getDb().prepare(`
+          ${WORKTREE_PROJECTION_SQL}
+          WHERE public_worktree_id = ?
+        `).get(task.worktreeId) as WorktreeRow | undefined;
+        return row ? [toControlWorktreeRecord(row, task.sessions)] : [];
+      });
     },
     get: (worktreeId) => {
       const row = getDb().prepare(`
@@ -56,6 +59,8 @@ export function persistDatabaseControlWorktree(input: {
   title: string;
   branch: string;
   filesystemPath: string;
+  creationScope?: WorktreeCreationScope;
+  startPoint?: string;
 }): { taskId: string; worktree: ControlWorktreeRecord } {
   const taskId = `task_${randomUUID()}`;
   const worktreeId = createTask({
@@ -64,6 +69,8 @@ export function persistDatabaseControlWorktree(input: {
     title: input.title,
     worktreeBranch: input.branch,
     worktreePath: input.filesystemPath,
+    creationScope: input.creationScope,
+    startPoint: input.startPoint,
   });
   const worktree = createDatabaseControlWorktreeSource().get(worktreeId);
   if (!worktree) {
@@ -72,7 +79,10 @@ export function persistDatabaseControlWorktree(input: {
   return { taskId, worktree };
 }
 
-function toControlWorktreeRecord(row: WorktreeRow): ControlWorktreeRecord {
+function toControlWorktreeRecord(
+  row: WorktreeRow,
+  projectedSessions?: TaskSession[],
+): ControlWorktreeRecord {
   return {
     worktreeId: row.public_worktree_id,
     projectId: row.project_id,
@@ -81,7 +91,14 @@ function toControlWorktreeRecord(row: WorktreeRow): ControlWorktreeRecord {
     filesystemPath: row.worktree_path,
     preparationStatus: readPreparationStatus(row.preparation_status),
     preparationPhase: readPreparationPhase(row.preparation_phase),
-    sessions: readSessionSummaries(row.public_worktree_id),
+    sessions: projectedSessions
+      ? projectedSessions.map((session) => ({
+          sessionId: session.id,
+          title: session.title,
+          provider: session.provider ?? 'unknown',
+          updatedAt: session.lastModified,
+        }))
+      : readSessionSummaries(row.public_worktree_id),
   };
 }
 

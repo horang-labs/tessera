@@ -1,5 +1,6 @@
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
+import { buildOriginProjectRepresentation } from '@/lib/projects/origin-project-representation';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 
 export type RecentWorkItem =
@@ -78,6 +79,7 @@ function taskToRecentItem(project: ProjectGroup, task: TaskEntity): RecentWorkIt
     id: recentSession.id,
     title: recentSession.title,
     projectDir: project.encodedDir,
+    originProjectId: recentSession.originProjectId,
     isRunning: recentSession.isRunning,
     status: recentSession.isRunning ? 'running' : 'completed',
     lastModified: recentSession.lastModified,
@@ -137,6 +139,7 @@ function fallbackTaskItemsFromSessions(
     const taskSessions: TaskSession[] = sortedSessions.map((session) => ({
       id: session.id,
       title: session.title,
+      originProjectId: session.originProjectId,
       provider: session.provider,
       lastModified: session.lastModified,
       isRunning: session.isRunning,
@@ -146,6 +149,7 @@ function fallbackTaskItemsFromSessions(
     const task: TaskEntity = {
       id: taskId,
       projectId: project.encodedDir,
+      projectViewId: project.encodedDir,
       title: recentSession.title,
       collectionId: recentSession.collectionId,
       workflowStatus: recentSession.workflowStatus ?? 'todo',
@@ -199,15 +203,23 @@ export function buildRecentWorkItems({
   projects,
   tasksByProject,
   limit = 8,
+  originOnly = false,
 }: {
   projects: ProjectGroup[];
   tasksByProject: Record<string, TaskEntity[]>;
   limit?: number;
+  originOnly?: boolean;
 }): RecentWorkItem[] {
   const items: RecentWorkItem[] = [];
+  const representation = originOnly
+    ? buildOriginProjectRepresentation(projects, tasksByProject)
+    : { projects, tasksByProject };
 
-  for (const project of projects) {
-    const tasks = mergeTasksWithLiveSessions(tasksByProject[project.encodedDir] ?? [], project.sessions);
+  for (const project of representation.projects) {
+    const tasks = mergeTasksWithLiveSessions(
+      representation.tasksByProject[project.encodedDir] ?? [],
+      project.sessions,
+    );
     const knownTaskIds = new Set(tasks.map((task) => task.id));
 
     for (const task of tasks) {

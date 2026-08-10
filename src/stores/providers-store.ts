@@ -23,7 +23,9 @@ interface ProvidersState {
 
 export const useProvidersStore = create<ProvidersState>((set, get) => {
   const runProviderRequest = (
-    sendRequest: (callback: (providers: ProviderMeta[]) => void) => (() => void) | void,
+    sendRequest: (
+      callback: (providers: ProviderMeta[] | null) => void,
+    ) => (() => void) | void,
   ) => {
     // Skip while WS is disconnected — provider WS requests would immediately
     // resolve with [] and we'd flash an empty state. The ws onopen hook
@@ -76,7 +78,7 @@ export const useProvidersStore = create<ProvidersState>((set, get) => {
         finish();
       }, PROVIDER_REQUEST_TIMEOUT_MS);
 
-      cancelAttempt = sendRequest((received) => finish(received)) ?? null;
+      cancelAttempt = sendRequest((received) => finish(received ?? undefined)) ?? null;
     };
 
     cancelActiveProviderRequest = cancelCurrentRequest;

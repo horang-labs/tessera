@@ -1613,12 +1613,15 @@ test('new PTY sessions are stopped until their terminal is opened', () => {
     type: 'session_created',
     sessionId: 'new-terminal-session',
     status: 'ready',
+    projectId: '/workspace-project',
     workDir: '/workspace',
     kind: 'terminal',
     provider: 'claude-code',
   });
 
   const created = useSessionStore.getState().getSession('new-terminal-session');
+  assert.equal(created?.projectDir, '/workspace-project');
+  assert.equal(created?.originProjectId, '/workspace-project');
   assert.equal(created?.isRunning, false);
   assert.equal(created?.status, 'stopped');
 });

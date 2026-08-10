@@ -170,7 +170,7 @@ test('PR observation uses parent paths for zero-session Worktrees and legacy fal
   assert.equal(tasks.getTaskPrSyncContext('pr-legacy-task')?.workDir, legacyPath);
 });
 
-test('creating or attaching a child Session copies the parent checkout compatibility fields', async () => {
+test('creating a child Session copies the parent checkout compatibility fields', async () => {
   const { sessions, tasks } = await modules();
   const parentPath = path.join(dataDir, 'child-parent-owned ');
 
@@ -190,23 +190,6 @@ test('creating or attaching a child Session copies the parent checkout compatibi
       workDir: sessions.getSession('created-child')?.work_dir,
       branch: sessions.getSession('created-child')?.worktree_branch,
       managed: sessions.getSession('created-child')?.worktree_managed,
-    },
-    {
-      workDir: parentPath,
-      branch: 'feature/child-parent',
-      managed: 1,
-    },
-  );
-
-  sessions.createSession('attached-child', dataDir, 'Attached child', 'claude-code', {
-    workDir: path.join(dataDir, 'standalone-path'),
-  });
-  tasks.addSessionToTask('child-parent', 'attached-child');
-  assert.deepEqual(
-    {
-      workDir: sessions.getSession('attached-child')?.work_dir,
-      branch: sessions.getSession('attached-child')?.worktree_branch,
-      managed: sessions.getSession('attached-child')?.worktree_managed,
     },
     {
       workDir: parentPath,
@@ -283,11 +266,49 @@ test('deleting the last child Session leaves its parent Worktree checkout intact
     worktreeManaged: true,
   });
 
+  const { archiveSession } = await import('@/lib/session/session-archive');
+  const { restoreArchivedChat } = await import('@/lib/archive/archive-service');
+  await archiveSession('delete-last-child', true);
+  assert.equal(fs.existsSync(worktreePath), true);
+  assert.deepEqual(tasks.getTask('delete-parent-task')?.sessions, []);
+  assert.equal(tasks.getTask('delete-parent-task')?.workDir, worktreePath);
+  await restoreArchivedChat('delete-last-child');
+
   await sessionOrchestrator.deleteSession('delete-user', 'delete-last-child');
 
   assert.equal(fs.existsSync(worktreePath), true);
   assert.deepEqual(tasks.getTask('delete-parent-task')?.sessions, []);
   assert.equal(tasks.getTask('delete-parent-task')?.workDir, worktreePath);
+});
+
+test('deleting the final standalone Session leaves its managed Worktree checkout intact', async () => {
+  const { projects, sessions } = await modules();
+  const { sessionOrchestrator } = await import('@/lib/session/session-orchestrator');
+  const sourcePath = path.join(dataDir, 'delete-standalone-source');
+  const worktreePath = path.join(dataDir, 'delete-standalone-worktree');
+  fs.mkdirSync(sourcePath, { recursive: true });
+  execFileSync('git', ['init', '-b', 'main'], { cwd: sourcePath, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: sourcePath });
+  execFileSync('git', ['config', 'user.name', 'Tessera Test'], { cwd: sourcePath });
+  fs.writeFileSync(path.join(sourcePath, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: sourcePath });
+  execFileSync('git', ['commit', '-m', 'base'], { cwd: sourcePath, stdio: 'ignore' });
+  execFileSync('git', ['worktree', 'add', '-b', 'feature/delete-standalone', worktreePath], {
+    cwd: sourcePath,
+    stdio: 'ignore',
+  });
+
+  projects.registerProject(sourcePath, sourcePath, 'delete-standalone-source');
+  sessions.createSession('delete-standalone', sourcePath, 'Delete standalone', 'claude-code', {
+    workDir: worktreePath,
+    worktreeBranch: 'feature/delete-standalone',
+    worktreeManaged: true,
+  });
+
+  await sessionOrchestrator.deleteSession('delete-user', 'delete-standalone');
+
+  assert.equal(fs.existsSync(worktreePath), true);
+  assert.equal(sessions.getSession('delete-standalone'), undefined);
 });
 
 test('an archived child Session uses its parent checkout for status and restore', async () => {

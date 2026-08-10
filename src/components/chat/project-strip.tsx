@@ -23,6 +23,7 @@ import { useI18n } from '@/lib/i18n';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { ProviderUsageRail } from './provider-usage-rail';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 
 interface ProjectStripProps {
   onAddProject: () => void;
@@ -64,6 +65,7 @@ export function ProjectStrip({
   }, [hideManagementActions]);
 
   const handleProjectSelect = useCallback((projectDir: string) => {
+    useWorkspacePeekStore.getState().close();
     setSelectedProjectDir(projectDir);
     useTabStore.getState().switchProject(projectDir);
   }, [setSelectedProjectDir]);

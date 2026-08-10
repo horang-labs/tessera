@@ -31,8 +31,11 @@ export class WebSocketClient {
   private reconnectAttempt = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private userId: string | null = null;
-  private providersListCallbacks: Map<string, (providers: ProviderMeta[]) => void> = new Map();
-  private cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null) => void> = new Map();
+  private providersListCallbacks: Map<string, (providers: ProviderMeta[] | null) => void> = new Map();
+  private cliStatusCallbacks: Map<
+    string,
+    (results: CliStatusEntry[] | null | undefined) => void
+  > = new Map();
   private serverMessageListeners: Set<ServerMessageListener> = new Set();
   private wasReconnect = false;
   private connectionGeneration = 0;
@@ -330,7 +333,7 @@ export class WebSocketClient {
     this.sendRequest('get_commands', { sessionId });
   }
 
-  listProviders(callback: (providers: ProviderMeta[]) => void): (() => void) | void {
+  listProviders(callback: (providers: ProviderMeta[] | null) => void): (() => void) | void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       const message = buildClientRequest('list_providers', {});
       this.providersListCallbacks.set(message.requestId, callback);
@@ -339,11 +342,11 @@ export class WebSocketClient {
         this.providersListCallbacks.delete(message.requestId);
       };
     } else {
-      callback([]);
+      callback(null);
     }
   }
 
-  refreshProviders(callback: (providers: ProviderMeta[]) => void): (() => void) | void {
+  refreshProviders(callback: (providers: ProviderMeta[] | null) => void): (() => void) | void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       const message = buildClientRequest('refresh_providers', {});
       this.providersListCallbacks.set(message.requestId, callback);
@@ -352,15 +355,20 @@ export class WebSocketClient {
         this.providersListCallbacks.delete(message.requestId);
       };
     } else {
-      callback([]);
+      callback(null);
     }
   }
 
-  checkCliStatus(callback: (results: CliStatusEntry[] | null) => void) {
+  checkCliStatus(
+    callback: (results: CliStatusEntry[] | null | undefined) => void,
+  ): (() => void) | void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       const message = buildClientRequest('check_cli_status', {});
       this.cliStatusCallbacks.set(message.requestId, callback);
       this.send(message);
+      return () => {
+        this.cliStatusCallbacks.delete(message.requestId);
+      };
     } else {
       callback(null);
     }
@@ -500,7 +508,7 @@ export class WebSocketClient {
 
   private failPendingRequestCallbacks() {
     for (const callback of this.providersListCallbacks.values()) {
-      callback([]);
+      callback(null);
     }
     this.providersListCallbacks.clear();
 

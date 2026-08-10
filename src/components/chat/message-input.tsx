@@ -23,7 +23,7 @@ import { useSessionResume } from '@/hooks/use-session-resume';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSkillPicker, type SkillInfo } from '@/hooks/use-skill-picker';
 import { SkillPicker } from '@/components/chat/skill-picker';
-import { useFilePicker } from '@/hooks/use-file-picker';
+import { useReferencePicker } from '@/hooks/use-file-picker';
 import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
@@ -130,6 +130,7 @@ import type { SessionSpawnConfig } from '@/lib/ws/message-types';
 
 interface MessageInputProps {
   sessionId: string;
+  projectViewDir?: string | null;
   isDisabled: boolean;
   isReadOnly?: boolean;
   isStopped?: boolean;
@@ -141,6 +142,7 @@ const EMPTY_COLLECTIONS: Collection[] = [];
 
 export function MessageInput({
   sessionId,
+  projectViewDir,
   isDisabled,
   isReadOnly,
   isStopped,
@@ -241,7 +243,7 @@ export function MessageInput({
     hasConversationHistory(state.messages.get(sessionId))
   );
   const addMessage = useChatStore((state) => state.addMessage);
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useSessionStore((state) => state.getSession(sessionId, projectViewDir));
   const updateSessionRuntimeConfig = useSessionStore((state) => state.updateSessionRuntimeConfig);
   const projects = useSessionStore((state) => state.projects);
   const sessionStatus = session && 'status' in session ? session.status : 'running';
@@ -294,7 +296,7 @@ export function MessageInput({
     serverPlatform,
     agentEnvironment,
   );
-  const filePicker = useFilePicker(sessionId);
+  const filePicker = useReferencePicker(sessionId, session?.projectDir ?? projectViewDir);
   const getInputValue = useCallback(() => inputValue, [inputValue]);
   const sessionRefs = useSessionRefs({
     textareaRef,
@@ -1209,7 +1211,6 @@ export function MessageInput({
     if (shouldResumeSession && session && 'projectDir' in session) {
       void resumeAndSend(
         sessionId,
-        session.projectDir,
         sendContent,
         skillName,
         displayContent,
