@@ -9,6 +9,8 @@ import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { useCloseOnEscape } from '@/hooks/use-close-on-escape';
 import { useMenuNavigation } from '@/hooks/use-menu-navigation';
 import { useTabDisplayTitle } from '@/hooks/use-tab-display-title';
+import { useTabStatusIndicator } from './use-tab-status-indicator';
+import { ItemStatusIndicator } from '@/components/chat/work-item-primitives';
 import {
   ANCHORED_VIEWPORT_MARGIN,
   resolveAnchoredAlignedLeft,
@@ -211,6 +213,15 @@ const TabListItem = memo(function TabListItem({
 }: TabListItemProps) {
   const { t } = useI18n();
   const title = useTabDisplayTitle(tab);
+  const {
+    statusKind,
+    statusLabel,
+    isProcessing,
+    isAwaitingUser,
+    hasUnread,
+    isRunning,
+    hasTerminalProcessingSession,
+  } = useTabStatusIndicator(tab, isActive);
 
   return (
     <div className="flex items-center gap-1">
@@ -232,6 +243,26 @@ const TabListItem = memo(function TabListItem({
         data-tab-id={tab.id}
         data-active={String(isActive)}
       >
+        {statusKind ? (
+          <span
+            className="flex shrink-0 items-center"
+            data-testid="tab-list-item-status"
+            data-status={statusKind}
+            aria-label={statusLabel}
+            title={statusLabel}
+          >
+            <ItemStatusIndicator
+              isProcessing={isProcessing}
+              isAwaitingUser={isAwaitingUser}
+              hasUnread={hasUnread}
+              isRunning={isRunning}
+              sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
+              placement="inline"
+              size="lg"
+              surface="sidebar"
+            />
+          </span>
+        ) : null}
         <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
           {title}
         </span>

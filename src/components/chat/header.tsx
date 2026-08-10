@@ -130,9 +130,16 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
   };
 
   const handleMoreClick = useCallback((e: React.MouseEvent) => {
+    // stopPropagation keeps the surrounding row from picking the tap up, but it
+    // also means the menu's own outside-click watcher never sees a click on the
+    // trigger. Without a toggle branch here, re-tapping the button while the
+    // menu is open does nothing and the user is stuck reaching for empty space.
     e.stopPropagation();
-    const rect = moreButtonRef.current?.getBoundingClientRect();
-    if (rect) setMenuAnchorRect(rect);
+    setMenuAnchorRect((prev) => {
+      if (prev) return null;
+      const rect = moreButtonRef.current?.getBoundingClientRect();
+      return rect ?? null;
+    });
   }, []);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {

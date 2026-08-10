@@ -2,11 +2,10 @@
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, Home, Plus, LogOut, Blocks, EyeOff, MessageSquarePlus } from 'lucide-react';
+import { Archive, Home, Plus, Blocks, EyeOff, MessageSquarePlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
-import { useAuthStore } from '@/stores/auth-store';
 import { useTabStore } from '@/stores/tab-store';
 import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
 import { ARCHIVE_DASHBOARD_SESSION_ID, SKILLS_DASHBOARD_SESSION_ID } from '@/lib/constants/special-sessions';
@@ -44,10 +43,7 @@ export function ProjectStrip({
   const projects = useSessionStore((state) => state.projects);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const setSelectedProjectDir = useBoardStore((state) => state.setSelectedProjectDir);
-  const user = useAuthStore((state) => state.user);
-  const logout = useAuthStore((state) => state.logout);
   const electronPlatform = useElectronPlatform();
-  const isElectron = electronPlatform !== null;
   const isMacElectron = electronPlatform === 'darwin';
   // The popout window only renders one project at a time, so the All
   // Projects sentinel doesn't make sense while it's open.
@@ -117,6 +113,11 @@ export function ProjectStrip({
     <div className={cn(
       'shrink-0 w-11 flex flex-col border-r border-(--divider) bg-(--sidebar-bg)',
       PHONE_TOUCH_TARGET_WIDTH,
+      // Phone override — the strip on 360px screens was consuming a solid 44px
+      // column; users on the smallest font scale asked for it about a third
+      // narrower. `max-sm:!w-8` beats the PHONE_TOUCH_TARGET_WIDTH `min-w-11`
+      // by pinning an exact width rather than a floor.
+      'max-sm:!w-8 max-sm:!min-w-0',
     )}>
       {isMacElectron && (
         <div
@@ -133,10 +134,11 @@ export function ProjectStrip({
             className={cn(
               'w-11 h-9 flex items-center justify-center shrink-0 text-(--text-muted) hover:text-(--sidebar-text-active) transition-colors',
               PHONE_TOUCH_TARGET,
+              'max-sm:!w-8 max-sm:!h-7 max-sm:!min-w-0 max-sm:!min-h-0',
             )}
             data-testid="project-strip-add"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 max-sm:w-3 max-sm:h-3" />
           </button>
         </Tooltip>
       )}
@@ -160,6 +162,7 @@ export function ProjectStrip({
           className={cn(
             'relative w-11 h-11 flex items-center justify-center shrink-0 transition-colors',
             PHONE_TOUCH_TARGET,
+            'max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0',
             isAllMode
               ? 'text-(--accent)'
               : 'text-(--text-muted) hover:text-(--sidebar-text-active)',
@@ -170,15 +173,24 @@ export function ProjectStrip({
           {isAllMode && !isPopoutActive && (
             <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r bg-(--accent)" />
           )}
-          <Home className="w-5 h-5" />
+          <Home className="w-5 h-5 max-sm:w-3.5 max-sm:h-3.5" />
         </button>
       </Tooltip>
 
       <div className="w-6 mx-auto border-t border-(--divider)" />
 
-      {/* Project icon list */}
+      {/* Project icon list.
+          The bottom action stack (bell / skills / archive / feedback / settings /
+          logout) is `shrink-0`, and on a short phone viewport those + the usage
+          rail + the header take the whole column — a `min-h-0 flex-1` here
+          collapses to 0 and the project tiles disappear entirely. Guaranteeing
+          a few tiles worth of runway means the list is always reachable; the
+          hidden overflow is what scrolling the strip is for. */}
       <ScrollArea
-        className="min-h-0 flex-1 overflow-x-hidden overscroll-contain scrollbar-none"
+        className={cn(
+          'flex-1 overflow-x-hidden overscroll-contain scrollbar-none',
+          projects.length > 0 ? 'min-h-[6.5rem]' : 'min-h-0',
+        )}
         data-testid="project-strip-scroll-area"
       >
         <div className="flex flex-col items-center gap-1 py-1">
@@ -204,15 +216,14 @@ export function ProjectStrip({
                   className={cn(
                     'relative w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
                     'font-bold text-white text-xs select-none transition-all',
-                    // Unlike the other controls the floor is applied to, this
-                    // box is painted: the coloured tile *is* the button, so on
-                    // a phone the tile grows to 44px with it and fills the
-                    // column. That is deliberate — splitting a transparent
-                    // 44px hit box from a 26px tile would leave the running
-                    // badge and the selected marker, both absolutely
-                    // positioned against this element, floating off the tile
-                    // they belong to. The letter keeps its `text-xs` (#270).
+                    // Reporter asked the whole strip to shrink by a third at
+                    // the smallest font scale; the tile follows suit at
+                    // max-sm and the `!` beats PHONE_TOUCH_TARGET's floor.
+                    // Runtime badge and selected marker are positioned
+                    // against this same box, so they inherit the smaller
+                    // tile without re-anchoring (#270 spirit preserved).
                     PHONE_TOUCH_TARGET,
+                    'max-sm:!w-6 max-sm:!h-6 max-sm:!min-w-0 max-sm:!min-h-0 max-sm:text-[10px] max-sm:rounded-md',
                     isSelected ? 'opacity-100' : 'opacity-50 hover:opacity-80',
                     isDragging && 'opacity-30 scale-90',
                     isDragOver && 'ring-2 ring-(--accent) ring-offset-1 ring-offset-(--sidebar-bg)'
@@ -248,7 +259,7 @@ export function ProjectStrip({
           <Button
             variant="ghost"
             size="icon-lg"
-            className="rounded-none"
+            className="rounded-none max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0"
             onClick={() => {
               const tabStore = useTabStore.getState();
               const existing = tabStore.findSessionLocation(SKILLS_DASHBOARD_SESSION_ID);
@@ -259,14 +270,14 @@ export function ProjectStrip({
               }
             }}
           >
-            <Blocks className="w-5 h-5" />
+            <Blocks className="w-5 h-5 max-sm:w-3.5 max-sm:h-3.5" />
           </Button>
         </Tooltip>
         <Tooltip content={t('archive.title')} delay={300}>
           <Button
             variant="ghost"
             size="icon-lg"
-            className="rounded-none"
+            className="rounded-none max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0"
             onClick={() => {
               const tabStore = useTabStore.getState();
               const existing = tabStore.findSessionLocation(ARCHIVE_DASHBOARD_SESSION_ID);
@@ -278,34 +289,21 @@ export function ProjectStrip({
             }}
             data-testid="project-strip-archive"
           >
-            <Archive className="w-5 h-5" />
+            <Archive className="w-5 h-5 max-sm:w-3.5 max-sm:h-3.5" />
           </Button>
         </Tooltip>
         <Tooltip content={t('feedback.tooltip')} delay={300}>
           <Button
             variant="ghost"
             size="icon-lg"
-            className="rounded-none"
+            className="rounded-none max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0"
             onClick={() => setIsFeedbackOpen(true)}
             data-testid="project-strip-feedback"
           >
-            <MessageSquarePlus className="w-5 h-5" />
+            <MessageSquarePlus className="w-5 h-5 max-sm:w-3.5 max-sm:h-3.5" />
           </Button>
         </Tooltip>
-        <SettingsButton className="rounded-none" iconSize="lg" />
-        {!isElectron && (
-          <Tooltip content={user?.username ?? 'Logout'} delay={300}>
-            <Button
-              variant="ghost"
-              size="icon-lg"
-              className="rounded-none"
-              onClick={logout}
-              data-testid="strip-logout"
-            >
-              <LogOut className="w-5 h-5" />
-            </Button>
-          </Tooltip>
-        )}
+        <SettingsButton className="rounded-none max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0" iconSize="lg" />
       </div>
       )}
 

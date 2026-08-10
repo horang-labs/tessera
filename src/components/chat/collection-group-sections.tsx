@@ -144,8 +144,18 @@ export function CollectionHeaderMenu({
       }
     }
 
-    document.addEventListener('mousedown', handleMouseDown, true);
-    return () => document.removeEventListener('mousedown', handleMouseDown, true);
+    // A phone tap synthesises pointerdown → mousedown → mouseup → click all in
+    // one tick. If we register on the leading edge of that sequence, the very
+    // click that just opened the menu is also seen as an outside mousedown and
+    // the menu snaps shut before the user ever sees it. Deferring by a frame
+    // lets the opening cycle drain first.
+    const raf = window.requestAnimationFrame(() => {
+      document.addEventListener('mousedown', handleMouseDown, true);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      document.removeEventListener('mousedown', handleMouseDown, true);
+    };
   }, [open]);
 
   const handleToggle = useCallback(
@@ -662,12 +672,21 @@ function SubSessionRow({
         <span className="min-w-0 flex-1 truncate pr-8">{sess.title}</span>
       )}
 
-      {isHovered && !isRenaming && (
+      {!isRenaming && (
+        // Row actions.
+        // Desktop: hover-reveal — stop / archive / kebab appear together.
+        // Phone: stop and archive collapse into the kebab menu (which already
+        // carries them via onContextMenu), and the kebab itself is always
+        // visible. Hover on touch is unreliable and, when it does fire on tap,
+        // races the row's own onClick that opens the session.
         <div className="flex shrink-0 items-center gap-0.5">
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
               onClick={handleStopProcess}
-              className="rounded p-0.5 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
+              className={cn(
+                'max-sm:hidden rounded p-0.5 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90',
+                isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none',
+              )}
               testId={`collection-subsession-quick-stop-${sess.id}`}
             />
           )}
@@ -680,10 +699,11 @@ function SubSessionRow({
                 handleArchiveClick();
               }}
               className={cn(
-                'rounded p-0.5 transition-all duration-150',
+                'max-sm:hidden rounded p-0.5 transition-all duration-150',
                 isConfirmingArchive
                   ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                   : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
+                isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none',
               )}
               testId={`collection-subsession-quick-archive-${sess.id}`}
               confirmTitle="Click again to archive"
@@ -697,7 +717,12 @@ function SubSessionRow({
               onContextMenu?.(event, 'chat', sess.id, collectionId, true);
             }}
             size="compact"
-            className="shrink-0 text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)"
+            className={cn(
+              'shrink-0 text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
+              // Always available on phone; desktop keeps the hover-reveal.
+              'max-sm:opacity-100',
+              isHovered ? 'sm:opacity-100' : 'sm:opacity-0 sm:pointer-events-none',
+            )}
           />
         </div>
       )}
@@ -1119,21 +1144,29 @@ export function TaskItemRow({
 
         <div
           className={cn(
-            'pointer-events-none absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
+            // Desktop keeps hover-reveal. Phone forces the action rail visible
+            // and pointer-active so the + and kebab are always reachable — hover
+            // on touch is unreliable and, when it fires from a tap, races the
+            // row's own onClick that opens the session. Stop/archive drop into
+            // the kebab menu on phone (see max-sm:hidden below).
+            'absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
             hasVisibleRuntimeSession ? 'w-28' : 'w-24',
-            isHovered && !isRenaming ? 'opacity-100' : 'pointer-events-none opacity-0',
+            'max-sm:opacity-100 max-sm:pointer-events-auto',
+            isHovered && !isRenaming
+              ? 'sm:opacity-100 sm:pointer-events-auto'
+              : 'sm:opacity-0 sm:pointer-events-none',
           )}
         >
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 w-full rounded-r-lg"
+            className="absolute inset-y-0 right-0 w-full rounded-r-lg max-sm:hidden"
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">
             {hasVisibleRuntimeSession && onStopProcess && (
               <StopProcessButton
                 onClick={handleStopProcess}
-                className="rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
+                className="max-sm:hidden rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
                 testId={`collection-task-quick-stop-${task.id}`}
               />
             )}
@@ -1145,7 +1178,7 @@ export function TaskItemRow({
                 handleArchiveClick();
               }}
               className={cn(
-                'rounded p-1 transition-all duration-150',
+                'max-sm:hidden rounded p-1 transition-all duration-150',
                 isConfirmingArchive
                   ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                   : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',

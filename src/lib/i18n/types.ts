@@ -643,6 +643,9 @@ export interface I18nMessages {
       imageAttachFailed: string;
       keyEscape: string;
       keyShiftTab: string;
+      keyLeft: string;
+      keyRight: string;
+      keyBackspace: string;
       keyUp: string;
       keyDown: string;
       keyEnter: string;
