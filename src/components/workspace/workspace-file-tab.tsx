@@ -222,6 +222,35 @@ export function WorkspaceFileTab({
     void loadFile({ silent: true });
   }, [loadFile]);
 
+  /**
+   * Decide whether a watcher event really touched *this* file.
+   *
+   * A watcher event is only a hint: `changedPaths` is capped, so
+   * `hasMoreChangedPaths` says "the list overflowed", not "your file changed".
+   * The mtime we loaded is the actual test — the same baseline the save sends —
+   * so raising the banner on the event alone would nag on any large agent edit.
+   */
+  const confirmExternalChange = useCallback(async () => {
+    const data = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
+    if (!data) return;
+
+    try {
+      const response = await fetchWithTimeout(
+        getFileUrl({ type: "workspace-file", sourceSessionId, kind, path }),
+        { timeoutMs: FILE_LOAD_TIMEOUT_MS, retries: 1 },
+      );
+      if (response.status === 404) {
+        setConflict(true);
+        return;
+      }
+      const payload = await response.json().catch(() => null) as WorkspaceFileData | null;
+      if (!response.ok || payload === null) return;
+      if (payload.mtimeMs !== data.mtimeMs) setConflict(true);
+    } catch {
+      // Leave it to the save's own 409: a failed probe is not evidence of a change.
+    }
+  }, [kind, path, sourceSessionId, state.data]);
+
   const handleWorkspaceFilesChanged = useCallback((msg: WorkspaceFilesChangedMessage) => {
     if (!msg.sessionIds.includes(sourceSessionId)) return;
 
@@ -257,12 +286,22 @@ export function WorkspaceFileTab({
       // The watcher echo of our own save is not an external change.
       if (isSelfWrite(sourceSessionId, path)) return;
       if (dirtyRef.current) {
-        setConflict(true);
+        void confirmExternalChange();
         return;
       }
       refreshFile();
     }
-  }, [assignSession, kind, loadFile, onFileRefChange, panelId, path, refreshFile, sourceSessionId]);
+  }, [
+    assignSession,
+    confirmExternalChange,
+    kind,
+    loadFile,
+    onFileRefChange,
+    panelId,
+    path,
+    refreshFile,
+    sourceSessionId,
+  ]);
 
   useWorkspaceFilesLiveSync({
     enabled: isTabActive && isDocumentVisible,

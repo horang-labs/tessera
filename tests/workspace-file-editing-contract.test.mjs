@@ -79,6 +79,28 @@ test('our own save does not read as an external change', () => {
   assert.match(fileTabSource, /mtimeMs: payload\?\.mtimeMs \?\? data\.mtimeMs/);
 });
 
+test('the banner is raised by the mtime baseline, not by a watcher event alone', () => {
+  // hasMoreChangedPaths only means the changed-path list overflowed; it says
+  // nothing about this file. Raising the banner on it would nag on any large
+  // agent edit, so the event only triggers a check of the real mtime.
+  assert.match(fileTabSource, /void confirmExternalChange\(\)/);
+  assert.match(fileTabSource, /payload\.mtimeMs !== data\.mtimeMs\) setConflict\(true\)/);
+  assert.doesNotMatch(
+    fileTabSource,
+    /hasMoreChangedPaths[\s\S]{0,200}?setConflict\(true\)/,
+  );
+});
+
+test('the server refuses to replace a document the reader would not serve as text', () => {
+  // The editor's binary/truncated gate lives in the browser; a crafted PUT
+  // must not be able to step around it.
+  assert.match(writeLibSource, /assertReplaceableAsText/);
+  assert.match(writeLibSource, /isLikelyBinary/);
+  assert.match(writeLibSource, /"binary_file"/);
+  const ioSource = read('../src/lib/workspace-files/workspace-file-io.ts');
+  assert.match(ioSource, /export function isLikelyBinary/);
+});
+
 test('the save is guarded by the optimistic lock unless the user chose to overwrite', () => {
   assert.match(fileTabSource, /options\?\.overwrite \? \{\} : \{ baseMtimeMs: data\.mtimeMs \}/);
   assert.match(fileTabSource, /response\.status === 409/);

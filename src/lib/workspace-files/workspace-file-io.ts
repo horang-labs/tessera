@@ -3,6 +3,19 @@ export const MAX_TEXT_FILE_BYTES = 512 * 1024;
 export const MAX_RAW_FILE_BYTES = 25 * 1024 * 1024;
 const FS_OPERATION_TIMEOUT_MS = 2_000;
 
+/**
+ * Same heuristic the read route serves `binary: true` from: a NUL byte in the
+ * first 8 KB. Both sides must agree, or the editor would offer to save a
+ * document the reader refused to hand over as text.
+ */
+export function isLikelyBinary(buffer: Buffer): boolean {
+  const sampleLength = Math.min(buffer.byteLength, 8000);
+  for (let index = 0; index < sampleLength; index += 1) {
+    if (buffer[index] === 0) return true;
+  }
+  return false;
+}
+
 export class WorkspaceFileError extends Error {
   constructor(
     readonly code: string,

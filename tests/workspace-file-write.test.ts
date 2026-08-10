@@ -218,3 +218,53 @@ test("a linked file inside the workspace saves through to its target, as reading
     rmSync(project, { force: true, recursive: true });
   }
 });
+
+test("a binary file cannot be replaced with text, even if the client asks", async () => {
+  const root = makeWorkspace();
+  try {
+    // The editor gates on `binary`, but that gate is in the browser. A crafted
+    // PUT must not be able to overwrite a PNG with UTF-8.
+    const original = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]);
+    writeFileSync(path.join(root, "logo.png"), original);
+
+    await assert.rejects(
+      saveWorkspaceFile(root, { content: "not a png", path: "logo.png" }),
+      (error: { code?: string; status?: number }) =>
+        error.code === "binary_file" && error.status === 415,
+    );
+    assert.deepEqual(readFileSync(path.join(root, "logo.png")), original);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("a file past the text ceiling cannot be saved back from a truncated buffer", async () => {
+  const root = makeWorkspace();
+  try {
+    // Saving what the reader truncated would silently delete the remainder.
+    const original = "x".repeat(512 * 1024 + 10);
+    writeFileSync(path.join(root, "huge.txt"), original);
+
+    await assert.rejects(
+      saveWorkspaceFile(root, { content: "just the first part", path: "huge.txt" }),
+      (error: { code?: string; status?: number }) =>
+        error.code === "file_too_large" && error.status === 413,
+    );
+    assert.equal(readFileSync(path.join(root, "huge.txt"), "utf8").length, original.length);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("an empty existing file is still editable", async () => {
+  const root = makeWorkspace();
+  try {
+    writeFileSync(path.join(root, "empty.md"), "");
+
+    await saveWorkspaceFile(root, { content: "# now it has content", path: "empty.md" });
+
+    assert.equal(readFileSync(path.join(root, "empty.md"), "utf8"), "# now it has content");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

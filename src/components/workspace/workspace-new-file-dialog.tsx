@@ -90,8 +90,10 @@ export function WorkspaceNewFileDialog({
             void createFile();
           }}
         >
+          {/* The placeholder used to suggest "notes/todo.md", which the server
+              404s unless "notes/" already exists — creating folders is wave 2. */}
           <label className="block text-xs text-(--text-muted)" htmlFor="workspace-new-file-path">
-            Path, relative to the workspace root
+            Path, relative to the workspace root. The folder must already exist.
           </label>
           <input
             ref={inputRef}
@@ -101,7 +103,7 @@ export function WorkspaceNewFileDialog({
               setValue(event.target.value);
               setError(null);
             }}
-            placeholder="notes/todo.md"
+            placeholder="todo.md"
             autoComplete="off"
             spellCheck={false}
             className="mt-2 h-9 w-full rounded-md border border-(--input-border) bg-(--chat-bg) px-3 font-mono text-sm text-(--text-primary) outline-none focus:border-(--accent)"

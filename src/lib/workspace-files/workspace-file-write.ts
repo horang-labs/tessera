@@ -3,6 +3,7 @@ import { getFilesystemPathModule } from "@/lib/filesystem/host-path";
 import {
   MAX_TEXT_FILE_BYTES,
   WorkspaceFileError,
+  isLikelyBinary,
   withFsDeadline,
 } from "./workspace-file-io";
 import {
@@ -120,6 +121,37 @@ async function statSaved(absolutePath: string, relativePath: string): Promise<Wo
 }
 
 /**
+ * Refuse to replace anything the read route would not have handed over as a
+ * whole text document.
+ *
+ * The editor already gates on `binary` and `truncated`, but that gate is in the
+ * browser: without this the same PUT would happily replace a PNG with UTF-8, or
+ * write back a buffer that only ever held the first 512 KB of a large file.
+ */
+async function assertReplaceableAsText(absolutePath: string, size: number): Promise<void> {
+  if (size > MAX_TEXT_FILE_BYTES) {
+    throw new WorkspaceFileError(
+      "file_too_large",
+      "This file is too large to edit, so it cannot be saved back",
+      413,
+    );
+  }
+
+  const handle = await withFsDeadline(fs.open(absolutePath, "r"));
+  try {
+    const sample = Buffer.alloc(Math.min(size, 8000));
+    if (sample.byteLength === 0) return;
+    const { bytesRead } = await withFsDeadline(handle.read(sample, 0, sample.byteLength, 0));
+    if (isLikelyBinary(sample.subarray(0, bytesRead))) {
+      throw new WorkspaceFileError("binary_file", "This file is binary and cannot be edited", 415);
+    }
+  } finally {
+    // Not awaited: close() can hang on the same stalled mounts the deadline guards.
+    void handle.close().catch(() => {});
+  }
+}
+
+/**
  * Overwrite an existing workspace file.
  *
  * `baseMtimeMs` is the optimistic lock: it is the mtime the client loaded, and
@@ -139,6 +171,9 @@ export async function saveWorkspaceFile(
   });
   if (currentStat && !currentStat.isFile()) {
     throw new WorkspaceFileError("invalid_file_path", "Path is not a file", 400);
+  }
+  if (currentStat) {
+    await assertReplaceableAsText(absolutePath, currentStat.size);
   }
   if (input.baseMtimeMs !== null && input.baseMtimeMs !== undefined) {
     if (!currentStat) {
