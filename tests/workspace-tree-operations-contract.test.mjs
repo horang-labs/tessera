@@ -27,14 +27,16 @@ test('every row action lives on the right-click menu, not on a hover strip', () 
     'workspace-delete-entry',
     'workspace-new-file-in-folder',
     'workspace-new-folder-in-folder',
-    'workspace-new-file"',
-    'workspace-new-folder"',
   ]) {
     assert.ok(
-      !filePanelSource.includes(`data-testid="${goneTestId}`),
-      `${goneTestId} must not be a row or header control any more`,
+      !filePanelSource.includes(`data-testid="${goneTestId}"`),
+      `${goneTestId} must not be a row control any more`,
     );
   }
+  // The panel's own two buttons stay: they sit in one place rather than
+  // following the pointer, and the user asked for them to be kept.
+  assert.match(filePanelSource, /data-testid="workspace-new-file"/);
+  assert.match(filePanelSource, /data-testid="workspace-new-folder"/);
   for (const item of ['new-file', 'new-folder', 'rename', 'delete']) {
     assert.match(contextMenuSource, new RegExp(`data-testid="workspace-context-${item}"`));
   }

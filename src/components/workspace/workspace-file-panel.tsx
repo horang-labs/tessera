@@ -5,9 +5,11 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  FilePlus2,
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   FolderTree,
   Link2,
   LoaderCircle,
@@ -672,9 +674,31 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-          {/* Creating lives on the right-click menu, on a row or on the empty
-              space below the tree — not on a header button and not on a strip
-              of icons that follows the pointer down the tree. */}
+          {/* Two buttons for the whole panel, always in the same place. What was
+              removed is the strip that followed the pointer down the tree — a
+              row's own actions are on its right-click menu. */}
+          <Tooltip content="New file">
+            <button
+              type="button"
+              onClick={() => inlineInput.startNew("file", "")}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              aria-label="New file"
+              data-testid="workspace-new-file"
+            >
+              <FilePlus2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+          <Tooltip content="New folder">
+            <button
+              type="button"
+              onClick={() => inlineInput.startNew("folder", "")}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              aria-label="New folder"
+              data-testid="workspace-new-folder"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
             <button
               type="button"

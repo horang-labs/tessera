@@ -387,3 +387,24 @@ times immediately after `npm run build` had written a production bundle into the
 `.next` directory the dev server was serving from. Deleting `.next` and restarting the dev
 server ended it, and it never recurred across the rework's passes. Not a product defect;
 recorded so the screenshots taken in that window are not misread.
+
+### Follow-up: the panel's own New file / New folder buttons stay
+
+The rework above had removed the header buttons along with the row strip. The user asked
+for those two back — and they are a different thing from what was wrong: they sit in one
+fixed place instead of appearing on whichever row the pointer crosses. Restored, creating
+at the workspace root, with the right-click menu still the path for creating *inside* a
+particular folder.
+
+Shipped header: **New file**, **New folder**, hidden-files toggle, search. Shipped row:
+chevron, icon, name, count — nothing else.
+
+```
+$ npx tsc --noEmit          → exit 0
+$ npm run lint              → 0 errors, the same 3 untouched-file warnings
+$ npx tsx --test <8 files>  → # tests 106  # pass 106  # fail 0
+```
+
+Browser: header **New folder** opens a focused placeholder at the root and Enter creates
+`header-button-works/` on disk; a query for the row-strip testids still returns **0**
+(`shots/23`).
