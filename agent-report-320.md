@@ -5,6 +5,8 @@ Branch: `feature/320-file-explorer`. Not pushed, not merged, no PR.
 - `9f8111f` feat(workspace): delete, rename and create folders on the server
 - `9fd3d90` feat(workspace): rename, delete and create folders from the Files panel
 - `2e6c44d` fix(workspace): write the dirty-registry separator as an escape
+- `f03f0e7` docs: add agent-report-320
+- `e46dc16` fix(workspace): address the two-axis review
 
 ## The `workspace-explorer-tab.tsx` question — deleted
 
@@ -60,8 +62,9 @@ symbol, so it cannot quietly come back.
   - `renameWorkspaceEntry` — takes a bare name via `parseWorkspaceEntryName`, which rejects
     both separators, both dot segments, NUL and empty. Explicit exists-check before
     `fs.rename`, because `fs.rename` is *defined* to replace its target silently. The check
-    compares resolved entries, not path strings, so a case-only rename on a
-    case-insensitive filesystem (macOS, Windows) is not refused as a collision with itself.
+    compares entries by inode, not by resolved path, so a case-only rename on a
+    case-insensitive filesystem (macOS, Windows) is not refused as a collision with itself
+    while two links to one target stay two entries (see the Spec review below).
   - `createWorkspaceDirectory` — plain `mkdir`, not `mkdir -p`: `EEXIST` is the 409 the
     duplicate refusal is built on, atomically, and a typo mid-path is a 404 rather than a
     surprise tree of empty folders.
@@ -120,16 +123,17 @@ $ npx tsx --test tests/workspace-file-mutations.test.ts \
     tests/workspace-file-watch-manager.test.ts tests/workspace-file-write.test.ts \
     tests/workspace-file-write-target.test.ts tests/workspace-file-editing-contract.test.mjs \
     tests/file-read-timeout-contract.test.mjs tests/workspace-self-write-registry.test.ts
-# tests 98
-# pass 96
+# tests 102
+# pass 100
 # fail 2
 ```
 
 | File | Tests | Covers |
 |---|---|---|
-| `tests/workspace-file-mutations.test.ts` (new) | 18 | Real temp-dir workspaces: file delete, recursive folder delete, the non-empty refusal, 404, the stale-baseline 409, traversal refusal; the rename name table, same-directory rename, the duplicate 409 for files *and* folders (with both entries verified intact), the separator refusal, rename-onto-itself; folder create, the duplicate 409 against a folder and against a file, `parent_not_found`, traversal refusal; and the subtree-prefix rule behind the tab sync. |
-| `tests/workspace-tree-operations-contract.test.mjs` (new) | 12 | Client and route invariants with no DOM rig here: both row kinds carry Rename and Delete, folders can be created at the root and per row, the confirmation copy, the dirty registry reaching the confirmation, `recursive` sent only for a folder, tabs following a rename and closing on a delete, auth-before-body on both routes, every fs call under `withFsDeadline`, the absence of agent-environment escape hatches, the uniform `directories` shape, and that the deleted explorer stays deleted. |
-| `tests/workspace-file-scan.test.ts` | +1 | Directories reported including an empty one, with ignored dirs still pruned. |
+| `tests/workspace-file-mutations.test.ts` (new) | 21 | Real temp-dir workspaces: file delete, recursive folder delete, the non-empty refusal, 404, the stale-baseline 409, traversal refusal; the rename name table, same-directory rename, the duplicate 409 for files *and* folders (with both entries verified intact), the separator refusal, rename-onto-itself; folder create, the duplicate 409 against a folder and against a file, `parent_not_found`, traversal refusal; two links to one target and two hard links each
+staying two entries; and the subtree-prefix rule behind the tab sync. |
+| `tests/workspace-tree-operations-contract.test.mjs` (new) | 13 | Client and route invariants with no DOM rig here: both row kinds carry Rename and Delete, folders can be created at the root and per row, the confirmation copy, the dirty registry reaching both the delete and the rename confirmation, `recursive` sent only for a folder, tabs following a rename and closing on a delete, auth-before-body on both routes, every fs call under `withFsDeadline`, the absence of agent-environment escape hatches, the uniform `directories` shape, and that the deleted explorer stays deleted. |
+| `tests/workspace-file-scan.test.ts` | +2 | Directories reported including an empty one, with ignored dirs still pruned; and files and directories sharing one cap. |
 | `tests/workspace-file-watch-manager.test.ts` | +1 | An empty folder reaches the index, and creating **and** removing one notifies subscribers. |
 
 **The 2 failures are pre-existing and unrelated** — `file-read-timeout-contract.test.mjs`
@@ -265,4 +269,95 @@ reproduce the case-insensitive collision itself. Worth a look on macOS or Window
 
 ## Sub-agent review
 
-_(filled in below when both axes return)_
+Both axes were spawned in parallel and both returned. Neither sent its report as a plain
+final message — each surfaced only as an idle notification — so both had to be asked again
+for the text; worth knowing for the next wave.
+
+Everything acted on is in `e46dc16`.
+
+### Spec axis — four findings, two of them real defects
+
+1. **`namesTheSameEntry` treated two distinct symlinks as one entry.** Real, and the worst
+   thing found. Identity was decided by comparing `fs.realpath` results, and two links
+   pointing at the same file resolve alike — so renaming link `a` onto link `b` skipped the
+   duplicate refusal and `fs.rename` destroyed `b`. Against the AC directly: *"Renaming onto
+   a name that already exists is refused with a visible error, and neither file is
+   modified."* Identity is now decided by **inode** (`lstat` `dev`+`ino`), with a
+   case-insensitive name check so two hard links stay two entries. Two new tests cover the
+   symlink pair and the hard-link pair; the case-only rename this comparison exists for
+   still passes.
+2. **The directory cap truncated file enumeration.** Real. `if (dirs.length >= limit)`
+   aborted `recurse` mid-directory, dropping the files in that directory the walk had not
+   reached yet, and files and directories each carried their own `MAX_WORKSPACE_FILES`
+   budget, so the index could reach twice the intended size. They now spend one shared
+   budget, and `applyMaxFiles` judges `truncated` on the two together. New test.
+3. **Rename discarded an unsaved draft silently.** Real, and I had missed the asymmetry:
+   delete warns, rename did not — but `repointWorkspaceFileTabs` swaps the panel's session
+   id and `panel-container.tsx` keys the tab on it, so the tab remounts and the draft goes
+   with the old path. The rename dialog now carries the same warning, off the same registry.
+4. **`findRenameTarget` was not confirmed, as the ticket asked** (*"confirm it covers the
+   rename this ticket issues, and extend it only if it does not"*). Fair — I read it and
+   judged it insufficient without writing that down. It is: it fires only when the watcher
+   batches exactly one delete and one add in the same directory, which a debounce boundary
+   or any concurrent write breaks, and it only runs for a tab that is mounted and
+   subscribed. Hence the explicit re-point. The two do not fight: whichever lands first
+   moves the tab, and the other then finds nothing matching its old path. Left as is, now
+   recorded.
+
+Not adopted, with reasons:
+
+- **`baseMtimeMs` on DELETE/PATCH called scope creep.** The reviewer read `ticket-b.md`
+  alone, where the contract lines omit it; the wave brief states *"Optimistic-lock policy
+  for rename/delete: same `baseMtimeMs` convention as wave 1's write route"*, so it was
+  asked for. The reviewer is right that **nothing in the UI sends it** — the file list
+  carries no mtime, only an open tab has a baseline. Kept, and the comment now says plainly
+  that the explorer never reaches it rather than claiming a protection that is not running.
+- **The non-recursive delete branch called unreachable.** True from the app, deliberately:
+  it is the guard for any other caller, so a request without an explicit `recursive` cannot
+  take a tree with it. Now says so in the code.
+- The reviewer independently agreed the `workspace-explorer-tab.tsx` deletion was
+  defensible and that keeping the pre-existing tree does not violate *"Do NOT build a tree
+  view"* — *"nothing new was built; directory rows were fed into the list that was already
+  there."*
+
+### Standards axis — zero hard violations, eight judgement calls
+
+No documented standard is breached: the agent-environment rules, the `src/lib` →
+`git-panel-shared` import (precedented at `src/lib/git/git-panel-read.ts:12`), and the
+registry-module shape all check out.
+
+Fixed:
+
+- **A JSDoc had drifted onto the wrong symbol** — the "Remove a file or directory…" block
+  sat above `assertUnchangedSince`, leaving `deleteWorkspaceEntry` undocumented. A real
+  mistake, now on the function it describes.
+- **A dead re-export** (`export { WorkspaceFileError }`) that no importer used. Gone.
+- **The Rename/Delete pair was written out twice**, once per row kind. Now one
+  `RowMutationActions`; only what the click means differs.
+- **Not a smell, but flagged**: `visibleDirectories` tested every folder against every
+  visible file — the product of the two, on every keystroke, over a tree that can hold
+  twenty thousand entries. The ancestors are now collected once into a set.
+
+Left, with reasons:
+
+- **`applyMaxFiles(fileSet, symlinkSet?, directorySet?)` as a data clump**, and
+  `WorkspaceWatchEntry` holding the three sets side by side. Bundling them into a type is a
+  fair refactor of wave 1's signature and of the watch entry, which this ticket has no
+  reason to churn.
+- **`workspace-file-panel.tsx` doing tree rendering, search, dialog state and mutation
+  orchestration** (divergent change). Real, and the honest fix is a hook for the mutation
+  half. It would touch every call site in the component for no behaviour change, in the
+  file the QA above exercises; better as its own change.
+- **`WorkspaceEntryNameDialog`'s nine props.** Five are presentation strings that travel
+  together and could be one object. The component is used twice, and the flat props are
+  what make each call site readable.
+
+### Re-verification after these fixes
+
+`npx tsc --noEmit` clean; `npx eslint src tests` 0 errors. Targeted tests **102 tests, 100
+pass, 2 fail** — the same two pre-existing `git-panel.ts` failures.
+
+Browser, on a fresh server and a reset fixture: folder create, file rename, folder delete
+with its contents warning, and an external `mkdir` appearing on its own all still pass after
+the row-action refactor (`shots/19`), and the new rename warning shows for a dirty buffer
+(`shots/18`).
