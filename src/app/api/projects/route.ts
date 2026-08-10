@@ -9,7 +9,6 @@ import {
 } from '@/lib/filesystem/path-environment';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { SettingsManager } from '@/lib/settings/manager';
-import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 
 /**
  * POST /api/projects — Register a project directory (no session creation).
@@ -26,7 +25,6 @@ export async function POST(req: NextRequest) {
   }
 
   const settings = await SettingsManager.load(auth.userId);
-  await routeCanonicalWorktreePaths(settings.agentEnvironment);
   let resolvedPath: string;
   try {
     resolvedPath = (await resolveBrowsePath(

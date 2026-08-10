@@ -246,6 +246,7 @@ export interface I18nMessages {
       loadingProviders: string;
       empty: string;
       disconnected: string;
+      checkFailed: string;
       active: string;
       refresh: string;
       refreshProviders: string;

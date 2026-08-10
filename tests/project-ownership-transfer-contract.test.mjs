@@ -47,10 +47,10 @@ test('Project ownership transfer API and UI are unavailable', () => {
   assert.match(sessionFilesRoute, /getProjectViewReferenceSessions\(projectId/);
   assert.match(sessionFilesRoute, /projectId is required for Project View references/);
   assert.doesNotMatch(sessionFilesRoute, /WHERE project_id = \?/);
-  assert.ok(
-    sessionFilesRoute.indexOf('await routeCanonicalWorktreePaths(agentEnvironment)')
-      < sessionFilesRoute.indexOf('getProjectViewReferenceSessions(projectId'),
-    'canonical path routing must complete before the Project View reference read',
+  assert.doesNotMatch(
+    sessionFilesRoute,
+    /routeCanonicalWorktreePaths/,
+    'Project View reference reads must not reconcile or mutate stored paths',
   );
 
   const translations = [

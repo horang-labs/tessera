@@ -20,6 +20,7 @@ import { useTaskStore } from '@/stores/task-store';
 import { useTabStore } from '@/stores/tab-store';
 import {
   parseMemoryFileSessionId,
+  parseWorktreeFileSessionId,
   parseWorkspaceExplorerSessionId,
   parseWorkspaceFileSessionId,
 } from '@/lib/workspace-tabs/special-session';
@@ -93,6 +94,10 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
       if (explorerRef) return <WorkspaceExplorerTab key={sessionId} explorerRef={explorerRef} />;
       const fileRef = parseWorkspaceFileSessionId(sessionId);
       if (fileRef) return <WorkspaceFileTab key={sessionId} fileRef={fileRef} panelId={panelId} />;
+      const worktreeFileRef = parseWorktreeFileSessionId(sessionId);
+      if (worktreeFileRef) {
+        return <WorkspaceFileTab key={sessionId} fileRef={worktreeFileRef} panelId={panelId} />;
+      }
       const memoryRef = parseMemoryFileSessionId(sessionId);
       if (memoryRef) return <MemoryFileTab key={sessionId} memoryRef={memoryRef} panelId={panelId} />;
     }

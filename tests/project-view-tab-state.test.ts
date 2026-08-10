@@ -150,3 +150,31 @@ test('an explicit Project lookup never leaks another Project Collection placemen
   assert.equal(sessionInC?.collectionId, undefined);
   assert.equal(sessionInC?.originProjectId, 'project-a');
 });
+
+test('a retained Session projection keeps a stable selector reference', () => {
+  resetWorkspace();
+  const retained = {
+    ...sharedSession,
+    collectionId: 'collection-a',
+  };
+  useSessionStore.setState({
+    ...useSessionStore.getInitialState(),
+    projects: [
+      { ...project('project-a'), sessions: [] },
+      { ...project('project-c'), sessions: [] },
+    ],
+    retainedSessions: { [retained.id]: retained },
+  });
+
+  const first = useSessionStore.getState().getSession(retained.id, 'project-c');
+  const second = useSessionStore.getState().getSession(retained.id, 'project-c');
+  assert.strictEqual(second, first);
+  assert.equal(first?.projectDir, 'project-c');
+  assert.equal(first?.collectionId, undefined);
+
+  const updated = { ...retained, title: 'Updated conversation' };
+  useSessionStore.setState({ retainedSessions: { [updated.id]: updated } });
+  const afterUpdate = useSessionStore.getState().getSession(updated.id, 'project-c');
+  assert.notStrictEqual(afterUpdate, first);
+  assert.equal(afterUpdate?.title, 'Updated conversation');
+});

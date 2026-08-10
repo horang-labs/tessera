@@ -9,8 +9,6 @@ import { broadcastTaskMutation, getOriginClientIdFromRequest } from '@/lib/ws/mu
 import logger from '@/lib/logger';
 import { pathExists } from '@/lib/filesystem/path-exists';
 import { getProjectViewWorktrees } from '@/lib/projects/project-view-projection';
-import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
-import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 import { getProjectWorktree } from '@/lib/db/projects';
 
 /**
@@ -28,7 +26,6 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    await routeCanonicalWorktreePaths(await getAgentEnvironment(userId));
     const activeSessionIds = getActiveSessionIds(userId);
     const rawTasks = getProjectViewWorktrees(projectId, activeSessionIds);
     const worktreePresence = await Promise.all(

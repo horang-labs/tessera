@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import chokidar from 'chokidar';
 import logger from '@/lib/logger';
+import {
+  parseWslUncRoot,
+  WslInotifyBridge,
+} from '@/lib/workspace-files/wsl-inotify-bridge';
 import type {
   ProviderTerminalSessionObservation,
   ProviderTerminalSessionObserver,
@@ -9,6 +13,12 @@ import type {
 
 export interface ProviderSessionArtifactCandidate extends ProviderTerminalSessionObservation {
   previousProviderSessionId: string;
+}
+
+export function getTerminalSessionArtifactWatchBackend(
+  root: string,
+): 'wsl-inotify' | 'chokidar' {
+  return parseWslUncRoot(root) ? 'wsl-inotify' : 'chokidar';
 }
 
 export function createTerminalSessionArtifactObserver(options: {
@@ -27,6 +37,7 @@ export function createTerminalSessionArtifactObserver(options: {
   const retryTimers = new Set<ReturnType<typeof setTimeout>>();
   let disposed = false;
   let watcher: ReturnType<typeof chokidar.watch> | null = null;
+  let wslBridge: WslInotifyBridge | null = null;
   let resolveReady!: () => void;
   const readyPromise = new Promise<void>((resolve) => { resolveReady = resolve; });
   let readySettled = false;
@@ -62,6 +73,29 @@ export function createTerminalSessionArtifactObserver(options: {
     if (disposed) return;
     fs.mkdirSync(root, { recursive: true });
 
+    const wslRoot = parseWslUncRoot(root);
+    if (wslRoot) {
+      const bridge = new WslInotifyBridge({
+        root: wslRoot,
+        onEvent: ({ eventName, relativePath }) => {
+          if (eventName !== 'add' && eventName !== 'change') return;
+          if (options.matchesPath(relativePath)) inspect(root, relativePath);
+        },
+        onEstablished: markReady,
+        onDown: (reason) => {
+          markReady();
+          logger.warn({ reason, root }, 'Provider session artifact WSL watcher stopped');
+        },
+      });
+      wslBridge = bridge;
+      if (disposed) {
+        bridge.stop();
+        return;
+      }
+      bridge.start();
+      return;
+    }
+
     const started = chokidar.watch(root, {
       atomic: true,
       awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 10 },
@@ -88,6 +122,11 @@ export function createTerminalSessionArtifactObserver(options: {
     started.on('ready', markReady);
     started.on('error', (error) => {
       markReady();
+      // Chokidar can emit one error per descendant when an underlying watcher
+      // fails. Close on the first error so logging cannot starve the server.
+      if (watcher !== started) return;
+      watcher = null;
+      void started.close();
       logger.warn({ error, root }, 'Provider session artifact watcher failed');
     });
   };
@@ -105,7 +144,10 @@ export function createTerminalSessionArtifactObserver(options: {
       if (disposed) return;
       disposed = true;
       markReady();
+      wslBridge?.stop();
+      wslBridge = null;
       void watcher?.close();
+      watcher = null;
       for (const timer of retryTimers) clearTimeout(timer);
       retryTimers.clear();
     },

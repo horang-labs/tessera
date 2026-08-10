@@ -4,7 +4,6 @@ import { resolveSessionWorkspaceFilesystemRoot } from '@/lib/session/session-wor
 import { readWorkspaceRootFiles } from '@/lib/workspace-files/read-workspace-root';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { getProjectViewReferenceSessions } from '@/lib/projects/project-view-projection';
-import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 
 export async function GET(
   request: NextRequest,
@@ -27,7 +26,6 @@ export async function GET(
     );
   }
   const agentEnvironment = await getAgentEnvironment(auth.userId);
-  await routeCanonicalWorktreePaths(agentEnvironment);
   const refs = getProjectViewReferenceSessions(projectId, id);
 
   const root = await resolveSessionWorkspaceFilesystemRoot(id, {

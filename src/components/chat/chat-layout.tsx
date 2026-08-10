@@ -54,6 +54,8 @@ import { activateSessionPanel } from "@/lib/session/focus-session-panel";
 import { resolveSessionTabOpenMode } from "@/lib/terminal/terminal-preview-policy";
 import { useEffectiveViewMode } from "@/hooks/use-effective-view-mode";
 import { findCompositeWorktreeId } from "@/lib/worktrees/linked-worktree-presentation";
+import { WorktreePeek } from "@/components/worktree/worktree-peek";
+import { useWorkspacePeekStore } from "@/stores/workspace-peek-store";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -115,10 +117,19 @@ export function ChatLayout() {
     const activeTabData = state.tabPanels[activeTabId];
     return activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
   });
+  const activePanelId = usePanelStore((state) =>
+    state.tabPanels[activeTabId]?.activePanelId ?? null
+  );
   const activePanelWorktreeId = usePanelStore((state) => {
     const activeTabData = state.tabPanels[activeTabId];
     return activeTabData?.panels[activeTabData.activePanelId]?.worktreeId ?? null;
   });
+  const peekWorktreeId = useWorkspacePeekStore(
+    (state) => state.target?.worktreeId ?? null,
+  );
+  const peekProjectDir = useWorkspacePeekStore(
+    (state) => state.target?.projectDir ?? null,
+  );
   const activeTabProjectDir = useTabStore((state) =>
     state.tabs.find((tab) => tab.id === activeTabId)?.projectDir ?? null
   );
@@ -137,9 +148,10 @@ export function ChatLayout() {
         activePanelSessionId,
         activeSessionId,
       });
-  const activeGitWorktreeId = isKanbanPeekMode && selectedBoardSessionId
-    ? null
-    : activePanelWorktreeId ?? compositeWorktreeId;
+  const activeGitWorktreeId = peekWorktreeId
+    ?? (isKanbanPeekMode && selectedBoardSessionId
+      ? null
+      : activePanelWorktreeId ?? compositeWorktreeId);
 
   const markSessionAsRead = useNotificationStore(
     (state) => state.markSessionAsRead,
@@ -165,6 +177,8 @@ export function ChatLayout() {
   // BR-PERSIST-001: persist tab/panel state with a short debounce.
   const persistDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const kanbanScrollAnchorRef = useRef<{ rightEdge: number; atEnd: boolean } | null>(null);
+  const activeWorkspaceIdentity = `${activeTabId}:${activePanelId ?? ''}:${activePanelSessionId ?? ''}`;
+  const peekWorkspaceIdentityRef = useRef(activeWorkspaceIdentity);
   const [viewportWidth, setViewportWidth] = useState(getViewportWidth);
   const initiallyHasProjects = projects.length > 0;
   const projectsLoadedRef = useRef(initiallyHasProjects);
@@ -212,6 +226,23 @@ export function ChatLayout() {
     const timeoutId = globalThis.setTimeout(preload, 1000);
     return () => globalThis.clearTimeout(timeoutId);
   }, []);
+
+  useEffect(function closeWorktreePeekOutsideItsProject() {
+    if (!peekProjectDir) return;
+    const projectStillVisible = selectedProjectDir === peekProjectDir
+      || selectedProjectDir === ALL_PROJECTS_SENTINEL;
+    if (renderedViewMode !== 'list' || !projectStillVisible) {
+      useWorkspacePeekStore.getState().close();
+    }
+  }, [peekProjectDir, renderedViewMode, selectedProjectDir]);
+
+  useEffect(function closeWorktreePeekWhenWorkspaceChanges() {
+    const previousIdentity = peekWorkspaceIdentityRef.current;
+    peekWorkspaceIdentityRef.current = activeWorkspaceIdentity;
+    if (peekProjectDir && previousIdentity !== activeWorkspaceIdentity) {
+      useWorkspacePeekStore.getState().close();
+    }
+  }, [activeWorkspaceIdentity, peekProjectDir]);
 
   const captureKanbanScrollAnchor = useCallback(() => {
     const scrollArea = getKanbanScrollArea();
@@ -587,7 +618,16 @@ export function ChatLayout() {
           {!isKanbanPeekLayout && (
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <TabBar />
-              <TabPanelHost />
+              <div className="relative flex min-h-0 flex-1 overflow-hidden">
+                <div
+                  className="flex min-h-0 flex-1"
+                  aria-hidden={peekWorktreeId ? true : undefined}
+                  inert={peekWorktreeId ? true : undefined}
+                >
+                  <TabPanelHost />
+                </div>
+                <WorktreePeek />
+              </div>
             </div>
           )}
 

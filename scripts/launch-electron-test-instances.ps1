@@ -94,17 +94,43 @@ function Initialize-TestData {
   return $databaseHash
 }
 
-function Test-TcpPortOpen {
+function Test-TcpPortBindable {
   param([Parameter(Mandatory = $true)][int]$Port)
 
-  $client = [System.Net.Sockets.TcpClient]::new()
+  $listener = [System.Net.Sockets.TcpListener]::new(
+    [System.Net.IPAddress]::Loopback,
+    $Port
+  )
   try {
-    $pending = $client.ConnectAsync('127.0.0.1', $Port)
-    return $pending.Wait(200) -and $client.Connected
+    # A connect probe cannot distinguish a free port from a Windows-excluded
+    # port. Binding catches both a live listener and WSAEACCES exclusions.
+    $listener.Start()
+    return $true
   } catch {
     return $false
   } finally {
-    $client.Dispose()
+    $listener.Stop()
+  }
+}
+
+function Test-TcpPortClaimed {
+  param([Parameter(Mandatory = $true)][int]$Port)
+
+  if (-not (Test-TcpPortBindable -Port $Port)) {
+    return $true
+  }
+
+  # Chromium can retain a live process with an assigned debugging port while
+  # its endpoint is temporarily not listening. Reusing that command-line port
+  # makes the new instance start without a CDP owner and leaves a failed test
+  # process behind, so treat the live claim as occupied too.
+  $argument = "--remote-debugging-port=$Port"
+  try {
+    return $null -ne (Get-CimInstance Win32_Process -ErrorAction Stop |
+      Where-Object { $_.CommandLine -like "*$argument*" } |
+      Select-Object -First 1)
+  } catch {
+    throw "Cannot verify whether TCP port $Port is claimed by a live Chromium process"
   }
 }
 
@@ -117,7 +143,7 @@ function Find-AvailableTcpPort {
   )
 
   for ($candidate = $StartPort; $candidate -le 65535; $candidate += 1) {
-    if (-not $ReservedPorts.Contains($candidate) -and -not (Test-TcpPortOpen -Port $candidate)) {
+    if (-not $ReservedPorts.Contains($candidate) -and -not (Test-TcpPortClaimed -Port $candidate)) {
       $ReservedPorts.Add($candidate) | Out-Null
       return $candidate
     }
@@ -232,7 +258,24 @@ foreach ($name in $environmentNames) {
 
 $results = @()
 $reservedPorts = [System.Collections.Generic.HashSet[int]]::new()
+$portAllocationMutex = [System.Threading.Mutex]::new(
+  $false,
+  'Local\TesseraElectronTestPortAllocation'
+)
+$portAllocationMutexHeld = $false
 try {
+  if (-not $PrepareOnly) {
+    try {
+      $portAllocationMutexHeld = $portAllocationMutex.WaitOne(600000)
+    } catch [System.Threading.AbandonedMutexException] {
+      # The abandoned mutex is acquired by this thread when the exception is raised.
+      $portAllocationMutexHeld = $true
+    }
+    if (-not $portAllocationMutexHeld) {
+      throw 'Timed out waiting for concurrent Electron test port allocation'
+    }
+  }
+
   for ($offset = 0; $offset -lt $Count; $offset += 1) {
     $index = $StartIndex + $offset
     if ($Count -eq 1 -and $StartIndex -eq 1) {
@@ -324,6 +367,10 @@ try {
     }
   }
 } finally {
+  if ($portAllocationMutexHeld) {
+    $portAllocationMutex.ReleaseMutex()
+  }
+  $portAllocationMutex.Dispose()
   foreach ($name in $environmentNames) {
     [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process')
   }

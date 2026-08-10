@@ -29,6 +29,33 @@ import {
   type SessionRuntimeLiveness,
 } from '@/lib/session/session-runtime-liveness';
 
+const projectedSessionCache = new WeakMap<
+  UnifiedSession,
+  Map<string, UnifiedSession>
+>();
+
+/**
+ * Zustand selectors must return the same reference while their source state is
+ * unchanged. React 19 treats a freshly allocated fallback on every snapshot as
+ * an endlessly changing external store and eventually throws error #185.
+ */
+function projectSessionIntoView(
+  session: UnifiedSession,
+  projectDir: string,
+): UnifiedSession {
+  let projections = projectedSessionCache.get(session);
+  if (!projections) {
+    projections = new Map();
+    projectedSessionCache.set(session, projections);
+  }
+  const cached = projections.get(projectDir);
+  if (cached) return cached;
+
+  const projected = { ...session, projectDir, collectionId: undefined };
+  projections.set(projectDir, projected);
+  return projected;
+}
+
 
 export interface SessionState {
   // Core state - NEW (project-grouped)
@@ -1153,7 +1180,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         .find((session) => session.id === sessionId)
         ?? retainedSessions[sessionId];
       return canonicalSession
-        ? { ...canonicalSession, projectDir, collectionId: undefined }
+        ? projectSessionIntoView(canonicalSession, projectDir)
         : undefined;
     }
     for (const project of projects) {

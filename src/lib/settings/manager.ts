@@ -17,7 +17,10 @@ export class SettingsManager {
     return path.join(SETTINGS_DIR, `${userId}.json`);
   }
 
-  static async load(userId: string, options: { silent?: boolean } = {}): Promise<UserSettings> {
+  static async load(
+    userId: string,
+    options: { silent?: boolean; strict?: boolean } = {},
+  ): Promise<UserSettings> {
     try {
       await this.ensureDir();
       const filePath = this.getFilePath(userId);
@@ -35,6 +38,7 @@ export class SettingsManager {
         }
         return DEFAULT_SETTINGS;
       }
+      if (options.strict) throw error;
       logger.error({ userId, error }, 'Failed to load settings');
       return DEFAULT_SETTINGS;
     }

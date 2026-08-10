@@ -25,6 +25,8 @@ import {
   buildOriginProjectRepresentation,
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
+import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -128,6 +130,7 @@ function AllProjectSection({
   const toggleCollectionCollapse = useBoardStore((state) => state.toggleCollectionCollapse);
   const isExpanded = useBoardStore((state) => state.allProjectsExpandedSections?.[project.encodedDir] ?? false);
   const toggleAllProjectsSection = useBoardStore((state) => state.toggleAllProjectsSection ?? (() => {}));
+  const peekWorktreeId = useWorkspacePeekStore((state) => state.target?.worktreeId ?? null);
 
   const {
     draggingItem,
@@ -225,19 +228,28 @@ function AllProjectSection({
     }
   }, [collectionsLoaded, isProjectQuickCreateOpen, project.encodedDir]);
 
+  const handleProjectWorktreeSelect = useCallback(() => {
+    const projectWorktree = project.projectWorktree;
+    if (!projectWorktree) return;
+    useWorkspacePeekStore.getState().openWorktree(
+      projectWorktree.id,
+      project.encodedDir,
+    );
+  }, [project.encodedDir, project.projectWorktree]);
+
   return (
     <div className="relative mb-3 mt-3 first:mt-1" data-testid={`all-project-section-${project.encodedDir}`}>
       <div
         className={cn(
           'flex items-center gap-1 rounded-md py-1.5 pl-0.5 pr-2 transition-colors',
-          'cursor-pointer hover:bg-(--sidebar-hover)'
+          'cursor-pointer hover:bg-(--sidebar-hover)',
         )}
         onClick={() => toggleAllProjectsSection(project.encodedDir)}
       >
         <ChevronRight
           className={cn(
             'h-3 w-3 shrink-0 text-(--text-muted) transition-transform duration-200',
-            isExpanded && 'rotate-90'
+            isExpanded && 'rotate-90',
           )}
         />
         <div
@@ -254,8 +266,9 @@ function AllProjectSection({
         <span className="shrink-0 tabular-nums text-[0.625rem] text-(--text-muted)">
           {sectionSessionCount}
         </span>
-        {project.isCurrent && <Pin className="h-3 w-3 shrink-0 text-(--accent)" />}
+        {project.isCurrent ? <Pin className="h-3 w-3 shrink-0 text-(--accent)" /> : null}
         <button
+          type="button"
           onClick={handleProjectQuickCreateToggle}
           className="shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-bg) hover:text-(--accent)"
           title={t('sidebar.createNewSession')}
@@ -280,6 +293,14 @@ function AllProjectSection({
 
       {isExpanded && (
         <div className="ml-2">
+          {project.projectWorktree ? (
+            <CompactProjectWorktreeRow
+              active={peekWorktreeId === project.projectWorktree.id}
+              branch={project.projectWorktree.currentBranch}
+              displayPath={project.projectWorktree.displayPath}
+              onSelect={handleProjectWorktreeSelect}
+            />
+          ) : null}
           {shouldShowLoading ? (
             <div className="px-4 py-3 text-[0.6875rem] text-(--text-muted)">
               {t('common.loading')}

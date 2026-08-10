@@ -271,6 +271,7 @@ export const ko: I18nMessages = {
       loadingProviders: '프로바이더를 불러오는 중…',
       empty: '등록된 CLI 프로바이더가 없습니다.',
       disconnected: 'WebSocket 연결이 끊어졌습니다. 페이지를 새로 열거나 연결 상태를 확인하세요.',
+      checkFailed: 'CLI 상태 확인에 실패했습니다. 이전 결과를 유지했습니다. 다시 시도하세요.',
       active: '사용 중',
       refresh: '새로고침',
       refreshProviders: '프로바이더 다시 확인',

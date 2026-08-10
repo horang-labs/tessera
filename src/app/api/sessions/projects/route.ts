@@ -1,4 +1,3 @@
-import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { processManager } from '@/lib/cli/process-manager';
 import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
@@ -16,7 +15,6 @@ import {
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
 import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
-import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -48,24 +46,10 @@ export async function GET(req: NextRequest) {
     const generatingSessionIds = processManager.getGeneratingSessionIds();
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
     const agentEnvironment = await getAgentEnvironment(userId);
-    await routeCanonicalWorktreePaths(agentEnvironment);
 
     // Current project directory (matches projects.id which is now the absolute path)
     const currentProjectId = process.cwd();
     const shouldRegisterCurrentProject = shouldAutoRegisterCurrentProject(currentProjectId);
-
-    // Ensure the currently running workspace always appears in the project list.
-    // This matters for sibling worktrees because the Tessera DB is shared across
-    // worktrees, but a fresh worktree may not be registered yet. Packaged
-    // Electron runs the server from the app resources directory, which is not a
-    // user project and must not be auto-imported.
-    if (shouldRegisterCurrentProject && !dbProjects.isRegistered(currentProjectId)) {
-      dbProjects.registerProject(
-        currentProjectId,
-        currentProjectId,
-        path.basename(currentProjectId)
-      );
-    }
 
     // Load all registered projects from DB
     const projects = dbProjects

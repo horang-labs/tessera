@@ -32,13 +32,13 @@ export function WorktreeOverview({ branch, displayPath, label, onNewSession, onN
         {(onNewSession || onNewWorktree) && (
           <div className="mt-6 flex flex-wrap gap-2">
             {onNewSession && (
-              <button type="button" onClick={onNewSession} className="inline-flex items-center gap-2 rounded-md bg-(--accent) px-3 py-2 text-sm font-medium text-white">
+              <button type="button" onClick={onNewSession} className="inline-flex min-h-11 items-center gap-2 rounded-md bg-(--accent) px-3 py-2 text-sm font-medium text-white">
                 <MessageSquarePlus className="h-4 w-4" />
                 New Session
               </button>
             )}
             {onNewWorktree && (
-              <button type="button" onClick={onNewWorktree} className="inline-flex items-center gap-2 rounded-md border border-(--input-border) px-3 py-2 text-sm font-medium text-(--text-primary) hover:bg-(--sidebar-hover)">
+              <button type="button" onClick={onNewWorktree} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-(--input-border) px-3 py-2 text-sm font-medium text-(--text-primary) hover:bg-(--sidebar-hover)">
                 <GitFork className="h-4 w-4" />
                 New Worktree
               </button>

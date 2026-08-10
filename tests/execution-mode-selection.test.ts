@@ -7,6 +7,7 @@ import {
   getExecutionModeSelectorOptions,
 } from '@/components/session/execution-mode-selector';
 import {
+  resolveAllProjectsDefaultProjectId,
   resolveEmptyPanelProjectId,
   shouldLaunchFromEmptyPanelShortcut,
 } from '@/components/panel/empty-panel-state';
@@ -76,6 +77,22 @@ test('All Projects defaults to the most recently active conversation project whe
   assert.equal(resolveLastActiveProjectDir(projects, 'project-b'), 'project-b');
   assert.equal(resolveLastActiveProjectDir(projects, 'removed-project'), null);
   assert.equal(resolveLastActiveProjectDir(projects, null), null);
+});
+
+test('All Projects creation prefers the active tab project over the last active project', () => {
+  const projects = [
+    { encodedDir: 'project-a' },
+    { encodedDir: 'project-b' },
+  ];
+
+  assert.equal(
+    resolveAllProjectsDefaultProjectId(projects, 'project-b', 'project-a'),
+    'project-b',
+  );
+  assert.equal(
+    resolveAllProjectsDefaultProjectId(projects, null, 'project-a'),
+    'project-a',
+  );
 });
 
 test('a standalone shell honors the project cwd selected in the launcher', () => {

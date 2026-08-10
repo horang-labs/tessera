@@ -4,6 +4,7 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export const WORKSPACE_EXPLORER_SESSION_PREFIX = "__workspace-explorer__|" as const;
 export const WORKSPACE_FILE_SESSION_PREFIX = "__workspace-file__|" as const;
+export const WORKTREE_FILE_SESSION_PREFIX = "__worktree-file__|" as const;
 export const MEMORY_FILE_SESSION_PREFIX = "__memory-file__|" as const;
 
 export type WorkspaceFileTabKind = "file" | "diff";
@@ -19,6 +20,15 @@ export interface WorkspaceFileSessionRef {
   kind: WorkspaceFileTabKind;
   path: string;
 }
+
+export interface WorktreeFileSessionRef {
+  type: "worktree-file";
+  sourceWorktreeId: string;
+  kind: "file";
+  path: string;
+}
+
+export type WorkspaceFileRef = WorkspaceFileSessionRef | WorktreeFileSessionRef;
 
 export interface MemoryFileSessionRef {
   type: "memory-file";
@@ -38,6 +48,13 @@ export function buildWorkspaceFileSessionId(
   filePath: string,
 ): string {
   return `${WORKSPACE_FILE_SESSION_PREFIX}${encodeURIComponent(sourceSessionId)}|${encodeURIComponent(kind)}|${encodeURIComponent(filePath)}`;
+}
+
+export function buildWorktreeFileSessionId(
+  sourceWorktreeId: string,
+  filePath: string,
+): string {
+  return `${WORKTREE_FILE_SESSION_PREFIX}${encodeURIComponent(sourceWorktreeId)}|${encodeURIComponent(filePath)}`;
 }
 
 export function parseWorkspaceExplorerSessionId(
@@ -70,6 +87,26 @@ export function parseWorkspaceFileSessionId(
       type: "workspace-file",
       sourceSessionId: decodeURIComponent(encodedSourceSessionId),
       kind,
+      path: decodeURIComponent(encodedPath),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function parseWorktreeFileSessionId(
+  sessionId: string,
+): WorktreeFileSessionRef | null {
+  if (!sessionId.startsWith(WORKTREE_FILE_SESSION_PREFIX)) return null;
+  const [encodedWorktreeId, encodedPath] = sessionId
+    .slice(WORKTREE_FILE_SESSION_PREFIX.length)
+    .split("|");
+  if (!encodedWorktreeId || !encodedPath) return null;
+  try {
+    return {
+      type: "worktree-file",
+      sourceWorktreeId: decodeURIComponent(encodedWorktreeId),
+      kind: "file",
       path: decodeURIComponent(encodedPath),
     };
   } catch {
@@ -115,9 +152,10 @@ export function parseMemoryFileSessionId(
 
 export function parseWorkspaceSpecialSessionId(
   sessionId: string,
-): WorkspaceExplorerSessionRef | WorkspaceFileSessionRef | MemoryFileSessionRef | null {
+): WorkspaceExplorerSessionRef | WorkspaceFileRef | MemoryFileSessionRef | null {
   return parseWorkspaceExplorerSessionId(sessionId)
     ?? parseWorkspaceFileSessionId(sessionId)
+    ?? parseWorktreeFileSessionId(sessionId)
     ?? parseMemoryFileSessionId(sessionId);
 }
 
@@ -138,11 +176,14 @@ export function getWorkspaceSpecialSessionTitle(sessionId: string, t?: Translate
   }
 
   const file = parseWorkspaceFileSessionId(sessionId);
-  if (!file) return null;
-  const name = file.path.split("/").pop() || file.path;
-  return file.kind === "diff" ? `${name} ${t ? t("gitPanel.tabs.diff") : "diff"}` : name;
+  const worktreeFile = parseWorktreeFileSessionId(sessionId);
+  if (!file && !worktreeFile) return null;
+  const resolvedFile = file ?? worktreeFile!;
+  const name = resolvedFile.path.split("/").pop() || resolvedFile.path;
+  return resolvedFile.kind === "diff" ? `${name} ${t ? t("gitPanel.tabs.diff") : "diff"}` : name;
 }
 
 export function getWorkspaceSpecialSourceSessionId(sessionId: string): string | null {
-  return parseWorkspaceSpecialSessionId(sessionId)?.sourceSessionId ?? null;
+  const ref = parseWorkspaceSpecialSessionId(sessionId);
+  return ref && 'sourceSessionId' in ref ? ref.sourceSessionId : null;
 }

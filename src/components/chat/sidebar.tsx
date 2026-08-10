@@ -44,6 +44,7 @@ import {
 import {
   buildSidebarOrderedSessionIds,
   findSidebarProject,
+  selectSidebarProjectTasks,
 } from './sidebar-utils';
 import { buildRecentWorkItems } from '@/lib/chat/recent-work';
 import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
@@ -52,6 +53,8 @@ import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -294,8 +297,13 @@ export function Sidebar() {
     const tab = selectActiveTab(state);
     return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
   });
+  const peekWorktreeId = useWorkspacePeekStore(
+    (state) => state.target?.worktreeId ?? null,
+  );
   const visibleSessionId = activePanelSessionId ?? activeSessionId;
-  const selectionSessionId = getSessionSelectionId(visibleSessionId);
+  const selectionSessionId = peekWorktreeId
+    ? null
+    : getSessionSelectionId(visibleSessionId);
 
   // Board store — status group collapse state
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
@@ -317,7 +325,9 @@ export function Sidebar() {
       ? state.collectionsByProject?.[selectedProjectDir] ?? EMPTY_COLLECTIONS
       : EMPTY_COLLECTIONS,
   );
-  const tasks = useTaskStore((state) => state.tasks);
+  const tasks = useTaskStore((state) =>
+    selectSidebarProjectTasks(state, selectedProjectDir)
+  );
   const tasksByProject = useTaskStore((state) => state.tasksByProject);
   const loadedTaskProjects = useTaskStore((state) => state.loadedProjects);
   const loadingTaskProjects = useTaskStore((state) => state.loadingProjectIds);
@@ -529,11 +539,13 @@ export function Sidebar() {
 
   const handleProjectWorktreeSelect = useCallback(() => {
     const projectWorktree = selectedProject?.projectWorktree;
-    if (!projectWorktree || !activePanelId) return;
-    usePanelStore.getState().assignWorktree(activePanelId, projectWorktree.id);
-    const tabId = usePanelStore.getState().activeTabId;
-    if (tabId) useTabStore.getState().setTabProject(tabId, selectedProject.encodedDir);
-  }, [activePanelId, selectedProject]);
+    if (!projectWorktree || !selectedProject) return;
+    stepAsidePhoneSidebar();
+    useWorkspacePeekStore.getState().openWorktree(
+      projectWorktree.id,
+      selectedProject.encodedDir,
+    );
+  }, [selectedProject]);
 
   const collectionGroups = useMemo(() => {
     if (!selectedProject) return null;
@@ -773,9 +785,11 @@ export function Sidebar() {
             {selectedProject.projectWorktree ? (
               <>
                 <ProjectWorktreeRow
-                  active={activePanelWorktreeId === selectedProject.projectWorktree.id}
+                  active={(peekWorktreeId ?? activePanelWorktreeId)
+                    === selectedProject.projectWorktree.id}
                   branch={selectedProject.projectWorktree.currentBranch}
-                  label="Project Worktree"
+                  name={selectedProject.displayName}
+                  displayPath={selectedProject.projectWorktree.displayPath}
                   onSelect={handleProjectWorktreeSelect}
                 />
                 {selectedProject.branchRenameWarning ? (

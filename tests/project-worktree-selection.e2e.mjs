@@ -108,6 +108,47 @@ try {
   await page.goto(`${origin}/chat`, { waitUntil: "domcontentloaded" });
   const projectWorktree = page.getByTestId("project-worktree-row");
   await projectWorktree.waitFor({ timeout: 30_000 });
+  const tabIdsBefore = await page.locator('[role="tab"][data-tab-id]').evaluateAll(
+    (tabs) => tabs.map((tab) => tab.getAttribute('data-tab-id')),
+  );
+  await projectWorktree.click();
+
+  assert.deepEqual(
+    await page.locator('[role="tab"][data-tab-id]').evaluateAll(
+      (tabs) => tabs.map((tab) => tab.getAttribute('data-tab-id')),
+    ),
+    tabIdsBefore,
+  );
+  const dialogBox = await page.getByTestId('worktree-peek').boundingBox();
+  const panelHostBox = await page.getByTestId('tab-panel-host').boundingBox();
+  assert.ok(dialogBox && panelHostBox);
+  assert.ok(dialogBox.width < panelHostBox.width);
+  assert.ok(dialogBox.height < panelHostBox.height);
+  const panelHostWrapper = page.getByTestId('tab-panel-host').locator('..');
+  assert.equal(await panelHostWrapper.getAttribute('aria-hidden'), 'true');
+  assert.equal(await panelHostWrapper.evaluate((element) => element.inert), true);
+  await page.keyboard.press('Escape');
+  await page.getByTestId('worktree-peek').waitFor({ state: 'detached' });
+  assert.deepEqual(
+    await page.locator('[role="tab"][data-tab-id]').evaluateAll(
+      (tabs) => tabs.map((tab) => tab.getAttribute('data-tab-id')),
+    ),
+    tabIdsBefore,
+  );
+
+  await page.getByTestId('project-strip-all').click();
+  const allProjectsSection = page.getByTestId(`all-project-section-${process.cwd()}`);
+  await allProjectsSection.waitFor();
+  await allProjectsSection.locator(':scope > div').first().click();
+  const allProjectsWorktreeRow = allProjectsSection.getByTestId('project-worktree-row');
+  await allProjectsWorktreeRow.waitFor();
+  assert.equal(await allProjectsWorktreeRow.getAttribute('data-variant'), 'compact');
+  assert.ok((await allProjectsWorktreeRow.innerText()).includes(process.cwd()));
+  await allProjectsWorktreeRow.click();
+  await page.getByTestId('worktree-peek').waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByTestId(`project-strip-${process.cwd()}`).click();
+  await projectWorktree.waitFor();
   await projectWorktree.click();
 
   await page.getByRole("button", { name: "New Session", exact: true }).waitFor();
@@ -124,12 +165,27 @@ try {
 
   await page.getByRole("tab", { name: "Files" }).click();
   await page.getByText("Workspace files", { exact: true }).waitFor({ timeout: 30_000 });
-  await page.getByRole("button", { name: "README.md", exact: true }).waitFor();
+  const readmeRow = page.getByRole("button", { name: "README.md", exact: true });
+  await readmeRow.waitFor();
+  const fileResponse = page.waitForResponse((response) =>
+    response.url().includes('/api/worktrees/')
+      && response.url().includes('/file?path=README.md')
+  );
+  await readmeRow.click();
+  assert.equal((await fileResponse).status(), 200);
+  await page.getByTestId('worktree-peek').waitFor({ state: 'detached' });
+  await page.getByRole('tab', { name: 'README.md', exact: true }).waitFor();
+  await projectWorktree.click();
+  await page.getByTestId('worktree-peek').waitFor();
 
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "New Session", exact: true }).waitFor({ timeout: 30_000 });
+  await projectWorktree.waitFor({ timeout: 30_000 });
+  assert.equal(await page.getByTestId("worktree-peek").count(), 0);
+  await projectWorktree.click();
+  await page.getByTestId("worktree-peek").waitFor();
+  await page.getByRole("button", { name: "New Session", exact: true }).waitFor();
   assert.equal(await projectWorktree.count(), 1);
-  console.log("Project Worktree selection, direct Git/Files routing, and reload persistence passed.");
+  console.log("Project Worktree Peek, direct Git/Files routing, and transient reload behavior passed.");
 } finally {
   await browser?.close();
   await stopServer();

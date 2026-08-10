@@ -1,5 +1,6 @@
 import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 
 export interface SessionPanelLocation {
   tabId: string;
@@ -53,6 +54,8 @@ export function activateSessionPanel(
   const tabStore = useTabStore.getState();
   const location = options.location ?? tabStore.findSessionLocation(sessionId);
   if (!location) return false;
+
+  useWorkspacePeekStore.getState().close();
 
   if (location.tabId !== tabStore.activeTabId) {
     tabStore.setActiveTab(location.tabId);

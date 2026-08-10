@@ -3,7 +3,6 @@ import path from 'path';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { getTask, setTaskWorktreeCheckout, taskExists } from '@/lib/db/tasks';
 import { getProjectWorktree } from '@/lib/db/projects';
-import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 import logger from '@/lib/logger';
 import { validateProjectEnvironment } from '@/lib/projects/environment-policy';
 import { startWorktreePreparation } from '@/lib/projects/worktree-preparation';
@@ -118,7 +117,6 @@ export async function POST(req: NextRequest) {
   }
 
   const settings = await SettingsManager.load(userId);
-  await routeCanonicalWorktreePaths(settings.agentEnvironment);
 
   const originatingTask = typeof taskId === 'string' ? getTask(taskId) : undefined;
   const originProjectWorktree = originatingTask

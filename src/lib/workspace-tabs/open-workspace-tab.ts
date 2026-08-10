@@ -4,10 +4,12 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useBoardStore } from "@/stores/board-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useWorkspacePeekStore } from "@/stores/workspace-peek-store";
 import { getRenderedViewMode } from "@/lib/viewport/rendered-view-mode";
 import { stepAsidePhoneGitPanel } from "@/lib/viewport/phone-overlay-step-aside";
 import {
   buildMemoryFileSessionId,
+  buildWorktreeFileSessionId,
   buildWorkspaceFileSessionId,
   type WorkspaceFileTabKind,
 } from "./special-session";
@@ -61,7 +63,7 @@ function tryOpenMemoryFileInKanbanPeek(
 function focusOrCreateSpecialTab(
   specialSessionId: string,
   options: { pinExistingPreview?: boolean; insertAfterTabId?: string | null } = {},
-): void {
+): string {
   // #258: a file tab is about to become the active tab, and on a phone the Git
   // panel these are opened from is a full-screen overlay — so the tab would
   // open behind it. Placed on the tab-opening helpers rather than on each
@@ -76,9 +78,9 @@ function focusOrCreateSpecialTab(
     tabStore.setActiveTab(existing.tabId);
     usePanelStore.getState().setActivePanelId(existing.panelId);
     if (options.pinExistingPreview) tabStore.pinTab(existing.tabId);
-    return;
+    return existing.tabId;
   }
-  tabStore.createTab(specialSessionId, {
+  return tabStore.createTab(specialSessionId, {
     insertAfterTabId: options.insertAfterTabId ?? tabStore.activeTabId,
   });
 }
@@ -89,6 +91,7 @@ export function openWorkspaceFileTab(
   filePath: string,
   options: FileOpenOptions = {},
 ): void {
+  useWorkspacePeekStore.getState().close();
   if (
     options.preferKanbanPeek
     && tryOpenWorkspaceFileInKanbanPeek(sourceSessionId, kind, filePath)
@@ -108,6 +111,7 @@ export function previewWorkspaceFileTab(
   filePath: string,
   options: FileOpenOptions = {},
 ): void {
+  useWorkspacePeekStore.getState().close();
   if (
     options.preferKanbanPeek
     && tryOpenWorkspaceFileInKanbanPeek(sourceSessionId, kind, filePath)
@@ -147,16 +151,43 @@ export function previewMemoryFileTab(
   previewSpecialFileTab(buildMemoryFileSessionId(sourceSessionId, memoryKind, fileName));
 }
 
-function previewSpecialFileTab(specialSessionId: string): void {
+export function openWorktreeFileTab(
+  sourceWorktreeId: string,
+  filePath: string,
+  projectDir?: string | null,
+): void {
+  useWorkspacePeekStore.getState().close();
+  const tabId = focusOrCreateSpecialTab(
+    buildWorktreeFileSessionId(sourceWorktreeId, filePath),
+    {
+      pinExistingPreview: true,
+      insertAfterTabId: useTabStore.getState().activeTabId,
+    },
+  );
+  if (projectDir) useTabStore.getState().setTabProject(tabId, projectDir);
+}
+
+export function previewWorktreeFileTab(
+  sourceWorktreeId: string,
+  filePath: string,
+  projectDir?: string | null,
+): void {
+  useWorkspacePeekStore.getState().close();
+  const tabId = previewSpecialFileTab(buildWorktreeFileSessionId(sourceWorktreeId, filePath));
+  if (projectDir) useTabStore.getState().setTabProject(tabId, projectDir);
+}
+
+function previewSpecialFileTab(specialSessionId: string): string {
   stepAsidePhoneGitPanel();
   const tabStore = useTabStore.getState();
   const existing = tabStore.findSessionLocation(specialSessionId);
   if (existing) {
     tabStore.setActiveTab(existing.tabId);
     usePanelStore.getState().setActivePanelId(existing.panelId);
-    return;
+    return existing.tabId;
   }
   tabStore.openWorkspaceFilePreview(specialSessionId, {
     insertAfterTabId: tabStore.activeTabId,
   });
+  return useTabStore.getState().activeTabId;
 }

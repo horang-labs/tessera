@@ -6,6 +6,7 @@ const fetchWithTimeoutSource = fs.readFileSync(new URL('../src/lib/api/fetch-wit
 const fileTabSource = fs.readFileSync(new URL('../src/components/workspace/workspace-file-tab.tsx', import.meta.url), 'utf8');
 const codeViewSource = fs.readFileSync(new URL('../src/components/workspace/workspace-code-view.tsx', import.meta.url), 'utf8');
 const fileRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/file/route.ts', import.meta.url), 'utf8');
+const fileReaderSource = fs.readFileSync(new URL('../src/lib/workspace-files/read-workspace-file.ts', import.meta.url), 'utf8');
 const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', import.meta.url), 'utf8');
 const filePanelSource = fs.readFileSync(new URL('../src/components/workspace/workspace-file-panel.tsx', import.meta.url), 'utf8');
 const explorerTabSource = fs.readFileSync(new URL('../src/components/workspace/workspace-explorer-tab.tsx', import.meta.url), 'utf8');
@@ -40,16 +41,17 @@ test('code view keeps the close button visible while loading and offers retry on
 });
 
 test('file route bounds every workspace fs operation with a deadline', () => {
-  assert.match(fileRouteSource, /function withFsDeadline/);
-  assert.match(fileRouteSource, /filesystem_timeout/);
-  assert.match(fileRouteSource, /504/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.realpath\(root\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.realpath\(candidatePath\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.stat\(absolutePath\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.readFile\(absolutePath\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(fs\.open\(absolutePath, "r"\)\)/);
-  assert.match(fileRouteSource, /withFsDeadline\(handle\.read\(/);
-  assert.doesNotMatch(fileRouteSource, /await handle\.close\(\);/);
+  assert.match(fileRouteSource, /readWorkspaceFileResponse/);
+  assert.match(fileReaderSource, /function withFsDeadline/);
+  assert.match(fileReaderSource, /filesystem_timeout/);
+  assert.match(fileReaderSource, /504/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.realpath\(root\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.realpath\(candidatePath\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.stat\(absolutePath\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.readFile\(absolutePath\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(fs\.open\(absolutePath, ['"]r['"]\)\)/);
+  assert.match(fileReaderSource, /withFsDeadline\(handle\.read\(/);
+  assert.doesNotMatch(fileReaderSource, /await handle\.close\(\);/);
 });
 
 test('git panel commands are killed after a timeout and never wait on a credential prompt', () => {

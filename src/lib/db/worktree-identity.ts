@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveWslDisplayPathAgainstWindowsHostedPath } from '@/lib/filesystem/path-environment';
+import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 
 export interface CanonicalWorktreePath {
   filesystemPath: string;
@@ -24,14 +25,18 @@ export function canonicalizeWorktreePath(
       ) ?? reportedPath
     : reportedPath;
   if (!trimmed) return null;
-  const pathModule = /^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\')
-    ? path.win32
-    : path;
+  const windowsStyle = isWindowsStylePath(trimmed);
+  const pathModule = windowsStyle ? path.win32 : path.posix;
   let resolved = pathModule.resolve(trimmed);
-  try {
-    resolved = fs.realpathSync.native(resolved);
-  } catch {
-    // A pending or externally missing checkout retains a stable normalized key.
+  // Never ask the host OS to interpret a path from the other coordinate
+  // system. On Windows, realpath('/home/...') is drive-relative and can become
+  // C:\home\..., which was the v38 Worktree-registry corruption.
+  if (isHostFilesystemPathStyle(windowsStyle)) {
+    try {
+      resolved = fs.realpathSync.native(resolved);
+    } catch {
+      // A pending or externally missing checkout retains a stable normalized key.
+    }
   }
   const normalized = pathModule.normalize(resolved);
   return {
@@ -42,14 +47,18 @@ export function canonicalizeWorktreePath(
 
 export function isGitCheckoutPath(filesystemPath: string): boolean {
   const identity = canonicalizeWorktreePath(filesystemPath);
-  return Boolean(identity && fs.existsSync(path.join(identity.filesystemPath, '.git')));
+  if (!identity || !isHostFilesystemPathStyle(isWindowsStylePath(identity.filesystemPath))) {
+    return false;
+  }
+  const pathModule = isWindowsStylePath(identity.filesystemPath) ? path.win32 : path.posix;
+  return fs.existsSync(pathModule.join(identity.filesystemPath, '.git'));
 }
 
 export function readWorktreeCurrentBranch(filesystemPath: string): string | null {
   const directories = resolveWorktreeGitDirectories(filesystemPath);
   if (!directories) return null;
   try {
-    const pathModule = isWindowsStylePath(directories.gitDir) ? path.win32 : path;
+    const pathModule = isWindowsStylePath(directories.gitDir) ? path.win32 : path.posix;
     const head = fs.readFileSync(pathModule.join(directories.gitDir, 'HEAD'), 'utf8').trim();
     return head.startsWith('ref: refs/heads/')
       ? head.slice('ref: refs/heads/'.length)
@@ -63,6 +72,16 @@ function isWindowsStylePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\');
 }
 
+/** Whether a path spelling belongs to the filesystem coordinate system this server can open. */
+export function hasHostFilesystemPathStyle(filesystemPath: string): boolean {
+  const trimmed = filesystemPath.trim();
+  return trimmed !== '' && isHostFilesystemPathStyle(isWindowsStylePath(trimmed));
+}
+
+function isHostFilesystemPathStyle(windowsStyle: boolean): boolean {
+  return getRuntimePlatform() === 'win32' ? windowsStyle : !windowsStyle;
+}
+
 function resolveGitPointerPath(filesystemPath: string, pointerPath: string): string {
   if (pointerPath.startsWith('/')) {
     const bridgedPath = resolveWslDisplayPathAgainstWindowsHostedPath(
@@ -71,7 +90,7 @@ function resolveGitPointerPath(filesystemPath: string, pointerPath: string): str
     );
     if (bridgedPath) return bridgedPath;
   }
-  const pathModule = isWindowsStylePath(filesystemPath) ? path.win32 : path;
+  const pathModule = isWindowsStylePath(filesystemPath) ? path.win32 : path.posix;
   return pathModule.resolve(filesystemPath, pointerPath);
 }
 
@@ -81,7 +100,11 @@ function resolveWorktreeGitDirectories(filesystemPath: string): {
 } | null {
   const identity = canonicalizeWorktreePath(filesystemPath);
   if (!identity) return null;
-  const dotGitPath = path.join(identity.filesystemPath, '.git');
+  if (!isHostFilesystemPathStyle(isWindowsStylePath(identity.filesystemPath))) return null;
+  const checkoutPathModule = isWindowsStylePath(identity.filesystemPath)
+    ? path.win32
+    : path.posix;
+  const dotGitPath = checkoutPathModule.join(identity.filesystemPath, '.git');
   try {
     let gitDir = dotGitPath;
     if (fs.statSync(dotGitPath).isFile()) {
@@ -90,7 +113,7 @@ function resolveWorktreeGitDirectories(filesystemPath: string): {
       if (!match) return null;
       gitDir = resolveGitPointerPath(identity.filesystemPath, match[1]);
     }
-    const pathModule = isWindowsStylePath(gitDir) ? path.win32 : path;
+    const pathModule = isWindowsStylePath(gitDir) ? path.win32 : path.posix;
     const commonDirPath = pathModule.join(gitDir, 'commondir');
     const commonGitDir = fs.existsSync(commonDirPath)
       ? pathModule.resolve(gitDir, fs.readFileSync(commonDirPath, 'utf8').trim())
@@ -115,7 +138,7 @@ export function readExactOneHopBranchRename(
 ): { previousBranch: string; currentBranch: string; eventId: string } | undefined {
   const directories = resolveWorktreeGitDirectories(filesystemPath);
   if (!directories) return undefined;
-  const pathModule = isWindowsStylePath(directories.commonGitDir) ? path.win32 : path;
+  const pathModule = isWindowsStylePath(directories.commonGitDir) ? path.win32 : path.posix;
   const branchParts = currentBranch.split('/');
   if (branchParts.some((part) => !part || part === '.' || part === '..')) return undefined;
   const reflogPath = pathModule.join(

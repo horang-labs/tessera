@@ -33,7 +33,6 @@ import {
   type ControlWorktreeRecord,
 } from './service';
 import * as dbProjects from '@/lib/db/projects';
-import { routeCanonicalWorktreePaths } from '@/lib/db/worktrees';
 import { resolveAgentReportedPath } from '@/lib/filesystem/path-environment';
 
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -57,7 +56,6 @@ export function createDatabaseControlWorktreeCreator(options: {
         SettingsManager.load(userId, { silent: true }),
         getAgentEnvironment(userId),
       ]);
-      await routeCanonicalWorktreePaths(agentEnvironment);
       const projectDir = request.project.decodedPath;
       const originProjectWorktree = dbProjects.getProjectWorktree(request.project.id);
       if (!originProjectWorktree?.currentBranch) {

@@ -1046,7 +1046,6 @@ export async function getWorktreeGitPanelData(
       ? { userId }
       : { inferFromPaths: initialWorktree?.filesystemPath ? [initialWorktree.filesystemPath] : [] },
   );
-  await dbWorktrees.routeCanonicalWorktreePaths(agentEnvironment);
   const worktree = dbWorktrees.getWorktree(worktreeId);
   if (!worktree) {
     throw new GitPanelError('session_not_found', 'Worktree not found', 404);

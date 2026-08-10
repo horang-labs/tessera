@@ -271,6 +271,7 @@ export const ja: I18nMessages = {
       loadingProviders: 'プロバイダーを読み込み中…',
       empty: '登録されているCLIプロバイダがありません。',
       disconnected: 'WebSocketが切断されています。ページを再度開くか接続を確認してください。',
+      checkFailed: 'CLI状態の確認に失敗しました。以前の結果を保持しています。もう一度お試しください。',
       active: '使用中',
       refresh: '更新',
       refreshProviders: 'プロバイダーを再確認',

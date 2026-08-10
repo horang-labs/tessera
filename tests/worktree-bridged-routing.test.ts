@@ -103,28 +103,62 @@ test('native Worktree root behavior remains unchanged', async () => {
   assert.equal(root, existingNativeRoot);
 });
 
-test('configured routing translates stored CLI paths before navigation and Files access', async () => {
-  const [database, projects, sessions, worktrees, sessionRoots] = await Promise.all([
+test('one-time authenticated bootstrap registers a legacy WSL Project Worktree', async () => {
+  const [database, projects, projection, bootstrap] = await Promise.all([
+    import('@/lib/db/database'),
+    import('@/lib/db/projects'),
+    import('@/lib/projects/project-view-projection'),
+    import('@/lib/db/worktree-bootstrap'),
+  ]);
+  await database.initDatabase();
+
+  const repository = createRepository('legacy-wsl-project-root');
+  const reportedPath = '/home/work/legacy-wsl-project-root';
+  const now = new Date().toISOString();
+  database.getDb().prepare(`
+    INSERT INTO projects (
+      id, decoded_path, display_name, provider, visible, sort_order,
+      project_worktree_id, registered_at, updated_at
+    ) VALUES (?, ?, ?, NULL, 1, 0, NULL, ?, ?)
+  `).run('legacy-wsl-project', reportedPath, 'Legacy WSL Project', now, now);
+
+  assert.equal(projects.getProjectWorktree('legacy-wsl-project'), undefined);
+
+  const translate = async (candidate: string) => (
+    candidate === reportedPath ? repository : candidate
+  );
+  database.getDb().prepare(`
+    INSERT INTO _meta (key, value)
+    VALUES ('canonical_worktree_bootstrap_v38', 'pending')
+    ON CONFLICT(key) DO UPDATE SET value = 'pending'
+  `).run();
+  const result = await bootstrap.bootstrapCanonicalWorktreeRegistry('wsl', translate);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.registeredProjects >= 1, true);
+
+  const root = projects.getProjectWorktree('legacy-wsl-project');
+  assert.ok(root);
+  assert.equal(root.filesystemPath, fs.realpathSync.native(repository));
+  assert.equal(root.currentBranch, 'feature/c');
+
+  const projectView = projection.getProjectViewProjection('legacy-wsl-project');
+  assert.equal(projectView.projectWorktree.id, root.id);
+  assert.equal(projectView.projectWorktree.currentBranch, 'feature/c');
+});
+
+test('Session workspace routing opens CLI paths without mutating stored evidence', async () => {
+  const [database, projects, sessions, sessionRoots] = await Promise.all([
     import('@/lib/db/database'),
     import('@/lib/db/projects'),
     import('@/lib/db/sessions'),
-    import('@/lib/db/worktrees'),
     import('@/lib/session/session-workspace-root'),
   ]);
   await database.initDatabase();
 
   const repository = createRepository('reported-path-project');
   const reportedPath = '/home/work/reported-path-project';
-  const worktreeId = worktrees.createPendingWorktree('wt_reported_path');
-  const reportedIdentity = canonicalizeWorktreePath(reportedPath);
-  assert.ok(reportedIdentity);
-  database.getDb().prepare(`
-    UPDATE worktrees SET filesystem_path = ?, canonical_path_key = ? WHERE id = ?
-  `).run(reportedPath, reportedIdentity.canonicalPathKey, worktreeId);
   projects.registerProject('reported-project', repository, 'Reported Project');
-  database.getDb().prepare(`
-    UPDATE projects SET project_worktree_id = ? WHERE id = ?
-  `).run(worktreeId, 'reported-project');
+  const worktreeId = projects.getProjectWorktree('reported-project')!.id;
   sessions.createSession('reported-session', 'reported-project', 'Reported Session', 'codex', {
     workDir: reportedPath,
     worktreeId,
@@ -137,83 +171,12 @@ test('configured routing translates stored CLI paths before navigation and Files
   const translate = async (candidate: string) => (
     candidate === reportedPath ? repository : candidate
   );
-  await worktrees.routeCanonicalWorktreePaths('wsl', translate);
-
-  const routed = projects.getProjectWorktree('reported-project');
-  assert.equal(routed?.id, worktreeId);
-  assert.equal(routed?.filesystemPath, fs.realpathSync.native(repository));
-  assert.equal(routed?.currentBranch, 'feature/c');
-  assert.deepEqual(
-    {
-      worktreeId: sessions.getSession('legacy-reported-session')?.worktree_id,
-      workDir: sessions.getSession('legacy-reported-session')?.work_dir,
-    },
-    { worktreeId, workDir: fs.realpathSync.native(repository) },
-  );
 
   const sessionRoot = await sessionRoots.resolveSessionWorkspaceFilesystemRoot(
     'reported-session',
     { agentEnvironment: 'wsl', resolveAgentPath: translate },
   );
   assert.equal(sessionRoot, fs.realpathSync.native(repository));
-});
-
-test('canonical reconciliation preserves immutable Worktree Creation Scope', async () => {
-  const [database, projects, tasks, worktrees] = await Promise.all([
-    import('@/lib/db/database'),
-    import('@/lib/db/projects'),
-    import('@/lib/db/tasks'),
-    import('@/lib/db/worktrees'),
-  ]);
-  await database.initDatabase();
-
-  const repository = createRepository('duplicate-scope-project');
-  projects.registerProject('duplicate-scope-project', repository, 'Duplicate Scope');
-  const canonicalId = tasks.createTask({
-    id: 'canonical-owner-task',
-    projectId: 'duplicate-scope-project',
-    title: 'Canonical owner',
-    worktreePath: repository,
-  });
-  const duplicateId = worktrees.createPendingWorktree('wt_duplicate_scope');
-  const reportedPath = '/home/work/duplicate-scope-project';
-  const reportedIdentity = canonicalizeWorktreePath(reportedPath);
-  assert.ok(reportedIdentity);
-  database.getDb().prepare(`
-    UPDATE worktrees SET filesystem_path = ?, canonical_path_key = ? WHERE id = ?
-  `).run(reportedPath, reportedIdentity.canonicalPathKey, duplicateId);
-
-  tasks.createTask({
-    id: 'scoped-child-task',
-    projectId: 'duplicate-scope-project',
-    title: 'Scoped child',
-    creationScope: { originWorktreeId: duplicateId, branch: 'feature/c' },
-  });
-
-  const translate = async (candidate: string) => (
-    candidate === reportedPath ? repository : candidate
-  );
-  await worktrees.routeCanonicalWorktreePaths('wsl', translate);
-
-  const scope = database.getDb().prepare(`
-    SELECT creation_scope_worktree_id, creation_scope_branch
-    FROM tasks WHERE id = 'scoped-child-task'
-  `).get() as { creation_scope_worktree_id: string; creation_scope_branch: string };
-  assert.deepEqual(scope, {
-    creation_scope_worktree_id: canonicalId,
-    creation_scope_branch: 'feature/c',
-  });
-  assert.equal(worktrees.getWorktree(duplicateId), undefined);
-
-  const unrelatedId = worktrees.createPendingWorktree('wt_unrelated_scope');
-  tasks.createTask({
-    id: 'unrelated-scope-task',
-    projectId: 'duplicate-scope-project',
-    title: 'Unrelated scope',
-    creationScope: { originWorktreeId: unrelatedId, branch: 'feature/c' },
-  });
-  database.getDb().prepare('DELETE FROM worktrees WHERE id = ?').run(unrelatedId);
-  assert.throws(() => database.getDb().prepare(`
-    UPDATE tasks SET creation_scope_worktree_id = ? WHERE id = 'unrelated-scope-task'
-  `).run(canonicalId), /Worktree Creation Scope is immutable/);
+  assert.equal(sessions.getSession('reported-session')?.work_dir, reportedPath);
+  assert.equal(sessions.getSession('legacy-reported-session')?.work_dir, reportedPath);
 });

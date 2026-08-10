@@ -271,6 +271,7 @@ export const en: I18nMessages = {
       loadingProviders: 'Loading providers…',
       empty: 'No CLI providers registered.',
       disconnected: 'WebSocket is not connected. Reopen the page or check your connection.',
+      checkFailed: 'CLI status check failed. Previous results were kept; try again.',
       active: 'Active',
       refresh: 'Refresh',
       refreshProviders: 'Check providers again',

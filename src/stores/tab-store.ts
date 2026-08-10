@@ -22,6 +22,7 @@ import { getSpecialSessionSourceSessionId, isSpecialSession } from '@/lib/consta
 import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
 import {
   parseMemoryFileSessionId,
+  parseWorktreeFileSessionId,
   parseWorkspaceFileSessionId,
 } from '@/lib/workspace-tabs/special-session';
 
@@ -62,6 +63,7 @@ function getTabActiveSessionId(
 function isFileLikeSessionId(sessionId: string | null): boolean {
   if (!sessionId) return false;
   return parseWorkspaceFileSessionId(sessionId) !== null
+    || parseWorktreeFileSessionId(sessionId) !== null
     || parseMemoryFileSessionId(sessionId) !== null;
 }
 

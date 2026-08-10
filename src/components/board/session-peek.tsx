@@ -402,7 +402,9 @@ export function SessionPeek({
                       panelId={PEEK_FILE_PANEL_ID}
                       surfaceActive
                       onClose={closePeekFile}
-                      onFileRefChange={openPeekFile}
+                      onFileRefChange={(nextFileRef) => {
+                        if (nextFileRef.type === 'workspace-file') openPeekFile(nextFileRef);
+                      }}
                     />
                   )}
                 </TabIdContext.Provider>

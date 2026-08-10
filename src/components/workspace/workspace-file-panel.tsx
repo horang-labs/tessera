@@ -26,9 +26,12 @@ import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
 import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
 import {
+  openWorktreeFileTab,
   openWorkspaceFileTab,
+  previewWorktreeFileTab,
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import {
   copyText,
@@ -303,15 +306,33 @@ export function WorkspaceFilePanel({
         <button
           type="button"
           onClick={() => {
-            if (!sessionId) return;
             setSelectedPath(node.path);
+            if (worktreeId) {
+              const peekTarget = useWorkspacePeekStore.getState().target;
+              previewWorktreeFileTab(
+                worktreeId,
+                node.path,
+                peekTarget?.worktreeId === worktreeId ? peekTarget.projectDir : null,
+              );
+              return;
+            }
+            if (!sessionId) return;
             previewWorkspaceFileTab(sessionId, "file", node.path, {
               preferKanbanPeek: true,
             });
           }}
           onDoubleClick={() => {
-            if (!sessionId) return;
             setSelectedPath(node.path);
+            if (worktreeId) {
+              const peekTarget = useWorkspacePeekStore.getState().target;
+              openWorktreeFileTab(
+                worktreeId,
+                node.path,
+                peekTarget?.worktreeId === worktreeId ? peekTarget.projectDir : null,
+              );
+              return;
+            }
+            if (!sessionId) return;
             openWorkspaceFileTab(sessionId, "file", node.path, {
               preferKanbanPeek: true,
             });

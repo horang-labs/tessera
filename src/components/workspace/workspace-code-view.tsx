@@ -15,6 +15,7 @@ import {
 } from "@/lib/workspace-tabs/file-path-actions";
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
+import type { WorkspaceTarget } from '@/types/worktree';
 
 type MarkdownViewMode = "preview" | "source";
 
@@ -82,8 +83,9 @@ function isBrowserImageSrc(src: string): boolean {
   );
 }
 
-function buildWorkspaceRawFileUrl(sessionId: string, filePath: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(filePath)}&raw=1`;
+function buildWorkspaceRawFileUrl(target: WorkspaceTarget, filePath: string): string {
+  const collection = target.kind === 'worktree' ? 'worktrees' : 'sessions';
+  return `/api/${collection}/${encodeURIComponent(target.id)}/file?path=${encodeURIComponent(filePath)}&raw=1`;
 }
 
 function useCanUseElectronFileActions(): boolean {
@@ -210,7 +212,7 @@ export function WorkspaceCodeView({
   onClose,
   onRetry,
   path,
-  sourceSessionId,
+  sourceTarget,
 }: {
   data: WorkspaceFileData | GitDiffData | null;
   error: string | null;
@@ -219,7 +221,7 @@ export function WorkspaceCodeView({
   onClose?: () => void;
   onRetry?: () => void;
   path: string;
-  sourceSessionId?: string;
+  sourceTarget?: WorkspaceTarget;
 }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [markdownModeState, setMarkdownModeState] = useState<{ mode: MarkdownViewMode; path: string }>({
@@ -244,11 +246,11 @@ export function WorkspaceCodeView({
   const shouldRenderMarkdownPreview = isMarkdownFile && markdownViewMode === "preview";
   const showOpenButton = canOpenOnHost && Boolean(absolutePath);
   const resolveMarkdownImageSrc = useCallback((src: string): string | null => {
-    if (!sourceSessionId || isBrowserImageSrc(src)) return src;
+    if (!sourceTarget || isBrowserImageSrc(src)) return src;
     const assetPath = normalizeWorkspaceAssetPath(path, src);
     if (!assetPath) return null;
-    return buildWorkspaceRawFileUrl(sourceSessionId, assetPath);
-  }, [path, sourceSessionId]);
+    return buildWorkspaceRawFileUrl(sourceTarget, assetPath);
+  }, [path, sourceTarget]);
   const handleMarkdownViewModeChange = useCallback((nextMode: MarkdownViewMode) => {
     setMarkdownModeState({ mode: nextMode, path });
   }, [path]);

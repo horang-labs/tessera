@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
+import { getWorktree } from '@/lib/db/worktrees';
 import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
-import { resolveSessionWorkspaceFilesystemRoot } from '@/lib/session/session-workspace-root';
-import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import {
   readWorkspaceFileResponse,
   WorkspaceFileError,
@@ -21,24 +20,23 @@ export async function GET(
     });
     if ('response' in auth) return auth.response;
 
-    const root = await resolveSessionWorkspaceFilesystemRoot(id, {
-      agentEnvironment: await getAgentEnvironment(auth.userId),
-    });
-    if (!root) {
-      return jsonError('missing_work_dir', 'Session has no working directory', 422);
+    const worktree = getWorktree(id);
+    if (!worktree) return jsonError('worktree_not_found', 'Worktree not found', 404);
+    if (!worktree.filesystemPath) {
+      return jsonError('missing_work_dir', 'Worktree has no working directory', 422);
     }
 
     return await readWorkspaceFileResponse({
       raw: request.nextUrl.searchParams.get('raw') === '1',
       rawPath: request.nextUrl.searchParams.get('path') ?? '',
-      root,
+      root: worktree.filesystemPath,
       sourceId: id,
     });
   } catch (error) {
     if (error instanceof WorkspaceFileError) {
       return jsonError(error.code, error.message, error.status);
     }
-    logger.error({ error, sessionId: id }, 'Failed to load workspace file');
-    return jsonError('internal_error', 'Failed to load workspace file', 500);
+    logger.error({ error, worktreeId: id }, 'Failed to load Worktree file');
+    return jsonError('internal_error', 'Failed to load Worktree file', 500);
   }
 }

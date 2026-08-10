@@ -271,6 +271,7 @@ export const zh: I18nMessages = {
       loadingProviders: '正在加载提供者…',
       empty: '未注册 CLI 提供程序。',
       disconnected: 'WebSocket 未连接。请重新打开页面或检查连接。',
+      checkFailed: 'CLI 状态检查失败。已保留之前的结果，请重试。',
       active: '使用中',
       refresh: '刷新',
       refreshProviders: '重新检查提供者',

@@ -4,8 +4,6 @@ import {
   isGitCheckoutPath,
   readWorktreeCurrentBranch,
 } from './worktree-identity';
-import { resolveAgentReportedPath } from '@/lib/filesystem/path-environment';
-import type { AgentEnvironment } from '@/lib/settings/types';
 import { getDb } from './database';
 
 interface WorktreeRow {
@@ -26,11 +24,6 @@ export interface VisibleProjectWorktreeView {
   id: string;
   displayName: string;
 }
-
-export type AgentReportedPathResolver = (
-  filesystemPath: string,
-  environment: AgentEnvironment,
-) => Promise<string>;
 
 export function createPendingWorktree(id = generatePublicWorktreeId()): string {
   const now = new Date().toISOString();
@@ -74,33 +67,33 @@ export function resolveCanonicalWorktree(
     ?? existingRows[0];
   if (existing) {
     const duplicates = existingRows.filter((row) => row.id !== existing.id);
-    db.transaction(() => {
-      for (const duplicate of duplicates) {
-        db.prepare(`
-          UPDATE projects SET project_worktree_id = ? WHERE project_worktree_id = ?
-        `).run(existing.id, duplicate.id);
-        db.prepare(`
-          UPDATE sessions SET worktree_id = ? WHERE worktree_id = ?
-        `).run(existing.id, duplicate.id);
-        db.prepare('DELETE FROM worktrees WHERE id = ?').run(duplicate.id);
-        db.prepare(`
-          INSERT INTO worktree_identity_reconciliation_authorizations (
-            old_worktree_id, new_worktree_id
-          ) VALUES (?, ?)
-        `).run(duplicate.id, existing.id);
-        db.prepare(`
-          UPDATE tasks SET creation_scope_worktree_id = ?
-          WHERE creation_scope_worktree_id = ?
-        `).run(existing.id, duplicate.id);
-        db.prepare(`
-          DELETE FROM worktree_identity_reconciliation_authorizations
-          WHERE old_worktree_id = ? AND new_worktree_id = ?
-        `).run(duplicate.id, existing.id);
-      }
-      if (
-        existing.filesystem_path !== identity.filesystemPath
-        || existing.canonical_path_key !== identity.canonicalPathKey
-      ) {
+    const needsPathUpdate = existing.filesystem_path !== identity.filesystemPath
+      || existing.canonical_path_key !== identity.canonicalPathKey;
+    if (duplicates.length > 0 || needsPathUpdate) {
+      db.transaction(() => {
+        for (const duplicate of duplicates) {
+          db.prepare(`
+            UPDATE projects SET project_worktree_id = ? WHERE project_worktree_id = ?
+          `).run(existing.id, duplicate.id);
+          db.prepare(`
+            UPDATE sessions SET worktree_id = ? WHERE worktree_id = ?
+          `).run(existing.id, duplicate.id);
+          db.prepare('DELETE FROM worktrees WHERE id = ?').run(duplicate.id);
+          db.prepare(`
+            INSERT INTO worktree_identity_reconciliation_authorizations (
+              old_worktree_id, new_worktree_id
+            ) VALUES (?, ?)
+          `).run(duplicate.id, existing.id);
+          db.prepare(`
+            UPDATE tasks SET creation_scope_worktree_id = ?
+            WHERE creation_scope_worktree_id = ?
+          `).run(existing.id, duplicate.id);
+          db.prepare(`
+            DELETE FROM worktree_identity_reconciliation_authorizations
+            WHERE old_worktree_id = ? AND new_worktree_id = ?
+          `).run(duplicate.id, existing.id);
+        }
+        if (!needsPathUpdate) return;
         db.prepare(`
           UPDATE worktrees
           SET filesystem_path = ?, canonical_path_key = ?, updated_at = ?
@@ -111,8 +104,8 @@ export function resolveCanonicalWorktree(
           new Date().toISOString(),
           existing.id,
         );
-      }
-    })();
+      })();
+    }
     return getWorktree(existing.id);
   }
 
@@ -135,78 +128,6 @@ export function getWorktree(id: string): CanonicalWorktree | undefined {
     | WorktreeRow
     | undefined;
   return row ? mapWorktree(row) : undefined;
-}
-
-/**
- * Rewrite CLI-owned checkout paths into the authenticated agent environment's
- * host-filesystem form before synchronous Project View and Files readers touch
- * them. Existing opaque IDs remain authoritative; only the path spelling and
- * its compatibility copies are repaired.
- */
-export async function routeCanonicalWorktreePaths(
-  environment: AgentEnvironment,
-  resolveAgentPath: AgentReportedPathResolver = resolveAgentReportedPath,
-): Promise<number> {
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT * FROM worktrees
-    WHERE filesystem_path IS NOT NULL AND TRIM(filesystem_path) <> ''
-    ORDER BY created_at, id
-  `).all() as WorktreeRow[];
-  let routedCount = 0;
-
-  for (const row of rows) {
-    const reportedPath = row.filesystem_path!;
-    const routedPath = await resolveAgentPath(reportedPath, environment);
-    const identity = canonicalizeWorktreePath(routedPath);
-    if (!identity) continue;
-    if (
-      identity.filesystemPath === reportedPath
-      && identity.canonicalPathKey === row.canonical_path_key
-    ) continue;
-    if (!isGitCheckoutPath(identity.filesystemPath)) continue;
-
-    const canonical = resolveCanonicalWorktree(identity.filesystemPath, row.id, {
-      equivalentFilesystemPaths: [reportedPath],
-    });
-    if (canonical?.id !== row.id) continue;
-
-    db.transaction(() => {
-      db.prepare(`
-        UPDATE tasks SET worktree_path = ?
-        WHERE public_worktree_id = ? AND worktree_path = ?
-      `).run(identity.filesystemPath, row.id, reportedPath);
-      db.prepare(`
-        UPDATE sessions SET work_dir = ?
-        WHERE work_dir = ? AND worktree_id = ?
-      `).run(identity.filesystemPath, reportedPath, row.id);
-    })();
-    routedCount += 1;
-  }
-
-  const legacySessions = db.prepare(`
-    SELECT id, work_dir
-    FROM sessions
-    WHERE worktree_id IS NULL
-      AND task_id IS NULL
-      AND work_dir IS NOT NULL
-      AND TRIM(work_dir) <> ''
-    ORDER BY created_at, id
-  `).all() as Array<{ id: string; work_dir: string }>;
-  for (const session of legacySessions) {
-    const routedPath = await resolveAgentPath(session.work_dir, environment);
-    const canonical = resolveCanonicalWorktree(routedPath, undefined, {
-      equivalentFilesystemPaths: [session.work_dir],
-    });
-    if (!canonical?.filesystemPath) continue;
-    db.prepare(`
-      UPDATE sessions
-      SET worktree_id = ?, work_dir = ?
-      WHERE id = ? AND worktree_id IS NULL
-    `).run(canonical.id, canonical.filesystemPath, session.id);
-  }
-
-  return routedCount;
 }
 
 export function getVisibleProjectWorktreeViews(worktreeId: string): VisibleProjectWorktreeView[] {

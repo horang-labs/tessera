@@ -6,6 +6,12 @@
 
 export const SCHEMA_VERSION = 38;
 
+/**
+ * v38 needs the authenticated agent environment before legacy path evidence
+ * can be registered as a host-openable Worktree location.
+ */
+export const CANONICAL_WORKTREE_BOOTSTRAP_META_KEY = 'canonical_worktree_bootstrap_v38';
+
 export const CREATE_TABLES = `
 CREATE TABLE IF NOT EXISTS _meta (
   key   TEXT PRIMARY KEY,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceCodeView } from "@/components/workspace/workspace-code-view";
 import { extractGitPanelErrorMessage } from "@/components/git/git-panel-shared";
 import {
@@ -16,9 +16,10 @@ import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
 import {
   buildWorkspaceFileSessionId,
-  type WorkspaceFileSessionRef,
+  type WorkspaceFileRef,
 } from "@/lib/workspace-tabs/special-session";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
+import type { WorkspaceTarget } from '@/types/worktree';
 
 type WorkspaceFilesChangedMessage = Extract<
   ServerTransportMessage,
@@ -35,10 +36,13 @@ const FILE_LOAD_TIMEOUT_MS = 3_000;
 const FILE_LOAD_TIMEOUT_MESSAGE =
   "The file did not load in time. The workspace filesystem or git may be unresponsive.";
 
-function getFileUrl(ref: WorkspaceFileSessionRef): string {
-  const sessionId = encodeURIComponent(ref.sourceSessionId);
-  const path = encodeURIComponent(ref.path);
-  if (ref.kind === "diff") return `/api/sessions/${sessionId}/git/diff?path=${path}`;
+function getFileUrl(target: WorkspaceTarget, kind: 'file' | 'diff', filePath: string): string {
+  const path = encodeURIComponent(filePath);
+  if (target.kind === 'worktree') {
+    return `/api/worktrees/${encodeURIComponent(target.id)}/file?path=${path}`;
+  }
+  const sessionId = encodeURIComponent(target.id);
+  if (kind === "diff") return `/api/sessions/${sessionId}/git/diff?path=${path}`;
   return `/api/sessions/${sessionId}/file?path=${path}`;
 }
 
@@ -98,13 +102,22 @@ export function WorkspaceFileTab({
   onClose,
   onFileRefChange,
 }: {
-  fileRef: WorkspaceFileSessionRef;
+  fileRef: WorkspaceFileRef;
   panelId: string;
   surfaceActive?: boolean;
   onClose?: () => void;
-  onFileRefChange?: (fileRef: WorkspaceFileSessionRef) => void;
+  onFileRefChange?: (fileRef: WorkspaceFileRef) => void;
 }) {
-  const { kind, path, sourceSessionId } = fileRef;
+  const { kind, path } = fileRef;
+  const sourceSessionId = fileRef.type === 'workspace-file' ? fileRef.sourceSessionId : null;
+  const sourceTargetKind = fileRef.type === 'worktree-file' ? 'worktree' : 'session';
+  const sourceTargetId = fileRef.type === 'worktree-file'
+    ? fileRef.sourceWorktreeId
+    : fileRef.sourceSessionId;
+  const sourceTarget = useMemo<WorkspaceTarget>(
+    () => ({ kind: sourceTargetKind, id: sourceTargetId }),
+    [sourceTargetId, sourceTargetKind],
+  );
   const tabId = useContext(TabIdContext);
   const isTabActive = useTabStore((state) => surfaceActive || state.activeTabId === tabId);
   const isDocumentVisible = useDocumentVisibility();
@@ -144,7 +157,7 @@ export function WorkspaceFileTab({
     activeLoadsRef.current += 1;
     try {
       const response = await fetchWithTimeout(
-        getFileUrl({ type: "workspace-file", sourceSessionId, kind, path }),
+        getFileUrl(sourceTarget, kind, path),
         { signal: options?.signal, timeoutMs: FILE_LOAD_TIMEOUT_MS, retries: 1 },
       );
       const payload = await response.json().catch(() => null);
@@ -181,13 +194,14 @@ export function WorkspaceFileTab({
     } finally {
       activeLoadsRef.current -= 1;
     }
-  }, [kind, path, sourceSessionId]);
+  }, [kind, path, sourceTarget]);
 
   const refreshFile = useCallback(() => {
     void loadFile({ silent: true });
   }, [loadFile]);
 
   const handleWorkspaceFilesChanged = useCallback((msg: WorkspaceFilesChangedMessage) => {
+    if (!sourceSessionId) return;
     if (!msg.sessionIds.includes(sourceSessionId)) return;
 
     const renameTarget = findRenameTarget(msg, path);
@@ -219,11 +233,11 @@ export function WorkspaceFileTab({
   }, [assignSession, kind, loadFile, onFileRefChange, panelId, path, refreshFile, sourceSessionId]);
 
   useWorkspaceFilesLiveSync({
-    enabled: isTabActive && isDocumentVisible,
+    enabled: Boolean(sourceSessionId) && isTabActive && isDocumentVisible,
     onFilesChanged: handleWorkspaceFilesChanged,
     onRefresh: refreshFile,
     refreshOnTreeChange: false,
-    sessionId: sourceSessionId,
+    sessionId: sourceSessionId ?? '',
     subscriberId,
   });
 
@@ -266,7 +280,7 @@ export function WorkspaceFileTab({
     };
 
     const unsubscribe = wsClient.subscribeServerMessages((msg) => {
-      if (shouldRefreshForSession(msg, sourceSessionId)) {
+      if (sourceSessionId && shouldRefreshForSession(msg, sourceSessionId)) {
         scheduleRefresh();
       }
     });
@@ -299,7 +313,7 @@ export function WorkspaceFileTab({
       }}
       onRetry={() => void loadFile()}
       path={fileRef.path}
-      sourceSessionId={sourceSessionId}
+      sourceTarget={sourceTarget}
     />
   );
 }

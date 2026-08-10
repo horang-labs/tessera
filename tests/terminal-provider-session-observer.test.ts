@@ -12,6 +12,7 @@ import {
   resolveClaudeBackgroundTerminalSessionFork,
   resolveClaudeJobsDir,
 } from '@/lib/cli/providers/claude-code/terminal-session-observer';
+import { getTerminalSessionArtifactWatchBackend } from '@/lib/cli/providers/terminal-session-artifact-observer';
 
 /**
  * Forces the bridged topology (Windows server, WSL agent) the packaged app
@@ -23,6 +24,19 @@ function withBridgedPlatform(t: { after: (fn: () => void) => void }): void {
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
   t.after(() => Object.defineProperty(process, 'platform', original));
 }
+
+test('provider artifacts on a WSL UNC root use native inotify instead of Windows chokidar', () => {
+  assert.equal(
+    getTerminalSessionArtifactWatchBackend(
+      '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\.codex\\sessions',
+    ),
+    'wsl-inotify',
+  );
+  assert.equal(
+    getTerminalSessionArtifactWatchBackend('C:\\Users\\work\\.codex\\sessions'),
+    'chokidar',
+  );
+});
 
 test('Codex fork artifacts report the child identity before its first prompt', async (t) => {
   const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-observer-'));

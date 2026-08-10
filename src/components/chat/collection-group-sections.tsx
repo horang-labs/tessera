@@ -66,6 +66,7 @@ import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { getLinkedWorktreeDensity, toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -767,9 +768,18 @@ export function TaskItemRow({
     const tab = state.tabPanels[activeTabId];
     return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
   });
-  const isTaskActive = density === 'composite'
-    ? task.sessions[0]?.id === activeSessionId
-    : Boolean(task.worktreeId && task.worktreeId === activeWorktreeId);
+  const peekSelection = useWorkspacePeekStore((state) =>
+    state.target === null
+      ? 'none'
+      : state.target.worktreeId === task.worktreeId
+        ? 'self'
+        : 'other'
+  );
+  const isTaskActive = peekSelection !== 'none'
+    ? peekSelection === 'self' && density !== 'composite'
+    : density === 'composite'
+      ? task.sessions[0]?.id === activeSessionId
+      : Boolean(task.worktreeId && task.worktreeId === activeWorktreeId);
   const isPending = task.isPending === true;
   const primarySessionId = task.sessions[0]?.id;
   const isGeneratingTitle = useSessionStore((state) =>
@@ -873,14 +883,8 @@ export function TaskItemRow({
 
   const selectWorktree = useCallback(() => {
     if (!task.worktreeId) return;
-    const panelStore = usePanelStore.getState();
-    const tabId = useTabStore.getState().activeTabId;
-    const tab = panelStore.tabPanels[tabId];
-    if (!tab) return;
     stepAsidePhoneSidebar();
-    panelStore.setActiveTabId(tabId);
-    panelStore.assignWorktree(tab.activePanelId, task.worktreeId);
-    useTabStore.getState().setTabProject(tabId, task.projectViewId);
+    useWorkspacePeekStore.getState().openWorktree(task.worktreeId, task.projectViewId);
   }, [task.projectViewId, task.worktreeId]);
 
   const openPrimarySession = useCallback(async (
