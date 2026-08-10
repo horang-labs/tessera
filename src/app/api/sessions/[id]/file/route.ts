@@ -13,46 +13,16 @@ import {
   isInsideWorkspacePath,
   resolveWorkspaceReadTarget,
 } from "@/lib/workspace-files/workspace-file-read-target";
-
-const MAX_TEXT_FILE_BYTES = 512 * 1024;
-const MAX_RAW_FILE_BYTES = 25 * 1024 * 1024;
-const FS_OPERATION_TIMEOUT_MS = 2_000;
-
-class WorkspaceFileError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-  }
-}
-
-// fs calls against the workspace can block indefinitely on hung network,
-// FUSE, or WSL mounts; respond with 504 instead of never responding. The
-// underlying syscall cannot be cancelled, but the HTTP response must not
-// wait for it.
-function withFsDeadline<T>(operation: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new WorkspaceFileError(
-        "filesystem_timeout",
-        "The workspace filesystem did not respond in time",
-        504,
-      ));
-    }, FS_OPERATION_TIMEOUT_MS);
-    operation.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
+import {
+  MAX_RAW_FILE_BYTES,
+  MAX_TEXT_FILE_BYTES,
+  WorkspaceFileError,
+  withFsDeadline,
+} from "@/lib/workspace-files/workspace-file-io";
+import {
+  createWorkspaceFile,
+  saveWorkspaceFile,
+} from "@/lib/workspace-files/workspace-file-write";
 
 async function resolveRequestedFile(root: string, rawPath: string): Promise<{
   absolutePath: string;
@@ -172,18 +142,11 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const auth = await requireAuthenticatedUserId(request, {
-      error: { code: "unauthorized", message: "Unauthorized" },
-    });
-    if ("response" in auth) return auth.response;
-
-    const root = await resolveSessionWorkspaceFilesystemRoot(id);
-    if (!root) {
-      return jsonError("missing_work_dir", "Session has no working directory", 422);
-    }
+    const resolved = await authenticateAndResolveRoot(request, id);
+    if ("response" in resolved) return resolved.response;
 
     const rawPath = request.nextUrl.searchParams.get("path") ?? "";
-    const { absolutePath, relativePath } = await resolveRequestedFile(root, rawPath);
+    const { absolutePath, relativePath } = await resolveRequestedFile(resolved.root, rawPath);
     const fileStat = await withFsDeadline(fs.stat(absolutePath));
     if (!fileStat.isFile()) {
       throw new WorkspaceFileError("invalid_file_path", "Path is not a file", 400);
@@ -224,20 +187,124 @@ export async function GET(
 
     return NextResponse.json({
       sessionId: id,
-      workDir: root,
+      workDir: resolved.root,
       path: relativePath,
       content: binary ? "" : contentBuffer.toString("utf8"),
       language: inferLanguage(relativePath),
       size: fileStat.size,
+      mtimeMs: fileStat.mtimeMs,
       truncated,
       binary,
     });
   } catch (error) {
-    if (error instanceof WorkspaceFileError) {
-      return jsonError(error.code, error.message, error.status);
-    }
+    return toErrorResponse(error, id, "load");
+  }
+}
 
-    logger.error({ error, sessionId: id }, "Failed to load workspace file");
-    return jsonError("internal_error", "Failed to load workspace file", 500);
+function toErrorResponse(error: unknown, sessionId: string, action: string): NextResponse {
+  if (error instanceof WorkspaceFileError) {
+    return jsonError(error.code, error.message, error.status);
+  }
+
+  logger.error({ error, sessionId }, `Failed to ${action} workspace file`);
+  return jsonError("internal_error", `Failed to ${action} workspace file`, 500);
+}
+
+interface WorkspaceWriteBody {
+  path?: unknown;
+  content?: unknown;
+  baseMtimeMs?: unknown;
+}
+
+function parseWriteBody(body: unknown, options: { contentOptional?: boolean } = {}): {
+  path: string;
+  content: string;
+  baseMtimeMs: number | null;
+} {
+  const { path: rawPath, content, baseMtimeMs } = (body ?? {}) as WorkspaceWriteBody;
+  if (typeof rawPath !== "string") {
+    throw new WorkspaceFileError("invalid_file_path", "Missing file path", 400);
+  }
+  if (typeof content !== "string" && !(options.contentOptional && content === undefined)) {
+    throw new WorkspaceFileError("invalid_request", "Expected file content", 400);
+  }
+  return {
+    path: rawPath,
+    content: typeof content === "string" ? content : "",
+    baseMtimeMs:
+      typeof baseMtimeMs === "number" && Number.isFinite(baseMtimeMs) ? baseMtimeMs : null,
+  };
+}
+
+async function authenticateAndResolveRoot(
+  request: NextRequest,
+  sessionId: string,
+): Promise<{ root: string } | { response: NextResponse }> {
+  const auth = await requireAuthenticatedUserId(request, {
+    error: { code: "unauthorized", message: "Unauthorized" },
+  });
+  if ("response" in auth) return { response: auth.response };
+
+  const root = await resolveSessionWorkspaceFilesystemRoot(sessionId);
+  if (!root) {
+    return { response: jsonError("missing_work_dir", "Session has no working directory", 422) };
+  }
+  return { root };
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await params;
+
+  try {
+    // Authenticate before reading the body: an unauthenticated caller should
+    // not get as far as having its payload parsed.
+    const resolved = await authenticateAndResolveRoot(request, id);
+    if ("response" in resolved) return resolved.response;
+    const body = parseWriteBody(await request.json().catch(() => null));
+
+    const saved = await saveWorkspaceFile(resolved.root, {
+      baseMtimeMs: body.baseMtimeMs,
+      content: body.content,
+      path: body.path,
+    });
+
+    return NextResponse.json({
+      sessionId: id,
+      path: saved.relativePath,
+      size: saved.size,
+      mtimeMs: saved.mtimeMs,
+    });
+  } catch (error) {
+    return toErrorResponse(error, id, "save");
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await params;
+
+  try {
+    const resolved = await authenticateAndResolveRoot(request, id);
+    if ("response" in resolved) return resolved.response;
+    const body = parseWriteBody(await request.json().catch(() => null), { contentOptional: true });
+
+    const created = await createWorkspaceFile(resolved.root, {
+      content: body.content,
+      path: body.path,
+    });
+
+    return NextResponse.json({
+      sessionId: id,
+      path: created.relativePath,
+      size: created.size,
+      mtimeMs: created.mtimeMs,
+    });
+  } catch (error) {
+    return toErrorResponse(error, id, "create");
   }
 }

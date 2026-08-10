@@ -6,6 +6,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  FilePlus2,
   FileText,
   Folder,
   FolderOpen,
@@ -35,6 +36,7 @@ import {
   toAbsoluteWorkspacePath,
 } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
+import { WorkspaceNewFileDialog } from "@/components/workspace/workspace-new-file-dialog";
 import { cn } from "@/lib/utils";
 
 interface WorkspaceFileNode {
@@ -162,6 +164,8 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // null when closed; the string is the folder the dialog pre-fills with.
+  const [newFileDirectory, setNewFileDirectory] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
   const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
@@ -223,6 +227,10 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
       const absolutePath = toAbsoluteWorkspacePath(workDir, node.path);
       return (
         <div key={`dir:${node.path}`} className="flex flex-col">
+          {/* The row's own action sits beside the disclosure button, not inside
+              it: a control nested in a control is unreachable to a screen
+              reader and invalid HTML. */}
+          <div className="group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)">
           <button
             type="button"
             onClick={() => toggleDirectory(node.path)}
@@ -241,7 +249,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               setWorkspaceDirectoryDragData(event.dataTransfer, sessionId, node.path, absolutePath);
             }}
             draggable={Boolean(sessionId)}
-            className="group flex min-w-0 items-center gap-1.5 border-l-2 border-l-transparent py-1.5 pr-2 text-left text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+            className="flex min-w-0 flex-1 items-center gap-1.5 border-l-2 border-l-transparent py-1.5 pr-2 text-left text-(--text-secondary) transition-colors group-hover:text-(--text-primary)"
             style={{ paddingLeft }}
             title={node.path}
             aria-expanded={expanded}
@@ -260,6 +268,18 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               {node.fileCount}
             </span>
           </button>
+          <Tooltip content={`New file in ${node.path}`}>
+            <button
+              type="button"
+              onClick={() => setNewFileDirectory(node.path)}
+              className="mr-1 inline-flex shrink-0 rounded-md p-1 text-(--text-muted) opacity-0 transition-opacity hover:bg-(--chat-bg) hover:text-(--text-primary) focus-visible:opacity-100 group-hover:opacity-100"
+              aria-label={`New file in ${node.path}`}
+              data-testid="workspace-new-file-in-folder"
+            >
+              <FilePlus2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+          </div>
           {expanded ? node.children.map((child) => renderTreeNode(child, depth + 1)) : null}
         </div>
       );
@@ -378,6 +398,18 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               </p>
             </div>
           </div>
+          <div className="flex shrink-0 items-center gap-1">
+          <Tooltip content="New file">
+            <button
+              type="button"
+              onClick={() => setNewFileDirectory("")}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              aria-label="New file"
+              data-testid="workspace-new-file"
+            >
+              <FilePlus2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
             <button
               type="button"
@@ -394,6 +426,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               {showHiddenFiles ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
             </button>
           </Tooltip>
+          </div>
         </div>
         <label className="mt-3 flex h-8 items-center gap-2 rounded-md border border-(--input-border) bg-(--chat-bg) px-2.5 focus-within:border-(--accent)">
           <Search className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
@@ -442,6 +475,14 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           position={contextMenu.position}
         />
       ) : null}
+      <WorkspaceNewFileDialog
+        directory={newFileDirectory ?? ""}
+        open={newFileDirectory !== null}
+        onOpenChange={(next) => {
+          if (!next) setNewFileDirectory(null);
+        }}
+        sessionId={sessionId}
+      />
     </div>
   );
 }

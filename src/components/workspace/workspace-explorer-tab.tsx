@@ -1,9 +1,10 @@
 "use client";
 
-import { AlertCircle, Eye, EyeOff, FileText, FolderTree, Link2, LoaderCircle, Search } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, FilePlus2, FileText, FolderTree, Link2, LoaderCircle, Search } from "lucide-react";
 import { useContext, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
+import { WorkspaceNewFileDialog } from "@/components/workspace/workspace-new-file-dialog";
 import {
   useDocumentVisibility,
   useStableWorkspaceFilesSubscriberId,
@@ -61,6 +62,8 @@ export function WorkspaceExplorerTab({
   const isDocumentVisible = useDocumentVisibility();
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-explorer-tab");
   const [query, setQuery] = useState("");
+  // null when closed; the string is the folder the dialog pre-fills with.
+  const [newFileDirectory, setNewFileDirectory] = useState<string | null>(null);
   const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
   const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
   const {
@@ -118,6 +121,17 @@ export function WorkspaceExplorerTab({
                 className="min-w-0 flex-1 bg-transparent text-sm text-(--text-primary) outline-none placeholder:text-(--text-muted)"
               />
             </label>
+            <Tooltip content="New file">
+              <button
+                type="button"
+                onClick={() => setNewFileDirectory("")}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+                aria-label="New file"
+                data-testid="workspace-new-file"
+              >
+                <FilePlus2 className="h-4 w-4" />
+              </button>
+            </Tooltip>
             <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
               <button
                 type="button"
@@ -154,31 +168,56 @@ export function WorkspaceExplorerTab({
           <div className="mx-auto max-w-5xl py-3">
             {visibleFiles.map((filePath) => {
               const isSymlink = symlinkPaths.has(filePath);
+              const directory = dirname(filePath);
               return (
-                <button
+                <div
                   key={filePath}
-                  type="button"
-                  onClick={() => openWorkspaceFileTab(explorerRef.sourceSessionId, "file", filePath)}
-                  className={cn(
-                    "grid h-10 w-full grid-cols-[1.5rem_minmax(12rem,1fr)_minmax(12rem,1.5fr)] items-center gap-3 rounded-md px-3 text-left transition-colors",
-                    "text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
-                  )}
-                  title={isSymlink ? `${filePath} (symbolic link)` : filePath}
-                  data-symlink={isSymlink ? "true" : undefined}
+                  className="group grid w-full grid-cols-[1fr_2.25rem] items-center rounded-md transition-colors hover:bg-(--sidebar-hover)"
                 >
-                  {isSymlink ? (
-                    <Link2 className="h-4 w-4 text-(--text-muted)" aria-label="Symbolic link" />
-                  ) : (
-                    <FileText className="h-4 w-4 text-(--text-muted)" />
-                  )}
-                  <span className="truncate font-mono text-xs">{basename(filePath)}</span>
-                  <span className="truncate text-xs text-(--text-muted)">{dirname(filePath)}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => openWorkspaceFileTab(explorerRef.sourceSessionId, "file", filePath)}
+                    className={cn(
+                      "grid h-10 w-full grid-cols-[1.5rem_minmax(12rem,1fr)_minmax(12rem,1.5fr)] items-center gap-3 rounded-md px-3 text-left transition-colors",
+                      "text-(--text-secondary) group-hover:text-(--text-primary)",
+                    )}
+                    title={isSymlink ? `${filePath} (symbolic link)` : filePath}
+                    data-symlink={isSymlink ? "true" : undefined}
+                  >
+                    {isSymlink ? (
+                      <Link2 className="h-4 w-4 text-(--text-muted)" aria-label="Symbolic link" />
+                    ) : (
+                      <FileText className="h-4 w-4 text-(--text-muted)" />
+                    )}
+                    <span className="truncate font-mono text-xs">{basename(filePath)}</span>
+                    <span className="truncate text-xs text-(--text-muted)">{directory}</span>
+                  </button>
+                  <Tooltip content={directory === "." ? "New file at the workspace root" : `New file in ${directory}`}>
+                    <button
+                      type="button"
+                      onClick={() => setNewFileDirectory(directory === "." ? "" : directory)}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-(--text-muted) opacity-0 transition-opacity hover:bg-(--sidebar-bg) hover:text-(--text-primary) focus-visible:opacity-100 group-hover:opacity-100"
+                      aria-label={`New file in ${directory === "." ? "the workspace root" : directory}`}
+                      data-testid="workspace-new-file-in-folder"
+                    >
+                      <FilePlus2 className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                </div>
               );
             })}
           </div>
         </ScrollArea>
       )}
+
+      <WorkspaceNewFileDialog
+        directory={newFileDirectory ?? ""}
+        open={newFileDirectory !== null}
+        onOpenChange={(next) => {
+          if (!next) setNewFileDirectory(null);
+        }}
+        sessionId={explorerRef.sourceSessionId}
+      />
     </div>
   );
 }
