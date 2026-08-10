@@ -5,6 +5,9 @@ Branch: `feature/322-inline-explorer`. Not pushed, not merged, no PR.
 - `365f65d` feat(workspace): name files and folders inline, not in a modal
 - `c287341` fix(workspace): commit an inline blur before the row can be unmounted
 - `67e890a` fix(workspace): move the row actions onto the right-click menu
+- `0c49997`, `503035e`, `6d67bd6` docs: this report
+- `1c84523` fix(workspace): keep the panel's New file and New folder buttons
+- `ae204d1` fix(workspace): disarm the deferred folder toggle when an input opens
 
 ## What was built
 
