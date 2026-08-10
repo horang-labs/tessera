@@ -564,7 +564,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       output: { provider: 'claude-code', model: '', promptTemplate: '' },
       sendShortcut: 'meta+enter',
     },
-    theme: 'auto',
+    theme: 'dark',
     terminalThemeLightPreset: 'lifted-neutral',
     terminalThemeDarkPreset: 'neutral-charcoal',
     fontSize: DEFAULT_FONT_SCALE,
