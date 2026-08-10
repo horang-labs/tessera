@@ -135,6 +135,23 @@ test("directory scan reports a vanished directory instead of an empty one", asyn
   });
 });
 
+test("workspace file scan reports directories, including empty ones", async () => {
+  await withTempWorkspace(async (root) => {
+    await mkdir(path.join(root, "src/nested"), { recursive: true });
+    await mkdir(path.join(root, "empty"), { recursive: true });
+    await mkdir(path.join(root, "node_modules/pkg"), { recursive: true });
+    await writeFile(path.join(root, "src/nested/a.ts"), "");
+    await writeFile(path.join(root, "top.ts"), "");
+
+    const result = await walkWorkspaceFiles(root);
+
+    // An empty folder has no file to infer it from, so the explorer can only
+    // show it if the scan reports it in its own right.
+    assert.deepEqual(result.directories, ["empty", "src", "src/nested"]);
+    assert.deepEqual(result.files, ["src/nested/a.ts", "top.ts"]);
+  });
+});
+
 test("workspace path helpers normalize and classify ignored paths", () => {
   assert.equal(workspaceRelativeDirname("top.ts"), "");
   assert.equal(workspaceRelativeDirname(".codex/hooks.json"), ".codex");

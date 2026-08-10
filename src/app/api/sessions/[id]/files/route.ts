@@ -57,6 +57,7 @@ export async function GET(
   const root = await resolveSessionWorkspaceFilesystemRoot(id);
   if (!root) {
     return NextResponse.json({
+      directories: [],
       files: [],
       symlinks: [],
       chats: refs.chats,
@@ -71,6 +72,7 @@ export async function GET(
     const stat = await fs.stat(root);
     if (!stat.isDirectory()) {
       return NextResponse.json({
+        directories: [],
         files: [],
         symlinks: [],
         chats: refs.chats,
@@ -82,6 +84,7 @@ export async function GET(
     }
   } catch {
     return NextResponse.json({
+      directories: [],
       files: [],
       symlinks: [],
       chats: refs.chats,
@@ -96,6 +99,7 @@ export async function GET(
     const result = await workspaceFileWatchManager.ensureSnapshotForRoot(root)
       ?? await walkWorkspaceFiles(root);
     return NextResponse.json({
+      directories: result.directories,
       files: result.files,
       symlinks: result.symlinks,
       chats: refs.chats,
@@ -105,6 +109,7 @@ export async function GET(
     });
   } catch {
     return NextResponse.json({
+      directories: [],
       files: [],
       symlinks: [],
       chats: refs.chats,

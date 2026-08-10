@@ -23,6 +23,10 @@ import {
   createWorkspaceFile,
   saveWorkspaceFile,
 } from "@/lib/workspace-files/workspace-file-write";
+import {
+  deleteWorkspaceEntry,
+  renameWorkspaceEntry,
+} from "@/lib/workspace-files/workspace-file-mutations";
 
 async function resolveRequestedFile(root: string, rawPath: string): Promise<{
   absolutePath: string;
@@ -306,5 +310,83 @@ export async function POST(
     });
   } catch (error) {
     return toErrorResponse(error, id, "create");
+  }
+}
+
+function parseOptionalMtime(rawValue: string | null): number | null {
+  if (rawValue === null) return null;
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await params;
+
+  try {
+    const resolved = await authenticateAndResolveRoot(request, id);
+    if ("response" in resolved) return resolved.response;
+
+    const searchParams = request.nextUrl.searchParams;
+    const deleted = await deleteWorkspaceEntry(resolved.root, {
+      baseMtimeMs: parseOptionalMtime(searchParams.get("baseMtimeMs")),
+      path: searchParams.get("path") ?? "",
+      recursive: searchParams.get("recursive") === "1",
+    });
+
+    return NextResponse.json({
+      sessionId: id,
+      path: deleted.relativePath,
+      kind: deleted.kind,
+      deleted: true,
+    });
+  } catch (error) {
+    return toErrorResponse(error, id, "delete");
+  }
+}
+
+interface WorkspaceRenameBody {
+  path?: unknown;
+  newName?: unknown;
+  baseMtimeMs?: unknown;
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await params;
+
+  try {
+    const resolved = await authenticateAndResolveRoot(request, id);
+    if ("response" in resolved) return resolved.response;
+
+    const body = (await request.json().catch(() => null) ?? {}) as WorkspaceRenameBody;
+    if (typeof body.path !== "string") {
+      throw new WorkspaceFileError("invalid_file_path", "Missing file path", 400);
+    }
+    if (typeof body.newName !== "string") {
+      throw new WorkspaceFileError("invalid_file_name", "Enter a name", 400);
+    }
+
+    const renamed = await renameWorkspaceEntry(resolved.root, {
+      baseMtimeMs:
+        typeof body.baseMtimeMs === "number" && Number.isFinite(body.baseMtimeMs)
+          ? body.baseMtimeMs
+          : null,
+      newName: body.newName,
+      path: body.path,
+    });
+
+    return NextResponse.json({
+      sessionId: id,
+      path: renamed.relativePath,
+      previousPath: renamed.previousPath,
+      kind: renamed.kind,
+    });
+  } catch (error) {
+    return toErrorResponse(error, id, "rename");
   }
 }
