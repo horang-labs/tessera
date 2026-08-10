@@ -362,19 +362,23 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   );
   const isSearching = query.trim().length > 0;
 
+  // Expand the ancestors, or an entry created inside a collapsed folder appears
+  // to have done nothing.
+  function expandParentOf(path: string) {
+    expandPath(path.split("/").slice(0, -1).join("/"));
+  }
+
   async function createFolder(path: string) {
     if (!sessionId) return;
     const created = await createWorkspaceDirectoryRequest(sessionId, path);
-    // Expand the ancestors, or a folder created inside a collapsed one appears
-    // to have done nothing.
-    expandPath(created.path.split("/").slice(0, -1).join("/"));
+    expandParentOf(created.path);
     refreshFiles();
   }
 
   async function createFile(path: string) {
     if (!sessionId) return;
     const created = await createWorkspaceFileRequest(sessionId, path);
-    expandPath(created.path.split("/").slice(0, -1).join("/"));
+    expandParentOf(created.path);
     refreshFiles();
     setSelectedPath(created.path);
     openWorkspaceFileTab(sessionId, "file", created.path);
@@ -444,7 +448,12 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     }, DIR_TOGGLE_DOUBLE_CLICK_MS);
   }
 
-  function startRename(node: WorkspaceTreeNode) {
+  /**
+   * Named apart from the hook's `startRename` because it does more: the first
+   * click of the gesture armed a deferred toggle, and it must not fire under
+   * the input that is about to open.
+   */
+  function beginRename(node: WorkspaceTreeNode) {
     clearDeferredToggle();
     inlineInput.startRename({
       isDirectory: node.type === "directory",
@@ -544,7 +553,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               {...{ [RENAME_HOTSPOT_ATTR]: "" }}
               onDoubleClick={(event) => {
                 event.stopPropagation();
-                startRename(node);
+                beginRename(node);
               }}
               className="min-w-0 flex-1 truncate font-mono text-[11px]"
             >
@@ -580,7 +589,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             <RowMutationActions
               name={node.name}
               onDelete={() => setDeleteRequest({ kind: "directory", path: node.path })}
-              onRename={() => startRename(node)}
+              onRename={() => beginRename(node)}
               path={node.path}
             />
           </div>
@@ -660,7 +669,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             {...{ [RENAME_HOTSPOT_ATTR]: "" }}
             onDoubleClick={(event) => {
               event.stopPropagation();
-              startRename(node);
+              beginRename(node);
             }}
             className="min-w-0 flex-1 truncate font-mono text-[11px]"
           >
@@ -693,7 +702,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               path: node.path,
               dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
             })}
-            onRename={() => startRename(node)}
+            onRename={() => beginRename(node)}
             path={node.path}
             stopPropagation
           />

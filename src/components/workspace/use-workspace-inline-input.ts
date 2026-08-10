@@ -54,12 +54,17 @@ export function useWorkspaceInlineInput(
   const inputRef = useRef<WorkspaceInlineInput | null>(null);
   const submittingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
+  // Bumped whenever the open input changes. A blur commits synchronously and
+  // the next input can open while that request is still out; without this its
+  // late reply would close the new input, or hang the old input's error on it.
+  const generationRef = useRef(0);
 
   useEffect(() => {
     handlersRef.current = handlers;
   });
 
   const close = useCallback(() => {
+    generationRef.current += 1;
     inputRef.current = null;
     submittingRef.current = false;
     setInput(null);
@@ -74,6 +79,7 @@ export function useWorkspaceInlineInput(
   }, []);
 
   const open = useCallback((next: WorkspaceInlineInput) => {
+    generationRef.current += 1;
     inputRef.current = next;
     submittingRef.current = false;
     setInput(next);
@@ -102,6 +108,7 @@ export function useWorkspaceInlineInput(
       return;
     }
 
+    const generation = generationRef.current;
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
@@ -114,8 +121,12 @@ export function useWorkspaceInlineInput(
         } else {
           await handlersRef.current.onRename(intent.path, intent.newName);
         }
-        close();
+        // Only if this is still the input that was submitted: another row may
+        // have taken over while the request was out, and closing it or
+        // reporting into it would be reporting about someone else's name.
+        if (generationRef.current === generation) close();
       } catch (caught) {
+        if (generationRef.current !== generation) return;
         submittingRef.current = false;
         setSubmitting(false);
         setError(caught instanceof Error ? caught.message : "That did not work.");

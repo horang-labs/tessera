@@ -7,9 +7,6 @@ import {
   type WorkspaceInlineInput,
 } from "@/components/workspace/workspace-inline-input-state";
 
-/** How long a blur waits before it is treated as a commit rather than a re-focus. */
-const BLUR_COMMIT_DELAY_MS = 150;
-
 const ICON_CLASS = "h-3.5 w-3.5 shrink-0 text-(--text-muted)";
 
 /** Written out rather than picked into a variable: a component chosen during
@@ -29,6 +26,12 @@ function InlineInputIcon({ kind }: { kind: WorkspaceInlineInput["kind"] }) {
  * behaviour of every file manager, and of Orca's `InlineInputRow`. An empty
  * value and an unchanged rename both resolve to "do nothing", so a stray blur
  * cannot create anything.
+ *
+ * The blur commits **synchronously**. Orca holds it behind a timer to survive
+ * the focus shuffle its context menus cause; nothing here opens a menu, and a
+ * held timer is worse than the problem: opening another row's input unmounts
+ * this one, the cleanup takes the pending timer with it, and the name the user
+ * typed disappears without a word.
  */
 export function WorkspaceInlineInputRow({
   error,
@@ -51,15 +54,8 @@ export function WorkspaceInlineInputRow({
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const focusFrameRef = useRef<number | null>(null);
-  const blurTimerRef = useRef<number | null>(null);
   const submittedRef = useRef(false);
   const initialValue = input.kind === "rename" ? input.name : "";
-
-  const clearBlurTimer = useCallback(() => {
-    if (blurTimerRef.current === null) return;
-    window.clearTimeout(blurTimerRef.current);
-    blurTimerRef.current = null;
-  }, []);
 
   // A refused name leaves the input open, so the next Enter has to be heard.
   useEffect(() => {
@@ -68,7 +64,6 @@ export function WorkspaceInlineInputRow({
 
   useEffect(() => () => {
     if (focusFrameRef.current !== null) cancelAnimationFrame(focusFrameRef.current);
-    if (blurTimerRef.current !== null) window.clearTimeout(blurTimerRef.current);
   }, []);
 
   const setInputRef = useCallback((element: HTMLInputElement | null) => {
@@ -96,9 +91,8 @@ export function WorkspaceInlineInputRow({
   const commit = useCallback((value: string) => {
     if (submittedRef.current) return;
     submittedRef.current = true;
-    clearBlurTimer();
     onSubmit(value);
-  }, [clearBlurTimer, onSubmit]);
+  }, [onSubmit]);
 
   return (
     <div
@@ -132,22 +126,11 @@ export function WorkspaceInlineInputRow({
               commit(event.currentTarget.value);
             } else if (event.key === "Escape") {
               event.preventDefault();
-              clearBlurTimer();
               submittedRef.current = true;
               onCancel();
             }
           }}
-          onFocus={clearBlurTimer}
-          onBlur={(event) => {
-            // Held briefly: a re-render that swaps the row would otherwise read
-            // as the user leaving, and a request would go out on its own.
-            const { value } = event.currentTarget;
-            clearBlurTimer();
-            blurTimerRef.current = window.setTimeout(() => {
-              blurTimerRef.current = null;
-              commit(value);
-            }, BLUR_COMMIT_DELAY_MS);
-          }}
+          onBlur={(event) => commit(event.currentTarget.value)}
         />
         {submitting ? (
           <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-(--text-muted)" />

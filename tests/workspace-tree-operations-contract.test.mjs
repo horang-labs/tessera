@@ -105,6 +105,17 @@ test('a refused name is reported beside the input, not in a toast or a modal', (
   assert.doesNotMatch(inlineRowSource, /toast/i);
 });
 
+test('a blur commits before the row can be unmounted out from under it', () => {
+  // A deferred blur is lost with the row: opening another input unmounts this
+  // one and the cleanup takes the pending timer — and the typed name — with it.
+  assert.match(inlineRowSource, /onBlur=\{\(event\) => commit\(event\.currentTarget\.value\)\}/);
+  assert.doesNotMatch(inlineRowSource, /setTimeout/);
+  // The late reply of that commit must not land on whatever opened next.
+  assert.match(inlineHookSource, /generationRef\.current \+= 1/);
+  assert.match(inlineHookSource, /if \(generationRef\.current === generation\) close\(\)/);
+  assert.match(inlineHookSource, /if \(generationRef\.current !== generation\) return/);
+});
+
 test('a watch reconcile cannot take the row being edited', () => {
   // The panel's live sync goes through the hook: while an input is open the
   // reload is held back and applied once, when the input closes.
@@ -117,7 +128,7 @@ test('double-clicking the name renames without fighting the row click', () => {
   // The hotspot is the name text alone, and a folder holds its toggle back for
   // the double-click window so the row does not collapse under the input.
   assert.match(filePanelSource, /\[RENAME_HOTSPOT_ATTR\]: ""/);
-  assert.match(filePanelSource, /onDoubleClick=\{\(event\) => \{\s*event\.stopPropagation\(\);\s*startRename\(node\);/);
+  assert.match(filePanelSource, /onDoubleClick=\{\(event\) => \{\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
   assert.match(filePanelSource, /resolveDirToggleTiming\(\{/);
   assert.match(inlineStateSource, /return clickCount > 1 \? "skip" : "deferred"/);
 });
