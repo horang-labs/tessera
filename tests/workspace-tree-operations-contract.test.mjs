@@ -7,6 +7,7 @@ const read = (relativePath) =>
 
 const filePanelSource = read('../src/components/workspace/workspace-file-panel.tsx');
 const deleteDialogSource = read('../src/components/workspace/workspace-delete-dialog.tsx');
+const contextMenuSource = read('../src/components/workspace/workspace-file-context-menu.tsx');
 const inlineRowSource = read('../src/components/workspace/workspace-inline-input-row.tsx');
 const inlineHookSource = read('../src/components/workspace/use-workspace-inline-input.ts');
 const inlineStateSource = read('../src/components/workspace/workspace-inline-input-state.ts');
@@ -18,20 +19,40 @@ const filesRouteSource = read('../src/app/api/sessions/[id]/files/route.ts');
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const panelContainerSource = read('../src/components/panel/panel-container.tsx');
 
-test('the explorer offers rename and delete on both kinds of row', () => {
-  assert.match(filePanelSource, /data-testid="workspace-rename-entry"/);
-  assert.match(filePanelSource, /data-testid="workspace-delete-entry"/);
+test('every row action lives on the right-click menu, not on a hover strip', () => {
+  // A file explorer is a list of names. Four icons appearing on whichever row
+  // the pointer crosses is a toolbar, and the user rejected it (#322 rework).
+  for (const goneTestId of [
+    'workspace-rename-entry',
+    'workspace-delete-entry',
+    'workspace-new-file-in-folder',
+    'workspace-new-folder-in-folder',
+    'workspace-new-file"',
+    'workspace-new-folder"',
+  ]) {
+    assert.ok(
+      !filePanelSource.includes(`data-testid="${goneTestId}`),
+      `${goneTestId} must not be a row or header control any more`,
+    );
+  }
+  for (const item of ['new-file', 'new-folder', 'rename', 'delete']) {
+    assert.match(contextMenuSource, new RegExp(`data-testid="workspace-context-${item}"`));
+  }
   // A folder row deletes as a directory, a file row as a file: the two take
   // different confirmation copy and only one sends `recursive`.
-  assert.match(filePanelSource, /setDeleteRequest\(\{ kind: "directory", path: node\.path \}\)/);
+  assert.match(filePanelSource, /if \(node\.type === "directory"\) return \{ kind: "directory", path: node\.path \}/);
   assert.match(filePanelSource, /kind: "file",\s*\n\s*path: node\.path,/);
 });
 
-test('folders can be created at the root and inside a row', () => {
-  assert.match(filePanelSource, /data-testid="workspace-new-folder"/);
-  assert.match(filePanelSource, /data-testid="workspace-new-folder-in-folder"/);
-  assert.match(filePanelSource, /inlineInput\.startNew\("folder", ""\)/);
-  assert.match(filePanelSource, /inlineInput\.startNew\("folder", node\.path\)/);
+test('the menu creates where the click was, and the background creates at the root', () => {
+  // On a folder, inside it; on a file, beside it; on the empty space, at the root.
+  assert.match(filePanelSource, /if \(node\.type === "directory"\) return node\.path;/);
+  assert.match(filePanelSource, /return node\.path\.split\("\/"\)\.slice\(0, -1\)\.join\("\/"\);/);
+  assert.match(filePanelSource, /function newEntryParentFor\(node: WorkspaceTreeNode \| null\): string \{\s*\n\s*if \(!node\) return "";/);
+  assert.match(filePanelSource, /onContextMenu=\{openBackgroundContextMenu\}/);
+  // The background menu has no row, so it offers no rename and no delete.
+  assert.match(filePanelSource, /onDelete: contextMenu\.node/);
+  assert.match(filePanelSource, /onRename: contextMenu\.node/);
 });
 
 test('the delete confirmation states what is lost', () => {
@@ -114,6 +135,25 @@ test('a blur commits before the row can be unmounted out from under it', () => {
   assert.match(inlineHookSource, /generationRef\.current \+= 1/);
   assert.match(inlineHookSource, /if \(generationRef\.current === generation\) close\(\)/);
   assert.match(inlineHookSource, /if \(generationRef\.current !== generation\) return/);
+});
+
+test('an input from another session cannot strand this panel', () => {
+  // The panel outlives a session switch. An input left behind would create at
+  // the new root — and, worse, hold the watch refresh back for good, which is
+  // why the open input is derived against the current session rather than
+  // reset in an effect.
+  assert.match(inlineHookSource, /opened\.sessionId === handlers\.sessionId \? opened\.input : null/);
+  assert.match(inlineHookSource, /current\.sessionId === handlersRef\.current\.sessionId/);
+  assert.match(filePanelSource, /onRename: renameEntry,\s*\n\s*sessionId,/);
+});
+
+test('the rename gesture does not also re-open the file', () => {
+  // Both clicks of a double-click on the name reach the row; the second one
+  // previewing the file again under the input it just opened is nobody's ask.
+  assert.match(filePanelSource, /if \(!shouldOpenOnRowClick\(\{/);
+  assert.match(inlineStateSource, /return !\(fromRenameHotspot && clickCount > 1\)/);
+  // F2 renames; Enter still activates the row, so the keyboard can open a file.
+  assert.match(filePanelSource, /if \(event\.key !== "F2"\) return;/);
 });
 
 test('a watch reconcile cannot take the row being edited', () => {

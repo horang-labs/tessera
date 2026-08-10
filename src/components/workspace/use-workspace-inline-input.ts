@@ -14,6 +14,13 @@ interface WorkspaceInlineInputHandlers {
   /** A file-list reload the panel held back while an input was open. */
   onRefreshFiles: () => void;
   onRename: (path: string, newName: string) => Promise<void>;
+  /** The workspace the open input belongs to. Changing it abandons the input. */
+  sessionId: string | null;
+}
+
+interface OpenedInlineInput {
+  input: WorkspaceInlineInput;
+  sessionId: string | null;
 }
 
 export interface WorkspaceInlineInputController {
@@ -45,13 +52,19 @@ export interface WorkspaceInlineInputController {
 export function useWorkspaceInlineInput(
   handlers: WorkspaceInlineInputHandlers,
 ): WorkspaceInlineInputController {
-  const [input, setInput] = useState<WorkspaceInlineInput | null>(null);
+  // The workspace the input was opened against travels with it. The panel
+  // outlives a session switch, and an input left over from the last workspace
+  // has no row to sit on: it would create at the new root, or — worse — hold
+  // this panel's watch refresh back for good. Deriving it rather than resetting
+  // it in an effect keeps that impossible instead of merely handled.
+  const [opened, setOpened] = useState<OpenedInlineInput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const input = opened && opened.sessionId === handlers.sessionId ? opened.input : null;
   // The refs carry what the callbacks need without re-creating them on every
   // render of the panel, which would remount the input and lose its focus.
   const handlersRef = useRef(handlers);
-  const inputRef = useRef<WorkspaceInlineInput | null>(null);
+  const openedRef = useRef<OpenedInlineInput | null>(null);
   const submittingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
   // Bumped whenever the open input changes. A blur commits synchronously and
@@ -65,9 +78,9 @@ export function useWorkspaceInlineInput(
 
   const close = useCallback(() => {
     generationRef.current += 1;
-    inputRef.current = null;
+    openedRef.current = null;
     submittingRef.current = false;
-    setInput(null);
+    setOpened(null);
     setError(null);
     setSubmitting(false);
     // Whatever the watcher reported while the input was open is applied now,
@@ -79,10 +92,11 @@ export function useWorkspaceInlineInput(
   }, []);
 
   const open = useCallback((next: WorkspaceInlineInput) => {
+    const entry = { input: next, sessionId: handlersRef.current.sessionId };
     generationRef.current += 1;
-    inputRef.current = next;
+    openedRef.current = entry;
     submittingRef.current = false;
-    setInput(next);
+    setOpened(entry);
     setError(null);
     setSubmitting(false);
   }, []);
@@ -99,10 +113,11 @@ export function useWorkspaceInlineInput(
   );
 
   const submit = useCallback((value: string) => {
-    const current = inputRef.current;
-    if (!current || submittingRef.current) return;
+    const current = openedRef.current;
+    if (!current || current.sessionId !== handlersRef.current.sessionId) return;
+    if (submittingRef.current) return;
 
-    const intent = resolveInlineSubmitIntent(current, value);
+    const intent = resolveInlineSubmitIntent(current.input, value);
     if (intent.kind === "cancel") {
       close();
       return;
@@ -135,7 +150,10 @@ export function useWorkspaceInlineInput(
   }, [close]);
 
   const handleExternalRefresh = useCallback(() => {
-    if (inputRef.current) {
+    const current = openedRef.current;
+    // Only an input for *this* workspace holds the reload back. One left from a
+    // session that is no longer shown must not stop the panel updating.
+    if (current && current.sessionId === handlersRef.current.sessionId) {
       pendingRefreshRef.current = true;
       return;
     }

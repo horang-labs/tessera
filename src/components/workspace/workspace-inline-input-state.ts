@@ -59,6 +59,22 @@ export function resolveDirToggleTiming({
 }
 
 /**
+ * Whether a click on a file row should open the file. A file row has nothing
+ * to defer — the first click opens a preview, as it always has — so only the
+ * second click of a double-click on the name is dropped, leaving that gesture
+ * meaning rename and nothing else.
+ */
+export function shouldOpenOnRowClick({
+  clickCount,
+  fromRenameHotspot,
+}: {
+  clickCount: number;
+  fromRenameHotspot: boolean;
+}): boolean {
+  return !(fromRenameHotspot && clickCount > 1);
+}
+
+/**
  * The selection an inline rename opens with: the name without its extension,
  * so retyping a name is not retyping ".md" as well. A leading dot is part of
  * the name, not an extension — `.gitignore` selects whole.

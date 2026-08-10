@@ -3,20 +3,15 @@
 import {
   AlertCircle,
   ChevronRight,
-  Copy,
   Eye,
   EyeOff,
-  FilePlus2,
   FileText,
   Folder,
   FolderOpen,
-  FolderPlus,
   FolderTree,
   Link2,
   LoaderCircle,
-  PenLine,
   Search,
-  Trash2,
 } from "lucide-react";
 import {
   type MouseEvent,
@@ -42,10 +37,7 @@ import {
   previewWorkspaceFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
-import {
-  copyText,
-  toAbsoluteWorkspacePath,
-} from "@/lib/workspace-tabs/file-path-actions";
+import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import {
   WorkspaceDeleteDialog,
@@ -58,6 +50,7 @@ import {
   isRenameHotspotTarget,
   RENAME_HOTSPOT_ATTR,
   resolveDirToggleTiming,
+  shouldOpenOnRowClick,
 } from "@/components/workspace/workspace-inline-input-state";
 import {
   createWorkspaceDirectoryRequest,
@@ -93,6 +86,8 @@ type WorkspaceTreeNode = WorkspaceDirectoryNode | WorkspaceFileNode;
 interface PathContextMenuState {
   absolutePath: string;
   canOpenFile: boolean;
+  /** The row it was opened on, or null for the panel's empty background. */
+  node: WorkspaceTreeNode | null;
   position: { x: number; y: number };
 }
 
@@ -182,57 +177,6 @@ function buildFileTree(
   return finalizeDirectory(root).children;
 }
 
-/**
- * Rename and Delete, identical on a file row and a folder row — only what the
- * click means differs, so only that is passed in.
- */
-function RowMutationActions({
-  name,
-  onDelete,
-  onRename,
-  path,
-  stopPropagation = false,
-}: {
-  name: string;
-  onDelete: () => void;
-  onRename: () => void;
-  path: string;
-  /** File rows sit inside a click target of their own; folder rows do not. */
-  stopPropagation?: boolean;
-}) {
-  const handle = (action: () => void) => (event: { stopPropagation: () => void }) => {
-    if (stopPropagation) event.stopPropagation();
-    action();
-  };
-
-  return (
-    <>
-      <Tooltip content={`Rename ${name}`}>
-        <button
-          type="button"
-          onClick={handle(onRename)}
-          className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-          aria-label={`Rename ${path}`}
-          data-testid="workspace-rename-entry"
-        >
-          <PenLine className="h-3.5 w-3.5" />
-        </button>
-      </Tooltip>
-      <Tooltip content={`Delete ${name}`}>
-        <button
-          type="button"
-          onClick={handle(onDelete)}
-          className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--status-error-text)"
-          aria-label={`Delete ${path}`}
-          data-testid="workspace-delete-entry"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      </Tooltip>
-    </>
-  );
-}
-
 function EmptyState({
   title,
   body,
@@ -306,6 +250,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     onExpandParent: expandPath,
     onRefreshFiles: refreshFiles,
     onRename: renameEntry,
+    sessionId,
   });
 
   useWorkspaceFilesLiveSync({
@@ -462,6 +407,57 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     });
   }
 
+  /**
+   * Every action a row offers lives here. Hanging four icons off each row on
+   * hover is what a toolbar does, not what a file explorer does — the tree is
+   * the name, and the actions are one right-click away.
+   */
+  function openRowContextMenu(
+    event: MouseEvent,
+    node: WorkspaceTreeNode,
+    absolutePath: string | null,
+  ) {
+    if (!absolutePath) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      absolutePath,
+      canOpenFile: true,
+      node,
+      position: { x: event.clientX, y: event.clientY },
+    });
+  }
+
+  /** Right-click past the last row: the actions that need no row. */
+  function openBackgroundContextMenu(event: MouseEvent) {
+    const rootPath = toAbsoluteWorkspacePath(workDir, "");
+    if (!rootPath) return;
+    event.preventDefault();
+    setContextMenu({
+      absolutePath: rootPath,
+      canOpenFile: false,
+      node: null,
+      position: { x: event.clientX, y: event.clientY },
+    });
+  }
+
+  /** A folder takes its contents with it; a file may take an unsaved draft. */
+  function deleteRequestFor(node: WorkspaceTreeNode): WorkspaceDeleteRequest {
+    if (node.type === "directory") return { kind: "directory", path: node.path };
+    return {
+      kind: "file",
+      path: node.path,
+      dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
+    };
+  }
+
+  /** A new entry goes inside a folder, or beside the file that was clicked. */
+  function newEntryParentFor(node: WorkspaceTreeNode | null): string {
+    if (!node) return "";
+    if (node.type === "directory") return node.path;
+    return node.path.split("/").slice(0, -1).join("/");
+  }
+
   function renderInlineInputRow(depth: number) {
     const input = inlineInput.input;
     if (!input) return null;
@@ -512,23 +508,16 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
 
       return (
         <div key={`dir:${node.path}`} className="flex flex-col">
-          {/* The row's own action sits beside the disclosure button, not inside
-              it: a control nested in a control is unreachable to a screen
-              reader and invalid HTML. */}
           <div className="group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)">
           <button
             type="button"
             onClick={(event) => handleDirectoryClick(event, node.path)}
-            onContextMenu={(event) => {
-              if (!absolutePath) return;
+            onKeyDown={(event) => {
+              if (event.key !== "F2") return;
               event.preventDefault();
-              event.stopPropagation();
-              setContextMenu({
-                absolutePath,
-                canOpenFile: true,
-                position: { x: event.clientX, y: event.clientY },
-              });
+              beginRename(node);
             }}
+            onContextMenu={(event) => openRowContextMenu(event, node, absolutePath)}
             onDragStart={(event) => {
               if (!sessionId) return;
               setWorkspaceDirectoryDragData(event.dataTransfer, sessionId, node.path, absolutePath);
@@ -563,36 +552,6 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               {node.fileCount}
             </span>
           </button>
-          <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-            <Tooltip content={`New file in ${node.path}`}>
-              <button
-                type="button"
-                onClick={() => inlineInput.startNew("file", node.path)}
-                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-                aria-label={`New file in ${node.path}`}
-                data-testid="workspace-new-file-in-folder"
-              >
-                <FilePlus2 className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            <Tooltip content={`New folder in ${node.path}`}>
-              <button
-                type="button"
-                onClick={() => inlineInput.startNew("folder", node.path)}
-                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-                aria-label={`New folder in ${node.path}`}
-                data-testid="workspace-new-folder-in-folder"
-              >
-                <FolderPlus className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            <RowMutationActions
-              name={node.name}
-              onDelete={() => setDeleteRequest({ kind: "directory", path: node.path })}
-              onRename={() => beginRename(node)}
-              path={node.path}
-            />
-          </div>
           </div>
           {expanded ? children : null}
         </div>
@@ -617,22 +576,22 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
         )}
         style={{ paddingLeft: paddingLeft + 19 }}
         onContextMenu={(event) => {
-          if (!absolutePath) return;
-          event.preventDefault();
-          event.stopPropagation();
           setSelectedPath(node.path);
-          setContextMenu({
-            absolutePath,
-            canOpenFile: true,
-            position: { x: event.clientX, y: event.clientY },
-          });
+          openRowContextMenu(event, node, absolutePath);
         }}
       >
         <button
           type="button"
-          onClick={() => {
+          onClick={(event) => {
             if (!sessionId) return;
             setSelectedPath(node.path);
+            // The second click of a double-click on the name means rename, and
+            // re-previewing the same file under the input it just opened is
+            // nothing anyone asked for.
+            if (!shouldOpenOnRowClick({
+              clickCount: event.detail,
+              fromRenameHotspot: isRenameHotspotTarget(event.target),
+            })) return;
             previewWorkspaceFileTab(sessionId, "file", node.path, {
               preferKanbanPeek: true,
             });
@@ -643,6 +602,13 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             openWorkspaceFileTab(sessionId, "file", node.path, {
               preferKanbanPeek: true,
             });
+          }}
+          onKeyDown={(event) => {
+            // F2, not Enter: Enter already activates the row, and taking that
+            // to mean rename would stop the keyboard opening a file at all.
+            if (event.key !== "F2") return;
+            event.preventDefault();
+            beginRename(node);
           }}
           onDragStart={(event) => {
             if (!sessionId) return;
@@ -676,37 +642,6 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             {node.name}
           </span>
         </button>
-        {/* Below the Phone viewport step the actions are simply present: `hover:` compiles
-            to `@media (hover: hover)`, so on a phone no rule exists to reveal them. The
-            reveal is kept from `sm` up, where a pointer drives the UI (#250). */}
-        <div className="pointer-events-auto absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-100 sm:pointer-events-none sm:opacity-0 shadow-sm transition-opacity sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-          <Tooltip content="Copy absolute path">
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                if (!absolutePath || !node.path) return;
-                copyText(absolutePath);
-              }}
-              disabled={!absolutePath}
-              className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary) disabled:pointer-events-none disabled:opacity-35"
-              aria-label={`Copy absolute path for ${absolutePath || node.path}`}
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-          <RowMutationActions
-            name={node.name}
-            onDelete={() => setDeleteRequest({
-              kind: "file",
-              path: node.path,
-              dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
-            })}
-            onRename={() => beginRename(node)}
-            path={node.path}
-            stopPropagation
-          />
-        </div>
       </div>
     );
   }
@@ -737,28 +672,9 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-          <Tooltip content="New file">
-            <button
-              type="button"
-              onClick={() => inlineInput.startNew("file", "")}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-              aria-label="New file"
-              data-testid="workspace-new-file"
-            >
-              <FilePlus2 className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-          <Tooltip content="New folder">
-            <button
-              type="button"
-              onClick={() => inlineInput.startNew("folder", "")}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-              aria-label="New folder"
-              data-testid="workspace-new-folder"
-            >
-              <FolderPlus className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
+          {/* Creating lives on the right-click menu, on a row or on the empty
+              space below the tree — not on a header button and not on a strip
+              of icons that follows the pointer down the tree. */}
           <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
             <button
               type="button"
@@ -795,10 +711,16 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
       ) : error ? (
         <EmptyState title="Files unavailable" body={error} icon="error" />
       ) : fileTree.length === 0 && !inlineInput.input ? (
-        <EmptyState
-          title={query.trim() ? "No matches" : "No files"}
-          body={query.trim() ? "Try another search." : "This workspace has no readable files."}
-        />
+        // The empty state is a right-click target too: an empty workspace is
+        // exactly where "New file" is wanted most.
+        <div className="min-h-0 flex-1" onContextMenu={openBackgroundContextMenu}>
+          <EmptyState
+            title={query.trim() ? "No matches" : "No files"}
+            body={query.trim()
+              ? "Try another search."
+              : "This workspace has no readable files. Right-click to add one."}
+          />
+        </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
           <div className="flex items-center justify-between px-1">
@@ -810,7 +732,13 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             </span>
           </div>
           <ScrollArea className="min-h-0 flex-1">
-            <div className="flex flex-col">
+            {/* The rows stop their own context menu, so this one only ever
+                fires on the empty space past the last row. */}
+            <div
+              className="flex min-h-full flex-col"
+              onContextMenu={openBackgroundContextMenu}
+              data-testid="workspace-file-tree"
+            >
               {inlineInput.newEntryParent === "" ? renderInlineInputRow(0) : null}
               {fileTree.map((node) => renderTreeNode(node, 0))}
             </div>
@@ -821,6 +749,16 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
         <WorkspaceFileContextMenu
           absolutePath={contextMenu.absolutePath}
           canOpenFile={contextMenu.canOpenFile}
+          entryActions={{
+            onDelete: contextMenu.node
+              ? () => setDeleteRequest(deleteRequestFor(contextMenu.node!))
+              : undefined,
+            onNewFile: () => inlineInput.startNew("file", newEntryParentFor(contextMenu.node)),
+            onNewFolder: () => inlineInput.startNew("folder", newEntryParentFor(contextMenu.node)),
+            onRename: contextMenu.node
+              ? () => beginRename(contextMenu.node!)
+              : undefined,
+          }}
           onClose={() => setContextMenu(null)}
           position={contextMenu.position}
         />
