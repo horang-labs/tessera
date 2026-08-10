@@ -37,6 +37,26 @@ function sessionUrl(sessionId: string, suffix: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/${suffix}`;
 }
 
+/**
+ * Creates an empty file. The route writes with the `wx` flag, so a name that is
+ * already taken comes back as a 409 rather than replacing what is there.
+ */
+export async function createWorkspaceFileRequest(
+  sessionId: string,
+  path: string,
+): Promise<{ path: string }> {
+  return requestMutation<{ path: string }>(
+    sessionUrl(sessionId, "file"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, content: "" }),
+    },
+    "Failed to create file.",
+    "The file was not created in time. The workspace filesystem may be unresponsive.",
+  );
+}
+
 export async function createWorkspaceDirectoryRequest(
   sessionId: string,
   path: string,

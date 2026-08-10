@@ -10,7 +10,7 @@ const writeTargetSource = read('../src/lib/workspace-files/workspace-file-write-
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const codeViewSource = read('../src/components/workspace/workspace-code-view.tsx');
 const filePanelSource = read('../src/components/workspace/workspace-file-panel.tsx');
-const newFileDialogSource = read('../src/components/workspace/workspace-new-file-dialog.tsx');
+const mutationClientSource = read('../src/lib/workspace-files/workspace-file-mutation-client.ts');
 const workspaceFileTypeSource = read('../src/types/workspace-file.ts');
 
 test('the read route reports the mtime the optimistic lock is built on', () => {
@@ -136,19 +136,21 @@ test('the conflict banner offers reload, overwrite and cancel', () => {
   assert.match(fileTabSource, /onOverwrite=\{\(\) => void saveFile\(\{ overwrite: true \}\)\}/);
 });
 
-test('the create dialog posts and opens what it created', () => {
-  assert.match(newFileDialogSource, /method: "POST"/);
-  assert.match(newFileDialogSource, /openWorkspaceFileTab\(sessionId, "file", payload\.path\)/);
-  // A name that already exists surfaces the server's message rather than silently succeeding.
-  assert.match(newFileDialogSource, /setError\(/);
+test('creating a file posts and opens what it created', () => {
+  // The dialog that used to hold this went with #322; the request is the same
+  // POST, now issued straight from the inline input.
+  assert.match(mutationClientSource, /createWorkspaceFileRequest/);
+  assert.match(mutationClientSource, /body: JSON\.stringify\(\{ path, content: "" \}\)/);
+  assert.match(filePanelSource, /openWorkspaceFileTab\(sessionId, "file", created\.path\)/);
 });
 
 test('the Files panel users actually reach carries the create actions', () => {
   // The Git panel's Files tab is the File Explorer. The second copy that used
   // to live in workspace-explorer-tab.tsx was unreachable — nothing ever built
-  // its session id — and is gone (#320).
-  assert.match(filePanelSource, /data-testid="workspace-new-file"/);
-  assert.match(filePanelSource, /data-testid="workspace-new-file-in-folder"/);
-  assert.match(filePanelSource, /setNewFileDirectory\(node\.path\)/);
-  assert.match(filePanelSource, /<WorkspaceNewFileDialog/);
+  // its session id — and is gone (#320). The actions themselves moved onto the
+  // right-click menu in #322, off the row-hover strip.
+  const contextMenuSource = read('../src/components/workspace/workspace-file-context-menu.tsx');
+  assert.match(contextMenuSource, /data-testid="workspace-context-new-file"/);
+  assert.match(filePanelSource, /beginNewEntry\("file", newEntryParentFor\(contextMenu\.node\)\)/);
+  assert.match(filePanelSource, /<WorkspaceFileContextMenu/);
 });
