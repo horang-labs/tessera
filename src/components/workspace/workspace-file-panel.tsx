@@ -227,6 +227,10 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
       const absolutePath = toAbsoluteWorkspacePath(workDir, node.path);
       return (
         <div key={`dir:${node.path}`} className="flex flex-col">
+          {/* The row's own action sits beside the disclosure button, not inside
+              it: a control nested in a control is unreachable to a screen
+              reader and invalid HTML. */}
+          <div className="group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)">
           <button
             type="button"
             onClick={() => toggleDirectory(node.path)}
@@ -245,7 +249,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               setWorkspaceDirectoryDragData(event.dataTransfer, sessionId, node.path, absolutePath);
             }}
             draggable={Boolean(sessionId)}
-            className="group flex min-w-0 items-center gap-1.5 border-l-2 border-l-transparent py-1.5 pr-2 text-left text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+            className="flex min-w-0 flex-1 items-center gap-1.5 border-l-2 border-l-transparent py-1.5 pr-2 text-left text-(--text-secondary) transition-colors group-hover:text-(--text-primary)"
             style={{ paddingLeft }}
             title={node.path}
             aria-expanded={expanded}
@@ -263,28 +267,19 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             <span className="shrink-0 font-mono text-[10px] text-(--text-muted) tabular-nums">
               {node.fileCount}
             </span>
-            <Tooltip content={`New file in ${node.path}`}>
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setNewFileDirectory(node.path);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  event.stopPropagation();
-                  event.preventDefault();
-                  setNewFileDirectory(node.path);
-                }}
-                className="inline-flex shrink-0 rounded-md p-1 text-(--text-muted) opacity-0 transition-opacity hover:bg-(--chat-bg) hover:text-(--text-primary) focus-visible:opacity-100 group-hover:opacity-100"
-                aria-label={`New file in ${node.path}`}
-                data-testid="workspace-new-file-in-folder"
-              >
-                <FilePlus2 className="h-3.5 w-3.5" />
-              </span>
-            </Tooltip>
           </button>
+          <Tooltip content={`New file in ${node.path}`}>
+            <button
+              type="button"
+              onClick={() => setNewFileDirectory(node.path)}
+              className="mr-1 inline-flex shrink-0 rounded-md p-1 text-(--text-muted) opacity-0 transition-opacity hover:bg-(--chat-bg) hover:text-(--text-primary) focus-visible:opacity-100 group-hover:opacity-100"
+              aria-label={`New file in ${node.path}`}
+              data-testid="workspace-new-file-in-folder"
+            >
+              <FilePlus2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+          </div>
           {expanded ? node.children.map((child) => renderTreeNode(child, depth + 1)) : null}
         </div>
       );

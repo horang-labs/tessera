@@ -142,18 +142,11 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const auth = await requireAuthenticatedUserId(request, {
-      error: { code: "unauthorized", message: "Unauthorized" },
-    });
-    if ("response" in auth) return auth.response;
-
-    const root = await resolveSessionWorkspaceFilesystemRoot(id);
-    if (!root) {
-      return jsonError("missing_work_dir", "Session has no working directory", 422);
-    }
+    const resolved = await authenticateAndResolveRoot(request, id);
+    if ("response" in resolved) return resolved.response;
 
     const rawPath = request.nextUrl.searchParams.get("path") ?? "";
-    const { absolutePath, relativePath } = await resolveRequestedFile(root, rawPath);
+    const { absolutePath, relativePath } = await resolveRequestedFile(resolved.root, rawPath);
     const fileStat = await withFsDeadline(fs.stat(absolutePath));
     if (!fileStat.isFile()) {
       throw new WorkspaceFileError("invalid_file_path", "Path is not a file", 400);
@@ -194,7 +187,7 @@ export async function GET(
 
     return NextResponse.json({
       sessionId: id,
-      workDir: root,
+      workDir: resolved.root,
       path: relativePath,
       content: binary ? "" : contentBuffer.toString("utf8"),
       language: inferLanguage(relativePath),
@@ -266,9 +259,11 @@ export async function PUT(
   const { id } = await params;
 
   try {
-    const body = parseWriteBody(await request.json().catch(() => null));
+    // Authenticate before reading the body: an unauthenticated caller should
+    // not get as far as having its payload parsed.
     const resolved = await authenticateAndResolveRoot(request, id);
     if ("response" in resolved) return resolved.response;
+    const body = parseWriteBody(await request.json().catch(() => null));
 
     const saved = await saveWorkspaceFile(resolved.root, {
       baseMtimeMs: body.baseMtimeMs,
@@ -294,9 +289,9 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const body = parseWriteBody(await request.json().catch(() => null), { contentOptional: true });
     const resolved = await authenticateAndResolveRoot(request, id);
     if ("response" in resolved) return resolved.response;
+    const body = parseWriteBody(await request.json().catch(() => null), { contentOptional: true });
 
     const created = await createWorkspaceFile(resolved.root, {
       content: body.content,
