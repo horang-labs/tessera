@@ -197,3 +197,26 @@ test("workspace file index keeps symlink markers inside the capped list", () => 
   // this list against `files` and would otherwise carry a dangling entry.
   assert.deepEqual(result.symlinks, ["file-00000.ts"]);
 });
+
+test("the scan cap covers files and directories together", async () => {
+  await withTempWorkspace(async (root) => {
+    // Directories first in readdir order, then the files beside them: with a
+    // separate budget per kind, hitting the directory cap would abandon the
+    // walk mid-directory and drop the files it had not reached yet.
+    for (let index = 0; index < 4; index += 1) {
+      await mkdir(path.join(root, `dir-${index}`), { recursive: true });
+      await writeFile(path.join(root, `file-${index}.ts`), "");
+    }
+
+    const result = await scanWorkspaceDirectory(root, "", { limit: 6, recursive: true });
+
+    assert.equal(result.truncated, true);
+    // One shared budget: the two lists together stay within it, rather than
+    // each list being allowed the whole of it.
+    assert.ok(
+      result.files.length + result.directories.length <= 6,
+      `expected the cap to be shared, got ${result.files.length} files and ${result.directories.length} directories`,
+    );
+    assert.ok(result.files.length > 0, "files must not be starved by the directory count");
+  });
+});

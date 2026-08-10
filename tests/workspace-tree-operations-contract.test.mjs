@@ -49,6 +49,13 @@ test('a dirty buffer is visible to the delete confirmation', () => {
   assert.match(filePanelSource, /dirty: hasUnsavedWorkspaceFileEdits\(sessionId, node\.path\)/);
 });
 
+test('rename warns about the draft it discards', () => {
+  // Re-pointing a tab remounts it on the new path, so the draft goes with the
+  // old one — the same loss the delete confirmation warns about.
+  assert.match(filePanelSource, /hasUnsavedWorkspaceFileEdits\(sessionId, renameTarget\)/);
+  assert.match(filePanelSource, /unsaved edits, and they are discarded by the rename/);
+});
+
 test('only a folder delete asks the server to recurse', () => {
   assert.match(filePanelSource, /recursive: request\.kind === "directory"/);
   assert.match(mutationClientSource, /if \(options\.recursive\) search\.set\("recursive", "1"\)/);

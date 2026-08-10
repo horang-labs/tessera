@@ -4,8 +4,11 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  linkSync,
+  lstatSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -346,4 +349,44 @@ test("a folder operation reaches the tabs inside that folder", () => {
   assert.equal(isPathUnderMutation("docs-archive/note.md", "docs"), false);
   assert.equal(isPathUnderMutation("other/note.md", "docs"), false);
   assert.equal(isPathUnderMutation("docs", "docs/nested"), false);
+});
+
+test("two distinct links to one target are still two entries", async () => {
+  const root = makeWorkspace();
+  try {
+    writeFileSync(path.join(root, "target.md"), "shared target");
+    symlinkSync(path.join(root, "target.md"), path.join(root, "link-a.md"));
+    symlinkSync(path.join(root, "target.md"), path.join(root, "link-b.md"));
+
+    // Both links resolve to the same file, so comparing resolved paths would
+    // call them the same entry and let the rename overwrite link-b.
+    await assert.rejects(
+      renameWorkspaceEntry(root, { newName: "link-b.md", path: "link-a.md" }),
+      (error: { code?: string; status?: number }) =>
+        error.code === "already_exists" && error.status === 409,
+    );
+    assert.equal(lstatSync(path.join(root, "link-a.md")).isSymbolicLink(), true);
+    assert.equal(lstatSync(path.join(root, "link-b.md")).isSymbolicLink(), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("two hard links to one file are still two entries", async () => {
+  const root = makeWorkspace();
+  try {
+    writeFileSync(path.join(root, "first.md"), "shared bytes");
+    linkSync(path.join(root, "first.md"), path.join(root, "second.md"));
+
+    // Same inode, different names: renaming one onto the other would remove a
+    // name the user can still see in the explorer.
+    await assert.rejects(
+      renameWorkspaceEntry(root, { newName: "second.md", path: "first.md" }),
+      (error: { code?: string }) => error.code === "already_exists",
+    );
+    assert.equal(existsSync(path.join(root, "first.md")), true);
+    assert.equal(existsSync(path.join(root, "second.md")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
 });

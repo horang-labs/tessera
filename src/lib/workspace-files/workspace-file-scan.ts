@@ -157,7 +157,10 @@ export async function scanWorkspaceDirectory(
         // Recorded even when the walk does not descend: a non-recursive rescan
         // still has to see which folders exist at that level.
         dirs.push(childRel);
-        if (dirs.length >= limit) {
+        // One budget across both lists. Giving directories their own would let
+        // the index reach twice the cap, and would let a directory-heavy tree
+        // abandon the walk while files in the same directory went uncollected.
+        if (dirs.length + out.length >= limit) {
           truncated = true;
           return;
         }
@@ -165,7 +168,7 @@ export async function scanWorkspaceDirectory(
       } else if (ent.isFile()) {
         out.push(childRel);
         symlinks.delete(childRel);
-        if (out.length >= limit) {
+        if (dirs.length + out.length >= limit) {
           truncated = true;
           return;
         }
@@ -179,7 +182,7 @@ export async function scanWorkspaceDirectory(
         if (await classifySymlinkTarget(pathModule.join(absDir, ent.name)) !== "file") continue;
         out.push(childRel);
         symlinks.add(childRel);
-        if (out.length >= limit) {
+        if (dirs.length + out.length >= limit) {
           truncated = true;
           return;
         }
@@ -226,7 +229,7 @@ export function applyMaxFiles(
     // Stays a subset of the capped list: a symlink dropped by the cap must not
     // leak into the marker list the client joins against.
     symlinks: symlinkSet?.size ? files.filter((filePath) => symlinkSet.has(filePath)) : [],
-    truncated: sorted.length > MAX_WORKSPACE_FILES
-      || sortedDirectories.length > MAX_WORKSPACE_FILES,
+    // Judged on the two together, the same budget the walk spends.
+    truncated: sorted.length + sortedDirectories.length > MAX_WORKSPACE_FILES,
   };
 }

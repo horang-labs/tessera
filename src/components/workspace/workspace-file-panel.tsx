@@ -167,6 +167,57 @@ function buildFileTree(
   return finalizeDirectory(root).children;
 }
 
+/**
+ * Rename and Delete, identical on a file row and a folder row — only what the
+ * click means differs, so only that is passed in.
+ */
+function RowMutationActions({
+  name,
+  onDelete,
+  onRename,
+  path,
+  stopPropagation = false,
+}: {
+  name: string;
+  onDelete: () => void;
+  onRename: () => void;
+  path: string;
+  /** File rows sit inside a click target of their own; folder rows do not. */
+  stopPropagation?: boolean;
+}) {
+  const handle = (action: () => void) => (event: { stopPropagation: () => void }) => {
+    if (stopPropagation) event.stopPropagation();
+    action();
+  };
+
+  return (
+    <>
+      <Tooltip content={`Rename ${name}`}>
+        <button
+          type="button"
+          onClick={handle(onRename)}
+          className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+          aria-label={`Rename ${path}`}
+          data-testid="workspace-rename-entry"
+        >
+          <PenLine className="h-3.5 w-3.5" />
+        </button>
+      </Tooltip>
+      <Tooltip content={`Delete ${name}`}>
+        <button
+          type="button"
+          onClick={handle(onDelete)}
+          className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--status-error-text)"
+          aria-label={`Delete ${path}`}
+          data-testid="workspace-delete-entry"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </Tooltip>
+    </>
+  );
+}
+
 function EmptyState({
   title,
   body,
@@ -248,10 +299,21 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     const trimmed = query.trim().toLowerCase();
     if (!trimmed) return baseDirectories;
     // A folder stays visible while its own name matches, or while a matching
-    // file needs it as an ancestor — the file rows are nested under it.
+    // file needs it as an ancestor — the file rows are nested under it. The
+    // ancestors are collected from the matching files once; testing each
+    // folder against every file would be the product of the two, on every
+    // keystroke, over a tree that can hold twenty thousand entries.
+    const ancestors = new Set<string>();
+    for (const filePath of visibleFiles) {
+      const parts = filePath.split("/");
+      let walked = "";
+      for (const part of parts.slice(0, -1)) {
+        walked = walked ? `${walked}/${part}` : part;
+        ancestors.add(walked);
+      }
+    }
     return baseDirectories.filter((dirPath) =>
-      dirPath.toLowerCase().includes(trimmed)
-      || visibleFiles.some((filePath) => filePath.startsWith(`${dirPath}/`)));
+      dirPath.toLowerCase().includes(trimmed) || ancestors.has(dirPath));
   }, [baseDirectories, query, visibleFiles]);
   const symlinkPaths = useMemo(() => new Set(symlinks), [symlinks]);
   const fileTree = useMemo(
@@ -389,28 +451,12 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
                 <FolderPlus className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
-            <Tooltip content={`Rename ${node.name}`}>
-              <button
-                type="button"
-                onClick={() => setRenameTarget(node.path)}
-                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-                aria-label={`Rename ${node.path}`}
-                data-testid="workspace-rename-entry"
-              >
-                <PenLine className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            <Tooltip content={`Delete ${node.name}`}>
-              <button
-                type="button"
-                onClick={() => setDeleteRequest({ kind: "directory", path: node.path })}
-                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--status-error-text)"
-                aria-label={`Delete ${node.path}`}
-                data-testid="workspace-delete-entry"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
+            <RowMutationActions
+              name={node.name}
+              onDelete={() => setDeleteRequest({ kind: "directory", path: node.path })}
+              onRename={() => setRenameTarget(node.path)}
+              path={node.path}
+            />
           </div>
           </div>
           {expanded ? node.children.map((child) => renderTreeNode(child, depth + 1)) : null}
@@ -501,38 +547,17 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               <Copy className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
-          <Tooltip content={`Rename ${node.name}`}>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                setRenameTarget(node.path);
-              }}
-              className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-              aria-label={`Rename ${node.path}`}
-              data-testid="workspace-rename-entry"
-            >
-              <PenLine className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-          <Tooltip content={`Delete ${node.name}`}>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                setDeleteRequest({
-                  kind: "file",
-                  path: node.path,
-                  dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
-                });
-              }}
-              className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--status-error-text)"
-              aria-label={`Delete ${node.path}`}
-              data-testid="workspace-delete-entry"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
+          <RowMutationActions
+            name={node.name}
+            onDelete={() => setDeleteRequest({
+              kind: "file",
+              path: node.path,
+              dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
+            })}
+            onRename={() => setRenameTarget(node.path)}
+            path={node.path}
+            stopPropagation
+          />
         </div>
       </div>
     );
@@ -676,7 +701,12 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
       />
       <WorkspaceEntryNameDialog
         confirmLabel="Rename"
-        description="New name. It stays in the same folder, so a name cannot contain a slash."
+        // The tab re-points by remounting on the new path, which drops the
+        // draft with it — the same loss a delete warns about, so it says so
+        // here too rather than swallowing the typing.
+        description={renameTarget && hasUnsavedWorkspaceFileEdits(sessionId, renameTarget)
+          ? "New name. It stays in the same folder, so a name cannot contain a slash. This file has unsaved edits, and they are discarded by the rename."
+          : "New name. It stays in the same folder, so a name cannot contain a slash."}
         initialValue={renameTarget ? renameTarget.split("/").pop() ?? "" : ""}
         key={`rename:${renameTarget ?? ""}`}
         onOpenChange={(next) => {

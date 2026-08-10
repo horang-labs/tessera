@@ -34,18 +34,16 @@ export interface WorkspaceDeleteResult {
 }
 
 /**
- * Remove a file or directory from the workspace, permanently.
- *
- * Resolution goes through the write-side resolver so the same containment and
- * symlink rules apply as to a save: the client-supplied path is never trusted,
- * and a path that only reaches its target through a linked directory is
- * refused rather than followed out of the workspace.
- */
-/**
  * The optimistic lock shared by the mutating verbs, and the same one the save
- * route uses: `baseMtimeMs` is the mtime the client last saw, so a mismatch
- * means the entry changed under the user and the destructive action has to be
- * re-confirmed rather than silently applied to something else.
+ * route uses: `baseMtimeMs` is the mtime the caller last saw, so a mismatch
+ * means the entry changed underneath and the destructive action is refused
+ * rather than silently applied to something else.
+ *
+ * **The explorer does not send it.** The file list carries no mtime — only an
+ * open tab has a baseline — so a delete or rename driven from a row passes
+ * nothing here and the lock stays inert. It is honoured for callers that *do*
+ * have a baseline, which is what makes the convention the same one across all
+ * four verbs; nothing in the UI reaches it today.
  *
  * Followed, not lstat'd — the read route stats the resolved target, so a
  * symlink's baseline is its target's mtime and the two sides must agree.
@@ -68,6 +66,14 @@ async function assertUnchangedSince(
   }
 }
 
+/**
+ * Remove a file or directory from the workspace, permanently.
+ *
+ * Resolution goes through the write-side resolver so the same containment and
+ * symlink rules apply as to a save: the client-supplied path is never trusted,
+ * and a path that only reaches its target through a linked directory is
+ * refused rather than followed out of the workspace.
+ */
 export async function deleteWorkspaceEntry(
   root: string,
   input: { path: string; recursive?: boolean; baseMtimeMs?: number | null },
@@ -90,6 +96,10 @@ export async function deleteWorkspaceEntry(
       await withFsDeadline(fs.rm(absolutePath, { force: true, recursive: true }));
       return { relativePath, kind: "directory" };
     }
+    // The explorer always asks to recurse for a folder, because its
+    // confirmation has already said the contents go. This branch is the
+    // guard for every other caller: without an explicit `recursive`, a
+    // request cannot take a tree with it by accident.
     try {
       await withFsDeadline(fs.rmdir(absolutePath));
     } catch (error) {
@@ -119,24 +129,36 @@ const NAME_REJECTION_MESSAGES: Record<WorkspaceEntryNameRejection, string> = {
 };
 
 /**
- * Whether two paths name the same entry on disk.
+ * Whether the rename target *is* the entry being renamed, under another casing.
  *
- * A case-insensitive filesystem — macOS and Windows both — reports the
- * rename target as existing when the only difference is the casing of the file
- * being renamed. Comparing the resolved paths tells that apart from a genuine
- * collision, while two hard links to the same bytes still resolve to their own
- * distinct paths and stay a collision.
+ * A case-insensitive filesystem — macOS and Windows both — reports the target
+ * as already existing when the only difference is the casing of the entry
+ * itself, and renaming `README.md` to `readme.md` is a rename a user is
+ * entitled to make.
+ *
+ * Identity is decided by inode, never by resolved path: two distinct symlinks
+ * pointing at one file resolve to the same path but are two entries, and
+ * treating them as one would let the rename overwrite the second. The name
+ * check keeps hard links out of it — those are two names for one inode, and
+ * losing either is losing a row the user can see.
  */
-async function namesTheSameEntry(a: string, b: string): Promise<boolean> {
+async function isSameEntryUnderAnotherCase(
+  sourcePath: string,
+  sourceName: string,
+  targetPath: string,
+  targetName: string,
+): Promise<boolean> {
+  if (sourceName.toLowerCase() !== targetName.toLowerCase()) return false;
+
   try {
-    const [resolvedA, resolvedB] = await Promise.all([
-      withFsDeadline(fs.realpath(a)),
-      withFsDeadline(fs.realpath(b)),
+    const [source, target] = await Promise.all([
+      withFsDeadline(fs.lstat(sourcePath)),
+      withFsDeadline(fs.lstat(targetPath)),
     ]);
-    return resolvedA === resolvedB;
+    return source.ino === target.ino && source.dev === target.dev;
   } catch {
-    // Unresolvable means a dangling link or a vanished entry; treat it as a
-    // genuine collision rather than clearing the way for an overwrite.
+    // Unreadable means a vanished entry; treat it as a genuine collision
+    // rather than clearing the way for an overwrite.
     return false;
   }
 }
@@ -187,7 +209,13 @@ export async function renameWorkspaceEntry(
     if (error instanceof WorkspaceFileError) throw error;
     return null;
   });
-  if (existing && !(await namesTheSameEntry(absolutePath, targetPath))) {
+  const sameEntry = existing !== null && await isSameEntryUnderAnotherCase(
+    absolutePath,
+    pathModule.basename(absolutePath),
+    targetPath,
+    parsedName.name,
+  );
+  if (existing && !sameEntry) {
     throw new WorkspaceFileError(
       "already_exists",
       "Something with this name already exists here",
@@ -236,5 +264,3 @@ export async function createWorkspaceDirectory(
 
   return { relativePath };
 }
-
-export { WorkspaceFileError };
