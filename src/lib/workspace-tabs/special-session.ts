@@ -2,16 +2,10 @@ import type { MemoryTargetKind } from "@/types/memory";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-export const WORKSPACE_EXPLORER_SESSION_PREFIX = "__workspace-explorer__|" as const;
 export const WORKSPACE_FILE_SESSION_PREFIX = "__workspace-file__|" as const;
 export const MEMORY_FILE_SESSION_PREFIX = "__memory-file__|" as const;
 
 export type WorkspaceFileTabKind = "file" | "diff";
-
-export interface WorkspaceExplorerSessionRef {
-  type: "explorer";
-  sourceSessionId: string;
-}
 
 export interface WorkspaceFileSessionRef {
   type: "workspace-file";
@@ -28,32 +22,12 @@ export interface MemoryFileSessionRef {
   fileName: string;
 }
 
-export function buildWorkspaceExplorerSessionId(sourceSessionId: string): string {
-  return `${WORKSPACE_EXPLORER_SESSION_PREFIX}${encodeURIComponent(sourceSessionId)}`;
-}
-
 export function buildWorkspaceFileSessionId(
   sourceSessionId: string,
   kind: WorkspaceFileTabKind,
   filePath: string,
 ): string {
   return `${WORKSPACE_FILE_SESSION_PREFIX}${encodeURIComponent(sourceSessionId)}|${encodeURIComponent(kind)}|${encodeURIComponent(filePath)}`;
-}
-
-export function parseWorkspaceExplorerSessionId(
-  sessionId: string,
-): WorkspaceExplorerSessionRef | null {
-  if (!sessionId.startsWith(WORKSPACE_EXPLORER_SESSION_PREFIX)) return null;
-  const encodedSourceSessionId = sessionId.slice(WORKSPACE_EXPLORER_SESSION_PREFIX.length);
-  if (!encodedSourceSessionId) return null;
-  try {
-    return {
-      type: "explorer",
-      sourceSessionId: decodeURIComponent(encodedSourceSessionId),
-    };
-  } catch {
-    return null;
-  }
 }
 
 export function parseWorkspaceFileSessionId(
@@ -115,16 +89,12 @@ export function parseMemoryFileSessionId(
 
 export function parseWorkspaceSpecialSessionId(
   sessionId: string,
-): WorkspaceExplorerSessionRef | WorkspaceFileSessionRef | MemoryFileSessionRef | null {
-  return parseWorkspaceExplorerSessionId(sessionId)
-    ?? parseWorkspaceFileSessionId(sessionId)
+): WorkspaceFileSessionRef | MemoryFileSessionRef | null {
+  return parseWorkspaceFileSessionId(sessionId)
     ?? parseMemoryFileSessionId(sessionId);
 }
 
 export function getWorkspaceSpecialSessionTitle(sessionId: string, t?: Translate): string | null {
-  const explorer = parseWorkspaceExplorerSessionId(sessionId);
-  if (explorer) return t ? t("gitPanel.tabs.files") : "Files";
-
   const memory = parseMemoryFileSessionId(sessionId);
   if (memory) {
     const name = memory.fileName.split(/[\\/]/).filter(Boolean).pop() || memory.fileName;

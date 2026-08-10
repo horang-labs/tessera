@@ -18,6 +18,7 @@ import {
   parseWorkspaceEntryName,
   renameWorkspaceEntry,
 } from "../src/lib/workspace-files/workspace-file-mutations";
+import { isPathUnderMutation } from "../src/lib/workspace-tabs/workspace-tab-sync";
 
 function makeWorkspace(): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), "tessera-mutate-")));
@@ -333,4 +334,16 @@ test("creating a folder inside one that does not exist is a 404, and escaping is
   } finally {
     rmSync(outer, { force: true, recursive: true });
   }
+});
+
+test("a folder operation reaches the tabs inside that folder", () => {
+  assert.equal(isPathUnderMutation("docs/note.md", "docs/note.md"), true);
+  assert.equal(isPathUnderMutation("docs/nested/deep.md", "docs"), true);
+  assert.equal(isPathUnderMutation("docs/note.md", "docs"), true);
+
+  // A prefix of the name is not a prefix of the path: deleting "docs" must not
+  // take "docs-archive" with it.
+  assert.equal(isPathUnderMutation("docs-archive/note.md", "docs"), false);
+  assert.equal(isPathUnderMutation("other/note.md", "docs"), false);
+  assert.equal(isPathUnderMutation("docs", "docs/nested"), false);
 });

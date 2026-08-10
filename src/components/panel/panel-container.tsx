@@ -10,13 +10,11 @@ import { EmptyPanelState } from '@/components/panel/empty-panel-state';
 import { ARCHIVE_DASHBOARD_SESSION_ID, SKILLS_DASHBOARD_SESSION_ID } from '@/lib/constants/special-sessions';
 import { SkillDashboard } from '@/components/skills/skill-dashboard';
 import { ArchiveDashboard } from '@/components/archive/archive-dashboard';
-import { WorkspaceExplorerTab } from '@/components/workspace/workspace-explorer-tab';
 import { WorkspaceFileTab } from '@/components/workspace/workspace-file-tab';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
 import { TerminalPanel } from '@/components/terminal/terminal-panel';
 import {
   parseMemoryFileSessionId,
-  parseWorkspaceExplorerSessionId,
   parseWorkspaceFileSessionId,
 } from '@/lib/workspace-tabs/special-session';
 
@@ -57,8 +55,6 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
     if (sessionId === SKILLS_DASHBOARD_SESSION_ID) return <SkillDashboard />;
     if (sessionId === ARCHIVE_DASHBOARD_SESSION_ID) return <ArchiveDashboard />;
     if (sessionId) {
-      const explorerRef = parseWorkspaceExplorerSessionId(sessionId);
-      if (explorerRef) return <WorkspaceExplorerTab key={sessionId} explorerRef={explorerRef} />;
       const fileRef = parseWorkspaceFileSessionId(sessionId);
       if (fileRef) return <WorkspaceFileTab key={sessionId} fileRef={fileRef} panelId={panelId} />;
       const memoryRef = parseMemoryFileSessionId(sessionId);

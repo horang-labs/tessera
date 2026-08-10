@@ -8,7 +8,6 @@ const codeViewSource = fs.readFileSync(new URL('../src/components/workspace/work
 const fileRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/file/route.ts', import.meta.url), 'utf8');
 const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', import.meta.url), 'utf8');
 const filePanelSource = fs.readFileSync(new URL('../src/components/workspace/workspace-file-panel.tsx', import.meta.url), 'utf8');
-const explorerTabSource = fs.readFileSync(new URL('../src/components/workspace/workspace-explorer-tab.tsx', import.meta.url), 'utf8');
 const fileListHookSource = fs.readFileSync(new URL('../src/hooks/use-workspace-file-list.ts', import.meta.url), 'utf8');
 
 test('fetchWithTimeout enforces a deadline and retries only on timeout', () => {
@@ -82,7 +81,6 @@ test('worktree diff stats git runner opts into the kill timer', () => {
 
 test('file list flows use the timeout-aware fetch', () => {
   assert.match(filePanelSource, /useWorkspaceFileList/);
-  assert.match(explorerTabSource, /useWorkspaceFileList/);
   assert.match(fileListHookSource, /fetchWithTimeout\(/);
   assert.match(fileListHookSource, /isTimeoutError/);
 });
