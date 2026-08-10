@@ -1075,6 +1075,15 @@ export interface I18nMessages {
     commit: {
       messageLabel: string;
       messagePlaceholder: string;
+      composerTitle: string;
+      composerLabel: string;
+      openComposer: string;
+      closeComposer: string;
+      reviewFiles: string;
+      changedFiles: string;
+      diffStatLabel: string;
+      menuLabel: string;
+      worktreeFallback: string;
       selectionSummary: string;
       includeFile: string;
       button: string;
@@ -1102,6 +1111,7 @@ export interface I18nMessages {
       publishButton: string;
       publishButtonPending: string;
       nothingToPush: string;
+      pullFirst: string;
       successToast: string;
       successNoUpstreamToast: string;
       publishedToast: string;
@@ -1140,13 +1150,33 @@ export interface I18nMessages {
       failureToast: string;
       createButton: string;
       createButtonPending: string;
+      viewButton: string;
       defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
       noUpstream: string;
+      pullFirst: string;
+      pushFirst: string;
       alreadyOpen: string;
     };
     conflict: {
+      resolve: string;
+      recoveryTitle: string;
+      mergeOperation: string;
+      rebaseOperation: string;
+      cherryPickOperation: string;
+      operationInProgress: string;
+      unresolvedFiles: string;
+      unresolvedFilesTruncated: string;
+      noUnresolvedFiles: string;
+      openDiff: string;
+      resolveWithAi: string;
+      aiPreparing: string;
+      aiReviewBoundary: string;
+      aiPreparedToast: string;
+      aiStaleToast: string;
+      aiUnavailableToast: string;
+      aiFailureToast: string;
       mergeInProgress: string;
       rebaseInProgress: string;
       cherryPickInProgress: string;
@@ -1160,13 +1190,16 @@ export interface I18nMessages {
       abortFailureToast: string;
     };
     primary: {
+      loading: string;
       stateUnknown: string;
       detachedHead: string;
       noRemote: string;
+      upToDate: string;
     };
     menu: {
       label: string;
       pending: string;
+      openSourceControl: string;
     };
     failure: {
       commitTitle: string;

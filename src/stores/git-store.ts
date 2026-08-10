@@ -15,6 +15,8 @@ interface GitPanelUIState {
    * has just been created — can open the panel on it.
    */
   panelTab: GitPanelTab
+  /** Monotonic request used to focus recovery even when the panel is open. */
+  conflictRecoveryFocusRequest: number
 
   toggle: () => void
   open: () => void
@@ -26,6 +28,8 @@ interface GitPanelUIState {
   setPanelTab: (tab: GitPanelTab) => void
   /** Open the panel and show one tab, whatever was showing before. */
   openTab: (tab: GitPanelTab) => void
+  /** Open the Git tab and focus its conflict-recovery surface. */
+  openConflictRecovery: () => void
 }
 
 export const useGitStore = create<GitPanelUIState>()(
@@ -36,6 +40,7 @@ export const useGitStore = create<GitPanelUIState>()(
       drawerOpen: false,
       drawerHeight: 320,
       panelTab: 'git',
+      conflictRecoveryFocusRequest: 0,
 
       toggle: () => set({ isOpen: !get().isOpen }),
       open: () => set({ isOpen: true }),
@@ -46,6 +51,11 @@ export const useGitStore = create<GitPanelUIState>()(
       setDrawerHeight: (height) => set({ drawerHeight: height }),
       setPanelTab: (tab) => set({ panelTab: tab }),
       openTab: (tab) => set({ isOpen: true, panelTab: tab }),
+      openConflictRecovery: () => set((state) => ({
+        isOpen: true,
+        panelTab: 'git',
+        conflictRecoveryFocusRequest: state.conflictRecoveryFocusRequest + 1,
+      })),
     }),
     {
       name: 'tessera:git-panel',

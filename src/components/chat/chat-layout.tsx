@@ -53,6 +53,7 @@ import { activateSessionPanel } from "@/lib/session/focus-session-panel";
 import { reconcileActiveSessionSurface } from "@/lib/session/reconcile-active-session-surface";
 import { resolveSessionTabOpenMode } from "@/lib/terminal/terminal-preview-policy";
 import { useEffectiveViewMode } from "@/hooks/use-effective-view-mode";
+import { GitPanelControllerProvider } from "@/components/git/git-panel-controller-context";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -505,6 +506,7 @@ export function ChatLayout() {
   return (
     <KeyboardShortcutProvider>
       <ElectronTitlebarThemeSync />
+      <GitPanelControllerProvider sessionId={activeGitSessionId}>
       <div className="flex h-dvh flex-col overflow-hidden" data-testid="chat-layout">
         <div className="flex flex-1 overflow-hidden">
           {/* Left panel — project strip + header + content (list/kanban) */}
@@ -585,6 +587,7 @@ export function ChatLayout() {
           )}
         </div>
       </div>
+      </GitPanelControllerProvider>
       <SettingsPanel />
       <ToastContainer />
       <UpdateNotifier />

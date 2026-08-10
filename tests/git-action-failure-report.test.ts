@@ -184,21 +184,27 @@ function read(relativePath: string): string {
   return fs.readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 }
 
-test('the panel keeps the failure and clears it on the same terms as a generation failure', () => {
+test('the worktree owner keeps the failure until the next action or dismiss', () => {
   const controller = read('src/components/git/use-git-panel-controller.ts');
+  const store = read('src/stores/git-panel-store.ts');
 
-  assert.match(controller, /setActionFailure\(\s*describeGitActionFailure\(/);
-  assert.match(controller, /setActionFailure\(describeGitRequestFailure\(/);
-  // Cleared when the next action starts — `markPending` is the one place every
-  // action passes through — on dismiss, and on a session switch.
-  assert.match(controller, /if \(verb\) setActionFailure\(null\);/);
-  assert.match(controller, /dismissActionFailure = useCallback\(\(\) => setActionFailure\(null\)/);
-  assert.match(controller, /actionFailure,\n\s*dismissActionFailure,/);
-  // The session-switch reset, beside the one `generateMessageError` gets.
   assert.match(
     controller,
-    /setGenerateMessageError\(null\);[\s\S]{0,200}?setActionFailure\(null\);/,
+    /setWorktreeActionFailure\(\s*worktreeKey,\s*describeGitActionFailure\(/,
   );
+  assert.match(
+    controller,
+    /setWorktreeActionFailure\(\s*worktreeKey,\s*describeGitRequestFailure\(/,
+  );
+  // Cleared when the next action starts — the store's `markPending` is the one
+  // action passes through — and on dismiss. A session switch deliberately does
+  // not clear a report owned by the same canonical worktree (#311).
+  assert.match(store, /actionFailure: pendingVerb \? null : current\.actionFailure/);
+  assert.match(
+    controller,
+    /dismissActionFailure = useCallback\(\(\) => \{\s*if \(worktreeKey\) setWorktreeActionFailure\(worktreeKey, null\)/,
+  );
+  assert.match(controller, /actionFailure,\n\s*dismissActionFailure,/);
 });
 
 test('the toast is still raised — the banner is additive', () => {
