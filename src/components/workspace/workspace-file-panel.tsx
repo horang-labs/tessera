@@ -32,6 +32,7 @@ import {
   useWorkspaceFilesLiveSync,
 } from "@/hooks/use-workspace-files-live-sync";
 import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
+import { useSessionStore } from "@/stores/session-store";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
 import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
 import {
@@ -225,6 +226,11 @@ export function WorkspaceFilePanel({
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
   const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
   const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
+  // The sessions/[id]/files route scopes Project View references by projectId;
+  // resolve it from the session store so the panel can list files at all.
+  const sessionProjectDir = useSessionStore((state) =>
+    sessionId ? state.getSession(sessionId)?.projectDir ?? null : null,
+  );
   const {
     directories,
     error,
@@ -238,6 +244,7 @@ export function WorkspaceFilePanel({
     worktreeId
       ? { kind: 'worktree', id: worktreeId }
       : sessionId,
+    sessionProjectDir,
   );
 
   const deferredToggleRef = useRef<number | null>(null);

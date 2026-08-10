@@ -34,6 +34,7 @@ function sameStringArray(a: string[], b: string[]): boolean {
 
 export function useWorkspaceFileList(
   selected: string | WorkspaceTarget | null,
+  projectId?: string | null,
 ): WorkspaceFileListState & {
   loadFiles: (options?: { signal?: AbortSignal; silent?: boolean }) => void;
   refreshFiles: () => void;
@@ -84,8 +85,13 @@ export function useWorkspaceFileList(
 
       try {
         const target: WorkspaceTarget = { kind: targetKind, id: targetId };
+        // The sessions/[id]/files route requires projectId to scope Project View
+        // reference sessions; skip the query param for worktree targets.
+        const url = target.kind === "session" && projectId
+          ? `${workspaceFileListPath(target)}?projectId=${encodeURIComponent(projectId)}`
+          : workspaceFileListPath(target);
         const response = await fetchWithTimeout(
-          workspaceFileListPath(target),
+          url,
           { signal: options?.signal, retries: 1 },
         );
         const payload = (await response.json().catch(() => null)) as WorkspaceFilesResponse | null;
@@ -127,7 +133,7 @@ export function useWorkspaceFileList(
             });
       }
     })();
-  }, [targetId, targetKind]);
+  }, [targetId, targetKind, projectId]);
 
   useEffect(() => {
     const abortController = new AbortController();
