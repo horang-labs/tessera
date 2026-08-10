@@ -3,6 +3,7 @@ import { workspaceFileWatchManager } from './workspace-file-watch-manager';
 import { walkWorkspaceFiles } from './workspace-file-scan';
 
 export interface WorkspaceRootFiles {
+  directories: string[];
   files: string[];
   symlinks: string[];
   truncated: boolean;
@@ -14,22 +15,23 @@ export async function readWorkspaceRootFiles(root: string): Promise<WorkspaceRoo
   try {
     const stat = await fs.stat(root);
     if (!stat.isDirectory()) {
-      return { files: [], symlinks: [], truncated: false, reason: 'not-a-directory', workDir: root };
+      return { directories: [], files: [], symlinks: [], truncated: false, reason: 'not-a-directory', workDir: root };
     }
   } catch {
-    return { files: [], symlinks: [], truncated: false, reason: 'unreadable', workDir: root };
+    return { directories: [], files: [], symlinks: [], truncated: false, reason: 'unreadable', workDir: root };
   }
 
   try {
     const result = await workspaceFileWatchManager.ensureSnapshotForRoot(root)
       ?? await walkWorkspaceFiles(root);
     return {
+      directories: result.directories,
       files: result.files,
       symlinks: result.symlinks,
       truncated: result.truncated,
       workDir: root,
     };
   } catch {
-    return { files: [], symlinks: [], truncated: false, reason: 'walk-failed', workDir: root };
+    return { directories: [], files: [], symlinks: [], truncated: false, reason: 'walk-failed', workDir: root };
   }
 }

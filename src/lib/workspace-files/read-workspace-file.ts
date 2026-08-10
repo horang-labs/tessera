@@ -9,42 +9,15 @@ import {
   isInsideWorkspacePath,
   resolveWorkspaceReadTarget,
 } from '@/lib/workspace-files/workspace-file-read-target';
+import {
+  isLikelyBinary as _isLikelyBinary,
+  MAX_RAW_FILE_BYTES,
+  MAX_TEXT_FILE_BYTES,
+  WorkspaceFileError,
+  withFsDeadline,
+} from '@/lib/workspace-files/workspace-file-io';
 
-const MAX_TEXT_FILE_BYTES = 512 * 1024;
-const MAX_RAW_FILE_BYTES = 25 * 1024 * 1024;
-const FS_OPERATION_TIMEOUT_MS = 2_000;
-
-export class WorkspaceFileError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-  }
-}
-
-function withFsDeadline<T>(operation: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new WorkspaceFileError(
-        'filesystem_timeout',
-        'The workspace filesystem did not respond in time',
-        504,
-      ));
-    }, FS_OPERATION_TIMEOUT_MS);
-    operation.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
+export { WorkspaceFileError };
 
 async function resolveRequestedFile(root: string, rawPath: string): Promise<{
   absolutePath: string;
@@ -104,13 +77,7 @@ async function resolveRequestedFile(root: string, rawPath: string): Promise<{
   };
 }
 
-function isLikelyBinary(buffer: Buffer): boolean {
-  const sampleLength = Math.min(buffer.byteLength, 8000);
-  for (let index = 0; index < sampleLength; index += 1) {
-    if (buffer[index] === 0) return true;
-  }
-  return false;
-}
+const isLikelyBinary = _isLikelyBinary;
 
 function inferLanguage(filePath: string): string {
   const ext = path.extname(filePath).slice(1).toLowerCase();
@@ -188,6 +155,7 @@ export async function readWorkspaceFileResponse({
     content: binary ? '' : contentBuffer.toString('utf8'),
     language: inferLanguage(relativePath),
     size: fileStat.size,
+    mtimeMs: fileStat.mtimeMs,
     truncated,
     binary,
   });

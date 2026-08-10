@@ -5,6 +5,7 @@ import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { workspaceTargetApiPath, type WorkspaceTarget } from "@/types/worktree";
 
 interface WorkspaceFilesResponse {
+  directories?: string[];
   files?: string[];
   symlinks?: string[];
   truncated?: boolean;
@@ -12,6 +13,11 @@ interface WorkspaceFilesResponse {
 }
 
 interface WorkspaceFileListState {
+  /**
+   * Folders as the server saw them, not inferred from the file paths: an empty
+   * one appears in no file path at all.
+   */
+  directories: string[];
   error: string | null;
   files: string[];
   loading: boolean;
@@ -35,6 +41,7 @@ export function useWorkspaceFileList(
   const targetKind = typeof selected === "string" ? "session" : selected?.kind;
   const targetId = typeof selected === "string" ? selected : selected?.id;
   const [state, setState] = useState<WorkspaceFileListState>(() => ({
+    directories: [],
     error: null,
     files: [],
     loading: Boolean(targetId),
@@ -51,6 +58,7 @@ export function useWorkspaceFileList(
     void (async () => {
       if (!targetKind || !targetId) {
         setState({
+          directories: [],
           error: null,
           files: [],
           loading: false,
@@ -86,7 +94,11 @@ export function useWorkspaceFileList(
         if (requestSeqRef.current !== requestSeq) return;
         const nextFiles = Array.isArray(payload?.files) ? payload.files : [];
         const nextSymlinks = Array.isArray(payload?.symlinks) ? payload.symlinks : [];
+        const nextDirectories = Array.isArray(payload?.directories) ? payload.directories : [];
         setState((current) => ({
+          directories: sameStringArray(current.directories, nextDirectories)
+            ? current.directories
+            : nextDirectories,
           error: null,
           files: sameStringArray(current.files, nextFiles) ? current.files : nextFiles,
           loading: false,
@@ -105,6 +117,7 @@ export function useWorkspaceFileList(
               loading: false,
             }
           : {
+              directories: [],
               error: message,
               files: [],
               loading: false,

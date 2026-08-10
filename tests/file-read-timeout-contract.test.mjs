@@ -10,7 +10,6 @@ const fileReaderSource = fs.readFileSync(new URL('../src/lib/workspace-files/rea
 const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', import.meta.url), 'utf8');
 const gitRunnerSource = fs.readFileSync(new URL('../src/lib/worktrees/git-runner.ts', import.meta.url), 'utf8');
 const filePanelSource = fs.readFileSync(new URL('../src/components/workspace/workspace-file-panel.tsx', import.meta.url), 'utf8');
-const explorerTabSource = fs.readFileSync(new URL('../src/components/workspace/workspace-explorer-tab.tsx', import.meta.url), 'utf8');
 const fileListHookSource = fs.readFileSync(new URL('../src/hooks/use-workspace-file-list.ts', import.meta.url), 'utf8');
 
 test('fetchWithTimeout enforces a deadline and retries only on timeout', () => {
@@ -27,7 +26,8 @@ test('workspace file tab loads through fetchWithTimeout with one automatic retry
 });
 
 test('silent refreshes do not supersede an in-flight load and keep shown content on failure', () => {
-  assert.match(fileTabSource, /if \(options\?\.silent && activeLoadsRef\.current > 0\) return;/);
+  // Since #319 the same guard also protects an unsaved draft.
+  assert.match(fileTabSource, /if \(options\?\.silent && \(dirtyRef\.current \|\| activeLoadsRef\.current > 0\)\) return;/);
   assert.match(fileTabSource, /current\.data \? current :/);
 });
 
@@ -42,10 +42,14 @@ test('code view keeps the close button visible while loading and offers retry on
 });
 
 test('file route bounds every workspace fs operation with a deadline', () => {
+  // Post-merge topology: route calls readWorkspaceFileResponse, which lives in
+  // read-workspace-file.ts; the shared withFsDeadline / WorkspaceFileError
+  // primitives live in workspace-file-io.ts so the write side reuses them.
+  const workspaceFileIoSource = fs.readFileSync(new URL('../src/lib/workspace-files/workspace-file-io.ts', import.meta.url), 'utf8');
   assert.match(fileRouteSource, /readWorkspaceFileResponse/);
-  assert.match(fileReaderSource, /function withFsDeadline/);
-  assert.match(fileReaderSource, /filesystem_timeout/);
-  assert.match(fileReaderSource, /504/);
+  assert.match(workspaceFileIoSource, /export function withFsDeadline/);
+  assert.match(workspaceFileIoSource, /filesystem_timeout/);
+  assert.match(workspaceFileIoSource, /504/);
   assert.match(fileReaderSource, /withFsDeadline\(fs\.realpath\(root\)\)/);
   assert.match(fileReaderSource, /withFsDeadline\(fs\.realpath\(candidatePath\)\)/);
   assert.match(fileReaderSource, /withFsDeadline\(fs\.stat\(absolutePath\)\)/);
@@ -78,7 +82,6 @@ test('worktree diff stats git runner opts into the kill timer', () => {
 
 test('file list flows use the timeout-aware fetch', () => {
   assert.match(filePanelSource, /useWorkspaceFileList/);
-  assert.match(explorerTabSource, /useWorkspaceFileList/);
   assert.match(fileListHookSource, /fetchWithTimeout\(/);
   assert.match(fileListHookSource, /isTimeoutError/);
 });

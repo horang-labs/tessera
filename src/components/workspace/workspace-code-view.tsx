@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, Binary, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, LoaderCircle, RefreshCw, X } from "lucide-react";
+import { AlertCircle, Binary, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, LoaderCircle, RefreshCw, Save, X } from "lucide-react";
 import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import { PreviewMarkdown } from "@/components/chat/preview-markdown";
 import { Button } from "@/components/ui/button";
@@ -205,22 +205,44 @@ function PendingStateHeader({
 }
 
 export function WorkspaceCodeView({
+  conflict = false,
   data,
+  dirty = false,
+  draft = null,
+  editable = false,
   error,
   loading,
   mode,
+  onCancelConflict,
   onClose,
+  onDraftChange,
+  onOverwrite,
+  onReload,
   onRetry,
+  onSave,
   path,
+  saving = false,
   sourceTarget,
 }: {
+  /** The file changed on disk under an unsaved draft; the banner is showing. */
+  conflict?: boolean;
   data: WorkspaceFileData | GitDiffData | null;
+  dirty?: boolean;
+  /** Unsaved buffer, shown instead of the loaded content when present. */
+  draft?: string | null;
+  editable?: boolean;
   error: string | null;
   loading: boolean;
   mode: "file" | "diff";
+  onCancelConflict?: () => void;
   onClose?: () => void;
+  onDraftChange?: (value: string) => void;
+  onOverwrite?: () => void;
+  onReload?: () => void;
   onRetry?: () => void;
+  onSave?: () => void;
   path: string;
+  saving?: boolean;
   sourceTarget?: WorkspaceTarget;
 }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -228,10 +250,11 @@ export function WorkspaceCodeView({
     mode: "preview",
     path: "",
   });
-  const content =
+  const loadedContent =
     mode === "diff"
       ? (data as GitDiffData | null)?.diff ?? ""
       : (data as WorkspaceFileData | null)?.content ?? "";
+  const content = draft ?? loadedContent;
   const fileData = mode === "file" ? (data as WorkspaceFileData | null) : null;
   const diffData = mode === "diff" ? (data as GitDiffData | null) : null;
   const absolutePath = toAbsoluteWorkspacePath(
@@ -254,6 +277,14 @@ export function WorkspaceCodeView({
   const handleMarkdownViewModeChange = useCallback((nextMode: MarkdownViewMode) => {
     setMarkdownModeState({ mode: nextMode, path });
   }, [path]);
+  // Bound to this view's root rather than window: with two split panels open,
+  // only the panel the keystroke happened in must save.
+  const handleSaveShortcut = useCallback((event: React.KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return;
+    if (!editable) return;
+    event.preventDefault();
+    if (dirty && !saving) onSave?.();
+  }, [dirty, editable, onSave, saving]);
 
   async function copyContent() {
     try {
@@ -330,7 +361,7 @@ export function WorkspaceCodeView({
 
   return (
     <>
-    <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
+    <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)" onKeyDown={handleSaveShortcut}>
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-(--chat-header-border) px-4">
         <div className="flex min-w-0 items-center gap-2">
           {mode === "diff" ? (
@@ -349,7 +380,18 @@ export function WorkspaceCodeView({
               setContextMenu({ x: event.clientX, y: event.clientY });
             }}
           >
-            <p className="truncate font-mono text-sm text-(--text-primary)">{path}</p>
+            <p className="truncate font-mono text-sm text-(--text-primary)">
+              {path}
+              {dirty ? (
+                <span
+                  className="ml-1.5 text-(--accent)"
+                  aria-label="Unsaved changes"
+                  data-testid="workspace-file-dirty"
+                >
+                  ●
+                </span>
+              ) : null}
+            </p>
             <p className="truncate text-[10px] uppercase tracking-[0.14em] text-(--text-muted)">
               {mode === "diff" ? "Diff" : fileData?.language || "text"}
               {fileData ? ` · ${formatBytes(fileData.size)}` : ""}
@@ -360,6 +402,25 @@ export function WorkspaceCodeView({
         <div className="flex shrink-0 items-center gap-1">
           {isMarkdownFile ? (
             <MarkdownModeToggle mode={markdownViewMode} onChange={handleMarkdownViewModeChange} />
+          ) : null}
+          {editable ? (
+            <Tooltip content={dirty ? "Save (Ctrl/Cmd+S)" : "No unsaved changes"}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 shrink-0 px-2.5"
+                onClick={onSave}
+                disabled={!dirty || saving}
+                aria-label="Save file"
+                data-testid="workspace-file-save"
+              >
+                {saving
+                  ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  : <Save className="h-3.5 w-3.5" />}
+                <span>Save</span>
+              </Button>
+            </Tooltip>
           ) : null}
           {showOpenButton ? (
             <Tooltip content="Open">
@@ -418,6 +479,49 @@ export function WorkspaceCodeView({
           ) : null}
         </div>
       </div>
+      {conflict ? (
+        <div
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-(--status-warning-border) bg-(--status-warning-bg) px-4 py-2"
+          data-testid="workspace-conflict-banner"
+        >
+          <p className="text-xs text-(--status-warning-text)">
+            This file changed on disk since you opened it. Saving now would overwrite those changes.
+          </p>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={onReload}
+              data-testid="workspace-conflict-reload"
+            >
+              Reload and discard
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={onOverwrite}
+              disabled={saving}
+              data-testid="workspace-conflict-overwrite"
+            >
+              Overwrite
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={onCancelConflict}
+              data-testid="workspace-conflict-cancel"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <div className={shouldRenderMarkdownPreview ? "min-h-0 flex-1 overflow-auto" : "min-h-0 flex-1 overflow-hidden"}>
         {shouldRenderMarkdownPreview ? (
           <div className="mx-auto w-full max-w-5xl px-6 py-8 text-base">
@@ -429,7 +533,8 @@ export function WorkspaceCodeView({
             language={mode === "diff" ? "git-diff" : fileData?.language}
             mode={mode}
             path={path}
-            readOnly
+            readOnly={!editable}
+            onChange={editable ? onDraftChange : undefined}
           />
         )}
       </div>

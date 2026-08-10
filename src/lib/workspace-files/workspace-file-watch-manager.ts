@@ -54,6 +54,12 @@ interface WorkspaceWatchEntry {
   bridgeActive: boolean;
   closeTimer: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
+  /**
+   * Directories in their own right. A folder with no files in it changes no
+   * file path, so without this set an empty one is invisible to the index and
+   * its creation would never reach a subscriber.
+   */
+  directories: Set<string>;
   files: Set<string>;
   lastIndexedAt: number;
   pendingAddedPaths: Set<string>;
@@ -348,7 +354,7 @@ export class WorkspaceFileWatchManager {
     if (entry.watchMode === "poll" && Date.now() - entry.lastIndexedAt > staleAfterMs) {
       void this.refreshPollIndex(entry);
     }
-    return applyMaxFiles(entry.files, entry.symlinks);
+    return applyMaxFiles(entry.files, entry.symlinks, entry.directories);
   }
 
   private async resolveRootForSession(
@@ -374,6 +380,7 @@ export class WorkspaceFileWatchManager {
       bridgeActive: false,
       closeTimer: null,
       debounceTimer: null,
+      directories: new Set(),
       files: new Set(),
       lastIndexedAt: 0,
       pendingAddedPaths: new Set(),
@@ -409,6 +416,7 @@ export class WorkspaceFileWatchManager {
   private async bootstrapEntry(entry: WorkspaceWatchEntry): Promise<void> {
     try {
       const snapshot = await walkWorkspaceFiles(entry.root);
+      entry.directories = new Set(snapshot.directories);
       entry.files = new Set(snapshot.files);
       entry.symlinks = new Set(snapshot.symlinks);
       entry.truncated = snapshot.truncated;
@@ -659,7 +667,7 @@ export class WorkspaceFileWatchManager {
     const next = new Set(result.missing ? [] : result.files);
     const nextSymlinks = new Set(result.missing ? [] : result.symlinks);
 
-    let changed = false;
+    let changed = this.reconcileDirectories(entry, relativeDir, inScope, result);
     for (const filePath of previous) {
       if (next.has(filePath)) continue;
       entry.files.delete(filePath);
@@ -685,6 +693,42 @@ export class WorkspaceFileWatchManager {
       } else if (entry.symlinks.delete(filePath)) {
         changed = true;
       }
+    }
+    return changed;
+  }
+
+  /**
+   * Bring the directory index in line with one rescanned scope.
+   *
+   * Directory names stay out of `addedPaths` / `deletedPaths`: those lists are
+   * read as file paths — the file tab treats a lone delete+add pair as a rename
+   * of *its* file — so a folder appearing there would be mistaken for one. A
+   * directory change is a tree change and nothing more.
+   */
+  private reconcileDirectories(
+    entry: WorkspaceWatchEntry,
+    relativeDir: string,
+    inScope: (relativePath: string) => boolean,
+    result: { directories: string[]; missing: boolean },
+  ): boolean {
+    // The scanned directory itself is inside its own scope: it is what goes
+    // away when the scan reports the directory missing.
+    const inDirectoryScope = (dirPath: string): boolean =>
+      (Boolean(relativeDir) && dirPath === relativeDir) || inScope(dirPath);
+
+    const nextDirectories = new Set(result.missing ? [] : result.directories);
+    if (!result.missing && relativeDir) nextDirectories.add(relativeDir);
+
+    let changed = false;
+    for (const dirPath of entry.directories) {
+      if (!inDirectoryScope(dirPath) || nextDirectories.has(dirPath)) continue;
+      entry.directories.delete(dirPath);
+      changed = true;
+    }
+    for (const dirPath of nextDirectories) {
+      if (entry.directories.has(dirPath)) continue;
+      entry.directories.add(dirPath);
+      changed = true;
     }
     return changed;
   }
@@ -771,14 +815,20 @@ export class WorkspaceFileWatchManager {
       if (this.entriesByRoot.get(entry.root) !== entry) return;
       const previous = entry.files;
       const previousSymlinks = entry.symlinks;
+      const previousDirectories = entry.directories;
       const next = new Set(snapshot.files);
       const nextSymlinks = new Set(snapshot.symlinks);
+      const nextDirectories = new Set(snapshot.directories);
+      entry.directories = nextDirectories;
       entry.files = next;
       entry.symlinks = nextSymlinks;
       entry.truncated = snapshot.truncated;
       entry.lastIndexedAt = Date.now();
 
-      let changed = false;
+      // A folder created or removed with nothing in it moves no file path, so
+      // the file diff below cannot see it at all.
+      let changed = previousDirectories.size !== nextDirectories.size
+        || Array.from(nextDirectories).some((dirPath) => !previousDirectories.has(dirPath));
       for (const filePath of next) {
         if (previous.has(filePath)) continue;
         changed = true;

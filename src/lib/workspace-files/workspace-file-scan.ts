@@ -21,6 +21,13 @@ export const IGNORED_WORKSPACE_DIR_NAMES = new Set([
 ]);
 
 export type WorkspaceFileWalkResult = {
+  /**
+   * Every directory in the scanned scope, in its own right rather than inferred
+   * from the files under it. An empty folder has no file to infer it from, so
+   * without this the explorer cannot show one at all — and "create folder" would
+   * have nothing to display.
+   */
+  directories: string[];
   files: string[];
   /** Subset of `files` reached through a symbolic link, so the UI can mark them. */
   symlinks: string[];
@@ -119,6 +126,7 @@ export async function scanWorkspaceDirectory(
   const limit = options?.limit ?? MAX_WORKSPACE_FILES;
   const recursive = options?.recursive ?? true;
   const out: string[] = [];
+  const dirs: string[] = [];
   const symlinks = new Set<string>();
   let truncated = false;
   let missing = false;
@@ -146,11 +154,21 @@ export async function scanWorkspaceDirectory(
       if (isIgnoredWorkspacePath(childRel, ent, { includeHidden: true })) continue;
 
       if (ent.isDirectory()) {
+        // Recorded even when the walk does not descend: a non-recursive rescan
+        // still has to see which folders exist at that level.
+        dirs.push(childRel);
+        // One budget across both lists. Giving directories their own would let
+        // the index reach twice the cap, and would let a directory-heavy tree
+        // abandon the walk while files in the same directory went uncollected.
+        if (dirs.length + out.length >= limit) {
+          truncated = true;
+          return;
+        }
         if (recursive) await recurse(pathModule.join(absDir, ent.name), childRel, false);
       } else if (ent.isFile()) {
         out.push(childRel);
         symlinks.delete(childRel);
-        if (out.length >= limit) {
+        if (dirs.length + out.length >= limit) {
           truncated = true;
           return;
         }
@@ -164,7 +182,7 @@ export async function scanWorkspaceDirectory(
         if (await classifySymlinkTarget(pathModule.join(absDir, ent.name)) !== "file") continue;
         out.push(childRel);
         symlinks.add(childRel);
-        if (out.length >= limit) {
+        if (dirs.length + out.length >= limit) {
           truncated = true;
           return;
         }
@@ -174,8 +192,10 @@ export async function scanWorkspaceDirectory(
 
   const absStart = startRel ? pathModule.join(root, ...startRel.split("/")) : root;
   await recurse(absStart, startRel, true);
-  out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  out.sort(compareWorkspacePaths);
+  dirs.sort(compareWorkspacePaths);
   return {
+    directories: dirs,
     files: out,
     symlinks: out.filter((filePath) => symlinks.has(filePath)),
     missing,
@@ -184,25 +204,32 @@ export async function scanWorkspaceDirectory(
 }
 
 export async function walkWorkspaceFiles(root: string): Promise<WorkspaceFileWalkResult> {
-  const { files, symlinks, truncated } = await scanWorkspaceDirectory(root, "", {
+  const { directories, files, symlinks, truncated } = await scanWorkspaceDirectory(root, "", {
     limit: MAX_WORKSPACE_FILES,
     recursive: true,
   });
-  return { files, symlinks, truncated };
+  return { directories, files, symlinks, truncated };
+}
+
+function compareWorkspacePaths(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
 export function applyMaxFiles(
   fileSet: Set<string>,
   symlinkSet?: Set<string>,
+  directorySet?: Set<string>,
 ): WorkspaceFileWalkResult {
-  const sorted = Array.from(fileSet)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  const sorted = Array.from(fileSet).sort(compareWorkspacePaths);
   const files = sorted.slice(0, MAX_WORKSPACE_FILES);
+  const sortedDirectories = Array.from(directorySet ?? []).sort(compareWorkspacePaths);
   return {
+    directories: sortedDirectories.slice(0, MAX_WORKSPACE_FILES),
     files,
     // Stays a subset of the capped list: a symlink dropped by the cap must not
     // leak into the marker list the client joins against.
     symlinks: symlinkSet?.size ? files.filter((filePath) => symlinkSet.has(filePath)) : [],
-    truncated: sorted.length > MAX_WORKSPACE_FILES,
+    // Judged on the two together, the same budget the walk spends.
+    truncated: sorted.length + sortedDirectories.length > MAX_WORKSPACE_FILES,
   };
 }

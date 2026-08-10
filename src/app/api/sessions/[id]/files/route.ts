@@ -33,6 +33,7 @@ export async function GET(
   });
   if (!root) {
     return NextResponse.json({
+      directories: [],
       files: [],
       symlinks: [],
       chats: refs.chats,

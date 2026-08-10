@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Copy, ExternalLink, FolderOpen } from "lucide-react";
+import { Copy, ExternalLink, FilePlus2, FolderOpen, FolderPlus, PenLine, Trash2 } from "lucide-react";
 import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
 import { useMenuNavigation } from "@/hooks/use-menu-navigation";
 import {
@@ -15,9 +15,23 @@ import {
 } from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
 
+/**
+ * The tree operations, when the surface that opened this menu has them. A file
+ * explorer keeps these on the right-click menu rather than on a strip of icons
+ * that appears on every row the pointer crosses.
+ */
+export interface WorkspaceEntryMenuActions {
+  /** Absent on the empty-background menu: there is no row to act on. */
+  onDelete?: () => void;
+  onNewFile: () => void;
+  onNewFolder: () => void;
+  onRename?: () => void;
+}
+
 interface WorkspaceFileContextMenuProps {
   absolutePath: string;
   canOpenFile?: boolean;
+  entryActions?: WorkspaceEntryMenuActions;
   onClose: () => void;
   position: { x: number; y: number };
 }
@@ -29,20 +43,27 @@ const PADDING = 6;
 export function WorkspaceFileContextMenu({
   absolutePath,
   canOpenFile = true,
+  entryActions,
   onClose,
   position,
 }: WorkspaceFileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const hasElectronFileActions = canUseElectronFileActions();
   const revealLabel = getRevealFileLabel(getElectronPlatform());
-  const itemCount = hasElectronFileActions ? 3 : 1;
+  const itemCount = (hasElectronFileActions ? 3 : 1)
+    + (entryActions ? 2 : 0)
+    + (entryActions?.onRename ? 1 : 0)
+    + (entryActions?.onDelete ? 1 : 0);
+  const separatorCount = (hasElectronFileActions ? 1 : 0)
+    + (entryActions ? 1 : 0)
+    + (entryActions?.onRename || entryActions?.onDelete ? 1 : 0);
 
   useCloseOnEscape(onClose, { capture: true });
 
   const menuPos = useMemo(() => {
     if (typeof window === "undefined") return null;
 
-    const menuHeight = ITEM_HEIGHT * itemCount + PADDING * 2 + (hasElectronFileActions ? 1 : 0);
+    const menuHeight = ITEM_HEIGHT * itemCount + PADDING * 2 + separatorCount * 9;
     let top = position.y;
     let left = position.x;
 
@@ -57,7 +78,7 @@ export function WorkspaceFileContextMenu({
       left: Math.max(8, left),
       top: Math.max(8, top),
     };
-  }, [hasElectronFileActions, itemCount, position.x, position.y]);
+  }, [itemCount, position.x, position.y, separatorCount]);
 
   useEffect(() => {
     function onMouseDown(event: MouseEvent) {
@@ -102,6 +123,16 @@ export function WorkspaceFileContextMenu({
     "flex h-8 w-full cursor-default items-center gap-2 rounded-md px-3 text-left text-[12px]",
     "text-(--text-muted) opacity-50",
   );
+  const destructiveItemClassName = cn(
+    "flex h-8 w-full cursor-default items-center gap-2 rounded-md px-3 text-left text-[12px]",
+    "text-(--status-error-text) transition-colors",
+    "hover:bg-(--sidebar-hover) focus:bg-(--sidebar-hover) focus:outline-none",
+  );
+  const separator = <div className="my-1 h-px bg-(--divider) opacity-40" />;
+  const run = (action: () => void) => () => {
+    onClose();
+    action();
+  };
 
   if (typeof document === "undefined" || !menuPos) return null;
 
@@ -118,6 +149,31 @@ export function WorkspaceFileContextMenu({
       onKeyDown={handleMenuKeyDown}
       data-testid="workspace-file-context-menu"
     >
+      {entryActions ? (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            className={menuItemClassName}
+            onClick={run(entryActions.onNewFile)}
+            data-testid="workspace-context-new-file"
+          >
+            <FilePlus2 className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+            <span>New file</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={menuItemClassName}
+            onClick={run(entryActions.onNewFolder)}
+            data-testid="workspace-context-new-folder"
+          >
+            <FolderPlus className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+            <span>New folder</span>
+          </button>
+          {separator}
+        </>
+      ) : null}
       {hasElectronFileActions ? (
         <>
           <button
@@ -151,6 +207,31 @@ export function WorkspaceFileContextMenu({
         <Copy className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
         <span>Copy absolute path</span>
       </button>
+      {entryActions?.onRename || entryActions?.onDelete ? separator : null}
+      {entryActions?.onRename ? (
+        <button
+          type="button"
+          role="menuitem"
+          className={menuItemClassName}
+          onClick={run(entryActions.onRename)}
+          data-testid="workspace-context-rename"
+        >
+          <PenLine className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <span>Rename</span>
+        </button>
+      ) : null}
+      {entryActions?.onDelete ? (
+        <button
+          type="button"
+          role="menuitem"
+          className={destructiveItemClassName}
+          onClick={run(entryActions.onDelete)}
+          data-testid="workspace-context-delete"
+        >
+          <Trash2 className="h-3.5 w-3.5 shrink-0" />
+          <span>Delete</span>
+        </button>
+      ) : null}
     </div>,
     document.body,
   );
