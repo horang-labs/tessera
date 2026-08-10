@@ -10,6 +10,7 @@ const writeTargetSource = read('../src/lib/workspace-files/workspace-file-write-
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const codeViewSource = read('../src/components/workspace/workspace-code-view.tsx');
 const explorerSource = read('../src/components/workspace/workspace-explorer-tab.tsx');
+const filePanelSource = read('../src/components/workspace/workspace-file-panel.tsx');
 const newFileDialogSource = read('../src/components/workspace/workspace-new-file-dialog.tsx');
 const workspaceFileTypeSource = read('../src/types/workspace-file.ts');
 
@@ -122,4 +123,14 @@ test('the explorer can create a file at the root and inside a row\'s folder', ()
   assert.match(newFileDialogSource, /openWorkspaceFileTab\(sessionId, "file", payload\.path\)/);
   // A name that already exists surfaces the server's message rather than silently succeeding.
   assert.match(newFileDialogSource, /setError\(/);
+});
+
+test('the Files panel users actually reach carries the same create actions', () => {
+  // workspace-explorer-tab has no UI entry point today (nothing builds its
+  // session id); the Git panel's Files tab is the reachable File Explorer, so
+  // the ticket's create actions have to live there too or they are untestable.
+  assert.match(filePanelSource, /data-testid="workspace-new-file"/);
+  assert.match(filePanelSource, /data-testid="workspace-new-file-in-folder"/);
+  assert.match(filePanelSource, /setNewFileDirectory\(node\.path\)/);
+  assert.match(filePanelSource, /<WorkspaceNewFileDialog/);
 });
