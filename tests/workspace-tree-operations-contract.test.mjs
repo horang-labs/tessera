@@ -7,7 +7,9 @@ const read = (relativePath) =>
 
 const filePanelSource = read('../src/components/workspace/workspace-file-panel.tsx');
 const deleteDialogSource = read('../src/components/workspace/workspace-delete-dialog.tsx');
-const nameDialogSource = read('../src/components/workspace/workspace-entry-name-dialog.tsx');
+const inlineRowSource = read('../src/components/workspace/workspace-inline-input-row.tsx');
+const inlineHookSource = read('../src/components/workspace/use-workspace-inline-input.ts');
+const inlineStateSource = read('../src/components/workspace/workspace-inline-input-state.ts');
 const mutationClientSource = read('../src/lib/workspace-files/workspace-file-mutation-client.ts');
 const tabSyncSource = read('../src/lib/workspace-tabs/workspace-tab-sync.ts');
 const fileRouteSource = read('../src/app/api/sessions/[id]/file/route.ts');
@@ -28,8 +30,8 @@ test('the explorer offers rename and delete on both kinds of row', () => {
 test('folders can be created at the root and inside a row', () => {
   assert.match(filePanelSource, /data-testid="workspace-new-folder"/);
   assert.match(filePanelSource, /data-testid="workspace-new-folder-in-folder"/);
-  assert.match(filePanelSource, /onClick=\{\(\) => setNewFolderDirectory\(""\)\}/);
-  assert.match(filePanelSource, /onClick=\{\(\) => setNewFolderDirectory\(node\.path\)\}/);
+  assert.match(filePanelSource, /inlineInput\.startNew\("folder", ""\)/);
+  assert.match(filePanelSource, /inlineInput\.startNew\("folder", node\.path\)/);
 });
 
 test('the delete confirmation states what is lost', () => {
@@ -51,9 +53,11 @@ test('a dirty buffer is visible to the delete confirmation', () => {
 
 test('rename warns about the draft it discards', () => {
   // Re-pointing a tab remounts it on the new path, so the draft goes with the
-  // old one — the same loss the delete confirmation warns about.
-  assert.match(filePanelSource, /hasUnsavedWorkspaceFileEdits\(sessionId, renameTarget\)/);
+  // old one — the same loss the delete confirmation warns about. The warning
+  // moved onto the inline row with the dialog's removal (#322).
+  assert.match(filePanelSource, /hasUnsavedWorkspaceFileEdits\(sessionId, input\.path\)/);
   assert.match(filePanelSource, /unsaved edits, and they are discarded by the rename/);
+  assert.match(inlineRowSource, /data-testid="workspace-inline-input-hint"/);
 });
 
 test('only a folder delete asks the server to recurse', () => {
@@ -69,11 +73,61 @@ test('open tabs follow a rename and close on a delete', () => {
   assert.match(tabSyncSource, /openPath\.startsWith\(`\$\{mutatedPath\}\/`\)/);
 });
 
-test('the rename dialog refuses to be a move', () => {
-  assert.match(filePanelSource, /a name cannot contain a slash/);
-  assert.match(nameDialogSource, /data-testid=\{`\$\{testIdPrefix\}-error`\}/);
-  // PATCH carries a bare name, never a path.
+test('a rename is a rename, never a move', () => {
+  // The inline input submits the bare name the row already had; PATCH carries
+  // that name and never a path, so the server's same-directory rule holds.
+  assert.match(inlineStateSource, /return \{ kind: "rename", path: input\.path, newName: name \}/);
   assert.match(mutationClientSource, /body: JSON\.stringify\(\{ path, newName \}\)/);
+});
+
+test('name entry happens inline, and the name-entry dialogs are gone', () => {
+  for (const dead of ['workspace-new-file-dialog.tsx', 'workspace-entry-name-dialog.tsx']) {
+    assert.equal(
+      fs.existsSync(new URL(`../src/components/workspace/${dead}`, import.meta.url)),
+      false,
+      `${dead} was replaced by the inline input (#322)`,
+    );
+    assert.ok(!filePanelSource.includes(dead.replace(/\.tsx$/, '')));
+  }
+  assert.match(inlineRowSource, /data-testid="workspace-inline-input"/);
+  assert.match(inlineRowSource, /data-testid="workspace-inline-input-row"/);
+  // Enter commits, Esc abandons without a request of any kind.
+  assert.match(inlineRowSource, /event\.key === "Enter"/);
+  assert.match(inlineRowSource, /event\.key === "Escape"/);
+  assert.match(inlineStateSource, /if \(!name\) return \{ kind: "cancel" \}/);
+});
+
+test('a refused name is reported beside the input, not in a toast or a modal', () => {
+  // The hook keeps the input open and holds the server's message; the row
+  // renders it under the field so the name can be fixed where it was typed.
+  assert.match(inlineHookSource, /setError\(caught instanceof Error \? caught\.message/);
+  assert.match(inlineRowSource, /data-testid="workspace-inline-input-error"/);
+  assert.doesNotMatch(inlineRowSource, /toast/i);
+});
+
+test('a watch reconcile cannot take the row being edited', () => {
+  // The panel's live sync goes through the hook: while an input is open the
+  // reload is held back and applied once, when the input closes.
+  assert.match(filePanelSource, /onRefresh: inlineInput\.handleExternalRefresh/);
+  assert.match(inlineHookSource, /pendingRefreshRef\.current = true/);
+  assert.match(inlineHookSource, /handlersRef\.current\.onRefreshFiles\(\)/);
+});
+
+test('double-clicking the name renames without fighting the row click', () => {
+  // The hotspot is the name text alone, and a folder holds its toggle back for
+  // the double-click window so the row does not collapse under the input.
+  assert.match(filePanelSource, /\[RENAME_HOTSPOT_ATTR\]: ""/);
+  assert.match(filePanelSource, /onDoubleClick=\{\(event\) => \{\s*event\.stopPropagation\(\);\s*startRename\(node\);/);
+  assert.match(filePanelSource, /resolveDirToggleTiming\(\{/);
+  assert.match(inlineStateSource, /return clickCount > 1 \? "skip" : "deferred"/);
+});
+
+test('the delete confirmation survives the move to inline entry', () => {
+  // Destructive and permanent: this one keeps its explicit acknowledgement.
+  assert.match(filePanelSource, /<WorkspaceDeleteDialog/);
+  assert.ok(fs.existsSync(
+    new URL('../src/components/workspace/workspace-delete-dialog.tsx', import.meta.url),
+  ));
 });
 
 test('the mutating routes authenticate before parsing a body', () => {
@@ -104,6 +158,9 @@ test('the tree operations reach for no agent-environment escape hatch', () => {
     ['directory/route.ts', directoryRouteSource],
     ['file/route.ts', fileRouteSource],
     ['workspace-tab-sync.ts', tabSyncSource],
+    ['use-workspace-inline-input.ts', inlineHookSource],
+    ['workspace-inline-input-state.ts', inlineStateSource],
+    ['workspace-inline-input-row.tsx', inlineRowSource],
   ];
   for (const [name, source] of sources) {
     for (const banned of ['os.homedir(', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'XDG_DATA_HOME']) {

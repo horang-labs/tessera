@@ -18,7 +18,15 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import {
+  type MouseEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -39,14 +47,21 @@ import {
   toAbsoluteWorkspacePath,
 } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
-import { WorkspaceNewFileDialog } from "@/components/workspace/workspace-new-file-dialog";
-import { WorkspaceEntryNameDialog } from "@/components/workspace/workspace-entry-name-dialog";
 import {
   WorkspaceDeleteDialog,
   type WorkspaceDeleteRequest,
 } from "@/components/workspace/workspace-delete-dialog";
+import { WorkspaceInlineInputRow } from "@/components/workspace/workspace-inline-input-row";
+import { useWorkspaceInlineInput } from "@/components/workspace/use-workspace-inline-input";
+import {
+  DIR_TOGGLE_DOUBLE_CLICK_MS,
+  isRenameHotspotTarget,
+  RENAME_HOTSPOT_ATTR,
+  resolveDirToggleTiming,
+} from "@/components/workspace/workspace-inline-input-state";
 import {
   createWorkspaceDirectoryRequest,
+  createWorkspaceFileRequest,
   deleteWorkspaceEntryRequest,
   renameWorkspaceEntryRequest,
 } from "@/lib/workspace-files/workspace-file-mutation-client";
@@ -250,10 +265,6 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  // null when closed; the string is the folder the dialog pre-fills with.
-  const [newFileDirectory, setNewFileDirectory] = useState<string | null>(null);
-  const [newFolderDirectory, setNewFolderDirectory] = useState<string | null>(null);
-  const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<WorkspaceDeleteRequest | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
@@ -270,9 +281,38 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     workDir,
   } = useWorkspaceFileList(sessionId);
 
+  const deferredToggleRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (deferredToggleRef.current !== null) window.clearTimeout(deferredToggleRef.current);
+  }, []);
+
+  const expandPath = useCallback((path: string) => {
+    if (!path) return;
+    setExpandedPaths((current) => {
+      if (current.has(path)) return current;
+      const next = new Set(current);
+      let walked = "";
+      for (const part of path.split("/")) {
+        walked = walked ? `${walked}/${part}` : part;
+        next.add(walked);
+      }
+      return next;
+    });
+  }, []);
+
+  const inlineInput = useWorkspaceInlineInput({
+    onCreateFile: createFile,
+    onCreateFolder: createFolder,
+    onExpandParent: expandPath,
+    onRefreshFiles: refreshFiles,
+    onRename: renameEntry,
+  });
+
   useWorkspaceFilesLiveSync({
     enabled: Boolean(sessionId) && isDocumentVisible,
-    onRefresh: refreshFiles,
+    // Gated, not passed straight through: a reconcile landing while a name is
+    // being typed would take the row it is being typed into.
+    onRefresh: inlineInput.handleExternalRefresh,
     sessionId,
     subscriberId,
   });
@@ -322,24 +362,22 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   );
   const isSearching = query.trim().length > 0;
 
-  async function createFolder(directory: string, name: string) {
+  async function createFolder(path: string) {
     if (!sessionId) return;
-    const created = await createWorkspaceDirectoryRequest(
-      sessionId,
-      directory ? `${directory}/${name}` : name,
-    );
+    const created = await createWorkspaceDirectoryRequest(sessionId, path);
     // Expand the ancestors, or a folder created inside a collapsed one appears
     // to have done nothing.
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      let walked = "";
-      for (const part of created.path.split("/").slice(0, -1)) {
-        walked = walked ? `${walked}/${part}` : part;
-        next.add(walked);
-      }
-      return next;
-    });
+    expandPath(created.path.split("/").slice(0, -1).join("/"));
     refreshFiles();
+  }
+
+  async function createFile(path: string) {
+    if (!sessionId) return;
+    const created = await createWorkspaceFileRequest(sessionId, path);
+    expandPath(created.path.split("/").slice(0, -1).join("/"));
+    refreshFiles();
+    setSelectedPath(created.path);
+    openWorkspaceFileTab(sessionId, "file", created.path);
   }
 
   async function renameEntry(path: string, newName: string) {
@@ -378,6 +416,65 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     });
   }
 
+  function clearDeferredToggle() {
+    if (deferredToggleRef.current === null) return;
+    window.clearTimeout(deferredToggleRef.current);
+    deferredToggleRef.current = null;
+  }
+
+  /**
+   * A click on the folder's name may be the first half of a double-click that
+   * means rename, and toggling on both halves collapses and re-expands the row
+   * under the input. Clicks on the name wait the double-click window out.
+   */
+  function handleDirectoryClick(event: MouseEvent, path: string) {
+    const timing = resolveDirToggleTiming({
+      clickCount: event.detail,
+      fromRenameHotspot: isRenameHotspotTarget(event.target),
+    });
+    clearDeferredToggle();
+    if (timing === "skip") return;
+    if (timing === "immediate") {
+      toggleDirectory(path);
+      return;
+    }
+    deferredToggleRef.current = window.setTimeout(() => {
+      deferredToggleRef.current = null;
+      toggleDirectory(path);
+    }, DIR_TOGGLE_DOUBLE_CLICK_MS);
+  }
+
+  function startRename(node: WorkspaceTreeNode) {
+    clearDeferredToggle();
+    inlineInput.startRename({
+      isDirectory: node.type === "directory",
+      name: node.name,
+      path: node.path,
+    });
+  }
+
+  function renderInlineInputRow(depth: number) {
+    const input = inlineInput.input;
+    if (!input) return null;
+    // Re-pointing a tab remounts it on the new path, so the draft goes with the
+    // old one. The delete confirmation says so; the rename has to as well.
+    const hint = input.kind === "rename"
+      && hasUnsavedWorkspaceFileEdits(sessionId, input.path)
+      ? "This file has unsaved edits, and they are discarded by the rename."
+      : null;
+    return (
+      <WorkspaceInlineInputRow
+        error={inlineInput.error}
+        hint={hint}
+        indent={8 + depth * 12}
+        input={input}
+        onCancel={inlineInput.cancel}
+        onSubmit={inlineInput.submit}
+        submitting={inlineInput.submitting}
+      />
+    );
+  }
+
   function renderTreeNode(node: WorkspaceTreeNode, depth: number): ReactNode {
     const paddingLeft = 8 + depth * 12;
 
@@ -385,6 +482,25 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
       const expanded = isSearching || expandedPaths.has(node.path);
       const FolderIcon = expanded ? FolderOpen : Folder;
       const absolutePath = toAbsoluteWorkspacePath(workDir, node.path);
+      const children = (
+        <>
+          {inlineInput.newEntryParent === node.path ? renderInlineInputRow(depth + 1) : null}
+          {node.children.map((child) => renderTreeNode(child, depth + 1))}
+        </>
+      );
+
+      // Renaming replaces the row itself rather than putting an input inside the
+      // disclosure button — a control nested in a control is invalid HTML and
+      // unreachable to a screen reader. The subtree stays where it was.
+      if (inlineInput.isRenaming(node.path)) {
+        return (
+          <div key={`dir:${node.path}`} className="flex flex-col">
+            {renderInlineInputRow(depth)}
+            {expanded ? children : null}
+          </div>
+        );
+      }
+
       return (
         <div key={`dir:${node.path}`} className="flex flex-col">
           {/* The row's own action sits beside the disclosure button, not inside
@@ -393,7 +509,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           <div className="group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)">
           <button
             type="button"
-            onClick={() => toggleDirectory(node.path)}
+            onClick={(event) => handleDirectoryClick(event, node.path)}
             onContextMenu={(event) => {
               if (!absolutePath) return;
               event.preventDefault();
@@ -421,7 +537,17 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               )}
             />
             <FolderIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
-            <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+            <span
+              // The double-click-to-rename target is the name text alone, so the
+              // disclosure stays reachable on the chevron, the icon and the
+              // empty part of the row.
+              {...{ [RENAME_HOTSPOT_ATTR]: "" }}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                startRename(node);
+              }}
+              className="min-w-0 flex-1 truncate font-mono text-[11px]"
+            >
               {node.name}
             </span>
             <span className="shrink-0 font-mono text-[10px] text-(--text-muted) tabular-nums">
@@ -432,7 +558,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             <Tooltip content={`New file in ${node.path}`}>
               <button
                 type="button"
-                onClick={() => setNewFileDirectory(node.path)}
+                onClick={() => inlineInput.startNew("file", node.path)}
                 className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
                 aria-label={`New file in ${node.path}`}
                 data-testid="workspace-new-file-in-folder"
@@ -443,7 +569,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             <Tooltip content={`New folder in ${node.path}`}>
               <button
                 type="button"
-                onClick={() => setNewFolderDirectory(node.path)}
+                onClick={() => inlineInput.startNew("folder", node.path)}
                 className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
                 aria-label={`New folder in ${node.path}`}
                 data-testid="workspace-new-folder-in-folder"
@@ -454,18 +580,22 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
             <RowMutationActions
               name={node.name}
               onDelete={() => setDeleteRequest({ kind: "directory", path: node.path })}
-              onRename={() => setRenameTarget(node.path)}
+              onRename={() => startRename(node)}
               path={node.path}
             />
           </div>
           </div>
-          {expanded ? node.children.map((child) => renderTreeNode(child, depth + 1)) : null}
+          {expanded ? children : null}
         </div>
       );
     }
 
     const isSelected = node.path === selectedPath;
     const absolutePath = toAbsoluteWorkspacePath(workDir, node.path);
+
+    if (inlineInput.isRenaming(node.path)) {
+      return <div key={`file:${node.path}`}>{renderInlineInputRow(depth)}</div>;
+    }
 
     return (
       <div
@@ -524,7 +654,16 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           ) : (
             <FileText className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
           )}
-          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+          <span
+            // Renaming is scoped to the name text, so the icon and the rest of
+            // the row keep opening the file the way they always have.
+            {...{ [RENAME_HOTSPOT_ATTR]: "" }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              startRename(node);
+            }}
+            className="min-w-0 flex-1 truncate font-mono text-[11px]"
+          >
             {node.name}
           </span>
         </button>
@@ -554,7 +693,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               path: node.path,
               dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
             })}
-            onRename={() => setRenameTarget(node.path)}
+            onRename={() => startRename(node)}
             path={node.path}
             stopPropagation
           />
@@ -592,7 +731,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           <Tooltip content="New file">
             <button
               type="button"
-              onClick={() => setNewFileDirectory("")}
+              onClick={() => inlineInput.startNew("file", "")}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
               aria-label="New file"
               data-testid="workspace-new-file"
@@ -603,7 +742,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           <Tooltip content="New folder">
             <button
               type="button"
-              onClick={() => setNewFolderDirectory("")}
+              onClick={() => inlineInput.startNew("folder", "")}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
               aria-label="New folder"
               data-testid="workspace-new-folder"
@@ -646,7 +785,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
         </div>
       ) : error ? (
         <EmptyState title="Files unavailable" body={error} icon="error" />
-      ) : fileTree.length === 0 ? (
+      ) : fileTree.length === 0 && !inlineInput.input ? (
         <EmptyState
           title={query.trim() ? "No matches" : "No files"}
           body={query.trim() ? "Try another search." : "This workspace has no readable files."}
@@ -663,6 +802,7 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           </div>
           <ScrollArea className="min-h-0 flex-1">
             <div className="flex flex-col">
+              {inlineInput.newEntryParent === "" ? renderInlineInputRow(0) : null}
               {fileTree.map((node) => renderTreeNode(node, 0))}
             </div>
           </ScrollArea>
@@ -676,48 +816,6 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           position={contextMenu.position}
         />
       ) : null}
-      <WorkspaceNewFileDialog
-        directory={newFileDirectory ?? ""}
-        open={newFileDirectory !== null}
-        onOpenChange={(next) => {
-          if (!next) setNewFileDirectory(null);
-        }}
-        sessionId={sessionId}
-      />
-      <WorkspaceEntryNameDialog
-        confirmLabel="Create"
-        description={newFolderDirectory
-          ? `New folder inside ${newFolderDirectory}.`
-          : "New folder at the workspace root."}
-        key={`new-folder:${newFolderDirectory ?? ""}`}
-        onOpenChange={(next) => {
-          if (!next) setNewFolderDirectory(null);
-        }}
-        onSubmit={(name) => createFolder(newFolderDirectory ?? "", name)}
-        open={newFolderDirectory !== null}
-        placeholder="drafts"
-        testIdPrefix="workspace-new-folder"
-        title="New folder"
-      />
-      <WorkspaceEntryNameDialog
-        confirmLabel="Rename"
-        // The tab re-points by remounting on the new path, which drops the
-        // draft with it — the same loss a delete warns about, so it says so
-        // here too rather than swallowing the typing.
-        description={renameTarget && hasUnsavedWorkspaceFileEdits(sessionId, renameTarget)
-          ? "New name. It stays in the same folder, so a name cannot contain a slash. This file has unsaved edits, and they are discarded by the rename."
-          : "New name. It stays in the same folder, so a name cannot contain a slash."}
-        initialValue={renameTarget ? renameTarget.split("/").pop() ?? "" : ""}
-        key={`rename:${renameTarget ?? ""}`}
-        onOpenChange={(next) => {
-          if (!next) setRenameTarget(null);
-        }}
-        onSubmit={(name) => renameEntry(renameTarget ?? "", name)}
-        open={renameTarget !== null}
-        placeholder="new-name.md"
-        testIdPrefix="workspace-rename"
-        title="Rename"
-      />
       <WorkspaceDeleteDialog
         onConfirm={deleteEntry}
         onOpenChange={(next) => {
