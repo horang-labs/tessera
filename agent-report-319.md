@@ -1,9 +1,10 @@
 # agent-report-319 — File tab: edit existing files and create new files (wave 1)
 
-Branch: `feature/319-file-editing`. Two commits, not pushed, not merged.
+Branch: `feature/319-file-editing`. Three commits, not pushed, not merged.
 
 - `6768e46` feat(workspace): edit and create files from the File tab
 - `b541670` feat(workspace): put the create actions where the File Explorer actually is
+- `a8962a6` fix(workspace): address the standards review
 
 ## What was built
 
@@ -218,12 +219,64 @@ the banner, OS Trash routing, drag-and-drop, and a global draft store.
   cycles, one slice at a time). The route-level temp-dir tests started red on the first
   behaviour and the remaining nine cases were written against the implementation; they are
   verification, not test-first, and are labelled honestly here.
-- `/code-review` — both sub-agents were spawned in parallel (Standards and Spec). Their
-  findings are appended below if they returned in time; if the section is empty, they had not
-  reported when this file was written, and the review should be considered incomplete.
+- `/code-review` — both sub-agents were spawned in parallel. **Standards returned and its
+  findings were acted on. Spec never reported** (see below).
 - Full suite: not run, and not necessary — the change is localized to the workspace file
   surface, and targeted tests plus contract tests cover it.
 
-## Sub-agent review findings
+## Sub-agent review — Standards axis (returned)
 
-_Pending — see the note above._
+Two hard violations and ten judgement calls. Everything hard, plus the accessibility defect,
+was fixed in `a8962a6`:
+
+1. **The self-write registry's key separator was a literal NUL byte in the source.** `file(1)`
+   reported the module as `data` and git classified it as binary (`Bin 0 -> 1412 bytes`) — no
+   diff, no blame, nothing for a reviewer to read. This was a real defect I introduced and did
+   not notice; the review caught it. Now written as an escape sequence, so the runtime key is
+   byte-for-byte the same and the file is text again (verified: `JavaScript source, UTF-8`).
+2. **`PUT`/`POST` parsed the request body before authenticating**, unlike the `GET` in the same
+   file and every neighbouring route. I had copied the memory route's ordering. Auth now runs
+   first in both.
+3. **Nested interactive control** — the folder row's "New file in this folder" was a
+   `role="button"` span inside the disclosure `<button>`: invalid HTML, unreachable to a
+   screen reader. Now a sibling button. Re-verified in the browser afterwards: the folder still
+   expands, the action still pre-fills `docs/`, and creating from it still works
+   (`shots/21`, `shots/22`).
+4. `GET` now shares `authenticateAndResolveRoot` instead of repeating it.
+
+Judgement calls left as they are, with reasons:
+
+- **Duplicated create entry point across the two file-listing components.** Real, and it
+  follows directly from deviation 1 below. The shared parts (dialog, POST, error handling) are
+  already one component; what is duplicated is a state field and a button. Collapsing it
+  properly means deciding whether `workspace-explorer-tab.tsx` should exist at all, which is a
+  call for the ticket author, and touches wave 2's surface.
+- **Path validation appears in both the read route and `parseWorkspaceWritePath`.** The read
+  path resolves an existing file and the write path resolves a parent that may not exist;
+  merging them was exactly what D4 says cannot be done. Messages differ because the failures
+  differ.
+- **`dirtyRef.current = dirty` during render.** Copied verbatim from `memory-file-tab.tsx:164`,
+  which the ticket names as the pattern to follow. Changing it here alone would leave the two
+  file surfaces inconsistent.
+- **Ten editing props on `WorkspaceCodeView`.** Bundling them into one object is a fair
+  refactor but would churn the component's whole signature for no behaviour change.
+- **`invalid_base` covers both "names a directory" and "empty after normalising".** Fair; the
+  user-facing message is accurate for both, and the code is not part of the API contract.
+- **Windows reserved names / alternate data streams / trailing dots** are not rejected
+  lexically. Real gap on a Windows workspace, but out of this ticket's scope — the existing
+  read route has the same blind spot, and the fix belongs with it.
+
+## Sub-agent review — Spec axis (NOT completed)
+
+The Spec sub-agent was spawned in parallel with Standards and **never reported**, across four
+requests over roughly 55 minutes. I deliberately did not substitute an inline review of my own
+work for it — that is the degraded single-perspective review the two-axis split exists to
+prevent, and presenting it as the real thing would be worse than saying it did not happen.
+
+**A reviewer still needs to run the Spec axis.** What is available in its place is
+first-hand evidence, not an independent judgement: every acceptance criterion in
+`ticket-a.md` except the two listed under "AC items I could not verify" was exercised against
+a real dev server and is recorded above with its screenshot, and D1–D15 are each pinned by a
+contract test in `tests/workspace-file-editing-contract.test.mjs`. Deviations are listed
+below and are the most likely thing an independent spec review would want to argue with —
+particularly deviation 1.
