@@ -79,8 +79,6 @@ export const en: I18nMessages = {
     remoteAccess: {
       title: 'Remote access',
       description: 'Connect directly over Tailscale, or keep using an existing tunnel, then pair another device with a one-time link.',
-      warningTitle: 'The desktop app listens on every IPv4 interface',
-      warningDescription: 'Direct Tailscale access also opens the listener to LAN paths on Windows, macOS, and Linux. Every HTTP API and WebSocket still requires an app secret, device token, or web login. Pair only devices you trust.',
       systemFirewallTitle: 'Check your system firewall',
       systemFirewallDescription: 'Tessera does not change macOS or Linux firewall rules or request administrator access. If direct connections are blocked, allow inbound TCP to the Tessera port shown below for your Tailscale interface.',
       firewallTitle: 'Windows Firewall',

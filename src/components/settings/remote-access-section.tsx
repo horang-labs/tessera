@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
-  AlertTriangle,
   Check,
   CheckCircle2,
   Clock3,
@@ -488,17 +487,7 @@ export default function RemoteAccessSection() {
         </p>
       </div>
 
-      <div className="flex items-start gap-3 rounded-lg border border-(--status-warning-border) bg-(--status-warning-bg) p-3 text-(--status-warning-text)">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{t('settings.remoteAccess.warningTitle')}</p>
-          <p className="mt-1 text-xs leading-5 opacity-90">
-            {t('settings.remoteAccess.warningDescription')}
-          </p>
-        </div>
-      </div>
-
-      {canConfigureWindowsFirewall ? (
+{canConfigureWindowsFirewall ? (
         <div className="flex flex-col gap-3 rounded-lg border border-(--divider) bg-(--input-bg) p-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="flex items-center gap-2 text-sm font-medium text-(--text-primary)">

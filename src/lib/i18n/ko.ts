@@ -79,8 +79,6 @@ export const ko: I18nMessages = {
     remoteAccess: {
       title: '원격 접속',
       description: 'Tailscale로 직접 연결하거나 기존 터널을 계속 사용한 뒤, 일회용 링크로 다른 기기를 페어링합니다.',
-      warningTitle: '데스크톱 앱은 모든 IPv4 인터페이스에서 연결을 받습니다',
-      warningDescription: 'Windows·macOS·Linux에서 Tailscale 직접 접속을 사용하면 같은 LAN 경로에도 리스너가 열립니다. 모든 HTTP API와 WebSocket에는 App secret·Device token·웹 로그인이 계속 필요합니다. 신뢰하는 기기만 페어링하세요.',
       systemFirewallTitle: '시스템 방화벽을 확인하세요',
       systemFirewallDescription: 'Tessera는 macOS·Linux 방화벽 규칙을 바꾸거나 관리자 권한을 요청하지 않습니다. 직접 연결이 막히면 아래 Tessera 포트의 인바운드 TCP를 Tailscale 인터페이스에 허용하세요.',
       firewallTitle: 'Windows 방화벽',

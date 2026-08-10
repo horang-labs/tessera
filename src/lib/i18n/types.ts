@@ -60,8 +60,6 @@ export interface I18nMessages {
     remoteAccess: {
       title: string;
       description: string;
-      warningTitle: string;
-      warningDescription: string;
       systemFirewallTitle: string;
       systemFirewallDescription: string;
       firewallTitle: string;

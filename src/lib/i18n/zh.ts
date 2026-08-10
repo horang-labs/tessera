@@ -79,8 +79,6 @@ export const zh: I18nMessages = {
     remoteAccess: {
       title: '远程访问',
       description: '通过 Tailscale 直接连接或继续使用现有隧道，然后用一次性链接配对另一台设备。',
-      warningTitle: '桌面应用会监听所有 IPv4 接口',
-      warningDescription: '在 Windows、macOS 和 Linux 上使用 Tailscale 直接访问时，同一局域网也能连接此监听器。所有 HTTP API 和 WebSocket 仍需要应用密钥、设备令牌或网页登录。请只配对受信任的设备。',
       systemFirewallTitle: '检查系统防火墙',
       systemFirewallDescription: 'Tessera 不会修改 macOS 或 Linux 防火墙规则，也不会请求管理员权限。如果直接连接受阻，请允许 Tailscale 接口接收发往下方 Tessera 端口的 TCP 连接。',
       firewallTitle: 'Windows 防火墙',
