@@ -283,10 +283,29 @@ export default function SettingsPanel() {
           data-testid="settings-modal"
         >
           <aside className="shrink-0 border-b border-(--divider) bg-[linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.03))] md:w-64 md:border-b-0 md:border-r">
-            <div className="px-4 pb-3 pt-4 md:px-5 md:pb-4 md:pt-6">
+            <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-4 md:px-5 md:pb-4 md:pt-6">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-(--text-muted)">
                 {t('settings.title')}
               </p>
+              {/* Phone-only close. The body's own close button lives beside a
+                  faded feedback icon further down the modal and reads as part
+                  of that row — reporter had to hunt for it. Repeating the
+                  action next to the SETTINGS heading puts it exactly where a
+                  reader looks for a modal dismiss. Hidden on `md` where the
+                  body's top-right corner is unambiguous. */}
+              <button
+                type="button"
+                onClick={closeSettings}
+                disabled={isSaving}
+                aria-label="Close settings"
+                className={cn(
+                  'md:hidden inline-flex items-center justify-center rounded-xl text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-wait disabled:opacity-50',
+                  PHONE_TOUCH_TARGET,
+                )}
+                data-testid="settings-close-mobile"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
             {/* Wherever the nav is this band rather than the column, the strip
                 below is ~1040px of tabs in a box the dialog's width: 332px at
@@ -394,6 +413,11 @@ export default function SettingsPanel() {
                 disabled={isSaving}
                 aria-label="Close settings"
                 className={cn(
+                  // Hidden on phones — the aside already renders a close button
+                  // beside the SETTINGS heading, which is where a reader looks
+                  // for a modal dismiss. Leaving this one visible produced two
+                  // close buttons a thumb-scroll apart.
+                  'max-sm:hidden',
                   'rounded-xl p-2 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-wait disabled:opacity-50',
                   // Free here, and only here: the row is already 44px tall for the
                   // collapsed button beside it, so the floor costs the block no

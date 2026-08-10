@@ -34,6 +34,13 @@ export function Tooltip({
   }, []);
 
   const handleMouseEnter = useCallback(function showTooltip(e: React.MouseEvent) {
+    // A touchscreen has no way to hover away, so the tooltip that a tap
+    // synthesises never receives its own mouseleave and sticks on the page.
+    // `hover: none` covers phones and stylus-only tablets without touching
+    // desktops, where the reveal is still driven by a real pointer.
+    if (typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches) {
+      return;
+    }
     mousePos.current = { x: e.clientX, y: e.clientY };
     const nextPosition = () => ({
       top: side === 'top'

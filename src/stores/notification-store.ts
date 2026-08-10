@@ -5,6 +5,50 @@ import type { Notification } from '@/types/notification';
 const MAX_NOTIFICATIONS = 50;
 type ActionToastType = 'success' | 'error' | 'warning' | 'info';
 
+// Dismissed notifications survive a reload — the WS layer replays session
+// events on reconnect (which is what a page refresh looks like from the
+// server), so without this the same "3 unread" toasts kept coming back after
+// the user had already X'd them out. Keyed by `dedupKey` because that's what
+// addNotification already uses to spot replays; `id` is a fresh uuid each
+// time so it would never match.
+const DISMISSED_STORAGE_KEY = 'tessera:dismissed-notification-keys';
+const DISMISSED_MAX = 500;
+
+function loadDismissedKeys(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function persistDismissedKeys(keys: Set<string>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    // FIFO cap: iteration order is insertion order, so slicing from the end
+    // keeps the most recently dismissed keys — the ones most likely to be
+    // re-sent by an imminent replay.
+    const arr = Array.from(keys);
+    const trimmed = arr.length > DISMISSED_MAX ? arr.slice(arr.length - DISMISSED_MAX) : arr;
+    window.localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // Quota / private mode — a lost dismissal is annoying, a crash is worse.
+  }
+}
+
+const dismissedKeys = loadDismissedKeys();
+
+function rememberDismissed(dedupKey: string | undefined) {
+  if (!dedupKey) return;
+  if (dismissedKeys.has(dedupKey)) return;
+  dismissedKeys.add(dedupKey);
+  persistDismissedKeys(dismissedKeys);
+}
+
 // Simple action toast (e.g. "Session created", "Failed to delete")
 export interface ActionToast {
   id: string;
@@ -52,6 +96,8 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     // Orca식 dedup: 같은 dedupKey가 이미 있으면(dismissed 무관) 재발화를 무시한다.
     // 재연결/리로드 replay와 근접 이중(Stop+result)이 unread/sound를 부풀리는 걸 막는다.
     if (notification.dedupKey) {
+      // Cross-reload dedup: a key the user has already dismissed stays dismissed.
+      if (dismissedKeys.has(notification.dedupKey)) return false;
       const seen = get().notifications.some((n) => n.dedupKey === notification.dedupKey);
       if (seen) return false;
     }
@@ -81,19 +127,28 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     return true;
   },
 
-  dismissNotification: (id) =>
+  dismissNotification: (id) => {
+    const target = get().notifications.find((n) => n.id === id);
+    rememberDismissed(target?.dedupKey);
     set((state) => ({
       notifications: state.notifications.filter((n) => n.id !== id),
-    })),
+    }));
+  },
 
-  dismissToast: (id) =>
+  dismissToast: (id) => {
+    const target = get().notifications.find((n) => n.id === id);
+    rememberDismissed(target?.dedupKey);
     set((state) => ({
       notifications: state.notifications.map((n) =>
         n.id === id ? { ...n, dismissed: true } : n
       ),
-    })),
+    }));
+  },
 
-  dismissAll: () => set({ notifications: [] }),
+  dismissAll: () => {
+    for (const n of get().notifications) rememberDismissed(n.dedupKey);
+    set({ notifications: [] });
+  },
 
   markAsRead: (id) =>
     set((state) => ({

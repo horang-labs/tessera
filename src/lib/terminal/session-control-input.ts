@@ -10,6 +10,11 @@ export const TERMINAL_NAMED_KEYS = [
   // permission mode. Its absence was a gap rather than a judgement: the Control CLI
   // drives sessions programmatically and never had to reach that control.
   'shift-tab',
+  // Backspace deletes at the TUI prompt when the phone soft keyboard isn't up
+  // — same reason the arrow keys are here. DEL (0x7f) rather than BS (0x08)
+  // because that's what a modern terminal emulator sends for the ⌫ key, and
+  // what readline / providers' prompt widgets bind to.
+  'backspace',
 ] as const;
 
 export type TerminalNamedKey = typeof TERMINAL_NAMED_KEYS[number];
@@ -25,6 +30,7 @@ const TERMINAL_NAMED_KEY_SEQUENCES: Record<TerminalNamedKey, string> = {
   left: '\x1b[D',
   right: '\x1b[C',
   'shift-tab': '\x1b[Z',
+  backspace: '\x7f',
 };
 
 export function isTerminalNamedKey(value: unknown): value is TerminalNamedKey {

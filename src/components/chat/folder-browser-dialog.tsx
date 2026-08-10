@@ -552,13 +552,17 @@ export function FolderBrowserDialog({
           </div>
         </div>
 
-        {/* Footer buttons */}
-        <div className="flex shrink-0 gap-3 justify-end mt-4">
+        {/* Footer buttons — on a phone the three-across layout was breaking
+            the primary label ("Add this folder") into three stacked words.
+            The feedback CTA collapses to an icon-only tap target and the
+            other two get `whitespace-nowrap` so nothing wraps mid-word. */}
+        <div className="flex shrink-0 gap-2 sm:gap-3 justify-end mt-4">
           <Button
             variant="outline"
             onClick={onClose}
             disabled={isCreating}
             data-testid="folder-browser-cancel"
+            className="whitespace-nowrap"
           >
           {t('common.cancel')}
           </Button>
@@ -567,14 +571,17 @@ export function FolderBrowserDialog({
             onClick={() => setIsFeedbackOpen(true)}
             disabled={isCreating}
             data-testid="folder-browser-feedback"
+            aria-label={t('feedback.projectImportCta')}
+            className="whitespace-nowrap max-sm:px-2"
           >
             <MessageSquarePlus className="w-4 h-4" />
-            {t('feedback.projectImportCta')}
+            <span className="max-sm:sr-only">{t('feedback.projectImportCta')}</span>
           </Button>
           <Button
             onClick={handleSelect}
             disabled={isCreating || isLoading || (!currentFilesystemPath && !currentPath)}
             data-testid="folder-browser-confirm"
+            className="whitespace-nowrap"
           >
             {isCreating ? (
               <>
