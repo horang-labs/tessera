@@ -12,6 +12,12 @@ import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { wsClient } from "@/lib/ws/client";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
+import { toast } from "@/stores/notification-store";
+import {
+  clearSelfWrite,
+  isSelfWrite,
+  markSelfWrite,
+} from "@/lib/workspace-files/workspace-self-write-registry";
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
 import {
@@ -119,8 +125,30 @@ export function WorkspaceFileTab({
     error: null,
     data: null,
   });
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [conflict, setConflict] = useState(false);
   const requestSeqRef = useRef(0);
   const activeLoadsRef = useRef(0);
+  const dirtyRef = useRef(false);
+
+  const fileData = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
+  // A truncated buffer holds only the first 512 KB: saving it back would delete
+  // everything past that. A binary file has no text buffer to edit at all.
+  const editable = fileData !== null && !fileData.binary && !fileData.truncated;
+  const dirty = editable && draft !== null && draft !== fileData.content;
+  dirtyRef.current = dirty;
+
+  // A preview tab is replaced by the next previewed file without warning; pin
+  // it as soon as there are unsaved edits so the draft cannot vanish.
+  useEffect(() => {
+    if (!dirty) return;
+    const tabStore = useTabStore.getState();
+    const location = tabStore.findSessionLocation(
+      buildWorkspaceFileSessionId(sourceSessionId, kind, path),
+    );
+    if (location) tabStore.pinTab(location.tabId);
+  }, [dirty, kind, path, sourceSessionId]);
 
   const loadFile = useCallback(async (options?: {
     signal?: AbortSignal;
@@ -128,7 +156,8 @@ export function WorkspaceFileTab({
   }) => {
     // A silent refresh must not supersede an in-flight load: bumping the
     // sequence would discard that load's response while loading stays true.
-    if (options?.silent && activeLoadsRef.current > 0) return;
+    // Nor may it wipe unsaved edits — a draft outranks disk content.
+    if (options?.silent && (dirtyRef.current || activeLoadsRef.current > 0)) return;
 
     const requestSeq = requestSeqRef.current + 1;
     requestSeqRef.current = requestSeq;
@@ -139,6 +168,8 @@ export function WorkspaceFileTab({
         error: null,
         data: null,
       });
+      setDraft(null);
+      setConflict(false);
     }
 
     activeLoadsRef.current += 1;
@@ -156,11 +187,15 @@ export function WorkspaceFileTab({
       }
 
       if (requestSeqRef.current !== requestSeq) return;
+      // The dirty flag can flip while the request is in flight.
+      if (options?.silent && dirtyRef.current) return;
       setState({
         loading: false,
         error: null,
         data: payload as WorkspaceFileData | GitDiffData,
       });
+      setDraft(null);
+      setConflict(false);
     } catch (error) {
       if (options?.signal?.aborted || requestSeqRef.current !== requestSeq) return;
       const message = isTimeoutError(error)
@@ -209,11 +244,22 @@ export function WorkspaceFileTab({
     }
 
     if (msg.deletedPaths.includes(path)) {
+      // Reloading would drop the draft; let the save report the conflict.
+      if (dirtyRef.current) {
+        setConflict(true);
+        return;
+      }
       void loadFile();
       return;
     }
 
     if (msg.hasMoreChangedPaths || msg.changedPaths.includes(path)) {
+      // The watcher echo of our own save is not an external change.
+      if (isSelfWrite(sourceSessionId, path)) return;
+      if (dirtyRef.current) {
+        setConflict(true);
+        return;
+      }
       refreshFile();
     }
   }, [assignSession, kind, loadFile, onFileRefChange, panelId, path, refreshFile, sourceSessionId]);
@@ -280,12 +326,89 @@ export function WorkspaceFileTab({
     };
   }, [loadFile, sourceSessionId]);
 
+  const saveFile = useCallback(async (options?: { overwrite?: boolean }) => {
+    const data = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
+    if (!data || data.binary || data.truncated || draft === null || saving) return;
+
+    setSaving(true);
+    // Stamped before the request so the watcher event, which can arrive while
+    // the PUT is still in flight, is already recognised as our own.
+    markSelfWrite(sourceSessionId, path);
+    try {
+      const response = await fetchWithTimeout(
+        `/api/sessions/${encodeURIComponent(sourceSessionId)}/file`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            path,
+            content: draft,
+            // Overwrite deliberately drops the lock: the user has seen the
+            // banner and chosen their version over what is on disk.
+            ...(options?.overwrite ? {} : { baseMtimeMs: data.mtimeMs }),
+          }),
+          timeoutMs: FILE_LOAD_TIMEOUT_MS,
+        },
+      );
+      const payload = await response.json().catch(() => null) as
+        | { mtimeMs?: number; size?: number; error?: { code?: string; message?: string } }
+        | null;
+      if (response.status === 409) {
+        clearSelfWrite(sourceSessionId, path);
+        setConflict(true);
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(extractGitPanelErrorMessage(payload, "Failed to save file."));
+      }
+
+      // Invalidate loads started before the save so a stale response cannot
+      // overwrite the freshly saved state.
+      requestSeqRef.current += 1;
+      setState({
+        loading: false,
+        error: null,
+        data: {
+          ...data,
+          content: draft,
+          // The new mtime is the next baseline, which is what actually stops
+          // our own write from reading as an external change.
+          mtimeMs: payload?.mtimeMs ?? data.mtimeMs,
+          size: payload?.size ?? data.size,
+        },
+      });
+      // Only clear the draft when it still equals what was saved — the user
+      // may have kept typing while the PUT was in flight.
+      setDraft((current) => (current === draft ? null : current));
+      setConflict(false);
+      toast.success(`Saved ${path}`);
+    } catch (error) {
+      clearSelfWrite(sourceSessionId, path);
+      const message = isTimeoutError(error)
+        ? "The file did not save in time. The workspace filesystem may be unresponsive."
+        : error instanceof Error ? error.message : "Failed to save file.";
+      toast.error(message);
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, kind, path, saving, sourceSessionId, state.data]);
+
   return (
     <WorkspaceCodeView
+      conflict={conflict}
       data={state.data}
+      dirty={dirty}
+      draft={draft}
+      editable={editable}
       error={state.error}
       loading={state.loading}
       mode={fileRef.kind}
+      onCancelConflict={() => setConflict(false)}
+      onDraftChange={setDraft}
+      onOverwrite={() => void saveFile({ overwrite: true })}
+      onReload={() => void loadFile()}
+      onSave={() => void saveFile()}
+      saving={saving}
       onClose={() => {
         if (onClose) {
           onClose();

@@ -25,7 +25,8 @@ test('workspace file tab loads through fetchWithTimeout with one automatic retry
 });
 
 test('silent refreshes do not supersede an in-flight load and keep shown content on failure', () => {
-  assert.match(fileTabSource, /if \(options\?\.silent && activeLoadsRef\.current > 0\) return;/);
+  // Since #319 the same guard also protects an unsaved draft.
+  assert.match(fileTabSource, /if \(options\?\.silent && \(dirtyRef\.current \|\| activeLoadsRef\.current > 0\)\) return;/);
   assert.match(fileTabSource, /current\.data \? current :/);
 });
 
@@ -40,9 +41,13 @@ test('code view keeps the close button visible while loading and offers retry on
 });
 
 test('file route bounds every workspace fs operation with a deadline', () => {
-  assert.match(fileRouteSource, /function withFsDeadline/);
-  assert.match(fileRouteSource, /filesystem_timeout/);
-  assert.match(fileRouteSource, /504/);
+  // The deadline moved to a shared module in #319 so the write side reuses it;
+  // the route must still route every fs call through it.
+  const workspaceFileIoSource = fs.readFileSync(new URL('../src/lib/workspace-files/workspace-file-io.ts', import.meta.url), 'utf8');
+  assert.match(workspaceFileIoSource, /export function withFsDeadline/);
+  assert.match(workspaceFileIoSource, /filesystem_timeout/);
+  assert.match(workspaceFileIoSource, /504/);
+  assert.match(fileRouteSource, /withFsDeadline,?\n\} from "@\/lib\/workspace-files\/workspace-file-io"/);
   assert.match(fileRouteSource, /withFsDeadline\(fs\.realpath\(root\)\)/);
   assert.match(fileRouteSource, /withFsDeadline\(fs\.realpath\(candidatePath\)\)/);
   assert.match(fileRouteSource, /withFsDeadline\(fs\.stat\(absolutePath\)\)/);
