@@ -135,6 +135,23 @@ test("directory scan reports a vanished directory instead of an empty one", asyn
   });
 });
 
+test("workspace file scan reports directories, including empty ones", async () => {
+  await withTempWorkspace(async (root) => {
+    await mkdir(path.join(root, "src/nested"), { recursive: true });
+    await mkdir(path.join(root, "empty"), { recursive: true });
+    await mkdir(path.join(root, "node_modules/pkg"), { recursive: true });
+    await writeFile(path.join(root, "src/nested/a.ts"), "");
+    await writeFile(path.join(root, "top.ts"), "");
+
+    const result = await walkWorkspaceFiles(root);
+
+    // An empty folder has no file to infer it from, so the explorer can only
+    // show it if the scan reports it in its own right.
+    assert.deepEqual(result.directories, ["empty", "src", "src/nested"]);
+    assert.deepEqual(result.files, ["src/nested/a.ts", "top.ts"]);
+  });
+});
+
 test("workspace path helpers normalize and classify ignored paths", () => {
   assert.equal(workspaceRelativeDirname("top.ts"), "");
   assert.equal(workspaceRelativeDirname(".codex/hooks.json"), ".codex");
@@ -179,4 +196,27 @@ test("workspace file index keeps symlink markers inside the capped list", () => 
   // A marker for a path the cap dropped must not survive: the client joins
   // this list against `files` and would otherwise carry a dangling entry.
   assert.deepEqual(result.symlinks, ["file-00000.ts"]);
+});
+
+test("the scan cap covers files and directories together", async () => {
+  await withTempWorkspace(async (root) => {
+    // Directories first in readdir order, then the files beside them: with a
+    // separate budget per kind, hitting the directory cap would abandon the
+    // walk mid-directory and drop the files it had not reached yet.
+    for (let index = 0; index < 4; index += 1) {
+      await mkdir(path.join(root, `dir-${index}`), { recursive: true });
+      await writeFile(path.join(root, `file-${index}.ts`), "");
+    }
+
+    const result = await scanWorkspaceDirectory(root, "", { limit: 6, recursive: true });
+
+    assert.equal(result.truncated, true);
+    // One shared budget: the two lists together stay within it, rather than
+    // each list being allowed the whole of it.
+    assert.ok(
+      result.files.length + result.directories.length <= 6,
+      `expected the cap to be shared, got ${result.files.length} files and ${result.directories.length} directories`,
+    );
+    assert.ok(result.files.length > 0, "files must not be starved by the directory count");
+  });
 });

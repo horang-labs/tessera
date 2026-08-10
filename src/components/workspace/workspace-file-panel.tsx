@@ -10,10 +10,13 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   FolderTree,
   Link2,
   LoaderCircle,
+  PenLine,
   Search,
+  Trash2,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -37,6 +40,22 @@ import {
 } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import { WorkspaceNewFileDialog } from "@/components/workspace/workspace-new-file-dialog";
+import { WorkspaceEntryNameDialog } from "@/components/workspace/workspace-entry-name-dialog";
+import {
+  WorkspaceDeleteDialog,
+  type WorkspaceDeleteRequest,
+} from "@/components/workspace/workspace-delete-dialog";
+import {
+  createWorkspaceDirectoryRequest,
+  deleteWorkspaceEntryRequest,
+  renameWorkspaceEntryRequest,
+} from "@/lib/workspace-files/workspace-file-mutation-client";
+import { hasUnsavedWorkspaceFileEdits } from "@/lib/workspace-files/workspace-dirty-registry";
+import {
+  closeWorkspaceFileTabsFor,
+  isPathUnderMutation,
+  repointWorkspaceFileTabs,
+} from "@/lib/workspace-tabs/workspace-tab-sync";
 import { cn } from "@/lib/utils";
 
 interface WorkspaceFileNode {
@@ -102,24 +121,40 @@ function finalizeDirectory(node: MutableDirectoryNode): WorkspaceDirectoryNode {
   };
 }
 
-function buildFileTree(filePaths: string[], symlinkPaths: Set<string>): WorkspaceTreeNode[] {
+function ensureDirectory(root: MutableDirectoryNode, directoryPath: string): MutableDirectoryNode {
+  let directory = root;
+  for (const part of directoryPath.split("/").filter(Boolean)) {
+    const childPath = directory.path ? `${directory.path}/${part}` : part;
+    let child = directory.directories.get(part);
+    if (!child) {
+      child = createMutableDirectory(part, childPath);
+      directory.directories.set(part, child);
+    }
+    directory = child;
+  }
+  return directory;
+}
+
+function buildFileTree(
+  filePaths: string[],
+  symlinkPaths: Set<string>,
+  directoryPaths: string[],
+): WorkspaceTreeNode[] {
   const root = createMutableDirectory("", "");
+
+  // Folders first and in their own right: one with no files in it appears in no
+  // file path, so inferring the tree from `filePaths` alone would hide exactly
+  // the folder a user just created.
+  for (const directoryPath of directoryPaths) {
+    ensureDirectory(root, directoryPath);
+  }
 
   for (const filePath of filePaths) {
     const parts = filePath.split("/").filter(Boolean);
     const fileName = parts.pop();
     if (!fileName) continue;
 
-    let directory = root;
-    for (const part of parts) {
-      const childPath = directory.path ? `${directory.path}/${part}` : part;
-      let child = directory.directories.get(part);
-      if (!child) {
-        child = createMutableDirectory(part, childPath);
-        directory.directories.set(part, child);
-      }
-      directory = child;
-    }
+    const directory = ensureDirectory(root, parts.join("/"));
 
     directory.files.push({
       type: "file",
@@ -130,6 +165,57 @@ function buildFileTree(filePaths: string[], symlinkPaths: Set<string>): Workspac
   }
 
   return finalizeDirectory(root).children;
+}
+
+/**
+ * Rename and Delete, identical on a file row and a folder row — only what the
+ * click means differs, so only that is passed in.
+ */
+function RowMutationActions({
+  name,
+  onDelete,
+  onRename,
+  path,
+  stopPropagation = false,
+}: {
+  name: string;
+  onDelete: () => void;
+  onRename: () => void;
+  path: string;
+  /** File rows sit inside a click target of their own; folder rows do not. */
+  stopPropagation?: boolean;
+}) {
+  const handle = (action: () => void) => (event: { stopPropagation: () => void }) => {
+    if (stopPropagation) event.stopPropagation();
+    action();
+  };
+
+  return (
+    <>
+      <Tooltip content={`Rename ${name}`}>
+        <button
+          type="button"
+          onClick={handle(onRename)}
+          className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+          aria-label={`Rename ${path}`}
+          data-testid="workspace-rename-entry"
+        >
+          <PenLine className="h-3.5 w-3.5" />
+        </button>
+      </Tooltip>
+      <Tooltip content={`Delete ${name}`}>
+        <button
+          type="button"
+          onClick={handle(onDelete)}
+          className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--status-error-text)"
+          aria-label={`Delete ${path}`}
+          data-testid="workspace-delete-entry"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </Tooltip>
+    </>
+  );
 }
 
 function EmptyState({
@@ -166,11 +252,15 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   // null when closed; the string is the folder the dialog pre-fills with.
   const [newFileDirectory, setNewFileDirectory] = useState<string | null>(null);
+  const [newFolderDirectory, setNewFolderDirectory] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<string | null>(null);
+  const [deleteRequest, setDeleteRequest] = useState<WorkspaceDeleteRequest | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
   const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
   const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
   const {
+    directories,
     error,
     files,
     loading,
@@ -199,12 +289,82 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
     return baseFiles
       .filter((filePath) => filePath.toLowerCase().includes(trimmed));
   }, [baseFiles, query]);
+  const baseDirectories = useMemo(
+    () => (showHiddenFiles
+      ? directories
+      : directories.filter((dirPath) => !isHiddenWorkspaceRelativePath(dirPath))),
+    [directories, showHiddenFiles],
+  );
+  const visibleDirectories = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return baseDirectories;
+    // A folder stays visible while its own name matches, or while a matching
+    // file needs it as an ancestor — the file rows are nested under it. The
+    // ancestors are collected from the matching files once; testing each
+    // folder against every file would be the product of the two, on every
+    // keystroke, over a tree that can hold twenty thousand entries.
+    const ancestors = new Set<string>();
+    for (const filePath of visibleFiles) {
+      const parts = filePath.split("/");
+      let walked = "";
+      for (const part of parts.slice(0, -1)) {
+        walked = walked ? `${walked}/${part}` : part;
+        ancestors.add(walked);
+      }
+    }
+    return baseDirectories.filter((dirPath) =>
+      dirPath.toLowerCase().includes(trimmed) || ancestors.has(dirPath));
+  }, [baseDirectories, query, visibleFiles]);
   const symlinkPaths = useMemo(() => new Set(symlinks), [symlinks]);
   const fileTree = useMemo(
-    () => buildFileTree(visibleFiles, symlinkPaths),
-    [symlinkPaths, visibleFiles],
+    () => buildFileTree(visibleFiles, symlinkPaths, visibleDirectories),
+    [symlinkPaths, visibleDirectories, visibleFiles],
   );
   const isSearching = query.trim().length > 0;
+
+  async function createFolder(directory: string, name: string) {
+    if (!sessionId) return;
+    const created = await createWorkspaceDirectoryRequest(
+      sessionId,
+      directory ? `${directory}/${name}` : name,
+    );
+    // Expand the ancestors, or a folder created inside a collapsed one appears
+    // to have done nothing.
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      let walked = "";
+      for (const part of created.path.split("/").slice(0, -1)) {
+        walked = walked ? `${walked}/${part}` : part;
+        next.add(walked);
+      }
+      return next;
+    });
+    refreshFiles();
+  }
+
+  async function renameEntry(path: string, newName: string) {
+    if (!sessionId) return;
+    const renamed = await renameWorkspaceEntryRequest(sessionId, path, newName);
+    repointWorkspaceFileTabs(sessionId, renamed.previousPath, renamed.path);
+    if (selectedPath && isPathUnderMutation(selectedPath, renamed.previousPath)) {
+      setSelectedPath(renamed.path + selectedPath.slice(renamed.previousPath.length));
+    }
+    refreshFiles();
+  }
+
+  async function deleteEntry(request: WorkspaceDeleteRequest) {
+    if (!sessionId) return;
+    await deleteWorkspaceEntryRequest(sessionId, request.path, {
+      recursive: request.kind === "directory",
+    });
+    // The tab has to go with the file: leaving it open shows an editable buffer
+    // for a path that no longer exists.
+    closeWorkspaceFileTabsFor(sessionId, request.path);
+    if (selectedPath && isPathUnderMutation(selectedPath, request.path)) {
+      setSelectedPath(null);
+    }
+    refreshFiles();
+  }
 
   function toggleDirectory(path: string) {
     setExpandedPaths((current) => {
@@ -268,17 +428,36 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               {node.fileCount}
             </span>
           </button>
-          <Tooltip content={`New file in ${node.path}`}>
-            <button
-              type="button"
-              onClick={() => setNewFileDirectory(node.path)}
-              className="mr-1 inline-flex shrink-0 rounded-md p-1 text-(--text-muted) opacity-0 transition-opacity hover:bg-(--chat-bg) hover:text-(--text-primary) focus-visible:opacity-100 group-hover:opacity-100"
-              aria-label={`New file in ${node.path}`}
-              data-testid="workspace-new-file-in-folder"
-            >
-              <FilePlus2 className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
+          <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+            <Tooltip content={`New file in ${node.path}`}>
+              <button
+                type="button"
+                onClick={() => setNewFileDirectory(node.path)}
+                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+                aria-label={`New file in ${node.path}`}
+                data-testid="workspace-new-file-in-folder"
+              >
+                <FilePlus2 className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Tooltip content={`New folder in ${node.path}`}>
+              <button
+                type="button"
+                onClick={() => setNewFolderDirectory(node.path)}
+                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+                aria-label={`New folder in ${node.path}`}
+                data-testid="workspace-new-folder-in-folder"
+              >
+                <FolderPlus className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <RowMutationActions
+              name={node.name}
+              onDelete={() => setDeleteRequest({ kind: "directory", path: node.path })}
+              onRename={() => setRenameTarget(node.path)}
+              path={node.path}
+            />
+          </div>
           </div>
           {expanded ? node.children.map((child) => renderTreeNode(child, depth + 1)) : null}
         </div>
@@ -368,6 +547,17 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               <Copy className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
+          <RowMutationActions
+            name={node.name}
+            onDelete={() => setDeleteRequest({
+              kind: "file",
+              path: node.path,
+              dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
+            })}
+            onRename={() => setRenameTarget(node.path)}
+            path={node.path}
+            stopPropagation
+          />
         </div>
       </div>
     );
@@ -408,6 +598,17 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
               data-testid="workspace-new-file"
             >
               <FilePlus2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+          <Tooltip content="New folder">
+            <button
+              type="button"
+              onClick={() => setNewFolderDirectory("")}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              aria-label="New folder"
+              data-testid="workspace-new-folder"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
           <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
@@ -482,6 +683,47 @@ export function WorkspaceFilePanel({ sessionId }: { sessionId: string | null }) 
           if (!next) setNewFileDirectory(null);
         }}
         sessionId={sessionId}
+      />
+      <WorkspaceEntryNameDialog
+        confirmLabel="Create"
+        description={newFolderDirectory
+          ? `New folder inside ${newFolderDirectory}.`
+          : "New folder at the workspace root."}
+        key={`new-folder:${newFolderDirectory ?? ""}`}
+        onOpenChange={(next) => {
+          if (!next) setNewFolderDirectory(null);
+        }}
+        onSubmit={(name) => createFolder(newFolderDirectory ?? "", name)}
+        open={newFolderDirectory !== null}
+        placeholder="drafts"
+        testIdPrefix="workspace-new-folder"
+        title="New folder"
+      />
+      <WorkspaceEntryNameDialog
+        confirmLabel="Rename"
+        // The tab re-points by remounting on the new path, which drops the
+        // draft with it — the same loss a delete warns about, so it says so
+        // here too rather than swallowing the typing.
+        description={renameTarget && hasUnsavedWorkspaceFileEdits(sessionId, renameTarget)
+          ? "New name. It stays in the same folder, so a name cannot contain a slash. This file has unsaved edits, and they are discarded by the rename."
+          : "New name. It stays in the same folder, so a name cannot contain a slash."}
+        initialValue={renameTarget ? renameTarget.split("/").pop() ?? "" : ""}
+        key={`rename:${renameTarget ?? ""}`}
+        onOpenChange={(next) => {
+          if (!next) setRenameTarget(null);
+        }}
+        onSubmit={(name) => renameEntry(renameTarget ?? "", name)}
+        open={renameTarget !== null}
+        placeholder="new-name.md"
+        testIdPrefix="workspace-rename"
+        title="Rename"
+      />
+      <WorkspaceDeleteDialog
+        onConfirm={deleteEntry}
+        onOpenChange={(next) => {
+          if (!next) setDeleteRequest(null);
+        }}
+        request={deleteRequest}
       />
     </div>
   );

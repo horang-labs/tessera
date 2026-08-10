@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 
 interface WorkspaceFilesResponse {
+  directories?: string[];
   files?: string[];
   symlinks?: string[];
   truncated?: boolean;
@@ -11,6 +12,11 @@ interface WorkspaceFilesResponse {
 }
 
 interface WorkspaceFileListState {
+  /**
+   * Folders as the server saw them, not inferred from the file paths: an empty
+   * one appears in no file path at all.
+   */
+  directories: string[];
   error: string | null;
   files: string[];
   loading: boolean;
@@ -30,6 +36,7 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
   refreshFiles: () => void;
 } {
   const [state, setState] = useState<WorkspaceFileListState>(() => ({
+    directories: [],
     error: null,
     files: [],
     loading: Boolean(sessionId),
@@ -46,6 +53,7 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
     void (async () => {
       if (!sessionId) {
         setState({
+          directories: [],
           error: null,
           files: [],
           loading: false,
@@ -80,7 +88,11 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
         if (requestSeqRef.current !== requestSeq) return;
         const nextFiles = Array.isArray(payload?.files) ? payload.files : [];
         const nextSymlinks = Array.isArray(payload?.symlinks) ? payload.symlinks : [];
+        const nextDirectories = Array.isArray(payload?.directories) ? payload.directories : [];
         setState((current) => ({
+          directories: sameStringArray(current.directories, nextDirectories)
+            ? current.directories
+            : nextDirectories,
           error: null,
           files: sameStringArray(current.files, nextFiles) ? current.files : nextFiles,
           loading: false,
@@ -99,6 +111,7 @@ export function useWorkspaceFileList(sessionId: string | null): WorkspaceFileLis
               loading: false,
             }
           : {
+              directories: [],
               error: message,
               files: [],
               loading: false,

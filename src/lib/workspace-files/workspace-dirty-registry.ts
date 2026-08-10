@@ -1,0 +1,31 @@
+/**
+ * Which workspace files currently hold unsaved edits.
+ *
+ * The draft itself lives in the file tab's own state, where the explorer
+ * cannot see it — and the explorer is where a delete is confirmed. Deleting a
+ * file discards its draft with it (no autosave, no hot exit), so the
+ * confirmation has to be able to say so, which means something outside the tab
+ * has to know. This is that: a name, nothing more, registered while the buffer
+ * is dirty and dropped as soon as it is not.
+ */
+const dirtyPaths = new Set<string>();
+
+function key(sessionId: string, filePath: string): string {
+  return `${sessionId}\0${filePath}`;
+}
+
+export function markWorkspaceFileDirty(sessionId: string, filePath: string): void {
+  dirtyPaths.add(key(sessionId, filePath));
+}
+
+export function clearWorkspaceFileDirty(sessionId: string, filePath: string): void {
+  dirtyPaths.delete(key(sessionId, filePath));
+}
+
+export function hasUnsavedWorkspaceFileEdits(
+  sessionId: string | null,
+  filePath: string,
+): boolean {
+  if (!sessionId) return false;
+  return dirtyPaths.has(key(sessionId, filePath));
+}

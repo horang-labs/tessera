@@ -9,7 +9,6 @@ const writeLibSource = read('../src/lib/workspace-files/workspace-file-write.ts'
 const writeTargetSource = read('../src/lib/workspace-files/workspace-file-write-target.ts');
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const codeViewSource = read('../src/components/workspace/workspace-code-view.tsx');
-const explorerSource = read('../src/components/workspace/workspace-explorer-tab.tsx');
 const filePanelSource = read('../src/components/workspace/workspace-file-panel.tsx');
 const newFileDialogSource = read('../src/components/workspace/workspace-new-file-dialog.tsx');
 const workspaceFileTypeSource = read('../src/types/workspace-file.ts');
@@ -137,20 +136,17 @@ test('the conflict banner offers reload, overwrite and cancel', () => {
   assert.match(fileTabSource, /onOverwrite=\{\(\) => void saveFile\(\{ overwrite: true \}\)\}/);
 });
 
-test('the explorer can create a file at the root and inside a row\'s folder', () => {
-  assert.match(explorerSource, /data-testid="workspace-new-file"/);
-  assert.match(explorerSource, /data-testid="workspace-new-file-in-folder"/);
-  assert.match(explorerSource, /setNewFileDirectory\(directory === "\." \? "" : directory\)/);
+test('the create dialog posts and opens what it created', () => {
   assert.match(newFileDialogSource, /method: "POST"/);
   assert.match(newFileDialogSource, /openWorkspaceFileTab\(sessionId, "file", payload\.path\)/);
   // A name that already exists surfaces the server's message rather than silently succeeding.
   assert.match(newFileDialogSource, /setError\(/);
 });
 
-test('the Files panel users actually reach carries the same create actions', () => {
-  // workspace-explorer-tab has no UI entry point today (nothing builds its
-  // session id); the Git panel's Files tab is the reachable File Explorer, so
-  // the ticket's create actions have to live there too or they are untestable.
+test('the Files panel users actually reach carries the create actions', () => {
+  // The Git panel's Files tab is the File Explorer. The second copy that used
+  // to live in workspace-explorer-tab.tsx was unreachable — nothing ever built
+  // its session id — and is gone (#320).
   assert.match(filePanelSource, /data-testid="workspace-new-file"/);
   assert.match(filePanelSource, /data-testid="workspace-new-file-in-folder"/);
   assert.match(filePanelSource, /setNewFileDirectory\(node\.path\)/);

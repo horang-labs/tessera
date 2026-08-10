@@ -18,6 +18,10 @@ import {
   isSelfWrite,
   markSelfWrite,
 } from "@/lib/workspace-files/workspace-self-write-registry";
+import {
+  clearWorkspaceFileDirty,
+  markWorkspaceFileDirty,
+} from "@/lib/workspace-files/workspace-dirty-registry";
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
 import {
@@ -138,6 +142,18 @@ export function WorkspaceFileTab({
   const editable = fileData !== null && !fileData.binary && !fileData.truncated;
   const dirty = editable && draft !== null && draft !== fileData.content;
   dirtyRef.current = dirty;
+
+  // The explorer confirms deletes, and a delete discards the draft with the
+  // file, so the dirty state has to be visible from outside this tab (#320).
+  useEffect(() => {
+    if (kind !== "file") return;
+    if (dirty) {
+      markWorkspaceFileDirty(sourceSessionId, path);
+    } else {
+      clearWorkspaceFileDirty(sourceSessionId, path);
+    }
+    return () => clearWorkspaceFileDirty(sourceSessionId, path);
+  }, [dirty, kind, path, sourceSessionId]);
 
   // A preview tab is replaced by the next previewed file without warning; pin
   // it as soon as there are unsaved edits so the draft cannot vanish.
