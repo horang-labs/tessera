@@ -1,10 +1,12 @@
 # agent-report-319 — File tab: edit existing files and create new files (wave 1)
 
-Branch: `feature/319-file-editing`. Three commits, not pushed, not merged.
+Branch: `feature/319-file-editing`. Five commits, not pushed, not merged.
 
 - `6768e46` feat(workspace): edit and create files from the File tab
 - `b541670` feat(workspace): put the create actions where the File Explorer actually is
 - `a8962a6` fix(workspace): address the standards review
+- `e9375b8` docs: add agent-report-319
+- `2eb26a7` fix(workspace): address the spec review
 
 ## What was built
 
@@ -87,9 +89,9 @@ New test files:
 | File | Tests | Covers |
 |---|---|---|
 | `tests/workspace-file-write-target.test.ts` | 7 | Path parsing table (absolute, NUL, `../` escape, directory-shaped, Windows separators) and the parent-containment / symlink rules. |
-| `tests/workspace-file-write.test.ts` | 11 | Real temp-dir workspaces: save, the 409 lock (and that the refused save leaves bytes alone), overwrite without a baseline, 413, `wx` create + duplicate 409, missing-parent 404, traversal refusal for both verbs, a linked **directory** refused, a linked **file** saved through to its target. |
+| `tests/workspace-file-write.test.ts` | 14 | Real temp-dir workspaces: save, the 409 lock (and that the refused save leaves bytes alone), overwrite without a baseline, 413, `wx` create + duplicate 409, missing-parent 404, traversal refusal for both verbs, a linked **directory** refused, a linked **file** saved through to its target, a binary file refused (415), an oversize file refused (413), an empty file still editable. |
 | `tests/workspace-self-write-registry.test.ts` | 3 | Stamp scoping, TTL expiry, clear-on-failure. |
-| `tests/workspace-file-editing-contract.test.mjs` | 15 | Client and route invariants that have no DOM test rig here: the dirty guards, the self-write calls, `readOnly={!editable}`, the shortcut not being on `window`, the banner's three actions, both create surfaces. |
+| `tests/workspace-file-editing-contract.test.mjs` | 17 | Client and route invariants that have no DOM test rig here: the dirty guards, the self-write calls, `readOnly={!editable}`, the shortcut not being on `window`, the banner's three actions, both create surfaces, the banner keying off the mtime baseline rather than the watcher event, and the server's text-only gate. |
 
 **The 2 failures are pre-existing and unrelated.** They are
 `tests/file-read-timeout-contract.test.mjs` #6 and #7, which assert against
@@ -219,8 +221,10 @@ the banner, OS Trash routing, drag-and-drop, and a global draft store.
   cycles, one slice at a time). The route-level temp-dir tests started red on the first
   behaviour and the remaining nine cases were written against the implementation; they are
   verification, not test-first, and are labelled honestly here.
-- `/code-review` — both sub-agents were spawned in parallel. **Standards returned and its
-  findings were acted on. Spec never reported** (see below).
+- `/code-review` — both sub-agents were spawned in parallel. Both eventually returned (Standards
+  at ~35 min, Spec at ~80 min) and **both sets of findings were acted on**; between them they
+  caught one regression I introduced, one missing server-side gate, and a defect that made a
+  source file unreviewable.
 - Full suite: not run, and not necessary — the change is localized to the workspace file
   surface, and targeted tests plus contract tests cover it.
 
@@ -266,17 +270,57 @@ Judgement calls left as they are, with reasons:
   lexically. Real gap on a Windows workspace, but out of this ticket's scope — the existing
   read route has the same blind spot, and the fix belongs with it.
 
-## Sub-agent review — Spec axis (NOT completed)
+## Sub-agent review — Spec axis (returned late; findings acted on)
 
-The Spec sub-agent was spawned in parallel with Standards and **never reported**, across four
-requests over roughly 55 minutes. I deliberately did not substitute an inline review of my own
-work for it — that is the degraded single-perspective review the two-axis split exists to
-prevent, and presenting it as the real thing would be worse than saying it did not happen.
+The Spec sub-agent reported after roughly 80 minutes, past the point where this report was
+first written. It raised four findings, **all of them real**, fixed in `2eb26a7`:
 
-**A reviewer still needs to run the Spec axis.** What is available in its place is
-first-hand evidence, not an independent judgement: every acceptance criterion in
-`ticket-a.md` except the two listed under "AC items I could not verify" was exercised against
-a real dev server and is recorded above with its screenshot, and D1–D15 are each pinned by a
-contract test in `tests/workspace-file-editing-contract.test.mjs`. Deviations are listed
-below and are the most likely thing an independent spec review would want to argue with —
-particularly deviation 1.
+1. **The conflict banner fired on `hasMoreChangedPaths` — a regression I introduced.** That
+   flag is set purely when the watcher's changed-path list overflows
+   (`workspace-file-watch-manager.ts:832-836`); it says nothing about *this* file. Any large
+   agent edit would raise "This file changed on disk" on a dirty tab whose file nobody had
+   touched. Before this ticket the same condition only caused a harmless silent re-read, so
+   adding the banner is exactly what made it user-visible. I copied the condition from the
+   existing refresh path without re-reading what the flag means.
+2. **D5's stated primary mechanism never reached the banner.** The spec is explicit — the
+   adopted `mtimeMs` baseline "is the primary mechanism" — but the banner was raised from the
+   watcher event alone, leaving the 3000 ms TTL (a declared *backstop*) doing the whole job.
+   The same fix closes both: a watcher event is now only a hint that triggers a real mtime
+   comparison against the loaded baseline, and only a genuine difference raises the banner.
+3. **The server never enforced constraint 5** ("Only allow writes when the current server GET
+   returned text"). The binary and truncated gates were client-side only, so a crafted `PUT`
+   could replace a PNG with UTF-8, or write a truncated buffer back over a large file and
+   silently drop everything past 512 KB. `saveWorkspaceFile` now samples an existing file the
+   same way the read route does: 415 `binary_file`, 413 past the ceiling. Verified over HTTP —
+   `PUT` text at `logo.png` → 415 with the PNG bytes intact; `PUT` at a 512 KB+ file → 413
+   with the file still full size. Three new tests in `workspace-file-write.test.ts` cover it.
+4. **The create dialog promised nested paths the server refuses.** The placeholder said
+   `notes/todo.md`, which 404s unless `notes/` exists. Placeholder and label now state that
+   the folder must already exist.
+
+Not adopted: both reviewers suggest deleting the now-dead copy of the create actions in
+`workspace-explorer-tab.tsx`. That is the file the ticket explicitly listed under "Files to
+touch", so removing what it asked for is the orchestrator's call, not mine. It is recorded as
+deviation 1 below.
+
+The Spec axis also confirmed D1, D2, D3, D4, D6/D8, D7, D9, D10 and D15 as correctly
+implemented, found no substantive scope creep, and independently flagged the NUL byte that
+Standards caught. Two contract-level deltas against D14 it noted and I have left: the
+`parent_not_found` 404 (deviation 2) and an extra `sessionId` field on the `PUT`/`POST`
+responses, which matches what the memory route returns.
+
+### Re-verification after these fixes
+
+- Save-path banner, unchanged behaviour: external change → Save refused → banner → **Cancel**
+  keeps the draft dirty → **Overwrite** writes it → a subsequent plain save raises no banner.
+  6/6 (`shots/26`, `shots/27`).
+- **An unrelated bulk change (80 files written at once) no longer raises the banner** on a
+  dirty tab, and the draft survives it (`shots/23`).
+
+One thing I could **not** show: that a watcher event on *this* file raises the banner before a
+save is attempted. No `workspace_files_changed` message reached the browser at all in this
+environment during the probe (hooked via `addInitScript`, so the hook itself was live), so the
+watcher-driven half of the banner is unproven here either way — the false-positive result
+above is therefore also weaker evidence than it looks. What the AC actually requires — "modify
+the file on disk outside Tessera, then press Save → the save is refused and a banner appears"
+— is verified, because that path runs off the server's 409.
