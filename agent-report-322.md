@@ -62,8 +62,9 @@ moved rather than disappearing.
 ### `workspace-file-panel.tsx`
 
 - **New file** / **New folder** open a placeholder at the right depth and expand the folder
-  first. (These began as header and per-row buttons; the user's mid-wave feedback moved them
-  onto the right-click menu — see "UX rework" below, which is the shipped shape.)
+  first. (These began as header buttons *and* a per-row hover strip; the user's mid-wave
+  feedback removed the strip in favour of the right-click menu and kept the two header
+  buttons — see "UX rework" and the follow-up below for the shipped shape.)
 - **Rename** on a row and a **double-click on the name text** are the same call. The
   hotspot is the name alone, so the icon, the chevron and the empty part of the row keep
   doing what they always did (open the file, toggle the folder).
