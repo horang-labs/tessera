@@ -3,6 +3,8 @@
 Branch: `feature/322-inline-explorer`. Not pushed, not merged, no PR.
 
 - `365f65d` feat(workspace): name files and folders inline, not in a modal
+- `c287341` fix(workspace): commit an inline blur before the row can be unmounted
+- `67e890a` fix(workspace): move the row actions onto the right-click menu
 
 ## What was built
 
@@ -238,4 +240,145 @@ grepping `.next/static` and `.next/server`: no `workspace-new-file-dialog`,
 
 ## Sub-agent review
 
-_(pending — filled in below once both axes return)_
+Both axes were spawned in parallel. Neither sent its report as a final message — each
+surfaced only as an idle notification and had to be asked again for the text, exactly as
+`agent-report-320.md` warned. Worth building into the next wave's expectations.
+
+### Standards axis — one hard violation, no documented-standard breach
+
+**Fixed (`c287341`) — the blur commit was lost on unmount.** Real, and the worst thing
+found. The blur sat behind a 150 ms timer (copied from Orca, where it survives a context
+menu's focus shuffle); opening another row's input unmounts this one, and the cleanup took
+the pending timer — and the typed name — with it. Typing a new name and then double-clicking
+another row lost the first rename **silently**. The blur now commits synchronously, which
+puts the request out while the input it belongs to is still the open one; the hook stamps
+each submit with a generation so a late reply neither closes the input that replaced it nor
+hangs the old input's error there. Verified in the browser: `journal.txt` edited to
+`switched-away.txt`, then a double-click on another row — the rename landed on disk and the
+new input opened clean.
+
+Also fixed: `beginRename` no longer shares a name with the hook's `startRename` while doing
+more than it, and the duplicated expand-the-parent walk is one `expandParentOf`.
+
+Left, with reasons:
+
+- **`src/hooks/use-inline-rename.ts` re-implementation.** The overlap is real but partial:
+  that hook is synchronous, has no submitting state and no server error, and is used for
+  labels that cannot be refused. What genuinely coincides — trim, unchanged-name no-op — is
+  the rule in `workspace-inline-input-state.ts`, not the hook. Reusing the shell would mean
+  rebuilding submitting/error/placeholder-kind around it. Recorded here rather than left
+  silent, which was the reviewer's actual complaint.
+- **Hook placement under `components/workspace/` rather than `src/hooks/`.** The ticket
+  names the path (`src/components/workspace/use-workspace-inline-input.ts`) under "Files to
+  touch / create". Following it.
+- **`isRenameHotspotTarget` duck-typed on `closest`** rather than `instanceof Element`. That
+  is the point: the rule then holds with or without a DOM and is exercised directly. The DOM
+  contract it stands on is one method.
+- **`hasUnsavedWorkspaceFileEdits` read during render.** Pre-existing — the deleted dialog
+  read the same registry the same way. Not introduced here, and fixing it properly means
+  giving the registry a subscription, which is its own change.
+- **The `input.kind` cascade appearing in five places.** A kind→descriptor map would collapse
+  three of them (icon, placeholder, aria-label). Three short branches in one component
+  against an indirection every reader has to follow; left.
+
+### Spec axis — every AC satisfied, two real defects beyond them
+
+The reviewer walked all eight AC items with file:line evidence and found each one met,
+including the two it was asked to be adversarial about: the watch gate has no bypass
+(WS and fallback polling both route through `handleExternalRefresh`, and
+`use-workspace-file-list.ts:126` only reloads on a session change), and the inline error is
+genuinely reachable and re-submittable (`setError(null)` precedes the request, and the
+`[error]` effect unlatches `submittedRef`, so a second Enter is heard).
+
+**Fixed — the rename gesture opened the file twice.** Both clicks of a double-click on a
+file's name reached the row, so `previewWorkspaceFileTab` ran a second time under the input
+that had just opened. Folders were guarded by `resolveDirToggleTiming`; files had no
+equivalent. `shouldOpenOnRowClick` is now that equivalent — driven test-first — and drops
+only the second click of a hotspot double-click, so a first click still previews
+immediately and a double-click away from the name still pins the tab.
+
+**Fixed — an inline input outlived a session switch.** The panel outlives a session change
+and the hook did not know about sessions, so a left-over input would create at the *new*
+workspace's root and, worse, hold that panel's watch refresh back permanently — the live
+sync would simply stop. The open input now carries the session it was opened against and is
+**derived** against the current one rather than reset in an effect (React Compiler rejects
+`setState` in an effect body here, and deriving makes the stale state impossible rather than
+merely handled). `handleExternalRefresh` gates only on an input for the current session.
+
+**Added — F2 renames a focused row.** The ticket's Entry points section asks for a keyboard
+path ("Enter on a focused row … Enter is the paved path"). Enter already activates a row —
+opening a file, toggling a folder — and taking it would mean the keyboard could no longer
+open a file at all, which is a regression the ticket did not ask for. F2 is the alternative
+the same sentence permits, and it collides with nothing.
+
+**Not adopted — Orca's focus-settle grace period.** The reviewer read the pre-`c287341`
+code; the timer it concerns is gone. The residual worry (a placeholder losing focus before
+anyone types, committing empty) resolves to `cancel` and no request, and nothing in this
+panel takes focus programmatically — no menu opens over the input. Not reproduced in QA.
+
+## UX rework after user feedback (`67e890a`)
+
+Mid-wave, on seeing the panel, the user rejected the row-hover action strip: *"the
+row-hover action strip (New File / New Folder / Rename / Delete icons crammed on the right
+when a row is hovered) is bad UX and clutters the tree. A file explorer does not put four
+icons on every row."*
+
+They are right, and it was inherited rather than chosen — waves 1/2 put the actions on the
+rows, and this ticket kept them while changing only what they opened.
+
+- **Every hover control is gone from the rows** — rename, delete, new file, new folder and
+  copy-path. A row is its name again: chevron, icon, name, count.
+- **The header's New file / New folder buttons are gone too.** The header keeps the hidden-
+  files toggle and the search box.
+- **A right-click menu on every row** carries New file, New folder, Copy absolute path,
+  Rename and Delete (Delete in the error colour). This is Orca's shape
+  (`FileExplorerRow.tsx:681-688`).
+- **A right-click menu on the empty space below the tree** — and on the empty state, where
+  it matters most — carries New file and New folder against the root, matching Orca's
+  `FileExplorerBackgroundMenu.tsx:58-71`. It has no row, so it offers no Rename and no
+  Delete.
+- **Where a new entry lands**: inside a folder row, beside a file row (its parent), at the
+  root from the background.
+- **All three rename entry points survive**: the name's double-click hotspot, F2 on a
+  focused row, and the menu item.
+- **The delete confirmation is untouched.** Only the trash *icon* went; the destructive
+  path still asks.
+
+Nothing else moved: the server surfaces, the optimistic lock, the reconcile pause and every
+review fix above are as they were.
+
+### Passes after the rework
+
+```
+$ npx tsc --noEmit          → exit 0, no output
+$ npm run lint              → ✖ 3 problems (0 errors, 3 warnings)   [the same 3 untouched files]
+$ npx tsx --test <8 files>  → # tests 106  # pass 106  # fail 0
+```
+
+### QA through the context menu
+
+Same isolated dev server, re-driven after the rework. The dev annotation overlay was
+suppressed as before; right-clicks go through `playwright-cli click <target> right`, and the
+background menu through a synthesized `contextmenu` event at the bottom of the tree
+container (there is no row there to click).
+
+| Behaviour | Evidence |
+|---|---|
+| No hover controls remain anywhere | `19` — hovering a row shows only the name; a query for all five old testids returns **0** elements |
+| Right-click on a file row | `20` — New file · New folder · Copy absolute path · Rename · Delete |
+| Menu **Rename** matches the double-click | kind `rename`, value `README.md`, focused, selection `[0,6]` (extension excluded) |
+| Menu **New file** on a file row creates beside it | `from-file-menu.md` at the root, placeholder indent 8px (depth 0) |
+| Menu **New folder** on a folder row creates inside it | `reports/from-menu` on disk |
+| Right-click on the empty space below the tree | `21` — New file · New folder · Copy absolute path, and **no** Rename/Delete |
+| Background **New folder** creates at the root | `from-background/` on disk |
+| Menu **Delete** still confirms, then deletes | dialog named the file; after confirming it is gone from disk and from the tree (`22`) |
+| Double-click rename still works | kind `rename` |
+| F2 on a focused row still works | kind `rename` |
+
+### One harness note
+
+Between the two QA passes the panel twice showed "No files" while the API returned 7 — both
+times immediately after `npm run build` had written a production bundle into the same
+`.next` directory the dev server was serving from. Deleting `.next` and restarting the dev
+server ended it, and it never recurred across the rework's passes. Not a product defect;
+recorded so the screenshots taken in that window are not misread.
