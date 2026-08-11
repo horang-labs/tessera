@@ -1,6 +1,6 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { Layers3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -11,12 +11,14 @@ interface PortfolioFilterBarProps {
   projects: ProjectGroup[];
   activeProjectId: string | null;
   onProjectFilter: (projectId: string | null) => void;
+  trailingControls?: ReactNode;
 }
 
 export const PortfolioFilterBar = memo(function PortfolioFilterBar({
   projects,
   activeProjectId,
   onProjectFilter,
+  trailingControls,
 }: PortfolioFilterBarProps) {
   const { t } = useI18n();
 
@@ -72,6 +74,7 @@ export const PortfolioFilterBar = memo(function PortfolioFilterBar({
           );
         })}
       </div>
+      {trailingControls}
     </div>
   );
 });

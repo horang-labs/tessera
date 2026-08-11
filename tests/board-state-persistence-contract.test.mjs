@@ -24,6 +24,7 @@ test('board store persists restartable sidebar and project UI state', () => {
   assert.match(boardStoreSource, /const SELECTED_PROJECT_DIR_KEY = 'ccw:selectedProjectDir';/);
   assert.match(boardStoreSource, /const ALL_PROJECTS_EXPANDED_SECTIONS_KEY = 'ccw:allProjectsExpandedSections';/);
   assert.match(boardStoreSource, /const LIST_RUNNING_FILTER_KEY = 'ccw:listRunningFilterActive';/);
+  assert.match(boardStoreSource, /const KANBAN_RUNNING_FILTER_KEY = 'ccw:kanbanRunningFilterActive';/);
   assert.match(boardStoreSource, /const ACTIVE_COLLECTION_FILTER_KEY = 'ccw:activeCollectionFilter';/);
 
   assert.match(boardStoreSource, /function loadBooleanRecord\(key: string\): Record<string, boolean>/);
@@ -39,6 +40,8 @@ test('board store persists restartable sidebar and project UI state', () => {
 
   assert.match(boardStoreSource, /isListRunningFilterActive: loadBooleanFlag\(LIST_RUNNING_FILTER_KEY\),/);
   assert.match(boardStoreSource, /saveBooleanFlag\(LIST_RUNNING_FILTER_KEY, active\);/);
+  assert.match(boardStoreSource, /isKanbanRunningFilterActive: loadBooleanFlag\(KANBAN_RUNNING_FILTER_KEY\),/);
+  assert.match(boardStoreSource, /saveBooleanFlag\(KANBAN_RUNNING_FILTER_KEY, active\);/);
 
   assert.match(boardStoreSource, /selectedProjectDir: loadNullableString\(SELECTED_PROJECT_DIR_KEY\),/);
   assert.match(boardStoreSource, /saveNullableString\(SELECTED_PROJECT_DIR_KEY, dir\);/);

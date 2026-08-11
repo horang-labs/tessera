@@ -110,6 +110,7 @@ function CollectionLabel({
 interface KanbanChatCardProps {
   session: UnifiedSession;
   isActive: boolean;
+  dragEnabled?: boolean;
   dropIndicatorBefore?: boolean;
   dropIndicatorAfter?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
@@ -132,6 +133,7 @@ interface KanbanChatCardProps {
 export const KanbanChatCard = memo(function KanbanChatCard({
   session,
   isActive,
+  dragEnabled = true,
   dropIndicatorBefore,
   dropIndicatorAfter,
   onDragStart,
@@ -270,10 +272,10 @@ export const KanbanChatCard = memo(function KanbanChatCard({
       <div
         role="button"
         tabIndex={0}
-        draggable={!isRenaming}
-        onDragStart={!isRenaming ? onDragStart : undefined}
-        onDragEnd={!isRenaming ? onDragEnd : undefined}
-        onDragOver={onDragOverItem}
+        draggable={dragEnabled && !isRenaming}
+        onDragStart={dragEnabled && !isRenaming ? onDragStart : undefined}
+        onDragEnd={dragEnabled && !isRenaming ? onDragEnd : undefined}
+        onDragOver={dragEnabled ? onDragOverItem : undefined}
         onClick={(e) => {
           if (!isRenaming) onClick(e);
         }}
@@ -296,7 +298,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
         className={cn(
           // Base layout — flatter card, consistent with list view
           'group/card relative w-full rounded-lg p-2.5 px-3',
-          'text-left cursor-grab select-none',
+          'text-left select-none',
+          dragEnabled ? 'cursor-grab' : 'cursor-default',
           'transition-all duration-150',
           stripeClass,
           isDragging
@@ -551,6 +554,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
 interface KanbanTaskCardProps {
   task: TaskEntity;
   activeSessionId: string | null;
+  dragEnabled?: boolean;
   /** True when THIS card is the one being dragged */
   isDragging?: boolean;
   /** Drop indicator above/below */
@@ -576,6 +580,7 @@ interface KanbanTaskCardProps {
 export const KanbanTaskCard = memo(function KanbanTaskCard({
   task,
   activeSessionId,
+  dragEnabled = true,
   isDragging: isDraggingProp,
   dropIndicatorBefore,
   dropIndicatorAfter,
@@ -844,10 +849,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         role="button"
         tabIndex={isPending ? -1 : 0}
         aria-disabled={isPending || undefined}
-        draggable={!isRenaming && !isPending}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        onDragOver={onDragOverItem}
+        draggable={dragEnabled && !isRenaming && !isPending}
+        onDragStart={dragEnabled ? handleDragStart : undefined}
+        onDragEnd={dragEnabled ? handleDragEnd : undefined}
+        onDragOver={dragEnabled ? onDragOverItem : undefined}
         onClick={(e) => {
           if (isPending || isRenaming) return;
           handleCardClick(e);
@@ -872,7 +877,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         className={cn(
           // Base layout — flatter card, consistent with list view
           'group/card relative w-full rounded-lg p-2.5 px-3',
-          'text-left cursor-grab select-none',
+          'text-left select-none',
+          dragEnabled ? 'cursor-grab' : 'cursor-default',
           'transition-all duration-150',
           stripeClass,
           isPending && 'pointer-events-none opacity-60',
