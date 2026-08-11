@@ -24,6 +24,7 @@ type Modules = {
   projection: typeof import('@/lib/projects/project-view-projection');
   controlProjects: typeof import('@/lib/control/database-project-source');
   controlWorktrees: typeof import('@/lib/control/database-worktree-source');
+  audit: typeof import('@/lib/control/database-audit-history');
   service: typeof import('@/lib/control/service');
   creator: typeof import('@/lib/control/worktree-creator');
   httpHandler: typeof import('@/lib/control/http-handler');
@@ -43,6 +44,7 @@ function modules(): Promise<Modules> {
       projection,
       controlProjects,
       controlWorktrees,
+      audit,
       service,
       creator,
       httpHandler,
@@ -57,6 +59,7 @@ function modules(): Promise<Modules> {
       import('@/lib/projects/project-view-projection'),
       import('@/lib/control/database-project-source'),
       import('@/lib/control/database-worktree-source'),
+      import('@/lib/control/database-audit-history'),
       import('@/lib/control/service'),
       import('@/lib/control/worktree-creator'),
       import('@/lib/control/http-handler'),
@@ -73,6 +76,7 @@ function modules(): Promise<Modules> {
       projection,
       controlProjects,
       controlWorktrees,
+      audit,
       service,
       creator,
       httpHandler,
@@ -115,6 +119,7 @@ test('Control creates exact local and remote branches through the managed path p
     appVersion: '1.0.0',
     runtimeId: 'runtime-create-test',
     authority,
+    auditHistory: mods.audit.createDatabaseControlAuditHistory(),
     projects: mods.controlProjects.createDatabaseControlProjectSource(),
     worktrees: mods.controlWorktrees.createDatabaseControlWorktreeSource(),
     worktreeCreator: mods.creator.createDatabaseControlWorktreeCreator({ userId: USER_ID }),
@@ -489,6 +494,7 @@ test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git re
     appVersion: packageVersion,
     runtimeId: runtime.descriptor.runtimeId,
     authority,
+    auditHistory: mods.audit.createDatabaseControlAuditHistory(),
     projects: mods.controlProjects.createDatabaseControlProjectSource(),
     worktrees: mods.controlWorktrees.createDatabaseControlWorktreeSource(),
     worktreeCreator: mods.creator.createDatabaseControlWorktreeCreator({ userId: USER_ID }),
@@ -713,6 +719,7 @@ function createControl(mods: Modules, preparationTimeoutMs: number, projectId: s
       appVersion: '1.0.0',
       runtimeId: 'runtime-create-test',
       authority,
+      auditHistory: mods.audit.createDatabaseControlAuditHistory(),
       projects: mods.controlProjects.createDatabaseControlProjectSource(),
       worktrees: mods.controlWorktrees.createDatabaseControlWorktreeSource(),
       worktreeCreator: mods.creator.createDatabaseControlWorktreeCreator({

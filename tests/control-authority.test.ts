@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createControlAuthorityRegistry } from '../src/lib/control/authority';
+import { createInMemoryControlAuditHistory } from '../src/lib/control/audit';
 import {
   ControlOperationError,
   createControlService,
@@ -73,6 +74,7 @@ test('a Managed Session reads only its current Project through the Control Servi
     appVersion: '1.0.0',
     runtimeId: 'runtime-one',
     authority,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: {
       list: () => [PROJECT_ONE, PROJECT_TWO],
       get: (projectId) => [PROJECT_ONE, PROJECT_TWO].find((project) => project.id === projectId),
@@ -108,6 +110,7 @@ test('an already-running degraded Session retains authority until its runtime gr
     appVersion: '1.0.0',
     runtimeId: 'runtime-one',
     authority,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: { list: () => [PROJECT_ONE], get: () => PROJECT_ONE },
     worktrees: { list: () => [WORKTREE_ONE], get: () => WORKTREE_ONE },
   });
@@ -152,6 +155,7 @@ test('a child Session launched through Control receives independent Project-scop
     appVersion: '1.0.0',
     runtimeId: 'runtime-one',
     authority,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: {
       list: () => [PROJECT_ONE, PROJECT_TWO],
       get: (projectId) => [PROJECT_ONE, PROJECT_TWO].find((project) => project.id === projectId),
@@ -215,6 +219,7 @@ test('every cross-Project Control read and mutation returns one stable denial', 
     appVersion: '1.0.0',
     runtimeId: 'runtime-one',
     authority,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: {
       list: () => [PROJECT_ONE, PROJECT_TWO],
       get: (projectId) => [PROJECT_ONE, PROJECT_TWO].find((project) => project.id === projectId),
@@ -323,6 +328,7 @@ test('foreign and unknown Worktree and Session IDs are publicly indistinguishabl
     appVersion: '1.0.0',
     runtimeId: 'runtime-one',
     authority,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: {
       list: () => [PROJECT_ONE, PROJECT_TWO],
       get: (projectId) => [PROJECT_ONE, PROJECT_TWO].find(

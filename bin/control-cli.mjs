@@ -145,6 +145,7 @@ export function controlUsage() {
   tessera status [--json]
   tessera project list [--json]
   tessera project show <project-id> [--json]
+  tessera project audit (--current | --project <project-id>) [--json]
   tessera worktree list (--current | --project <project-id>) [--json]
   tessera worktree show <worktree-id> [--json]
   tessera worktree create (--current | --project <project-id>) [--mode <branch-off|checkout-branch>] -b <branch> [<start-point>] [--title <title>] [--json]
@@ -229,6 +230,21 @@ function parseControlInvocation(argv, env) {
       descriptorPath,
       kind: 'project-list',
       requestPath: '/__tessera/control/v1/projects',
+    };
+  }
+
+  if (
+    commandArgs.length >= 3
+    && commandArgs[0] === 'project'
+    && commandArgs[1] === 'audit'
+  ) {
+    const selector = parseWorktreeProjectSelector(commandArgs.slice(2));
+    return {
+      descriptorPath,
+      kind: 'project-audit',
+      requestPath: selector.kind === 'current'
+        ? '/__tessera/control/v1/audit?current=1'
+        : `/__tessera/control/v1/audit?projectId=${encodeURIComponent(selector.projectId)}`,
     };
   }
 
@@ -1092,6 +1108,13 @@ function isControlEnvelope(value) {
 const INVALID_SUCCESS_DATA = Symbol('invalid-success-data');
 
 function validateSuccessData(kind, data) {
+  if (kind === 'project-audit') {
+    if (!isRecord(data) || !Array.isArray(data.records)) return INVALID_SUCCESS_DATA;
+    const records = data.records.map(parsePublicControlAuditRecord);
+    return records.some((record) => record === null)
+      ? INVALID_SUCCESS_DATA
+      : { records };
+  }
   if (kind === 'session-list') {
     if (!isRecord(data) || !Array.isArray(data.sessions)) return INVALID_SUCCESS_DATA;
     const sessions = data.sessions.map(parsePublicSessionDto);
@@ -1119,6 +1142,39 @@ function validateSuccessData(kind, data) {
     return parseSessionSnapshot(data) ?? INVALID_SUCCESS_DATA;
   }
   return data;
+}
+
+function parsePublicControlAuditRecord(value) {
+  if (!isRecord(value) || !isRecord(value.target)) return null;
+  if (
+    !isNonEmptyString(value.id)
+    || !isNonEmptyString(value.projectId)
+    || !isNonEmptyString(value.sourceSessionId)
+    || ![
+      'worktree.create',
+      'session.create',
+      'session.start',
+      'session.launch',
+      'session.prompt',
+      'session.send-keys',
+      'session.stop',
+    ].includes(value.operation)
+    || !['project', 'worktree', 'session'].includes(value.target.kind)
+    || !isNonEmptyString(value.target.id)
+    || !isNonEmptyString(value.occurredAt)
+    || !['pending', 'succeeded', 'failed'].includes(value.outcome)
+    || !(value.failureCode === undefined || isNonEmptyString(value.failureCode))
+  ) return null;
+  return {
+    id: value.id,
+    projectId: value.projectId,
+    sourceSessionId: value.sourceSessionId,
+    operation: value.operation,
+    target: { kind: value.target.kind, id: value.target.id },
+    occurredAt: value.occurredAt,
+    outcome: value.outcome,
+    ...(value.failureCode === undefined ? {} : { failureCode: value.failureCode }),
+  };
 }
 
 function parsePublicSessionDto(value) {
@@ -1216,6 +1272,14 @@ function writeHumanSuccess(kind, data) {
   }
   if (kind === 'project-show') {
     process.stdout.write(`${data.displayName}\n${data.id}\n${data.path}\n${data.visible ? 'visible' : 'hidden'}\n`);
+    return;
+  }
+  if (kind === 'project-audit') {
+    for (const record of data.records) {
+      process.stdout.write(
+        `${record.occurredAt}\t${record.outcome}\t${record.operation}\t${record.target.kind}:${record.target.id}\t${record.sourceSessionId}${record.failureCode ? `\t${record.failureCode}` : ''}\n`,
+      );
+    }
     return;
   }
   if (kind === 'worktree-list') {

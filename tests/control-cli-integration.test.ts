@@ -8,6 +8,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createControlHttpHandler } from '../src/lib/control/http-handler';
 import { createControlAuthorityRegistry } from '../src/lib/control/authority';
+import { createInMemoryControlAuditHistory } from '../src/lib/control/audit';
 import {
   publishRuntimeDescriptor,
   type RuntimeDescriptorHandle,
@@ -117,6 +118,70 @@ test('the CLI stays pinned to one of two distinguishable runtimes and their Proj
   } finally {
     await runtimeOne.close();
     await runtimeTwo.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
+test('the CLI exposes Project-scoped audit history without sensitive Session input', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-audit-cli-'));
+  const project = {
+    id: 'project-audit-cli',
+    decodedPath: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\project-audit-cli',
+    displayName: 'Audit CLI',
+    visible: true,
+  };
+  const otherProject = {
+    id: 'project-audit-other',
+    decodedPath: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\project-audit-other',
+    displayName: 'Audit Other',
+    visible: true,
+  };
+  const worktree: ControlWorktreeRecord = {
+    worktreeId: 'wt_audit_cli',
+    projectId: project.id,
+    title: 'Audit CLI Worktree',
+    branch: 'feature/audit-cli',
+    filesystemPath: project.decodedPath,
+    preparationStatus: 'succeeded',
+    preparationPhase: 'before',
+    sessions: [],
+  };
+  const runtime = await startRuntime(testRoot, 'audit-cli', project, [worktree], [otherProject]);
+  const sensitivePrompt = 'never persist this CLI prompt 348';
+
+  try {
+    const launch = await runCli([
+      'session', 'launch', '--worktree', worktree.worktreeId,
+      '--provider', 'codex', '--prompt', sensitivePrompt, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(launch.code, 0, launch.stderr || launch.stdout);
+
+    const audit = await runCli([
+      'project', 'audit', '--current', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(audit.code, 0, audit.stderr || audit.stdout);
+    const records = JSON.parse(audit.stdout).data.records;
+    assert.deepEqual(records.map((record: Record<string, unknown>) => ({
+      operation: record.operation,
+      sourceSessionId: record.sourceSessionId,
+      outcome: record.outcome,
+    })), [{
+      operation: 'session.launch',
+      sourceSessionId: 'caller-audit-cli',
+      outcome: 'succeeded',
+    }]);
+    assert.equal(audit.stdout.includes(sensitivePrompt), false);
+
+    const crossProject = await runCli([
+      'project', 'audit', '--project', otherProject.id, '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(crossProject.code, 1);
+    assert.equal(JSON.parse(crossProject.stdout).error.code, 'CONTROL_AUTHORITY_DENIED');
+  } finally {
+    await runtime.close();
     await fs.rm(testRoot, { recursive: true, force: true });
   }
 });
@@ -856,6 +921,7 @@ async function startRuntime(
     appVersion: PACKAGE_VERSION,
     runtimeId: descriptor.descriptor.runtimeId,
     authority,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: {
       list: () => [project, ...additionalProjects],
       get: (projectId) => [project, ...additionalProjects].find(

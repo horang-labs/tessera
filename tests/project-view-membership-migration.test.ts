@@ -7,7 +7,7 @@ import test from 'node:test';
 import initSqlJs, { type Database } from 'sql.js';
 import { CREATE_TABLES } from '@/lib/db/schema';
 
-test('a v37 database reaches the merged v39 schema and bootstraps canonical Worktrees once', async () => {
+test('a v37 database reaches the current schema and bootstraps canonical Worktrees once', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-project-membership-migration-'));
   const dataDir = path.join(root, 'data');
   const repository = path.join(root, 'repository');
@@ -21,7 +21,7 @@ test('a v37 database reaches the merged v39 schema and bootstraps canonical Work
 
     await runDatabaseStartup(dataDir);
     const beforeBootstrap = await readMembership(dataDir);
-    assert.equal(beforeBootstrap.schemaVersion, '39');
+    assert.equal(beforeBootstrap.schemaVersion, '40');
     assert.equal(beforeBootstrap.bootstrapState, 'pending');
     assert.equal(beforeBootstrap.poisonedWorktreeCount, 0);
     assert.equal(beforeBootstrap.projectWorktreeId, null);
@@ -91,7 +91,7 @@ test('a feature v38 database gains dev PR columns without resetting completed Wo
     `)[0];
     assert.equal(
       rows(db, `SELECT value FROM _meta WHERE key = 'schema_version'`)[0]?.value,
-      '39',
+      '40',
     );
     assert.equal(
       rows(db, `SELECT value FROM _meta WHERE key = 'canonical_worktree_bootstrap_v38'`)[0]?.value,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createControlAuthorityRegistry } from '../src/lib/control/authority';
+import { createInMemoryControlAuditHistory } from '../src/lib/control/audit';
 import {
   ControlOperationError,
   ControlSessionStartError,
@@ -104,6 +105,7 @@ function createFixture() {
     appVersion: '1.0.0',
     runtimeId: 'runtime-one',
     authority: AUTHORITY,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: { list: () => [PROJECT], get: (id) => id === PROJECT.id ? PROJECT : undefined },
     worktrees: {
       list: () => [WORKTREE],

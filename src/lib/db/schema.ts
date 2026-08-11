@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 39;
+export const SCHEMA_VERSION = 40;
 
 /**
  * v38 needs the authenticated agent environment before legacy path evidence
@@ -45,6 +45,26 @@ CREATE TABLE IF NOT EXISTS projects (
   registered_at TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS control_audit_history (
+  id                TEXT PRIMARY KEY,
+  project_id        TEXT NOT NULL,
+  source_session_id TEXT NOT NULL,
+  operation         TEXT NOT NULL,
+  target_kind       TEXT NOT NULL,
+  target_id         TEXT NOT NULL,
+  occurred_at       TEXT NOT NULL,
+  outcome           TEXT NOT NULL,
+  failure_code      TEXT,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_projects_delete_control_audit
+AFTER DELETE ON projects
+FOR EACH ROW
+BEGIN
+  DELETE FROM control_audit_history WHERE project_id = OLD.id;
+END;
 
 CREATE TABLE IF NOT EXISTS sessions (
   id               TEXT PRIMARY KEY,
@@ -165,6 +185,9 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
 export const CREATE_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_sessions_project_updated
   ON sessions(project_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_control_audit_project_id
+  ON control_audit_history(project_id, id ASC);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project_created
   ON sessions(project_id, created_at DESC);

@@ -236,6 +236,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   ensureWorktreeIdentityColumns(db);
   ensureCanonicalWorktreeRegistry(db);
   ensureWorktreeCreationScopeColumns(db);
+  ensureControlAuditHistory(db);
 }
 
 /**
@@ -1084,6 +1085,36 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     backfillPullRequestRevisionColumns(db);
     logger.info('Migration v39 applied: canonical Project View bootstrap pending and PR revision schema reconciled');
   }
+
+  if (fromVersion < 40) {
+    ensureControlAuditHistory(db);
+    logger.info('Migration v40 applied: Project-owned Control audit history added');
+  }
+}
+
+function ensureControlAuditHistory(db: DatabaseWrapper): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS control_audit_history (
+      id                TEXT PRIMARY KEY,
+      project_id        TEXT NOT NULL,
+      source_session_id TEXT NOT NULL,
+      operation         TEXT NOT NULL,
+      target_kind       TEXT NOT NULL,
+      target_id         TEXT NOT NULL,
+      occurred_at       TEXT NOT NULL,
+      outcome           TEXT NOT NULL,
+      failure_code      TEXT,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_control_audit_project_id
+      ON control_audit_history(project_id, id ASC);
+    CREATE TRIGGER IF NOT EXISTS trg_projects_delete_control_audit
+    AFTER DELETE ON projects
+    FOR EACH ROW
+    BEGIN
+      DELETE FROM control_audit_history WHERE project_id = OLD.id;
+    END;
+  `);
 }
 
 function addPullRequestRevisionColumns(db: DatabaseWrapper): void {

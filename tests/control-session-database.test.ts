@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createControlAuthorityRegistry } from '../src/lib/control/authority';
+import { createInMemoryControlAuditHistory } from '../src/lib/control/audit';
 import {
   ControlOperationError,
   createControlService,
@@ -154,6 +155,7 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
       appVersion: '1.0.0',
       runtimeId: 'runtime-one',
       authority,
+      auditHistory: createInMemoryControlAuditHistory(),
       projects: { list: () => [], get: () => undefined },
       worktrees: { list: () => [worktree], get: (id) => id === worktreeId ? worktree : undefined },
       sessions: source,

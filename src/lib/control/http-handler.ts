@@ -106,6 +106,24 @@ export function createControlHttpHandler(options: {
         return true;
       }
 
+      if (pathname === `${CONTROL_ROUTE_PREFIX}/audit`) {
+        requireMethod(request, 'GET');
+        const current = requestUrl?.searchParams.get('current');
+        const projectId = requestUrl?.searchParams.get('projectId');
+        if ((current === '1') === Boolean(projectId)) {
+          throw new ControlOperationError(
+            'INVALID_USAGE',
+            'Exactly one audit Project selector is required.',
+            400,
+          );
+        }
+        const selector = current === '1'
+          ? { kind: 'current' as const }
+          : { kind: 'project' as const, projectId: projectId as string };
+        writeSuccess(response, await service.listProjectAudit(selector, context));
+        return true;
+      }
+
       if (pathname === `${CONTROL_ROUTE_PREFIX}/worktrees`) {
         const current = requestUrl?.searchParams.get('current');
         const projectId = requestUrl?.searchParams.get('projectId');

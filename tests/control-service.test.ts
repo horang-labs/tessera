@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createControlAuthorityRegistry } from '../src/lib/control/authority';
+import { createInMemoryControlAuditHistory } from '../src/lib/control/audit';
 import {
   ControlOperationError,
   createControlService,
@@ -68,6 +69,7 @@ function makeService() {
     appVersion: '1.2.3',
     runtimeId: 'runtime-one',
     authority: AUTHORITY,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: {
       list: () => PROJECTS,
       get: (projectId) => PROJECTS.find((project) => project.id === projectId),
@@ -207,6 +209,7 @@ test('Worktree creation rejects an incompatible Project before the mutation boun
       appVersion: '1.2.3',
       runtimeId: 'runtime-one',
       authority,
+      auditHistory: createInMemoryControlAuditHistory(),
       projects: {
         list: () => [],
         get: (projectId) => projectId === 'windows-project'
