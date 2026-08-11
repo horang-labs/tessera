@@ -631,6 +631,8 @@ test('WSL terminals cross hook coordinates and overlay homes via WSLENV', () => 
   assert.match(terminalManagerSource, /\{ name: 'TESSERA_PANE_TOKEN' \}/);
   assert.match(terminalManagerSource, /\{ name: 'TESSERA_SESSION_ID' \}/);
   assert.match(terminalManagerSource, /\{ name: 'TESSERA_HOOK_PORT' \}/);
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_CONTROL_AUTHORITY' \}/);
+  assert.match(providerLaunchModuleSource, /TESSERA_CONTROL_AUTHORITY: undefined/);
   // 오버레이 홈은 값이 이미 게스트 POSIX 경로('/')면 /p 변환을 붙이지 않는다 —
   // Windows 경로일 때만 경로 변환(orca endpointFlag 미러).
   assert.match(terminalManagerSource, /\{ name: 'CODEX_HOME', path: !terminalEnv\.CODEX_HOME\?\.startsWith\('\/'\) \}/);

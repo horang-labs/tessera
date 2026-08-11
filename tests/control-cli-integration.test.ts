@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createControlHttpHandler } from '../src/lib/control/http-handler';
+import { createControlAuthorityRegistry } from '../src/lib/control/authority';
 import {
   publishRuntimeDescriptor,
   type RuntimeDescriptorHandle,
@@ -26,9 +27,11 @@ const REPO_ROOT = process.cwd();
 const PACKAGE_VERSION = JSON.parse(
   fsSync.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'),
 ).version as string;
+const authorityByDescriptor = new Map<string, string>();
 
 interface TestRuntime {
   descriptor: RuntimeDescriptorHandle;
+  authorityToken: string;
   sessionStarts: Array<{ sessionId: string; initialPrompt?: string; allowPreparationFailure?: boolean }>;
   sessionWaits: Array<{ sessionId: string; condition: string; timeoutMs: number }>;
   sessionControls: Array<{ sessionId: string; kind: string; value?: unknown }>;
@@ -37,18 +40,20 @@ interface TestRuntime {
 
 test('the CLI stays pinned to one of two distinguishable runtimes and their Projects', async () => {
   const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-cli-'));
-  const runtimeOne = await startRuntime(testRoot, 'one', {
+  const projectOne = {
     id: '/home/work/project-one',
     decodedPath: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\project-one',
     displayName: 'Project One',
     visible: true,
-  });
-  const runtimeTwo = await startRuntime(testRoot, 'two', {
+  };
+  const projectTwo = {
     id: '/home/work/project-two',
     decodedPath: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\project-two',
     displayName: 'Project Two',
     visible: false,
-  });
+  };
+  const runtimeOne = await startRuntime(testRoot, 'one', projectOne, [], [projectTwo]);
+  const runtimeTwo = await startRuntime(testRoot, 'two', projectTwo);
 
   try {
     const statusOne = await runCli([
@@ -91,6 +96,18 @@ test('the CLI stays pinned to one of two distinguishable runtimes and their Proj
       },
     });
 
+    const crossProject = await runCli([
+      'project', 'show', projectTwo.id, '--json',
+      '--control-descriptor', runtimeOne.descriptor.path,
+    ]);
+    assert.equal(crossProject.code, 1);
+    assert.deepEqual(JSON.parse(crossProject.stdout).error, {
+      code: 'CONTROL_AUTHORITY_DENIED',
+      message: 'The requested resource is outside the caller Project scope.',
+      details: {},
+    });
+    assert.equal(crossProject.stdout.includes(projectTwo.decodedPath), false);
+
     for (const output of [statusOne, statusTwo, listOne, showTwo]) {
       assert.equal(output.stdout.includes(runtimeOne.descriptor.descriptor.token), false);
       assert.equal(output.stdout.includes(runtimeTwo.descriptor.descriptor.token), false);
@@ -119,7 +136,7 @@ test('the CLI uses stable JSON failures and process exits', async () => {
       '--control-descriptor', runtime.descriptor.path,
     ]);
     assert.equal(missingProject.code, 1);
-    assert.equal(JSON.parse(missingProject.stdout).error.code, 'PROJECT_NOT_FOUND');
+    assert.equal(JSON.parse(missingProject.stdout).error.code, 'CONTROL_AUTHORITY_DENIED');
 
     const invalidUsage = await runCli([
       'project', 'show', '--json', '--control-descriptor', runtime.descriptor.path,
@@ -228,7 +245,7 @@ test('the CLI lists and shows zero-session Worktrees through exact selectors', a
     assert.equal(nativeShow.code, 0);
     assert.equal(
       JSON.parse(nativeShow.stdout).data.path,
-      '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\zero-session',
+      '/home/work/zero-session',
     );
 
     const missingSelector = await runCli([
@@ -241,19 +258,19 @@ test('the CLI lists and shows zero-session Worktrees through exact selectors', a
     assert.equal(missingSelector.code, 2);
     assert.equal(duplicateSelector.code, 2);
 
-    const currentWithoutContext = await runCli([
+    const currentFromAuthority = await runCli([
       'worktree', 'list', '--current', '--json',
       '--control-descriptor', runtime.descriptor.path,
     ]);
-    assert.equal(currentWithoutContext.code, 1);
-    assert.equal(JSON.parse(currentWithoutContext.stdout).error.code, 'CALLER_CONTEXT_UNAVAILABLE');
+    assert.equal(currentFromAuthority.code, 0);
+    assert.equal(JSON.parse(currentFromAuthority.stdout).data.worktrees.length, 1);
 
     const legacyId = await runCli([
       'worktree', 'show', 'legacy-internal-id', '--json',
       '--control-descriptor', runtime.descriptor.path,
     ]);
     assert.equal(legacyId.code, 1);
-    assert.equal(JSON.parse(legacyId.stdout).error.code, 'WORKTREE_NOT_FOUND');
+    assert.equal(JSON.parse(legacyId.stdout).error.code, 'CONTROL_AUTHORITY_DENIED');
   } finally {
     await runtime.close();
     await fs.rm(testRoot, { recursive: true, force: true });
@@ -311,13 +328,12 @@ test('the CLI creates a zero-session Worktree from exact explicit Git inputs', a
     }
 
     const createdCount = worktrees.length;
-    const currentWithoutContext = await runCli([
+    const currentFromAuthority = await runCli([
       'worktree', 'create', '--current', '-b', 'feature/no-context', 'main',
       '--json', '--control-descriptor', runtime.descriptor.path,
     ]);
-    assert.equal(currentWithoutContext.code, 1);
-    assert.equal(JSON.parse(currentWithoutContext.stdout).error.code, 'CALLER_CONTEXT_UNAVAILABLE');
-    assert.equal(worktrees.length, createdCount);
+    assert.equal(currentFromAuthority.code, 0);
+    assert.equal(worktrees.length, createdCount + 1);
 
     const timedOut = await runCli([
       'worktree', 'create', '--project', project.id, '-b', 'feature/prep-timeout', 'main',
@@ -501,6 +517,7 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
       '--file', '-', '--json', '--control-descriptor', runtime.descriptor.path,
     ], {
       repoRoot: REPO_ROOT,
+      envOverrides: { TESSERA_CONTROL_AUTHORITY: runtime.authorityToken },
       stdin: 'follow up\nwith context',
     });
     assert.equal(prompted.code, 0, prompted.stderr || prompted.stdout);
@@ -798,6 +815,12 @@ async function startRuntime(
   label: string,
   project: { id: string; decodedPath: string; displayName: string; visible: boolean },
   worktrees: ControlWorktreeRecord[] = [],
+  additionalProjects: Array<{
+    id: string;
+    decodedPath: string;
+    displayName: string;
+    visible: boolean;
+  }> = [],
 ): Promise<TestRuntime> {
   const sessionRecords: ControlSessionRecord[] = [];
   const sessionStarts: TestRuntime['sessionStarts'] = [];
@@ -821,12 +844,23 @@ async function startRuntime(
     origin,
     runtimeDirectory: path.join(testRoot, label),
   });
+  const authority = createControlAuthorityRegistry();
+  const grant = authority.grant({
+    agentEnvironment: 'wsl',
+    projectId: project.id,
+    sessionId: `caller-${label}`,
+    ...(worktrees[0] ? { worktreeId: worktrees[0].worktreeId } : {}),
+  });
+  authorityByDescriptor.set(descriptor.path, grant.token);
   const serviceOptions = {
     appVersion: PACKAGE_VERSION,
     runtimeId: descriptor.descriptor.runtimeId,
+    authority,
     projects: {
-      list: () => [project],
-      get: (projectId) => projectId === project.id ? project : undefined,
+      list: () => [project, ...additionalProjects],
+      get: (projectId) => [project, ...additionalProjects].find(
+        (candidate) => candidate.id === projectId,
+      ),
     },
     worktrees: {
       list: (projectId) => worktrees.filter((worktree) => worktree.projectId === projectId),
@@ -984,16 +1018,19 @@ async function startRuntime(
         return controlSnapshot('exited');
       },
     },
-  };
-  const service = createControlService(serviceOptions as Parameters<typeof createControlService>[0]);
+  } satisfies Parameters<typeof createControlService>[0];
+  const service = createControlService(serviceOptions);
   requestHandler = createControlHttpHandler({ descriptor: descriptor.descriptor, service });
 
   return {
     descriptor,
+    authorityToken: grant.token,
     sessionStarts,
     sessionWaits,
     sessionControls,
     close: async () => {
+      authorityByDescriptor.delete(descriptor.path);
+      grant.revoke();
       await descriptor.cleanup();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
@@ -1029,5 +1066,14 @@ function runCli(
   args: string[],
   envOverrides: Record<string, string> = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return runControlCli(args, { repoRoot: REPO_ROOT, envOverrides });
+  const descriptorOptionIndex = args.indexOf('--control-descriptor');
+  const descriptorPath = descriptorOptionIndex >= 0 ? args[descriptorOptionIndex + 1] : undefined;
+  const authorityToken = descriptorPath ? authorityByDescriptor.get(descriptorPath) : undefined;
+  return runControlCli(args, {
+    repoRoot: REPO_ROOT,
+    envOverrides: {
+      ...(authorityToken ? { TESSERA_CONTROL_AUTHORITY: authorityToken } : {}),
+      ...envOverrides,
+    },
+  });
 }

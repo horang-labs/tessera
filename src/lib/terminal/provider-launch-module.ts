@@ -793,6 +793,7 @@ export function createProviderLaunchModule(
                 ...(launchEnv ?? {}),
                 TESSERA_CONTROL_DESCRIPTOR: undefined,
                 TESSERA_CONTROL_DESCRIPTOR_PATH: undefined,
+                TESSERA_CONTROL_AUTHORITY: undefined,
                 TESSERA_CLI_CWD: undefined,
                 TESSERA_AGENT_ENVIRONMENT: undefined,
               };

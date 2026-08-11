@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { createControlAuthorityRegistry } from '../src/lib/control/authority';
 import {
   ControlOperationError,
   createControlService,
@@ -142,9 +143,17 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
       preparationPhase: 'before',
       sessions: [],
     };
+    const authority = createControlAuthorityRegistry();
+    const grant = authority.grant({
+      agentEnvironment: 'native',
+      projectId,
+      sessionId: 'caller-session',
+      worktreeId,
+    });
     const service = createControlService({
       appVersion: '1.0.0',
       runtimeId: 'runtime-one',
+      authority,
       projects: { list: () => [], get: () => undefined },
       worktrees: { list: () => [worktree], get: (id) => id === worktreeId ? worktree : undefined },
       sessions: source,
@@ -153,9 +162,12 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
     const launchCountBeforeRejectedStarts = launchRequests.length;
     for (const sessionId of ['chat-child', 'invalid-kind-child']) {
       await assert.rejects(
-        service.startSession({ sessionId }, { agentEnvironment: 'native' }),
+        service.startSession(
+          { sessionId },
+          { agentEnvironment: 'native', authorityToken: grant.token },
+        ),
         (error: unknown) => error instanceof ControlOperationError
-          && error.code === 'SESSION_NOT_FOUND',
+          && error.code === 'CONTROL_AUTHORITY_DENIED',
       );
     }
     assert.equal(launchRequests.length, launchCountBeforeRejectedStarts);

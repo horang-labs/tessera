@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { createControlAuthorityRegistry } from '../src/lib/control/authority';
 import { runControlCli } from './helpers/control-cli-runner';
 
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-control-worktree-creation-'));
@@ -104,14 +105,21 @@ test('Control creates exact local and remote branches through the managed path p
     lastModified: new Date().toISOString(),
   });
 
+  const authority = createControlAuthorityRegistry();
+  const grant = authority.grant({
+    agentEnvironment: 'wsl',
+    projectId: repository.path,
+    sessionId: 'caller-exact-inputs',
+  });
   const control = mods.service.createControlService({
     appVersion: '1.0.0',
     runtimeId: 'runtime-create-test',
+    authority,
     projects: mods.controlProjects.createDatabaseControlProjectSource(),
     worktrees: mods.controlWorktrees.createDatabaseControlWorktreeSource(),
     worktreeCreator: mods.creator.createDatabaseControlWorktreeCreator({ userId: USER_ID }),
   });
-  const context = { agentEnvironment: 'wsl' as const };
+  const context = { agentEnvironment: 'wsl' as const, authorityToken: grant.token };
 
   const local = await control.createWorktree({
     selector: { kind: 'project', projectId: repository.path },
@@ -186,6 +194,11 @@ test('Control creates exact local and remote branches through the managed path p
     ['feature/exact-remote', 'feature/exact-local'],
   );
 
+  const nativeGrant = authority.grant({
+    agentEnvironment: 'native',
+    projectId: repository.path,
+    sessionId: 'caller-native-environment',
+  });
   await assert.rejects(
     control.createWorktree({
       selector: { kind: 'project', projectId: repository.path },
@@ -213,7 +226,7 @@ test('Control creates exact local and remote branches through the managed path p
       selector: { kind: 'project', projectId: repository.path },
       branch: 'feature/environment-mismatch',
       startPoint: 'main',
-    }, { agentEnvironment: 'native' }),
+    }, { agentEnvironment: 'native', authorityToken: nativeGrant.token }),
     (error: unknown) => error instanceof mods.service.ControlOperationError
       && error.code === 'PROJECT_ENVIRONMENT_MISMATCH',
   );
@@ -250,8 +263,7 @@ test('Control opens local and remote-only branches and returns distinct checkout
     managedWorktreePathTemplate: path.join(managedRoot, '{branchName}'),
     lastModified: new Date().toISOString(),
   });
-  const control = createControl(mods, 5_000);
-  const context = { agentEnvironment: 'wsl' as const };
+  const { control, context } = createControl(mods, 5_000, repository.path);
 
   const local = await control.createWorktree({
     selector: { kind: 'project', projectId: repository.path },
@@ -467,9 +479,16 @@ test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git re
     origin,
     runtimeDirectory: descriptorRoot,
   });
+  const authority = createControlAuthorityRegistry();
+  const grant = authority.grant({
+    agentEnvironment: 'wsl',
+    projectId: repository.path,
+    sessionId: 'caller-cli-http',
+  });
   const control = mods.service.createControlService({
     appVersion: packageVersion,
     runtimeId: runtime.descriptor.runtimeId,
+    authority,
     projects: mods.controlProjects.createDatabaseControlProjectSource(),
     worktrees: mods.controlWorktrees.createDatabaseControlWorktreeSource(),
     worktreeCreator: mods.creator.createDatabaseControlWorktreeCreator({ userId: USER_ID }),
@@ -498,7 +517,7 @@ test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git re
       '-b', 'feature/cli-http', '--json',
       '--control-descriptor', runtime.path,
       '--', '--json',
-    ]);
+    ], { envOverrides: { TESSERA_CONTROL_AUTHORITY: grant.token } });
     assert.equal(result.code, 0, result.stderr || result.stdout);
     assert.equal(result.stderr, '');
     const created = JSON.parse(result.stdout).data as Record<string, unknown>;
@@ -510,7 +529,7 @@ test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git re
       'worktree', 'create', '--project', repository.path,
       '--mode', 'checkout-branch', '-b', 'feature/cli-resume', '--json',
       '--control-descriptor', runtime.path,
-    ]);
+    ], { envOverrides: { TESSERA_CONTROL_AUTHORITY: grant.token } });
     assert.equal(checkout.code, 0, checkout.stderr || checkout.stdout);
     const resumed = JSON.parse(checkout.stdout).data as Record<string, unknown>;
     assert.equal(resumed.branch, 'feature/cli-resume');
@@ -550,13 +569,13 @@ test('Control reports blocking preparation outcomes while preserving inspectable
   const failedRepository = createRepository('preparation-failed');
   mods.projects.registerProject(failedRepository.path, failedRepository.path, 'Preparation failed');
   mods.projects.setPreparationScript(failedRepository.path, 'printf "before failed\\n"; exit 9');
-  const failedControl = createControl(mods, 5_000);
+  const failed = createControl(mods, 5_000, failedRepository.path);
   await assert.rejects(
-    failedControl.createWorktree({
+    failed.control.createWorktree({
       selector: { kind: 'project', projectId: failedRepository.path },
       branch: 'feature/preparation-failed',
       startPoint: 'main',
-    }, { agentEnvironment: 'wsl' }),
+    }, failed.context),
     (error: unknown) => {
       if (!(error instanceof mods.service.ControlOperationError)) return false;
       const worktree = error.details.worktree as Record<string, unknown> | undefined;
@@ -580,11 +599,12 @@ test('Control reports blocking preparation outcomes while preserving inspectable
     succeededRepository.path,
     'printf "before ready\\n" > before-stage.txt',
   );
-  const succeededWorktree = await createControl(mods, 5_000).createWorktree({
+  const succeeded = createControl(mods, 5_000, succeededRepository.path);
+  const succeededWorktree = await succeeded.control.createWorktree({
     selector: { kind: 'project', projectId: succeededRepository.path },
     branch: 'feature/preparation-succeeded',
     startPoint: 'main',
-  }, { agentEnvironment: 'wsl' });
+  }, succeeded.context);
   assert.deepEqual(succeededWorktree.preparation, {
     status: 'succeeded',
     phase: 'before',
@@ -603,11 +623,12 @@ test('Control reports blocking preparation outcomes while preserving inspectable
     'sleep 3; printf "after ready\\n" > after-stage.txt',
     'after',
   );
-  const afterWorktree = await createControl(mods, 5_000).createWorktree({
+  const after = createControl(mods, 5_000, afterRepository.path);
+  const afterWorktree = await after.control.createWorktree({
     selector: { kind: 'project', projectId: afterRepository.path },
     branch: 'feature/preparation-after',
     startPoint: 'origin/remote-start',
-  }, { agentEnvironment: 'wsl' });
+  }, after.context);
   assert.deepEqual(afterWorktree.preparation, {
     status: 'running',
     phase: 'after',
@@ -618,12 +639,13 @@ test('Control reports blocking preparation outcomes while preserving inspectable
   const timeoutRepository = createRepository('preparation-timeout');
   mods.projects.registerProject(timeoutRepository.path, timeoutRepository.path, 'Preparation timeout');
   mods.projects.setPreparationScript(timeoutRepository.path, 'sleep 5');
+  const timeout = createControl(mods, 25, timeoutRepository.path);
   await assert.rejects(
-    createControl(mods, 25).createWorktree({
+    timeout.control.createWorktree({
       selector: { kind: 'project', projectId: timeoutRepository.path },
       branch: 'feature/preparation-timeout',
       startPoint: 'main',
-    }, { agentEnvironment: 'wsl' }),
+    }, timeout.context),
     (error: unknown) => {
       if (!(error instanceof mods.service.ControlOperationError)) return false;
       const worktree = error.details.worktree as Record<string, unknown> | undefined;
@@ -660,12 +682,13 @@ test('a persistence failure compensates the checkout and exact new branch', asyn
   `);
 
   try {
+    const compensated = createControl(mods, 5_000, repository.path);
     await assert.rejects(
-      createControl(mods, 5_000).createWorktree({
+      compensated.control.createWorktree({
         selector: { kind: 'project', projectId: repository.path },
         branch: 'feature/compensated',
         startPoint: 'main',
-      }, { agentEnvironment: 'wsl' }),
+      }, compensated.context),
       (error: unknown) => error instanceof mods.service.ControlOperationError
         && error.code === 'WORKTREE_PERSIST_FAILED',
     );
@@ -678,17 +701,27 @@ test('a persistence failure compensates the checkout and exact new branch', asyn
   assert.equal(fs.existsSync(path.join(managedRoot, 'feature/compensated')), false);
 });
 
-function createControl(mods: Modules, preparationTimeoutMs: number) {
-  return mods.service.createControlService({
-    appVersion: '1.0.0',
-    runtimeId: 'runtime-create-test',
-    projects: mods.controlProjects.createDatabaseControlProjectSource(),
-    worktrees: mods.controlWorktrees.createDatabaseControlWorktreeSource(),
-    worktreeCreator: mods.creator.createDatabaseControlWorktreeCreator({
-      userId: USER_ID,
-      preparationTimeoutMs,
-    }),
+function createControl(mods: Modules, preparationTimeoutMs: number, projectId: string) {
+  const authority = createControlAuthorityRegistry();
+  const grant = authority.grant({
+    agentEnvironment: 'wsl',
+    projectId,
+    sessionId: `caller-${path.basename(projectId)}`,
   });
+  return {
+    control: mods.service.createControlService({
+      appVersion: '1.0.0',
+      runtimeId: 'runtime-create-test',
+      authority,
+      projects: mods.controlProjects.createDatabaseControlProjectSource(),
+      worktrees: mods.controlWorktrees.createDatabaseControlWorktreeSource(),
+      worktreeCreator: mods.creator.createDatabaseControlWorktreeCreator({
+        userId: USER_ID,
+        preparationTimeoutMs,
+      }),
+    }),
+    context: { agentEnvironment: 'wsl' as const, authorityToken: grant.token },
+  };
 }
 
 function createRepository(label: string): {

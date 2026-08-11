@@ -1029,6 +1029,7 @@ function requestControl(descriptor, invocation, env, appVersion) {
     copyCallerHeader(headers, 'x-tessera-caller-project-id', env.TESSERA_PROJECT_ID);
     copyCallerHeader(headers, 'x-tessera-caller-session-id', env.TESSERA_SESSION_ID);
     copyCallerHeader(headers, 'x-tessera-caller-worktree-id', env.TESSERA_WORKTREE_ID);
+    copyCallerHeader(headers, 'x-tessera-control-authority', env.TESSERA_CONTROL_AUTHORITY);
 
     const request = http.request(url, {
       headers,

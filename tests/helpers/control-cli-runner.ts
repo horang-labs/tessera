@@ -22,6 +22,7 @@ export function runControlCli(
       env: {
         ...process.env,
         TESSERA_AGENT_ENVIRONMENT: 'wsl',
+        TESSERA_CONTROL_AUTHORITY: '',
         TESSERA_CONTROL_DESCRIPTOR: '',
         TESSERA_PROJECT_ID: '',
         ...options.envOverrides,

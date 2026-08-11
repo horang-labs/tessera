@@ -90,6 +90,10 @@ export function createControlHttpHandler(options: {
 
     const context = callerContext(request);
     try {
+      // Fail closed before route-specific decoding or body reads so callers
+      // without a live Managed Session cannot use validation as an oracle.
+      service.assertAuthority(context);
+
       if (pathname === `${CONTROL_ROUTE_PREFIX}/status`) {
         requireMethod(request, 'GET');
         writeSuccess(response, await service.status(context));
@@ -641,13 +645,14 @@ function callerContext(request: IncomingMessage): ControlCallerContext {
     agentEnvironment: headerValue(request, 'x-tessera-agent-environment') === 'wsl'
       ? 'wsl'
       : 'native',
+    ...readCallerId(request, 'x-tessera-control-authority', 'authorityToken'),
     ...readCallerId(request, 'x-tessera-caller-project-id', 'projectId'),
     ...readCallerId(request, 'x-tessera-caller-session-id', 'sessionId'),
     ...readCallerId(request, 'x-tessera-caller-worktree-id', 'worktreeId'),
   };
 }
 
-function readCallerId<Key extends 'projectId' | 'sessionId' | 'worktreeId'>(
+function readCallerId<Key extends 'authorityToken' | 'projectId' | 'sessionId' | 'worktreeId'>(
   request: IncomingMessage,
   header: string,
   key: Key,

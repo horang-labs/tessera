@@ -769,6 +769,7 @@ test('shared provider launches inject the complete control bridge environment fo
           environment: {
             TESSERA_ENV: '1',
             TESSERA_CLI_COMMAND: `/home/test/.cache/tessera/${sessionId}/tessera`,
+            TESSERA_CONTROL_AUTHORITY: `authority-${sessionId}`,
             TESSERA_PROJECT_ID: 'provider-launch-project',
             TESSERA_SESSION_ID: sessionId,
             TESSERA_WORKTREE_ID: publicWorktreeId,
@@ -791,12 +792,14 @@ test('shared provider launches inject the complete control bridge environment fo
       `/home/test/.cache/tessera/${sessionId}/tessera`,
     );
     assert.equal(childEnv?.TESSERA_PROJECT_ID, 'provider-launch-project');
+    assert.equal(childEnv?.TESSERA_CONTROL_AUTHORITY, `authority-${sessionId}`);
     assert.equal(childEnv?.TESSERA_SESSION_ID, sessionId);
     assert.equal(childEnv?.TESSERA_WORKTREE_ID, publicWorktreeId);
     if (agentEnvironment === 'wsl') {
       for (const key of [
         'TESSERA_ENV',
         'TESSERA_CLI_COMMAND',
+        'TESSERA_CONTROL_AUTHORITY',
         'TESSERA_PROJECT_ID',
         'TESSERA_SESSION_ID',
         'TESSERA_WORKTREE_ID',
@@ -897,6 +900,7 @@ test('managed fake-provider launches discover the canonical skill in a WSL-like 
         environment: {
           TESSERA_ENV: '1',
           TESSERA_CLI_COMMAND: `/home/agent/.tessera/control/${sessionId}/tessera`,
+          TESSERA_CONTROL_AUTHORITY: `authority-${sessionId}`,
           TESSERA_PROJECT_ID: projectId,
           TESSERA_SESSION_ID: sessionId,
         },
@@ -923,6 +927,10 @@ test('managed fake-provider launches discover the canonical skill in a WSL-like 
       );
       assert.equal(
         spawned?.env?.WSLENV?.split(':').some((entry) => entry === 'TESSERA_CLI_COMMAND'),
+        true,
+      );
+      assert.equal(
+        spawned?.env?.WSLENV?.split(':').some((entry) => entry === 'TESSERA_CONTROL_AUTHORITY'),
         true,
       );
 
