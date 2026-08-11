@@ -101,10 +101,10 @@ export function useSessionClickHandlers(options?: {
         return;
       }
 
-      // Clear multi-select when doing a normal click
-      if (useSelectionStore.getState().selectedIds.size > 0) {
-        useSelectionStore.getState().clearSelection();
-      }
+      // Record the clicked row synchronously. Session activation below may be
+      // asynchronous or fail for a stale session, but the next Shift+Click
+      // must still start from the row the user actually clicked.
+      useSelectionStore.getState().setRangeAnchor(session.id);
 
       // BRANCH B — Normal click
 

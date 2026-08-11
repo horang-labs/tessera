@@ -106,3 +106,19 @@ test('Recent Work Shift range selection follows the rendered recent-item order',
     ['session-a', 'session-b', 'session-c'],
   );
 });
+
+test('normal click replaces a stale Shift range anchor before session activation finishes', () => {
+  useSelectionStore.getState().clearSelection();
+  useSelectionStore.getState().toggleSelect('previous-session');
+
+  useSelectionStore.getState().setRangeAnchor('session-a');
+  useSelectionStore.getState().rangeSelect(
+    'session-b',
+    ['previous-session', 'session-a', 'session-b'],
+  );
+
+  const state = useSelectionStore.getState();
+  assert.deepEqual([...state.selectedIds], ['session-a', 'session-b']);
+  assert.equal(state.lastClickedId, 'session-a');
+  assert.equal(state.barAnchorId, 'session-b');
+});
