@@ -60,6 +60,7 @@ try {
   appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
   browser = await launchPhoneBrowser();
+  await testRestoredSessionWaitsForProjectCatalog(browser, appOrigin);
   await testKeyboardShrinksTheLayoutViewport(browser, appOrigin);
   await testPhoneShellFillsTheVisibleViewport(browser, appOrigin);
   await testTallPanelScrollsInsideItsOwnBox(browser, appOrigin);
@@ -78,6 +79,105 @@ try {
   }
   await waitForExit(server, 5_000);
   await fs.rm(dataDir, { recursive: true, force: true });
+}
+
+async function testRestoredSessionWaitsForProjectCatalog(browserInstance, origin) {
+  const { context, page } = await createPhonePage(browserInstance);
+  const projectDir = '/home/tester/restored-project';
+  const sessionId = 'restored-session';
+  const tabId = 'restored-tab';
+  const panelId = 'restored-panel';
+  let releaseProjects;
+  const projectsGate = new Promise((resolve) => {
+    releaseProjects = resolve;
+  });
+  let projectsRequested;
+  const projectsRequest = new Promise((resolve) => {
+    projectsRequested = resolve;
+  });
+
+  try {
+    await page.addInitScript(({ projectDir: restoredProjectDir, sessionId: restoredSessionId, tabId: restoredTabId, panelId: restoredPanelId }) => {
+      localStorage.setItem('ccw:selectedProjectDir', restoredProjectDir);
+      sessionStorage.setItem('activeSessionId', restoredSessionId);
+      localStorage.setItem('tessera-tab-store', JSON.stringify({
+        version: 3,
+        currentProjectDir: restoredProjectDir,
+        activeTabId: restoredTabId,
+        projects: {
+          [restoredProjectDir]: {
+            tabs: [{
+              id: restoredTabId,
+              projectDir: restoredProjectDir,
+              snapshot: {
+                layout: { type: 'leaf', panelId: restoredPanelId },
+                panels: {
+                  [restoredPanelId]: { id: restoredPanelId, sessionId: restoredSessionId },
+                },
+                activePanelId: restoredPanelId,
+              },
+              title: null,
+              isPreview: false,
+            }],
+            activeTabId: restoredTabId,
+          },
+        },
+        global: null,
+      }));
+    }, { projectDir, sessionId, tabId, panelId });
+
+    await page.route('**/api/sessions/projects', async (route) => {
+      projectsRequested();
+      await projectsGate;
+      await route.fulfill(jsonResponse({
+        projects: [{
+          encodedDir: projectDir,
+          displayName: 'restored-project',
+          decodedPath: projectDir,
+          displayPath: projectDir,
+          isCurrent: true,
+          sessions: [{
+            id: sessionId,
+            title: 'Restored mobile session',
+            projectDir,
+            isRunning: false,
+            status: 'completed',
+            lastModified: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            provider: 'codex',
+            kind: 'chat',
+          }],
+          totalSessions: 1,
+          allLoaded: true,
+          loadedCount: 1,
+          nextCursor: null,
+          countByStatus: {},
+          cursorByStatus: {},
+        }],
+      }));
+    });
+    await page.route(`**/api/sessions/${sessionId}/messages**`, async (route) => {
+      await route.fulfill(jsonResponse({
+        messages: [],
+        pagination: { hasMore: false, nextBeforeBytes: null },
+      }));
+    });
+
+    await page.goto(`${origin}/chat`, { waitUntil: 'load', timeout: 60_000 });
+    await projectsRequest;
+    await page.getByTestId('chat-skeleton').waitFor();
+    assert.equal(
+      await page.getByText('Session not found', { exact: true }).count(),
+      0,
+      'a restored tab must not be declared missing while the project catalog is loading',
+    );
+
+    releaseProjects();
+    await page.getByRole('heading', { name: 'Restored mobile session' }).waitFor();
+  } finally {
+    releaseProjects?.();
+    await context.close();
+  }
 }
 
 // Evidence for the device-only criteria, not a substitute for them: the page has to ask

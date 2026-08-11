@@ -58,6 +58,7 @@ import { GitPanelControllerProvider } from "@/components/git/git-panel-controlle
 import { findCompositeWorktreeId } from "@/lib/worktrees/linked-worktree-presentation";
 import { WorktreePeek } from "@/components/worktree/worktree-peek";
 import { useWorkspacePeekStore } from "@/stores/workspace-peek-store";
+import { ChatAreaSkeleton } from "./chat-area-skeleton";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -608,7 +609,9 @@ export function ChatLayout() {
                   aria-hidden={peekWorktreeId ? true : undefined}
                   inert={peekWorktreeId ? true : undefined}
                 >
-                  <TabPanelHost />
+                  {projectsLoaded
+                    ? <TabPanelHost />
+                    : <ChatAreaSkeleton isSinglePanel />}
                 </div>
                 <WorktreePeek />
               </div>
