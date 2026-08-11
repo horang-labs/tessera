@@ -47,8 +47,12 @@ export function useSessionNavigation() {
       options?: { forceReload?: boolean; activate?: boolean },
     ) => {
       const shouldActivate = options?.activate !== false;
+      // Navigation intent belongs to the user action that called this function.
+      // Never defer it until after history I/O: a slower, older request could
+      // otherwise steal focus from the session the user selected meanwhile.
+      if (shouldActivate) sessionStore.setActiveSession(session.id);
+
       if (!options?.forceReload && chatStore.isHistoryLoaded(session.id)) {
-        if (shouldActivate) sessionStore.setActiveSession(session.id);
         return;
       }
 
@@ -66,7 +70,6 @@ export function useSessionNavigation() {
           if (response.status === 404) {
             if (session.isRunning) {
               restoreSessionReplay(session.id, { messages: [] });
-              if (shouldActivate) sessionStore.setActiveSession(session.id);
               return;
             }
             toast.error(i18n.t('errors.sessionFileNotFound'));
@@ -88,7 +91,6 @@ export function useSessionNavigation() {
           });
         }
 
-        if (shouldActivate) sessionStore.setActiveSession(session.id);
       } catch (err) {
         toast.error(i18n.t('errors.sessionLoadFailed'));
         console.error('View session error:', err);

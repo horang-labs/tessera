@@ -13,6 +13,9 @@ const runningProcessPanel = read('../src/components/layout/running-process-panel
 const notificationCenter = read('../src/components/notifications/notification-center.tsx');
 const toastContainer = read('../src/components/notifications/toast-container.tsx');
 const sessionNavigation = read('../src/hooks/use-session-navigation.ts');
+const sessionCrud = read('../src/hooks/use-session-crud.ts');
+const sessionResume = read('../src/hooks/use-session-resume.ts');
+const chatArea = read('../src/components/chat/chat-area.tsx');
 
 test('session activation helper selects tab, panel, and composer focus together', () => {
   assert.match(focusHelper, /export function activateSessionPanel/);
@@ -65,4 +68,60 @@ test('normal session clicks become Shift range anchors before navigation starts'
 
   assert.notEqual(anchorUpdate, -1);
   assert.ok(anchorUpdate < navigationBranch);
+});
+
+test('a late session creation response replaces only its optimistic surface', () => {
+  assert.match(sessionCrud, /sessionStore\.addSession\(newSession, \{ activate: false \}\)/);
+  assert.match(
+    sessionCrud,
+    /rebindSessionSurface\(\s*\[tempSessionId\],\s*result\.sessionId,/,
+  );
+
+  const responseCompletion = sessionCrud.slice(
+    sessionCrud.indexOf('const result = await response.json()'),
+    sessionCrud.indexOf("chatStore.loadHistory(result.sessionId, [])"),
+  );
+  assert.doesNotMatch(
+    responseCompletion,
+    /selectActiveTab\(ps\).*assignSession/s,
+    'the response must not target whichever panel became active while the request was pending',
+  );
+});
+
+test('late history and resume responses cannot reactivate an abandoned session', () => {
+  const historyRequest = sessionNavigation.indexOf('const response = await fetch');
+  assert.notEqual(historyRequest, -1);
+  assert.match(
+    sessionNavigation.slice(0, historyRequest),
+    /if \(shouldActivate\) sessionStore\.setActiveSession\(session\.id\)/,
+    'an explicit navigation intent should activate before waiting for history',
+  );
+  assert.doesNotMatch(
+    sessionNavigation.slice(historyRequest),
+    /setActiveSession\(session\.id\)/,
+    'history completion must only hydrate data, never restore stale focus',
+  );
+
+  const resumeRequest = sessionResume.indexOf('const response = await fetch');
+  assert.notEqual(resumeRequest, -1);
+  assert.doesNotMatch(
+    sessionResume.slice(resumeRequest),
+    /setActiveSession\(sessionId\)/,
+    'resume completion must not restore a session after the user moved away',
+  );
+});
+
+test('passive panel history loading never requests session activation', () => {
+  assert.match(
+    chatArea,
+    /void viewSession\(session, \{ activate: false \}\)/,
+  );
+});
+
+test('notification toasts choose their surface before awaiting history', () => {
+  const openPreview = toastContainer.indexOf('tabStore.openPreview(sessionId)');
+  const loadHistory = toastContainer.indexOf('await viewSession(session)');
+  assert.notEqual(openPreview, -1);
+  assert.notEqual(loadHistory, -1);
+  assert.ok(openPreview < loadHistory);
 });

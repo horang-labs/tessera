@@ -240,12 +240,17 @@ function transferReboundInTabData(
   sourceSessionId: string,
   supersededSessionIds: ReadonlySet<string>,
   sessionId: string,
+  worktreeId?: string | null,
 ): TabPanelData {
   let changed = false;
   const panels = Object.fromEntries(Object.entries(tabData.panels).map(([panelId, panel]) => {
     if (tabId === source.tabId && panelId === source.panelId && panel.sessionId === sourceSessionId) {
       changed = true;
-      return [panelId, { ...panel, sessionId }];
+      return [panelId, {
+        ...panel,
+        sessionId,
+        ...(worktreeId !== undefined ? { worktreeId } : {}),
+      }];
     }
     if (
       panel.sessionId === sessionId
@@ -272,6 +277,7 @@ function transferReboundInScopedState(
   sourceSessionId: string,
   supersededSessionIds: ReadonlySet<string>,
   sessionId: string,
+  worktreeId?: string | null,
 ): ProjectTabState | null {
   if (!scopedState?.tabPanelSnapshots) return scopedState;
   let changed = false;
@@ -285,6 +291,7 @@ function transferReboundInScopedState(
         sourceSessionId,
         supersededSessionIds,
         sessionId,
+        worktreeId,
       );
       if (nextTabData !== tabData) changed = true;
       return [tabId, nextTabData];
@@ -965,7 +972,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     return findSessionSurfaceInState(get(), usePanelStore.getState(), sessionId);
   },
 
-  rebindSessionSurface: (previousSessionIds: readonly string[], sessionId: string): boolean => {
+  rebindSessionSurface: (previousSessionIds, sessionId, options) => {
     const supersededSessionIds = new Set(
       previousSessionIds.filter((previousSessionId) => previousSessionId !== sessionId),
     );
@@ -994,6 +1001,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         sourceSessionId,
         supersededSessionIds,
         sessionId,
+        options?.worktreeId,
       );
       if (nextTabData !== tabData) liveChanged = true;
       return [tabId, nextTabData];
@@ -1010,6 +1018,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
           sourceSessionId,
           supersededSessionIds,
           sessionId,
+          options?.worktreeId,
         );
         if (nextProjectState !== projectState) scopedChanged = true;
         return [projectDir, nextProjectState];
@@ -1022,6 +1031,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       sourceSessionId,
       supersededSessionIds,
       sessionId,
+      options?.worktreeId,
     );
     if (globalTabState !== state.globalTabState) scopedChanged = true;
     if (scopedChanged) set({ projectTabStates, globalTabState });

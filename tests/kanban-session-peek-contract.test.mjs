@@ -113,7 +113,7 @@ test('PTY sessions use retained Peek ownership without pinning or killing a tab 
 });
 
 test('Peek loads history without mutating the hidden active tab session', () => {
-  assert.match(chatAreaSource, /viewSession\(session, \{ activate: !isPeek \}\)/);
+  assert.match(chatAreaSource, /viewSession\(session, \{ activate: false \}\)/);
   assert.match(navigationSource, /const shouldActivate = options\?\.activate !== false/);
   assert.match(navigationSource, /if \(shouldActivate\) sessionStore\.setActiveSession\(session\.id\)/);
 });

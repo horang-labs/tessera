@@ -148,7 +148,10 @@ export function ToastContainer() {
       return;
     }
 
-    // Session not in any tab/panel: load it in the active panel
+    // Session not in any tab/panel: choose its surface synchronously, before
+    // history I/O. Completion of an older load must never overwrite a newer
+    // tab or panel selection.
+    tabStore.openPreview(sessionId);
     try {
       await viewSession(session);
     } catch {

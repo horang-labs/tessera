@@ -29,6 +29,10 @@ export function useSessionResume() {
    */
   const resumeSession = useCallback(
     async (sessionId: string) => {
+      // Capture the explicit resume navigation immediately. The response may
+      // arrive after the user has selected another session and must not restore
+      // this one as a stale side effect.
+      sessionStore.setActiveSession(sessionId);
       setIsResuming(true);
 
       try {
@@ -60,7 +64,6 @@ export function useSessionResume() {
               }
             } catch { /* non-fatal */ }
             // Keep original status — don't overwrite
-            sessionStore.setActiveSession(sessionId);
             return;
           }
           throw new Error('Failed to resume session');
@@ -71,7 +74,6 @@ export function useSessionResume() {
         if (result.status === 'read_only') {
           restoreSessionReplay(sessionId, result);
           sessionStore.updateSessionStatus(sessionId, 'stopped');
-          sessionStore.setActiveSession(sessionId);
           toast.warning(i18n.t('notifications.sessionReadOnlyWarning'));
           sessionStore.markSessionReadOnly(sessionId, true);
           return;
@@ -85,8 +87,6 @@ export function useSessionResume() {
           sessionMode: runtimeConfig.sessionMode,
           accessMode: runtimeConfig.accessMode,
         });
-        sessionStore.setActiveSession(sessionId);
-
         toast.success(i18n.t('notifications.sessionResumed'));
       } catch (err) {
         toast.error(i18n.t('errors.sessionResumeFailed'));
@@ -132,7 +132,6 @@ export function useSessionResume() {
         if (result.status === 'read_only') {
           restoreSessionReplay(sessionId, result);
           sessionStore.updateSessionStatus(sessionId, 'stopped');
-          sessionStore.setActiveSession(sessionId);
           sessionStore.markSessionReadOnly(sessionId, true);
           toast.warning(i18n.t('notifications.sessionReadOnlyWarning'));
           return false;
