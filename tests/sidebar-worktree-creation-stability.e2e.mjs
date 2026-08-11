@@ -164,6 +164,30 @@ async function stopTitlePositionSampler() {
   });
 }
 
+async function startAllProjectsLoadingSampler(sectionTestId) {
+  await page.evaluate((testId) => {
+    const state = { stopped: false, transitions: 0, lastLoading: false };
+    const sample = () => {
+      const section = document.querySelector(`[data-testid="${CSS.escape(testId)}"]`);
+      const loading = [...(section?.querySelectorAll('div') ?? [])].some(
+        (element) => element.children.length === 0 && element.textContent?.trim() === 'Loading...',
+      );
+      if (loading && !state.lastLoading) state.transitions += 1;
+      state.lastLoading = loading;
+      if (!state.stopped) requestAnimationFrame(sample);
+    };
+    window.__allProjectsLoadingSampler = state;
+    requestAnimationFrame(sample);
+  }, sectionTestId);
+}
+
+async function stopAllProjectsLoadingSampler() {
+  return page.evaluate(() => {
+    window.__allProjectsLoadingSampler.stopped = true;
+    return window.__allProjectsLoadingSampler.transitions;
+  });
+}
+
 async function submitWorktree(title) {
   await page.getByTestId('empty-panel-mode-task').click({ timeout: 30_000 });
   await page.getByTestId('empty-panel-task-title-input').fill(title);
@@ -236,6 +260,40 @@ try {
     rightPanel.loadingTransitions,
     0,
     `right Git panel flashed its loading surface during Worktree creation; targets: ${rightPanel.targetTransitions.join(' -> ')}`,
+  );
+
+  await page.getByTestId('project-strip-all').click();
+  const allProjectsSectionTestId = `all-project-section-${projectDir}`;
+  const allProjectsSection = page.getByTestId(allProjectsSectionTestId);
+  await allProjectsSection.waitFor({ state: 'visible', timeout: 30_000 });
+  await allProjectsSection.locator(':scope > div').first().click();
+  await allProjectsSection.getByText('Loading...', { exact: true }).waitFor({ state: 'detached' });
+  await startAllProjectsLoadingSampler(allProjectsSectionTestId);
+
+  const refreshTitle = 'stable-all-projects-refresh';
+  const taskResult = await api('/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ projectId: projectDir, title: refreshTitle }),
+  });
+  await api('/api/worktrees', {
+    method: 'POST',
+    body: JSON.stringify({
+      projectDir,
+      branchSlug: refreshTitle,
+      source: { mode: 'branch-off', baseRef: null },
+      taskId: taskResult.task.id,
+    }),
+  });
+  const refreshTaskRow = allProjectsSection.locator('.task-item-container').filter({ hasText: refreshTitle });
+  await refreshTaskRow.waitFor({ state: 'visible', timeout: 30_000 });
+  const refreshPreparationBadge = refreshTaskRow.getByTestId('task-preparation-badge');
+  await refreshPreparationBadge.waitFor({ state: 'visible', timeout: 30_000 });
+  await refreshPreparationBadge.waitFor({ state: 'detached', timeout: 30_000 });
+  await page.waitForTimeout(250);
+  assert.equal(
+    await stopAllProjectsLoadingSampler(),
+    0,
+    'All Projects replaced its cached sidebar rows with Loading... during Worktree refreshes',
   );
 
   console.log(`Sidebar Worktree title stayed fixed at x=${titlePositions[0]}px during creation.`);

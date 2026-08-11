@@ -27,6 +27,7 @@ import {
 } from '@/lib/projects/origin-project-representation';
 import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { shouldShowAllProjectLoading } from './sidebar-utils';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -122,10 +123,8 @@ function AllProjectSection({
   const color = getProjectColor(project.displayName);
   const collections = useCollectionStore((state) => state.collectionsByProject[project.encodedDir] ?? EMPTY_COLLECTIONS);
   const collectionsLoaded = useCollectionStore((state) => state.loadedProjects[project.encodedDir] ?? false);
-  const collectionsLoading = useCollectionStore((state) => state.loadingProjectIds[project.encodedDir] ?? false);
   const loadTasks = useTaskStore((state) => state.loadTasks);
   const tasksLoaded = useTaskStore((state) => state.loadedProjects[project.encodedDir] ?? false);
-  const tasksLoading = useTaskStore((state) => state.loadingProjectIds[project.encodedDir] ?? false);
   const collapsedCollections = useBoardStore((state) => state.collapsedCollections);
   const toggleCollectionCollapse = useBoardStore((state) => state.toggleCollectionCollapse);
   const isExpanded = useBoardStore((state) => state.allProjectsExpandedSections?.[project.encodedDir] ?? false);
@@ -200,12 +199,12 @@ function AllProjectSection({
 
   const isProjectDragActive = draggingItem?.projectId === project.encodedDir;
   const isProjectGroupDragActive = draggingGroupId?.startsWith(`${project.encodedDir}::`) ?? false;
-  const shouldShowLoading =
-    isExpanded && (
-      isRunningFilterActive
-        ? (!tasksLoaded || tasksLoading)
-        : (!collectionsLoaded || !tasksLoaded || collectionsLoading || tasksLoading)
-    );
+  const shouldShowLoading = shouldShowAllProjectLoading({
+    isExpanded,
+    isRunningFilterActive,
+    collectionsLoaded,
+    tasksLoaded,
+  });
 
   const handleTaskRename = useCallback((taskId: string, newTitle: string) => {
     void useTaskStore.getState().updateTask(taskId, { title: newTitle });
