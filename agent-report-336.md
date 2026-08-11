@@ -15,8 +15,11 @@ The implementation now:
   distinct test IDs;
 - keeps direct-Session unarchive behavior, while not exposing an unsupported task-owned Session
   unarchive in the chat header;
-- adds a focused 180-line browser acceptance test using an isolated database, real setup login,
-  a real managed Worktree, and headless Chromium.
+- adds a focused 188-line browser acceptance test using an isolated database, real setup login,
+  a real managed Worktree, and headless Chromium;
+- synchronizes every UI archive action with its successful Session archive response before the
+  test restores that Session, so an optimistic zero-Session render cannot race a later archive
+  commit and overwrite the restore.
 
 No server/database lifecycle change was needed: the existing Session archive endpoint, workspace
 state mutation boundary, cross-window mutation handling, restore path, and surface-retirement code
@@ -37,6 +40,9 @@ The provider's `$implement` skill was invoked by loading
 
 The browser acceptance then exercised the composite quick action, chat-header action, `/archive`,
 zero-Session persistence, and explicit Worktree Task archive as one vertical lifecycle flow.
+The verification follow-up used the same E2E as the red/green seam: it reproduced the archive versus
+restore ordering race, then proved the response-synchronized flow stable without changing production
+behavior.
 
 ## Exact commands and measured results
 
@@ -52,7 +58,9 @@ zero-Session persistence, and explicit Worktree Task archive as one vertical lif
   - green: 1 passed, 0 failed.
 - Targeted lifecycle command covering six files (`session-archive-client`, adaptive Worktree,
   task-session archive, workspace state, cross-window mutation, and Session lifetime):
-  **44 passed, 0 failed** in 1.625 s.
+  **44 passed, 0 failed** initially. The exact follow-up command was
+  `node --import tsx --test tests/session-archive-client.test.ts tests/adaptive-linked-worktree-navigation.test.tsx tests/task-session-archive.test.ts tests/project-view-workspace-state.test.ts tests/project-view-cross-window-mutation.test.ts tests/project-view-session-lifetime.test.ts`:
+  **44 passed, 0 failed** in 679 ms.
 - Post-review targeted command covering five files: **36 passed, 0 failed** in 0.450 s.
 - `node tests/session-worktree-archive.e2e.mjs`
   - first setup attempt correctly failed with `PROJECT_ENVIRONMENT_MISMATCH` because the isolated
@@ -60,48 +68,65 @@ zero-Session persistence, and explicit Worktree Task archive as one vertical lif
   - after explicitly setting `agentEnvironment: wsl`, it passed twice (before and after review fix);
   - observed three Session PATCHes to `/api/sessions/<id>/archive`, one explicit Task PATCH to
     `/api/archive/tasks/<id>`, and a retained standalone Worktree row after each final-Session archive.
-- `npx tsc --noEmit`: passed with no diagnostics before and after review.
-- `npm run lint`: passed with 0 errors. The first run reported three unrelated existing warnings;
-  the final run completed without diagnostics.
+  - independent orchestration later failed deterministically after the `/archive` case at the old
+    line 128: actual density `standalone`, expected `composite`;
+  - the exact command first passed locally, but
+    `for run_id in 1 2 3 4 5 6; do echo "RUN ${run_id}"; node tests/session-worktree-archive.e2e.mjs || exit 1; done`
+    reproduced the same failure on run 1;
+  - temporary tagged diagnostics showed that after the third restore returned, the authoritative
+    `/api/tasks` response still had zero matching Sessions and the UI did not converge within five
+    seconds. This disproved a DOM-readiness-only theory and identified a late slash-command archive
+    request overwriting the restore. The diagnostics were removed;
+  - after awaiting each archive PATCH response, the exact stability loop
+    `for run_id in 1 2 3 4 5 6 7 8 9 10; do echo "RUN ${run_id}"; node tests/session-worktree-archive.e2e.mjs || exit 1; done`
+    passed **10/10 runs**, exercising 30 successful Session archive/restore cycles.
+- `npx tsc --noEmit`: passed with no diagnostics after the follow-up fix.
+- `npm run lint`: passed with **0 errors and 3 pre-existing warnings** in
+  `preview-markdown.tsx`, `use-virtual-message-list.ts`, and `spawn-cli-runtime.ts`; none are in the
+  issue #336 diff.
 - `node --check tests/session-worktree-archive.e2e.mjs`: passed.
 - `git diff --check`: passed.
-- `graphify update .`: completed after implementation (10,909 nodes / 28,613 edges), then completed
-  again after the review fix with no topology changes.
+- `graphify update .`: completed after implementation and review, then again after the follow-up
+  test fix at **10,921 nodes / 28,624 edges**.
 
 Browser screenshots were captured and visually inspected:
 
-- `.tmp/issue-336-evidence/01-composite-session-action.png` (79,114 bytes)
-- `.tmp/issue-336-evidence/02-zero-session-worktree.png` (56,628 bytes)
-- `.tmp/issue-336-evidence/03-explicit-worktree-task-action.png` (89,312 bytes)
+- `.tmp/issue-336-evidence/01-composite-session-action.png` (79,210 bytes)
+- `.tmp/issue-336-evidence/02-zero-session-worktree.png` (78,347 bytes)
+- `.tmp/issue-336-evidence/03-explicit-worktree-task-action.png` (89,536 bytes)
 
 ## Runtime-specific review
 
-The requested `$code-review` skill was loaded from
-`/home/work/.agents/skills/code-review/SKILL.md`. Fixed point `b656df9` resolved successfully;
-the reviewed command was `git diff b656df9...HEAD`, with commit list initially containing
-`ab9d95d fix(project-view): separate session and task archive (#336)`. The skill's two read-only
-reviewers ran in parallel as `/root/review_standards_336` and `/root/review_spec_336`.
+The requested `$code-review` skill was loaded exactly from
+`/home/work/.agents/skills/code-review/SKILL.md`. Fixed point `b656df9` resolved to
+`b656df9158ba2b48bd8d3f1208feb2cf1f690832`; the reviewed command was
+`git diff b656df9...HEAD`. For the required follow-up review, the commit list was:
+
+- `231447c test(archive): await session mutation before restore (#336)`
+- `b064517 docs: add issue 336 agent report`
+- `efcb0d5 fix(project-view): separate session and task archive (#336)`
+
+The skill's read-only Standards and Spec reviewers ran in parallel as
+`/root/review_standards_336` and `/root/review_spec_336`, using `AGENTS.md`, `CONTRIBUTING.md`, the
+skill's full smell baseline, issue #336, and the agreed issue #328 context.
 
 ### Standards
 
-No hard documented-standards findings. The reviewer found the change focused and consistent with
-existing store/E2E patterns. It noted that command and screenshot evidence was not yet inferable
-from the implementation diff; this report now records both.
+No actionable findings. The reviewer found the diff focused, consistent with existing store and
+browser-test patterns, and correctly verified through the isolated `server.ts` browser flow. It
+found no hard documented-standard violation. A possible small `Middle Man` judgement call was
+explicitly not elevated because the shared helper centralizes canonical Session identity and the
+requested finding filter excludes standalone style preferences.
 
 ### Spec
 
-One P1 acceptance finding: enabling task-owned Session **unarchive** in the header would call the
-generic local `toggleArchive(false)` path, which does not repopulate Task Session summaries in the
-initiating window, while the echoed mutation is ignored. The E2E restore reload masked that path.
+No acceptance-criteria findings and no acceptance-relevant scope creep. The reviewer confirmed the
+Session/Worktree archive separation, zero-Session Worktree preservation, retained-surface retirement
+or read-locking, explicit Task archive semantics, and existing restore/mutation density flow.
 
-Applied resolution: `TaskContextMenu` now permits archive and unarchive callbacks independently;
-the task-owned Session header exposes only the required archive action. Direct Sessions retain their
-existing unarchive callback, and task-owned Session restore remains on Archive Dashboard's existing
-workspace-state restore path. Targeted tests, typecheck, lint, and the browser acceptance all passed
-again afterward.
-
-Review summary: **Standards 0 findings (no worst issue); Spec 1 finding (source-window task-owned
-header unarchive density), resolved.**
+Review summary: **Standards 0 actionable findings (no worst issue); Spec 0 findings (no worst
+issue).** The earlier pre-follow-up review's task-owned header-unarchive finding remains resolved by
+exposing only the required archive action there.
 
 ## What could not be verified
 
@@ -121,4 +146,5 @@ header unarchive density), resolved.**
 ## Commit
 
 Implementation code/tests commit: `efcb0d5d11c58a4e734be4159ab2034d0af9661b`.
-This report is committed separately as the durable handoff.
+E2E synchronization follow-up commit: `231447cba09d6193b1350835eab2037fb07b0095`.
+This report is committed separately as the durable handoff; no push or GitHub mutation was made.
