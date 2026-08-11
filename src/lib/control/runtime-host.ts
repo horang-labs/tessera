@@ -5,6 +5,7 @@ import { configureSharedProviderControlCliBridge } from '@/lib/terminal/shared-p
 import { createControlCliBridgeFactory } from './cli-bridge';
 import { createControlAuthorityRegistry } from './authority';
 import { createDatabaseControlProjectSource } from './database-project-source';
+import { createDatabaseControlAuditHistory } from './database-audit-history';
 import { createDatabaseControlSessionSource } from './database-session-source';
 import { createDatabaseControlWorktreeSource } from './database-worktree-source';
 import { createControlHttpHandler } from './http-handler';
@@ -77,6 +78,7 @@ export async function startControlRuntimeHost(
         appVersion: options.appVersion,
         runtimeId: descriptorHandle.descriptor.runtimeId,
         authority,
+        auditHistory: createDatabaseControlAuditHistory(),
         projects: createDatabaseControlProjectSource(),
         worktrees: createDatabaseControlWorktreeSource(),
         worktreeCreator: createDatabaseControlWorktreeCreator({

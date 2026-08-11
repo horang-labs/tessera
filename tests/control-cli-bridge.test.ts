@@ -21,6 +21,7 @@ import {
   type RuntimeDescriptorHandle,
 } from '../src/lib/control/runtime-descriptor';
 import { createControlService } from '../src/lib/control/service';
+import { createInMemoryControlAuditHistory } from '../src/lib/control/audit';
 import { runControlCli } from './helpers/control-cli-runner';
 
 const REPO_ROOT = process.cwd();
@@ -598,6 +599,7 @@ async function startRuntime(
       appVersion: PACKAGE_VERSION,
       runtimeId: descriptor.descriptor.runtimeId,
       authority,
+      auditHistory: createInMemoryControlAuditHistory(),
       projects: { list: () => [], get: () => undefined },
       worktrees: { list: () => [], get: () => undefined },
     }),

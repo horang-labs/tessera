@@ -23,6 +23,13 @@ import type {
   ControlAuthorityContext,
   ControlAuthoritySource,
 } from './authority';
+import {
+  auditControlMutation,
+  type ControlAuditHistory,
+  type ControlAuditOperation,
+  type ControlAuditTarget,
+  type PublicControlAuditRecord,
+} from './audit';
 
 export type ControlErrorCode =
   | 'BRANCH_REQUIRED'
@@ -268,6 +275,10 @@ export interface ControlService {
   status(context: ControlCallerContext): Promise<ControlStatusDto>;
   listProjects(context: ControlCallerContext): Promise<{ projects: PublicProjectDto[] }>;
   showProject(projectId: string, context: ControlCallerContext): Promise<PublicProjectDto>;
+  listProjectAudit(
+    selector: ControlProjectSelector,
+    context: ControlCallerContext,
+  ): Promise<{ records: PublicControlAuditRecord[] }>;
   listWorktrees(
     selector: ControlProjectSelector,
     context: ControlCallerContext,
@@ -366,6 +377,7 @@ export function createControlService(options: {
   sessionMutator?: ControlSessionMutator;
   sessionObserver?: ControlSessionObserver;
   sessionController?: ControlSessionRuntimeController;
+  auditHistory: ControlAuditHistory;
 }): ControlService {
   const {
     appVersion,
@@ -378,6 +390,7 @@ export function createControlService(options: {
     sessionMutator,
     sessionObserver,
     sessionController,
+    auditHistory,
   } = options;
 
   return {
@@ -419,6 +432,21 @@ export function createControlService(options: {
       return toPublicProject(project, caller);
     },
 
+    async listProjectAudit(selector, context) {
+      const caller = requireControlAuthority(authority, context);
+      const projectId = resolveSelectedProjectId(selector, caller);
+      requireProjectScope(projectId, caller);
+      if (!projects.get(projectId)) {
+        throw new ControlOperationError(
+          'PROJECT_NOT_FOUND',
+          'The requested Project does not exist.',
+          404,
+          { projectId },
+        );
+      }
+      return { records: await auditHistory.list(projectId) };
+    },
+
     async listWorktrees(selector, context) {
       const caller = requireControlAuthority(authority, context);
       const projectId = resolveSelectedProjectId(selector, caller);
@@ -446,88 +474,96 @@ export function createControlService(options: {
     async createWorktree(request, context) {
       const caller = requireControlAuthority(authority, context);
       const projectId = resolveSelectedProjectId(request.selector, caller);
-      requireProjectScope(projectId, caller);
-      if (!request.branch || !request.branch.trim()) {
-        throw new ControlOperationError(
-          'BRANCH_REQUIRED',
-          'A new Worktree branch is required.',
-          400,
-        );
-      }
-      if (!request.startPoint || !request.startPoint.trim()) {
-        throw new ControlOperationError(
-          'START_POINT_REQUIRED',
-          'A Worktree start point is required.',
-          400,
-        );
-      }
-      if (request.title !== undefined && !request.title.trim()) {
-        throw new ControlOperationError(
-          'INVALID_USAGE',
-          'A Worktree title must not be empty.',
-          400,
-        );
-      }
-
-      const project = projects.get(projectId);
-      if (!project) {
-        throw new ControlOperationError(
-          'PROJECT_NOT_FOUND',
-          'The requested Project does not exist.',
-          404,
-          { projectId },
-        );
-      }
-      const compatibility = validateProjectEnvironment(
-        project.decodedPath,
-        caller.agentEnvironment,
-      );
-      if (!compatibility.ok) {
-        throw new ControlOperationError(
-          'PROJECT_ENVIRONMENT_MISMATCH',
-          compatibility.error ?? 'The Project is not compatible with the caller environment.',
-          400,
-          {
-            projectId,
-            agentEnvironment: caller.agentEnvironment,
-            filesystemKind: compatibility.filesystemKind,
-          },
-        );
-      }
-      if (!worktreeCreator) {
-        throw new ControlOperationError(
-          'INSTANCE_UNAVAILABLE',
-          'This Tessera runtime cannot create Worktrees.',
-          503,
-        );
-      }
-
-      let created: ControlCreatedWorktreeRecord;
-      try {
-        created = await worktreeCreator.create({
-          project,
-          branch: request.branch,
-          startPoint: request.startPoint,
-          ...(request.source === undefined ? {} : { source: request.source }),
-          ...(request.title === undefined ? {} : { title: request.title }),
-        });
-      } catch (error) {
-        if (!(error instanceof ControlWorktreeCreationError)) throw error;
-        const details = error.worktree && error.startPoint
-          ? {
-              ...error.details,
-              worktree: {
-                ...toPublicWorktree(error.worktree, caller),
-                startPoint: error.startPoint,
+      return auditProjectMutation(
+        auditHistory,
+        caller,
+        'worktree.create',
+        { kind: 'project', id: projectId },
+        async () => {
+          requireProjectScope(projectId, caller);
+          const project = projects.get(projectId);
+          if (!project) {
+            throw new ControlOperationError(
+              'PROJECT_NOT_FOUND',
+              'The requested Project does not exist.',
+              404,
+              { projectId },
+            );
+          }
+          if (!request.branch || !request.branch.trim()) {
+            throw new ControlOperationError(
+              'BRANCH_REQUIRED',
+              'A new Worktree branch is required.',
+              400,
+            );
+          }
+          if (!request.startPoint || !request.startPoint.trim()) {
+            throw new ControlOperationError(
+              'START_POINT_REQUIRED',
+              'A Worktree start point is required.',
+              400,
+            );
+          }
+          if (request.title !== undefined && !request.title.trim()) {
+            throw new ControlOperationError(
+              'INVALID_USAGE',
+              'A Worktree title must not be empty.',
+              400,
+            );
+          }
+          const compatibility = validateProjectEnvironment(
+            project.decodedPath,
+            caller.agentEnvironment,
+          );
+          if (!compatibility.ok) {
+            throw new ControlOperationError(
+              'PROJECT_ENVIRONMENT_MISMATCH',
+              compatibility.error ?? 'The Project is not compatible with the caller environment.',
+              400,
+              {
+                projectId,
+                agentEnvironment: caller.agentEnvironment,
+                filesystemKind: compatibility.filesystemKind,
               },
-            }
-          : error.details;
-        throw new ControlOperationError(error.code, error.message, error.httpStatus, details);
-      }
-      return {
-        ...toPublicWorktree(created.worktree, caller),
-        startPoint: created.startPoint,
-      };
+            );
+          }
+          if (!worktreeCreator) {
+            throw new ControlOperationError(
+              'INSTANCE_UNAVAILABLE',
+              'This Tessera runtime cannot create Worktrees.',
+              503,
+            );
+          }
+
+          let created: ControlCreatedWorktreeRecord;
+          try {
+            created = await worktreeCreator.create({
+              project,
+              branch: request.branch,
+              startPoint: request.startPoint,
+              ...(request.source === undefined ? {} : { source: request.source }),
+              ...(request.title === undefined ? {} : { title: request.title }),
+            });
+          } catch (error) {
+            if (!(error instanceof ControlWorktreeCreationError)) throw error;
+            const details = error.worktree && error.startPoint
+              ? {
+                  ...error.details,
+                  worktree: {
+                    ...toPublicWorktree(error.worktree, caller),
+                    startPoint: error.startPoint,
+                  },
+                }
+              : error.details;
+            throw new ControlOperationError(error.code, error.message, error.httpStatus, details);
+          }
+          return {
+            ...toPublicWorktree(created.worktree, caller),
+            startPoint: created.startPoint,
+          };
+        },
+        (created) => ({ kind: 'worktree', id: created.worktreeId }),
+      );
     },
 
     async listSessions(worktreeId, context) {
@@ -547,39 +583,67 @@ export function createControlService(options: {
 
     async createSession(request, context) {
       const caller = requireControlAuthority(authority, context);
-      requireScopedWorktree(worktrees, request.worktreeId, caller);
-      const support = requireSessionSupport(sessions, sessionMutator);
-      validateSessionCreationRequest(request);
-      return toPublicSession(await support.mutator.create(request));
+      return toPublicSession(await auditProjectMutation(
+        auditHistory,
+        caller,
+        'session.create',
+        { kind: 'worktree', id: request.worktreeId },
+        async () => {
+          requireScopedWorktree(worktrees, request.worktreeId, caller);
+          const support = requireSessionSupport(sessions, sessionMutator);
+          validateSessionCreationRequest(request);
+          return support.mutator.create(request);
+        },
+        (created) => ({ kind: 'session', id: created.sessionId }),
+      ));
     },
 
     async startSession(request, context) {
       const caller = requireControlAuthority(authority, context);
-      const support = requireSessionSupport(sessions, sessionMutator);
-      const session = requireScopedSession(support.sessions, request.sessionId, caller);
-      const launched = await support.mutator.start(request);
-      return { session: toPublicSession(session), terminalId: launched.terminalId };
+      const target = { kind: 'session' as const, id: request.sessionId };
+      return auditProjectMutation(
+        auditHistory,
+        caller,
+        'session.start',
+        target,
+        async () => {
+          const support = requireSessionSupport(sessions, sessionMutator);
+          const session = requireScopedSession(support.sessions, request.sessionId, caller);
+          const launched = await support.mutator.start(request);
+          return { session: toPublicSession(session), terminalId: launched.terminalId };
+        },
+      );
     },
 
     async launchSession(request, context) {
       const caller = requireControlAuthority(authority, context);
-      requireScopedWorktree(worktrees, request.worktreeId, caller);
-      const support = requireSessionSupport(sessions, sessionMutator);
-      validateSessionCreationRequest(request);
-      const created = await support.mutator.create(request);
-      try {
-        const launched = await support.mutator.start({
-          sessionId: created.sessionId,
-          initialPrompt: request.initialPrompt,
-          allowPreparationFailure: request.allowPreparationFailure,
-        });
-        return { session: toPublicSession(created), terminalId: launched.terminalId };
-      } catch (error) {
-        if (!(error instanceof ControlSessionStartError) || !error.runtimeOwned) {
-          await support.mutator.removeCreated(created.sessionId);
-        }
-        throw error;
-      }
+      let target: ControlAuditTarget = { kind: 'worktree', id: request.worktreeId };
+      return auditProjectMutation(
+        auditHistory,
+        caller,
+        'session.launch',
+        () => target,
+        async () => {
+          requireScopedWorktree(worktrees, request.worktreeId, caller);
+          const support = requireSessionSupport(sessions, sessionMutator);
+          validateSessionCreationRequest(request);
+          const created = await support.mutator.create(request);
+          target = { kind: 'session', id: created.sessionId };
+          try {
+            const launched = await support.mutator.start({
+              sessionId: created.sessionId,
+              initialPrompt: request.initialPrompt,
+              allowPreparationFailure: request.allowPreparationFailure,
+            });
+            return { session: toPublicSession(created), terminalId: launched.terminalId };
+          } catch (error) {
+            if (!(error instanceof ControlSessionStartError) || !error.runtimeOwned) {
+              await support.mutator.removeCreated(created.sessionId);
+            }
+            throw error;
+          }
+        },
+      );
     },
 
     async readSession(sessionId, context) {
@@ -617,38 +681,65 @@ export function createControlService(options: {
 
     async promptSession(request, context) {
       const caller = requireControlAuthority(authority, context);
-      const controller = requireSessionController(sessions, sessionController);
-      requireScopedSession(controller.sessions, request.sessionId, caller);
-      if (!request.text.trim()) {
-        throw new ControlOperationError(
-          'INPUT_NOT_ACCEPTED',
-          'The Session prompt must not be empty.',
-          409,
-          { sessionId: request.sessionId },
-        );
-      }
-      return controller.controller.prompt(request.sessionId, request.text);
+      const target = { kind: 'session' as const, id: request.sessionId };
+      return auditProjectMutation(
+        auditHistory,
+        caller,
+        'session.prompt',
+        target,
+        async () => {
+          const controller = requireSessionController(sessions, sessionController);
+          requireScopedSession(controller.sessions, request.sessionId, caller);
+          if (!request.text.trim()) {
+            throw new ControlOperationError(
+              'INPUT_NOT_ACCEPTED',
+              'The Session prompt must not be empty.',
+              409,
+              { sessionId: request.sessionId },
+            );
+          }
+          return controller.controller.prompt(request.sessionId, request.text);
+        },
+      );
     },
 
     async sendSessionKeys(request, context) {
       const caller = requireControlAuthority(authority, context);
-      const controller = requireSessionController(sessions, sessionController);
-      requireScopedSession(controller.sessions, request.sessionId, caller);
-      if (request.keys.length === 0 || !request.keys.every(isTerminalNamedKey)) {
-        throw new ControlOperationError(
-          'INVALID_USAGE',
-          'At least one supported Session key is required.',
-          400,
-        );
-      }
-      return controller.controller.sendKeys(request.sessionId, request.keys);
+      const target = { kind: 'session' as const, id: request.sessionId };
+      return auditProjectMutation(
+        auditHistory,
+        caller,
+        'session.send-keys',
+        target,
+        async () => {
+          const controller = requireSessionController(sessions, sessionController);
+          requireScopedSession(controller.sessions, request.sessionId, caller);
+          if (request.keys.length === 0 || !request.keys.every(isTerminalNamedKey)) {
+            throw new ControlOperationError(
+              'INVALID_USAGE',
+              'At least one supported Session key is required.',
+              400,
+            );
+          }
+          return controller.controller.sendKeys(request.sessionId, request.keys);
+        },
+      );
     },
 
     async stopSession(sessionId, context) {
       const caller = requireControlAuthority(authority, context);
-      const controller = requireSessionController(sessions, sessionController);
-      requireScopedSession(controller.sessions, sessionId, caller);
-      return controller.controller.stop(sessionId);
+      const target = { kind: 'session' as const, id: sessionId };
+      return auditProjectMutation(
+        auditHistory,
+        caller,
+        'session.stop',
+        target,
+        async () => {
+          const controller = requireSessionController(sessions, sessionController);
+          requireScopedSession(controller.sessions, sessionId, caller);
+          return controller.controller.stop(sessionId);
+        },
+      );
     },
   };
 }
@@ -663,6 +754,35 @@ function requireControlAuthority(
     'CONTROL_AUTHORITY_DENIED',
     'The caller does not have active Tessera Control authority.',
     403,
+  );
+}
+
+function publicAuditFailureCode(error: unknown): string | undefined {
+  return error instanceof ControlOperationError ? error.code : undefined;
+}
+
+function auditProjectMutation<T>(
+  history: ControlAuditHistory,
+  caller: ControlAuthorityContext,
+  operation: ControlAuditOperation,
+  target: ControlAuditTarget | (() => ControlAuditTarget),
+  mutation: () => Promise<T>,
+  successTarget?: (result: T) => ControlAuditTarget,
+): Promise<T> {
+  const resolveTarget = (): ControlAuditTarget => (
+    typeof target === 'function' ? target() : target
+  );
+  return auditControlMutation(
+    history,
+    {
+      projectId: caller.projectId,
+      sourceSessionId: caller.sessionId,
+      operation,
+      failureTarget: resolveTarget,
+      successTarget: successTarget ?? resolveTarget,
+      failureCode: publicAuditFailureCode,
+    },
+    mutation,
   );
 }
 

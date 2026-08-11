@@ -11,6 +11,7 @@ import {
   isValidBearerToken,
 } from '../src/lib/control/http-handler';
 import { createControlAuthorityRegistry } from '../src/lib/control/authority';
+import { createInMemoryControlAuditHistory } from '../src/lib/control/audit';
 import type { RuntimeDescriptor } from '../src/lib/control/runtime-descriptor';
 import { createControlService } from '../src/lib/control/service';
 
@@ -45,6 +46,7 @@ test('every Control request authenticates and negotiates the exact runtime and v
     appVersion: DESCRIPTOR.appVersion,
     runtimeId: DESCRIPTOR.runtimeId,
     authority,
+    auditHistory: createInMemoryControlAuditHistory(),
     projects: { list: () => [], get: () => undefined },
     worktrees: { list: () => [], get: () => undefined },
   });
