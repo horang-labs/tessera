@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
 import type { Tab } from '@/types/tab';
@@ -309,17 +310,8 @@ export const TabItem = memo(function TabItem({
   // Unread indicator — any session in this tab has unreadCount > 0.
   // Active panel's unread is auto-cleared by panel-wrapper; this surfaces
   // unread in inactive panels (same tab) and any panel of inactive tabs.
-  const hasUnread = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return panelSessionIds.split(',').some((id) => {
-          const s = state.getSession(id);
-          return s ? (s.unreadCount ?? 0) > 0 : false;
-        });
-      },
-      [panelSessionIds],
-    ),
+  const hasUnread = useAnyProjectViewSessionUnread(
+    panelSessionIds ? panelSessionIds.split(',') : [],
   );
 
   // Mirror ItemStatusIndicator's own priority so the label/testid describe the

@@ -1191,7 +1191,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   // Unread count actions
-  incrementUnreadCount: (sessionId) =>
+  incrementUnreadCount: (sessionId) => {
+    const nextUnreadCount = (get().getSession(sessionId)?.unreadCount ?? 0) + 1;
     set((state) => ({
       // Notification handlers already decide whether the session is visibly
       // active. Re-checking the hidden tab's activeSessionId here breaks
@@ -1209,9 +1210,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionId,
         (session) => ({ ...session, unreadCount: (session.unreadCount || 0) + 1 }),
       ),
-    })),
+    }));
+    useTaskStore.getState().setLinkedSessionUnreadCount(sessionId, nextUnreadCount);
+  },
 
-  clearUnreadCount: (sessionId) =>
+  clearUnreadCount: (sessionId) => {
     set((state) => ({
       projects: state.projects.map((project) => ({
         ...project,
@@ -1224,7 +1227,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionId,
         (session) => ({ ...session, unreadCount: 0 }),
       ),
-    })),
+    }));
+    useTaskStore.getState().setLinkedSessionUnreadCount(sessionId, 0);
+  },
 
   // Task workflow actions
   updateLinkedTaskWorkflowStatus: (sessionId, workflowStatus) => {

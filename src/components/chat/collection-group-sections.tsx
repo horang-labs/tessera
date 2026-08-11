@@ -21,6 +21,10 @@ import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useInlineRename } from '@/hooks/use-inline-rename';
 import { useSubSessionCap } from '@/hooks/use-sub-session-cap';
 import { useSubSessionReorder } from '@/hooks/use-sub-session-reorder';
+import {
+  useAnyProjectViewSessionUnread,
+  useProjectViewSessionUnread,
+} from '@/hooks/use-project-view-session-unread';
 import { setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { cn } from '@/lib/utils';
@@ -507,25 +511,13 @@ function SubSessionRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
-  const liveSession = useSessionStore((state) => {
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return session;
-    }
-    return undefined;
-  });
+  const liveSession = useSessionStore((state) => state.getSession(sess.id));
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? sess.kind,
     isRunning: liveSession?.isRunning ?? sess.isRunning,
   });
-  const hasUnread = useSessionStore((state) => {
-    if (isActive) return false;
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return (session.unreadCount ?? 0) > 0;
-    }
-    return false;
-  });
+  const hasCanonicalUnread = useProjectViewSessionUnread(sess.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const asUnifiedSession = useCallback(
     () => toLinkedWorktreeSession(task, sess, liveSession),
     [liveSession, sess, task],
@@ -825,13 +817,10 @@ export function TaskItemRow({
   const taskSessionIds = task.sessions.map((session) => session.id);
   const hasVisibleRuntimeSession = useSessionStore((state) =>
     taskSessionIds.some((id) => {
-      for (const project of state.projects) {
-        const session = project.sessions.find((item) => item.id === id);
-        if (session) return resolveSessionRuntimePresentation(session).showRunning;
-      }
       const snapshot = task.sessions.find((session) => session.id === id);
-      return snapshot
-        ? resolveSessionRuntimePresentation(snapshot).showRunning
+      const session = state.getSession(id) ?? snapshot;
+      return session
+        ? resolveSessionRuntimePresentation(session).showRunning
         : false;
     }),
   );
@@ -840,17 +829,11 @@ export function TaskItemRow({
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
-  const hasUnreadSession = useSessionStore((state) =>
-    !isTaskActive &&
-    taskSessionIds.some((id) => {
-      if (id === activeSessionId) return false;
-      for (const project of state.projects) {
-        const session = project.sessions.find((item) => item.id === id);
-        if (session) return (session.unreadCount ?? 0) > 0;
-      }
-      return false;
-    }),
+  const hasCanonicalUnreadSession = useAnyProjectViewSessionUnread(
+    taskSessionIds,
+    activeSessionId,
   );
+  const hasUnreadSession = !isTaskActive && hasCanonicalUnreadSession;
   const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasVisibleRuntimeSession;
   const {
     inputRef: renameInputRef,
@@ -1358,7 +1341,8 @@ export function ChatItemRow({
   // rows already carry the bubble in the leading slot instead.
   const showTrailingDiff = !!session.diffStats && session.diffStats.changedFiles > 0;
   const showTrailingBubble = showProviderIcons;
-  const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
+  const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
     isConfirmingArchive,

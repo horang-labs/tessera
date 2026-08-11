@@ -80,8 +80,8 @@ test('live replay events mark background popout cards as processing', () => {
 
 test('mark-as-read broadcasts clear unread state to board popouts', () => {
   assert.match(clientMessageHandlersSource, /case 'unread_cleared':\s*sessionStore\.clearUnreadCount\(msg\.sessionId\);\s*useNotificationStore\.getState\(\)\.markSessionAsRead\(msg\.sessionId\);/);
-  assert.match(panelWrapperSource, /wsClient\.sendMarkAsRead\(sessionId\);/);
-  assert.match(panelWrapperSource, /sessionUnreadCount <= 0/);
+  assert.match(panelWrapperSource, /projectViewWorkspaceState\.markSessionRead\(sessionId\);/);
+  assert.match(panelWrapperSource, /!hasSessionUnread/);
   assert.match(sessionClickHandlersSource, /\(session\.unreadCount \?\? 0\) > 0/);
   assert.match(sessionClickHandlersSource, /wsClient\.sendMarkAsRead\(session\.id\);/);
   assert.match(notificationCenterSource, /wsClient\.sendMarkAsRead\(sessionId\);/);

@@ -18,7 +18,10 @@ import {
 } from '@/hooks/use-session-awaiting-user';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
-import { useNotificationStore } from '@/stores/notification-store';
+import {
+  useAnyProjectViewSessionUnread,
+  useProjectViewSessionUnread,
+} from '@/hooks/use-project-view-session-unread';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
@@ -188,19 +191,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   // board→scope→column 경유라, 완료 시 terminal-session-store(isProcessing) 리렌더와
   // board 리렌더 타이밍이 어긋나면 낡은 값을 읽어 unread를 놓친다(칸반 카드는 memo).
   // 리스트뷰가 쓰는 것과 같은 직접 구독으로 타이밍을 일치시킨다.
-  const liveUnreadCount = useSessionStore((state) => {
-    for (const project of state.projects) {
-      const s = project.sessions.find((item) => item.id === session.id);
-      if (s) return s.unreadCount ?? 0;
-    }
-    return session.unreadCount ?? 0;
-  });
-  const hasUnreadNotification = useNotificationStore((state) =>
-    state.notifications.some((notification) =>
-      notification.sessionId === session.id && !notification.read
-    )
-  );
-  const hasUnread = !isActive && (liveUnreadCount > 0 || hasUnreadNotification);
+  const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const runtimePresentation = resolveSessionRuntimePresentation(session);
   const visibleUnread = session.kind === 'terminal' && isProcessing ? false : hasUnread;
   const stripeClass = isAwaitingUser
@@ -651,13 +643,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   }, [liveProjects]);
   const hasVisibleRuntimeSession = useSessionStore((state) =>
     taskSessionIds.some((id) => {
-      for (const p of state.projects) {
-        const s = p.sessions.find((ss) => ss.id === id);
-        if (s) return resolveSessionRuntimePresentation(s).showRunning;
-      }
       const snapshot = task.sessions.find((session) => session.id === id);
-      return snapshot
-        ? resolveSessionRuntimePresentation(snapshot).showRunning
+      const session = state.getSession(id) ?? snapshot;
+      return session
+        ? resolveSessionRuntimePresentation(session).showRunning
         : false;
     })
   );
@@ -670,24 +659,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   // 제거한다. multi-session task에서 한 세션이 활성이면 다른 완료+안읽음 세션의 unread가
   // 다 숨겨져 초록 running 스트라이프로 밀리던 버그(리스트뷰는 단일세션+활성일 때만
   // 억제해 이 문제가 없었다). 활성 세션 자체는 아래 개별 제외로 이미 빠진다.
-  const hasUnreadSession = useSessionStore((state) =>
-    taskSessionIds.some((id) => {
-      if (id === activeSessionId) return false;
-      for (const p of state.projects) {
-        const s = p.sessions.find((ss) => ss.id === id);
-        if (s) return (s.unreadCount ?? 0) > 0;
-      }
-      return false;
-    })
+  const hasVisibleTaskUnread = useAnyProjectViewSessionUnread(
+    taskSessionIds,
+    activeSessionId,
   );
-  const hasUnreadNotification = useNotificationStore((state) =>
-    state.notifications.some((notification) =>
-      notification.sessionId !== activeSessionId
-      && taskSessionIds.includes(notification.sessionId)
-      && !notification.read
-    )
-  );
-  const hasVisibleTaskUnread = hasUnreadSession || hasUnreadNotification;
   const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasVisibleTaskUnread || hasVisibleRuntimeSession;
 
   // PTY turn processing is the live state and outranks stale unread. Once the
@@ -1259,13 +1234,8 @@ function KanbanSubSessionItem({
     kind: liveSession?.kind ?? session.kind,
     isRunning: liveIsRunning,
   });
-  const liveUnreadCount = liveSession?.unreadCount ?? 0;
-  const hasUnreadNotification = useNotificationStore((state) =>
-    state.notifications.some((notification) =>
-      notification.sessionId === session.id && !notification.read
-    )
-  );
-  const hasLiveUnread = !isActive && (liveUnreadCount > 0 || hasUnreadNotification);
+  const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
+  const hasLiveUnread = !isActive && hasCanonicalUnread;
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const displayTitle = liveSession?.title ?? session.title;
   const isArchived = liveSession?.archived ?? false;

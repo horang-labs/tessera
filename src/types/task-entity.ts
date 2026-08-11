@@ -101,6 +101,8 @@ export interface TaskSession {
   provider?: string;
   lastModified: string;
   isRunning: boolean;
+  /** Live canonical unread state when the Session is present in client workspace state. */
+  unreadCount?: number;
   /** Fixed execution surface inherited from the linked session. */
   kind?: 'chat' | 'terminal';
   /**
