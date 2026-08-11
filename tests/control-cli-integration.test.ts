@@ -270,7 +270,7 @@ test('the CLI lists and shows zero-session Worktrees through exact selectors', a
       '--control-descriptor', runtime.descriptor.path,
     ]);
     assert.equal(legacyId.code, 1);
-    assert.equal(JSON.parse(legacyId.stdout).error.code, 'WORKTREE_NOT_FOUND');
+    assert.equal(JSON.parse(legacyId.stdout).error.code, 'CONTROL_AUTHORITY_DENIED');
   } finally {
     await runtime.close();
     await fs.rm(testRoot, { recursive: true, force: true });
@@ -1018,8 +1018,8 @@ async function startRuntime(
         return controlSnapshot('exited');
       },
     },
-  };
-  const service = createControlService(serviceOptions as Parameters<typeof createControlService>[0]);
+  } satisfies Parameters<typeof createControlService>[0];
+  const service = createControlService(serviceOptions);
   requestHandler = createControlHttpHandler({ descriptor: descriptor.descriptor, service });
 
   return {

@@ -180,7 +180,7 @@ test('Worktree reads use exact public IDs and expose caller-readable public DTOs
   await assert.rejects(
     service.showWorktree('legacy-internal-id', context),
     (error: unknown) => error instanceof ControlOperationError
-      && error.code === 'WORKTREE_NOT_FOUND',
+      && error.code === 'CONTROL_AUTHORITY_DENIED',
   );
 });
 

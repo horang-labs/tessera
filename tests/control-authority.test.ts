@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createControlAuthorityRegistry } from '../src/lib/control/authority';
 import {
+  ControlOperationError,
   createControlService,
   type ControlProjectRecord,
   type ControlSessionRecord,
@@ -128,7 +129,7 @@ test('an already-running degraded Session retains authority until its runtime gr
   };
   // Hook health is deliberately not an authority-registry input: an existing
   // degraded runtime keeps this grant, while an external runtime has none.
-  assert.equal((await service.status(managedContext)).callerContext?.sessionId, 'managed-session');
+  assert.equal((await service.status(managedContext)).callerContext.sessionId, 'managed-session');
 
   grant.revoke();
   await assert.rejects(
@@ -197,7 +198,7 @@ test('a child Session launched through Control receives independent Project-scop
     agentEnvironment: 'native' as const,
     authorityToken: childGrant.token,
   };
-  assert.equal((await service.status(childContext)).callerContext?.sessionId, 'child-session');
+  assert.equal((await service.status(childContext)).callerContext.sessionId, 'child-session');
   await assert.rejects(service.showProject(PROJECT_TWO.id, childContext), isAuthorityDenied);
 });
 
@@ -311,6 +312,64 @@ test('every cross-Project Control read and mutation returns one stable denial', 
   assert.equal(mutationCalls, 0);
 });
 
+test('foreign and unknown Worktree and Session IDs are publicly indistinguishable', async () => {
+  const authority = createControlAuthorityRegistry();
+  const grant = authority.grant({
+    agentEnvironment: 'native',
+    projectId: PROJECT_ONE.id,
+    sessionId: 'caller-session',
+  });
+  const service = createControlService({
+    appVersion: '1.0.0',
+    runtimeId: 'runtime-one',
+    authority,
+    projects: {
+      list: () => [PROJECT_ONE, PROJECT_TWO],
+      get: (projectId) => [PROJECT_ONE, PROJECT_TWO].find(
+        (project) => project.id === projectId,
+      ),
+    },
+    worktrees: {
+      list: (projectId) => [WORKTREE_ONE, WORKTREE_TWO].filter(
+        (worktree) => worktree.projectId === projectId,
+      ),
+      get: (worktreeId) => [WORKTREE_ONE, WORKTREE_TWO].find(
+        (worktree) => worktree.worktreeId === worktreeId,
+      ),
+    },
+    sessions: {
+      list: (worktreeId) => [SESSION_ONE, SESSION_TWO].filter(
+        (session) => session.worktreeId === worktreeId,
+      ),
+      get: (sessionId) => [SESSION_ONE, SESSION_TWO].find(
+        (session) => session.sessionId === sessionId,
+      ),
+    },
+    sessionMutator: {
+      create: async () => SESSION_ONE,
+      start: async () => ({ terminalId: 'terminal-one' }),
+      removeCreated: async () => {},
+    },
+  });
+  const context = { agentEnvironment: 'native' as const, authorityToken: grant.token };
+
+  const [foreignWorktree, unknownWorktree, foreignSession, unknownSession] = await Promise.all([
+    captureControlError(() => service.showWorktree(WORKTREE_TWO.worktreeId, context)),
+    captureControlError(() => service.showWorktree('worktree-unknown', context)),
+    captureControlError(() => service.showSession(SESSION_TWO.sessionId, context)),
+    captureControlError(() => service.showSession('session-unknown', context)),
+  ]);
+
+  assert.deepEqual(publicError(foreignWorktree), publicError(unknownWorktree));
+  assert.deepEqual(publicError(foreignSession), publicError(unknownSession));
+  assert.deepEqual(publicError(foreignWorktree), {
+    code: 'CONTROL_AUTHORITY_DENIED',
+    message: 'The requested resource is outside the caller Project scope.',
+    httpStatus: 403,
+    details: {},
+  });
+});
+
 function terminalSnapshot() {
   return {
     screen: '',
@@ -330,4 +389,23 @@ function isAuthorityDenied(error: unknown): boolean {
     && error.code === 'CONTROL_AUTHORITY_DENIED'
     && 'httpStatus' in error
     && error.httpStatus === 403;
+}
+
+async function captureControlError(attempt: () => Promise<unknown>): Promise<ControlOperationError> {
+  try {
+    await attempt();
+  } catch (error) {
+    if (error instanceof ControlOperationError) return error;
+    throw error;
+  }
+  throw new Error('Expected a Control operation failure.');
+}
+
+function publicError(error: ControlOperationError) {
+  return {
+    code: error.code,
+    message: error.message,
+    httpStatus: error.httpStatus,
+    details: error.details,
+  };
 }

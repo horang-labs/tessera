@@ -29,7 +29,6 @@ export type ControlErrorCode =
   | 'BRANCH_ALREADY_EXISTS'
   | 'BRANCH_ALREADY_CHECKED_OUT'
   | 'BRANCH_NOT_FOUND'
-  | 'CALLER_CONTEXT_UNAVAILABLE'
   | 'CONTROL_AUTHORITY_DENIED'
   | 'CONTROL_VERSION_MISMATCH'
   | 'INSTANCE_UNAVAILABLE'
@@ -259,10 +258,13 @@ export interface ControlStatusDto {
   controlVersion: typeof CONTROL_API_VERSION;
   instanceId: string;
   connectionState: 'connected';
-  callerContext: Omit<ControlCallerContext, 'agentEnvironment'> | null;
+  callerContext: PublicControlCallerContext;
 }
 
+export type PublicControlCallerContext = Omit<ControlAuthorityContext, 'agentEnvironment'>;
+
 export interface ControlService {
+  assertAuthority(context: ControlCallerContext): void;
   status(context: ControlCallerContext): Promise<ControlStatusDto>;
   listProjects(context: ControlCallerContext): Promise<{ projects: PublicProjectDto[] }>;
   showProject(projectId: string, context: ControlCallerContext): Promise<PublicProjectDto>;
@@ -379,6 +381,10 @@ export function createControlService(options: {
   } = options;
 
   return {
+    assertAuthority(context) {
+      requireControlAuthority(authority, context);
+    },
+
     async status(context) {
       const caller = requireControlAuthority(authority, context);
       return {
@@ -665,24 +671,14 @@ function requireProjectScope(
   authority: ControlAuthorityContext,
 ): void {
   if (projectId === authority.projectId) return;
+  throwOutsideProjectScope();
+}
+
+function throwOutsideProjectScope(): never {
   throw new ControlOperationError(
     'CONTROL_AUTHORITY_DENIED',
     'The requested resource is outside the caller Project scope.',
     403,
-  );
-}
-
-function requireWorktree(
-  worktrees: ControlWorktreeSource,
-  worktreeId: string,
-): ControlWorktreeRecord {
-  const worktree = worktrees.get(worktreeId);
-  if (worktree) return worktree;
-  throw new ControlOperationError(
-    'WORKTREE_NOT_FOUND',
-    'The requested Worktree does not exist.',
-    404,
-    { worktreeId },
   );
 }
 
@@ -691,8 +687,8 @@ function requireScopedWorktree(
   worktreeId: string,
   authority: ControlAuthorityContext,
 ): ControlWorktreeRecord {
-  const worktree = requireWorktree(worktrees, worktreeId);
-  requireProjectScope(worktree.projectId, authority);
+  const worktree = worktrees.get(worktreeId);
+  if (!worktree || worktree.projectId !== authority.projectId) throwOutsideProjectScope();
   return worktree;
 }
 
@@ -739,27 +735,13 @@ function isSessionWaitCondition(value: unknown): value is TerminalSessionWaitCon
     || value === 'runtime-exit';
 }
 
-function requireSession(
-  sessions: ControlSessionSource,
-  sessionId: string,
-): ControlSessionRecord {
-  const session = sessions.get(sessionId);
-  if (session) return session;
-  throw new ControlOperationError(
-    'SESSION_NOT_FOUND',
-    'The requested Session does not exist.',
-    404,
-    { sessionId },
-  );
-}
-
 function requireScopedSession(
   sessions: ControlSessionSource,
   sessionId: string,
   authority: ControlAuthorityContext,
 ): ControlSessionRecord {
-  const session = requireSession(sessions, sessionId);
-  requireProjectScope(session.projectId, authority);
+  const session = sessions.get(sessionId);
+  if (!session || session.projectId !== authority.projectId) throwOutsideProjectScope();
   return session;
 }
 
@@ -840,23 +822,17 @@ function resolveSelectedProjectId(
   selector: ControlProjectSelector,
   context: Pick<ControlAuthorityContext, 'projectId'>,
 ): string {
-  if (selector.kind === 'project') return selector.projectId;
-  if (context.projectId) return context.projectId;
-  throw new ControlOperationError(
-    'CALLER_CONTEXT_UNAVAILABLE',
-    'The current Project is unavailable outside a managed caller context.',
-    400,
-  );
+  return selector.kind === 'project' ? selector.projectId : context.projectId;
 }
 
 function publicCallerContext(
-  context: ControlCallerContext,
-): Omit<ControlCallerContext, 'agentEnvironment'> | null {
-  const callerContext: Omit<ControlCallerContext, 'agentEnvironment'> = {};
-  if (context.projectId) callerContext.projectId = context.projectId;
-  if (context.sessionId) callerContext.sessionId = context.sessionId;
-  if (context.worktreeId) callerContext.worktreeId = context.worktreeId;
-  return Object.keys(callerContext).length > 0 ? callerContext : null;
+  context: ControlAuthorityContext,
+): PublicControlCallerContext {
+  return {
+    projectId: context.projectId,
+    sessionId: context.sessionId,
+    ...(context.worktreeId ? { worktreeId: context.worktreeId } : {}),
+  };
 }
 
 function toPublicProject(

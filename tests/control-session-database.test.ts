@@ -167,7 +167,7 @@ test('the database adapter persists Worktree-owned PTY Sessions and broadcasts r
           { agentEnvironment: 'native', authorityToken: grant.token },
         ),
         (error: unknown) => error instanceof ControlOperationError
-          && error.code === 'SESSION_NOT_FOUND',
+          && error.code === 'CONTROL_AUTHORITY_DENIED',
       );
     }
     assert.equal(launchRequests.length, launchCountBeforeRejectedStarts);

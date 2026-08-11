@@ -129,12 +129,57 @@ test('every Control request authenticates and negotiates the exact runtime and v
       message: 'The caller does not have active Tessera Control authority.',
       details: {},
     });
+
+    const malformedOutsideTessera = await postJson(
+      origin,
+      '/__tessera/control/v1/sessions',
+      {
+        authorization: `Bearer ${TOKEN}`,
+        [CONTROL_RUNTIME_ID_HEADER]: DESCRIPTOR.runtimeId,
+        [CONTROL_API_VERSION_HEADER]: '1',
+        [CONTROL_APP_VERSION_HEADER]: DESCRIPTOR.appVersion,
+        'content-type': 'application/json',
+      },
+      '{',
+    );
+    assert.equal(malformedOutsideTessera.status, 403);
+    assert.deepEqual(malformedOutsideTessera.body.error, outsideTessera.body.error);
   } finally {
     if (previousBypass === undefined) delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;
     else process.env.TESSERA_ELECTRON_AUTH_BYPASS = previousBypass;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+function postJson(
+  origin: string,
+  requestPath: string,
+  headers: Record<string, string>,
+  requestBody: string,
+): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const request = http.request(`${origin}${requestPath}`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'content-length': String(Buffer.byteLength(requestBody)),
+      },
+    }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => {
+        try {
+          resolve({ status: response.statusCode ?? 0, body: JSON.parse(body) });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.on('error', reject);
+    request.end(requestBody);
+  });
+}
 
 function getJson(
   origin: string,

@@ -197,7 +197,7 @@ test('Control creates a durable PTY Session and lists it only through its public
   await assert.rejects(
     fixture.service.listSessions('task-legacy-one', CONTEXT),
     (error: unknown) => error instanceof ControlOperationError
-      && error.code === 'WORKTREE_NOT_FOUND',
+      && error.code === 'CONTROL_AUTHORITY_DENIED',
   );
 });
 

@@ -90,6 +90,10 @@ export function createControlHttpHandler(options: {
 
     const context = callerContext(request);
     try {
+      // Fail closed before route-specific decoding or body reads so callers
+      // without a live Managed Session cannot use validation as an oracle.
+      service.assertAuthority(context);
+
       if (pathname === `${CONTROL_ROUTE_PREFIX}/status`) {
         requireMethod(request, 'GET');
         writeSuccess(response, await service.status(context));
