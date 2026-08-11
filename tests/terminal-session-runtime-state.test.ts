@@ -153,11 +153,16 @@ test('PTY UserPromptSubmit marks only the terminal state as processing', () => {
     terminalId: `session-${SESSION_ID}`,
     status: 'running',
     hookEvent: 'UserPromptSubmit',
+    interruptInputPolicy: 'single-escape',
   });
 
   assert.equal(
     useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
     'running',
+  );
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.interruptInputPolicy,
+    'single-escape',
   );
   assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
   assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);

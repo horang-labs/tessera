@@ -4,6 +4,7 @@ import type { ITheme, IUnicodeHandling } from '@xterm/xterm';
 import { v4 as uuidv4 } from 'uuid';
 import { wsClient } from '@/lib/ws/client';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import type { TerminalInterruptInputPolicy } from '@/lib/cli/providers/types';
 import { useSessionStore } from '@/stores/session-store';
 import { useNotificationStore } from '@/stores/notification-store';
 import {
@@ -345,6 +346,7 @@ export class TerminalSurface {
   private attachedConnectionGeneration = 0;
   private pendingLaunch: PendingTerminalLaunch | null = null;
   private serverGeneration: number | null = null;
+  private interruptInputPolicy: TerminalInterruptInputPolicy = 'none';
   private lastSequence = 0;
   // xterm's write queue is the output-ordering boundary. This state only
   // blocks onData while snapshot bytes are parsing and remembers the fit that
@@ -567,6 +569,10 @@ export class TerminalSurface {
       || this.state.status === 'exited'
     ) return false;
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
+  }
+
+  supportsEscapeInterrupt(): boolean {
+    return !this.disposed && this.interruptInputPolicy === 'single-escape';
   }
 
   /** Sends input that came from an explicit user-facing control. */
@@ -1288,6 +1294,7 @@ export class TerminalSurface {
 
     if (message.type === 'terminal_started') {
       this.actualTerminalId = message.terminalId;
+      this.interruptInputPolicy = message.interruptInputPolicy ?? 'none';
       if (this.serverGeneration !== message.generation) {
         this.cancelSnapshotReplay();
         this.serverGeneration = message.generation;
@@ -2005,6 +2012,13 @@ export function sendInputToTerminal(terminalId: string, data: string): boolean {
     if (surface.getSnapshot().status === 'running' && surface.sendInput(data)) return true;
   }
   return candidates.some((surface) => surface.sendInput(data));
+}
+
+/** Whether the provider attached behind this terminal declares one-Escape cancellation. */
+export function terminalSupportsEscapeInterrupt(terminalId: string): boolean {
+  return [...surfaces.values()].some(
+    (surface) => surface.matchesTerminal(terminalId) && surface.supportsEscapeInterrupt(),
+  );
 }
 
 /** Paste-mode counterpart of sendInputToTerminal (see TerminalSurface.pasteInput). */
