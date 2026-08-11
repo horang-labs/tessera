@@ -67,6 +67,7 @@ import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { getLinkedWorktreeDensity, toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { resolvePreparationBadge } from '@/lib/projects/preparation-status-policy';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -806,6 +807,9 @@ export function TaskItemRow({
       ? task.sessions[0]?.id === activeSessionId
       : Boolean(task.worktreeId && task.worktreeId === activeWorktreeId);
   const isPending = task.isPending === true;
+  const hasPreparationBadge = resolvePreparationBadge(
+    task.preparationStatus ?? 'never_run',
+  ) !== null;
   const primarySessionId = task.sessions[0]?.id;
   const isGeneratingTitle = useSessionStore((state) =>
     primarySessionId ? state.generatingTitleIds.has(primarySessionId) : false,
@@ -1056,8 +1060,14 @@ export function TaskItemRow({
         aria-current={isTaskActive ? 'true' : undefined}
         data-testid={`collection-task-${task.id}`}
       >
-        <span className="flex shrink-0 items-center">
-          {showProviderIcons && primarySessionId ? (
+        {/* Pending, preparation, and ready states share one slot so the title stays put. */}
+        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+          {hasPreparationBadge ? (
+            <TaskPreparationBadge
+              status={task.preparationStatus}
+              presentation="icon"
+            />
+          ) : showProviderIcons && primarySessionId ? (
             <span className="relative flex shrink-0 items-center">
               <ProviderLogoMark
                 providerId={task.sessions[0]?.provider}
@@ -1091,13 +1101,6 @@ export function TaskItemRow({
             </span>
           ) : null}
         </span>
-
-        {/* Left of the title, where the hover actions on the trailing edge can
-            never cover it — a preparation failure has to stay reachable. */}
-        <TaskPreparationBadge
-          status={task.preparationStatus}
-          presentation="icon"
-        />
 
         <div className="min-w-0 flex-1">
           {isRenaming ? (
