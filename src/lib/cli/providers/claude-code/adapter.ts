@@ -59,6 +59,8 @@ import {
   fingerprintTranscriptFile,
   resolveClaudeTranscriptPath,
 } from './transcript-path';
+import { resolveClaudeConfigDirForEnvironment } from '@/lib/skill/skill-loader';
+import { resolveProviderOwnedSkillHome } from '../provider-skill-home';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -121,6 +123,15 @@ export class ClaudeCodeAdapter implements CliProvider {
    */
   getProviderId(): string {
     return PROVIDER_ID;
+  }
+
+  resolveSkillHome(environment: 'native' | 'wsl'): Promise<string> {
+    return resolveProviderOwnedSkillHome({
+      providerId: PROVIDER_ID,
+      environment,
+      windowsHostedWslExpression: '${CLAUDE_CONFIG_DIR:-$HOME/.claude}',
+      resolveSharedFilesystemHome: () => resolveClaudeConfigDirForEnvironment(environment),
+    });
   }
 
   /**

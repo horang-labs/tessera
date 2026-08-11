@@ -3,7 +3,6 @@ import path from 'path';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import logger from '@/lib/logger';
 import { buildOpenCodeHookPluginSource } from './opencode-hook-plugin';
-import { materializeTesseraControlSkill } from './tessera-control-skill';
 
 const SAFE_TERMINAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -33,7 +32,6 @@ export function createOpenCodeOverlay(terminalId: string): OpenCodeOverlay {
       buildOpenCodeHookPluginSource(),
       { mode: 0o600 },
     );
-    materializeTesseraControlSkill(path.join(configDir, 'skills'));
   } catch (error) {
     fs.rmSync(configDir, { recursive: true, force: true });
     throw error;

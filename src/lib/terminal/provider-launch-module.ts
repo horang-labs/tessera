@@ -13,11 +13,6 @@ import { sessionHistory } from '@/lib/session-history';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { HookCommandStyle } from './hook-command';
 import { buildClaudeHookSettingsJson } from './claude-hook-settings';
-import { createClaudeSkillOverlay } from './claude-skill-overlay';
-import {
-  createClaudeSkillOverlayInWsl,
-  type WslClaudeSkillOverlay,
-} from './claude-skill-overlay-wsl';
 import { createCodexOverlay, repairCodexOverlayResumePath } from './codex-overlay';
 import {
   cleanupCodexOverlayInWsl,
@@ -51,13 +46,6 @@ import type {
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
 const SAFE_TERMINAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-/**
- * Stands in for the guest plugin directory in a bridged Claude launch, which is
- * only known once the overlay has been created inside the distro. Whatever
- * consumes it later must find this exact value still in place — argv it no
- * longer recognises is argv it must not edit.
- */
-const CLAUDE_PLUGIN_DIR_PLACEHOLDER = '__tessera_claude_plugin_pending__';
 
 export type ProviderLaunchErrorCode =
   | 'SESSION_NOT_FOUND'
@@ -351,7 +339,6 @@ async function buildLaunchDecision(
   request: ProviderLaunchRequest,
   persisted: ReturnType<typeof getPersistedProvider>,
   hookCommandStyle: HookCommandStyle,
-  claudePluginDir?: string,
 ): Promise<ProviderLaunchDecision> {
   const { providerId, providerState, model, reasoningEffort, serviceTier } = persisted;
 
@@ -371,7 +358,6 @@ async function buildLaunchDecision(
         ?? (providerSession.nativeFork ? 'background' : undefined),
       settingsJson: buildClaudeHookSettingsJson(hookCommandStyle),
       initialPrompt: request.initialPrompt,
-      claudePluginDir,
       model,
       reasoningEffort,
     });
@@ -556,21 +542,10 @@ export function createProviderLaunchModule(
           && !wslTerminalRuntime
           ? 'windows-cmd'
           : 'posix';
-        let claudePluginDir: string | undefined;
-        if (persisted.providerId === 'claude-code') {
-          if (wslTerminalRuntime) {
-            claudePluginDir = CLAUDE_PLUGIN_DIR_PLACEHOLDER;
-          } else {
-            const overlay = createClaudeSkillOverlay(terminalId);
-            resourceDisposers.add(overlay.dispose);
-            claudePluginDir = overlay.pluginDir;
-          }
-        }
         const decision = await buildLaunchDecision(
           request,
           persisted,
           hookCommandStyle,
-          claudePluginDir,
         );
         decision.launchSpec.cwd = workDir;
         const codexResumeTranscriptPath = decision.providerId === 'codex'
@@ -579,10 +554,8 @@ export function createProviderLaunchModule(
           : undefined;
 
         let launchEnv: Record<string, string | undefined> | undefined;
-        let prepareLaunch: (() => Promise<void>) | undefined;
         let launchEnvFactory:
           (() => Promise<Record<string, string | undefined> | undefined>) | undefined;
-        const claudePluginFlagIndex = decision.launchSpec.args?.indexOf('--plugin-dir') ?? -1;
 
         // Started now, ahead of the preparation wait, so the spawn is already in
         // flight — usually already finished — by the time the launch needs its
@@ -594,28 +567,9 @@ export function createProviderLaunchModule(
         // timeout, a stored `before` failure — abandons a spawn that is still
         // running, and an overlay that lands in the guest after that point has
         // nobody left to remove it.
-        let claudeOverlayPromise: Promise<WslClaudeSkillOverlay | null> | undefined;
         let codexOverlayPromise: Promise<string | null> | undefined;
         let opencodeOverlayPromise: Promise<string | null> | undefined;
-        if (
-          decision.providerId === 'claude-code'
-          && wslTerminalRuntime
-          && claudePluginFlagIndex >= 0
-        ) {
-          const pending = createOverlayWithRetry(
-            'Claude WSL skill',
-            terminalId,
-            () => createClaudeSkillOverlayInWsl(terminalId),
-          );
-          claudeOverlayPromise = pending;
-          resourceDisposers.add(() => {
-            void pending
-              .then((overlay) => overlay?.dispose())
-              .catch((error) => {
-                logger.debug({ error }, 'Claude WSL skill overlay cleanup skipped');
-              });
-          });
-        } else if (decision.providerId === 'codex' && wslTerminalRuntime) {
+        if (decision.providerId === 'codex' && wslTerminalRuntime) {
           const pending = createOverlayWithRetry(
             'Codex WSL',
             terminalId,
@@ -695,37 +649,7 @@ export function createProviderLaunchModule(
           );
         }
 
-        if (claudeOverlayPromise && decision.launchSpec.args) {
-          const claudeArgs = decision.launchSpec.args;
-          const overlayPromise = claudeOverlayPromise;
-          prepareLaunch = async () => {
-            const overlay = await overlayPromise;
-            if (overlay) {
-              claudeArgs[claudePluginFlagIndex + 1] = overlay.pluginDir;
-              return;
-            }
-            // Drop the flag along with the placeholder there is now no path to
-            // fill. What the overlay carries is the tessera-cli skill, a
-            // convenience for agent-initiated Worktree and Session control — a
-            // session without it still edits, runs, and reports normally, so
-            // this launch goes ahead rather than leaving the user a pane that
-            // never opens.
-            //
-            // The placeholder is re-checked rather than trusted: the index was
-            // taken before the preparation wait, and removing a pair that is no
-            // longer the one it pointed at would corrupt the command line. If
-            // the argv ever stops looking the way it did, leaving it alone is
-            // the recoverable half of that choice.
-            if (claudeArgs[claudePluginFlagIndex + 1] !== CLAUDE_PLUGIN_DIR_PLACEHOLDER) {
-              logger.error(
-                { terminalId, claudePluginFlagIndex },
-                'Claude plugin argv no longer holds its placeholder; leaving it untouched',
-              );
-              return;
-            }
-            claudeArgs.splice(claudePluginFlagIndex, 2);
-          };
-        } else if (decision.providerId === 'codex') {
+        if (decision.providerId === 'codex') {
           // Unlike Claude's overlay, this one also carries hooks.json — how
           // Tessera observes turn-complete and every other session state.
           // Launching without it would produce a session that runs but never
@@ -879,7 +803,6 @@ export function createProviderLaunchModule(
               }
             : {}),
           launchSpec: decision.launchSpec,
-          prepareLaunch,
           paneToken,
           providerId: decision.providerId,
           detectConversationReset: decision.provider.detectTerminalConversationReset

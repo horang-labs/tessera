@@ -1,8 +1,12 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import { execFile } from 'node:child_process';
 import http from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
+const PROVIDER_SKILL_IDS = Object.freeze(Object.keys(JSON.parse(
+  fsSync.readFileSync(new URL('./provider-skill-ids.json', import.meta.url), 'utf8'),
+)));
 
 const CONTROL_API_VERSION = 1;
 const CONTROL_DESCRIPTOR_ENV = 'TESSERA_CONTROL_DESCRIPTOR';
@@ -25,6 +29,7 @@ export function isControlInvocation(argv) {
   }
   const args = withoutDescriptorSelector(argv);
   return args[0] === 'status'
+    || args[0] === 'skills'
     || args[0] === 'project'
     || args[0] === 'worktree'
     || args[0] === 'session'
@@ -148,6 +153,10 @@ export async function runControlCli(options) {
 export function controlUsage() {
   return `Control commands:
   tessera status [--json]
+  tessera skills status [--provider <claude-code|codex|opencode>]... [--json]
+  tessera skills install [--provider <claude-code|codex|opencode>]... [--json]
+  tessera skills update [--provider <claude-code|codex|opencode>]... [--json]
+  tessera skills remove [--provider <claude-code|codex|opencode>]... [--json]
   tessera project list [--json]
   tessera project show <project-id> [--json]
   tessera project audit (--current | --project <project-id>) [--json]
@@ -255,6 +264,31 @@ function parseControlInvocation(argv, env) {
       kind: 'provider-codex-lifecycle-install',
       requestPath: '/__tessera/control/v1/provider-integrations/codex/lifecycle',
       requestBody: { consent: 'granted' },
+    };
+  }
+
+  if (
+    commandArgs.length >= 2
+    && commandArgs[0] === 'skills'
+    && ['status', 'install', 'update', 'remove'].includes(commandArgs[1])
+  ) {
+    const operation = commandArgs[1];
+    const providerIds = parseProviderSkillSelection(commandArgs.slice(2));
+    if (operation === 'status') {
+      const query = providerIds.length === 0
+        ? ''
+        : `?${providerIds.map((providerId) => `provider=${encodeURIComponent(providerId)}`).join('&')}`;
+      return {
+        descriptorPath,
+        kind: 'provider-skills-status',
+        requestPath: `/__tessera/control/v1/provider-skills${query}`,
+      };
+    }
+    return {
+      descriptorPath,
+      kind: `provider-skills-${operation}`,
+      requestPath: `/__tessera/control/v1/provider-skills/${operation}`,
+      requestBody: providerIds.length === 0 ? {} : { providerIds },
     };
   }
 
@@ -512,6 +546,25 @@ function parseControlInvocation(argv, env) {
   }
 
   throw new Error('Invalid Control command. Run tessera --help for usage.');
+}
+
+function parseProviderSkillSelection(args) {
+  const providerIds = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== '--provider') {
+      throw new Error(`Unknown provider skill option: ${args[index]}`);
+    }
+    const providerId = args[index + 1];
+    if (!providerId || providerId.startsWith('-')) {
+      throw new Error('--provider requires a provider ID.');
+    }
+    if (!PROVIDER_SKILL_IDS.includes(providerId)) {
+      throw new Error(`Unsupported provider skill target: ${providerId}`);
+    }
+    if (!providerIds.includes(providerId)) providerIds.push(providerId);
+    index += 1;
+  }
+  return providerIds;
 }
 
 function parseRequiredNamedValue(args, option, label) {
@@ -1158,6 +1211,9 @@ function validateSuccessData(kind, data) {
   ) {
     return parseProviderIntegrationDecision(data) ?? INVALID_SUCCESS_DATA;
   }
+  if (kind.startsWith('provider-skills-')) {
+    return parseProviderSkillManagementResult(data) ?? INVALID_SUCCESS_DATA;
+  }
   if (kind === 'session-list') {
     if (!isRecord(data) || !Array.isArray(data.sessions)) return INVALID_SUCCESS_DATA;
     const sessions = data.sessions.map(parsePublicSessionDto);
@@ -1225,7 +1281,7 @@ function parseProviderIntegrationDecision(value) {
   if (
     value.providerHome.owner !== 'agent-environment'
     || !['native', 'wsl'].includes(value.providerHome.agentEnvironment)
-    || !['healthy', 'blocked', 'unchecked'].includes(value.health.state)
+    || !['healthy', 'degraded', 'blocked', 'unchecked'].includes(value.health.state)
   ) return null;
   const lifecycle = parseArtifactPolicy(value.lifecycle);
   const skill = parseArtifactPolicy(value.skill);
@@ -1254,8 +1310,8 @@ function parseArtifactPolicy(value) {
   if (!isRecord(value)) return null;
   if (
     !['required', 'optional', 'not-applicable'].includes(value.requirement)
-    || !['unchecked', 'ready', 'absent', 'installed', 'conflict', 'unavailable', 'not-applicable'].includes(value.state)
-    || !['unchecked', 'not-required', 'required', 'granted', 'declined'].includes(value.consent)
+    || !['unchecked', 'ready', 'stale', 'absent', 'installed', 'conflict', 'unavailable', 'not-applicable'].includes(value.state)
+    || !['unchecked', 'not-required', 'required', 'granted', 'revoked', 'declined'].includes(value.consent)
     || !['unchecked', 'not-required', 'trusted', 'untrusted', 'unavailable'].includes(value.trust)
     || (value.message !== undefined && typeof value.message !== 'string')
   ) return null;
@@ -1265,6 +1321,40 @@ function parseArtifactPolicy(value) {
     consent: value.consent,
     trust: value.trust,
     ...(value.message === undefined ? {} : { message: value.message }),
+  };
+}
+
+function parseProviderSkillManagementResult(value) {
+  if (
+    !isRecord(value)
+    || value.success !== true
+    || !['install', 'status', 'update', 'remove'].includes(value.operation)
+    || !['native', 'wsl'].includes(value.agentEnvironment)
+    || !Array.isArray(value.providers)
+  ) return null;
+  const providers = value.providers.map((provider) => {
+    if (
+      !isRecord(provider)
+      || !PROVIDER_SKILL_IDS.includes(provider.providerId)
+      || typeof provider.detected !== 'boolean'
+      || !['absent', 'ready', 'stale', 'conflict', 'unavailable'].includes(provider.state)
+      || !['granted', 'revoked', 'not-granted'].includes(provider.consent)
+      || !['none', 'tessera', 'user', 'unknown'].includes(provider.ownership)
+    ) return null;
+    return {
+      providerId: provider.providerId,
+      detected: provider.detected,
+      state: provider.state,
+      consent: provider.consent,
+      ownership: provider.ownership,
+    };
+  });
+  if (providers.some((provider) => provider === null)) return null;
+  return {
+    success: true,
+    operation: value.operation,
+    agentEnvironment: value.agentEnvironment,
+    providers,
   };
 }
 
@@ -1357,6 +1447,14 @@ function writeHumanSuccess(kind, data) {
       `Codex lifecycle: ${data.lifecycle.state}; trust: ${data.lifecycle.trust}; consent: ${data.lifecycle.consent}; health: ${data.health.state}\n`,
     );
     if (data.guidance?.message) process.stdout.write(`${data.guidance.message}\n`);
+    return;
+  }
+  if (kind.startsWith('provider-skills-')) {
+    for (const provider of data.providers) {
+      process.stdout.write(
+        `${provider.providerId}\t${provider.state}\t${provider.consent}\t${provider.ownership}\n`,
+      );
+    }
     return;
   }
   if (kind === 'status') {

@@ -67,6 +67,9 @@ test('Provider Integration exposes path-free, provider-specific integration stat
   ]);
   const providerIntegration = createProviderIntegration({
     resolveAgentEnvironment: async () => 'wsl',
+    detectSkillProviders: async () => ['codex'],
+    resolveProviderSkillHome: async () => authoritativeCodexHome,
+    providerSkillStateDirectory: path.join(testRoot, 'provider-integration-state'),
   });
 
   const codex = await providerIntegration.resolveLaunch({
@@ -85,10 +88,21 @@ test('Provider Integration exposes path-free, provider-specific integration stat
   });
   assert.deepEqual(codex.skill, {
     requirement: 'optional',
-    state: 'unchecked',
-    consent: 'unchecked',
-    trust: 'unchecked',
+    state: 'absent',
+    consent: 'declined',
+    trust: 'not-required',
   });
+  await providerIntegration.manageSkills({
+    operation: 'install',
+    agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
+    providerIds: ['codex'],
+  });
+  const codexWithReadyOptionalSkill = await providerIntegration.resolveLaunch({
+    provider: new CodexAdapter(),
+    agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
+  });
+  assert.equal(codexWithReadyOptionalSkill.skill.state, 'ready');
+  assert.equal(codexWithReadyOptionalSkill.health.state, 'unchecked');
 
   const providerWithoutRequiredLifecycle = await providerIntegration.resolveLaunch({
     provider: { getProviderId: () => 'claude-code' },

@@ -728,7 +728,7 @@ test('concurrent detached launches reject the loser without revoking the winning
   });
 });
 
-test('shared provider launches inject the complete control bridge environment for every provider', async () => {
+test('shared provider launches inject the control bridge without per-Session skill content', async () => {
   const providers = ['claude-code', 'codex', 'opencode'];
   const agentEnvironments = ['native', 'wsl'] as const;
   for (const agentEnvironment of agentEnvironments) {
@@ -814,44 +814,32 @@ test('shared provider launches inject the complete control bridge environment fo
     assert.equal(childEnv?.TESSERA_CONTROL_DESCRIPTOR, undefined);
     assert.equal(childEnv?.TESSERA_CONTROL_DESCRIPTOR_PATH, undefined);
 
-    let providerSkillPath: string;
     if (provider === 'claude-code') {
-      const pluginDir = captured[0]?.args.join(' ').match(/'--plugin-dir' '([^']+)'/)?.[1];
-      assert.ok(pluginDir, 'Claude launch should include its Tessera plugin overlay');
-      providerSkillPath = path.join(pluginDir, 'skills', 'tessera-cli', 'SKILL.md');
+      assert.doesNotMatch(captured[0]?.args.join(' ') ?? '', /--plugin-dir/);
     } else if (provider === 'codex') {
       assert.ok(childEnv?.CODEX_HOME, 'Codex launch should include its overlay home');
-      providerSkillPath = path.join(
-        childEnv.CODEX_HOME,
-        'skills',
-        'tessera-cli',
-        'SKILL.md',
+      assert.equal(
+        fs.existsSync(path.join(childEnv.CODEX_HOME, 'skills', 'tessera-cli')),
+        false,
       );
     } else {
       assert.ok(
         childEnv?.OPENCODE_CONFIG_DIR,
         'OpenCode launch should include its overlay config directory',
       );
-      providerSkillPath = path.join(
-        childEnv.OPENCODE_CONFIG_DIR,
-        'skills',
-        'tessera-cli',
-        'SKILL.md',
+      assert.equal(
+        fs.existsSync(path.join(childEnv.OPENCODE_CONFIG_DIR, 'skills', 'tessera-cli')),
+        false,
       );
     }
-    assert.equal(
-      fs.readFileSync(providerSkillPath, 'utf8'),
-      fs.readFileSync(path.join(process.cwd(), 'skills', 'tessera-cli', 'SKILL.md'), 'utf8'),
-    );
 
     await manager.closeSession(sessionId, 'provider-launch-user');
-    assert.equal(fs.existsSync(providerSkillPath), false);
     assert.deepEqual(disposed, [sessionId]);
     }
   }
 });
 
-test('managed fake-provider launches discover the canonical skill in a WSL-like environment', async () => {
+test('managed WSL-like launches preserve global skills without per-Session injection', async () => {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
   const previousHome = process.env.HOME;
   const previousPath = process.env.PATH;
@@ -934,27 +922,25 @@ test('managed fake-provider launches discover the canonical skill in a WSL-like 
         true,
       );
 
-      let skillPath: string;
       if (provider === 'claude-code') {
-        const pluginDir = spawned?.args.join(' ').match(/--plugin-dir[^/]*(\/[^'\\ ]+)/)?.[1];
-        assert.ok(pluginDir);
-        transientOverlayDirs.push(pluginDir);
-        skillPath = path.join(pluginDir, 'skills/tessera-cli/SKILL.md');
+        assert.doesNotMatch(spawned?.args.join(' ') ?? '', /--plugin-dir/);
       } else if (provider === 'codex') {
         assert.ok(spawned?.env?.CODEX_HOME?.startsWith(guestHome));
         transientOverlayDirs.push(spawned.env.CODEX_HOME);
-        skillPath = path.join(spawned.env.CODEX_HOME, 'skills/tessera-cli/SKILL.md');
+        assert.equal(
+          fs.readFileSync(
+            path.join(spawned.env.CODEX_HOME, 'skills/tessera-cli/SKILL.md'),
+            'utf8',
+          ),
+          'user-owned:SKILL.md\n',
+        );
       } else {
         assert.ok(spawned?.env?.OPENCODE_CONFIG_DIR?.startsWith(guestHome));
-        skillPath = path.join(
-          spawned.env.OPENCODE_CONFIG_DIR,
-          'skills/tessera-cli/SKILL.md',
+        assert.equal(
+          fs.existsSync(path.join(spawned.env.OPENCODE_CONFIG_DIR, 'skills/tessera-cli')),
+          false,
         );
       }
-      assert.equal(
-        fs.readFileSync(skillPath, 'utf8'),
-        fs.readFileSync(path.join(process.cwd(), 'skills/tessera-cli/SKILL.md'), 'utf8'),
-      );
     }
 
     for (const sessionId of sessionIds) {
@@ -1228,7 +1214,7 @@ test('a preparation timeout removes a Codex overlay that only lands after the ga
   }
 });
 
-test('a preparation timeout still removes the WSL overlay whose spawn it abandoned', async () => {
+test('a preparation timeout does not create a Claude WSL skill overlay', async () => {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
   const previousHome = process.env.HOME;
   const previousPath = process.env.PATH;
@@ -1289,34 +1275,16 @@ test('a preparation timeout still removes the WSL overlay whose spawn it abandon
       preparationTimeoutMs: 1_000,
     });
 
-    const launch = launcher.launch({
-      sessionId: 'abandoned-overlay-session',
-      userId: 'provider-launch-user',
-      mode: 'detached',
-    });
-    // The overlay is started alongside the gate, so it lands in the guest
-    // while the gate is still waiting — and is then abandoned when the gate
-    // gives up before any consumer of it is ever reached.
-    let created = false;
-    for (let retry = 0; retry < 100 && !created; retry += 1) {
-      created = fs.existsSync(overlayDir);
-      if (!created) await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-
     await assert.rejects(
-      launch,
+      launcher.launch({
+        sessionId: 'abandoned-overlay-session',
+        userId: 'provider-launch-user',
+        mode: 'detached',
+      }),
       (error: unknown) => error instanceof modules.ProviderLaunchError
         && error.code === 'PREPARATION_TIMEOUT',
     );
-    assert.equal(created, true, 'the overlay should have landed before the gate gave up');
-    for (let retry = 0; retry < 100 && fs.existsSync(overlayDir); retry += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.equal(
-      fs.existsSync(overlayDir),
-      false,
-      'an abandoned overlay must not be left behind in the guest',
-    );
+    assert.equal(fs.existsSync(overlayDir), false);
     assert.equal(captured.length, 0);
   } finally {
     if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
@@ -1328,7 +1296,7 @@ test('a preparation timeout still removes the WSL overlay whose spawn it abandon
   }
 });
 
-test('a deterministically failing WSL overlay is not retried: Claude launches anyway, Codex does not', async () => {
+test('Claude avoids WSL skill overlays while a deterministic Codex overlay failure stays fail-closed', async () => {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
   const previousHome = process.env.HOME;
   const previousPath = process.env.PATH;
@@ -1374,8 +1342,8 @@ test('a deterministically failing WSL overlay is not retried: Claude launches an
     assert.doesNotMatch(captured[0]?.args.join(' ') ?? '', /--plugin-dir/);
     assert.equal(
       wslCallCount(),
-      1,
-      'a script that ran and exited non-zero must not be attempted a second time',
+      0,
+      'Claude must not run a WSL script for optional skill injection',
     );
     await manager.closeSession('failing-overlay-claude', 'provider-launch-user');
 
@@ -1395,6 +1363,7 @@ test('a deterministically failing WSL overlay is not retried: Claude launches an
         && error.code === 'LAUNCH_FAILED',
       'codex should fail its launch rather than continue without its overlay',
     );
+    assert.equal(wslCallCount(), 1, 'a deterministic Codex failure must not be retried');
   } finally {
     if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
     if (previousHome === undefined) delete process.env.HOME;
