@@ -20,6 +20,7 @@ export type {
   ProviderTerminalSessionObserver,
   ProviderTerminalSessionObserverOptions,
   ProviderRateLimitOptions,
+  ProviderIntegrationRequirements,
 } from './provider-contract';
 export type { ParsedMessage, ParsedMessageSideEffect } from './message-types';
 export type {

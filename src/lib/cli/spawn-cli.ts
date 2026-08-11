@@ -75,7 +75,7 @@ export function buildSpawnEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return buildSpawnEnvironment(baseEnv, spawnCliCache);
 }
 
-export { normalizeCwdForCliEnvironment };
+export { normalizeCwdForCliEnvironment, resolveDefaultAgentEnvironment };
 
 /**
  * Spawn a CLI command with WSL bridge support.

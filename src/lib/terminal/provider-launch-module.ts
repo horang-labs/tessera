@@ -1,6 +1,9 @@
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import type { CliProvider } from '@/lib/cli/providers/types';
-import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import {
+  providerIntegration as sharedProviderIntegration,
+  type ProviderIntegration,
+} from '@/lib/cli/provider-integration';
 import * as dbSessions from '@/lib/db/sessions';
 import { getTaskPreparation } from '@/lib/db/task-preparation';
 import { getTerminalProviderSessionForTesseraSession } from '@/lib/db/terminal-provider-sessions';
@@ -44,7 +47,6 @@ import type {
   ControlCliBridgeContext,
   PreparedControlCliBridge,
 } from '@/lib/control/cli-bridge';
-import type { AgentEnvironment } from '@/lib/settings/types';
 
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -150,7 +152,7 @@ type ProviderLaunchTerminalAdapter = Pick<
 interface ProviderLaunchModuleOptions {
   terminalManager: ProviderLaunchTerminalAdapter;
   preparationTimeoutMs?: number;
-  resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
+  providerIntegration?: ProviderIntegration;
   observeProviderSession?: (options: {
     pane: {
       terminalId: string;
@@ -466,6 +468,7 @@ export function createProviderLaunchModule(
   options: ProviderLaunchModuleOptions,
 ): ProviderLaunchModule {
   const manager = options.terminalManager;
+  const providerIntegration = options.providerIntegration ?? sharedProviderIntegration;
   const activeLaunches = new Map<string, Promise<ProviderLaunchResult>>();
 
   const launchOnce = async (
@@ -542,10 +545,11 @@ export function createProviderLaunchModule(
         // as the check that the Session still exists, and a wait long enough to
         // matter is long enough for the Session to be deleted inside it — so it
         // is read after the gate, where the answer is still true.
-        const agentEnvironment = await (
-          options.resolveAgentEnvironment?.(request.userId)
-          ?? getAgentEnvironment(request.userId)
-        );
+        const integration = await providerIntegration.resolveLaunch({
+          provider: persisted.provider,
+          agentEnvironmentOwner: { kind: 'user', userId: request.userId },
+        });
+        const agentEnvironment = integration.providerHome.agentEnvironment;
         const wslTerminalRuntime = getRuntimePlatform() === 'win32'
           && agentEnvironment === 'wsl';
         const hookCommandStyle: HookCommandStyle = getRuntimePlatform() === 'win32'
