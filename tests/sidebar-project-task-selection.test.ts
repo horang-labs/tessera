@@ -4,6 +4,7 @@ import {
   buildRecentWorkOrderedSessionIds,
   buildSidebarOrderedSessionIds,
   selectSidebarProjectTasks,
+  shouldShowAllProjectLoading,
 } from '../src/components/chat/sidebar-utils';
 import type { RecentWorkItem } from '../src/lib/chat/recent-work';
 import { useSelectionStore } from '../src/stores/selection-store';
@@ -41,6 +42,36 @@ test('Sidebar uses one stable empty task list while a Project cache is unavailab
     selectSidebarProjectTasks(state, 'project-b'),
   );
   assert.deepEqual(selectSidebarProjectTasks(state, 'project-b'), []);
+});
+
+test('All Projects keeps cached rows visible during background task refreshes', () => {
+  assert.equal(shouldShowAllProjectLoading({
+    isExpanded: true,
+    isRunningFilterActive: false,
+    collectionsLoaded: true,
+    tasksLoaded: true,
+  }), false);
+});
+
+test('All Projects shows Loading only while its first expanded data set is unavailable', () => {
+  assert.equal(shouldShowAllProjectLoading({
+    isExpanded: true,
+    isRunningFilterActive: false,
+    collectionsLoaded: false,
+    tasksLoaded: true,
+  }), true);
+  assert.equal(shouldShowAllProjectLoading({
+    isExpanded: true,
+    isRunningFilterActive: true,
+    collectionsLoaded: false,
+    tasksLoaded: true,
+  }), false);
+  assert.equal(shouldShowAllProjectLoading({
+    isExpanded: false,
+    isRunningFilterActive: false,
+    collectionsLoaded: false,
+    tasksLoaded: false,
+  }), false);
 });
 
 test('Shift range selection includes rendered task sessions missing from the direct Session projection', () => {

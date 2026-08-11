@@ -28,6 +28,25 @@ export function findSidebarProject(
   return projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
 }
 
+export function shouldShowAllProjectLoading({
+  isExpanded,
+  isRunningFilterActive,
+  collectionsLoaded,
+  tasksLoaded,
+}: {
+  isExpanded: boolean;
+  isRunningFilterActive: boolean;
+  collectionsLoaded: boolean;
+  tasksLoaded: boolean;
+}): boolean {
+  // Mutation-driven refreshes keep the previous cache usable. Blocking the
+  // section on a transient `loadingProjectIds` flag would replace those rows
+  // with Loading... for every Worktree preparation update.
+  if (!isExpanded) return false;
+  if (!tasksLoaded) return true;
+  return !isRunningFilterActive && !collectionsLoaded;
+}
+
 export function buildRecentWorkOrderedSessionIds(items: RecentWorkItem[]): string[] {
   return items.flatMap((item) =>
     item.type === 'task'
