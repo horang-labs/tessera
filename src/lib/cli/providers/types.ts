@@ -21,6 +21,11 @@ export type {
   ProviderTerminalSessionObserverOptions,
   ProviderRateLimitOptions,
   ProviderIntegrationRequirements,
+  ProviderLifecycleContext,
+  ProviderLifecycleIntegration,
+  ProviderLifecycleResult,
+  ProviderLifecycleState,
+  ProviderLifecycleTrust,
 } from './provider-contract';
 export type { ParsedMessage, ParsedMessageSideEffect } from './message-types';
 export type {

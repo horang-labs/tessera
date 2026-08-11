@@ -3,6 +3,10 @@ import type { CliEnvironment } from '@/lib/cli/cli-exec';
 import { buildCodexAccountEnvironment } from '@/lib/codex-home';
 import { resolveProviderCliCommand } from '@/lib/cli/provider-command';
 import {
+  formatPathForAgentDisplay,
+  isBridgedAgentEnvironment,
+} from '@/lib/filesystem/path-environment';
+import {
   getAgentEnvironment,
   normalizeCwdForCliEnvironment,
   spawnCli,
@@ -28,6 +32,8 @@ export interface CodexAppServerRequestContext {
   userId?: string;
   workDir?: string | null;
   environment?: CliEnvironment;
+  /** Host-openable spelling of the authoritative home this request must use. */
+  providerHomeFilesystemPath?: string;
 }
 
 export type CodexAppServerRequestExecutor = (
@@ -54,6 +60,36 @@ export class CodexAppServerRequestError extends Error {
     super(message);
     this.name = 'CodexAppServerRequestError';
   }
+}
+
+interface CodexAppServerEnvironmentDependencies {
+  formatProviderHome?: typeof formatPathForAgentDisplay;
+  isBridged?: typeof isBridgedAgentEnvironment;
+}
+
+export function buildCodexAppServerRequestEnvironment(
+  baseEnv: NodeJS.ProcessEnv,
+  agentEnvironment: CliEnvironment,
+  providerHomeFilesystemPath?: string,
+  dependencies: CodexAppServerEnvironmentDependencies = {},
+): NodeJS.ProcessEnv {
+  const env = buildCodexAccountEnvironment(baseEnv, agentEnvironment);
+  if (!providerHomeFilesystemPath) return env;
+  const formatProviderHome = dependencies.formatProviderHome ?? formatPathForAgentDisplay;
+  const isBridged = dependencies.isBridged ?? isBridgedAgentEnvironment;
+
+  env.CODEX_HOME = formatProviderHome(
+    providerHomeFilesystemPath,
+    agentEnvironment,
+  );
+  if (agentEnvironment === 'wsl' && isBridged(agentEnvironment)) {
+    const entries = (env.WSLENV ?? '').split(':').filter(Boolean);
+    const byName = new Map(entries.map((entry) => [entry.split('/')[0], entry]));
+    // The value is already expressed as a WSL path, so pass it unchanged.
+    byName.set('CODEX_HOME', 'CODEX_HOME');
+    env.WSLENV = [...byName.values()].join(':');
+  }
+  return env;
 }
 
 function killRequestProcess(proc: ChildProcess): void {
@@ -126,7 +162,11 @@ export async function runCodexAppServerRequest<T>(
     const proc = spawnCli(command, ['app-server'], {
       cwd,
       shell: false,
-      env: buildCodexAccountEnvironment(process.env, agentEnvironment),
+      env: buildCodexAppServerRequestEnvironment(
+        process.env,
+        agentEnvironment,
+        context.providerHomeFilesystemPath,
+      ),
       stdio: ['pipe', 'pipe', 'pipe'],
     }, agentEnvironment);
     let buffer = '';

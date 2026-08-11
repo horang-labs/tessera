@@ -23,6 +23,10 @@ const sources = {
   codex: fs.readFileSync(new URL('../src/lib/memory/codex-memory.ts', import.meta.url), 'utf8'),
   opencode: fs.readFileSync(new URL('../src/lib/memory/opencode-memory.ts', import.meta.url), 'utf8'),
 };
+sources.codex = fs.readFileSync(
+  new URL('../src/lib/cli/providers/codex/provider-home.ts', import.meta.url),
+  'utf8',
+);
 
 // ── Behavioural: the probe really translates, under a real shell ─────────────
 
@@ -89,8 +93,8 @@ for (const [provider, source] of Object.entries(sources)) {
 // the panel at a directory the agent does not read.
 
 test('codex drops CODEX_HOME across a bridge', () => {
-  assert.match(sources.codex,
-    /isBridgedAgentEnvironment\(environment\)[\s\S]{0,80}process\.env\.CODEX_HOME/);
+  assert.match(sources.codex, /environment === 'wsl'[\s\S]{0,500}buildWslFilesystemPathProbe/);
+  assert.doesNotMatch(sources.codex, /process\.env\.CODEX_HOME/);
 });
 
 test('claude drops CLAUDE_CONFIG_DIR across a bridge', () => {
@@ -98,12 +102,16 @@ test('claude drops CLAUDE_CONFIG_DIR across a bridge', () => {
     /isBridgedAgentEnvironment\(environment\)[\s\S]{0,80}process\.env\.CLAUDE_CONFIG_DIR/);
 });
 
-// ── Contract: the probe-failed fallback stays on the agent's side ────────────
+// ── Contract: failed probes never fall back across ownership boundaries ──────
 
-for (const provider of ['codex', 'opencode'] as const) {
-  test(`${provider} falls back to the agent's home, not the server's`, () => {
-    assert.match(sources[provider], /resolveAgentHomeFilesystemPath\(environment\)/);
-    assert.doesNotMatch(sources[provider], /path\.join\(homedir\(\)/,
-      'homedir() is the wrong side of the bridge');
-  });
-}
+test('codex fails closed instead of guessing a provider home', () => {
+  assert.match(sources.codex, /failed probe is not permission to guess/);
+  assert.doesNotMatch(sources.codex, /resolveAgentHomeFilesystemPath/);
+  assert.doesNotMatch(sources.codex, /homedir\(\)/);
+});
+
+test('opencode falls back to the agent home rather than the server home', () => {
+  assert.match(sources.opencode, /resolveAgentHomeFilesystemPath\(environment\)/);
+  assert.doesNotMatch(sources.opencode, /path\.join\(homedir\(\)/,
+    'homedir() is the wrong side of the bridge');
+});

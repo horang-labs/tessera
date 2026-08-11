@@ -1,12 +1,8 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as dbSessions from "@/lib/db/sessions";
-import { execCli, isRunningInWsl, type CliEnvironment } from "@/lib/cli/cli-exec";
-import {
-  isBridgedAgentEnvironment,
-  resolveAgentHomeFilesystemPath,
-} from "@/lib/filesystem/path-environment";
-import { buildWslFilesystemPathProbe } from "@/lib/filesystem/wsl-path-probe";
+import type { CliEnvironment } from "@/lib/cli/cli-exec";
+import { resolveCodexHomeForEnvironment } from "@/lib/cli/providers/codex/provider-home";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 import { getMemoryProviderKind } from "@/lib/memory/memory-provider";
 import { toMemoryDisplayPath } from "@/lib/memory/memory-display-path";
@@ -41,81 +37,6 @@ export interface CodexGuidelineTarget {
   status: "active" | "shadowed";
   statusLabel: string;
   statusReason: "active" | "shadowed-by-override";
-}
-
-function lastNonEmptyLine(value: string): string | null {
-  const lines = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return lines.at(-1) ?? null;
-}
-
-function windowsPathToWslPath(value: string): string | null {
-  const driveMatch = value.match(/^([A-Za-z]):[\\/](.*)$/);
-  if (!driveMatch) return null;
-  const drive = driveMatch[1].toLowerCase();
-  const rest = driveMatch[2].replace(/[\\/]+/g, "/");
-  return `/mnt/${drive}/${rest}`;
-}
-
-export async function resolveCodexHomeForEnvironment(
-  environment: CliEnvironment,
-): Promise<string> {
-  // `CODEX_HOME` describes the environment *this server* runs in. Across a
-  // bridge the codex CLI lives on the other side and never saw this variable,
-  // so honouring it would point the panel at a directory the agent never reads.
-  const configuredDir = isBridgedAgentEnvironment(environment)
-    ? null
-    : process.env.CODEX_HOME?.trim();
-  if (configuredDir) return path.resolve(configuredDir);
-
-  if (environment === "wsl" && process.platform === "win32") {
-    // Intentionally keeps the login shell (no `loginShell: false`), unlike the
-    // claude/opencode probes: this reads `$CODEX_HOME`, which the user exports
-    // from their rc. The real codex CLI is also spawned through the login shell,
-    // so it sees that same `$CODEX_HOME` — dropping it here would make the panel
-    // show a different home than the CLI actually uses. Do not "optimize" this
-    // to a non-login shell for consistency; the latency is the correct trade.
-    const result = await execCli(
-      "sh",
-      // `-c`, not `-lc`: the WSL bridge already ran this through the login shell,
-      // so a second one only re-reads ~/.profile (where a broken line can kill
-      // the probe). `$CODEX_HOME` is already exported into this shell's env.
-      // The answer goes to `fs.stat`, so it must come back host-openable —
-      // see buildWslFilesystemPathProbe.
-      ["-c", buildWslFilesystemPathProbe("${CODEX_HOME:-$HOME/.codex}")],
-      "wsl",
-      5000,
-    );
-    const resolvedDir = lastNonEmptyLine(result.stdout);
-    if (result.ok && resolvedDir) return resolvedDir;
-  }
-
-  if (environment === "native" && isRunningInWsl()) {
-    const result = await execCli(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        // `$home` is a PowerShell automatic variable: assigning to it is a
-        // no-op, so the probe used to echo the Windows profile itself and drop
-        // the `.codex` suffix. Keep this script free of double quotes too —
-        // PowerShell strips them when forwarding arguments to a native command.
-        "$codexDir = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }; Write-Output $codexDir",
-      ],
-      "native",
-      5000,
-    );
-    const windowsCodexHome = lastNonEmptyLine(result.stdout);
-    const wslCodexHome = windowsCodexHome ? windowsPathToWslPath(windowsCodexHome) : null;
-    if (result.ok && wslCodexHome) return wslCodexHome;
-  }
-
-  // The agent's home, never this server's: across a bridge they are different
-  // filesystems, so a failed probe would otherwise fall back to a directory the
-  // CLI never writes — and every AGENTS.md there would read as missing.
-  return path.join(await resolveAgentHomeFilesystemPath(environment), ".codex");
 }
 
 export function getCodexMemorySession(sessionId: string): dbSessions.SessionRow | null {

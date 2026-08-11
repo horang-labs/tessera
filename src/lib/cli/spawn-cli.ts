@@ -52,6 +52,17 @@ export async function getAgentEnvironment(userId?: string): Promise<AgentEnviron
   return spawnCliCache.defaultAgentEnvironment;
 }
 
+/** Resolve a user's configured Agent Environment without masking corrupt settings. */
+export async function getAgentEnvironmentStrict(userId: string): Promise<AgentEnvironment> {
+  const cachedEnvironment = spawnCliCache.agentEnvironmentByUserId.get(userId);
+  if (cachedEnvironment) return cachedEnvironment;
+
+  const settings = await SettingsManager.load(userId, { silent: true, strict: true });
+  const resolvedEnvironment = settings.agentEnvironment || 'native';
+  spawnCliCache.agentEnvironmentByUserId.set(userId, resolvedEnvironment);
+  return resolvedEnvironment;
+}
+
 /** Invalidate the cached environment (call when settings change). */
 export function invalidateAgentEnvironmentCache(userId?: string): void {
   if (userId) {

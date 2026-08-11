@@ -53,7 +53,6 @@ const config = [
       "src/lib/cli/providers/claude-code/terminal-session-observer.ts",
       "src/lib/cli/providers/codex/transcript-path.ts",
       "src/lib/cli/providers/opencode/transcript-source.ts",
-      "src/lib/memory/codex-memory.ts",
       // Take the home/env as injected options; their callers own the choice.
       "src/lib/codex-home.ts",
       "src/lib/cli/providers/opencode/native-transcript.ts",

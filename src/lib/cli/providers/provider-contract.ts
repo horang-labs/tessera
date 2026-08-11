@@ -54,6 +54,31 @@ export interface ProviderIntegrationRequirements {
   skill: 'required' | 'optional' | 'not-applicable';
 }
 
+export interface ProviderLifecycleContext {
+  environment: CliEnvironment;
+  userId?: string;
+  workDir?: string | null;
+}
+
+export type ProviderLifecycleState = 'absent' | 'installed' | 'conflict' | 'unavailable';
+export type ProviderLifecycleTrust = 'unchecked' | 'trusted' | 'untrusted' | 'unavailable';
+
+export interface ProviderLifecycleResult {
+  state: ProviderLifecycleState;
+  trust: ProviderLifecycleTrust;
+  message?: string;
+  guidance?: {
+    minimumVersion: string;
+    updateCommand: string;
+    message: string;
+  };
+}
+
+export interface ProviderLifecycleIntegration {
+  inspect(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+  install(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+}
+
 export interface ProviderTerminalSessionObservation {
   activation: 'active' | 'background';
   providerSessionId: string;
@@ -149,6 +174,9 @@ export interface CliProvider {
 
   /** Declares provider-specific integration requirements without filesystem details. */
   getProviderIntegrationRequirements?(): ProviderIntegrationRequirements;
+
+  /** Implements provider-owned lifecycle artifact management behind this provider seam. */
+  getLifecycleIntegration?(): ProviderLifecycleIntegration;
 
   /**
    * Returns the human-readable display name for this CLI provider.

@@ -47,6 +47,7 @@ const POSIX_IS_WSL =
 
 const POSIX_HOOK_COMMAND =
   'payload=$(cat); '
+  + '[ -n "$TESSERA_HOOK_PORT" ] && [ -n "$TESSERA_SESSION_ID" ] && [ -n "$TESSERA_PANE_TOKEN" ] || exit 0; '
   + POSIX_HOOK_POST_FN
   + '; tessera_hook_post curl 0.5 2'
   + ' || { '
@@ -57,7 +58,10 @@ const POSIX_HOOK_COMMAND =
 // cmd에는 함수/재시도가 없다: curl.exe 하나로 충분(네이티브에선 loopback이 곧 서버).
 // `& exit /b 0` 로 curl 실패와 무관하게 성공 종료.
 const WINDOWS_CMD_HOOK_COMMAND =
-  '"%SystemRoot%\\System32\\curl.exe" -sS --connect-timeout 1 --max-time 3 '
+  'if not defined TESSERA_HOOK_PORT (more >nul & exit /b 0) & '
+  + 'if not defined TESSERA_SESSION_ID (more >nul & exit /b 0) & '
+  + 'if not defined TESSERA_PANE_TOKEN (more >nul & exit /b 0) & '
+  + '"%SystemRoot%\\System32\\curl.exe" -sS --connect-timeout 1 --max-time 3 '
   + '--noproxy 127.0.0.1 -X POST '
   + '"http://127.0.0.1:%TESSERA_HOOK_PORT%/__tessera/hook?session=%TESSERA_SESSION_ID%" '
   + '-H "X-Tessera-Pane-Token: %TESSERA_PANE_TOKEN%" '

@@ -19,6 +19,11 @@ test('strict settings load accepts absence but rejects a malformed existing file
       SettingsManager.load('malformed-user', { silent: true, strict: true }),
       SyntaxError,
     );
+    const { getAgentEnvironmentStrict } = await import('@/lib/cli/spawn-cli');
+    await assert.rejects(
+      getAgentEnvironmentStrict('malformed-user'),
+      SyntaxError,
+    );
   } finally {
     delete process.env.TESSERA_DATA_DIR;
     await fs.rm(root, { recursive: true, force: true });

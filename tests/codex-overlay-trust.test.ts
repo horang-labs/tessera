@@ -12,12 +12,12 @@ import {
 // 훅 커맨드(hook-command.ts)나 timeout이 바뀌면 함께 바뀐다 — codex의
 // command_hook_hash 계약(정규화·직렬화)이 유지되는지 고정하는 값.
 const EXPECTED_TRUSTED_HASHES = {
-  session_start: 'sha256:54118a230f5a83c3bd07b62077af4c27a38bd3d2e7087c3771b2effb1318e2f9',
-  user_prompt_submit: 'sha256:0f11b1e78a95d841d47f37b1bd79b598ce91ba11f0962e4fb4b30c264fb4d9f1',
-  pre_tool_use: 'sha256:c6164b8a833972d6597fb603f95193db1a327b1c6bebd379fad3d06e42509285',
-  permission_request: 'sha256:dbfc8a48b3def5b466ef460fdc822ba1521ec4ed587227d237c8cccc19f3c2e3',
-  post_tool_use: 'sha256:9417b820045acf8a0ada4b56ab7d0295b36fe475949ce9bf77b3db36b3bd6ba1',
-  stop: 'sha256:5af8ee0181c8ee533e4a53fc56e393ee95096c6c7699613d56438d98a198e5a1',
+  session_start: 'sha256:9ec56be666ef581ff5a72fca53576f93f9dee8e9a12f9ee747bb2f8b64e3c274',
+  user_prompt_submit: 'sha256:610cacd63364417270ce0568b9972f2294a29fb242b41fc9d79f32df736f4b22',
+  pre_tool_use: 'sha256:94c561741d69ac7294a08d32923c2d8307a3ad3b1b2ef2b9b1cc5f0df21671a9',
+  permission_request: 'sha256:f841ad1f7512c927e0f077ec601d53465173f62baa7834d374f9b85a16eb45c1',
+  post_tool_use: 'sha256:63e0ac41b134c78f2ad580a71f9ede041dc9ea57af40c7a9f3edba0baf64dd81',
+  stop: 'sha256:59fc142e77080a61930f55eea4b921ef2398ceec1bce10101e40ce71f6b80393',
 } as const;
 
 test('Codex overlay pre-trusts exactly the lifecycle hooks it installs', () => {
