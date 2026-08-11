@@ -2,6 +2,7 @@ import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
   CliProvider,
   ProviderIntegrationRequirements,
+  ProviderLaunchPreparation,
 } from './providers/provider-contract';
 import { getAgentEnvironmentStrict, resolveDefaultAgentEnvironment } from './spawn-cli';
 import type {
@@ -66,6 +67,7 @@ export interface ProviderIntegrationLaunchRequest {
     | 'getProviderId'
     | 'getProviderIntegrationRequirements'
     | 'getLifecycleIntegration'
+    | 'prepareLaunchIntegration'
   >;
   agentEnvironmentOwner:
     | { kind: 'user'; userId: string }
@@ -87,6 +89,10 @@ export interface ProviderIntegration {
   resolveLaunch(
     request: ProviderIntegrationLaunchRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
+  buildLaunchEnvironment(
+    decision: ProviderIntegrationLaunchDecision,
+    baseEnvironment: NodeJS.ProcessEnv,
+  ): NodeJS.ProcessEnv | undefined;
   inspectLifecycle(
     request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
@@ -114,11 +120,6 @@ export class ProviderIntegrationLaunchBlockedError extends Error {
     this.name = 'ProviderIntegrationLaunchBlockedError';
   }
 }
-
-const DEFAULT_REQUIREMENTS: ProviderIntegrationRequirements = {
-  lifecycle: 'not-applicable',
-  skill: 'optional',
-};
 
 function resolveArtifactPolicy(
   requirement: ProviderIntegrationArtifactPolicy['requirement'],
@@ -162,6 +163,10 @@ function launchBlockedMessage(
 export function createProviderIntegration(
   options: ProviderIntegrationOptions = {},
 ): ProviderIntegration {
+  const launchPreparations = new WeakMap<
+    ProviderIntegrationLaunchDecision,
+    ProviderLaunchPreparation
+  >();
   const resolveAgentEnvironment = options.resolveAgentEnvironment ?? getAgentEnvironmentStrict;
   const resolveDefaultEnvironment = options.resolveDefaultEnvironment
     ?? (async () => resolveDefaultAgentEnvironment());
@@ -214,8 +219,7 @@ export function createProviderIntegration(
   return {
     async resolveLaunch(request) {
       const agentEnvironment = await resolveEnvironment(request);
-      const requirements = request.provider.getProviderIntegrationRequirements?.()
-        ?? DEFAULT_REQUIREMENTS;
+      const requirements = request.provider.getProviderIntegrationRequirements();
       if (
         request.provider.getProviderId() === 'codex'
         && request.compatibility === 'exact-legacy-overlay-resume'
@@ -241,8 +245,35 @@ export function createProviderIntegration(
         skill: resolveArtifactPolicy(requirements.skill),
         health: { state: 'unchecked' },
       };
+      let launchPreparation: ProviderLaunchPreparation | undefined;
+      if (requirements.launchEnvironment === 'required') {
+        if (!request.provider.prepareLaunchIntegration) {
+          decision.health = { state: 'blocked' };
+          throw new ProviderIntegrationLaunchBlockedError(
+            decision,
+            `${request.provider.getProviderId()} launch is blocked because the provider cannot prepare its Authoritative Provider Home environment. Reinstall or update Tessera, then retry.`,
+          );
+        }
+        try {
+          launchPreparation = await request.provider.prepareLaunchIntegration({
+            environment: agentEnvironment,
+            userId: request.agentEnvironmentOwner.kind === 'user'
+              ? request.agentEnvironmentOwner.userId
+              : undefined,
+            workDir: request.workDir,
+          });
+        } catch (error) {
+          decision.health = { state: 'blocked' };
+          throw new ProviderIntegrationLaunchBlockedError(
+            decision,
+            `${request.provider.getProviderId()} launch is blocked because the Authoritative Provider Home could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       if (requirements.lifecycle === 'required') {
-        const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
+        const lifecycle = options.lifecycle
+          ?? launchPreparation?.lifecycle
+          ?? request.provider.getLifecycleIntegration?.();
         let result: ProviderLifecycleResult;
         try {
           result = lifecycle
@@ -279,12 +310,16 @@ export function createProviderIntegration(
         }
       }
 
+      if (launchPreparation) launchPreparations.set(decision, launchPreparation);
+
       return decision;
+    },
+    buildLaunchEnvironment(decision, baseEnvironment) {
+      return launchPreparations.get(decision)?.buildEnvironment(baseEnvironment);
     },
     async inspectLifecycle(request) {
       const agentEnvironment = await resolveEnvironment(request);
-      const requirements = request.provider.getProviderIntegrationRequirements?.()
-        ?? DEFAULT_REQUIREMENTS;
+      const requirements = request.provider.getProviderIntegrationRequirements();
       if (requirements.lifecycle === 'not-applicable') {
         return notApplicableDecision(agentEnvironment, requirements);
       }
@@ -311,8 +346,7 @@ export function createProviderIntegration(
     },
     async installLifecycle(request) {
       const agentEnvironment = await resolveEnvironment(request);
-      const requirements = request.provider.getProviderIntegrationRequirements?.()
-        ?? DEFAULT_REQUIREMENTS;
+      const requirements = request.provider.getProviderIntegrationRequirements();
       if (requirements.lifecycle === 'not-applicable') {
         return notApplicableDecision(agentEnvironment, requirements);
       }

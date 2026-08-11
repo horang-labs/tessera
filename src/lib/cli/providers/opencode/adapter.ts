@@ -10,6 +10,7 @@ import type {
   SpawnResult,
   CliRawLogSink,
   TranslatedText,
+  ProviderIntegrationRequirements,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { SessionHistoryEvent } from '@/lib/session-replay-types';
@@ -109,6 +110,14 @@ export class OpenCodeAdapter implements CliProvider {
 
   getProviderId(): string {
     return PROVIDER_ID;
+  }
+
+  getProviderIntegrationRequirements(): ProviderIntegrationRequirements {
+    return {
+      lifecycle: 'not-applicable',
+      skill: 'optional',
+      launchEnvironment: 'not-applicable',
+    };
   }
 
   getDisplayName(): string {

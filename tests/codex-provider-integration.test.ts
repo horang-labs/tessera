@@ -62,6 +62,9 @@ test('Codex app-server launch preserves explicit server-default ownership withou
         ownership.push(request.agentEnvironmentOwner);
         throw new Error('stop after resolving explicit ownership');
       },
+      buildLaunchEnvironment: () => undefined,
+      inspectLifecycle: async () => { throw new Error('not used'); },
+      installLifecycle: async () => { throw new Error('not used'); },
     },
   });
 
@@ -110,7 +113,14 @@ test('Provider Integration exposes path-free, provider-specific integration stat
   assert.equal('launchEnvironment' in codex, false);
 
   const providerWithoutRequiredLifecycle = await providerIntegration.resolveLaunch({
-    provider: { getProviderId: () => 'claude-code' },
+    provider: {
+      getProviderId: () => 'claude-code',
+      getProviderIntegrationRequirements: () => ({
+        lifecycle: 'not-applicable',
+        skill: 'optional',
+        launchEnvironment: 'not-applicable',
+      }),
+    },
     agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
   });
   assert.deepEqual(providerWithoutRequiredLifecycle.lifecycle, {
@@ -119,6 +129,93 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     consent: 'not-required',
     trust: 'not-required',
   });
+});
+
+test('one Codex home resolution binds lifecycle approval and the launched environment', async () => {
+  const [{ CodexAdapter }, { createProviderIntegration }] = await Promise.all([
+    import('@/lib/cli/providers/codex/adapter'),
+    import('@/lib/cli/provider-integration'),
+  ]);
+  const firstHome = path.join(testRoot, 'authority-home-a');
+  const secondHome = path.join(testRoot, 'authority-home-b');
+  const resolvedHomes: string[] = [];
+  let resolutionCount = 0;
+  const provider = new CodexAdapter({
+    resolveProviderHome: async () => {
+      resolutionCount += 1;
+      return resolutionCount === 1 ? firstHome : secondHome;
+    },
+    createLifecycleIntegration: (dependencies) => ({
+      inspect: async () => {
+        const home = await dependencies.resolveProviderHome?.('wsl');
+        assert.ok(home);
+        resolvedHomes.push(home);
+        return { state: 'installed', trust: 'trusted' };
+      },
+      install: async () => ({ state: 'installed', trust: 'trusted' }),
+    }),
+  });
+  const integration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'wsl',
+  });
+
+  const decision = await integration.resolveLaunch({
+    provider,
+    agentEnvironmentOwner: { kind: 'user', userId: 'single-authority-user' },
+    workDir: workspace,
+  });
+  const environment = integration.buildLaunchEnvironment(decision, {
+    CODEX_HOME: secondHome,
+  });
+
+  assert.equal(resolutionCount, 1);
+  assert.deepEqual(resolvedHomes, [firstHome]);
+  assert.equal(environment?.CODEX_HOME, firstHome);
+  assert.equal(environment?.TESSERA_CODEX_HOME, undefined);
+  assert.equal('launchEnvironment' in decision, false);
+});
+
+test('app-server preparation exports a custom Windows-backend-to-WSL Codex home', async () => {
+  const [{ CodexAdapter }, { createProviderIntegration }] = await Promise.all([
+    import('@/lib/cli/providers/codex/adapter'),
+    import('@/lib/cli/provider-integration'),
+  ]);
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', {
+    configurable: true,
+    enumerable: true,
+    value: 'win32',
+  });
+  try {
+    const provider = new CodexAdapter({
+      resolveProviderHome: async () => (
+        '\\\\wsl.localhost\\Ubuntu-24.04\\home\\owner\\custom-app-codex-home'
+      ),
+    });
+    const integration = createProviderIntegration({
+      resolveAgentEnvironment: async () => 'wsl',
+      lifecycle: {
+        inspect: async () => ({ state: 'installed', trust: 'trusted' }),
+        install: async () => ({ state: 'installed', trust: 'trusted' }),
+      },
+    });
+    const decision = await integration.resolveLaunch({
+      provider,
+      agentEnvironmentOwner: { kind: 'user', userId: 'bridged-app-user' },
+      workDir: workspace,
+    });
+    const environment = integration.buildLaunchEnvironment(decision, {
+      CODEX_HOME: 'C:\\Users\\server\\.codex',
+      TESSERA_CODEX_HOME: 'C:\\server\\legacy-overlay',
+      WSLENV: 'HTTPS_PROXY:TESSERA_CODEX_HOME/p',
+    });
+
+    assert.equal(environment?.CODEX_HOME, '/home/owner/custom-app-codex-home');
+    assert.equal(environment?.TESSERA_CODEX_HOME, undefined);
+    assert.deepEqual(environment?.WSLENV?.split(':'), ['HTTPS_PROXY', 'CODEX_HOME']);
+  } finally {
+    if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+  }
 });
 
 test('Codex app-server launch uses the shared Provider Integration policy and authoritative home', async (t) => {
@@ -154,7 +251,10 @@ test('Codex app-server launch uses the shared Provider Integration policy and au
     },
   });
   const rawLogs: CliRawLogEvent[] = [];
-  const adapter = new CodexAdapter({ providerIntegration });
+  const adapter = new CodexAdapter({
+    providerIntegration,
+    resolveProviderHome: async () => authoritativeCodexHome,
+  });
 
   const result = await adapter.spawn(workspace, {
     userId,
@@ -198,23 +298,7 @@ test('Codex app-server launch uses the shared Provider Integration policy and au
   await closed;
 });
 
-test('Codex-owned state persists across separate managed app-server lifecycles in the authoritative home', async (t) => {
-  const [{ CodexAdapter }, { createProviderIntegration }, { SettingsManager }] =
-    await Promise.all([
-      import('@/lib/cli/providers/codex/adapter'),
-      import('@/lib/cli/provider-integration'),
-      import('@/lib/settings/manager'),
-    ]);
-  const userId = 'provider-integration-persistence-user';
-  const settings = await SettingsManager.load(userId, { silent: true });
-  await SettingsManager.save(userId, {
-    ...settings,
-    agentEnvironment: 'wsl',
-    cliCommandOverrides: {
-      ...settings.cliCommandOverrides,
-      codex: { ...settings.cliCommandOverrides.codex, wsl: fakeCodex },
-    },
-  });
+test('Codex-owned state persists across separate Tessera process lifecycles like ordinary Codex', () => {
   const stateKey = 'ordinary-provider-state.json';
   const statePath = path.join(authoritativeCodexHome, stateKey);
   const ownedFiles = [
@@ -230,63 +314,52 @@ test('Codex-owned state persists across separate managed app-server lifecycles i
     fs.mkdirSync(path.dirname(ownedFile), { recursive: true });
     fs.writeFileSync(ownedFile, `user-owned:${path.basename(ownedFile)}\n`);
   }
-  const previousTestStateKey = process.env.TESSERA_TEST_CODEX_STATE_KEY;
-  const previousOverlayHome = process.env.TESSERA_CODEX_HOME;
-  process.env.TESSERA_TEST_CODEX_STATE_KEY = stateKey;
-  process.env.TESSERA_CODEX_HOME = path.join(testRoot, 'inherited-legacy-overlay');
-  t.after(() => {
-    if (previousTestStateKey === undefined) delete process.env.TESSERA_TEST_CODEX_STATE_KEY;
-    else process.env.TESSERA_TEST_CODEX_STATE_KEY = previousTestStateKey;
-    if (previousOverlayHome === undefined) delete process.env.TESSERA_CODEX_HOME;
-    else process.env.TESSERA_CODEX_HOME = previousOverlayHome;
-  });
-
-  const launch = async (): Promise<CliRawLogEvent[]> => {
-    const rawLogs: CliRawLogEvent[] = [];
-    const integration = createProviderIntegration({
-      resolveAgentEnvironment: async () => 'wsl',
-      lifecycle: {
-        inspect: async () => ({ state: 'installed', trust: 'trusted' }),
-        install: async () => ({ state: 'installed', trust: 'trusted' }),
-      },
-    });
-    const adapter = new CodexAdapter({ providerIntegration: integration });
-    const result = await adapter.spawn(workspace, {
-      userId,
-      sessionId: `persistence-${Date.now()}`,
-      startupTimeoutMs: 2_000,
-      rawLog: (event) => rawLogs.push(event),
-    });
-    assert.equal(result.ok, true, result.error?.message);
-    const closed = once(result.process, 'close');
-    result.process.kill('SIGTERM');
-    await closed;
-    return rawLogs;
-  };
-
-  const firstLogs = await launch();
-  assert.equal(
-    firstLogs.some((event) => event.data.includes('state-before:absent')),
-    true,
+  const harness = path.join(process.cwd(), 'node_modules/.bin/tsx');
+  const harnessScript = path.join(
+    process.cwd(),
+    'tests/fixtures/codex-authoritative-home-harness.ts',
   );
-  assert.equal(fs.readFileSync(statePath, 'utf8'), 'provider-owned\n');
-
-  // A fresh integration and adapter model a later Tessera process lifecycle.
-  const secondLogs = await launch();
-  assert.equal(
-    secondLogs.some((event) => event.data.includes('state-before:present')),
-    true,
+  const launch = (label: string) => spawnSync(
+    harness,
+    [
+      harnessScript,
+      fakeCodex,
+      authoritativeCodexHome,
+      path.join(testRoot, `restart-data-${label}`),
+      stateKey,
+    ],
+    {
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: process.env,
+    },
   );
-  const ordinary = spawnSync(fakeCodex, ['ordinary-state'], {
+  const ordinary = () => spawnSync(fakeCodex, ['ordinary-state'], {
     encoding: 'utf8',
     env: {
       ...process.env,
       CODEX_HOME: authoritativeCodexHome,
       TESSERA_CODEX_HOME: undefined,
+      TESSERA_TEST_CODEX_STATE_KEY: stateKey,
     },
   });
-  assert.equal(ordinary.status, 0, ordinary.stderr);
-  assert.match(ordinary.stderr, /state-before:present/);
+
+  const ordinaryBaseline = ordinary();
+  assert.equal(ordinaryBaseline.status, 0, ordinaryBaseline.stderr);
+  assert.match(ordinaryBaseline.stderr, /state-before:absent/);
+  fs.rmSync(statePath, { force: true });
+
+  const firstLaunch = launch('first-process');
+  assert.equal(firstLaunch.status, 0, firstLaunch.stderr);
+  assert.match(firstLaunch.stdout, /state-before:absent/);
+  assert.equal(fs.readFileSync(statePath, 'utf8'), 'provider-owned\n');
+
+  const secondLaunch = launch('second-process');
+  assert.equal(secondLaunch.status, 0, secondLaunch.stderr);
+  assert.match(secondLaunch.stdout, /state-before:present/);
+  const ordinaryAfterRestart = ordinary();
+  assert.equal(ordinaryAfterRestart.status, 0, ordinaryAfterRestart.stderr);
+  assert.match(ordinaryAfterRestart.stderr, /state-before:present/);
   for (const ownedFile of ownedFiles) {
     assert.equal(
       fs.readFileSync(ownedFile, 'utf8'),
@@ -301,6 +374,7 @@ test('Codex app-server launch fails closed before spawn when the required hook i
     import('@/lib/cli/provider-integration'),
   ]);
   const adapter = new CodexAdapter({
+    resolveProviderHome: async () => authoritativeCodexHome,
     providerIntegration: createProviderIntegration({
       resolveAgentEnvironment: async () => 'native',
       lifecycle: {
@@ -360,6 +434,21 @@ test('untrusted and unhealthy Codex lifecycle states fail closed with actionable
     }),
     /unavailable or unhealthy.*lifecycle status.*trust API timed out/i,
   );
+
+  await assert.rejects(
+    unhealthy.resolveLaunch({
+      provider: {
+        getProviderId: () => 'codex',
+        getProviderIntegrationRequirements: () => ({
+          lifecycle: 'required',
+          skill: 'optional',
+          launchEnvironment: 'required',
+        }),
+      },
+      agentEnvironmentOwner: { kind: 'user', userId: 'missing-home-capability-user' },
+    }),
+    /cannot prepare its Authoritative Provider Home environment.*update Tessera/i,
+  );
 });
 
 test('Provider Integration keeps exact legacy overlay resumes exempt without weakening new launches', async () => {
@@ -368,6 +457,9 @@ test('Provider Integration keeps exact legacy overlay resumes exempt without wea
     import('@/lib/cli/provider-integration'),
   ]);
   let lifecycleInspections = 0;
+  const provider = new CodexAdapter({
+    resolveProviderHome: async () => authoritativeCodexHome,
+  });
   const providerIntegration = createProviderIntegration({
     resolveAgentEnvironment: async () => 'native',
     lifecycle: {
@@ -380,7 +472,7 @@ test('Provider Integration keeps exact legacy overlay resumes exempt without wea
   });
 
   const legacy = await providerIntegration.resolveLaunch({
-    provider: new CodexAdapter(),
+    provider,
     agentEnvironmentOwner: { kind: 'user', userId: 'legacy-user' },
     compatibility: 'exact-legacy-overlay-resume',
   });
@@ -389,7 +481,7 @@ test('Provider Integration keeps exact legacy overlay resumes exempt without wea
   assert.equal(lifecycleInspections, 0);
   await assert.rejects(
     providerIntegration.resolveLaunch({
-      provider: new CodexAdapter(),
+      provider,
       agentEnvironmentOwner: { kind: 'user', userId: 'legacy-user' },
     }),
     /lifecycle hook is not installed/i,
@@ -403,6 +495,7 @@ test('Provider Integration keeps exact legacy overlay resumes exempt without wea
         getProviderIntegrationRequirements: () => ({
           lifecycle: 'required',
           skill: 'optional',
+          launchEnvironment: 'not-applicable',
         }),
       },
       agentEnvironmentOwner: { kind: 'user', userId: 'legacy-user' },

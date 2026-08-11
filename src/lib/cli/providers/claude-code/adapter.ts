@@ -26,6 +26,7 @@ import type {
   GeneratedTitle,
   TranslatedText,
   CliRawLogSink,
+  ProviderIntegrationRequirements,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import { claudeCodeProtocolParser } from './protocol-parser';
@@ -121,6 +122,14 @@ export class ClaudeCodeAdapter implements CliProvider {
    */
   getProviderId(): string {
     return PROVIDER_ID;
+  }
+
+  getProviderIntegrationRequirements(): ProviderIntegrationRequirements {
+    return {
+      lifecycle: 'not-applicable',
+      skill: 'optional',
+      launchEnvironment: 'not-applicable',
+    };
   }
 
   /**

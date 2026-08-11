@@ -18,6 +18,7 @@ type Modules = {
   tasks: typeof import('@/lib/db/tasks');
   taskPreparation: typeof import('@/lib/db/task-preparation');
   terminalProviderSessions: typeof import('@/lib/db/terminal-provider-sessions');
+  registry: typeof import('@/lib/cli/providers/registry');
   TerminalManager: typeof import('@/lib/terminal/terminal-manager').TerminalManager;
   createProviderLaunchModule:
     typeof import('@/lib/terminal/provider-launch-module').createProviderLaunchModule;
@@ -33,7 +34,10 @@ let workspace: string;
 const managers: Array<InstanceType<Modules['TerminalManager']>> = [];
 const observerDisposeCounts = new Map<string, number>();
 
-function withTestTerminalSessionObserver(provider: CliProvider): CliProvider {
+function withTestTerminalSessionObserver(
+  provider: CliProvider,
+  preserveLaunchPreparation = false,
+): CliProvider {
   return new Proxy(provider, {
     get(target, property) {
       if (property === 'createTerminalSessionObserver') {
@@ -48,13 +52,19 @@ function withTestTerminalSessionObserver(provider: CliProvider): CliProvider {
           },
         });
       }
-      if (target.getProviderId() === 'codex' && property === 'resolveLaunchEnvironment') {
-        return ({ baseEnvironment }: { baseEnvironment: NodeJS.ProcessEnv }) => ({
-          ...baseEnvironment,
-          CODEX_HOME: process.platform === 'win32'
-            ? path.join(process.env.HOME!, '.codex')
-            : process.env.CODEX_HOME,
-          TESSERA_CODEX_HOME: undefined,
+      if (
+        target.getProviderId() === 'codex'
+        && property === 'prepareLaunchIntegration'
+        && !preserveLaunchPreparation
+      ) {
+        return async () => ({
+          buildEnvironment: (baseEnvironment: NodeJS.ProcessEnv) => ({
+            ...baseEnvironment,
+            CODEX_HOME: process.platform === 'win32'
+              ? path.join(process.env.HOME!, '.codex')
+              : process.env.CODEX_HOME,
+            TESSERA_CODEX_HOME: undefined,
+          }),
         });
       }
       const value = Reflect.get(target, property, target) as unknown;
@@ -120,6 +130,7 @@ before(async () => {
     createProviderLaunchModule: launcher.createProviderLaunchModule,
     ProviderLaunchError: launcher.ProviderLaunchError,
     createProviderIntegration: providerIntegration.createProviderIntegration,
+    registry,
     terminalProviderSessions,
     resolvePaneToken: paneTokens.resolvePaneToken,
   };
@@ -293,6 +304,79 @@ test('new direct TUI Codex launch uses the authoritative provider home without a
   assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, undefined);
 
   await manager.closeSession('shared-policy-direct-codex', 'provider-launch-user');
+});
+
+test('direct TUI uses exact custom native and Windows-backend-to-WSL Codex homes', async () => {
+  const { CodexAdapter } = await import('@/lib/cli/providers/codex/adapter');
+  const originalProvider = modules.registry.cliProviderRegistry.getProvider('codex');
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const cases = [
+    {
+      id: 'custom-native-home',
+      environment: 'native' as const,
+      platform: 'linux' as const,
+      providerHome: '/mnt/c/Users/owner/custom-codex-home',
+      expectedHome: 'C:\\Users\\owner\\custom-codex-home',
+    },
+    {
+      id: 'custom-bridged-wsl-home',
+      environment: 'wsl' as const,
+      platform: 'win32' as const,
+      providerHome: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\owner\\custom-codex-home',
+      expectedHome: '/home/owner/custom-codex-home',
+    },
+  ];
+
+  try {
+    for (const testCase of cases) {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        enumerable: true,
+        value: testCase.platform,
+      });
+      const provider = new CodexAdapter({
+        resolveProviderHome: async () => testCase.providerHome,
+      });
+      modules.registry.cliProviderRegistry.register(
+        'codex',
+        withTestTerminalSessionObserver(provider, true),
+      );
+      const captured: CapturedSpawn[] = [];
+      const manager = createManager(captured);
+      const launcher = modules.createProviderLaunchModule({
+        terminalManager: manager,
+        providerIntegration: modules.createProviderIntegration({
+          resolveAgentEnvironment: async () => testCase.environment,
+          lifecycle: {
+            inspect: async () => ({ state: 'installed', trust: 'trusted' }),
+            install: async () => ({ state: 'installed', trust: 'trusted' }),
+          },
+        }),
+      });
+      createTerminalSession(testCase.id, 'codex');
+
+      await launcher.launch({
+        sessionId: testCase.id,
+        userId: 'provider-launch-user',
+        mode: 'detached',
+      });
+
+      assert.equal(captured[0]?.env?.CODEX_HOME, testCase.expectedHome);
+      assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, undefined);
+      if (testCase.environment === 'wsl') {
+        assert.equal(
+          captured[0]?.env?.WSLENV?.split(':').some(
+            (entry) => entry.split('/')[0] === 'TESSERA_CODEX_HOME',
+          ),
+          false,
+        );
+      }
+      await manager.closeSession(testCase.id, 'provider-launch-user');
+    }
+  } finally {
+    modules.registry.cliProviderRegistry.register('codex', originalProvider);
+    if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+  }
 });
 
 test('only an exact legacy Codex overlay Session resume keeps the compatibility home', async () => {

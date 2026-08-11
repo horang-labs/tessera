@@ -20,11 +20,17 @@ const codexProvider = {
   getProviderIntegrationRequirements: () => ({
     lifecycle: 'required' as const,
     skill: 'optional' as const,
+    launchEnvironment: 'not-applicable' as const,
   }),
 } as Pick<CliProvider, 'getProviderId' | 'getProviderIntegrationRequirements'>;
 
 const claudeProvider = {
   getProviderId: () => 'claude-code',
+  getProviderIntegrationRequirements: () => ({
+    lifecycle: 'not-applicable' as const,
+    skill: 'optional' as const,
+    launchEnvironment: 'not-applicable' as const,
+  }),
 } as Pick<CliProvider, 'getProviderId' | 'getProviderIntegrationRequirements'>;
 
 interface FakeCodexApi {

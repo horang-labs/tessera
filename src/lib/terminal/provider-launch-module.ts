@@ -590,14 +590,12 @@ export function createProviderLaunchModule(
         decision.launchSpec.cwd = workDir;
 
         let launchEnv: Record<string, string | undefined> | undefined;
-        if (!exactLegacyCodexOverlayResume && persisted.provider.resolveLaunchEnvironment) {
+        if (!exactLegacyCodexOverlayResume) {
           try {
-            launchEnv = await persisted.provider.resolveLaunchEnvironment({
-              environment: agentEnvironment,
-              userId: request.userId,
-              workDir,
-              baseEnvironment: process.env,
-            });
+            launchEnv = providerIntegration.buildLaunchEnvironment(
+              integration,
+              process.env,
+            );
           } catch (error) {
             const displayName = persisted.provider.getDisplayName();
             throw new Error(
