@@ -1237,18 +1237,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!session?.taskId || workflowStatus === 'chat') return;
 
     const nextWorkflowStatus = workflowStatus as NonNullable<UnifiedSession['workflowStatus']>;
-    const previousWorkflowStatus = session.workflowStatus ?? 'todo';
-    if (nextWorkflowStatus === previousWorkflowStatus) return;
+    if (nextWorkflowStatus === (session.workflowStatus ?? 'todo')) return;
 
-    const taskId = session.taskId;
-    get().syncTaskWorkflowStatus(taskId, previousWorkflowStatus, nextWorkflowStatus, sessionId);
-
-    useTaskStore.getState().updateTask(taskId, { workflowStatus: nextWorkflowStatus as any }).then((ok) => {
-      if (ok) return;
-
-      get().syncTaskWorkflowStatus(taskId, nextWorkflowStatus, previousWorkflowStatus);
-      console.warn(`[session-store] updateLinkedTaskWorkflowStatus rollback for task ${taskId}`);
-    });
+    void useTaskStore.getState().updateTask(
+      session.taskId,
+      { workflowStatus: nextWorkflowStatus },
+      session.projectDir,
+    );
   },
 
   updateChatWorkflowStatus: (sessionId, workflowStatus) => {
@@ -1339,7 +1334,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!session) return;
 
     if (session.taskId) {
-      void useTaskStore.getState().updateTask(session.taskId, { collectionId });
+      void useTaskStore.getState().updateTask(
+        session.taskId,
+        { collectionId },
+        session.projectDir,
+      );
       return;
     }
 

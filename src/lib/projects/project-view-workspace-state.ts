@@ -1,7 +1,18 @@
 import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
-import type { TaskEntity, TaskSession } from '@/types/task-entity';
+import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
+
+export interface TaskDerivedWorkspaceMutation {
+  taskId: string;
+  /** Required for Project-local fields such as Collection placement. */
+  projectViewId?: string;
+  workflowStatus?: WorkflowStatus;
+  collectionId?: string | null;
+  archived?: boolean;
+}
+
+export type WorkspaceMutationRollback = () => void;
 
 export interface ProjectViewWorkspaceStateDependencies {
   getProjects: () => readonly ProjectGroup[];
@@ -9,6 +20,9 @@ export interface ProjectViewWorkspaceStateDependencies {
   getTasksByProject: () => Readonly<Record<string, readonly TaskEntity[]>>;
   /** A missing key means the Project's Collections have not been loaded yet. */
   getCollectionsByProject: () => Readonly<Record<string, readonly Collection[]>>;
+  replaceProjects: (projects: ProjectGroup[]) => void;
+  replaceRetainedSessions: (sessions: Record<string, UnifiedSession>) => void;
+  replaceTasksByProject: (tasks: Record<string, TaskEntity[]>) => void;
   hasUnreadNotification: (sessionId: string) => boolean;
   clearSessionUnread: (sessionId: string) => void;
   clearTaskSessionUnread: (sessionId: string) => void;
@@ -25,6 +39,12 @@ export interface ProjectViewWorkspaceState {
   isSessionUnread: (sessionId: string) => boolean;
   /** Clear every loaded unread representation and acknowledge the transition once. */
   markSessionRead: (sessionId: string) => boolean;
+  /** Apply one Task-derived optimistic transition to every loaded appearance. */
+  applyTaskMutation: (
+    mutation: TaskDerivedWorkspaceMutation,
+  ) => WorkspaceMutationRollback | undefined;
+  /** Apply server-confirmed Todo -> Doing promotion through the same transition seam. */
+  promoteTodoTasks: (taskIds: readonly string[]) => WorkspaceMutationRollback | undefined;
 }
 
 interface TaskSessionAppearance {
@@ -78,6 +98,32 @@ function resolveCollectionPlacement(
   return knownCollections.some((collection) => collection.id === collectionId)
     ? collectionId
     : undefined;
+}
+
+function updateProjectWorkflowStatus(
+  project: ProjectGroup,
+  linkedSessionIds: ReadonlySet<string>,
+  taskId: string,
+  workflowStatus: WorkflowStatus,
+): ProjectGroup {
+  const previousStatuses: WorkflowStatus[] = [];
+  const sessions = project.sessions.map((session) => {
+    if (session.taskId !== taskId && !linkedSessionIds.has(session.id)) return session;
+    const previousStatus = session.workflowStatus ?? 'todo';
+    if (!session.archived && previousStatus !== workflowStatus) previousStatuses.push(previousStatus);
+    return { ...session, workflowStatus };
+  });
+  if (previousStatuses.length === 0 && sessions.every((session, index) => session === project.sessions[index])) {
+    return project;
+  }
+  if (!project.countByStatus || previousStatuses.length === 0) return { ...project, sessions };
+
+  const countByStatus = { ...project.countByStatus };
+  for (const previousStatus of previousStatuses) {
+    countByStatus[previousStatus] = Math.max(0, (countByStatus[previousStatus] ?? 0) - 1);
+    countByStatus[workflowStatus] = (countByStatus[workflowStatus] ?? 0) + 1;
+  }
+  return { ...project, sessions, countByStatus };
 }
 
 export function createProjectViewWorkspaceState(
@@ -178,5 +224,149 @@ export function createProjectViewWorkspaceState(
     return true;
   };
 
-  return { resolveSession, getCanonicalSessions, isSessionUnread, markSessionRead };
+  const applyTaskMutations = (
+    mutations: readonly TaskDerivedWorkspaceMutation[],
+  ): WorkspaceMutationRollback | undefined => {
+    if (mutations.length === 0) return undefined;
+
+    const previousProjects = [...dependencies.getProjects()];
+    const previousRetainedSessions = { ...dependencies.getRetainedSessions() };
+    const previousTasksByProject = Object.fromEntries(
+      Object.entries(dependencies.getTasksByProject()).map(([projectId, tasks]) => [
+        projectId,
+        [...tasks],
+      ]),
+    );
+    let projects = previousProjects;
+    let retainedSessions = previousRetainedSessions;
+    let tasksByProject = previousTasksByProject;
+
+    for (const mutation of mutations) {
+      const taskAppearances = Object.values(tasksByProject)
+        .flat()
+        .filter((task) => task.id === mutation.taskId);
+      if (taskAppearances.length === 0) continue;
+
+      const linkedSessionIds = new Set(
+        taskAppearances.flatMap((task) => task.sessions.map((session) => session.id)),
+      );
+      const hasCollectionMutation = Object.hasOwn(mutation, 'collectionId');
+      const hasArchiveMutation = Object.hasOwn(mutation, 'archived');
+
+      tasksByProject = Object.fromEntries(
+        Object.entries(tasksByProject).map(([projectId, tasks]) => {
+          if (mutation.archived === true) {
+            return [projectId, tasks.filter((task) => task.id !== mutation.taskId)];
+          }
+          return [
+            projectId,
+            tasks.map((task) => {
+              if (task.id !== mutation.taskId) return task;
+              return {
+                ...task,
+                ...(mutation.workflowStatus !== undefined && {
+                  workflowStatus: mutation.workflowStatus,
+                }),
+                ...(hasCollectionMutation && projectId === mutation.projectViewId && {
+                  collectionId: mutation.collectionId ?? undefined,
+                }),
+                ...(hasArchiveMutation && {
+                  archived: mutation.archived,
+                  archivedAt: mutation.archived ? new Date().toISOString() : undefined,
+                }),
+              };
+            }),
+          ];
+        }),
+      );
+
+      if (mutation.workflowStatus !== undefined) {
+        projects = projects.map((project) => updateProjectWorkflowStatus(
+          project,
+          linkedSessionIds,
+          mutation.taskId,
+          mutation.workflowStatus!,
+        ));
+      }
+
+      projects = projects.map((project) => ({
+        ...project,
+        sessions: project.sessions.map((session) => {
+          if (session.taskId !== mutation.taskId && !linkedSessionIds.has(session.id)) return session;
+          return {
+            ...session,
+            ...(hasCollectionMutation && project.encodedDir === mutation.projectViewId && {
+              collectionId: mutation.collectionId ?? undefined,
+            }),
+            ...(hasArchiveMutation && {
+              archived: mutation.archived,
+              archivedAt: mutation.archived ? new Date().toISOString() : undefined,
+              isReadOnly: mutation.archived,
+            }),
+          };
+        }),
+      }));
+
+      retainedSessions = Object.fromEntries(
+        Object.entries(retainedSessions).map(([sessionId, session]) => {
+          if (session.taskId !== mutation.taskId && !linkedSessionIds.has(session.id)) {
+            return [sessionId, session];
+          }
+          return [sessionId, {
+            ...session,
+            ...(mutation.workflowStatus !== undefined && {
+              workflowStatus: mutation.workflowStatus,
+            }),
+            ...(hasCollectionMutation && session.projectDir === mutation.projectViewId && {
+              collectionId: mutation.collectionId ?? undefined,
+            }),
+            ...(hasArchiveMutation && {
+              archived: mutation.archived,
+              archivedAt: mutation.archived ? new Date().toISOString() : undefined,
+              isReadOnly: mutation.archived,
+            }),
+          }];
+        }),
+      );
+    }
+
+    dependencies.replaceTasksByProject(tasksByProject);
+    dependencies.replaceProjects(projects);
+    dependencies.replaceRetainedSessions(retainedSessions);
+
+    return () => {
+      dependencies.replaceTasksByProject(previousTasksByProject);
+      dependencies.replaceProjects(previousProjects);
+      dependencies.replaceRetainedSessions(previousRetainedSessions);
+    };
+  };
+
+  const applyTaskMutation = (
+    mutation: TaskDerivedWorkspaceMutation,
+  ): WorkspaceMutationRollback | undefined => applyTaskMutations([mutation]);
+
+  const promoteTodoTasks = (
+    taskIds: readonly string[],
+  ): WorkspaceMutationRollback | undefined => {
+    const targets = new Set(taskIds);
+    const todoTaskIds = new Set<string>();
+    for (const tasks of Object.values(dependencies.getTasksByProject())) {
+      for (const task of tasks) {
+        if (targets.has(task.id) && task.workflowStatus === 'todo') todoTaskIds.add(task.id);
+      }
+    }
+    return applyTaskMutations(Array.from(todoTaskIds, (taskId) => ({
+      taskId,
+      workflowStatus: 'in_progress',
+    })));
+  };
+
+  return {
+    resolveSession,
+    getCanonicalSessions,
+    isSessionUnread,
+    markSessionRead,
+    applyTaskMutation,
+    promoteTodoTasks,
+  };
 }

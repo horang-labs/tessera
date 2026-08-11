@@ -9,8 +9,22 @@ import { useTaskStore } from '@/stores/task-store';
 export const projectViewWorkspaceState = createProjectViewWorkspaceState({
   getProjects: () => useSessionStore.getState().projects,
   getRetainedSessions: () => useSessionStore.getState().retainedSessions,
-  getTasksByProject: () => useTaskStore.getState().tasksByProject,
+  getTasksByProject: () => {
+    const state = useTaskStore.getState();
+    if (!state.currentProjectId || state.tasksByProject[state.currentProjectId]) {
+      return state.tasksByProject;
+    }
+    return { ...state.tasksByProject, [state.currentProjectId]: state.tasks };
+  },
   getCollectionsByProject: () => useCollectionStore.getState().collectionsByProject,
+  replaceProjects: (projects) => useSessionStore.setState({ projects }),
+  replaceRetainedSessions: (retainedSessions) => useSessionStore.setState({ retainedSessions }),
+  replaceTasksByProject: (tasksByProject) => useTaskStore.setState((state) => ({
+    tasksByProject,
+    ...(state.currentProjectId
+      ? { tasks: tasksByProject[state.currentProjectId] ?? [] }
+      : {}),
+  })),
   hasUnreadNotification: (sessionId) => useNotificationStore.getState().notifications.some(
     (notification) => notification.sessionId === sessionId && !notification.read,
   ),

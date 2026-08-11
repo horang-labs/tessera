@@ -375,7 +375,7 @@ export function useCollectionDnd(): UseCollectionDndReturn {
 
         const task = taskStore.getTaskBySessionId(sessionId);
         if (task) {
-          taskStore.updateTask(task.id, { collectionId: targetCollectionId });
+          taskStore.updateTask(task.id, { collectionId: targetCollectionId }, targetProjectId);
         } else {
           useSessionStore.getState().updateSessionCollection(sessionId, targetCollectionId);
         }
@@ -385,7 +385,7 @@ export function useCollectionDnd(): UseCollectionDndReturn {
     } else if (sourceCollectionId !== targetCollectionId) {
       // Single-item move to different collection (optimistic)
       if (type === 'task') {
-        useTaskStore.getState().updateTask(id, { collectionId: targetCollectionId });
+        useTaskStore.getState().updateTask(id, { collectionId: targetCollectionId }, targetProjectId);
       } else {
         useSessionStore.getState().updateSessionCollection(id, targetCollectionId);
       }

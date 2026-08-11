@@ -401,7 +401,6 @@ export function handleIncomingServerMessage({
       useTaskStore.getState().applyDiffStatsUpdate(msg.taskIds, msg.stats ?? null);
       if (msg.autoPromotedTaskIds?.length) {
         useTaskStore.getState().applyWorkflowStatusPromotions(msg.autoPromotedTaskIds);
-        sessionStore.applyWorkflowStatusPromotions(msg.autoPromotedTaskIds);
       }
       return { wasReconnect };
 

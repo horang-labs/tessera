@@ -91,6 +91,9 @@ test('canonical resolution deduplicates direct, retained, and task-summary ident
       'project-c': [task('project-c', 'collection-c', summary)],
     }),
     getCollectionsByProject: () => ({}),
+    replaceProjects: () => {},
+    replaceRetainedSessions: () => {},
+    replaceTasksByProject: () => {},
     hasUnreadNotification: () => false,
     clearSessionUnread: () => {},
     clearTaskSessionUnread: () => {},
@@ -125,6 +128,9 @@ test('retained unread activation keeps Project-local placement and reads every s
       'project-c': [collection('collection-c', 'project-c')],
       'project-d': [],
     }),
+    replaceProjects: () => {},
+    replaceRetainedSessions: () => {},
+    replaceTasksByProject: () => {},
     hasUnreadNotification: (id) => id === sessionId && notificationUnread,
     clearSessionUnread: () => { retained = { ...retained, unreadCount: 0 }; },
     clearTaskSessionUnread: () => { taskUnread = 0; },
@@ -146,4 +152,101 @@ test('retained unread activation keeps Project-local placement and reads every s
 
   assert.equal(workspace.markSessionRead(sessionId), false);
   assert.deepEqual(acknowledgements, [sessionId]);
+});
+
+test('Task-derived mutation matrix updates A/C appearances, retained state, and Task summaries', () => {
+  const taskId = 'shared-worktree';
+  const directInA = session({
+    projectDir: 'project-a',
+    workflowStatus: 'todo',
+    collectionId: 'collection-a',
+  });
+  const directInC = session({
+    projectDir: 'project-c',
+    workflowStatus: 'todo',
+    collectionId: 'collection-c',
+  });
+  let projects = [project('project-a', [directInA]), project('project-c', [directInC])];
+  let retainedSessions = {
+    [sessionId]: session({
+      projectDir: 'project-c',
+      workflowStatus: 'todo',
+      collectionId: 'collection-c',
+    }),
+  };
+  const taskInA = { ...task('project-a', 'collection-a'), id: taskId };
+  const taskInC = { ...task('project-c', 'collection-c'), id: taskId };
+  let tasksByProject = { 'project-a': [taskInA], 'project-c': [taskInC] };
+  const workspace = createProjectViewWorkspaceState({
+    getProjects: () => projects,
+    getRetainedSessions: () => retainedSessions,
+    getTasksByProject: () => tasksByProject,
+    getCollectionsByProject: () => ({
+      'project-a': [collection('collection-a', 'project-a')],
+      'project-c': [collection('collection-c', 'project-c')],
+    }),
+    replaceProjects: (next) => { projects = next; },
+    replaceRetainedSessions: (next) => { retainedSessions = next; },
+    replaceTasksByProject: (next) => { tasksByProject = next; },
+    hasUnreadNotification: () => false,
+    clearSessionUnread: () => {},
+    clearTaskSessionUnread: () => {},
+    markNotificationsRead: () => {},
+    acknowledgeSessionRead: () => {},
+  });
+
+  const workflowRollback = workspace.applyTaskMutation({
+    taskId,
+    workflowStatus: 'in_review',
+  });
+  assert.ok(workflowRollback);
+  assert.deepEqual(
+    Object.values(tasksByProject).map(([appearance]) => appearance.workflowStatus),
+    ['in_review', 'in_review'],
+  );
+  assert.deepEqual(
+    projects.map(({ sessions }) => sessions[0]?.workflowStatus),
+    ['in_review', 'in_review'],
+  );
+  assert.equal(retainedSessions[sessionId]?.workflowStatus, 'in_review');
+  workflowRollback();
+
+  workspace.promoteTodoTasks([taskId]);
+  assert.deepEqual(
+    Object.values(tasksByProject).map(([appearance]) => appearance.workflowStatus),
+    ['in_progress', 'in_progress'],
+  );
+  assert.deepEqual(
+    projects.map(({ sessions }) => sessions[0]?.workflowStatus),
+    ['in_progress', 'in_progress'],
+  );
+  assert.equal(retainedSessions[sessionId]?.workflowStatus, 'in_progress');
+
+  const collectionRollback = workspace.applyTaskMutation({
+    taskId,
+    projectViewId: 'project-c',
+    collectionId: null,
+  });
+  assert.ok(collectionRollback);
+  assert.equal(tasksByProject['project-a'][0]?.collectionId, 'collection-a');
+  assert.equal(tasksByProject['project-c'][0]?.collectionId, undefined);
+  assert.equal(projects[0]?.sessions[0]?.collectionId, 'collection-a');
+  assert.equal(projects[1]?.sessions[0]?.collectionId, undefined);
+  assert.equal(retainedSessions[sessionId]?.collectionId, undefined);
+  collectionRollback();
+  assert.equal(tasksByProject['project-c'][0]?.collectionId, 'collection-c');
+
+  const archiveRollback = workspace.applyTaskMutation({ taskId, archived: true });
+  assert.ok(archiveRollback);
+  assert.deepEqual(tasksByProject, { 'project-a': [], 'project-c': [] });
+  for (const appearance of projects.flatMap(({ sessions }) => sessions)) {
+    assert.equal(appearance.archived, true);
+    assert.equal(appearance.isReadOnly, true);
+  }
+  assert.equal(retainedSessions[sessionId]?.archived, true);
+  assert.equal(retainedSessions[sessionId]?.isReadOnly, true);
+  archiveRollback();
+  assert.equal(tasksByProject['project-a'][0]?.id, taskId);
+  assert.equal(retainedSessions[sessionId]?.archived, false);
+  assert.equal(retainedSessions[sessionId]?.isReadOnly, undefined);
 });
