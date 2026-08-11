@@ -59,6 +59,10 @@ import { codexProtocolParser } from './protocol-parser';
 import { buildCodexSandboxPolicy, getCodexPermissionMapping } from './session-config';
 import { isBinaryAvailable } from '../registry';
 import { getAgentEnvironment, normalizeCwdForCliEnvironment, spawnCli } from '../../spawn-cli';
+import {
+  providerIntegration as sharedProviderIntegration,
+  type ProviderIntegration,
+} from '../../provider-integration';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
 import {
   resolveProviderCliCommand,
@@ -222,7 +226,17 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
 // CodexAdapter
 // =============================================================================
 
+export interface CodexAdapterOptions {
+  providerIntegration?: ProviderIntegration;
+}
+
 export class CodexAdapter implements CliProvider {
+  private readonly _providerIntegration: ProviderIntegration;
+
+  constructor(options: CodexAdapterOptions = {}) {
+    this._providerIntegration = options.providerIntegration ?? sharedProviderIntegration;
+  }
+
   /**
    * Counter for JSON-RPC request IDs used by sendMessage / sendInterrupt.
    * Starts at 3 because the handshake reserves local ids 1 and 2 (initialize
@@ -460,7 +474,12 @@ export class CodexAdapter implements CliProvider {
    */
   async spawn(workDir: string, options: SpawnOptions): Promise<SpawnResult> {
     const args = this.getCliArgs(options);
-    const agentEnv = await getAgentEnvironment(options.userId);
+    const integration = await this._providerIntegration.resolveLaunch({
+      providerId: PROVIDER_ID,
+      surface: 'app-server',
+      userId: options.userId,
+    });
+    const agentEnv = integration.agentEnvironment;
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
 

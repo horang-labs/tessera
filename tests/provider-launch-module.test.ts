@@ -22,6 +22,8 @@ type Modules = {
     typeof import('@/lib/terminal/provider-launch-module').createProviderLaunchModule;
   ProviderLaunchError:
     typeof import('@/lib/terminal/provider-launch-module').ProviderLaunchError;
+  createProviderIntegration:
+    typeof import('@/lib/cli/provider-integration').createProviderIntegration;
   resolvePaneToken: typeof import('@/lib/terminal/pane-token-registry').resolvePaneToken;
 };
 
@@ -68,6 +70,7 @@ before(async () => {
     codex,
     opencode,
     paneTokens,
+    providerIntegration,
   ] = await Promise.all([
     import('@/lib/db/database'),
     import('@/lib/db/projects'),
@@ -81,6 +84,7 @@ before(async () => {
     import('@/lib/cli/providers/codex/adapter'),
     import('@/lib/cli/providers/opencode/adapter'),
     import('@/lib/terminal/pane-token-registry'),
+    import('@/lib/cli/provider-integration'),
   ]);
   registry.cliProviderRegistry.register(
     'claude-code',
@@ -103,6 +107,7 @@ before(async () => {
     TerminalManager: terminal.TerminalManager,
     createProviderLaunchModule: launcher.createProviderLaunchModule,
     ProviderLaunchError: launcher.ProviderLaunchError,
+    createProviderIntegration: providerIntegration.createProviderIntegration,
     resolvePaneToken: paneTokens.resolvePaneToken,
   };
 });
@@ -230,6 +235,38 @@ async function launchDetached(
     ...(initialPrompt === undefined ? {} : { initialPrompt }),
   });
 }
+
+test('direct TUI Codex launch uses the shared Provider Integration policy without changing its overlay', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const resolvedUsers: Array<string | undefined> = [];
+  const providerIntegration = modules.createProviderIntegration({
+    resolveAgentEnvironment: async (userId) => {
+      resolvedUsers.push(userId);
+      return 'wsl';
+    },
+  });
+  const launcher = modules.createProviderLaunchModule({
+    terminalManager: manager,
+    providerIntegration,
+  });
+  createTerminalSession('shared-policy-direct-codex', 'codex');
+
+  await launcher.launch({
+    sessionId: 'shared-policy-direct-codex',
+    userId: 'provider-launch-user',
+    mode: 'detached',
+  });
+
+  assert.deepEqual(resolvedUsers, ['provider-launch-user']);
+  assert.match(
+    captured[0]?.env?.CODEX_HOME ?? '',
+    /codex-overlay[\\/]session-shared-policy-direct-codex$/,
+  );
+  assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, captured[0]?.env?.CODEX_HOME);
+
+  await manager.closeSession('shared-policy-direct-codex', 'provider-launch-user');
+});
 
 test('launch preparation finalizes provider argv before shell resolution', async () => {
   const captured: CapturedSpawn[] = [];
@@ -713,7 +750,9 @@ test('shared provider launches inject the complete control bridge environment fo
     const disposed: string[] = [];
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      resolveAgentEnvironment: async () => agentEnvironment,
+      providerIntegration: modules.createProviderIntegration({
+        resolveAgentEnvironment: async () => agentEnvironment,
+      }),
       prepareControlCliBridge: async (context) => {
         assert.deepEqual(context, {
           agentEnvironment,
@@ -848,7 +887,9 @@ test('managed fake-provider launches discover the canonical skill in a WSL-like 
   try {
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      resolveAgentEnvironment: async () => 'wsl',
+      providerIntegration: modules.createProviderIntegration({
+        resolveAgentEnvironment: async () => 'wsl',
+      }),
       prepareControlCliBridge: async ({ projectId, sessionId }) => ({
         commandPath: `/home/agent/.tessera/control/${sessionId}/tessera`,
         environment: {
@@ -1047,7 +1088,9 @@ test('a WSL Claude background attach does not prepare a new plugin overlay', asy
     });
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      resolveAgentEnvironment: async () => 'wsl',
+      providerIntegration: modules.createProviderIntegration({
+        resolveAgentEnvironment: async () => 'wsl',
+      }),
     });
 
     await launcher.launch({
@@ -1126,7 +1169,9 @@ test('a preparation timeout removes a Codex overlay that only lands after the ga
     const manager = createManager(captured);
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      resolveAgentEnvironment: async () => 'wsl',
+      providerIntegration: modules.createProviderIntegration({
+        resolveAgentEnvironment: async () => 'wsl',
+      }),
       // Shorter than the sleeping guest script, so the gate always loses the race.
       preparationTimeoutMs: 200,
     });
@@ -1234,7 +1279,9 @@ test('a preparation timeout still removes the WSL overlay whose spawn it abandon
     const manager = createManager(captured);
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      resolveAgentEnvironment: async () => 'wsl',
+      providerIntegration: modules.createProviderIntegration({
+        resolveAgentEnvironment: async () => 'wsl',
+      }),
       preparationTimeoutMs: 1_000,
     });
 
@@ -1312,7 +1359,9 @@ test('a deterministically failing WSL overlay is not retried: Claude launches an
     createTerminalSession('failing-overlay-claude', 'claude-code');
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      resolveAgentEnvironment: async () => 'wsl',
+      providerIntegration: modules.createProviderIntegration({
+        resolveAgentEnvironment: async () => 'wsl',
+      }),
     });
 
     await launcher.launch({
