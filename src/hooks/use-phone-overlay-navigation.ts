@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 
 const PHONE_OVERLAY_STACK_KEY = '__tesseraPhoneOverlayStack';
 
@@ -33,7 +34,7 @@ export function usePhoneOverlayNavigation({
   useEffect(function registerPhoneOverlayHistoryEntry() {
     if (!enabled || !open || typeof window === 'undefined') return;
 
-    const entryId = `phone-overlay-${crypto.randomUUID()}`;
+    const entryId = `phone-overlay-${uuidv4()}`;
     entryIdRef.current = entryId;
     const stack = readPhoneOverlayStack(window.history.state);
     window.history.pushState({
