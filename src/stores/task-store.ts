@@ -80,6 +80,8 @@ interface TaskState {
   getTasksForProject: (projectId: string) => TaskEntity[];
   /** Mirror runtime liveness into linked Sessions projected only through Tasks. */
   setLinkedSessionRunning: (sessionId: string, running: boolean) => void;
+  /** Mirror canonical unread state into every loaded Worktree Task summary. */
+  setLinkedSessionUnreadCount: (sessionId: string, unreadCount: number) => void;
   /**
    * Update a linked session title in local task cache.
    * Single-session tasks also mirror the parent task title.
@@ -183,6 +185,28 @@ function setLinkedSessionRunningInList(
       ...task,
       sessions: task.sessions.map((candidate) =>
         candidate.id === sessionId ? { ...candidate, isRunning: running } : candidate
+      ),
+    };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function setLinkedSessionUnreadCountInList(
+  tasks: TaskEntity[],
+  sessionId: string,
+  unreadCount: number,
+): TaskEntity[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    const session = task.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session || session.unreadCount === unreadCount) return task;
+
+    changed = true;
+    return {
+      ...task,
+      sessions: task.sessions.map((candidate) =>
+        candidate.id === sessionId ? { ...candidate, unreadCount } : candidate
       ),
     };
   });
@@ -689,6 +713,28 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         ])
       ),
     })),
+
+  setLinkedSessionUnreadCount: (sessionId, unreadCount) =>
+    set((state) => {
+      const tasks = setLinkedSessionUnreadCountInList(state.tasks, sessionId, unreadCount);
+      let tasksByProject = state.tasksByProject;
+      for (const [projectId, projectTasks] of Object.entries(state.tasksByProject)) {
+        const updatedTasks = setLinkedSessionUnreadCountInList(
+          projectTasks,
+          sessionId,
+          unreadCount,
+        );
+        if (updatedTasks === projectTasks) continue;
+        if (tasksByProject === state.tasksByProject) {
+          tasksByProject = { ...state.tasksByProject };
+        }
+        tasksByProject[projectId] = updatedTasks;
+      }
+
+      return tasks === state.tasks && tasksByProject === state.tasksByProject
+        ? state
+        : { tasks, tasksByProject };
+    }),
 
   syncLinkedTaskTitle: (sessionId, title) =>
     set((state) => ({

@@ -5,6 +5,7 @@ import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
 import { useI18n } from '@/lib/i18n';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import type { Tab } from '@/types/tab';
@@ -72,18 +73,7 @@ export function useTabStatusIndicator(tab: Tab, isActive: boolean) {
     ),
   );
 
-  const hasUnread = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return panelSessionIds.split(',').some((id) => {
-          const s = state.getSession(id);
-          return s ? (s.unreadCount ?? 0) > 0 : false;
-        });
-      },
-      [panelSessionIds],
-    ),
-  );
+  const hasUnread = useAnyProjectViewSessionUnread(sessionIdList);
 
   // Same priority ladder as ItemStatusIndicator so the label/testid match the
   // dot that actually renders.

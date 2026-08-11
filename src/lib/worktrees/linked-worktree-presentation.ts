@@ -41,6 +41,7 @@ export function toLinkedWorktreeSession(
     isRunning: session.isRunning,
     status: session.isRunning ? 'running' : session.kind === 'terminal' ? 'stopped' : 'completed',
     lastModified: session.lastModified,
+    unreadCount: session.unreadCount,
     createdAt: task.createdAt,
     kind: session.kind,
     workflowStatus: task.workflowStatus,

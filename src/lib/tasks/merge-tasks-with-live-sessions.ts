@@ -16,6 +16,7 @@ function toTaskSession(session: UnifiedSession): TaskSession {
     provider: session.provider,
     lastModified: session.lastModified,
     isRunning: session.isRunning,
+    unreadCount: session.unreadCount,
     kind: session.kind,
     sortOrder: session.sortOrder,
   };

@@ -15,6 +15,7 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { useBoardStore } from '@/stores/board-store';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
 import { useChatStore } from '@/stores/chat-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
@@ -249,29 +250,17 @@ export const CollectionGroup = memo(function CollectionGroup({
   );
   const hasVisibleRuntimeSession = useSessionStore((state) =>
     collectionSessionSnapshots.some((snapshot) => {
-      for (const project of state.projects) {
-        const liveSession = project.sessions.find((session) => session.id === snapshot.id);
-        if (liveSession) return resolveSessionRuntimePresentation(liveSession).showRunning;
-      }
-
-      return resolveSessionRuntimePresentation(snapshot).showRunning;
+      const liveSession = state.getSession(snapshot.id);
+      return resolveSessionRuntimePresentation(liveSession ?? snapshot).showRunning;
     }),
   );
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(collectionSessionSnapshots);
-  const hasUnreadSession = useSessionStore((state) =>
-    collectionSessionSnapshots.some((snapshot) => {
-      if (snapshot.id === activeSessionId) return false;
-
-      for (const project of state.projects) {
-        const liveSession = project.sessions.find((session) => session.id === snapshot.id);
-        if (liveSession) return (liveSession.unreadCount ?? 0) > 0;
-      }
-
-      return (snapshot.unreadCount ?? 0) > 0;
-    }),
+  const hasUnreadSession = useAnyProjectViewSessionUnread(
+    collectionSessionIds,
+    activeSessionId,
   );
   const hasAwaitingUserSession = useAnySessionAwaitingUser(collectionSessionSnapshots);
   const collectionIndicatorStatus = getPrioritizedCollectionIndicatorStatus({
