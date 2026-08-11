@@ -10,6 +10,7 @@ import {
   isLoopbackAddress,
   isValidBearerToken,
 } from '../src/lib/control/http-handler';
+import { createControlAuthorityRegistry } from '../src/lib/control/authority';
 import type { RuntimeDescriptor } from '../src/lib/control/runtime-descriptor';
 import { createControlService } from '../src/lib/control/service';
 
@@ -34,9 +35,16 @@ test('bearer validation accepts only the exact token without length-dependent co
 });
 
 test('every Control request authenticates and negotiates the exact runtime and versions', async () => {
+  const authority = createControlAuthorityRegistry();
+  const grant = authority.grant({
+    agentEnvironment: 'wsl',
+    projectId: 'project-caller',
+    sessionId: 'session-caller',
+  });
   const service = createControlService({
     appVersion: DESCRIPTOR.appVersion,
     runtimeId: DESCRIPTOR.runtimeId,
+    authority,
     projects: { list: () => [], get: () => undefined },
     worktrees: { list: () => [], get: () => undefined },
   });
@@ -87,8 +95,10 @@ test('every Control request authenticates and negotiates the exact runtime and v
       [CONTROL_RUNTIME_ID_HEADER]: DESCRIPTOR.runtimeId,
       [CONTROL_API_VERSION_HEADER]: '1',
       [CONTROL_APP_VERSION_HEADER]: DESCRIPTOR.appVersion,
-      'x-tessera-caller-project-id': 'project-caller',
-      'x-tessera-agent-environment': 'wsl',
+      'x-tessera-control-authority': grant.token,
+      'x-tessera-caller-project-id': 'forged-project',
+      'x-tessera-caller-session-id': 'forged-session',
+      'x-tessera-agent-environment': 'native',
     });
     assert.equal(success.status, 200);
     assert.deepEqual(success.body, {
@@ -99,8 +109,25 @@ test('every Control request authenticates and negotiates the exact runtime and v
         controlVersion: 1,
         instanceId: 'runtime-http-test',
         connectionState: 'connected',
-        callerContext: { projectId: 'project-caller' },
+        callerContext: {
+          projectId: 'project-caller',
+          sessionId: 'session-caller',
+        },
       },
+    });
+
+    const outsideTessera = await getJson(origin, '/__tessera/control/v1/status', {
+      authorization: `Bearer ${TOKEN}`,
+      [CONTROL_RUNTIME_ID_HEADER]: DESCRIPTOR.runtimeId,
+      [CONTROL_API_VERSION_HEADER]: '1',
+      [CONTROL_APP_VERSION_HEADER]: DESCRIPTOR.appVersion,
+      'x-tessera-caller-session-id': 'session-caller',
+    });
+    assert.equal(outsideTessera.status, 403);
+    assert.deepEqual(outsideTessera.body.error, {
+      code: 'CONTROL_AUTHORITY_DENIED',
+      message: 'The caller does not have active Tessera Control authority.',
+      details: {},
     });
   } finally {
     if (previousBypass === undefined) delete process.env.TESSERA_ELECTRON_AUTH_BYPASS;

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createControlAuthorityRegistry } from '../src/lib/control/authority';
 import {
   ControlOperationError,
   createControlService,
@@ -50,10 +51,23 @@ const WORKTREES: ControlWorktreeRecord[] = [
   },
 ];
 
+const AUTHORITY = createControlAuthorityRegistry();
+const AUTHORITY_GRANT = AUTHORITY.grant({
+  agentEnvironment: 'wsl',
+  projectId: 'project-exact-id',
+  sessionId: 'session-caller',
+  worktreeId: 'wt_public_one',
+});
+const CONTEXT = {
+  agentEnvironment: 'wsl' as const,
+  authorityToken: AUTHORITY_GRANT.token,
+};
+
 function makeService() {
   return createControlService({
     appVersion: '1.2.3',
     runtimeId: 'runtime-one',
+    authority: AUTHORITY,
     projects: {
       list: () => PROJECTS,
       get: (projectId) => PROJECTS.find((project) => project.id === projectId),
@@ -66,11 +80,7 @@ function makeService() {
 }
 
 test('status reports one exact runtime and only available caller context', async () => {
-  const status = await makeService().status({
-    agentEnvironment: 'wsl',
-    projectId: 'project-exact-id',
-    sessionId: 'session-caller',
-  });
+  const status = await makeService().status(CONTEXT);
 
   assert.deepEqual(status, {
     appVersion: '1.2.3',
@@ -80,32 +90,21 @@ test('status reports one exact runtime and only available caller context', async
     callerContext: {
       projectId: 'project-exact-id',
       sessionId: 'session-caller',
+      worktreeId: 'wt_public_one',
     },
   });
 });
 
 test('project reads return public DTOs with caller-readable paths and compatibility', async () => {
   const service = makeService();
-  const context = { agentEnvironment: 'wsl' as const };
+  const context = CONTEXT;
 
   assert.deepEqual(await service.listProjects(context), {
-    projects: [
-      {
+    projects: [{
         id: 'project-exact-id',
         displayName: 'Alpha',
         path: '/home/work/alpha',
         visible: true,
-        agentEnvironmentCompatibility: {
-          agentEnvironment: 'wsl',
-          filesystemKind: 'wsl',
-          compatible: true,
-        },
-      },
-      {
-        id: 'closed-project-id',
-        displayName: 'Closed',
-        path: '/home/work/closed',
-        visible: false,
         agentEnvironmentCompatibility: {
           agentEnvironment: 'wsl',
           filesystemKind: 'wsl',
@@ -126,18 +125,18 @@ test('project reads return public DTOs with caller-readable paths and compatibil
   assert.equal(collectKeys(shown).includes('decodedPath'), false);
 });
 
-test('project show fails with the stable missing-project error', async () => {
+test('project show denies selectors outside the caller Project scope', async () => {
   await assert.rejects(
-    makeService().showProject('missing-project', { agentEnvironment: 'native' }),
+    makeService().showProject('missing-project', CONTEXT),
     (error: unknown) => error instanceof ControlOperationError
-      && error.code === 'PROJECT_NOT_FOUND'
-      && error.httpStatus === 404,
+      && error.code === 'CONTROL_AUTHORITY_DENIED'
+      && error.httpStatus === 403,
   );
 });
 
 test('Worktree reads use exact public IDs and expose caller-readable public DTOs', async () => {
   const service = makeService();
-  const context = { agentEnvironment: 'wsl' as const, projectId: 'project-exact-id' };
+  const context = CONTEXT;
 
   const current = await service.listWorktrees({ kind: 'current' }, context);
   assert.deepEqual(current, {
@@ -185,11 +184,11 @@ test('Worktree reads use exact public IDs and expose caller-readable public DTOs
   );
 });
 
-test('Worktree current selection fails without injected caller context', async () => {
+test('Worktree current selection fails without active managed authority', async () => {
   await assert.rejects(
     makeService().listWorktrees({ kind: 'current' }, { agentEnvironment: 'native' }),
     (error: unknown) => error instanceof ControlOperationError
-      && error.code === 'CALLER_CONTEXT_UNAVAILABLE',
+      && error.code === 'CONTROL_AUTHORITY_DENIED',
   );
 });
 
@@ -198,9 +197,16 @@ test('Worktree creation rejects an incompatible Project before the mutation boun
   Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
   let mutationCalls = 0;
   try {
+    const authority = createControlAuthorityRegistry();
+    const grant = authority.grant({
+      agentEnvironment: 'wsl',
+      projectId: 'windows-project',
+      sessionId: 'session-windows-project',
+    });
     const service = createControlService({
       appVersion: '1.2.3',
       runtimeId: 'runtime-one',
+      authority,
       projects: {
         list: () => [],
         get: (projectId) => projectId === 'windows-project'
@@ -226,7 +232,7 @@ test('Worktree creation rejects an incompatible Project before the mutation boun
         selector: { kind: 'project', projectId: 'windows-project' },
         branch: 'feature/environment-check',
         startPoint: 'main',
-      }, { agentEnvironment: 'wsl' }),
+      }, { agentEnvironment: 'wsl', authorityToken: grant.token }),
       (error: unknown) => error instanceof ControlOperationError
         && error.code === 'PROJECT_ENVIRONMENT_MISMATCH',
     );

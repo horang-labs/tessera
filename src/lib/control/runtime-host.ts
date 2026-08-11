@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { configureSharedProviderControlCliBridge } from '@/lib/terminal/shared-provider-launch-module';
 import { createControlCliBridgeFactory } from './cli-bridge';
+import { createControlAuthorityRegistry } from './authority';
 import { createDatabaseControlProjectSource } from './database-project-source';
 import { createDatabaseControlSessionSource } from './database-session-source';
 import { createDatabaseControlWorktreeSource } from './database-worktree-source';
@@ -57,7 +58,9 @@ export async function startControlRuntimeHost(
       runtimeDirectory: options.runtimeDirectory,
       descriptorPath: options.descriptorPath,
     });
+    const authority = createControlAuthorityRegistry();
     const bridgeFactory = createControlCliBridgeFactory({
+      authority,
       runtimeId: descriptorHandle.descriptor.runtimeId,
       descriptorPath: descriptorHandle.path,
       cliEntryPath: options.cliEntryPath ?? path.join(options.appRoot, 'bin', 'tessera.mjs'),
@@ -73,6 +76,7 @@ export async function startControlRuntimeHost(
       service: createControlService({
         appVersion: options.appVersion,
         runtimeId: descriptorHandle.descriptor.runtimeId,
+        authority,
         projects: createDatabaseControlProjectSource(),
         worktrees: createDatabaseControlWorktreeSource(),
         worktreeCreator: createDatabaseControlWorktreeCreator({

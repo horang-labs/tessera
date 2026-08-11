@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createControlAuthorityRegistry } from '../src/lib/control/authority';
 import {
   ControlOperationError,
   ControlSessionStartError,
@@ -29,7 +30,17 @@ const WORKTREE: ControlWorktreeRecord = {
   sessions: [],
 };
 
-const CONTEXT = { agentEnvironment: 'native' as const };
+const AUTHORITY = createControlAuthorityRegistry();
+const AUTHORITY_GRANT = AUTHORITY.grant({
+  agentEnvironment: 'native',
+  projectId: PROJECT.id,
+  sessionId: 'caller-session',
+  worktreeId: WORKTREE.worktreeId,
+});
+const CONTEXT = {
+  agentEnvironment: 'native' as const,
+  authorityToken: AUTHORITY_GRANT.token,
+};
 
 function createFixture() {
   const records: ControlSessionRecord[] = [];
@@ -92,6 +103,7 @@ function createFixture() {
   const service = createControlService({
     appVersion: '1.0.0',
     runtimeId: 'runtime-one',
+    authority: AUTHORITY,
     projects: { list: () => [PROJECT], get: (id) => id === PROJECT.id ? PROJECT : undefined },
     worktrees: {
       list: () => [WORKTREE],

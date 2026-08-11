@@ -11,12 +11,17 @@ import {
   createControlCliBridgeFactory,
   type WslExecutableStore,
 } from '../src/lib/control/cli-bridge';
+import {
+  createControlAuthorityRegistry,
+  type ControlAuthorityRegistry,
+} from '../src/lib/control/authority';
 import { createControlHttpHandler } from '../src/lib/control/http-handler';
 import {
   publishRuntimeDescriptor,
   type RuntimeDescriptorHandle,
 } from '../src/lib/control/runtime-descriptor';
 import { createControlService } from '../src/lib/control/service';
+import { runControlCli } from './helpers/control-cli-runner';
 
 const REPO_ROOT = process.cwd();
 const PACKAGE_VERSION = JSON.parse(
@@ -28,6 +33,7 @@ test('a native bridge stays pinned to its runtime and exact caller context', asy
   const runtimeOne = await startRuntime(testRoot, 'one');
   const runtimeTwo = await startRuntime(testRoot, 'two');
   const factoryOne = createControlCliBridgeFactory({
+    authority: runtimeOne.authority,
     runtimeId: runtimeOne.descriptor.runtimeId,
     descriptorPath: runtimeOne.path,
     cliEntryPath: path.join(REPO_ROOT, 'bin', 'tessera.mjs'),
@@ -36,6 +42,7 @@ test('a native bridge stays pinned to its runtime and exact caller context', asy
     artifactRoot: path.join(testRoot, 'bridges with spaces'),
   });
   const factoryTwo = createControlCliBridgeFactory({
+    authority: runtimeTwo.authority,
     runtimeId: runtimeTwo.descriptor.runtimeId,
     descriptorPath: runtimeTwo.path,
     cliEntryPath: path.join(REPO_ROOT, 'bin', 'tessera.mjs'),
@@ -62,10 +69,12 @@ test('a native bridge stays pinned to its runtime and exact caller context', asy
     assert.deepEqual(bridgeOne.environment, {
       TESSERA_ENV: '1',
       TESSERA_CLI_COMMAND: bridgeOne.commandPath,
+      TESSERA_CONTROL_AUTHORITY: bridgeOne.environment.TESSERA_CONTROL_AUTHORITY,
       TESSERA_PROJECT_ID: 'project-one',
       TESSERA_SESSION_ID: 'session-one',
       TESSERA_WORKTREE_ID: 'wt_one',
     });
+    assert.match(bridgeOne.environment.TESSERA_CONTROL_AUTHORITY, /^[A-Za-z0-9_-]{43}$/);
 
     const resultOne = await runQuotedBridge(bridgeOne.commandPath, {
       TESSERA_CONTROL_DESCRIPTOR: runtimeTwo.path,
@@ -91,14 +100,26 @@ test('a native bridge stays pinned to its runtime and exact caller context', asy
       runtimeTwo.path,
       runtimeOne.descriptor.token,
       runtimeTwo.descriptor.token,
+      bridgeOne.environment.TESSERA_CONTROL_AUTHORITY,
+      bridgeTwo.environment.TESSERA_CONTROL_AUTHORITY,
     ]) {
       assert.equal(resultOne.stdout.includes(secret), false);
       assert.equal(resultOne.stderr.includes(secret), false);
     }
 
+    const expiredAuthority = bridgeOne.environment.TESSERA_CONTROL_AUTHORITY;
     await bridgeOne.dispose();
     assert.equal(fsSync.existsSync(bridgeOne.commandPath), false);
     assert.equal(fsSync.existsSync(bridgeTwo.commandPath), true);
+    const expired = await runControlCli(
+      ['status', '--json', '--control-descriptor', runtimeOne.path],
+      {
+        repoRoot: REPO_ROOT,
+        envOverrides: { TESSERA_CONTROL_AUTHORITY: expiredAuthority },
+      },
+    );
+    assert.equal(expired.code, 1);
+    assert.equal(JSON.parse(expired.stdout).error.code, 'CONTROL_AUTHORITY_DENIED');
 
     const resultTwo = await runBridge(bridgeTwo.commandPath, ['status', '--json']);
     assert.equal(JSON.parse(resultTwo.stdout).data.instanceId, runtimeTwo.descriptor.runtimeId);
@@ -134,6 +155,7 @@ test('a Windows-to-WSL bridge exposes only a guest executable and owns both arti
     },
   };
   const factory = createControlCliBridgeFactory({
+    authority: createControlAuthorityRegistry(),
     runtimeId: 'runtime-windows-wsl',
     descriptorPath: 'C:\\Users\\Test\\AppData\\Local\\Tessera\\runtime.json',
     cliEntryPath: 'C:\\Program Files\\Tessera\\resources\\app.asar\\bin\\tessera.mjs',
@@ -161,6 +183,7 @@ test('a Windows-to-WSL bridge exposes only a guest executable and owns both arti
     assert.deepEqual(bridge.environment, {
       TESSERA_ENV: '1',
       TESSERA_CLI_COMMAND: bridge.commandPath,
+      TESSERA_CONTROL_AUTHORITY: bridge.environment.TESSERA_CONTROL_AUTHORITY,
       TESSERA_PROJECT_ID: 'project-wsl',
       TESSERA_SESSION_ID: 'session-wsl',
       TESSERA_WORKTREE_ID: 'wt_wsl',
@@ -236,6 +259,7 @@ test('runtime cleanup waits for a guest bridge disposal already in flight', asyn
   const removeStarted = new Promise<void>((resolve) => { reportRemoveStarted = resolve; });
   const removeGate = new Promise<void>((resolve) => { releaseRemove = resolve; });
   const factory = createControlCliBridgeFactory({
+    authority: createControlAuthorityRegistry(),
     runtimeId: 'runtime-cleanup-race',
     descriptorPath: 'C:\\private\\runtime.json',
     cliEntryPath: 'C:\\Tessera\\bin\\tessera.mjs',
@@ -277,6 +301,7 @@ test('runtime cleanup cancels and removes a guest bridge creation already in fli
   const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
   const removedGuestPaths: string[] = [];
   const factory = createControlCliBridgeFactory({
+    authority: createControlAuthorityRegistry(),
     runtimeId: 'runtime-create-race',
     descriptorPath: 'C:\\private\\runtime.json',
     cliEntryPath: 'C:\\Tessera\\bin\\tessera.mjs',
@@ -313,6 +338,7 @@ test('runtime cleanup reports and retries a failed guest artifact removal', asyn
   const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-wsl-remove-retry-'));
   let removeAttempts = 0;
   const factory = createControlCliBridgeFactory({
+    authority: createControlAuthorityRegistry(),
     runtimeId: 'runtime-remove-retry',
     descriptorPath: 'C:\\private\\runtime.json',
     cliEntryPath: 'C:\\Tessera\\bin\\tessera.mjs',
@@ -392,6 +418,7 @@ test('the generated WSL executable crosses into a host process with cwd and cont
     encoding: 'utf8',
   }).trim();
   const factory = createControlCliBridgeFactory({
+    authority: createControlAuthorityRegistry(),
     runtimeId: 'runtime-real-wsl-boundary',
     descriptorPath: 'C:\\private\\exact-runtime.json',
     cliEntryPath: toWindowsPath(fakeCliPath),
@@ -513,6 +540,7 @@ test('a Windows GUI host exit code survives the WSL bridge', {
     encoding: 'utf8',
   }).trim();
   const factory = createControlCliBridgeFactory({
+    authority: createControlAuthorityRegistry(),
     runtimeId: 'runtime-real-wsl-gui-exit',
     descriptorPath: 'C:\\private\\exact-runtime.json',
     cliEntryPath: toWindowsPath(fakeCliPath),
@@ -543,7 +571,10 @@ test('a Windows GUI host exit code survives the WSL bridge', {
   }
 });
 
-async function startRuntime(testRoot: string, label: string): Promise<RuntimeDescriptorHandle> {
+async function startRuntime(
+  testRoot: string,
+  label: string,
+): Promise<RuntimeDescriptorHandle & { authority: ControlAuthorityRegistry }> {
   let requestHandler: ReturnType<typeof createControlHttpHandler> | undefined;
   const server = http.createServer((request, response) => {
     if (!requestHandler) {
@@ -560,11 +591,13 @@ async function startRuntime(testRoot: string, label: string): Promise<RuntimeDes
     origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     runtimeDirectory: path.join(testRoot, label),
   });
+  const authority = createControlAuthorityRegistry();
   requestHandler = createControlHttpHandler({
     descriptor: descriptor.descriptor,
     service: createControlService({
       appVersion: PACKAGE_VERSION,
       runtimeId: descriptor.descriptor.runtimeId,
+      authority,
       projects: { list: () => [], get: () => undefined },
       worktrees: { list: () => [], get: () => undefined },
     }),
@@ -572,6 +605,7 @@ async function startRuntime(testRoot: string, label: string): Promise<RuntimeDes
   const cleanupDescriptor = descriptor.cleanup;
   return {
     ...descriptor,
+    authority,
     cleanup: async () => {
       await cleanupDescriptor();
       await new Promise<void>((resolve) => server.close(() => resolve()));

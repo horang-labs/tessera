@@ -19,6 +19,10 @@ import type {
 } from '@/lib/projects/preparation-status-policy';
 import type { WorktreeCreationSource } from '@/lib/worktrees/create';
 import { CONTROL_API_VERSION } from './runtime-descriptor';
+import type {
+  ControlAuthorityContext,
+  ControlAuthoritySource,
+} from './authority';
 
 export type ControlErrorCode =
   | 'BRANCH_REQUIRED'
@@ -26,6 +30,7 @@ export type ControlErrorCode =
   | 'BRANCH_ALREADY_CHECKED_OUT'
   | 'BRANCH_NOT_FOUND'
   | 'CALLER_CONTEXT_UNAVAILABLE'
+  | 'CONTROL_AUTHORITY_DENIED'
   | 'CONTROL_VERSION_MISMATCH'
   | 'INSTANCE_UNAVAILABLE'
   | 'INVALID_USAGE'
@@ -49,6 +54,7 @@ export type ControlErrorCode =
   | 'UNAUTHORIZED';
 
 export interface ControlCallerContext {
+  authorityToken?: string;
   agentEnvironment: AgentEnvironment;
   projectId?: string;
   sessionId?: string;
@@ -350,6 +356,7 @@ export class ControlSessionStartError extends ControlOperationError {
 export function createControlService(options: {
   appVersion: string;
   runtimeId: string;
+  authority: ControlAuthoritySource;
   projects: ControlProjectSource;
   worktrees: ControlWorktreeSource;
   worktreeCreator?: ControlWorktreeCreator;
@@ -361,6 +368,7 @@ export function createControlService(options: {
   const {
     appVersion,
     runtimeId,
+    authority,
     projects,
     worktrees,
     worktreeCreator,
@@ -372,22 +380,27 @@ export function createControlService(options: {
 
   return {
     async status(context) {
+      const caller = requireControlAuthority(authority, context);
       return {
         appVersion,
         controlVersion: CONTROL_API_VERSION,
         instanceId: runtimeId,
         connectionState: 'connected',
-        callerContext: publicCallerContext(context),
+        callerContext: publicCallerContext(caller),
       };
     },
 
     async listProjects(context) {
+      const caller = requireControlAuthority(authority, context);
+      const project = projects.get(caller.projectId);
       return {
-        projects: projects.list().map((project) => toPublicProject(project, context)),
+        projects: project ? [toPublicProject(project, caller)] : [],
       };
     },
 
     async showProject(projectId, context) {
+      const caller = requireControlAuthority(authority, context);
+      requireProjectScope(projectId, caller);
       const project = projects.get(projectId);
       if (!project) {
         throw new ControlOperationError(
@@ -397,11 +410,13 @@ export function createControlService(options: {
           { projectId },
         );
       }
-      return toPublicProject(project, context);
+      return toPublicProject(project, caller);
     },
 
     async listWorktrees(selector, context) {
-      const projectId = resolveSelectedProjectId(selector, context);
+      const caller = requireControlAuthority(authority, context);
+      const projectId = resolveSelectedProjectId(selector, caller);
+      requireProjectScope(projectId, caller);
       if (!projects.get(projectId)) {
         throw new ControlOperationError(
           'PROJECT_NOT_FOUND',
@@ -412,25 +427,20 @@ export function createControlService(options: {
       }
       return {
         worktrees: worktrees.list(projectId).map((worktree) => (
-          toPublicWorktree(worktree, context)
+          toPublicWorktree(worktree, caller)
         )),
       };
     },
 
     async showWorktree(worktreeId, context) {
-      const worktree = worktrees.get(worktreeId);
-      if (!worktree) {
-        throw new ControlOperationError(
-          'WORKTREE_NOT_FOUND',
-          'The requested Worktree does not exist.',
-          404,
-          { worktreeId },
-        );
-      }
-      return toPublicWorktree(worktree, context);
+      const caller = requireControlAuthority(authority, context);
+      return toPublicWorktree(requireScopedWorktree(worktrees, worktreeId, caller), caller);
     },
 
     async createWorktree(request, context) {
+      const caller = requireControlAuthority(authority, context);
+      const projectId = resolveSelectedProjectId(request.selector, caller);
+      requireProjectScope(projectId, caller);
       if (!request.branch || !request.branch.trim()) {
         throw new ControlOperationError(
           'BRANCH_REQUIRED',
@@ -453,7 +463,6 @@ export function createControlService(options: {
         );
       }
 
-      const projectId = resolveSelectedProjectId(request.selector, context);
       const project = projects.get(projectId);
       if (!project) {
         throw new ControlOperationError(
@@ -465,7 +474,7 @@ export function createControlService(options: {
       }
       const compatibility = validateProjectEnvironment(
         project.decodedPath,
-        context.agentEnvironment,
+        caller.agentEnvironment,
       );
       if (!compatibility.ok) {
         throw new ControlOperationError(
@@ -474,7 +483,7 @@ export function createControlService(options: {
           400,
           {
             projectId,
-            agentEnvironment: context.agentEnvironment,
+            agentEnvironment: caller.agentEnvironment,
             filesystemKind: compatibility.filesystemKind,
           },
         );
@@ -502,7 +511,7 @@ export function createControlService(options: {
           ? {
               ...error.details,
               worktree: {
-                ...toPublicWorktree(error.worktree, context),
+                ...toPublicWorktree(error.worktree, caller),
                 startPoint: error.startPoint,
               },
             }
@@ -510,40 +519,45 @@ export function createControlService(options: {
         throw new ControlOperationError(error.code, error.message, error.httpStatus, details);
       }
       return {
-        ...toPublicWorktree(created.worktree, context),
+        ...toPublicWorktree(created.worktree, caller),
         startPoint: created.startPoint,
       };
     },
 
-    async listSessions(worktreeId) {
-      requireWorktree(worktrees, worktreeId);
+    async listSessions(worktreeId, context) {
+      const caller = requireControlAuthority(authority, context);
+      requireScopedWorktree(worktrees, worktreeId, caller);
       const support = requireSessionSupport(sessions, sessionMutator);
       return {
         sessions: support.sessions.list(worktreeId).map(toPublicSession),
       };
     },
 
-    async showSession(sessionId) {
+    async showSession(sessionId, context) {
+      const caller = requireControlAuthority(authority, context);
       const support = requireSessionSupport(sessions, sessionMutator);
-      return toPublicSession(requireSession(support.sessions, sessionId));
+      return toPublicSession(requireScopedSession(support.sessions, sessionId, caller));
     },
 
-    async createSession(request) {
-      requireWorktree(worktrees, request.worktreeId);
+    async createSession(request, context) {
+      const caller = requireControlAuthority(authority, context);
+      requireScopedWorktree(worktrees, request.worktreeId, caller);
       const support = requireSessionSupport(sessions, sessionMutator);
       validateSessionCreationRequest(request);
       return toPublicSession(await support.mutator.create(request));
     },
 
-    async startSession(request) {
+    async startSession(request, context) {
+      const caller = requireControlAuthority(authority, context);
       const support = requireSessionSupport(sessions, sessionMutator);
-      const session = requireSession(support.sessions, request.sessionId);
+      const session = requireScopedSession(support.sessions, request.sessionId, caller);
       const launched = await support.mutator.start(request);
       return { session: toPublicSession(session), terminalId: launched.terminalId };
     },
 
-    async launchSession(request) {
-      requireWorktree(worktrees, request.worktreeId);
+    async launchSession(request, context) {
+      const caller = requireControlAuthority(authority, context);
+      requireScopedWorktree(worktrees, request.worktreeId, caller);
       const support = requireSessionSupport(sessions, sessionMutator);
       validateSessionCreationRequest(request);
       const created = await support.mutator.create(request);
@@ -562,15 +576,17 @@ export function createControlService(options: {
       }
     },
 
-    async readSession(sessionId) {
+    async readSession(sessionId, context) {
+      const caller = requireControlAuthority(authority, context);
       const observer = requireSessionObserver(sessions, sessionObserver);
-      requireSession(observer.sessions, sessionId);
+      requireScopedSession(observer.sessions, sessionId, caller);
       return observer.observer.read(sessionId);
     },
 
-    async waitForSession(request) {
+    async waitForSession(request, context) {
+      const caller = requireControlAuthority(authority, context);
       const observer = requireSessionObserver(sessions, sessionObserver);
-      requireSession(observer.sessions, request.sessionId);
+      requireScopedSession(observer.sessions, request.sessionId, caller);
       const timeoutSeconds = request.timeoutSeconds ?? 600;
       if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 3_600) {
         throw new ControlOperationError(
@@ -593,9 +609,10 @@ export function createControlService(options: {
       );
     },
 
-    async promptSession(request) {
+    async promptSession(request, context) {
+      const caller = requireControlAuthority(authority, context);
       const controller = requireSessionController(sessions, sessionController);
-      requireSession(controller.sessions, request.sessionId);
+      requireScopedSession(controller.sessions, request.sessionId, caller);
       if (!request.text.trim()) {
         throw new ControlOperationError(
           'INPUT_NOT_ACCEPTED',
@@ -607,9 +624,10 @@ export function createControlService(options: {
       return controller.controller.prompt(request.sessionId, request.text);
     },
 
-    async sendSessionKeys(request) {
+    async sendSessionKeys(request, context) {
+      const caller = requireControlAuthority(authority, context);
       const controller = requireSessionController(sessions, sessionController);
-      requireSession(controller.sessions, request.sessionId);
+      requireScopedSession(controller.sessions, request.sessionId, caller);
       if (request.keys.length === 0 || !request.keys.every(isTerminalNamedKey)) {
         throw new ControlOperationError(
           'INVALID_USAGE',
@@ -620,12 +638,38 @@ export function createControlService(options: {
       return controller.controller.sendKeys(request.sessionId, request.keys);
     },
 
-    async stopSession(sessionId) {
+    async stopSession(sessionId, context) {
+      const caller = requireControlAuthority(authority, context);
       const controller = requireSessionController(sessions, sessionController);
-      requireSession(controller.sessions, sessionId);
+      requireScopedSession(controller.sessions, sessionId, caller);
       return controller.controller.stop(sessionId);
     },
   };
+}
+
+function requireControlAuthority(
+  authority: ControlAuthoritySource,
+  context: ControlCallerContext,
+): ControlAuthorityContext {
+  const resolved = authority.resolve(context.authorityToken);
+  if (resolved) return resolved;
+  throw new ControlOperationError(
+    'CONTROL_AUTHORITY_DENIED',
+    'The caller does not have active Tessera Control authority.',
+    403,
+  );
+}
+
+function requireProjectScope(
+  projectId: string,
+  authority: ControlAuthorityContext,
+): void {
+  if (projectId === authority.projectId) return;
+  throw new ControlOperationError(
+    'CONTROL_AUTHORITY_DENIED',
+    'The requested resource is outside the caller Project scope.',
+    403,
+  );
 }
 
 function requireWorktree(
@@ -640,6 +684,16 @@ function requireWorktree(
     404,
     { worktreeId },
   );
+}
+
+function requireScopedWorktree(
+  worktrees: ControlWorktreeSource,
+  worktreeId: string,
+  authority: ControlAuthorityContext,
+): ControlWorktreeRecord {
+  const worktree = requireWorktree(worktrees, worktreeId);
+  requireProjectScope(worktree.projectId, authority);
+  return worktree;
 }
 
 function requireSessionSupport(
@@ -697,6 +751,16 @@ function requireSession(
     404,
     { sessionId },
   );
+}
+
+function requireScopedSession(
+  sessions: ControlSessionSource,
+  sessionId: string,
+  authority: ControlAuthorityContext,
+): ControlSessionRecord {
+  const session = requireSession(sessions, sessionId);
+  requireProjectScope(session.projectId, authority);
+  return session;
 }
 
 function validateSessionCreationRequest(
@@ -774,7 +838,7 @@ function toPublicSession(session: ControlSessionRecord): PublicSessionDto {
 
 function resolveSelectedProjectId(
   selector: ControlProjectSelector,
-  context: ControlCallerContext,
+  context: Pick<ControlAuthorityContext, 'projectId'>,
 ): string {
   if (selector.kind === 'project') return selector.projectId;
   if (context.projectId) return context.projectId;

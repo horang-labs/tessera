@@ -742,6 +742,7 @@ export class TerminalManager {
         appendWslenv(terminalEnv, [
           { name: 'TESSERA_ENV' },
           { name: 'TESSERA_CLI_COMMAND' },
+          { name: 'TESSERA_CONTROL_AUTHORITY' },
           { name: 'TESSERA_PROJECT_ID' },
           { name: 'TESSERA_WORKTREE_ID' },
           { name: 'TESSERA_PANE_TOKEN' },

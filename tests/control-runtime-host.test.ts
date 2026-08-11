@@ -37,14 +37,12 @@ test('the shared runtime host publishes one pinned CLI transport and cleans it u
         },
       },
     );
-    assert.equal(status.code, 0);
+    assert.equal(status.code, 1);
     assert.equal(status.stderr, '');
-    assert.deepEqual(JSON.parse(status.stdout).data, {
-      appVersion: PACKAGE_VERSION,
-      controlVersion: 1,
-      instanceId: host.runtimeId,
-      connectionState: 'connected',
-      callerContext: null,
+    assert.deepEqual(JSON.parse(status.stdout).error, {
+      code: 'CONTROL_AUTHORITY_DENIED',
+      message: 'The caller does not have active Tessera Control authority.',
+      details: {},
     });
     assert.equal(fsSync.existsSync(descriptorPath), true);
   } finally {

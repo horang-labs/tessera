@@ -641,13 +641,14 @@ function callerContext(request: IncomingMessage): ControlCallerContext {
     agentEnvironment: headerValue(request, 'x-tessera-agent-environment') === 'wsl'
       ? 'wsl'
       : 'native',
+    ...readCallerId(request, 'x-tessera-control-authority', 'authorityToken'),
     ...readCallerId(request, 'x-tessera-caller-project-id', 'projectId'),
     ...readCallerId(request, 'x-tessera-caller-session-id', 'sessionId'),
     ...readCallerId(request, 'x-tessera-caller-worktree-id', 'worktreeId'),
   };
 }
 
-function readCallerId<Key extends 'projectId' | 'sessionId' | 'worktreeId'>(
+function readCallerId<Key extends 'authorityToken' | 'projectId' | 'sessionId' | 'worktreeId'>(
   request: IncomingMessage,
   header: string,
   key: Key,
