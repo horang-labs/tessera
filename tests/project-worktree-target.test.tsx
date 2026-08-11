@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -7,7 +8,7 @@ import {
   ProjectWorktreeRow,
 } from '../src/components/worktree/project-worktree-row';
 import { WorktreeOverview } from '../src/components/worktree/worktree-overview';
-import { gitPanelReadPath } from '../src/lib/git/git-panel-read';
+import { gitPanelDiffPath, gitPanelReadPath } from '../src/lib/git/git-panel-read';
 import { workspaceFileListPath } from '../src/hooks/use-workspace-file-list';
 import { usePanelStore } from '../src/stores/panel-store';
 import { useTabStore } from '../src/stores/tab-store';
@@ -15,9 +16,19 @@ import { useWorkspacePeekStore } from '../src/stores/workspace-peek-store';
 import { activateSessionPanel } from '../src/lib/session/focus-session-panel';
 import {
   buildWorktreeFileSessionId,
+  parseWorkspaceFileSessionId,
   parseWorktreeFileSessionId,
 } from '../src/lib/workspace-tabs/special-session';
-import { previewWorktreeFileTab } from '../src/lib/workspace-tabs/open-workspace-tab';
+import {
+  previewWorkspaceTargetFileTab,
+  previewWorktreeFileTab,
+} from '../src/lib/workspace-tabs/open-workspace-tab';
+import { resolveWorkspaceTarget } from '../src/types/worktree';
+
+const chatLayoutSource = fs.readFileSync(
+  new URL('../src/components/chat/chat-layout.tsx', import.meta.url),
+  'utf8',
+);
 
 test('Project Worktree rows render detailed and compact variants', () => {
   const row = renderToStaticMarkup(createElement(ProjectWorktreeRow, {
@@ -169,8 +180,49 @@ test('a composite panel stores its Session and owning Worktree together', () => 
   assert.equal(panel?.worktreeId, 'wt-composite');
 });
 
+test('a composite target keeps its Session capabilities', () => {
+  const target = resolveWorkspaceTarget('session-composite', 'wt-composite');
+  assert.deepEqual(target, { kind: 'session', id: 'session-composite' });
+
+  previewWorkspaceTargetFileTab(target!, 'file', 'README.md');
+  const activeTabId = useTabStore.getState().activeTabId;
+  const activePanel = usePanelStore.getState().tabPanels[activeTabId];
+  const specialSessionId = activePanel?.panels[activePanel.activePanelId]?.sessionId ?? '';
+  assert.deepEqual(parseWorkspaceFileSessionId(specialSessionId), {
+    type: 'workspace-file',
+    sourceSessionId: 'session-composite',
+    kind: 'file',
+    path: 'README.md',
+  });
+});
+
+test('ChatLayout only drops the active Session for an explicit Worktree Peek', () => {
+  assert.match(
+    chatLayoutSource,
+    /const activeGitTargetSessionId = peekWorktreeId\s*\? null\s*:\s*activeGitSessionId;/,
+  );
+  assert.equal(
+    (chatLayoutSource.match(/sessionId=\{activeGitTargetSessionId\}/g) ?? []).length,
+    2,
+  );
+});
+
 test('sessionless Git and Files reads route by canonical Worktree identity', () => {
   const target = { kind: 'worktree', id: 'wt_project_root' } as const;
   assert.equal(gitPanelReadPath(target), '/api/worktrees/wt_project_root/git');
+  assert.equal(
+    gitPanelDiffPath(target, 'src/a file.ts'),
+    '/api/worktrees/wt_project_root/git/diff?path=src%2Fa%20file.ts',
+  );
   assert.equal(workspaceFileListPath(target), '/api/worktrees/wt_project_root/files');
+});
+
+test('Worktree diff tabs retain their Worktree target and kind', () => {
+  const id = buildWorktreeFileSessionId('wt_project_root', 'src/app.ts', 'diff');
+  assert.deepEqual(parseWorktreeFileSessionId(id), {
+    type: 'worktree-file',
+    sourceWorktreeId: 'wt_project_root',
+    kind: 'diff',
+    path: 'src/app.ts',
+  });
 });

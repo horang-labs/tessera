@@ -162,9 +162,34 @@ try {
   await page.getByText("Changed files", { exact: true }).waitFor({ timeout: 30_000 });
   await page.getByText(gitFixtureName, { exact: true }).waitFor();
   assert.equal(await page.getByText("No worktree selected", { exact: true }).count(), 0);
+  assert.equal(await page.getByTestId("git-commit-generate-button").isDisabled(), true);
+  const gitMenu = page.getByTestId("git-panel").getByTestId("git-action-menu");
+  await page.getByTestId("git-panel").getByTestId("git-action-menu-trigger").click();
+  await gitMenu.waitFor();
+  assert.doesNotMatch(await gitMenu.innerText(), /Reading git state/i);
+  assert.match(
+    await page.getByTestId(`git-action-menu-item-commit`).innerText(),
+    /Start a session/i,
+  );
+  await page.keyboard.press("Escape");
+  await gitMenu.waitFor({ state: "detached" });
+  const diffResponse = page.waitForResponse((response) =>
+    response.url().includes('/api/worktrees/')
+      && response.url().includes('/git/diff?path=')
+  );
+  await page
+    .getByTestId(`git-panel-file-row-${gitFixtureName}`)
+    .locator(':scope > div > button')
+    .click();
+  assert.equal((await diffResponse).status(), 200);
+  await page.getByRole('tab', { name: new RegExp(`^${gitFixtureName} Diff`) }).waitFor();
+  await projectWorktree.click();
+  await page.getByTestId('worktree-peek').waitFor();
 
   await page.getByRole("tab", { name: "Files" }).click();
   await page.getByText("Workspace files", { exact: true }).waitFor({ timeout: 30_000 });
+  assert.equal(await page.getByTestId("workspace-new-file").isDisabled(), true);
+  assert.equal(await page.getByTestId("workspace-new-folder").isDisabled(), true);
   const readmeRow = page.getByRole("button", { name: "README.md", exact: true });
   await readmeRow.waitFor();
   const fileResponse = page.waitForResponse((response) =>
@@ -174,7 +199,8 @@ try {
   await readmeRow.click();
   assert.equal((await fileResponse).status(), 200);
   await page.getByTestId('worktree-peek').waitFor({ state: 'detached' });
-  await page.getByRole('tab', { name: 'README.md', exact: true }).waitFor();
+  await page.getByRole('tab', { name: /^README\.md/ }).waitFor();
+  assert.equal(await page.getByTestId('workspace-file-save').count(), 0);
   await projectWorktree.click();
   await page.getByTestId('worktree-peek').waitFor();
 

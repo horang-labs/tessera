@@ -74,6 +74,7 @@ export type GitMenuActionReasonKey =
   | 'gitPanel.conflict.rebaseInProgress'
   | 'gitPanel.conflict.cherryPickInProgress'
   | 'gitPanel.primary.stateUnknown'
+  | 'gitPanel.primary.sessionRequired'
   | 'gitPanel.primary.detachedHead'
   | 'gitPanel.primary.noRemote'
   | 'gitPanel.commit.nothingToCommit'

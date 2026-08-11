@@ -1201,6 +1201,7 @@ export interface I18nMessages {
     primary: {
       loading: string;
       stateUnknown: string;
+      sessionRequired: string;
       detachedHead: string;
       noRemote: string;
       upToDate: string;

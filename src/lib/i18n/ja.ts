@@ -1219,6 +1219,7 @@ export const ja: I18nMessages = {
     primary: {
       loading: 'Git',
       stateUnknown: 'git の状態を読み込み中…',
+      sessionRequired: 'Git 操作を実行するには、このワークツリーでセッションを開始してください',
       detachedHead: 'HEAD が分離されています — プッシュするにはブランチをチェックアウトしてください',
       noRemote: 'このリポジトリにはプッシュ先のリモートがありません',
       upToDate: '最新',

@@ -152,18 +152,18 @@ test('an input from another session cannot strand this panel', () => {
 test('the rename gesture does not also re-open the file', () => {
   // Both clicks of a double-click on the name reach the row; the second one
   // previewing the file again under the input it just opened is nobody's ask.
-  assert.match(filePanelSource, /if \(!shouldOpenOnRowClick\(\{/);
+  assert.match(filePanelSource, /if \(target\.kind === 'session' && !shouldOpenOnRowClick\(\{/);
   assert.match(inlineStateSource, /return !\(fromRenameHotspot && clickCount > 1\)/);
   // F2 renames; Enter still activates the row, so the keyboard can open a file.
-  assert.match(filePanelSource, /if \(event\.key !== "F2"\) return;/);
+  assert.match(filePanelSource, /if \(!canMutate \|\| event\.key !== "F2"\) return;/);
 });
 
 test('a deferred folder toggle cannot fire under an input that just opened', () => {
   // Clicking a folder's name arms a toggle for the double-click window. Opening
   // any input before it fires would let it collapse the folder the row sits in,
   // taking the half-typed name with it — so both entry points disarm it.
-  assert.match(filePanelSource, /function beginRename\(node: WorkspaceTreeNode\) \{\s*\n\s*clearDeferredToggle\(\);/);
-  assert.match(filePanelSource, /function beginNewEntry\(kind: "file" \| "folder", parentPath: string\) \{\s*\n\s*clearDeferredToggle\(\);/);
+  assert.match(filePanelSource, /function beginRename\(node: WorkspaceTreeNode\) \{\s*if \(!canMutate\) return;\s*clearDeferredToggle\(\);/);
+  assert.match(filePanelSource, /function beginNewEntry\(kind: "file" \| "folder", parentPath: string\) \{\s*if \(!canMutate\) return;\s*clearDeferredToggle\(\);/);
   // And nothing reaches the hook's startNew around that guard.
   const rawStartNew = filePanelSource.match(/inlineInput\.startNew\(/g) ?? [];
   assert.equal(rawStartNew.length, 1, 'startNew is only called from beginNewEntry');
@@ -181,7 +181,7 @@ test('double-clicking the name renames without fighting the row click', () => {
   // The hotspot is the name text alone, and a folder holds its toggle back for
   // the double-click window so the row does not collapse under the input.
   assert.match(filePanelSource, /\[RENAME_HOTSPOT_ATTR\]: ""/);
-  assert.match(filePanelSource, /onDoubleClick=\{\(event\) => \{\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
+  assert.match(filePanelSource, /onDoubleClick=\{\(event\) => \{\s*if \(!canMutate\) return;\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
   assert.match(filePanelSource, /resolveDirToggleTiming\(\{/);
   assert.match(inlineStateSource, /return clickCount > 1 \? "skip" : "deferred"/);
 });

@@ -1222,6 +1222,7 @@ export const en: I18nMessages = {
     primary: {
       loading: 'Git',
       stateUnknown: 'Reading git state…',
+      sessionRequired: 'Start a session in this worktree to run Git actions',
       detachedHead: 'HEAD is detached — check out a branch to push',
       noRemote: 'This repository has no remote to push to',
       upToDate: 'Up to date',

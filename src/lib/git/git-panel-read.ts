@@ -43,6 +43,13 @@ export function gitPanelReadPath(target: string | WorkspaceTarget): string {
   return `${workspaceTargetApiPath(resolved)}/git`;
 }
 
+export function gitPanelDiffPath(
+  target: string | WorkspaceTarget,
+  filePath: string,
+): string {
+  return `${gitPanelReadPath(target)}/diff?path=${encodeURIComponent(filePath)}`;
+}
+
 export async function readGitPanelState(
   target: string | WorkspaceTarget,
   options: GitPanelReadOptions = {},
