@@ -22,9 +22,9 @@ import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
 import {
-  buildOriginProjectRepresentation,
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { shouldShowAllProjectLoading } from './sidebar-utils';
@@ -59,12 +59,10 @@ export function AllProjectsList({
   onSessionStopProcess,
   onChatStatusChange,
 }: AllProjectsListProps) {
-  const projects = useSessionStore((state) => state.projects);
-  const tasksByProject = useTaskStore((state) => state.tasksByProject);
-  const representation = useMemo(
-    () => buildOriginProjectRepresentation(projects, tasksByProject),
-    [projects, tasksByProject],
-  );
+  useSessionStore((state) => state.projects);
+  useSessionStore((state) => state.retainedSessions);
+  useTaskStore((state) => state.tasksByProject);
+  const representation = projectViewWorkspaceState.getOriginProjectRepresentation();
   const visibleProjects = useMemo(() => {
     if (!isRunningFilterActive) return representation.projects;
     return representation.projects.filter((project) => originProjectContainsRunningSession(

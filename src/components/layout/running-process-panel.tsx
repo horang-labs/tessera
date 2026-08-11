@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -12,7 +12,8 @@ import { wsClient } from '@/lib/ws/client';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
-import { getCanonicalRunningSessionRepresentatives } from '@/lib/projects/origin-project-representation';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { useTaskStore } from '@/stores/task-store';
 
 interface RunningProcessPanelProps {
   /** Dropdown open direction: 'down' (header) or 'right' (vertical strip) */
@@ -31,11 +32,10 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Get all running sessions across all projects
-  const projects = useSessionStore((state) => state.projects);
-  const runningSessions = useMemo(
-    () => getCanonicalRunningSessionRepresentatives(projects),
-    [projects],
-  );
+  useSessionStore((state) => state.projects);
+  useSessionStore((state) => state.retainedSessions);
+  useTaskStore((state) => state.tasksByProject);
+  const runningSessions = projectViewWorkspaceState.getCanonicalRunningSessions();
 
   const runningCount = runningSessions.length;
 
@@ -79,11 +79,9 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
   }, []);
 
   const handleStopAll = useCallback(() => {
-    for (const session of runningSessions) {
-      wsClient.stopSession(session.id);
-    }
+    projectViewWorkspaceState.stopAllRunningSessions();
     setIsOpen(false);
-  }, [runningSessions]);
+  }, []);
 
   const handleNavigateToSession = useCallback((sessionId: string, projectDir: string) => {
     // Switch to the session's project

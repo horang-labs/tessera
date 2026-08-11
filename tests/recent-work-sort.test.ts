@@ -218,3 +218,53 @@ test('global Recent Work represents a projected Session once through its origin 
     ['linked-c', 'project-a'],
   ]);
 });
+
+test('global Recent Work uses retained canonical activity and runtime over a stale Task snapshot', () => {
+  const retained = makeSession({
+    id: 'session-c',
+    title: 'Live retained Session',
+    projectDir: 'project-c',
+    originProjectId: 'project-a',
+    taskId: 'linked-c',
+    isRunning: true,
+    status: 'running',
+    createdAt: '2026-06-13T09:00:00.000Z',
+    lastModified: '2026-06-13T12:00:00.000Z',
+  });
+  const staleTask: TaskEntity = {
+    id: 'linked-c',
+    projectId: 'project-a',
+    projectViewId: 'project-a',
+    title: 'Linked C',
+    workflowStatus: 'todo',
+    sortOrder: 0,
+    sessions: [{
+      id: retained.id,
+      originProjectId: 'project-a',
+      title: 'Stale Task snapshot',
+      lastModified: '2026-06-13T10:00:00.000Z',
+      isRunning: false,
+      sortOrder: 0,
+    }],
+    createdAt: retained.createdAt,
+    updatedAt: '2026-06-13T10:00:00.000Z',
+  };
+  const projects = [
+    { ...makeProject([]), encodedDir: 'project-a', displayName: 'Project A' },
+    { ...makeProject([]), encodedDir: 'project-c', displayName: 'Project C' },
+  ];
+
+  const items = buildRecentWorkItems({
+    projects,
+    tasksByProject: { 'project-a': [staleTask], 'project-c': [] },
+    canonicalSessions: [retained],
+    limit: 8,
+    originOnly: true,
+  });
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.projectId, 'project-a');
+  assert.equal(items[0]?.session.title, 'Live retained Session');
+  assert.equal(items[0]?.lastActivityAt, retained.lastModified);
+  assert.equal(items[0]?.isRunning, true);
+});

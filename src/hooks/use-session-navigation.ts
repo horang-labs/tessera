@@ -11,7 +11,8 @@ import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
-import { getCanonicalSessionRepresentatives } from '@/lib/projects/origin-project-representation';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { useTaskStore } from '@/stores/task-store';
 
 /** Number of messages loaded per API page. Used as the bloat threshold. */
 export const INITIAL_PAGE_SIZE = 25;
@@ -19,6 +20,7 @@ export const INITIAL_PAGE_SIZE = 25;
 export function useSessionNavigation() {
   const sessionStore = useSessionStore();
   const chatStore = useChatStore();
+  useTaskStore((state) => state.tasksByProject);
 
   const [isLoading, setIsLoading] = useState(false);
   const loadingRequestCountRef = useRef(0);
@@ -109,7 +111,7 @@ export function useSessionNavigation() {
 
     isLoading,
 
-    sessions: getCanonicalSessionRepresentatives(sessionStore.projects),
+    sessions: projectViewWorkspaceState.getCanonicalSessions(),
     activeSessionId: sessionStore.activeSessionId,
   };
 }

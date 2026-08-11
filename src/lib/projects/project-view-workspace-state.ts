@@ -1,4 +1,6 @@
 import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { buildOriginProjectRepresentation } from '@/lib/projects/origin-project-representation';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
@@ -14,6 +16,7 @@ export interface ProjectViewWorkspaceStateDependencies {
   clearTaskSessionUnread: (sessionId: string) => void;
   markNotificationsRead: (sessionId: string) => void;
   acknowledgeSessionRead: (sessionId: string) => void;
+  stopSession: (sessionId: string) => void;
 }
 
 export interface ProjectViewWorkspaceState {
@@ -21,10 +24,16 @@ export interface ProjectViewWorkspaceState {
   resolveSession: (sessionId: string, projectViewId?: string) => UnifiedSession | undefined;
   /** Return one representative per canonical Session ID across every loaded source. */
   getCanonicalSessions: () => UnifiedSession[];
+  /** Return the running canonical representatives used by every global surface. */
+  getCanonicalRunningSessions: () => UnifiedSession[];
+  /** Build the single origin-only representation used by global Project surfaces. */
+  getOriginProjectRepresentation: () => ReturnType<typeof buildOriginProjectRepresentation>;
   /** Canonical unread state shared by tabs, rows, boards, Collections, and notifications. */
   isSessionUnread: (sessionId: string) => boolean;
   /** Clear every loaded unread representation and acknowledge the transition once. */
   markSessionRead: (sessionId: string) => boolean;
+  /** Stop each globally running Session once and clear its unread state everywhere. */
+  stopAllRunningSessions: () => string[];
 }
 
 interface TaskSessionAppearance {
@@ -158,13 +167,34 @@ export function createProjectViewWorkspaceState(
       }
     }
 
-    return Array.from(sessionIds, resolveCanonicalSession).filter(
-      (session): session is UnifiedSession => session !== undefined,
-    );
+    return Array.from(sessionIds, resolveCanonicalSession)
+      .filter((session): session is UnifiedSession => session !== undefined)
+      .map((session) => session.projectDir === session.originProjectId
+        ? session
+        : { ...session, projectDir: session.originProjectId });
   };
+
+  const getCanonicalRunningSessions = (): UnifiedSession[] => (
+    getCanonicalSessions().filter(
+      (session) => !session.archived && resolveSessionRuntimePresentation(session).canStop,
+    )
+  );
+
+  const getOriginProjectRepresentation = () => buildOriginProjectRepresentation(
+    [...dependencies.getProjects()],
+    Object.fromEntries(
+      Object.entries(dependencies.getTasksByProject()).map(([projectId, tasks]) => [
+        projectId,
+        [...tasks],
+      ]),
+    ),
+    getCanonicalSessions(),
+  );
 
   const isSessionUnread = (sessionId: string): boolean => (
     (resolveCanonicalSession(sessionId)?.unreadCount ?? 0) > 0
+    || findTaskSessionAppearances(dependencies.getTasksByProject(), sessionId)
+      .some(({ session }) => (session.unreadCount ?? 0) > 0)
     || dependencies.hasUnreadNotification(sessionId)
   );
 
@@ -178,5 +208,22 @@ export function createProjectViewWorkspaceState(
     return true;
   };
 
-  return { resolveSession, getCanonicalSessions, isSessionUnread, markSessionRead };
+  const stopAllRunningSessions = (): string[] => {
+    const sessionIds = getCanonicalRunningSessions().map((session) => session.id);
+    for (const sessionId of sessionIds) {
+      dependencies.stopSession(sessionId);
+      markSessionRead(sessionId);
+    }
+    return sessionIds;
+  };
+
+  return {
+    resolveSession,
+    getCanonicalSessions,
+    getCanonicalRunningSessions,
+    getOriginProjectRepresentation,
+    isSessionUnread,
+    markSessionRead,
+    stopAllRunningSessions,
+  };
 }

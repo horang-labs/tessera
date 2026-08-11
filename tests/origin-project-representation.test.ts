@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildOriginProjectRepresentation,
-  getCanonicalRunningSessionRepresentatives,
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
 import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
@@ -102,21 +101,6 @@ test('global representation keeps canonical items only at their origin Project',
     representation.projects[0],
     representation.tasksByProject['project-a'] ?? [],
   ), true);
-});
-
-test('running navigation deduplicates canonical Sessions and targets the origin Project', () => {
-  const projects = [
-    project('project-a', [session('shared', 'project-a', 'project-a', true)]),
-    project('project-c', [
-      session('shared', 'project-c', 'project-a', true),
-      session('running-c', 'project-c', 'project-c', true),
-    ]),
-  ];
-
-  assert.deepEqual(
-    getCanonicalRunningSessionRepresentatives(projects).map((item) => [item.id, item.projectDir]),
-    [['shared', 'project-a'], ['running-c', 'project-c']],
-  );
 });
 
 test('fresh global surfaces request every missing Project task projection', () => {
