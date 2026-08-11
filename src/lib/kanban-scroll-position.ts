@@ -8,8 +8,9 @@ const kanbanScrollPositions = new Map<string, number>();
 export function getKanbanScrollPositionKey(
   projectDir: string | null,
   collectionFilter: string | null,
+  runningFilter = false,
 ): string {
-  return `${projectDir ?? KANBAN_SCROLL_KEY_NONE}:${collectionFilter ?? KANBAN_SCROLL_KEY_ALL}`;
+  return `${projectDir ?? KANBAN_SCROLL_KEY_NONE}:${collectionFilter ?? KANBAN_SCROLL_KEY_ALL}:${runningFilter ? 'running' : 'all'}`;
 }
 
 export function getKanbanScrollPosition(key: string): number {
@@ -44,12 +45,13 @@ export function saveKanbanScrollPosition(key: string, scrollLeft: number): void 
 export function saveCurrentKanbanScrollPosition(
   projectDir: string | null,
   collectionFilter: string | null,
+  runningFilter = false,
 ): void {
   if (typeof document === 'undefined') return;
   const scrollArea = document.querySelector<HTMLDivElement>(KANBAN_SCROLL_AREA_SELECTOR);
   if (!scrollArea) return;
   saveKanbanScrollPosition(
-    getKanbanScrollPositionKey(projectDir, collectionFilter),
+    getKanbanScrollPositionKey(projectDir, collectionFilter, runningFilter),
     scrollArea.scrollLeft,
   );
 }

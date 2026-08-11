@@ -74,7 +74,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('window-state-changed', listener);
     };
   },
-  openBoardWindow: (payload?: { projectDir?: string | null; collectionFilter?: string | null }) =>
+  openBoardWindow: (payload?: {
+    projectDir?: string | null;
+    collectionFilter?: string | null;
+    runningFilter?: boolean;
+  }) =>
     ipcRenderer.invoke('open-board-window', payload),
   closeBoardPopouts: () => ipcRenderer.invoke('close-board-popouts'),
   getPopoutState: () => ipcRenderer.invoke('get-popout-state'),
@@ -160,6 +164,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('ui-collection-filter-changed', listener);
     return () => {
       ipcRenderer.removeListener('ui-collection-filter-changed', listener);
+    };
+  },
+  uiKanbanRunningFilterChanged: (active: boolean) =>
+    ipcRenderer.send('ui-kanban-running-filter-changed', { active }),
+  onUiKanbanRunningFilterChanged: (callback: (active: boolean) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { active?: boolean }
+    ) => {
+      if (typeof payload?.active !== 'boolean') return;
+      callback(payload.active);
+    };
+    ipcRenderer.on('ui-kanban-running-filter-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('ui-kanban-running-filter-changed', listener);
     };
   },
   onTitlebarMenuCommand: (callback: (command: string) => void) => {

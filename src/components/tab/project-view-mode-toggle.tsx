@@ -20,15 +20,28 @@ export const ProjectViewModeToggle = memo(function ProjectViewModeToggle({
   const setViewMode = useBoardStore((state) => state.setViewMode);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const activeCollectionFilter = useBoardStore((state) => state.activeCollectionFilter);
+  const isKanbanRunningFilterActive = useBoardStore(
+    (state) => state.isKanbanRunningFilterActive,
+  );
 
   const handleViewModeChange = useCallback(
     (nextMode: ViewMode) => {
       if (viewMode === 'board') {
-        saveCurrentKanbanScrollPosition(selectedProjectDir, activeCollectionFilter);
+        saveCurrentKanbanScrollPosition(
+          selectedProjectDir,
+          activeCollectionFilter,
+          isKanbanRunningFilterActive,
+        );
       }
       setViewMode(nextMode);
     },
-    [activeCollectionFilter, selectedProjectDir, setViewMode, viewMode],
+    [
+      activeCollectionFilter,
+      isKanbanRunningFilterActive,
+      selectedProjectDir,
+      setViewMode,
+      viewMode,
+    ],
   );
 
   if (!selectedProjectDir) return null;
