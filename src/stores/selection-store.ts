@@ -16,6 +16,8 @@ interface SelectionState {
 
   /** Toggle a single session's selection (Ctrl/Cmd+Click) */
   toggleSelect: (id: string) => void;
+  /** Clear multi-selection and use this normal click as the next Shift range anchor */
+  setRangeAnchor: (id: string) => void;
   /** Range select from lastClickedId to targetId within a given ordered list */
   rangeSelect: (targetId: string, orderedIds: string[]) => void;
   /** Select all given IDs (replace current selection) */
@@ -48,6 +50,9 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
       }
       return { selectedIds: next, lastClickedId: id, barAnchorId: id };
     }),
+
+  setRangeAnchor: (id) =>
+    set({ selectedIds: new Set(), lastClickedId: id, barAnchorId: null }),
 
   rangeSelect: (targetId, orderedIds) =>
     set((state) => {

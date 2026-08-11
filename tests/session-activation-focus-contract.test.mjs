@@ -58,3 +58,11 @@ test('global session-open surfaces resolve one canonical origin Project', () => 
   assert.match(notificationCenter, /getSessionOriginProjectId\(session\)/);
   assert.match(toastContainer, /getSessionOriginProjectId\(session\)/);
 });
+
+test('normal session clicks become Shift range anchors before navigation starts', () => {
+  const anchorUpdate = clickHandlers.indexOf('setRangeAnchor(session.id)');
+  const navigationBranch = clickHandlers.indexOf('// BRANCH B — Normal click');
+
+  assert.notEqual(anchorUpdate, -1);
+  assert.ok(anchorUpdate < navigationBranch);
+});
