@@ -116,6 +116,51 @@ test('canonical resolution deduplicates direct, retained, and task-summary ident
   );
 });
 
+test('Project-scoped DnD resolution selects the visible Task appearance when origin loaded first', () => {
+  const sharedChild = taskSession('shared-session');
+  const taskInA = { ...task('project-a', 'collection-a', sharedChild), id: 'shared-task' };
+  const taskInC = {
+    ...task('project-c', 'collection-c', sharedChild),
+    id: 'shared-task',
+    sortOrder: 7,
+  };
+  const secondChild = taskSession('second-session');
+  const secondInA = { ...task('project-a', 'collection-a', secondChild), id: 'second-task' };
+  const secondInC = { ...task('project-c', 'collection-c', secondChild), id: 'second-task' };
+  const workspace = createProjectViewWorkspaceState({
+    getProjects: () => [project('project-a', []), project('project-c', [])],
+    getRetainedSessions: () => ({}),
+    getTasksByProject: () => ({
+      'project-a': [taskInA, secondInA],
+      'project-c': [taskInC, secondInC],
+    }),
+    getCollectionsByProject: () => ({}),
+    replaceProjects: () => {},
+    replaceRetainedSessions: () => {},
+    replaceTasksByProject: () => {},
+    hasUnreadNotification: () => false,
+    clearSessionUnread: () => {},
+    clearTaskSessionUnread: () => {},
+    markNotificationsRead: () => {},
+    acknowledgeSessionRead: () => {},
+    stopSession: () => {},
+    getOpenSurfaceSessionIds: () => [],
+  });
+
+  assert.strictEqual(workspace.resolveTask('shared-task', 'project-c'), taskInC);
+  assert.strictEqual(
+    workspace.resolveTaskBySessionId('shared-session', 'project-c'),
+    taskInC,
+  );
+  assert.strictEqual(workspace.resolveTask('shared-task', 'project-a'), taskInA);
+  assert.deepEqual(
+    ['shared-session', 'second-session'].map((id) =>
+      workspace.resolveTaskBySessionId(id, 'project-c')?.projectViewId
+    ),
+    ['project-c', 'project-c'],
+  );
+});
+
 test('retained unread activation keeps Project-local placement and reads every surface once', () => {
   let retained = session({ unreadCount: 1, collectionId: 'collection-c' });
   let taskUnread = 1;

@@ -173,6 +173,55 @@ test('Collection mutation honors the requested Project appearance over currentPr
   });
 });
 
+test('linked Session Collection moves use the explicit visible Project appearance', async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response('{}', { status: 200 });
+  };
+  seedAppearances();
+  useTaskStore.setState((state) => ({
+    tasksByProject: {
+      ...state.tasksByProject,
+      'project-a': state.tasksByProject['project-a'].map((appearance) => ({
+        ...appearance,
+        collectionId: undefined,
+      })),
+    },
+  }));
+  useSessionStore.setState((state) => ({
+    projects: state.projects.map((projectState) => projectState.encodedDir === 'project-a'
+      ? {
+          ...projectState,
+          sessions: projectState.sessions.map((appearance) => ({
+            ...appearance,
+            collectionId: undefined,
+          })),
+        }
+      : projectState),
+  }));
+
+  useSessionStore.getState().updateSessionCollection(
+    'session-c',
+    'collection-c-next',
+    'project-c',
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(
+    useTaskStore.getState().tasksByProject['project-a'][0]?.collectionId,
+    undefined,
+  );
+  assert.equal(
+    useTaskStore.getState().tasksByProject['project-c'][0]?.collectionId,
+    'collection-c-next',
+  );
+  assert.deepEqual(requestBody, {
+    collectionId: 'collection-c-next',
+    projectViewId: 'project-c',
+  });
+});
+
 test('failed workflow mutation rolls back every loaded appearance', async () => {
   globalThis.fetch = async (input, init) => {
     if (init?.method === 'PATCH') return new Response('{}', { status: 500 });

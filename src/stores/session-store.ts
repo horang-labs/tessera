@@ -122,8 +122,16 @@ export interface SessionState {
   incrementUnreadCount: (sessionId: string) => void;
   clearUnreadCount: (sessionId: string) => void;
   // Task workflow actions (Unit 1 — Task Board Sidebar v2)
-  updateLinkedTaskWorkflowStatus: (sessionId: string, workflowStatus: string) => void;
-  updateChatWorkflowStatus: (sessionId: string, workflowStatus: WorkflowStatus | null) => void;
+  updateLinkedTaskWorkflowStatus: (
+    sessionId: string,
+    workflowStatus: string,
+    projectViewId?: string,
+  ) => void;
+  updateChatWorkflowStatus: (
+    sessionId: string,
+    workflowStatus: WorkflowStatus | null,
+    projectViewId?: string,
+  ) => void;
   syncTaskWorkflowStatus: (
     taskId: string,
     previousWorkflowStatus: NonNullable<UnifiedSession['workflowStatus']>,
@@ -131,7 +139,11 @@ export interface SessionState {
     touchedSessionId?: string
   ) => void;
   applyWorkflowStatusPromotions: (taskIds: string[]) => void;
-  updateSessionCollection: (sessionId: string, collectionId: string | null) => void;
+  updateSessionCollection: (
+    sessionId: string,
+    collectionId: string | null,
+    projectViewId?: string,
+  ) => void;
   syncTaskCollectionId: (taskId: string, collectionId: string | null) => void;
   replaceCollectionId: (fromCollectionId: string, toCollectionId: string | null) => void;
   toggleArchive: (sessionId: string, archived: boolean) => void;
@@ -1258,8 +1270,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   // Task workflow actions
-  updateLinkedTaskWorkflowStatus: (sessionId, workflowStatus) => {
-    const session = get().getSession(sessionId);
+  updateLinkedTaskWorkflowStatus: (sessionId, workflowStatus, projectViewId) => {
+    const session = get().getSession(sessionId, projectViewId);
     if (!session?.taskId || workflowStatus === 'chat') return;
 
     const nextWorkflowStatus = workflowStatus as NonNullable<UnifiedSession['workflowStatus']>;
@@ -1268,17 +1280,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     void useTaskStore.getState().updateTask(
       session.taskId,
       { workflowStatus: nextWorkflowStatus },
-      session.projectDir,
+      projectViewId ?? session.projectDir,
     );
   },
 
-  updateChatWorkflowStatus: (sessionId, workflowStatus) => {
-    const session = get().getSession(sessionId);
+  updateChatWorkflowStatus: (sessionId, workflowStatus, projectViewId) => {
+    const session = get().getSession(sessionId, projectViewId);
     if (!session) return;
 
     if (session.taskId) {
       if (workflowStatus) {
-        get().updateLinkedTaskWorkflowStatus(sessionId, workflowStatus);
+        get().updateLinkedTaskWorkflowStatus(sessionId, workflowStatus, projectViewId);
       }
       return;
     }
@@ -1355,33 +1367,38 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  updateSessionCollection: (sessionId, collectionId) => {
-    const session = get().getSession(sessionId);
+  updateSessionCollection: (sessionId, collectionId, projectViewId) => {
+    const session = get().getSession(sessionId, projectViewId);
     if (!session) return;
 
     if (session.taskId) {
       void useTaskStore.getState().updateTask(
         session.taskId,
         { collectionId },
-        session.projectDir,
+        projectViewId ?? session.projectDir,
       );
       return;
     }
 
-    const prev = session.collectionId;
+    const targetProjectViewId = projectViewId ?? session.projectDir;
+    const previousCollectionId = session.collectionId;
 
     // Optimistic update
     set((state) => ({
       projects: state.projects.map((project) => ({
         ...project,
         sessions: project.sessions.map((s) =>
-          s.id === sessionId ? { ...s, collectionId: collectionId ?? undefined } : s
+          project.encodedDir === targetProjectViewId && s.id === sessionId
+            ? { ...s, collectionId: collectionId ?? undefined }
+            : s
         ),
       })),
       retainedSessions: updateRetainedSession(
         state.retainedSessions,
         sessionId,
-        (retained) => ({ ...retained, collectionId: collectionId ?? undefined }),
+        (retained) => retained.projectDir === targetProjectViewId
+          ? { ...retained, collectionId: collectionId ?? undefined }
+          : retained,
       ),
     }));
 
@@ -1389,19 +1406,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     fetchWithClientId(`/api/sessions/${sessionId}/collection`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ collectionId }),
+      body: JSON.stringify({ collectionId, projectViewId: targetProjectViewId }),
     }).catch(() => {
       set((state) => ({
         projects: state.projects.map((project) => ({
           ...project,
-          sessions: project.sessions.map((s) =>
-            s.id === sessionId ? { ...s, collectionId: prev } : s
+          sessions: project.sessions.map((candidate) =>
+            project.encodedDir === targetProjectViewId && candidate.id === sessionId
+              ? { ...candidate, collectionId: previousCollectionId }
+              : candidate
           ),
         })),
         retainedSessions: updateRetainedSession(
           state.retainedSessions,
           sessionId,
-          (retained) => ({ ...retained, collectionId: prev }),
+          (retained) => retained.projectDir === targetProjectViewId
+            ? { ...retained, collectionId: previousCollectionId }
+            : retained,
         ),
       }));
     });

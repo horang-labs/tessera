@@ -44,6 +44,13 @@ export interface ProjectViewWorkspaceState {
     sessionId: string,
     projectViewId?: string,
   ) => Promise<UnifiedSession | undefined>;
+  /** Resolve a Worktree Task through the Project View currently being acted on. */
+  resolveTask: (taskId: string, projectViewId?: string) => TaskEntity | undefined;
+  /** Resolve a selected child Session to its Worktree Task in the requested Project View. */
+  resolveTaskBySessionId: (
+    sessionId: string,
+    projectViewId?: string,
+  ) => TaskEntity | undefined;
   /** Return one representative per canonical Session ID across every loaded source. */
   getCanonicalSessions: () => UnifiedSession[];
   /** Return the running canonical representatives used by every global surface. */
@@ -148,6 +155,38 @@ function updateProjectWorkflowStatus(
 export function createProjectViewWorkspaceState(
   dependencies: ProjectViewWorkspaceStateDependencies,
 ): ProjectViewWorkspaceState {
+  const resolveTask = (
+    taskId: string,
+    projectViewId?: string,
+  ): TaskEntity | undefined => {
+    const tasksByProject = dependencies.getTasksByProject();
+    if (projectViewId) {
+      return tasksByProject[projectViewId]?.find((task) => task.id === taskId);
+    }
+    const appearances = Object.values(tasksByProject)
+      .flat()
+      .filter((task) => task.id === taskId);
+    return appearances.find((task) => task.projectViewId === task.projectId)
+      ?? appearances[0];
+  };
+
+  const resolveTaskBySessionId = (
+    sessionId: string,
+    projectViewId?: string,
+  ): TaskEntity | undefined => {
+    const tasksByProject = dependencies.getTasksByProject();
+    if (projectViewId) {
+      return tasksByProject[projectViewId]?.find((task) =>
+        task.sessions.some((session) => session.id === sessionId)
+      );
+    }
+    const appearances = Object.values(tasksByProject)
+      .flat()
+      .filter((task) => task.sessions.some((session) => session.id === sessionId));
+    return appearances.find((task) => task.projectViewId === task.projectId)
+      ?? appearances[0];
+  };
+
   const resolveCanonicalSession = (sessionId: string): UnifiedSession | undefined => {
     const direct = chooseCanonicalDirectSession(dependencies.getProjects(), sessionId);
     if (direct) return direct;
@@ -444,6 +483,8 @@ export function createProjectViewWorkspaceState(
   return {
     resolveSession,
     materializeSession,
+    resolveTask,
+    resolveTaskBySessionId,
     getCanonicalSessions,
     getCanonicalRunningSessions,
     getOriginProjectRepresentation,

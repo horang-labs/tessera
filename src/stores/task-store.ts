@@ -427,7 +427,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   updateTask: async (id, patch, explicitProjectViewId) => {
-    const existingTask = get().getTask(id);
+    const existingTask = explicitProjectViewId
+      ? projectViewWorkspaceState.resolveTask(id, explicitProjectViewId)
+      : get().getTask(id);
     const projectViewId = explicitProjectViewId
       ?? get().currentProjectId
       ?? existingTask?.projectViewId;
