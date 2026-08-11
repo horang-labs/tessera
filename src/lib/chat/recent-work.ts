@@ -202,17 +202,19 @@ function chatToRecentItem(project: ProjectGroup, session: UnifiedSession): Recen
 export function buildRecentWorkItems({
   projects,
   tasksByProject,
+  canonicalSessions,
   limit = 8,
   originOnly = false,
 }: {
   projects: ProjectGroup[];
   tasksByProject: Record<string, TaskEntity[]>;
+  canonicalSessions?: readonly UnifiedSession[];
   limit?: number;
   originOnly?: boolean;
 }): RecentWorkItem[] {
   const items: RecentWorkItem[] = [];
   const representation = originOnly
-    ? buildOriginProjectRepresentation(projects, tasksByProject)
+    ? buildOriginProjectRepresentation(projects, tasksByProject, canonicalSessions)
     : { projects, tasksByProject };
 
   for (const project of representation.projects) {

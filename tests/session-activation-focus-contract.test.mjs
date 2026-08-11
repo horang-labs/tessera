@@ -56,8 +56,8 @@ test('session-open surfaces activate the located panel instead of only activeSes
 });
 
 test('global session-open surfaces resolve one canonical origin Project', () => {
-  assert.match(runningProcessPanel, /getCanonicalRunningSessionRepresentatives\(projects\)/);
-  assert.match(sessionNavigation, /getCanonicalSessionRepresentatives\(sessionStore\.projects\)/);
+  assert.match(runningProcessPanel, /projectViewWorkspaceState\.getCanonicalRunningSessions\(\)/);
+  assert.match(sessionNavigation, /projectViewWorkspaceState\.getCanonicalSessions\(\)/);
   assert.match(notificationCenter, /getSessionOriginProjectId\(session\)/);
   assert.match(toastContainer, /getSessionOriginProjectId\(session\)/);
 });

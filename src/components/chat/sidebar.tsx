@@ -33,7 +33,6 @@ import { useCollectionStore } from '@/stores/collection-store';
 import { useTaskStore } from '@/stores/task-store';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
-import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import { Tooltip } from '@/components/ui/tooltip';
 import {
@@ -56,6 +55,7 @@ import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -281,6 +281,7 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 export function Sidebar() {
   const { t } = useI18n();
   const projects = useSessionStore((state) => state.projects);
+  useSessionStore((state) => state.retainedSessions);
   const dismissBranchRenameWarning = useSessionStore(
     (state) => state.dismissBranchRenameWarning,
   );
@@ -571,19 +572,10 @@ export function Sidebar() {
     [projects],
   );
 
-  const allProjectsRunningSessionIds = useMemo(() => {
-    const sessionIds = new Set<string>();
-
-    for (const project of projects) {
-      for (const session of project.sessions) {
-        if (!session.archived && resolveSessionRuntimePresentation(session).canStop) {
-          sessionIds.add(session.id);
-        }
-      }
-    }
-
-    return Array.from(sessionIds);
-  }, [projects]);
+  const canonicalSessions = projectViewWorkspaceState.getCanonicalSessions();
+  const allProjectsRunningSessionIds = projectViewWorkspaceState
+    .getCanonicalRunningSessions()
+    .map((session) => session.id);
 
   const runningItemCount = useMemo(() => {
     if (!collectionGroups) return 0;
@@ -617,15 +609,18 @@ export function Sidebar() {
   }, [isRunningFilterActive, visibleCollectionGroups]);
 
   const handleStopAllRunning = useCallback(() => {
-    const sessionStore = useSessionStore.getState();
-    const sessionIds = isAllMode ? allProjectsRunningSessionIds : runningSessionIds;
+    if (isAllMode) {
+      projectViewWorkspaceState.stopAllRunningSessions();
+      return;
+    }
 
-    for (const sessionId of sessionIds) {
+    const sessionStore = useSessionStore.getState();
+    for (const sessionId of runningSessionIds) {
       wsClient.stopSession(sessionId);
       sessionStore.clearUnreadCount(sessionId);
       wsClient.sendMarkAsRead(sessionId);
     }
-  }, [allProjectsRunningSessionIds, isAllMode, runningSessionIds]);
+  }, [isAllMode, runningSessionIds]);
 
   const orderedIds = useMemo(() => {
     return buildSidebarOrderedSessionIds({
@@ -650,10 +645,11 @@ export function Sidebar() {
     return buildRecentWorkItems({
       projects: scopedProjects,
       tasksByProject,
+      canonicalSessions: isAllMode ? canonicalSessions : undefined,
       limit: 8,
       originOnly: isAllMode,
     });
-  }, [isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
+  }, [canonicalSessions, isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
 
   const recentWorkOrderedIds = useMemo(
     () => buildRecentWorkOrderedSessionIds(recentWorkItems),

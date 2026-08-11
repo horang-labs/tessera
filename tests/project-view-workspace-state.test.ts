@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createProjectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state';
+import { originProjectContainsRunningSession } from '@/lib/projects/origin-project-representation';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
@@ -96,6 +97,7 @@ test('canonical resolution deduplicates direct, retained, and task-summary ident
     clearTaskSessionUnread: () => {},
     markNotificationsRead: () => {},
     acknowledgeSessionRead: () => {},
+    stopSession: () => {},
   });
 
   assert.strictEqual(workspace.resolveSession('direct'), direct);
@@ -130,6 +132,7 @@ test('retained unread activation keeps Project-local placement and reads every s
     clearTaskSessionUnread: () => { taskUnread = 0; },
     markNotificationsRead: () => { notificationUnread = false; },
     acknowledgeSessionRead: (id) => { acknowledgements.push(id); },
+    stopSession: () => {},
   });
 
   assert.equal(workspace.isSessionUnread(sessionId), true);
@@ -146,4 +149,130 @@ test('retained unread activation keeps Project-local placement and reads every s
 
   assert.equal(workspace.markSessionRead(sessionId), false);
   assert.deepEqual(acknowledgements, [sessionId]);
+});
+
+test('global running actions deduplicate direct, retained, and linked Task Sessions at their origin', () => {
+  const direct = session({
+    id: 'direct-running',
+    projectDir: 'project-a',
+    originProjectId: 'project-a',
+    isRunning: true,
+    status: 'running',
+    unreadCount: 0,
+  });
+  const retained = session({
+    id: 'retained-running',
+    projectDir: 'project-c',
+    originProjectId: 'project-a',
+    isRunning: true,
+    status: 'running',
+    unreadCount: 1,
+  });
+  const linked = {
+    ...taskSession('linked-running'),
+    isRunning: true,
+    unreadCount: 1,
+  };
+  const directSummary = {
+    ...taskSession('direct-running'),
+    isRunning: true,
+    unreadCount: 1,
+  };
+  const stopped: string[] = [];
+  const clearedSessions: string[] = [];
+  const clearedTaskSessions: string[] = [];
+  const readNotifications: string[] = [];
+  const acknowledgements: string[] = [];
+  const workspace = createProjectViewWorkspaceState({
+    getProjects: () => [project('project-a', [direct]), project('project-c', [])],
+    getRetainedSessions: () => ({ [retained.id]: retained }),
+    getTasksByProject: () => ({
+      'project-a': [
+        { ...task('project-a', 'collection-a', directSummary), id: 'direct-task' },
+        task('project-a', 'collection-a', linked),
+      ],
+      'project-c': [
+        { ...task('project-c', 'collection-c', directSummary), id: 'direct-task' },
+        task('project-c', 'collection-c', linked),
+      ],
+    }),
+    getCollectionsByProject: () => ({}),
+    hasUnreadNotification: () => false,
+    clearSessionUnread: (id) => { clearedSessions.push(id); },
+    clearTaskSessionUnread: (id) => { clearedTaskSessions.push(id); },
+    markNotificationsRead: (id) => { readNotifications.push(id); },
+    acknowledgeSessionRead: (id) => { acknowledgements.push(id); },
+    stopSession: (id) => { stopped.push(id); },
+  });
+
+  assert.deepEqual(
+    workspace.getCanonicalRunningSessions().map((item) => [item.id, item.projectDir]),
+    [
+      ['direct-running', 'project-a'],
+      ['retained-running', 'project-a'],
+      ['linked-running', 'project-a'],
+    ],
+  );
+  assert.deepEqual(
+    workspace.getOriginProjectRepresentation().projects.map((item) => [
+      item.encodedDir,
+      item.sessions.map((candidate) => candidate.id),
+    ]),
+    [
+      ['project-a', ['direct-running', 'retained-running', 'linked-running']],
+      ['project-c', []],
+    ],
+  );
+
+  assert.deepEqual(workspace.stopAllRunningSessions(), [
+    'direct-running',
+    'retained-running',
+    'linked-running',
+  ]);
+  assert.deepEqual(stopped, [
+    'direct-running',
+    'retained-running',
+    'linked-running',
+  ]);
+  assert.deepEqual(clearedSessions, stopped);
+  assert.deepEqual(clearedTaskSessions, stopped);
+  assert.deepEqual(readNotifications, stopped);
+  assert.deepEqual(acknowledgements, stopped);
+});
+
+test('origin representation replaces stale Task runtime with canonical Session state', () => {
+  const canonical = session({
+    id: 'canonical-stopped',
+    projectDir: 'project-a',
+    originProjectId: 'project-a',
+    isRunning: false,
+    status: 'completed',
+  });
+  const staleSummary = {
+    ...taskSession(canonical.id),
+    isRunning: true,
+  };
+  const workspace = createProjectViewWorkspaceState({
+    getProjects: () => [project('project-a', [canonical])],
+    getRetainedSessions: () => ({}),
+    getTasksByProject: () => ({
+      'project-a': [{ ...task('project-a', 'collection-a', staleSummary), id: 'task-c' }],
+    }),
+    getCollectionsByProject: () => ({}),
+    hasUnreadNotification: () => false,
+    clearSessionUnread: () => {},
+    clearTaskSessionUnread: () => {},
+    markNotificationsRead: () => {},
+    acknowledgeSessionRead: () => {},
+    stopSession: () => {},
+  });
+
+  const representation = workspace.getOriginProjectRepresentation();
+  assert.equal(
+    originProjectContainsRunningSession(
+      representation.projects[0],
+      representation.tasksByProject['project-a'],
+    ),
+    false,
+  );
 });

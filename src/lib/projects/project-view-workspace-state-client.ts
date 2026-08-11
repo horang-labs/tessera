@@ -22,4 +22,5 @@ export const projectViewWorkspaceState = createProjectViewWorkspaceState({
     useNotificationStore.getState().markSessionAsRead(sessionId);
   },
   acknowledgeSessionRead: (sessionId) => wsClient.sendMarkAsRead(sessionId),
+  stopSession: (sessionId) => wsClient.stopSession(sessionId),
 });
