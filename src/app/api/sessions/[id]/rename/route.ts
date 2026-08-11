@@ -38,9 +38,12 @@ export async function PATCH(
 
     logger.info({ userId, sessionId, title }, 'Session renamed via API');
 
+    const session = getSession(sessionId);
     broadcastSessionMutation(userId, {
       kind: 'updated',
-      projectId: getSession(sessionId)?.project_id,
+      projectId: session?.project_id,
+      sessionId,
+      taskId: session?.task_id ?? undefined,
       originClientId: getOriginClientIdFromRequest(req),
     });
 

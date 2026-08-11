@@ -170,12 +170,14 @@ export async function PATCH(
     broadcastTaskMutation(auth.userId, {
       kind: 'updated',
       projectId: task.projectId,
+      taskId: id,
       originClientId,
     });
     if (patch.workflow_status !== undefined) {
       broadcastSessionMutation(auth.userId, {
         kind: 'updated',
         projectId: task.projectId,
+        taskId: id,
         originClientId,
       });
     }

@@ -16,8 +16,8 @@ import { useI18n } from '@/lib/i18n';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
 import { useSessionStore } from '@/stores/session-store';
-import { useTaskStore } from '@/stores/task-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { refreshProjectViewWorkspaceMutation } from '@/lib/projects/project-view-workspace-state-client';
 import type { UnifiedSession } from '@/types/chat';
 import type { ArchiveItem, ArchiveProjectOption } from '@/lib/archive/archive-service';
 
@@ -257,15 +257,15 @@ export function ArchiveDashboard() {
       setError(body.error ?? t('archive.errors.restoreFailed'));
       return;
     }
+    const result = await res.json().catch(() => ({})) as { taskId?: string };
     await Promise.all([
       loadArchive(),
-      useSessionStore.getState().loadProjects(),
+      refreshProjectViewWorkspaceMutation({
+        projectId: item.projectId,
+        sessionId: item.kind === 'chat' ? item.id : undefined,
+        taskId: item.kind === 'task' ? item.id : result.taskId,
+      }),
     ]);
-    // A restored chat that belongs to a task rejoins its task's session list, so
-    // the task cache has to be refreshed for those too.
-    if (item.kind === 'task' || item.sharedWorktree) {
-      await useTaskStore.getState().loadTasks(item.projectId, { setCurrent: false });
-    }
   }, [loadArchive, t]);
 
   const deleteItem = useCallback(async (item: ArchiveItem) => {

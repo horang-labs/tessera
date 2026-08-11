@@ -73,8 +73,17 @@ export function createDatabaseControlSessionMutator(options: {
           500,
         );
       }
-      broadcastSessionMutation(userId, { kind: 'created', projectId: created.projectId });
-      broadcastTaskMutation(userId, { kind: 'updated', projectId: created.projectId });
+      broadcastSessionMutation(userId, {
+        kind: 'created',
+        projectId: created.projectId,
+        sessionId,
+        taskId: worktree.task_id,
+      });
+      broadcastTaskMutation(userId, {
+        kind: 'updated',
+        projectId: created.projectId,
+        taskId: worktree.task_id,
+      });
       return created;
     },
 
@@ -97,9 +106,21 @@ export function createDatabaseControlSessionMutator(options: {
       const userId = await requireUserId();
       const session = source.get(sessionId);
       if (!session) return;
+      const sessionRow = dbSessions.getSession(sessionId);
       dbSessions.deleteSession(sessionId);
-      broadcastSessionMutation(userId, { kind: 'deleted', projectId: session.projectId });
-      broadcastTaskMutation(userId, { kind: 'updated', projectId: session.projectId });
+      broadcastSessionMutation(userId, {
+        kind: 'deleted',
+        projectId: session.projectId,
+        sessionId,
+        taskId: sessionRow?.task_id ?? undefined,
+      });
+      if (sessionRow?.task_id) {
+        broadcastTaskMutation(userId, {
+          kind: 'updated',
+          projectId: session.projectId,
+          taskId: sessionRow.task_id,
+        });
+      }
     },
   };
 }

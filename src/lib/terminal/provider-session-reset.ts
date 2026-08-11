@@ -33,7 +33,12 @@ export function forkTerminalSessionForProviderReset(options: {
   }
 
   manager.clearProviderSessionIdentity(terminalId, userId);
-  broadcastSessionMutation(userId, { kind: 'created', projectId: fork.projectId });
+  broadcastSessionMutation(userId, {
+    kind: 'created',
+    projectId: fork.projectId,
+    sessionId: fork.sessionId,
+    taskId: dbSessions.getSession(fork.sessionId)?.task_id ?? undefined,
+  });
   logger.info({
     previousSessionId: sourceSessionId,
     sessionId: fork.sessionId,

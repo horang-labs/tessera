@@ -148,6 +148,8 @@ export async function POST(req: NextRequest) {
       broadcastSessionMutation(userId, {
         kind: 'created',
         projectId: targetProjectId,
+        sessionId: result.sessionId,
+        taskId: normalizedTaskId,
         originClientId: getOriginClientIdFromRequest(req),
       });
 

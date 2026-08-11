@@ -45,9 +45,13 @@ export async function PATCH(
     await setTaskArchived(id, archived, auth.userId);
     if (projectId) {
       const originClientId = getOriginClientIdFromRequest(req);
-      broadcastTaskMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+      broadcastTaskMutation(auth.userId, {
+        kind: 'updated', projectId, taskId: id, archived, originClientId,
+      });
       // Sessions linked to this task carry archived/isReadOnly state too.
-      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+      broadcastSessionMutation(auth.userId, {
+        kind: 'updated', projectId, taskId: id, archived, originClientId,
+      });
     }
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -81,8 +85,8 @@ export async function DELETE(
     await permanentlyDeleteArchivedTask(auth.userId, id);
     if (projectId) {
       const originClientId = getOriginClientIdFromRequest(req);
-      broadcastTaskMutation(auth.userId, { kind: 'deleted', projectId, originClientId });
-      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+      broadcastTaskMutation(auth.userId, { kind: 'deleted', projectId, taskId: id, originClientId });
+      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, taskId: id, originClientId });
     }
     return NextResponse.json({ ok: true });
   } catch (error) {

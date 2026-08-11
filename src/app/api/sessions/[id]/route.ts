@@ -49,6 +49,8 @@ export async function DELETE(
     broadcastSessionMutation(userId, {
       kind: 'deleted',
       projectId,
+      sessionId,
+      taskId: sessionRow?.task_id ?? undefined,
       originClientId: getOriginClientIdFromRequest(request),
     });
 

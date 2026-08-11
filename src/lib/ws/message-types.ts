@@ -612,12 +612,17 @@ export type AppServerMessage =
       kind: 'created' | 'updated' | 'deleted' | 'reordered' | 'project_reordered' | 'project_deleted';
       originClientId?: string;
       projectId?: string;
+      sessionId?: string;
+      taskId?: string;
+      archived?: boolean;
     }
   | {
       type: 'task_mutated';
       kind: 'created' | 'updated' | 'deleted' | 'reordered';
       originClientId?: string;
       projectId: string;
+      taskId?: string;
+      archived?: boolean;
     }
   | {
       type: 'collection_mutated';

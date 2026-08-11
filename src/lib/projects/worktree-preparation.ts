@@ -266,6 +266,7 @@ function announcePreparationStatus(request: WorktreePreparationRequest): void {
   broadcastTaskMutation(request.userId, {
     kind: 'updated',
     projectId: request.projectId ?? request.projectDir,
+    taskId: request.taskId,
   });
 }
 

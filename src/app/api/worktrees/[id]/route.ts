@@ -27,19 +27,34 @@ export async function DELETE(
   }
 
   try {
-    const taskProjectIds = dbWorktrees.getTaskIdsForWorktree(id)
-      .map((taskId) => dbTasks.getTask(taskId)?.projectId)
-      .filter((projectId): projectId is string => Boolean(projectId));
-    const sessionProjectIds = dbWorktrees.getSessionIdsForWorktree(id)
-      .map((sessionId) => dbSessions.getSession(sessionId)?.project_id)
-      .filter((projectId): projectId is string => Boolean(projectId));
+    const affectedTasks = dbWorktrees.getTaskIdsForWorktree(id)
+      .map((taskId) => ({ taskId, projectId: dbTasks.getTask(taskId)?.projectId }))
+      .filter((entry): entry is { taskId: string; projectId: string } => Boolean(entry.projectId));
+    const affectedSessions = dbWorktrees.getSessionIdsForWorktree(id)
+      .map((sessionId) => {
+        const session = dbSessions.getSession(sessionId);
+        return {
+          sessionId,
+          projectId: session?.project_id,
+          taskId: session?.task_id ?? undefined,
+        };
+      })
+      .filter((entry): entry is { sessionId: string; projectId: string; taskId: string | undefined } => (
+        Boolean(entry.projectId)
+      ));
     await removeWorktreeById(id, auth.userId);
     const originClientId = getOriginClientIdFromRequest(req);
-    for (const projectId of new Set(taskProjectIds)) {
-      broadcastTaskMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+    for (const { taskId, projectId } of affectedTasks) {
+      broadcastTaskMutation(auth.userId, { kind: 'updated', projectId, taskId, originClientId });
     }
-    for (const projectId of new Set(sessionProjectIds)) {
-      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+    for (const { sessionId, projectId, taskId } of affectedSessions) {
+      broadcastSessionMutation(auth.userId, {
+        kind: 'updated',
+        projectId,
+        sessionId,
+        taskId,
+        originClientId,
+      });
     }
     return NextResponse.json({ ok: true });
   } catch (error) {

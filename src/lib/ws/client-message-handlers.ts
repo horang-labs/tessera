@@ -35,6 +35,10 @@ import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace
 import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
 import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
 import {
+  projectViewWorkspaceState,
+  refreshProjectViewWorkspaceMutation,
+} from '@/lib/projects/project-view-workspace-state-client';
+import {
   completePendingTerminalRebound,
   getPendingTerminalRebound,
   isPendingTerminalReboundSource,
@@ -436,17 +440,23 @@ export function handleIncomingServerMessage({
       if (msg.originClientId && msg.originClientId === getClientId()) {
         return { wasReconnect };
       }
-      void useSessionStore.getState().loadProjects();
-      if (msg.projectId) {
-        void useTaskStore.getState().loadTasks(msg.projectId, { setCurrent: false });
+      if (msg.sessionId && msg.archived !== undefined) {
+        projectViewWorkspaceState.applySessionArchiveMutation(msg.sessionId, msg.archived);
       }
+      void refreshProjectViewWorkspaceMutation(msg);
       return { wasReconnect };
 
     case 'task_mutated':
       if (msg.originClientId && msg.originClientId === getClientId()) {
         return { wasReconnect };
       }
-      void useTaskStore.getState().loadTasks(msg.projectId, { setCurrent: false });
+      if (msg.taskId && msg.archived !== undefined) {
+        projectViewWorkspaceState.applyTaskMutation({
+          taskId: msg.taskId,
+          archived: msg.archived,
+        });
+      }
+      void refreshProjectViewWorkspaceMutation(msg);
       return { wasReconnect };
 
     case 'collection_mutated':

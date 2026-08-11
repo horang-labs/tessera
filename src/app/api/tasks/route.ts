@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
     broadcastTaskMutation(auth.userId, {
       kind: 'created',
       projectId: projectId.trim(),
+      taskId: id,
       originClientId: getOriginClientIdFromRequest(req),
     });
     return NextResponse.json({ task }, { status: 201 });
