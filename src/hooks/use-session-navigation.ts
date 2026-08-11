@@ -25,6 +25,10 @@ export function useSessionNavigation() {
   const [isLoading, setIsLoading] = useState(false);
   const loadingRequestCountRef = useRef(0);
 
+  const materializeSession = useCallback(async (sessionId: string, projectViewId?: string) => (
+    projectViewWorkspaceState.materializeSession(sessionId, projectViewId)
+  ), []);
+
   /**
    * Switch to a different session (already loaded)
    */
@@ -108,6 +112,7 @@ export function useSessionNavigation() {
   return {
     viewSession,
     switchSession,
+    materializeSession,
 
     isLoading,
 

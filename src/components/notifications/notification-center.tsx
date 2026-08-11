@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle, AlertTriangle, Inbox } from 'lucide-react';
-import { useNotificationStore } from '@/stores/notification-store';
+import { toast, useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
@@ -66,8 +66,7 @@ function NotificationCenterContent({
   const markAllAsRead = useNotificationStore((state) => state.markAllAsRead);
   const markAsRead = useNotificationStore((state) => state.markAsRead);
   const getSession = useSessionStore((state) => state.getSession);
-  const setActiveSession = useSessionStore((state) => state.setActiveSession);
-  const { viewSession } = useSessionNavigation();
+  const { materializeSession, viewSession } = useSessionNavigation();
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -90,16 +89,21 @@ function NotificationCenterContent({
     };
   }, [onClose, triggerRef]);
 
-  const handleNotificationClick = (notificationId: string, sessionId: string) => {
+  const handleNotificationClick = async (notificationId: string, sessionId: string) => {
     markAsRead(notificationId);
     useSessionStore.getState().clearUnreadCount(sessionId);
     wsClient.sendMarkAsRead(sessionId);
 
-    const session = getSession(sessionId);
+    const session = await materializeSession(sessionId);
+    if (!session) {
+      toast.error(t('errors.sessionNotFound'));
+      onClose();
+      return;
+    }
 
     // Notified session may live in another project — bring that project into scope first,
     // otherwise it opens in a tab belonging to the project currently on screen.
-    if (!switchToSessionProject(session ? getSessionOriginProjectId(session) : undefined)) {
+    if (!switchToSessionProject(getSessionOriginProjectId(session))) {
       onClose();
       return;
     }
@@ -124,12 +128,8 @@ function NotificationCenterContent({
       activateSessionPanel(sessionId, { location });
     } else {
       // Session not in any tab/panel — open it without changing the project filter.
-      if (session) {
-        tabStore.openPreview(sessionId);
-        void viewSession(session);
-      } else {
-        setActiveSession(sessionId);
-      }
+      tabStore.openPreview(sessionId);
+      void viewSession(session);
     }
 
     onClose();

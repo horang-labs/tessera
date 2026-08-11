@@ -525,9 +525,7 @@ function SubSessionRow({
     [liveSession, sess, task],
   );
   const openSession = useCallback(() => {
-    const session = asUnifiedSession();
-    useSessionStore.getState().upsertSession(session);
-    return session;
+    return asUnifiedSession();
   }, [asUnifiedSession]);
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -907,17 +905,7 @@ export function TaskItemRow({
     const session = task.sessions[0];
     if (!session) return;
     const unifiedSession = toLinkedWorktreeSession(task, session);
-    useSessionStore.getState().upsertSession(unifiedSession);
     await open(unifiedSession);
-    const location = useTabStore.getState().findSessionLocation(unifiedSession.id);
-    if (location && task.worktreeId) {
-      usePanelStore.getState().assignSessionInTab(
-        location.tabId,
-        location.panelId,
-        unifiedSession.id,
-        task.worktreeId,
-      );
-    }
   }, [task]);
 
   const handleClick = useCallback(

@@ -25,6 +25,8 @@ export interface ProjectViewWorkspaceStateDependencies {
   replaceProjects: (projects: ProjectGroup[]) => void;
   replaceRetainedSessions: (sessions: Record<string, UnifiedSession>) => void;
   replaceTasksByProject: (tasks: Record<string, TaskEntity[]>) => void;
+  loadSession?: (sessionId: string) => Promise<UnifiedSession | undefined>;
+  materializeSession: (session: UnifiedSession) => void;
   hasUnreadNotification: (sessionId: string) => boolean;
   clearSessionUnread: (sessionId: string) => void;
   clearTaskSessionUnread: (sessionId: string) => void;
@@ -37,6 +39,11 @@ export interface ProjectViewWorkspaceStateDependencies {
 export interface ProjectViewWorkspaceState {
   /** Resolve one canonical Session, or its appearance in an explicit Project View. */
   resolveSession: (sessionId: string, projectViewId?: string) => UnifiedSession | undefined;
+  /** Make a resolved Session appearance available to tabs, Peek, and workspace side panels. */
+  materializeSession: (
+    sessionId: string,
+    projectViewId?: string,
+  ) => Promise<UnifiedSession | undefined>;
   /** Return one representative per canonical Session ID across every loaded source. */
   getCanonicalSessions: () => UnifiedSession[];
   /** Return the running canonical representatives used by every global surface. */
@@ -240,6 +247,27 @@ export function createProjectViewWorkspaceState(
     getCanonicalSessions(),
   );
 
+  const materializeSession = async (
+    sessionId: string,
+    projectViewId?: string,
+  ): Promise<UnifiedSession | undefined> => {
+    let canonical = resolveSession(sessionId);
+    if (!canonical && dependencies.loadSession) {
+      const loaded = await dependencies.loadSession(sessionId);
+      if (loaded) {
+        dependencies.materializeSession(loaded);
+        canonical = resolveSession(sessionId) ?? loaded;
+      }
+    }
+    if (!canonical) return undefined;
+    const session = resolveSession(
+      sessionId,
+      projectViewId ?? canonical.originProjectId,
+    ) ?? canonical;
+    dependencies.materializeSession(session);
+    return session;
+  };
+
   const isSessionUnread = (sessionId: string): boolean => (
     (resolveCanonicalSession(sessionId)?.unreadCount ?? 0) > 0
     || findTaskSessionAppearances(dependencies.getTasksByProject(), sessionId)
@@ -415,6 +443,7 @@ export function createProjectViewWorkspaceState(
 
   return {
     resolveSession,
+    materializeSession,
     getCanonicalSessions,
     getCanonicalRunningSessions,
     getOriginProjectRepresentation,

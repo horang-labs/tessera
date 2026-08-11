@@ -63,7 +63,7 @@ export function useSessionClickHandlers(options?: {
     [notifications],
   );
 
-  const { viewSession } = useSessionNavigation();
+  const { materializeSession, viewSession } = useSessionNavigation();
 
   // Handle session click — multi-tab aware rewrite (BR-SIDEBAR-009, BR-SIDEBAR-001 through BR-SIDEBAR-007)
   const handleSessionClick = useCallback(
@@ -107,6 +107,7 @@ export function useSessionClickHandlers(options?: {
       useSelectionStore.getState().setRangeAnchor(session.id);
 
       // BRANCH B — Normal click
+      const navigableSession = await materializeSession(session.id, session.projectDir) ?? session;
 
       // 1. Clear unread count (BR-SIDEBAR-008: only for normal click paths)
       if (unreadSessionIds.has(session.id) || (session.unreadCount ?? 0) > 0) {
@@ -117,7 +118,7 @@ export function useSessionClickHandlers(options?: {
 
       // When inside the popout board window, forward to main window
       // so the task opens there, then return without local navigation.
-      if (tryForwardClickToMainWindow(session.id, 'preview')) {
+      if (tryForwardClickToMainWindow(navigableSession.id, 'preview')) {
         return;
       }
 
@@ -129,16 +130,16 @@ export function useSessionClickHandlers(options?: {
       stepAsidePhoneSidebar();
 
       if (onOpenSession) {
-        await onOpenSession(session);
+        await onOpenSession(navigableSession);
         return;
       }
 
       // 2. Cross-tab location search (BR-SIDEBAR-004: replaces isInAnotherPanel)
-      const location = useTabStore.getState().findSessionLocation(session.id);
-      const openMode = resolveSessionTabOpenMode(session);
+      const location = useTabStore.getState().findSessionLocation(navigableSession.id);
+      const openMode = resolveSessionTabOpenMode(navigableSession);
 
       if (location) {
-        activateSessionPanel(session.id, { location });
+        activateSessionPanel(navigableSession.id, { location });
         if (openMode === 'pinned') {
           useTabStore.getState().pinTab(location.tabId);
         }
@@ -149,35 +150,36 @@ export function useSessionClickHandlers(options?: {
       // GUI and stopped PTY sessions use preview. A PTY runtime that is already
       // alive opens pinned so replacing its view can never terminate it.
       if (openMode === 'pinned') {
-        useTabStore.getState().createTabWithSession(session.id);
+        useTabStore.getState().createTabWithSession(navigableSession.id);
       } else {
-        useTabStore.getState().openPreview(session.id);
+        useTabStore.getState().openPreview(navigableSession.id);
       }
-      await viewSession(session);
+      await viewSession(navigableSession);
     },
-    [unreadSessionIds, clearUnreadCount, viewSession, orderedIds, onOpenSession]
+    [unreadSessionIds, clearUnreadCount, materializeSession, viewSession, orderedIds, onOpenSession]
   );
 
   // Handle session double-click — always opens as pinned tab
   const handleSessionDoubleClick = useCallback(
     async (session: UnifiedSession): Promise<void> => {
-      if (tryForwardClickToMainWindow(session.id, 'pin')) {
+      const navigableSession = await materializeSession(session.id, session.projectDir) ?? session;
+      if (tryForwardClickToMainWindow(navigableSession.id, 'pin')) {
         return;
       }
       useWorkspacePeekStore.getState().close();
       const tabStore = useTabStore.getState();
-      const location = tabStore.findSessionLocation(session.id);
+      const location = tabStore.findSessionLocation(navigableSession.id);
       if (location) {
         // 이미 열려있으면 해당 탭으로 이동 + 고정
-        activateSessionPanel(session.id, { location });
+        activateSessionPanel(navigableSession.id, { location });
         tabStore.pinTab(location.tabId);
       } else {
         // 새 고정 탭으로 열기
-        tabStore.createTabWithSession(session.id);
+        tabStore.createTabWithSession(navigableSession.id);
       }
-      await viewSession(session);
+      await viewSession(navigableSession);
     },
-    [viewSession]
+    [materializeSession, viewSession]
   );
 
   return { handleSessionClick, handleSessionDoubleClick };

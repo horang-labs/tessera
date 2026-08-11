@@ -62,6 +62,18 @@ test('global session-open surfaces resolve one canonical origin Project', () => 
   assert.match(toastContainer, /getSessionOriginProjectId\(session\)/);
 });
 
+test('List, Kanban, and notification navigation materialize before opening a surface', () => {
+  const clickMaterialization = clickHandlers.indexOf('await materializeSession(session.id, session.projectDir)');
+  assert.notEqual(clickMaterialization, -1);
+  assert.ok(clickMaterialization < clickHandlers.indexOf('if (onOpenSession)'));
+
+  for (const source of [notificationCenter, toastContainer]) {
+    const materialization = source.indexOf('await materializeSession(sessionId)');
+    assert.notEqual(materialization, -1);
+    assert.ok(materialization < source.indexOf('switchToSessionProject(', materialization));
+  }
+});
+
 test('normal session clicks become Shift range anchors before navigation starts', () => {
   const anchorUpdate = clickHandlers.indexOf('setRangeAnchor(session.id)');
   const navigationBranch = clickHandlers.indexOf('// BRANCH B — Normal click');

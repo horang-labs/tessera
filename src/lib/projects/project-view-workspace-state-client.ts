@@ -26,6 +26,19 @@ export const projectViewWorkspaceState = createProjectViewWorkspaceState({
       ? { tasks: tasksByProject[state.currentProjectId] ?? [] }
       : {}),
   })),
+  loadSession: async (sessionId) => {
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        cache: 'no-store',
+      });
+      if (!response.ok) return undefined;
+      const result = await response.json() as { session?: import('@/types/chat').UnifiedSession };
+      return result.session;
+    } catch {
+      return undefined;
+    }
+  },
+  materializeSession: (session) => useSessionStore.getState().retainSession(session),
   hasUnreadNotification: (sessionId) => useNotificationStore.getState().notifications.some(
     (notification) => notification.sessionId === sessionId && !notification.read,
   ),
