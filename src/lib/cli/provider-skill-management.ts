@@ -1,18 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { execCli } from '@/lib/cli/cli-exec';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
-import {
-  isBridgedAgentEnvironment,
-  isWindowsHostedWslFilesystemPath,
-} from '@/lib/filesystem/path-environment';
-import { buildWslFilesystemPathProbe } from '@/lib/filesystem/wsl-path-probe';
-import { resolveCodexHomeForEnvironment } from '@/lib/memory/codex-memory';
-import { resolveOpenCodeConfigDirForEnvironment } from '@/lib/memory/opencode-memory';
 import type { AgentEnvironment } from '@/lib/settings/types';
-import { resolveClaudeConfigDirForEnvironment } from '@/lib/skill/skill-loader';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
+import logger from '@/lib/logger';
 import {
   readBundledTesseraControlSkillFiles,
   TESSERA_CONTROL_SKILL_NAME,
@@ -57,7 +49,10 @@ export interface ProviderSkillManagementRequest {
 export interface ProviderSkillManagerOptions {
   resolveAgentEnvironment: (userId: string) => Promise<AgentEnvironment>;
   resolveDefaultEnvironment: () => Promise<AgentEnvironment>;
-  detectSkillProviders: (environment: AgentEnvironment) => Promise<ProviderSkillId[]>;
+  detectSkillProviders: (
+    environment: AgentEnvironment,
+    providerIds?: ProviderSkillId[],
+  ) => Promise<ProviderSkillId[]>;
   resolveProviderSkillHome: (
     providerId: ProviderSkillId,
     environment: AgentEnvironment,
@@ -92,6 +87,11 @@ interface PreparedMutation {
   committed: boolean;
 }
 
+interface ProviderSkillManagementExecution {
+  agentEnvironment: AgentEnvironment;
+  detectedProviderIds: ProviderSkillId[];
+}
+
 export interface ProviderSkillManager {
   manage(request: ProviderSkillManagementRequest): Promise<ProviderSkillManagementResult>;
   maintain(
@@ -103,9 +103,10 @@ export interface ProviderSkillManager {
 
 export async function detectSupportedProviderSkills(
   environment: AgentEnvironment,
+  providerIds: ProviderSkillId[] = [...PROVIDER_SKILL_IDS],
 ): Promise<ProviderSkillId[]> {
   const detected: ProviderSkillId[] = [];
-  for (const providerId of PROVIDER_SKILL_IDS) {
+  for (const providerId of providerIds) {
     if (!cliProviderRegistry.hasProvider(providerId)) continue;
     try {
       if (await cliProviderRegistry.getProvider(providerId).isAvailable(environment)) {
@@ -122,61 +123,11 @@ export async function resolveOwnedProviderSkillHome(
   providerId: ProviderSkillId,
   environment: AgentEnvironment,
 ): Promise<string> {
-  const home = environment === 'wsl' && process.platform === 'win32'
-    ? await resolveStrictWindowsHostedWslProviderHome(providerId)
-    : providerId === 'claude-code'
-      ? await resolveClaudeConfigDirForEnvironment(environment)
-      : providerId === 'codex'
-        ? await resolveCodexHomeForEnvironment(environment)
-        : await resolveOpenCodeConfigDirForEnvironment(environment);
-  assertProviderHomeOwnership(home, environment, providerId);
-  return home;
-}
-
-async function resolveStrictWindowsHostedWslProviderHome(
-  providerId: ProviderSkillId,
-): Promise<string> {
-  const expression = providerId === 'claude-code'
-    ? '${CLAUDE_CONFIG_DIR:-$HOME/.claude}'
-    : providerId === 'codex'
-      ? '${CODEX_HOME:-$HOME/.codex}'
-      : '${XDG_CONFIG_HOME:-$HOME/.config}/opencode';
-  const result = await execCli(
-    'sh',
-    ['-c', buildWslFilesystemPathProbe(expression)],
-    'wsl',
-    5_000,
-  );
-  const home = result.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1);
-  if (!result.ok || !home) {
-    throw new Error(
-      `The WSL ${providerId} home could not be resolved. Verify the selected WSL `
-      + 'distribution and its login shell, then retry; no native provider home was used.',
-    );
+  const provider = cliProviderRegistry.getProvider(providerId);
+  if (!provider.resolveSkillHome) {
+    throw new Error(`Provider ${providerId} does not declare a global skill home.`);
   }
-  return home;
-}
-
-function assertProviderHomeOwnership(
-  home: string,
-  environment: AgentEnvironment,
-  providerId: ProviderSkillId,
-): void {
-  if (!path.isAbsolute(home)) {
-    throw new Error(`The ${providerId} home is not an absolute path in the selected Agent Environment.`);
-  }
-  if (!isBridgedAgentEnvironment(environment)) return;
-
-  const owned = environment === 'wsl'
-    ? isWindowsHostedWslFilesystemPath(home)
-    : /^\/mnt\/[a-zA-Z](?:\/|$)/.test(home.replaceAll('\\', '/'))
-      || /^[a-zA-Z]:[\\/]/.test(home);
-  if (!owned) {
-    throw new Error(
-      `The resolved ${providerId} home belongs to the opposite Agent Environment. `
-      + 'No provider home was modified.',
-    );
-  }
+  return provider.resolveSkillHome(environment);
 }
 
 export function createProviderSkillManager(
@@ -200,24 +151,14 @@ export function createProviderSkillManager(
       const ledger = await readLedger(stateDirectory, userId);
       const consent = ledger.environments[agentEnvironment]?.[providerId]?.consent
         ?? 'not-granted';
-      if (consent !== 'granted') {
-        return {
-          agentEnvironment,
-          status: {
-            providerId,
-            detected: true,
-            state: 'absent',
-            consent,
-            ownership: 'none',
-          },
-        };
-      }
-
       try {
-        const result = await this.manage({
-          operation: 'update',
+        const result = await manageResolved({
+          operation: consent === 'granted' ? 'update' : 'status',
           agentEnvironmentOwner,
           providerIds: [providerId],
+        }, {
+          agentEnvironment,
+          detectedProviderIds: [providerId],
         });
         return {
           agentEnvironment,
@@ -225,7 +166,7 @@ export function createProviderSkillManager(
             providerId,
             detected: true,
             state: 'unavailable',
-            consent: 'granted',
+            consent,
             ownership: 'unknown',
           },
         };
@@ -236,21 +177,33 @@ export function createProviderSkillManager(
             providerId,
             detected: true,
             state: 'unavailable',
-            consent: 'granted',
+            consent,
             ownership: 'unknown',
           },
         };
       }
     },
-    async manage(request) {
-      const environment = request.agentEnvironmentOwner.kind === 'user'
-        ? await options.resolveAgentEnvironment(request.agentEnvironmentOwner.userId)
-        : await options.resolveDefaultEnvironment();
+    manage: (request) => manageResolved(request),
+  };
+
+  async function manageResolved(
+    request: ProviderSkillManagementRequest,
+    execution?: ProviderSkillManagementExecution,
+  ): Promise<ProviderSkillManagementResult> {
+      const environment = execution?.agentEnvironment ?? (
+        request.agentEnvironmentOwner.kind === 'user'
+          ? await options.resolveAgentEnvironment(request.agentEnvironmentOwner.userId)
+          : await options.resolveDefaultEnvironment()
+      );
       const userId = request.agentEnvironmentOwner.kind === 'user'
         ? request.agentEnvironmentOwner.userId
         : 'server-default';
-      const detected = await options.detectSkillProviders(environment);
-      const selected = [...new Set(request.providerIds ?? detected)];
+      const requestedProviderIds = request.providerIds
+        ? [...new Set(request.providerIds)]
+        : undefined;
+      const detected = execution?.detectedProviderIds
+        ?? await options.detectSkillProviders(environment, requestedProviderIds);
+      const selected = requestedProviderIds ?? detected;
       if (request.operation !== 'status' && selected.length === 0) {
         return {
           success: false,
@@ -343,10 +296,17 @@ export function createProviderSkillManager(
         try {
           await writeLedger(stateDirectory, userId, ledger);
         } catch (error) {
-          await rollbackMutations(prepared);
+          try {
+            await rollbackMutations(prepared);
+          } catch (rollbackError) {
+            throw new AggregateError(
+              [error, rollbackError],
+              'Provider skill state could not be committed and rollback was incomplete.',
+            );
+          }
           throw error;
         }
-        await discardMutationBackups(prepared);
+        await discardCommittedBackups(prepared);
         return {
           success: true,
           operation: request.operation,
@@ -371,8 +331,7 @@ export function createProviderSkillManager(
           },
         };
       }
-    },
-  };
+    }
 }
 
 async function inspectProviderSkill(
@@ -451,7 +410,14 @@ async function prepareInstallMutations(
     }
     return prepared;
   } catch (error) {
-    await cleanupPreparedMutations(prepared);
+    try {
+      await cleanupPreparedMutations(prepared);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Provider skill staging failed and temporary-artifact cleanup was incomplete.',
+      );
+    }
     throw error;
   }
 }
@@ -481,44 +447,102 @@ async function commitMutations(prepared: PreparedMutation[]): Promise<void> {
       mutation.committed = true;
     }
   } catch (error) {
-    await rollbackMutations(prepared);
+    try {
+      await rollbackMutations(prepared);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        'Provider skill commit failed and rollback was incomplete.',
+      );
+    }
     throw error;
   }
 }
 
 async function rollbackMutations(prepared: PreparedMutation[]): Promise<void> {
+  const errors: Error[] = [];
   for (const mutation of [...prepared].reverse()) {
     if (mutation.committed) {
       if (mutation.stageDir) {
-        await fs.rm(mutation.targetDir, { recursive: true, force: true }).catch(() => undefined);
+        await captureFilesystemError(
+          errors,
+          `remove committed skill ${mutation.targetDir}`,
+          () => fs.rm(mutation.targetDir, { recursive: true, force: true }),
+        );
       }
     }
     if (mutation.backupDir) {
-      await fs.rename(mutation.backupDir, mutation.targetDir).catch(() => undefined);
+      await captureFilesystemError(
+        errors,
+        `restore provider skill ${mutation.targetDir}`,
+        () => fs.rename(mutation.backupDir!, mutation.targetDir),
+      );
     }
     if (mutation.stageDir) {
-      await fs.rm(mutation.stageDir, { recursive: true, force: true }).catch(() => undefined);
+      await captureFilesystemError(
+        errors,
+        `remove staged skill ${mutation.stageDir}`,
+        () => fs.rm(mutation.stageDir!, { recursive: true, force: true }),
+      );
     }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'Provider skill rollback was incomplete.');
   }
 }
 
 async function cleanupPreparedMutations(prepared: PreparedMutation[]): Promise<void> {
+  const errors: Error[] = [];
   await Promise.all(prepared.flatMap((mutation) => [
     mutation.stageDir
-      ? fs.rm(mutation.stageDir, { recursive: true, force: true }).catch(() => undefined)
+      ? captureFilesystemError(
+          errors,
+          `remove staged skill ${mutation.stageDir}`,
+          () => fs.rm(mutation.stageDir!, { recursive: true, force: true }),
+        )
       : Promise.resolve(),
     mutation.backupDir
-      ? fs.rm(mutation.backupDir, { recursive: true, force: true }).catch(() => undefined)
+      ? captureFilesystemError(
+          errors,
+          `remove unused backup ${mutation.backupDir}`,
+          () => fs.rm(mutation.backupDir!, { recursive: true, force: true }),
+        )
       : Promise.resolve(),
   ]));
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'Provider skill staging cleanup was incomplete.');
+  }
 }
 
-async function discardMutationBackups(prepared: PreparedMutation[]): Promise<void> {
+async function discardCommittedBackups(prepared: PreparedMutation[]): Promise<void> {
+  const errors: Error[] = [];
   await Promise.all(prepared.map((mutation) => (
     mutation.backupDir
-      ? fs.rm(mutation.backupDir, { recursive: true, force: true }).catch(() => undefined)
+      ? captureFilesystemError(
+          errors,
+          `remove committed backup ${mutation.backupDir}`,
+          () => fs.rm(mutation.backupDir!, { recursive: true, force: true }),
+        )
       : Promise.resolve()
   )));
+  if (errors.length > 0) {
+    // Targets and the consent ledger are already committed. Backup collection
+    // is post-commit garbage collection and must not turn a unitary success
+    // into a reported failure whose observable provider state is actually ready.
+    logger.warn({ errors }, 'Provider skill backup cleanup will need manual recovery');
+  }
+}
+
+async function captureFilesystemError(
+  errors: Error[],
+  action: string,
+  operation: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    errors.push(new Error(`${action}: ${error instanceof Error ? error.message : String(error)}`));
+  }
 }
 
 function digestSkillFiles(files: BundledTesseraControlSkillFile[]): string {

@@ -7,6 +7,7 @@ import { getAgentEnvironment, resolveDefaultAgentEnvironment } from './spawn-cli
 import {
   createProviderSkillManager,
   detectSupportedProviderSkills,
+  PROVIDER_SKILL_IDS,
   resolveOwnedProviderSkillHome,
   type ProviderSkillId,
   type ProviderSkillManagementRequest,
@@ -179,8 +180,8 @@ export function createProviderIntegration(
 }
 
 function normalizeProviderSkillId(providerId: string): ProviderSkillId {
-  if (providerId === 'claude-code' || providerId === 'codex' || providerId === 'opencode') {
-    return providerId;
+  if ((PROVIDER_SKILL_IDS as readonly string[]).includes(providerId)) {
+    return providerId as ProviderSkillId;
   }
   throw new Error(`Provider ${providerId} does not support the tessera-cli skill.`);
 }

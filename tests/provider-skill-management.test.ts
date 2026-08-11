@@ -410,6 +410,103 @@ test('Session launch reports an externally modified skill but remains nonblockin
   }
 });
 
+test('Session launch reports a user-owned collision before consent without changing it', async () => {
+  const harness = createHarness();
+  const skillPath = path.join(
+    harness.homes['native:claude-code'],
+    'skills',
+    'tessera-cli',
+    'SKILL.md',
+  );
+  fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+  fs.writeFileSync(skillPath, 'user-owned before consent\n');
+  try {
+    const launch = await harness.integration.resolveLaunch({
+      provider: { getProviderId: () => 'claude-code' },
+      agentEnvironmentOwner: { kind: 'user', userId: 'pre-consent-conflict-user' },
+    });
+
+    assert.equal(launch.skill.state, 'conflict');
+    assert.equal(launch.skill.consent, 'declined');
+    assert.equal(launch.health.state, 'degraded');
+    assert.equal(fs.readFileSync(skillPath, 'utf8'), 'user-owned before consent\n');
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('Session launch remains nonblocking when its provider home cannot be inspected', async () => {
+  const harness = createHarness();
+  try {
+    const integration = createProviderIntegration({
+      resolveAgentEnvironment: async () => 'wsl',
+      detectSkillProviders: async () => ['opencode'],
+      resolveProviderSkillHome: async () => {
+        throw new Error('fake WSL home unavailable');
+      },
+      providerSkillStateDirectory: path.join(harness.root, 'unavailable-state'),
+      readProviderSkillFiles: () => [{ relativePath: 'SKILL.md', content: TEST_SKILL }],
+    });
+
+    const launch = await integration.resolveLaunch({
+      provider: { getProviderId: () => 'opencode' },
+      agentEnvironmentOwner: { kind: 'user', userId: 'unavailable-home-user' },
+    });
+
+    assert.equal(launch.providerHome.agentEnvironment, 'wsl');
+    assert.equal(launch.skill.state, 'conflict');
+    assert.equal(launch.skill.consent, 'declined');
+    assert.equal(launch.health.state, 'degraded');
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('Session maintenance remains pinned to the launch Agent Environment during a settings race', async () => {
+  const harness = createHarness();
+  const updatedSkill = `${TEST_SKILL}\nPinned update.\n`;
+  try {
+    await harness.integration.manageSkills({
+      operation: 'install',
+      agentEnvironmentOwner: { kind: 'user', userId: 'settings-race-user' },
+      providerIds: ['codex'],
+    });
+    let environmentResolutions = 0;
+    const racingIntegration = createProviderIntegration({
+      resolveAgentEnvironment: async () => (
+        environmentResolutions++ === 0 ? 'native' : 'wsl'
+      ),
+      detectSkillProviders: async () => PROVIDERS,
+      resolveProviderSkillHome: async (providerId, environment) => (
+        harness.homes[`${environment}:${providerId}`]
+      ),
+      providerSkillStateDirectory: path.join(harness.root, 'state'),
+      readProviderSkillFiles: () => [{ relativePath: 'SKILL.md', content: updatedSkill }],
+    });
+
+    const launch = await racingIntegration.resolveLaunch({
+      provider: { getProviderId: () => 'codex' },
+      agentEnvironmentOwner: { kind: 'user', userId: 'settings-race-user' },
+    });
+
+    assert.equal(launch.providerHome.agentEnvironment, 'native');
+    assert.equal(environmentResolutions, 1);
+    assert.equal(
+      fs.readFileSync(
+        path.join(harness.homes['native:codex'], 'skills', 'tessera-cli', 'SKILL.md'),
+        'utf8',
+      ),
+      updatedSkill,
+    );
+    assert.equal(
+      fs.existsSync(path.join(harness.homes['wsl:codex'], 'skills', 'tessera-cli')),
+      false,
+    );
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test('Session launch does not reinstall a skill after explicit removal revoked consent', async () => {
   const harness = createHarness();
   const skillDir = path.join(harness.homes['native:claude-code'], 'skills', 'tessera-cli');

@@ -67,6 +67,9 @@ test('Provider Integration exposes path-free, provider-specific integration stat
   ]);
   const providerIntegration = createProviderIntegration({
     resolveAgentEnvironment: async () => 'wsl',
+    detectSkillProviders: async () => ['codex'],
+    resolveProviderSkillHome: async () => authoritativeCodexHome,
+    providerSkillStateDirectory: path.join(testRoot, 'provider-integration-state'),
   });
 
   const codex = await providerIntegration.resolveLaunch({

@@ -82,6 +82,8 @@ import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
+import { resolveCodexHomeForEnvironment } from '@/lib/memory/codex-memory';
+import { resolveProviderOwnedSkillHome } from '../provider-skill-home';
 
 const CLI_TIMEOUT_MS = 120_000;
 const SKILLS_REQUEST_TIMEOUT_MS = 10_000;
@@ -283,6 +285,15 @@ export class CodexAdapter implements CliProvider {
 
   getProviderId(): string {
     return PROVIDER_ID;
+  }
+
+  resolveSkillHome(environment: 'native' | 'wsl'): Promise<string> {
+    return resolveProviderOwnedSkillHome({
+      providerId: PROVIDER_ID,
+      environment,
+      windowsHostedWslExpression: '${CODEX_HOME:-$HOME/.codex}',
+      resolveSharedFilesystemHome: () => resolveCodexHomeForEnvironment(environment),
+    });
   }
 
   getProviderIntegrationRequirements(): ProviderIntegrationRequirements {

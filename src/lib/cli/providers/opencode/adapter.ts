@@ -38,6 +38,8 @@ import {
   normalizeOpenCodeSessionMode,
   splitOpenCodeModelId,
 } from './session-config';
+import { resolveOpenCodeConfigDirForEnvironment } from '@/lib/memory/opencode-memory';
+import { resolveProviderOwnedSkillHome } from '../provider-skill-home';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -109,6 +111,15 @@ export class OpenCodeAdapter implements CliProvider {
 
   getProviderId(): string {
     return PROVIDER_ID;
+  }
+
+  resolveSkillHome(environment: 'native' | 'wsl'): Promise<string> {
+    return resolveProviderOwnedSkillHome({
+      providerId: PROVIDER_ID,
+      environment,
+      windowsHostedWslExpression: '${XDG_CONFIG_HOME:-$HOME/.config}/opencode',
+      resolveSharedFilesystemHome: () => resolveOpenCodeConfigDirForEnvironment(environment),
+    });
   }
 
   getDisplayName(): string {

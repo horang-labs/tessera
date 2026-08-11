@@ -43,6 +43,7 @@ export type ControlErrorCode =
   | 'PROVIDER_NOT_SUPPORTED'
   | 'PROVIDER_SKILL_CONFLICT'
   | 'PROVIDER_SKILL_CONSENT_REQUIRED'
+  | 'PROVIDER_SKILL_GLOBAL_AUTHORITY_REQUIRED'
   | 'PROVIDER_SKILL_NO_PROVIDERS'
   | 'PROVIDER_SKILL_TRANSACTION_FAILED'
   | 'INITIAL_PROMPT_TOO_LARGE'
@@ -398,12 +399,19 @@ export function createControlService(options: {
       };
     },
 
-    async manageProviderSkills(request, _context) {
+    async manageProviderSkills(request, context) {
       if (!providerIntegration || !resolveUserId) {
         throw new ControlOperationError(
           'PROVIDER_SKILL_TRANSACTION_FAILED',
           'Provider skill management is unavailable in this Tessera runtime.',
           503,
+        );
+      }
+      if (context.projectId || context.worktreeId || context.sessionId) {
+        throw new ControlOperationError(
+          'PROVIDER_SKILL_GLOBAL_AUTHORITY_REQUIRED',
+          'Provider skill management requires an explicit user-global CLI invocation outside a Managed Session.',
+          403,
         );
       }
       const userId = await resolveUserId();

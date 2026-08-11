@@ -11,6 +11,7 @@ const MAX_DESCRIPTOR_BYTES = 16 * 1024;
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5_000;
+const PROVIDER_SKILL_IDS = ['claude-code', 'codex', 'opencode'];
 // The server owns the ten-minute preparation deadline. Leave additional room
 // for the preceding Git worktree creation, which intentionally has no short
 // timeout because large repositories can take materially longer to checkout.
@@ -501,7 +502,7 @@ function parseProviderSkillSelection(args) {
     if (!providerId || providerId.startsWith('-')) {
       throw new Error('--provider requires a provider ID.');
     }
-    if (!['claude-code', 'codex', 'opencode'].includes(providerId)) {
+    if (!PROVIDER_SKILL_IDS.includes(providerId)) {
       throw new Error(`Unsupported provider skill target: ${providerId}`);
     }
     if (!providerIds.includes(providerId)) providerIds.push(providerId);
@@ -1183,7 +1184,7 @@ function parseProviderSkillManagementResult(value) {
   const providers = value.providers.map((provider) => {
     if (
       !isRecord(provider)
-      || !['claude-code', 'codex', 'opencode'].includes(provider.providerId)
+      || !PROVIDER_SKILL_IDS.includes(provider.providerId)
       || typeof provider.detected !== 'boolean'
       || !['absent', 'ready', 'stale', 'conflict', 'unavailable'].includes(provider.state)
       || !['granted', 'revoked', 'not-granted'].includes(provider.consent)

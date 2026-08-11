@@ -150,6 +150,9 @@ export interface CliProvider {
   /** Declares provider-specific integration requirements without filesystem details. */
   getProviderIntegrationRequirements?(): ProviderIntegrationRequirements;
 
+  /** Resolves the provider-owned home where global discovery skills live. */
+  resolveSkillHome?(environment: CliEnvironment): Promise<string>;
+
   /**
    * Returns the human-readable display name for this CLI provider.
    * Used in UI dropdowns and log messages.

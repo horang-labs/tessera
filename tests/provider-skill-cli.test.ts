@@ -55,9 +55,16 @@ test('CLI manages default and explicit provider sets through Provider Integratio
       if (!handled) response.writeHead(404).end();
     });
   });
+  const runUserGlobalCli = (args: string[]) => runControlCli(args, {
+    envOverrides: {
+      TESSERA_PROJECT_ID: '',
+      TESSERA_SESSION_ID: '',
+      TESSERA_WORKTREE_ID: '',
+    },
+  });
 
   try {
-    const install = await runControlCli([
+    const install = await runUserGlobalCli([
       'skills', 'install', '--json', '--control-descriptor', descriptor.path,
     ]);
     assert.equal(install.code, 0, install.stderr);
@@ -74,7 +81,7 @@ test('CLI manages default and explicit provider sets through Provider Integratio
       );
     }
 
-    const status = await runControlCli([
+    const status = await runUserGlobalCli([
       'skills', 'status', '--provider', 'codex', '--json',
       '--control-descriptor', descriptor.path,
     ]);
@@ -87,14 +94,14 @@ test('CLI manages default and explicit provider sets through Provider Integratio
       ownership: 'tessera',
     }]);
 
-    const update = await runControlCli([
+    const update = await runUserGlobalCli([
       'skills', 'update', '--provider', 'codex', '--json',
       '--control-descriptor', descriptor.path,
     ]);
     assert.equal(update.code, 0, update.stderr);
     assert.equal(JSON.parse(update.stdout).data.providers[0].state, 'ready');
 
-    const remove = await runControlCli([
+    const remove = await runUserGlobalCli([
       'skills', 'remove', '--provider', 'codex', '--json',
       '--control-descriptor', descriptor.path,
     ]);
@@ -115,14 +122,14 @@ test('CLI manages default and explicit provider sets through Provider Integratio
       true,
     );
 
-    const reinstall = await runControlCli([
+    const reinstall = await runUserGlobalCli([
       'skills', 'install', '--provider', 'codex', '--json',
       '--control-descriptor', descriptor.path,
     ]);
     assert.equal(reinstall.code, 0, reinstall.stderr);
     const codexSkillPath = path.join(homes.codex, 'skills', 'tessera-cli', 'SKILL.md');
     fsSync.appendFileSync(codexSkillPath, 'external CLI edit\n');
-    const conflict = await runControlCli([
+    const conflict = await runUserGlobalCli([
       'skills', 'update', '--provider', 'codex', '--json',
       '--control-descriptor', descriptor.path,
     ]);
@@ -130,12 +137,31 @@ test('CLI manages default and explicit provider sets through Provider Integratio
     assert.equal(JSON.parse(conflict.stdout).error.code, 'PROVIDER_SKILL_CONFLICT');
     assert.match(fsSync.readFileSync(codexSkillPath, 'utf8'), /external CLI edit/);
 
-    const invalid = await runControlCli([
+    const invalid = await runUserGlobalCli([
       'skills', 'status', '--provider', 'gemini', '--json',
       '--control-descriptor', descriptor.path,
     ]);
     assert.equal(invalid.code, 2);
     assert.equal(JSON.parse(invalid.stdout).error.code, 'INVALID_USAGE');
+
+    const managedSessionAttempt = await runControlCli([
+      'skills', 'remove', '--provider', 'opencode', '--json',
+      '--control-descriptor', descriptor.path,
+    ], {
+      envOverrides: {
+        TESSERA_PROJECT_ID: 'managed-project',
+        TESSERA_SESSION_ID: 'managed-session',
+      },
+    });
+    assert.equal(managedSessionAttempt.code, 1);
+    assert.equal(
+      JSON.parse(managedSessionAttempt.stdout).error.code,
+      'PROVIDER_SKILL_GLOBAL_AUTHORITY_REQUIRED',
+    );
+    assert.equal(
+      fsSync.existsSync(path.join(homes.opencode, 'skills', 'tessera-cli')),
+      true,
+    );
   } finally {
     await descriptor.cleanup();
     await new Promise<void>((resolve) => server.close(() => resolve()));
