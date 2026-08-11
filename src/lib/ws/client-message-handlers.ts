@@ -100,6 +100,7 @@ export function handleIncomingServerMessage({
         sessionMode: msg.sessionMode,
         accessMode: msg.accessMode,
       });
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, true);
       return { wasReconnect };
 
     case 'session_closed':
@@ -114,6 +115,7 @@ export function handleIncomingServerMessage({
     case 'session_stopped': {
       const stoppedSession = sessionStore.getSession(msg.sessionId);
       sessionStore.markSessionStopped(msg.sessionId);
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, false);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
       // The session was stopped, so any workflow still flagged running can no
       // longer emit its terminal task_notification — settle it instead of
@@ -193,6 +195,7 @@ export function handleIncomingServerMessage({
 
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, msg.running);
       if (msg.running) {
         removePendingTerminalReboundSource(msg.terminalId, msg.sessionId);
         useTerminalSessionStore.getState().markRuntimeStarted(msg.sessionId);

@@ -196,10 +196,10 @@ test('a composite target keeps its Session capabilities', () => {
   });
 });
 
-test('ChatLayout only drops the active Session for an explicit Worktree Peek', () => {
+test('ChatLayout drops non-canonical Session targets during Worktree Peek and optimistic creation', () => {
   assert.match(
     chatLayoutSource,
-    /const activeGitTargetSessionId = peekWorktreeId\s*\? null\s*:\s*activeGitSessionId;/,
+    /const activeGitTargetSessionId = peekWorktreeId \|\| activeGitSessionId\?\.startsWith\('temp-'\)\s*\? null\s*:\s*activeGitSessionId;/,
   );
   assert.equal(
     (chatLayoutSource.match(/sessionId=\{activeGitTargetSessionId\}/g) ?? []).length,

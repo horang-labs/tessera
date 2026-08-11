@@ -12,6 +12,7 @@ import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
+import type { TaskEntity } from '@/types/task-entity';
 
 const SESSION_ID = 'terminal-session-a';
 
@@ -52,6 +53,30 @@ function project(...sessions: UnifiedSession[]): ProjectGroup {
     loadedCount: 1,
     nextCursor: null,
     loadBatchIndex: 0,
+  };
+}
+
+function taskProjectionSession(isRunning: boolean): TaskEntity {
+  return {
+    id: 'task-a',
+    worktreeId: 'wt-a',
+    projectId: '/workspace',
+    projectViewId: '/workspace',
+    title: 'Linked Worktree',
+    workflowStatus: 'in_progress',
+    sortOrder: 0,
+    sessions: [{
+      id: SESSION_ID,
+      originProjectId: '/workspace',
+      title: 'PTY session',
+      provider: 'claude-code',
+      lastModified: '2026-07-14T00:00:00.000Z',
+      isRunning,
+      kind: 'terminal',
+      sortOrder: 0,
+    }],
+    createdAt: '2026-07-14T00:00:00.000Z',
+    updatedAt: '2026-07-14T00:00:00.000Z',
   };
 }
 
@@ -286,6 +311,25 @@ test('PTY runtime liveness remains active across completed turns', () => {
   assert.equal(reopened?.id, SESSION_ID);
   assert.equal(reopened?.isRunning, true);
   assert.equal(reopened?.status, 'running');
+});
+
+test('session stop updates a linked Session that only exists in the Task projection', () => {
+  const task = taskProjectionSession(true);
+  useSessionStore.setState({ projects: [project()] });
+  useTaskStore.setState({
+    tasks: [task],
+    tasksByProject: { '/workspace': [task] },
+    currentProjectId: '/workspace',
+  });
+
+  receive({ type: 'session_stopped', sessionId: SESSION_ID });
+
+  assert.equal(useSessionStore.getState().getSession(SESSION_ID), undefined);
+  assert.equal(useTaskStore.getState().getTaskBySessionId(SESSION_ID)?.sessions[0]?.isRunning, false);
+  assert.equal(
+    useTaskStore.getState().tasksByProject['/workspace']?.[0]?.sessions[0]?.isRunning,
+    false,
+  );
 });
 
 test('PTY runtime exit closes a retained single-panel session tab', () => {

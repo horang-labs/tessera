@@ -246,6 +246,7 @@ export function useSessionCrud() {
           ps.assignSession(
             selectActiveTab(ps)?.activePanelId ?? '',
             result.sessionId,
+            result.worktreeId,
           );
           useTabStore.getState().syncTabProjectFromSession(ps.activeTabId, result.sessionId);
         }

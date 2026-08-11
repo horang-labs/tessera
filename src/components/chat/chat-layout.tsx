@@ -154,7 +154,9 @@ export function ChatLayout() {
     ?? (isKanbanPeekMode && selectedBoardSessionId
       ? null
       : activePanelWorktreeId ?? compositeWorktreeId);
-  const activeGitTargetSessionId = peekWorktreeId ? null : activeGitSessionId;
+  const activeGitTargetSessionId = peekWorktreeId || activeGitSessionId?.startsWith('temp-')
+    ? null
+    : activeGitSessionId;
 
   const markSessionAsRead = useNotificationStore(
     (state) => state.markSessionAsRead,
