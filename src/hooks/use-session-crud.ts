@@ -197,8 +197,6 @@ export function useSessionCrud() {
           (p) => p.encodedDir === projectDir || p.decodedPath === projectDir
         );
 
-        sessionStore.removeSession(tempSessionId);
-
         // No runtime exists yet. GUI starts on first input; PTY starts on first open.
         const newSession: UnifiedSession = {
           id: result.sessionId,
@@ -230,7 +228,16 @@ export function useSessionCrud() {
           hasCustomTitle: options.hasCustomTitle ?? false,
         };
 
-        sessionStore.addSession(newSession);
+        // The user may have moved to another tab while the request was in flight.
+        // Keep that newer choice active and replace only the optimistic surface
+        // that initiated this creation.
+        sessionStore.addSession(newSession, { activate: false });
+        useTabStore.getState().rebindSessionSurface(
+          [tempSessionId],
+          result.sessionId,
+          { worktreeId: result.worktreeId ?? null },
+        );
+        sessionStore.removeSession(tempSessionId);
         sessionStore.setCreatingSession(null);
 
         // Migrate draft input from temp session to real session
@@ -238,17 +245,6 @@ export function useSessionCrud() {
         const tempDraft = chatStore.getDraftInput(tempSessionId);
         if (tempDraft) {
           chatStore.setDraftInput(result.sessionId, tempDraft);
-        }
-
-        // Update panel from temp to real session
-        {
-          const ps = usePanelStore.getState();
-          ps.assignSession(
-            selectActiveTab(ps)?.activePanelId ?? '',
-            result.sessionId,
-            result.worktreeId,
-          );
-          useTabStore.getState().syncTabProjectFromSession(ps.activeTabId, result.sessionId);
         }
 
         chatStore.loadHistory(result.sessionId, []);

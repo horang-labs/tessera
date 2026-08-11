@@ -702,6 +702,75 @@ test('PTY rebound transfers a child from a raced empty tab back to its hidden so
   );
 });
 
+test('late optimistic session completion updates its hidden origin without stealing the current Project', () => {
+  const tempSessionId = 'temp-session-from-project-a';
+  const realSessionId = 'real-session-from-project-a';
+  const currentSessionId = 'session-in-project-b';
+  const sourceTabId = 'creation-source-tab';
+  const sourcePanelId = 'creation-source-panel';
+  const currentTabId = 'current-tab';
+  const currentPanelId = 'current-panel';
+
+  useSessionStore.setState({ activeSessionId: currentSessionId });
+  useTabStore.setState({
+    tabs: [{ id: currentTabId, projectDir: '/project-b', title: null, isPreview: false }],
+    activeTabId: currentTabId,
+    lruTabIds: [currentTabId],
+    currentProjectDir: '/project-b',
+    projectTabStates: {
+      '/project-a': {
+        tabs: [{ id: sourceTabId, projectDir: '/project-a', title: null, isPreview: false }],
+        activeTabId: sourceTabId,
+        lruTabIds: [sourceTabId],
+        tabPanelSnapshots: {
+          [sourceTabId]: {
+            layout: { type: 'leaf', panelId: sourcePanelId },
+            panels: {
+              [sourcePanelId]: {
+                id: sourcePanelId,
+                sessionId: tempSessionId,
+                worktreeId: null,
+              },
+            },
+            activePanelId: sourcePanelId,
+          },
+        },
+      },
+    },
+  });
+  usePanelStore.setState({
+    activeTabId: currentTabId,
+    tabPanels: {
+      [currentTabId]: {
+        layout: { type: 'leaf', panelId: currentPanelId },
+        panels: { [currentPanelId]: { id: currentPanelId, sessionId: currentSessionId } },
+        activePanelId: currentPanelId,
+      },
+    },
+  });
+  useBoardStore.setState({ selectedProjectDir: '/project-b' });
+
+  assert.equal(useTabStore.getState().rebindSessionSurface(
+    [tempSessionId],
+    realSessionId,
+    { worktreeId: 'wt-real' },
+  ), true);
+
+  assert.equal(useSessionStore.getState().activeSessionId, currentSessionId);
+  assert.equal(useTabStore.getState().activeTabId, currentTabId);
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-b');
+  assert.equal(useBoardStore.getState().selectedProjectDir, '/project-b');
+  assert.deepEqual(
+    useTabStore.getState().projectTabStates['/project-a']
+      ?.tabPanelSnapshots?.[sourceTabId]?.panels[sourcePanelId],
+    {
+      id: sourcePanelId,
+      sessionId: realSessionId,
+      worktreeId: 'wt-real',
+    },
+  );
+});
+
 test('hidden session reconciliation defers when unsaved peek changes refuse the project switch', (t) => {
   const childSessionId = 'terminal-session-dirty-peek-child';
   const sourceTabId = 'dirty-peek-source-tab';

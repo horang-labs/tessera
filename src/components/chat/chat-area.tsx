@@ -111,7 +111,9 @@ export const ChatArea = memo(function ChatArea({
       return;
     }
     autoLoadedSessionIdRef.current = session.id;
-    void viewSession(session, { activate: !isPeek });
+    // Mounting a panel is passive. Its containing tab/panel action already owns
+    // selection, so a delayed history request must never activate this surface.
+    void viewSession(session, { activate: false });
   }, [session, historyLoaded, isPeek, viewSession]);
   const groupedMessagesForSearch = useMemo(
     () => groupMessages(windowedMessages),
@@ -187,7 +189,7 @@ export const ChatArea = memo(function ChatArea({
           <Button
             onClick={() => {
               clearError(sessionId);
-              viewSession(session, { activate: !isPeek });
+              viewSession(session, { activate: false });
             }}
           >
             {t("chat.retry")}
