@@ -488,9 +488,6 @@ export class CodexAdapter implements CliProvider {
         ? { kind: 'user', userId: options.userId }
         : { kind: 'server-default' },
     });
-    if (integration.health.state === 'blocked') {
-      throw new Error('Codex app-server launch is blocked by Provider Integration health.');
-    }
     const agentEnv = integration.providerHome.agentEnvironment;
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
