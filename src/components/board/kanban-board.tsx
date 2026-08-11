@@ -944,7 +944,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   const handleTaskMoveToCollection = useCallback((collectionId: string | null) => {
     if (!taskMenuAnchor) return;
-    void useTaskStore.getState().updateTask(taskMenuAnchor.task.id, { collectionId });
+    void useTaskStore.getState().updateTask(
+      taskMenuAnchor.task.id,
+      { collectionId },
+      taskMenuAnchor.task.projectViewId,
+    );
     setTaskMenuAnchor(null);
   }, [taskMenuAnchor]);
 

@@ -72,12 +72,13 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { title, collectionId, workflowStatus, worktreeBranch, summary } = body as {
+  const { title, collectionId, workflowStatus, worktreeBranch, summary, projectViewId } = body as {
     title?: unknown;
     collectionId?: unknown;
     workflowStatus?: unknown;
     worktreeBranch?: unknown;
     summary?: unknown;
+    projectViewId?: unknown;
   };
 
   const patch: Record<string, unknown> = {};
@@ -89,10 +90,13 @@ export async function PATCH(
     patch.title = title.trim();
   }
   if (collectionId !== undefined) {
+    const collectionProjectId = typeof projectViewId === 'string' && projectViewId.length > 0
+      ? projectViewId
+      : task.projectId;
     if (
       typeof collectionId === 'string' &&
       collectionId.trim().length > 0 &&
-      !collectionExists(collectionId.trim(), task.projectId)
+      !collectionExists(collectionId.trim(), collectionProjectId)
     ) {
       return NextResponse.json({ error: 'Collection not found' }, { status: 404 });
     }
