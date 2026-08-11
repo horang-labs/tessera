@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -48,7 +49,25 @@ test('CLI manages default and explicit provider sets through Provider Integratio
     providerIntegration: integration,
     resolveUserId: async () => 'cli-user',
   });
-  const handler = createControlHttpHandler({ descriptor: descriptor.descriptor, service });
+  const managedCredential = randomBytes(32).toString('base64url');
+  const managedDescriptorPath = path.join(root, 'managed-runtime.json');
+  await fs.writeFile(managedDescriptorPath, `${JSON.stringify({
+    ...descriptor.descriptor,
+    token: managedCredential,
+  })}\n`, { mode: 0o600 });
+  const handler = createControlHttpHandler({
+    descriptor: descriptor.descriptor,
+    service,
+    resolveManagedCredential: (credential) => (
+      credential === managedCredential
+        ? {
+            agentEnvironment: 'wsl',
+            projectId: 'managed-project',
+            sessionId: 'managed-session',
+          }
+        : undefined
+    ),
+  });
   server.removeAllListeners('request');
   server.on('request', (request, response) => {
     void handler(request, response).then((handled) => {
@@ -146,11 +165,12 @@ test('CLI manages default and explicit provider sets through Provider Integratio
 
     const managedSessionAttempt = await runControlCli([
       'skills', 'remove', '--provider', 'opencode', '--json',
-      '--control-descriptor', descriptor.path,
+      '--control-descriptor', managedDescriptorPath,
     ], {
       envOverrides: {
-        TESSERA_PROJECT_ID: 'managed-project',
-        TESSERA_SESSION_ID: 'managed-session',
+        TESSERA_PROJECT_ID: '',
+        TESSERA_SESSION_ID: '',
+        TESSERA_WORKTREE_ID: '',
       },
     });
     assert.equal(managedSessionAttempt.code, 1);

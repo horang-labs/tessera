@@ -39,6 +39,7 @@ interface ControlFailureEnvelope {
 export function createControlHttpHandler(options: {
   descriptor: RuntimeDescriptor;
   service: ControlService;
+  resolveManagedCredential?: (credential: string) => ControlCallerContext | undefined;
 }): (request: IncomingMessage, response: ServerResponse) => Promise<boolean> {
   const { descriptor, service } = options;
 
@@ -54,7 +55,13 @@ export function createControlHttpHandler(options: {
       return true;
     }
 
-    if (!isValidBearerToken(headerValue(request, 'authorization'), descriptor.token)) {
+    const authorization = headerValue(request, 'authorization');
+    const suppliedCredential = bearerToken(authorization);
+    const usesGlobalCredential = isValidBearerToken(authorization, descriptor.token);
+    const managedContext = usesGlobalCredential || !suppliedCredential
+      ? undefined
+      : options.resolveManagedCredential?.(suppliedCredential);
+    if (!usesGlobalCredential && !managedContext) {
       writeFailure(response, 401, {
         ok: false,
         apiVersion: 1,
@@ -92,7 +99,7 @@ export function createControlHttpHandler(options: {
       return true;
     }
 
-    const context = callerContext(request);
+    const context = managedContext ?? callerContext(request);
     try {
       if (pathname === `${CONTROL_ROUTE_PREFIX}/status`) {
         requireMethod(request, 'GET');
@@ -686,6 +693,12 @@ export function isValidBearerToken(
   const suppliedDigest = createHmac('sha256', expectedToken).update(suppliedToken).digest();
   return authorization?.startsWith('Bearer ') === true
     && timingSafeEqual(expectedDigest, suppliedDigest);
+}
+
+function bearerToken(authorization: string | undefined): string {
+  return authorization?.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : '';
 }
 
 export function isLoopbackAddress(address: string | undefined): boolean {

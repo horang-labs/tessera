@@ -1,8 +1,12 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import { execFile } from 'node:child_process';
 import http from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
+const PROVIDER_SKILL_IDS = Object.freeze(Object.keys(JSON.parse(
+  fsSync.readFileSync(new URL('./provider-skill-ids.json', import.meta.url), 'utf8'),
+)));
 
 const CONTROL_API_VERSION = 1;
 const CONTROL_DESCRIPTOR_ENV = 'TESSERA_CONTROL_DESCRIPTOR';
@@ -11,7 +15,6 @@ const MAX_DESCRIPTOR_BYTES = 16 * 1024;
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5_000;
-const PROVIDER_SKILL_IDS = ['claude-code', 'codex', 'opencode'];
 // The server owns the ten-minute preparation deadline. Leave additional room
 // for the preceding Git worktree creation, which intentionally has no short
 // timeout because large repositories can take materially longer to checkout.

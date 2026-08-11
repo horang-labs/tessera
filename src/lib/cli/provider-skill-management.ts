@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import providerSkillManifest from '../../../bin/provider-skill-ids.json';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
@@ -11,8 +12,10 @@ import {
   type BundledTesseraControlSkillFile,
 } from '@/lib/terminal/tessera-control-skill';
 
-export const PROVIDER_SKILL_IDS = ['claude-code', 'codex', 'opencode'] as const;
-export type ProviderSkillId = (typeof PROVIDER_SKILL_IDS)[number];
+export type ProviderSkillId = keyof typeof providerSkillManifest;
+export const PROVIDER_SKILL_IDS: readonly ProviderSkillId[] = Object.keys(
+  providerSkillManifest,
+) as ProviderSkillId[];
 export type ProviderSkillOperation = 'install' | 'status' | 'update' | 'remove';
 
 export interface ProviderSkillStatus {
@@ -59,6 +62,7 @@ export interface ProviderSkillManagerOptions {
   ) => Promise<string>;
   providerSkillStateDirectory?: string;
   readProviderSkillFiles?: () => BundledTesseraControlSkillFile[];
+  renameProviderSkillPath?: (source: string, destination: string) => Promise<void>;
 }
 
 interface ProviderLedgerEntry {
@@ -137,53 +141,66 @@ export function createProviderSkillManager(
     ?? getTesseraDataPath('provider-skills');
   const readSkillFiles = options.readProviderSkillFiles
     ?? (() => readBundledTesseraControlSkillFiles());
+  const renameProviderSkillPath = options.renameProviderSkillPath ?? fs.rename;
+  let operationTail: Promise<void> = Promise.resolve();
+
+  const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = operationTail.then(operation);
+    operationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
 
   return {
     async maintain(agentEnvironmentOwner, providerId, resolvedAgentEnvironment) {
-      const agentEnvironment = resolvedAgentEnvironment ?? (
-        agentEnvironmentOwner.kind === 'user'
-          ? await options.resolveAgentEnvironment(agentEnvironmentOwner.userId)
-          : await options.resolveDefaultEnvironment()
-      );
-      const userId = agentEnvironmentOwner.kind === 'user'
-        ? agentEnvironmentOwner.userId
-        : 'server-default';
-      const ledger = await readLedger(stateDirectory, userId);
-      const consent = ledger.environments[agentEnvironment]?.[providerId]?.consent
-        ?? 'not-granted';
-      try {
-        const result = await manageResolved({
-          operation: consent === 'granted' ? 'update' : 'status',
-          agentEnvironmentOwner,
-          providerIds: [providerId],
-        }, {
-          agentEnvironment,
-          detectedProviderIds: [providerId],
-        });
-        return {
-          agentEnvironment,
-          status: result.providers[0] ?? {
-            providerId,
-            detected: true,
-            state: 'unavailable',
-            consent,
-            ownership: 'unknown',
-          },
-        };
-      } catch {
-        return {
-          agentEnvironment,
-          status: {
-            providerId,
-            detected: true,
-            state: 'unavailable',
-            consent,
-            ownership: 'unknown',
-          },
-        };
-      }
+      return serialize(async () => {
+        const agentEnvironment = resolvedAgentEnvironment ?? (
+          agentEnvironmentOwner.kind === 'user'
+            ? await options.resolveAgentEnvironment(agentEnvironmentOwner.userId)
+            : await options.resolveDefaultEnvironment()
+        );
+        const userId = agentEnvironmentOwner.kind === 'user'
+          ? agentEnvironmentOwner.userId
+          : 'server-default';
+        const ledger = await readLedger(stateDirectory, userId);
+        const consent = ledger.environments[agentEnvironment]?.[providerId]?.consent
+          ?? 'not-granted';
+        try {
+          const result = await manageResolved({
+            operation: consent === 'granted' ? 'update' : 'status',
+            agentEnvironmentOwner,
+            providerIds: [providerId],
+          }, {
+            agentEnvironment,
+            detectedProviderIds: [providerId],
+          });
+          return {
+            agentEnvironment,
+            status: result.providers[0] ?? {
+              providerId,
+              detected: true,
+              state: 'unavailable',
+              consent,
+              ownership: 'unknown',
+            },
+          };
+        } catch {
+          return {
+            agentEnvironment,
+            status: {
+              providerId,
+              detected: true,
+              state: 'unavailable',
+              consent,
+              ownership: 'unknown',
+            },
+          };
+        }
+      });
     },
-    manage: (request) => manageResolved(request),
+    manage: (request) => serialize(() => manageResolved(request)),
   };
 
   async function manageResolved(
@@ -281,7 +298,7 @@ export function createProviderSkillManager(
         const prepared = request.operation === 'remove'
           ? await prepareRemoveMutations(inspected)
           : await prepareInstallMutations(inspected, files, digest);
-        await commitMutations(prepared);
+        await commitMutations(prepared, renameProviderSkillPath);
         if (request.operation === 'install') {
           ledger.environments[environment] ??= {};
           for (const providerId of selected) {
@@ -297,7 +314,7 @@ export function createProviderSkillManager(
           await writeLedger(stateDirectory, userId, ledger);
         } catch (error) {
           try {
-            await rollbackMutations(prepared);
+            await rollbackMutations(prepared, renameProviderSkillPath);
           } catch (rollbackError) {
             throw new AggregateError(
               [error, rollbackError],
@@ -439,16 +456,19 @@ async function prepareRemoveMutations(
   });
 }
 
-async function commitMutations(prepared: PreparedMutation[]): Promise<void> {
+async function commitMutations(
+  prepared: PreparedMutation[],
+  renamePath: (source: string, destination: string) => Promise<void>,
+): Promise<void> {
   try {
     for (const mutation of prepared) {
-      if (mutation.backupDir) await fs.rename(mutation.targetDir, mutation.backupDir);
-      if (mutation.stageDir) await fs.rename(mutation.stageDir, mutation.targetDir);
+      if (mutation.backupDir) await renamePath(mutation.targetDir, mutation.backupDir);
+      if (mutation.stageDir) await renamePath(mutation.stageDir, mutation.targetDir);
       mutation.committed = true;
     }
   } catch (error) {
     try {
-      await rollbackMutations(prepared);
+      await rollbackMutations(prepared, renamePath);
     } catch (rollbackError) {
       throw new AggregateError(
         [error, rollbackError],
@@ -459,7 +479,10 @@ async function commitMutations(prepared: PreparedMutation[]): Promise<void> {
   }
 }
 
-async function rollbackMutations(prepared: PreparedMutation[]): Promise<void> {
+async function rollbackMutations(
+  prepared: PreparedMutation[],
+  renamePath: (source: string, destination: string) => Promise<void>,
+): Promise<void> {
   const errors: Error[] = [];
   for (const mutation of [...prepared].reverse()) {
     if (mutation.committed) {
@@ -473,9 +496,9 @@ async function rollbackMutations(prepared: PreparedMutation[]): Promise<void> {
     }
     if (mutation.backupDir) {
       await captureFilesystemError(
-        errors,
-        `restore provider skill ${mutation.targetDir}`,
-        () => fs.rename(mutation.backupDir!, mutation.targetDir),
+          errors,
+          `restore provider skill ${mutation.targetDir}`,
+          () => renamePath(mutation.backupDir!, mutation.targetDir),
       );
     }
     if (mutation.stageDir) {

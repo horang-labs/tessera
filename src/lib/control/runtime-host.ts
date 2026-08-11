@@ -3,7 +3,10 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { providerIntegration } from '@/lib/cli/provider-integration';
 import { configureSharedProviderControlCliBridge } from '@/lib/terminal/shared-provider-launch-module';
-import { createControlCliBridgeFactory } from './cli-bridge';
+import {
+  createControlCliBridgeFactory,
+  type ControlCliBridgeContext,
+} from './cli-bridge';
 import { createDatabaseControlProjectSource } from './database-project-source';
 import { createDatabaseControlSessionSource } from './database-session-source';
 import { createDatabaseControlWorktreeSource } from './database-worktree-source';
@@ -58,12 +61,17 @@ export async function startControlRuntimeHost(
       runtimeDirectory: options.runtimeDirectory,
       descriptorPath: options.descriptorPath,
     });
+    const managedCredentials = new Map<string, ControlCliBridgeContext>();
     const bridgeFactory = createControlCliBridgeFactory({
       runtimeId: descriptorHandle.descriptor.runtimeId,
-      descriptorPath: descriptorHandle.path,
+      runtimeDescriptor: descriptorHandle.descriptor,
       cliEntryPath: options.cliEntryPath ?? path.join(options.appRoot, 'bin', 'tessera.mjs'),
       hostExecutablePath: options.hostExecutablePath ?? process.execPath,
       artifactRoot: options.bridgeArtifactRoot,
+      registerManagedCredential: (credential, context) => {
+        managedCredentials.set(credential, context);
+        return () => { managedCredentials.delete(credential); };
+      },
     });
     releaseBridge = configureSharedProviderControlCliBridge(bridgeFactory);
     const requireUserId = createRequiredControlUserIdResolver({
@@ -92,6 +100,7 @@ export async function startControlRuntimeHost(
         providerIntegration,
         resolveUserId: requireUserId,
       }),
+      resolveManagedCredential: (credential) => managedCredentials.get(credential),
     });
   } catch (error) {
     await releaseBridge?.().catch(() => undefined);

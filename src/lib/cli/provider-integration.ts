@@ -122,6 +122,9 @@ export function createProviderIntegration(
     ...(options.readProviderSkillFiles
       ? { readProviderSkillFiles: options.readProviderSkillFiles }
       : {}),
+    ...(options.renameProviderSkillPath
+      ? { renameProviderSkillPath: options.renameProviderSkillPath }
+      : {}),
   });
 
   return {
@@ -132,6 +135,7 @@ export function createProviderIntegration(
         : await resolveDefaultEnvironment();
       const requirements = request.provider.getProviderIntegrationRequirements?.()
         ?? DEFAULT_REQUIREMENTS;
+      const lifecycle = resolveArtifactPolicy(requirements.lifecycle);
       let skill = resolveArtifactPolicy(requirements.skill);
       let health: ProviderIntegrationHealth = { state: 'unchecked' };
       if (requirements.skill !== 'not-applicable') {
@@ -166,12 +170,19 @@ export function createProviderIntegration(
           health = { state: 'degraded' };
         }
       }
+      if (
+        lifecycle.requirement === 'required'
+        && lifecycle.state === 'unchecked'
+        && health.state === 'healthy'
+      ) {
+        health = { state: 'unchecked' };
+      }
       return {
         providerHome: {
           owner: 'agent-environment',
           agentEnvironment,
         },
-        lifecycle: resolveArtifactPolicy(requirements.lifecycle),
+        lifecycle,
         skill,
         health,
       };

@@ -90,6 +90,17 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     state: 'absent',
     consent: 'declined',
   });
+  await providerIntegration.manageSkills({
+    operation: 'install',
+    agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
+    providerIds: ['codex'],
+  });
+  const codexWithReadyOptionalSkill = await providerIntegration.resolveLaunch({
+    provider: new CodexAdapter(),
+    agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
+  });
+  assert.equal(codexWithReadyOptionalSkill.skill.state, 'ready');
+  assert.equal(codexWithReadyOptionalSkill.health.state, 'unchecked');
 
   const providerWithoutRequiredLifecycle = await providerIntegration.resolveLaunch({
     provider: { getProviderId: () => 'claude-code' },

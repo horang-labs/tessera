@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
+import type { RuntimeDescriptor } from './runtime-descriptor';
 
 const execFileAsync = promisify(execFile);
 const SAFE_RUNTIME_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -34,19 +35,24 @@ export interface WslExecutableStore {
 
 export interface ControlCliBridgeFactoryOptions {
   runtimeId: string;
-  descriptorPath: string;
+  runtimeDescriptor: RuntimeDescriptor;
   cliEntryPath: string;
   hostExecutablePath: string;
   hostPlatform?: NodeJS.Platform;
   artifactRoot?: string;
   wslExecutableStore?: WslExecutableStore;
   formatHostPathForWsl?: (hostPath: string) => string;
+  registerManagedCredential: (
+    credential: string,
+    context: ControlCliBridgeContext,
+  ) => () => void;
 }
 
 interface OwnedBridge {
   commandPath: string;
   hostDirectory: string;
   guestCommandPath?: string;
+  revokeCapability: () => void;
   disposal?: Promise<void>;
 }
 
@@ -90,6 +96,7 @@ export function createControlCliBridgeFactory(
 
   const disposeOwned = (bridge: OwnedBridge): Promise<void> => {
     if (bridge.disposal) return bridge.disposal;
+    bridge.revokeCapability();
     const disposal = removeArtifacts(bridge.hostDirectory, bridge.guestCommandPath)
       .then(() => { owned.delete(bridge); });
     bridge.disposal = disposal;
@@ -108,6 +115,7 @@ export function createControlCliBridgeFactory(
       const creation = new Promise<void>((resolve) => { finishCreation = resolve; });
       pendingCreations.add(creation);
       try {
+        const managedCredential = randomBytes(32).toString('base64url');
         const bridgeDirectory = path.join(runtimeRoot, randomUUID());
         await fs.mkdir(bridgeDirectory, { recursive: true, mode: 0o700 });
         await fs.chmod(runtimeRoot, 0o700).catch(() => undefined);
@@ -115,12 +123,23 @@ export function createControlCliBridgeFactory(
 
         let commandPath: string;
         let guestCommandPath: string | undefined;
+        let revokeCapability = (): void => undefined;
         try {
+          revokeCapability = options.registerManagedCredential(managedCredential, context);
+          const scopedDescriptorPath = path.join(bridgeDirectory, 'runtime.json');
+          await fs.writeFile(
+            scopedDescriptorPath,
+            `${JSON.stringify({
+              ...options.runtimeDescriptor,
+              token: managedCredential,
+            })}\n`,
+            { encoding: 'utf8', mode: 0o600 },
+          );
           if (hostPlatform === 'win32') {
             const hostBridgePath = path.join(bridgeDirectory, 'tessera-control-bridge.ps1');
             await fs.writeFile(
               hostBridgePath,
-              buildPowerShellBridge({ ...options, context }),
+              buildPowerShellBridge({ ...options, context, scopedDescriptorPath }),
               { encoding: 'utf8', mode: 0o600 },
             );
             if (context.agentEnvironment === 'wsl') {
@@ -142,12 +161,13 @@ export function createControlCliBridgeFactory(
             commandPath = path.join(bridgeDirectory, 'tessera-control');
             await fs.writeFile(
               commandPath,
-              buildPosixBridge({ ...options, context }),
+              buildPosixBridge({ ...options, context, scopedDescriptorPath }),
               { encoding: 'utf8', mode: 0o700 },
             );
             await fs.chmod(commandPath, 0o700);
           }
         } catch (error) {
+          revokeCapability();
           try {
             await removeArtifacts(bridgeDirectory, guestCommandPath);
           } catch (cleanupError) {
@@ -163,6 +183,7 @@ export function createControlCliBridgeFactory(
           commandPath,
           hostDirectory: bridgeDirectory,
           guestCommandPath,
+          revokeCapability,
         };
         owned.add(bridge);
         if (factoryDisposed) {
@@ -220,7 +241,10 @@ function bridgeEnvironment(
 }
 
 function buildPosixBridge(
-  options: ControlCliBridgeFactoryOptions & { context: ControlCliBridgeContext },
+  options: ControlCliBridgeFactoryOptions & {
+    context: ControlCliBridgeContext;
+    scopedDescriptorPath: string;
+  },
 ): string {
   const { context } = options;
   return [
@@ -235,13 +259,16 @@ function buildPosixBridge(
       ? `TESSERA_WORKTREE_ID=${quotePosix(context.worktreeId)}; export TESSERA_WORKTREE_ID`
       : 'unset TESSERA_WORKTREE_ID',
     'ELECTRON_RUN_AS_NODE=1; export ELECTRON_RUN_AS_NODE',
-    `exec ${quotePosix(options.hostExecutablePath)} ${quotePosix(options.cliEntryPath)} --control-descriptor ${quotePosix(options.descriptorPath)} "$@"`,
+    `exec ${quotePosix(options.hostExecutablePath)} ${quotePosix(options.cliEntryPath)} --control-descriptor ${quotePosix(options.scopedDescriptorPath)} "$@"`,
     '',
   ].join('\n');
 }
 
 function buildPowerShellBridge(
-  options: ControlCliBridgeFactoryOptions & { context: ControlCliBridgeContext },
+  options: ControlCliBridgeFactoryOptions & {
+    context: ControlCliBridgeContext;
+    scopedDescriptorPath: string;
+  },
 ): string {
   const { context } = options;
   const worktreeAssignment = context.worktreeId
@@ -302,7 +329,7 @@ function buildPowerShellBridge(
     '    $env:TESSERA_CLI_WSL_DISTRO = $WslDistro',
     '  }',
     "  $env:ELECTRON_RUN_AS_NODE = '1'",
-    `  $cliArgs = @(${quotePowerShell(options.cliEntryPath)}, '--control-descriptor', ${quotePowerShell(options.descriptorPath)}) + @($ForwardArgs)`,
+    `  $cliArgs = @(${quotePowerShell(options.cliEntryPath)}, '--control-descriptor', ${quotePowerShell(options.scopedDescriptorPath)}) + @($ForwardArgs)`,
     `  & ${quotePowerShell(options.hostExecutablePath)} @cliArgs | ForEach-Object { Write-Output $_ }`,
     '  if ($null -eq $LASTEXITCODE) {',
     '    $exitCode = if ($?) { 0 } else { 1 }',

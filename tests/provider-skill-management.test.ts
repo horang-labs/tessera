@@ -120,6 +120,42 @@ test('an explicit provider selection is treated as a set', async () => {
   }
 });
 
+test('concurrent provider commands preserve every consent ledger update', async () => {
+  const harness = createHarness();
+  try {
+    const owner = { kind: 'user' as const, userId: 'concurrent-user' };
+    const [claude, codex] = await Promise.all([
+      harness.integration.manageSkills({
+        operation: 'install',
+        agentEnvironmentOwner: owner,
+        providerIds: ['claude-code'],
+      }),
+      harness.integration.manageSkills({
+        operation: 'install',
+        agentEnvironmentOwner: owner,
+        providerIds: ['codex'],
+      }),
+    ]);
+
+    assert.equal(claude.success, true);
+    assert.equal(codex.success, true);
+    const status = await harness.createIntegration().manageSkills({
+      operation: 'status',
+      agentEnvironmentOwner: owner,
+      providerIds: ['claude-code', 'codex'],
+    });
+    assert.deepEqual(status.providers.map(({ providerId, consent }) => ({
+      providerId,
+      consent,
+    })), [
+      { providerId: 'claude-code', consent: 'granted' },
+      { providerId: 'codex', consent: 'granted' },
+    ]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test('changing Agent Environments requires fresh consent and leaves the prior install in place', async () => {
   const harness = createHarness();
   try {
@@ -632,6 +668,58 @@ test('a user-owned collision fails the selected provider set without partial ins
       false,
     );
     assert.equal(fs.readFileSync(collisionPath, 'utf8'), 'user-owned skill\n');
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('a mid-commit filesystem failure rolls back the whole selected provider set', async () => {
+  const harness = createHarness();
+  const claudeTarget = path.join(
+    harness.homes['native:claude-code'],
+    'skills',
+    'tessera-cli',
+  );
+  const codexTarget = path.join(harness.homes['native:codex'], 'skills', 'tessera-cli');
+  let injected = false;
+  try {
+    const integration = createProviderIntegration({
+      resolveAgentEnvironment: async () => 'native',
+      detectSkillProviders: async () => PROVIDERS,
+      resolveProviderSkillHome: async (providerId, environment) => (
+        harness.homes[`${environment}:${providerId}`]
+      ),
+      providerSkillStateDirectory: path.join(harness.root, 'state'),
+      readProviderSkillFiles: () => [{ relativePath: 'SKILL.md', content: TEST_SKILL }],
+      renameProviderSkillPath: async (source, destination) => {
+        if (!injected && destination === codexTarget && source.includes('.stage-')) {
+          injected = true;
+          throw new Error('injected second-provider commit failure');
+        }
+        await fs.promises.rename(source, destination);
+      },
+    });
+
+    const result = await integration.manageSkills({
+      operation: 'install',
+      agentEnvironmentOwner: { kind: 'user', userId: 'mid-commit-user' },
+      providerIds: ['claude-code', 'codex'],
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.error?.code, 'PROVIDER_SKILL_TRANSACTION_FAILED');
+    assert.equal(injected, true);
+    assert.equal(fs.existsSync(claudeTarget), false);
+    assert.equal(fs.existsSync(codexTarget), false);
+    const status = await harness.createIntegration().manageSkills({
+      operation: 'status',
+      agentEnvironmentOwner: { kind: 'user', userId: 'mid-commit-user' },
+      providerIds: ['claude-code', 'codex'],
+    });
+    assert.deepEqual(status.providers.map(({ state, consent }) => ({ state, consent })), [
+      { state: 'absent', consent: 'not-granted' },
+      { state: 'absent', consent: 'not-granted' },
+    ]);
   } finally {
     harness.cleanup();
   }
