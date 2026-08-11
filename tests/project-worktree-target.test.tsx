@@ -205,6 +205,10 @@ test('ChatLayout drops non-canonical Session targets during Worktree Peek and op
     (chatLayoutSource.match(/sessionId=\{activeGitTargetSessionId\}/g) ?? []).length,
     2,
   );
+  assert.match(
+    chatLayoutSource,
+    /state\.getSession\(selectedBoardSessionId, selectedProjectDir\)\?\.worktreeId/,
+  );
 });
 
 test('sessionless Git and Files reads route by canonical Worktree identity', () => {

@@ -104,8 +104,7 @@ export function ToastContainer() {
   const actionToasts = useNotificationStore((s) => s.toasts);
   const dismissActionToast = useNotificationStore((s) => s.dismissActionToast);
   const clearUnreadCount = useSessionStore((s) => s.clearUnreadCount);
-  const getSession = useSessionStore((s) => s.getSession);
-  const { viewSession } = useSessionNavigation();
+  const { materializeSession, viewSession } = useSessionNavigation();
 
   const visibleNotifications = notifications
     .filter((n) => !n.dismissed)
@@ -115,7 +114,7 @@ export function ToastContainer() {
     markAsRead(notificationId);
     dismissToast(notificationId);
 
-    const session = getSession(sessionId);
+    const session = await materializeSession(sessionId);
     if (!session) {
       toast.error(t('errors.sessionNotFound'));
       return;

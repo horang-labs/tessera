@@ -86,6 +86,10 @@ export interface SessionState {
   setActiveSession: (sessionId: string | null) => void;
   addSession: (session: UnifiedSession, options?: { activate?: boolean }) => void;
   removeSession: (sessionId: string) => void;
+  /** Retain a navigable Session without inserting it into a direct Project Session page. */
+  retainSession: (session: UnifiedSession) => void;
+  /** Return the latest explicitly materialized appearance before its canonical fallback. */
+  getMaterializedSession: (sessionId: string) => UnifiedSession | undefined;
   upsertSession: (session: UnifiedSession) => void;
   removeProject: (encodedDir: string) => void;
   updateSessionTitle: (sessionId: string, title: string, hasCustomTitle?: boolean) => void;
@@ -803,6 +807,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       };
     }),
 
+  retainSession: (session) =>
+    set((state) => {
+      return {
+        retainedSessions: {
+          ...state.retainedSessions,
+          [session.id]: {
+            ...session,
+            archived: session.archived ?? false,
+            isReadOnly: session.isReadOnly ?? session.archived ?? false,
+            hasStarted: session.hasStarted ?? session.isRunning ?? false,
+            sortOrder: session.sortOrder ?? 0,
+          },
+        },
+      };
+    }),
+
   upsertSession: (session) =>
     set((state) => {
       const { projectDir } = session;
@@ -1188,6 +1208,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (session) return session;
     }
     return retainedSessions[sessionId];
+  },
+
+  getMaterializedSession: (sessionId: string): UnifiedSession | undefined => {
+    const state = get();
+    return state.retainedSessions[sessionId] ?? state.getSession(sessionId);
   },
 
   // Unread count actions

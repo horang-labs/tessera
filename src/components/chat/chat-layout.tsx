@@ -113,6 +113,14 @@ export function ChatLayout() {
   const renderedViewMode = useEffectiveViewMode();
   const peekSessionId = useBoardStore((state) => state.peekSessionId);
   const selectedBoardSessionId = useBoardStore((state) => state.selectedBoardSessionId);
+  const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const selectedBoardWorktreeId = useSessionStore((state) => (
+    selectedBoardSessionId
+      ? state.getMaterializedSession(selectedBoardSessionId)?.worktreeId
+        ?? state.getSession(selectedBoardSessionId, selectedProjectDir)?.worktreeId
+        ?? null
+      : null
+  ));
   const kanbanSessionOpenMode = useSettingsStore(
     (state) => state.settings.kanbanSessionOpenMode,
   );
@@ -153,7 +161,7 @@ export function ChatLayout() {
       });
   const activeGitWorktreeId = peekWorktreeId
     ?? (isKanbanPeekMode && selectedBoardSessionId
-      ? null
+      ? selectedBoardWorktreeId
       : activePanelWorktreeId ?? compositeWorktreeId);
   const activeGitTargetSessionId = peekWorktreeId || activeGitSessionId?.startsWith('temp-')
     ? null
@@ -163,7 +171,6 @@ export function ChatLayout() {
     (state) => state.markSessionAsRead,
   );
   const sidebarCollapsed = useSettingsStore((state) => state.sidebarCollapsed);
-  const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const sidebarWidth = useSettingsStore(
     (state) => state.getSidebarWidth(viewMode, selectedProjectDir),
   );

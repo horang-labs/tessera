@@ -68,6 +68,11 @@ function isFileLikeSessionId(sessionId: string | null): boolean {
     || parseMemoryFileSessionId(sessionId) !== null;
 }
 
+function inferSessionWorktreeId(sessionId: string | null | undefined): string | null {
+  if (!sessionId || isSpecialSession(sessionId)) return null;
+  return useSessionStore.getState().getMaterializedSession(sessionId)?.worktreeId ?? null;
+}
+
 function isWorkspaceFilePreviewTab(
   tab: Tab,
   panelStore: ReturnType<typeof usePanelStore.getState>,
@@ -493,7 +498,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     const panelData: TabPanelData = {
       layout: { type: 'leaf' as const, panelId: newPanelId },
       panels: {
-        [newPanelId]: { id: newPanelId, sessionId: initialSessionId ?? null },
+        [newPanelId]: {
+          id: newPanelId,
+          sessionId: initialSessionId ?? null,
+          worktreeId: inferSessionWorktreeId(initialSessionId),
+        },
       },
       activePanelId: newPanelId,
     };
@@ -779,7 +788,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     // 선택된 New Tab은 이미 세션을 담기 위한 빈 화면이다. 새 탭을 하나 더
     // 만들지 않고 이 탭을 고정 세션 탭으로 채운다.
     if (tabData?.layout.type === 'leaf' && activePanel?.sessionId === null) {
-      panelStore.assignSession(tabData.activePanelId, sessionId);
+      panelStore.assignSession(
+        tabData.activePanelId,
+        sessionId,
+        inferSessionWorktreeId(sessionId),
+      );
       get().syncTabProjectFromSession(state.activeTabId, sessionId);
       get().pinTab(state.activeTabId);
       return;
@@ -815,7 +828,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       // 활성 패널의 세션을 교체
       const tabData = panelStore.tabPanels[panelStore.activeTabId];
       if (tabData) {
-        panelStore.assignSession(tabData.activePanelId, sessionId);
+        panelStore.assignSession(
+          tabData.activePanelId,
+          sessionId,
+          inferSessionWorktreeId(sessionId),
+        );
         set({ tabs: [...get().tabs] });
       }
     } else {
@@ -826,7 +843,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
       if (activePanel?.sessionId === null) {
         // 빈 패널: 세션 할당 + 현재 탭을 프리뷰로 변환
-        panelStore.assignSession(tabData!.activePanelId, sessionId);
+        panelStore.assignSession(
+          tabData!.activePanelId,
+          sessionId,
+          inferSessionWorktreeId(sessionId),
+        );
         set({
           tabs: get().tabs.map((tab): Tab =>
             tab.id === state.activeTabId ? { ...tab, isPreview: true } : tab,

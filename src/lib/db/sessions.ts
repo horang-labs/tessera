@@ -835,6 +835,7 @@ export function mapSessionRowToApi(
     kind,
     taskId: row.task_id ?? undefined,
     collectionId: row.collection_id ?? undefined,
+    sortOrder: row.sort_order,
   };
 }
 

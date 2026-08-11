@@ -51,6 +51,7 @@ import {
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 
 // --- Helpers ---
 
@@ -630,17 +631,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const getLiveSession = useCallback((taskSession: TaskSession): UnifiedSession => {
     for (const project of liveProjects) {
       const session = project.sessions.find((s) => s.id === taskSession.id);
-      if (session) return session;
+      if (session) return toLinkedWorktreeSession(task, taskSession, session);
     }
-    return {
-      id: taskSession.id,
-      title: taskSession.title,
-      provider: taskSession.provider,
-      lastModified: taskSession.lastModified,
-      isRunning: taskSession.isRunning,
-      kind: taskSession.kind,
-    } as UnifiedSession;
-  }, [liveProjects]);
+    return toLinkedWorktreeSession(task, taskSession);
+  }, [liveProjects, task]);
   const hasVisibleRuntimeSession = useSessionStore((state) =>
     taskSessionIds.some((id) => {
       const snapshot = task.sessions.find((session) => session.id === id);

@@ -12,6 +12,7 @@ import { i18n } from '@/lib/i18n';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
 import { getCanonicalSessionRepresentatives } from '@/lib/projects/origin-project-representation';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 /** Number of messages loaded per API page. Used as the bloat threshold. */
 export const INITIAL_PAGE_SIZE = 25;
@@ -22,6 +23,10 @@ export function useSessionNavigation() {
 
   const [isLoading, setIsLoading] = useState(false);
   const loadingRequestCountRef = useRef(0);
+
+  const materializeSession = useCallback(async (sessionId: string, projectViewId?: string) => (
+    projectViewWorkspaceState.materializeSession(sessionId, projectViewId)
+  ), []);
 
   /**
    * Switch to a different session (already loaded)
@@ -106,6 +111,7 @@ export function useSessionNavigation() {
   return {
     viewSession,
     switchSession,
+    materializeSession,
 
     isLoading,
 

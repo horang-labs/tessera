@@ -91,6 +91,7 @@ test('canonical resolution deduplicates direct, retained, and task-summary ident
       'project-c': [task('project-c', 'collection-c', summary)],
     }),
     getCollectionsByProject: () => ({}),
+    materializeSession: () => {},
     hasUnreadNotification: () => false,
     clearSessionUnread: () => {},
     clearTaskSessionUnread: () => {},
@@ -125,6 +126,7 @@ test('retained unread activation keeps Project-local placement and reads every s
       'project-c': [collection('collection-c', 'project-c')],
       'project-d': [],
     }),
+    materializeSession: () => {},
     hasUnreadNotification: (id) => id === sessionId && notificationUnread,
     clearSessionUnread: () => { retained = { ...retained, unreadCount: 0 }; },
     clearTaskSessionUnread: () => { taskUnread = 0; },
@@ -146,4 +148,79 @@ test('retained unread activation keeps Project-local placement and reads every s
 
   assert.equal(workspace.markSessionRead(sessionId), false);
   assert.deepEqual(acknowledgements, [sessionId]);
+});
+
+test('navigation materializes a summary-only linked Session with its owning Worktree', async () => {
+  const materialized: UnifiedSession[] = [];
+  const summaryOnlyTask = task('project-a', 'collection-a');
+  const workspace = createProjectViewWorkspaceState({
+    getProjects: () => [project('project-a', [])],
+    getRetainedSessions: () => ({}),
+    getTasksByProject: () => ({ 'project-a': [summaryOnlyTask] }),
+    getCollectionsByProject: () => ({
+      'project-a': [collection('collection-a', 'project-a')],
+    }),
+    materializeSession: (value) => { materialized.push(value); },
+    hasUnreadNotification: () => false,
+    clearSessionUnread: () => {},
+    clearTaskSessionUnread: () => {},
+    markNotificationsRead: () => {},
+    acknowledgeSessionRead: () => {},
+  });
+
+  const fromProjectView = await workspace.materializeSession(sessionId, 'project-a');
+  const fromGlobalNavigation = await workspace.materializeSession(sessionId);
+
+  assert.deepEqual(
+    fromProjectView && {
+      id: fromProjectView.id,
+      projectDir: fromProjectView.projectDir,
+      originProjectId: fromProjectView.originProjectId,
+      worktreeId: fromProjectView.worktreeId,
+      workDir: fromProjectView.workDir,
+      collectionId: fromProjectView.collectionId,
+    },
+    {
+      id: sessionId,
+      projectDir: 'project-a',
+      originProjectId: 'project-a',
+      worktreeId: 'wt-c',
+      workDir: '/repo-c',
+      collectionId: 'collection-a',
+    },
+  );
+  assert.equal(fromGlobalNavigation?.id, fromProjectView?.id);
+  assert.deepEqual(materialized, [fromProjectView, fromGlobalNavigation]);
+});
+
+test('navigation loads and retains canonical details when no client snapshot exists', async () => {
+  let retained: Record<string, UnifiedSession> = {};
+  const loaded = session({
+    id: 'notification-only',
+    worktreeId: 'wt-notification',
+    workDir: '/repo/notification',
+  });
+  const loads: string[] = [];
+  const workspace = createProjectViewWorkspaceState({
+    getProjects: () => [],
+    getRetainedSessions: () => retained,
+    getTasksByProject: () => ({}),
+    getCollectionsByProject: () => ({}),
+    loadSession: async (id) => {
+      loads.push(id);
+      return id === loaded.id ? loaded : undefined;
+    },
+    materializeSession: (value) => { retained = { ...retained, [value.id]: value }; },
+    hasUnreadNotification: () => false,
+    clearSessionUnread: () => {},
+    clearTaskSessionUnread: () => {},
+    markNotificationsRead: () => {},
+    acknowledgeSessionRead: () => {},
+  });
+
+  const materialized = await workspace.materializeSession(loaded.id);
+
+  assert.deepEqual(loads, [loaded.id]);
+  assert.equal(materialized?.worktreeId, 'wt-notification');
+  assert.strictEqual(retained[loaded.id], materialized);
 });
