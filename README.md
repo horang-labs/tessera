@@ -2,7 +2,7 @@
 
 > Keep parallel AI coding work organized.
 
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-20.9%2B%20or%2022--26-brightgreen)](https://nodejs.org/)
 [![npm](https://img.shields.io/npm/v/@horang-labs/tessera?label=npm)](https://www.npmjs.com/package/@horang-labs/tessera)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](#license)
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/7557zmY8x)
@@ -90,7 +90,7 @@ Windows builds are not code-signed yet, so SmartScreen may show an unknown-publi
 
 ### Browser runtime
 
-Requires Node.js 20 or later and npm 10 or later.
+Requires Node.js 20.9+ (20.x) or Node.js 22–26, plus npm 10 or later.
 
 ```bash
 npm install -g @horang-labs/tessera
@@ -128,7 +128,7 @@ Authenticate provider CLIs first, for example with `claude login`, `codex login`
 
 For development, clone the repository and install dependencies:
 
-Source development requires Node.js 20 or later and npm 10 or later.
+Source development requires Node.js 20.9+ (20.x) or Node.js 22–26, plus npm 10 or later.
 
 ```bash
 git clone https://github.com/horang-labs/tessera.git

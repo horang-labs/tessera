@@ -22,7 +22,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  serverExternalPackages: ['pino', 'pino-pretty', 'sql.js', 'electron'],
+  serverExternalPackages: ['pino', 'pino-pretty', 'better-sqlite3', 'sql.js', 'electron'],
   env: {
     NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: posthogProjectToken,
     NEXT_PUBLIC_POSTHOG_API_HOST: posthogApiHost,

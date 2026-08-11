@@ -319,6 +319,7 @@ async function main() {
   await addDirectory('dist-electron', files);
   await addDirectory('node_modules/next', files);
   await addDirectory('node_modules/@next/env', files);
+  await addDirectory('node_modules/better-sqlite3', files);
   await addDirectory('node_modules/sql.js', files);
   await addDirectory('node_modules/node-pty/lib/worker', files);
   await addDirectory('node_modules/node-pty/prebuilds', files);
