@@ -1,5 +1,6 @@
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import type { CollectionGroupData } from '@/lib/chat/build-collection-groups';
+import type { RecentWorkItem } from '@/lib/chat/recent-work';
 import type { ProjectGroup } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
 
@@ -27,6 +28,14 @@ export function findSidebarProject(
   return projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
 }
 
+export function buildRecentWorkOrderedSessionIds(items: RecentWorkItem[]): string[] {
+  return items.flatMap((item) =>
+    item.type === 'task'
+      ? item.task.sessions.map((session) => session.id)
+      : [item.session.id],
+  );
+}
+
 export function buildSidebarOrderedSessionIds({
   selectedProjectDir,
   projects,
@@ -52,19 +61,15 @@ export function buildSidebarOrderedSessionIds({
     return [];
   }
 
-  const visibleSessionIds = new Set(
-    selectedProject.sessions
-      .filter((session) => !session.archived)
-      .map((session) => session.id),
-  );
-
   const orderedIds: string[] = [];
   for (const group of collectionGroups) {
     for (const task of group.tasks) {
       for (const session of task.sessions) {
-        if (visibleSessionIds.has(session.id)) {
-          orderedIds.push(session.id);
-        }
+        // Collection groups are the rendered Project-view projection. Linked
+        // Worktree sessions can be present here without also appearing in the
+        // direct Session projection, so filtering through selectedProject.sessions
+        // makes visible rows disappear from Shift+Click ranges.
+        orderedIds.push(session.id);
       }
     }
 

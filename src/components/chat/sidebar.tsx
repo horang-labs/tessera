@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type MouseEvent } from 'react';
 import { Check, CircleDot, CircleStop, ListCollapse, ListTree } from 'lucide-react';
 import { useSessionStore } from '@/stores/session-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
@@ -42,6 +42,7 @@ import {
   SidebarLoadingState,
 } from './sidebar-sections';
 import {
+  buildRecentWorkOrderedSessionIds,
   buildSidebarOrderedSessionIds,
   findSidebarProject,
   selectSidebarProjectTasks,
@@ -635,8 +636,6 @@ export function Sidebar() {
     });
   }, [projects, selectedProject, selectedProjectDir, visibleCollectionGroups]);
 
-  const { handleSessionClick, handleSessionDoubleClick } = useSessionClickHandlers({ orderedIds });
-
   const showRecentWork = useSettingsStore((state) => state.settings.showRecentWork);
 
   const recentWorkItems = useMemo(() => {
@@ -655,6 +654,20 @@ export function Sidebar() {
       originOnly: isAllMode,
     });
   }, [isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
+
+  const recentWorkOrderedIds = useMemo(
+    () => buildRecentWorkOrderedSessionIds(recentWorkItems),
+    [recentWorkItems],
+  );
+
+  const { handleSessionClick, handleSessionDoubleClick } = useSessionClickHandlers({ orderedIds });
+  const handleRecentWorkSessionClick = useCallback((
+    session: UnifiedSession,
+    event?: MouseEvent,
+  ) => handleSessionClick(session, event, recentWorkOrderedIds), [
+    handleSessionClick,
+    recentWorkOrderedIds,
+  ]);
 
   const collectionGroupScopeKeys = useMemo(() => {
     if (!selectedProject || !visibleCollectionGroups) return [];
@@ -751,7 +764,7 @@ export function Sidebar() {
                   projectId={ALL_PROJECTS_SENTINEL}
                   projectDir=""
                   activeSessionId={selectionSessionId}
-                  onSessionClick={handleSessionClick}
+                  onSessionClick={handleRecentWorkSessionClick}
                   onSessionDoubleClick={handleSessionDoubleClick}
                   onTaskRename={handleTaskEntityRename}
                   onTaskDelete={handleTaskEntityDelete}
@@ -855,7 +868,7 @@ export function Sidebar() {
                     projectId={selectedProject.encodedDir}
                     projectDir={selectedProject.decodedPath}
                     activeSessionId={selectionSessionId}
-                    onSessionClick={handleSessionClick}
+                    onSessionClick={handleRecentWorkSessionClick}
                     onSessionDoubleClick={handleSessionDoubleClick}
                     onTaskRename={handleTaskEntityRename}
                     onTaskDelete={handleTaskEntityDelete}
