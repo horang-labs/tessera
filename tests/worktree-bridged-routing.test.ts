@@ -146,6 +146,47 @@ test('one-time authenticated bootstrap registers a legacy WSL Project Worktree',
   assert.equal(projectView.projectWorktree.currentBranch, 'feature/c');
 });
 
+test('a completed bootstrap re-routes Project Worktrees after the database changes host topology', async () => {
+  const [database, projects, projection, bootstrap] = await Promise.all([
+    import('@/lib/db/database'),
+    import('@/lib/db/projects'),
+    import('@/lib/projects/project-view-projection'),
+    import('@/lib/db/worktree-bootstrap'),
+  ]);
+  await database.initDatabase();
+
+  const repository = createRepository('topology-shift-project-root');
+  projects.registerProject('topology-shift-project', repository, 'Topology Shift');
+  const projectWorktree = projects.getProjectWorktree('topology-shift-project');
+  assert.ok(projectWorktree);
+
+  const foreignHostPath = 'C:\\Users\\work\\topology-shift-project-root';
+  const foreignIdentity = canonicalizeWorktreePath(foreignHostPath);
+  assert.ok(foreignIdentity);
+  database.getDb().prepare(`
+    UPDATE worktrees
+    SET filesystem_path = ?, canonical_path_key = ?
+    WHERE id = ?
+  `).run(foreignIdentity.filesystemPath, foreignIdentity.canonicalPathKey, projectWorktree.id);
+  assert.equal(projects.getProjectWorktree('topology-shift-project')?.currentBranch, null);
+
+  const result = await bootstrap.bootstrapCanonicalWorktreeRegistry(
+    'wsl',
+    async (candidate) => candidate === foreignIdentity.filesystemPath ? repository : candidate,
+  );
+  assert.equal(result.status, 'completed');
+  assert.equal(result.repairedWorktrees, 1);
+
+  const repaired = projects.getProjectWorktree('topology-shift-project');
+  assert.ok(repaired);
+  assert.equal(repaired.filesystemPath, fs.realpathSync.native(repository));
+  assert.equal(repaired.currentBranch, 'feature/c');
+  assert.equal(
+    projection.getProjectViewProjection('topology-shift-project').projectWorktree.currentBranch,
+    'feature/c',
+  );
+});
+
 test('Session workspace routing opens CLI paths without mutating stored evidence', async () => {
   const [database, projects, sessions, sessionRoots] = await Promise.all([
     import('@/lib/db/database'),
