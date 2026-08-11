@@ -54,7 +54,8 @@
   `npx tsx --test tests/project-view-session-lifetime.test.ts tests/project-view-workspace-state.test.ts tests/project-view-workspace-state-activation.test.ts tests/project-view-open-session.test.ts tests/project-view-tab-state.test.ts tests/terminal-session-runtime-state.test.ts tests/terminal-preview-surface-lifecycle.test.ts tests/task-session-archive.test.ts tests/codex-session-lifecycle-sync.test.ts tests/session-activation-focus-contract.test.mjs`
   — 87 passed, 0 failed.
 - `npx tsc --noEmit` — passed with exit code 0 before and after review fixes.
-- `npm run lint` — passed with exit code 0 and no warnings before and after review fixes.
+- `npm run lint` — exited 0 with 0 errors and 3 unrelated pre-existing warnings in
+  `preview-markdown.tsx`, `use-virtual-message-list.ts`, and `spawn-cli-runtime.ts`.
 - `git diff --check` — passed.
 - `graphify update .` — final graph update completed with 10,784 nodes, 28,343 edges,
   and 433 communities. Graph artifacts remain ignored.
