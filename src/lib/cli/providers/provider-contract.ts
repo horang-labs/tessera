@@ -61,12 +61,16 @@ export interface ProviderLifecycleContext {
   workDir?: string | null;
 }
 
-export type ProviderLifecycleState = 'absent' | 'installed' | 'conflict' | 'unavailable';
+export type ProviderLifecycleState = 'absent' | 'installed' | 'stale' | 'conflict' | 'unavailable';
 export type ProviderLifecycleTrust = 'unchecked' | 'trusted' | 'untrusted' | 'unavailable';
+export type ProviderLifecycleConsent = 'granted' | 'revoked' | 'not-granted';
 
 export interface ProviderLifecycleResult {
   state: ProviderLifecycleState;
   trust: ProviderLifecycleTrust;
+  consent?: ProviderLifecycleConsent;
+  installedVersion?: string;
+  currentVersion?: string;
   message?: string;
   guidance?: {
     minimumVersion: string;
@@ -78,6 +82,12 @@ export interface ProviderLifecycleResult {
 export interface ProviderLifecycleIntegration {
   inspect(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
   install(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+  /** Refreshes a consented artifact, including explicit conflict resolution. */
+  update?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+  /** Removes the managed artifact and revokes automatic management consent. */
+  remove?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+  /** Refreshes a consented artifact before launch without resolving conflicts. */
+  maintain?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
 }
 
 export type ProviderLaunchEnvironmentContext = ProviderLifecycleContext;

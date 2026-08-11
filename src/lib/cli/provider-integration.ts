@@ -56,6 +56,8 @@ export interface ProviderIntegrationArtifactPolicy {
   state: ProviderIntegrationArtifactState;
   consent: ProviderIntegrationConsentState;
   trust: ProviderIntegrationTrustState;
+  installedVersion?: string;
+  currentVersion?: string;
   message?: string;
 }
 
@@ -116,6 +118,12 @@ export interface ProviderIntegration {
   ): Promise<ProviderIntegrationLaunchDecision>;
   installLifecycle(
     request: ProviderIntegrationLifecycleInstallRequest,
+  ): Promise<ProviderIntegrationLaunchDecision>;
+  updateLifecycle(
+    request: ProviderIntegrationLifecycleRequest,
+  ): Promise<ProviderIntegrationLaunchDecision>;
+  removeLifecycle(
+    request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
   manageSkills(request: ProviderSkillManagementRequest): Promise<ProviderSkillManagementResult>;
 }
@@ -235,21 +243,32 @@ export function createProviderIntegration(
     agentEnvironment: AgentEnvironment,
     requirements: ProviderIntegrationRequirements,
     result: ProviderLifecycleResult,
-    consent: ProviderIntegrationConsentState,
+    fallbackConsent: ProviderIntegrationConsentState,
   ): ProviderIntegrationLaunchDecision => ({
     providerHome: { owner: 'agent-environment', agentEnvironment },
     lifecycle: {
       requirement: requirements.lifecycle,
       state: result.state,
-      consent,
+      consent: fallbackConsent === 'granted' || fallbackConsent === 'declined'
+        ? fallbackConsent
+        : result.consent === 'not-granted'
+          ? 'required'
+          : result.consent ?? fallbackConsent,
       trust: result.trust,
+      ...(result.installedVersion ? { installedVersion: result.installedVersion } : {}),
+      ...(result.currentVersion ? { currentVersion: result.currentVersion } : {}),
       ...(result.message ? { message: result.message } : {}),
     },
     skill: resolveArtifactPolicy(requirements.skill),
     health: {
-      state: result.state === 'installed' && result.trust === 'trusted'
+      state: result.state === 'installed'
+        && result.trust === 'trusted'
+        && result.consent !== 'revoked'
+        && result.consent !== 'not-granted'
         ? 'healthy'
-        : 'blocked',
+        : result.consent === 'granted' && result.state !== 'absent'
+          ? 'degraded'
+          : 'blocked',
     },
     ...(result.guidance ? { guidance: result.guidance } : {}),
   });
@@ -354,7 +373,7 @@ export function createProviderIntegration(
         let result: ProviderLifecycleResult;
         try {
           result = lifecycle
-            ? await lifecycle.inspect({
+            ? await (lifecycle.maintain ?? lifecycle.inspect)({
                 environment: agentEnvironment,
                 userId: request.agentEnvironmentOwner.kind === 'user'
                   ? request.agentEnvironmentOwner.userId
@@ -384,7 +403,7 @@ export function createProviderIntegration(
           lifecycle: checkedLifecycle.lifecycle,
           ...(checkedLifecycle.guidance ? { guidance: checkedLifecycle.guidance } : {}),
           health: checkedLifecycle.health.state === 'healthy'
-            ? health
+            ? health.state === 'degraded' ? health : checkedLifecycle.health
             : checkedLifecycle.health,
         };
         if (checkedLifecycle.health.state !== 'healthy') {
@@ -456,6 +475,52 @@ export function createProviderIntegration(
       }
       const result = await lifecycle.install(context);
       return lifecycleDecision(agentEnvironment, requirements, result, 'granted');
+    },
+    async updateLifecycle(request) {
+      const agentEnvironment = await resolveEnvironment(request);
+      const requirements = request.provider.getProviderIntegrationRequirements();
+      if (requirements.lifecycle === 'not-applicable') {
+        return notApplicableDecision(agentEnvironment, requirements);
+      }
+      const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
+      const context = {
+        environment: agentEnvironment,
+        userId: request.agentEnvironmentOwner.kind === 'user'
+          ? request.agentEnvironmentOwner.userId
+          : undefined,
+        workDir: request.workDir,
+      };
+      const result = lifecycle?.update
+        ? await lifecycle.update(context)
+        : {
+            state: 'unavailable' as const,
+            trust: 'unavailable' as const,
+            message: 'The provider does not expose lifecycle updates.',
+          };
+      return lifecycleDecision(agentEnvironment, requirements, result, 'required');
+    },
+    async removeLifecycle(request) {
+      const agentEnvironment = await resolveEnvironment(request);
+      const requirements = request.provider.getProviderIntegrationRequirements();
+      if (requirements.lifecycle === 'not-applicable') {
+        return notApplicableDecision(agentEnvironment, requirements);
+      }
+      const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
+      const context = {
+        environment: agentEnvironment,
+        userId: request.agentEnvironmentOwner.kind === 'user'
+          ? request.agentEnvironmentOwner.userId
+          : undefined,
+        workDir: request.workDir,
+      };
+      const result = lifecycle?.remove
+        ? await lifecycle.remove(context)
+        : {
+            state: 'unavailable' as const,
+            trust: 'unavailable' as const,
+            message: 'The provider does not expose lifecycle removal.',
+          };
+      return lifecycleDecision(agentEnvironment, requirements, result, 'revoked');
     },
   };
 }

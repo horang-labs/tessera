@@ -184,6 +184,7 @@ test('native lifecycle install requires explicit consent, preserves user hooks, 
       resolveProviderHome: async () => home,
       readVersion: async () => '0.146.0',
       request: fakeCodex.request,
+      stateDirectory: path.join(root, 'state'),
     }),
   });
   const request = {
@@ -247,6 +248,7 @@ test('native lifecycle install requires explicit consent, preserves user hooks, 
         if (method === 'hooks/list') response.data[0].hooks[0].enabled = false;
         return response;
       },
+      stateDirectory: path.join(root, 'disabled-state'),
     }),
   });
   const disabled = await disabledIntegration.inspectLifecycle(request);
@@ -279,6 +281,7 @@ test('bridged WSL ownership mutates only the WSL Authoritative Provider Home', a
         return '0.147.0';
       },
       request: fakeCodex.request,
+      stateDirectory: path.join(root, 'state'),
     }),
   });
 
@@ -316,6 +319,7 @@ test('unsupported Codex fails closed with minimum-version guidance and never att
         calls.push(method);
         throw new Error('unsupported Codex must not reach the hook API');
       },
+      stateDirectory: path.join(root, 'state'),
     }),
   });
 
@@ -328,12 +332,22 @@ test('unsupported Codex fails closed with minimum-version guidance and never att
 
   assert.equal(result.lifecycle.state, 'unavailable');
   assert.equal(result.lifecycle.trust, 'unavailable');
-  assert.equal(result.health.state, 'blocked');
+  assert.equal(result.lifecycle.consent, 'granted');
+  assert.equal(result.health.state, 'degraded');
   assert.equal(result.guidance?.minimumVersion, '0.146.0');
   assert.equal(result.guidance?.updateCommand, 'codex update');
   assert.match(result.guidance?.message ?? '', /0\.146\.0/);
   assert.deepEqual(calls, []);
   assert.equal(fs.existsSync(path.join(home, 'hooks.json')), false);
+
+  const persistedConsent = await integration.inspectLifecycle({
+    provider: codexProvider,
+    agentEnvironmentOwner: { kind: 'user', userId: 'old-codex-owner' },
+    workDir: root,
+  });
+  assert.equal(persistedConsent.lifecycle.consent, 'granted');
+  assert.equal(persistedConsent.health.state, 'degraded');
+  assert.equal(persistedConsent.guidance?.minimumVersion, '0.146.0');
 });
 
 test('missing supported trust API is unavailable and does not compute or persist substitute trust', async (t) => {
@@ -353,6 +367,7 @@ test('missing supported trust API is unavailable and does not compute or persist
         calls.push(method);
         throw new Error('Method not found: hooks/list');
       },
+      stateDirectory: path.join(root, 'state'),
     }),
   });
 
@@ -388,6 +403,7 @@ test('ordinary trust failures block without false Codex upgrade guidance', async
         if (method === 'config/batchWrite') throw new Error('permission denied');
         return fakeCodex.request(context, method, params);
       },
+      stateDirectory: path.join(root, 'state'),
     }),
   });
   const result = await integration.installLifecycle({
@@ -399,7 +415,7 @@ test('ordinary trust failures block without false Codex upgrade guidance', async
 
   assert.equal(result.lifecycle.state, 'installed');
   assert.equal(result.lifecycle.trust, 'untrusted');
-  assert.equal(result.health.state, 'blocked');
+  assert.equal(result.health.state, 'degraded');
   assert.equal(result.guidance, undefined);
   assert.match(result.lifecycle.message ?? '', /permission denied/);
 });
@@ -419,6 +435,7 @@ test('malformed user hook configuration is reported as a conflict without overwr
       resolveProviderHome: async () => home,
       readVersion: async () => '0.146.0',
       request: async () => ({ data: [] }),
+      stateDirectory: path.join(root, 'state'),
     }),
   });
 
@@ -463,6 +480,7 @@ test('modified Tessera-looking hooks are conflicted and never overwritten or tru
         methods.push(method);
         return { data: [{ hooks: [] }] };
       },
+      stateDirectory: path.join(root, 'state'),
     }),
   });
   const result = await integration.installLifecycle({
@@ -474,7 +492,7 @@ test('modified Tessera-looking hooks are conflicted and never overwritten or tru
 
   assert.equal(result.lifecycle.state, 'conflict');
   assert.equal(result.lifecycle.trust, 'unavailable');
-  assert.deepEqual(methods, ['hooks/list']);
+  assert.deepEqual(methods, []);
   assert.equal(fs.readFileSync(path.join(home, 'hooks.json'), 'utf8'), modified);
 });
 
@@ -498,6 +516,7 @@ test('install preserves a symlinked user hooks file, its mode, and existing hook
       resolveProviderHome: async () => home,
       readVersion: async () => '0.146.0',
       request: fakeCodex.request,
+      stateDirectory: path.join(root, 'state'),
     }),
   });
   const result = await integration.installLifecycle({
@@ -521,12 +540,13 @@ test('consent is scoped to one Authoritative Provider Home and does not transfer
   fs.mkdirSync(firstHome, { recursive: true });
   fs.mkdirSync(secondHome, { recursive: true });
   let activeHome = firstHome;
+  let activeEnvironment: 'native' | 'wsl' = 'native';
   const firstApi = createFakeCodexApi(firstHome);
   const secondApi = createFakeCodexApi(secondHome);
 
   const { createProviderIntegration } = await import('@/lib/cli/provider-integration');
   const integration = createProviderIntegration({
-    resolveAgentEnvironment: async () => 'native',
+    resolveAgentEnvironment: async () => activeEnvironment,
     lifecycle: createCodexLifecycleHookIntegration({
       resolveProviderHome: async () => activeHome,
       readVersion: async () => '0.146.0',
@@ -535,6 +555,7 @@ test('consent is scoped to one Authoritative Provider Home and does not transfer
           ? firstApi.request(context, method, params)
           : secondApi.request(context, method, params)
       ),
+      stateDirectory: path.join(root, 'state'),
     }),
   });
   const request = {
@@ -556,7 +577,135 @@ test('consent is scoped to one Authoritative Provider Home and does not transfer
   assert.equal(declined.lifecycle.consent, 'declined');
   assert.equal(fs.existsSync(path.join(secondHome, 'hooks.json')), false);
   assert.equal(fs.readFileSync(path.join(firstHome, 'hooks.json'), 'utf8'), firstText);
+
+  activeHome = firstHome;
+  const originalHome = await integration.inspectLifecycle(request);
+  assert.equal(originalHome.lifecycle.consent, 'granted');
+  assert.equal(originalHome.health.state, 'healthy');
+
+  activeEnvironment = 'wsl';
+  activeHome = secondHome;
+  const otherEnvironment = await integration.inspectLifecycle(request);
+  assert.equal(otherEnvironment.providerHome.agentEnvironment, 'wsl');
+  assert.equal(otherEnvironment.lifecycle.state, 'absent');
+  assert.equal(otherEnvironment.lifecycle.consent, 'required');
+  assert.equal(otherEnvironment.health.state, 'blocked');
 });
+
+test('consented lifecycle refreshes before launch, degrades on conflict, and revokes without affecting other providers', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-lifecycle-policy-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'codex-home');
+  fs.mkdirSync(home, { recursive: true });
+  const fakeCodex = createFakeCodexApi(home);
+  let tesseraVersion = '1.0.0';
+
+  const { createProviderIntegration, ProviderIntegrationLaunchBlockedError } = await import(
+    '@/lib/cli/provider-integration'
+  );
+  const integration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'native',
+    lifecycle: createCodexLifecycleHookIntegration({
+      resolveProviderHome: async () => home,
+      readVersion: async () => '0.146.0',
+      request: fakeCodex.request,
+      stateDirectory: path.join(root, 'state'),
+      readTesseraVersion: () => tesseraVersion,
+    }),
+  });
+  const lifecycleOnlyCodexProvider = {
+    ...codexProvider,
+    getProviderIntegrationRequirements: () => ({
+      lifecycle: 'required' as const,
+      skill: 'not-applicable' as const,
+      launchEnvironment: 'not-applicable' as const,
+    }),
+  };
+  const request = {
+    provider: lifecycleOnlyCodexProvider,
+    agentEnvironmentOwner: { kind: 'user' as const, userId: 'policy-owner' },
+    workDir: root,
+  };
+
+  const installed = await integration.installLifecycle({ ...request, consent: 'granted' });
+  assert.equal(installed.lifecycle.state, 'installed');
+  assert.equal(installed.lifecycle.consent, 'granted');
+  assert.equal(installed.lifecycle.installedVersion, '1.0.0');
+  assert.equal(installed.lifecycle.currentVersion, '1.0.0');
+
+  tesseraVersion = '1.1.0';
+  fs.appendFileSync(path.join(home, 'hooks.json'), '\n');
+  const beforeRefreshText = fs.readFileSync(path.join(home, 'hooks.json'), 'utf8');
+  const stale = await integration.inspectLifecycle(request);
+  assert.equal(stale.lifecycle.state, 'stale');
+  assert.equal(stale.lifecycle.consent, 'granted');
+  assert.equal(stale.lifecycle.installedVersion, '1.0.0');
+  assert.equal(stale.lifecycle.currentVersion, '1.1.0');
+  assert.equal(stale.health.state, 'degraded');
+
+  const trustWritesBeforeLaunch = fakeCodex.calls.filter(
+    (call) => call.method === 'config/batchWrite',
+  ).length;
+  const launched = await integration.resolveLaunch(request);
+  assert.equal(launched.lifecycle.state, 'installed');
+  assert.equal(launched.lifecycle.installedVersion, '1.1.0');
+  assert.equal(launched.health.state, 'healthy');
+  assert.equal(
+    fakeCodex.calls.filter((call) => call.method === 'config/batchWrite').length,
+    trustWritesBeforeLaunch + 1,
+  );
+  assert.notEqual(fs.readFileSync(path.join(home, 'hooks.json'), 'utf8'), beforeRefreshText);
+
+  const document = readHookDocument(home);
+  document.hooks.SessionStart.at(-1).hooks[0].timeout = 99;
+  fs.writeFileSync(path.join(home, 'hooks.json'), `${JSON.stringify(document, null, 2)}\n`);
+  const modifiedText = fs.readFileSync(path.join(home, 'hooks.json'), 'utf8');
+
+  const degraded = await integration.inspectLifecycle(request);
+  assert.equal(degraded.lifecycle.state, 'conflict');
+  assert.equal(degraded.lifecycle.consent, 'granted');
+  assert.equal(degraded.health.state, 'degraded');
+  assert.equal(fs.readFileSync(path.join(home, 'hooks.json'), 'utf8'), modifiedText);
+  await assert.rejects(integration.resolveLaunch(request), ProviderIntegrationLaunchBlockedError);
+
+  const otherProvider = await integration.resolveLaunch({
+    ...request,
+    provider: claudeProvider,
+  });
+  assert.equal(otherProvider.lifecycle.state, 'not-applicable');
+
+  const repaired = await integration.updateLifecycle(request);
+  assert.equal(repaired.lifecycle.state, 'installed');
+  assert.equal(repaired.lifecycle.consent, 'granted');
+  assert.equal(repaired.health.state, 'healthy');
+
+  const repairedDocument = readHookDocument(home);
+  const userStopHook = { hooks: [{ type: 'command', command: '/opt/user/stop-hook' }] };
+  repairedDocument.hooks.Stop.unshift(userStopHook);
+  fs.writeFileSync(path.join(home, 'hooks.json'), `${JSON.stringify(repairedDocument, null, 2)}\n`);
+  const removed = await integration.removeLifecycle(request);
+  assert.equal(removed.lifecycle.state, 'absent');
+  assert.equal(removed.lifecycle.consent, 'revoked');
+  assert.equal(removed.health.state, 'blocked');
+  assert.equal(
+    Object.values(readHookDocument(home).hooks).some((groups) => (
+      Array.isArray(groups) && groups.some(groupLooksTesseraOwnedForTest)
+    )),
+    false,
+  );
+  assert.deepEqual(readHookDocument(home).hooks.Stop, [userStopHook]);
+  await assert.rejects(integration.resolveLaunch(request), ProviderIntegrationLaunchBlockedError);
+});
+
+function groupLooksTesseraOwnedForTest(group: unknown): boolean {
+  return isRecord(group)
+    && Array.isArray(group.hooks)
+    && group.hooks.some((hook: unknown) => (
+      isRecord(hook)
+      && typeof hook.command === 'string'
+      && hook.command.includes('/__tessera/hook')
+    ));
+}
 
 test('non-Codex lifecycle management is not applicable and never touches Codex boundaries', async () => {
   const calls: string[] = [];

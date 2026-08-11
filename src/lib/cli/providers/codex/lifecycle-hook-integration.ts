@@ -13,6 +13,8 @@ import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { isRunningInWsl } from '@/lib/cli/cli-exec';
 import { resolveCodexHomeForEnvironment } from './provider-home';
 import { normalizeCwdForCliEnvironment } from '@/lib/cli/spawn-cli';
+import { getTesseraDataPath } from '@/lib/tessera-data-dir';
+import { getServerHostInfo } from '@/lib/system/server-host';
 import type {
   ProviderLifecycleContext,
   ProviderLifecycleIntegration,
@@ -89,6 +91,8 @@ export interface CodexLifecycleDependencies {
     method: string,
     params: Record<string, unknown>,
   ) => Promise<unknown>;
+  stateDirectory?: string;
+  readTesseraVersion?: () => string;
 }
 
 export type CodexLifecycleResult = ProviderLifecycleResult;
@@ -108,6 +112,20 @@ interface ManagedHookMetadata {
   currentHash: string;
   trustStatus: string;
 }
+
+interface CodexHookLedgerEntry {
+  home: string;
+  consent: 'granted' | 'revoked';
+  managedVersion?: string;
+}
+
+interface CodexHookLedger {
+  version: 1;
+  environments: Partial<Record<CliEnvironment, CodexHookLedgerEntry[]>>;
+}
+
+const EMPTY_LEDGER: CodexHookLedger = { version: 1, environments: {} };
+let lifecycleOperationTail: Promise<void> = Promise.resolve();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -295,7 +313,11 @@ async function inspectHookDocument(home: string, style: HookCommandStyle): Promi
   };
 }
 
-async function writeHookDocument(snapshot: InspectedHookDocument, style: HookCommandStyle): Promise<void> {
+async function writeHookDocument(
+  snapshot: InspectedHookDocument,
+  style: HookCommandStyle,
+  operation: 'install' | 'update' | 'remove' = 'install',
+): Promise<void> {
   if (!snapshot.document || snapshot.originalText === undefined || snapshot.mode === undefined) {
     throw new Error('The Codex hook document is not writable.');
   }
@@ -312,8 +334,10 @@ async function writeHookDocument(snapshot: InspectedHookDocument, style: HookCom
   const hooks = isRecord(nextDocument.hooks) ? nextDocument.hooks : {};
   nextDocument.hooks = hooks;
   for (const event of MANAGED_EVENTS) {
-    const groups = Array.isArray(hooks[event]) ? [...hooks[event]] : [];
-    groups.push(desiredGroup(style, event));
+    const groups = Array.isArray(hooks[event])
+      ? hooks[event].filter((group) => !groupLooksTesseraOwned(group))
+      : [];
+    if (operation !== 'remove') groups.push(desiredGroup(style, event));
     hooks[event] = groups;
   }
 
@@ -334,6 +358,102 @@ async function writeHookDocument(snapshot: InspectedHookDocument, style: HookCom
     await fs.unlink(temporaryPath).catch(() => {});
     throw error;
   }
+}
+
+async function readLedger(stateDirectory: string): Promise<CodexHookLedger> {
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(path.join(stateDirectory, 'lifecycle.json'), 'utf8'),
+    ) as unknown;
+    if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.environments)) {
+      throw new Error('Codex hook lifecycle state has an unsupported shape.');
+    }
+    const ledger: CodexHookLedger = { version: 1, environments: {} };
+    for (const environment of ['native', 'wsl'] as const) {
+      const entries = parsed.environments[environment];
+      if (entries === undefined) continue;
+      if (!Array.isArray(entries) || entries.some((entry) => (
+        !isRecord(entry)
+        || typeof entry.home !== 'string'
+        || !entry.home
+        || !['granted', 'revoked'].includes(String(entry.consent))
+        || !(entry.managedVersion === undefined || typeof entry.managedVersion === 'string')
+      ))) {
+        throw new Error(`Codex hook lifecycle state for ${environment} is invalid.`);
+      }
+      ledger.environments[environment] = entries as unknown as CodexHookLedgerEntry[];
+    }
+    return ledger;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return structuredClone(EMPTY_LEDGER);
+    throw error;
+  }
+}
+
+async function writeLedger(stateDirectory: string, ledger: CodexHookLedger): Promise<void> {
+  await fs.mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+  const targetPath = path.join(stateDirectory, 'lifecycle.json');
+  const temporaryPath = path.join(
+    stateDirectory,
+    `.lifecycle.${process.pid}.${randomUUID()}.tmp`,
+  );
+  try {
+    await fs.writeFile(temporaryPath, `${JSON.stringify(ledger, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    });
+    await fs.rename(temporaryPath, targetPath);
+  } catch (error) {
+    await fs.unlink(temporaryPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+function findLedgerEntry(
+  ledger: CodexHookLedger,
+  environment: CliEnvironment,
+  home: string,
+): CodexHookLedgerEntry | undefined {
+  return ledger.environments[environment]?.find((entry) => entry.home === home);
+}
+
+async function updateLedgerEntry(
+  stateDirectory: string,
+  environment: CliEnvironment,
+  home: string,
+  patch: { consent: 'granted' | 'revoked'; managedVersion?: string | null },
+): Promise<void> {
+  const ledger = await readLedger(stateDirectory);
+  const entries = ledger.environments[environment] ?? [];
+  const entry = entries.find((candidate) => candidate.home === home);
+  if (entry) {
+    entry.consent = patch.consent;
+    if (patch.managedVersion === null) {
+      delete entry.managedVersion;
+    } else if (patch.managedVersion !== undefined) {
+      entry.managedVersion = patch.managedVersion;
+    }
+  } else {
+    entries.push({
+      home,
+      consent: patch.consent,
+      ...(typeof patch.managedVersion === 'string'
+        ? { managedVersion: patch.managedVersion }
+        : {}),
+    });
+    ledger.environments[environment] = entries;
+  }
+  await writeLedger(stateDirectory, ledger);
+}
+
+function serializeLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = lifecycleOperationTail.then(operation);
+  lifecycleOperationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
 function managedMetadata(response: unknown, command: string): ManagedHookMetadata[] | null {
@@ -379,6 +499,10 @@ export function createCodexLifecycleHookIntegration(
   const resolveProviderHome = dependencies.resolveProviderHome ?? resolveCodexHomeForEnvironment;
   const readVersion = dependencies.readVersion ?? defaultReadVersion;
   const request = dependencies.request ?? executeCodexAppServerRequest;
+  const stateDirectory = dependencies.stateDirectory
+    ?? getTesseraDataPath('provider-integrations', 'codex');
+  const readTesseraVersion = dependencies.readTesseraVersion
+    ?? (() => getServerHostInfo().appVersion);
   const hookCwds = (context: CodexLifecycleRequestContext) => [
     normalizeCwdForCliEnvironment(
       context.workDir?.trim() || process.cwd(),
@@ -386,11 +510,28 @@ export function createCodexLifecycleHookIntegration(
     ),
   ];
 
-  async function preflight(context: CodexLifecycleRequestContext): Promise<{
+  interface Scope {
     home: string;
-    hooksResponse: unknown;
     style: HookCommandStyle;
-  } | CodexLifecycleResult> {
+    entry?: CodexHookLedgerEntry;
+    currentVersion: string;
+  }
+
+  const lifecycleResult = (
+    scope: Scope,
+    result: CodexLifecycleResult,
+  ): CodexLifecycleResult => ({
+    ...result,
+    consent: scope.entry?.consent ?? 'not-granted',
+    ...(scope.entry?.managedVersion
+      ? { installedVersion: scope.entry.managedVersion }
+      : {}),
+    currentVersion: scope.currentVersion,
+  });
+
+  async function resolveScope(
+    context: CodexLifecycleRequestContext,
+  ): Promise<Scope | CodexLifecycleResult> {
     let home: string;
     try {
       home = await resolveProviderHome(context.environment);
@@ -398,106 +539,143 @@ export function createCodexLifecycleHookIntegration(
       return unavailableResult((error as Error).message);
     }
 
+    let ledger: CodexHookLedger;
+    try {
+      ledger = await readLedger(stateDirectory);
+    } catch (error) {
+      return unavailableResult(`Codex hook consent state could not be read: ${(error as Error).message}`);
+    }
+    return {
+      home,
+      style: resolveHookCommandStyle(context.environment),
+      entry: findLedgerEntry(ledger, context.environment, home),
+      currentVersion: readTesseraVersion(),
+    };
+  }
+
+  async function preflight(
+    context: CodexLifecycleRequestContext,
+    scope: Scope,
+  ): Promise<{ hooksResponse: unknown } | CodexLifecycleResult> {
+
     const version = await readVersion(context.environment, context.userId).catch(() => null);
     if (!version || !versionAtLeast(version, MINIMUM_CODEX_HOOK_TRUST_VERSION)) {
-      return unsupportedResult(version ? `Installed version: ${version}.` : 'The installed version could not be read.');
+      return lifecycleResult(
+        scope,
+        unsupportedResult(version
+          ? `Installed version: ${version}.`
+          : 'The installed version could not be read.'),
+      );
     }
 
     try {
       const hooksResponse = await request({
         ...context,
-        providerHomeFilesystemPath: home,
+        providerHomeFilesystemPath: scope.home,
       }, 'hooks/list', {
         cwds: hookCwds(context),
       });
-      return { home, hooksResponse, style: resolveHookCommandStyle(context.environment) };
+      return { hooksResponse };
     } catch (error) {
       if (isUnavailableHookApi(error)) {
-        return unsupportedResult(`Codex hook trust API is unavailable: ${(error as Error).message}`);
+        return lifecycleResult(
+          scope,
+          unsupportedResult(`Codex hook trust API is unavailable: ${(error as Error).message}`),
+        );
       }
-      return unavailableResult(`Codex hook status could not be read: ${(error as Error).message}`);
+      return lifecycleResult(
+        scope,
+        unavailableResult(`Codex hook status could not be read: ${(error as Error).message}`),
+      );
     }
   }
 
   async function inspect(context: CodexLifecycleRequestContext): Promise<CodexLifecycleResult> {
-    const ready = await preflight(context);
-    if ('state' in ready) return ready;
-    const document = await inspectHookDocument(ready.home, ready.style);
+    const resolved = await resolveScope(context);
+    if ('state' in resolved) return resolved;
+    const document = await inspectHookDocument(resolved.home, resolved.style);
     if (document.state === 'conflict') {
-      return { state: 'conflict', trust: 'unavailable', message: document.message };
+      return lifecycleResult(resolved, {
+        state: 'conflict',
+        trust: 'unavailable',
+        message: document.message,
+      });
     }
     if (document.state === 'absent') {
-      return { state: 'absent', trust: 'unchecked' };
+      if (resolved.entry?.consent === 'granted' && !resolved.entry.managedVersion) {
+        const ready = await preflight(context, resolved);
+        if ('state' in ready) return ready;
+      }
+      return lifecycleResult(
+        resolved,
+        resolved.entry?.consent === 'granted' && resolved.entry.managedVersion
+        ? {
+            state: 'conflict',
+            trust: 'unavailable',
+            message: 'The consented Tessera lifecycle hook was removed outside Tessera.',
+          }
+        : { state: 'absent', trust: 'unchecked' },
+      );
     }
+    const ready = await preflight(context, resolved);
+    if ('state' in ready) return ready;
     const metadata = managedMetadata(ready.hooksResponse, document.command);
     if (!metadata) {
-      return {
+      return lifecycleResult(resolved, {
         state: 'conflict',
         trust: 'unavailable',
         message: 'Codex did not discover the complete Tessera lifecycle hook in the user home.',
-      };
+      });
     }
-    return {
-      state: 'installed',
+    return lifecycleResult(resolved, {
+      state: resolved.entry?.consent === 'granted'
+        && resolved.entry.managedVersion !== resolved.currentVersion
+        ? 'stale'
+        : 'installed',
       trust: metadata.every((hook) => hook.trustStatus === 'trusted') ? 'trusted' : 'untrusted',
-    };
+    });
   }
 
-  async function install(context: CodexLifecycleRequestContext): Promise<CodexLifecycleResult> {
-    const ready = await preflight(context);
-    if ('state' in ready) return ready;
-    let document = await inspectHookDocument(ready.home, ready.style);
-    if (document.state === 'conflict') {
-      return { state: 'conflict', trust: 'unavailable', message: document.message };
-    }
-    if (document.state === 'absent') {
-      try {
-        await writeHookDocument(document, ready.style);
-      } catch (error) {
-        return { state: 'conflict', trust: 'unavailable', message: (error as Error).message };
-      }
-      document = await inspectHookDocument(ready.home, ready.style);
-      if (document.state !== 'installed') {
-        return {
-          state: 'conflict',
-          trust: 'unavailable',
-          message: document.message ?? 'The Tessera lifecycle hook could not be verified after install.',
-        };
-      }
-    }
-
+  async function trustInstalledHook(
+    context: CodexLifecycleRequestContext,
+    scope: Scope,
+    document: InspectedHookDocument,
+  ): Promise<CodexLifecycleResult> {
     let discovered: unknown;
     try {
       discovered = await request({
         ...context,
-        providerHomeFilesystemPath: ready.home,
+        providerHomeFilesystemPath: scope.home,
       }, 'hooks/list', {
         cwds: hookCwds(context),
       });
     } catch (error) {
       if (isUnavailableHookApi(error)) {
-        return unsupportedResult(`Codex hook trust API is unavailable: ${(error as Error).message}`);
+        return lifecycleResult(
+          scope,
+          unsupportedResult(`Codex hook trust API is unavailable: ${(error as Error).message}`),
+        );
       }
-      return {
+      return lifecycleResult(scope, {
         state: 'installed',
         trust: 'unavailable',
         message: `Codex hook discovery failed after install: ${(error as Error).message}`,
-      };
+      });
     }
     const metadata = managedMetadata(discovered, document.command);
     if (!metadata) {
-      return {
+      return lifecycleResult(scope, {
         state: 'conflict',
         trust: 'unavailable',
         message: 'Codex did not discover the complete Tessera lifecycle hook after install.',
-      };
+      });
     }
 
+    const authoritativeContext = {
+      ...context,
+      providerHomeFilesystemPath: scope.home,
+    };
     try {
-      const authoritativeContext = {
-        ...context,
-        providerHomeFilesystemPath: ready.home,
-      };
       await request(authoritativeContext, 'config/batchWrite', {
         edits: [{
           keyPath: 'hooks.state',
@@ -516,24 +694,217 @@ export function createCodexLifecycleHookIntegration(
       });
       const verifiedMetadata = managedMetadata(verified, document.command);
       if (!verifiedMetadata || !verifiedMetadata.every((hook) => hook.trustStatus === 'trusted')) {
-        return {
+        return lifecycleResult(scope, {
           state: 'installed',
           trust: 'untrusted',
           message: 'Codex did not verify the Tessera lifecycle hook as trusted.',
-        };
+        });
       }
-      return { state: 'installed', trust: 'trusted' };
     } catch (error) {
       if (isUnavailableHookApi(error)) {
-        return unsupportedResult(`Codex hook trust API is unavailable: ${(error as Error).message}`);
+        return lifecycleResult(
+          scope,
+          unsupportedResult(`Codex hook trust API is unavailable: ${(error as Error).message}`),
+        );
       }
-      return {
+      return lifecycleResult(scope, {
         state: 'installed',
         trust: 'untrusted',
         message: `Codex hook trust failed: ${(error as Error).message}`,
+      });
+    }
+    try {
+      await updateLedgerEntry(stateDirectory, context.environment, scope.home, {
+        consent: 'granted',
+        managedVersion: scope.currentVersion,
+      });
+    } catch (error) {
+      return {
+        state: 'unavailable',
+        trust: 'trusted',
+        consent: 'granted',
+        currentVersion: scope.currentVersion,
+        message: `Codex hook consent state could not be recorded: ${(error as Error).message}`,
       };
     }
+    return {
+      state: 'installed',
+      trust: 'trusted',
+      consent: 'granted',
+      installedVersion: scope.currentVersion,
+      currentVersion: scope.currentVersion,
+    };
   }
 
-  return { inspect, install };
+  async function installOrUpdate(
+    context: CodexLifecycleRequestContext,
+    operation: 'install' | 'update' | 'maintain',
+  ): Promise<CodexLifecycleResult> {
+    const resolved = await resolveScope(context);
+    if ('state' in resolved) return resolved;
+    if (operation !== 'install' && resolved.entry?.consent !== 'granted') {
+      return lifecycleResult(resolved, {
+        state: 'absent',
+        trust: 'unchecked',
+        message: 'Explicit consent is required before Tessera can manage this Codex lifecycle hook.',
+      });
+    }
+
+    let document = await inspectHookDocument(resolved.home, resolved.style);
+    let materialized = false;
+    if (document.state === 'conflict') {
+      const mayResolve = operation !== 'maintain'
+        && resolved.entry !== undefined
+        && document.document !== undefined
+        && document.originalText !== undefined;
+      if (!mayResolve) {
+        return lifecycleResult(resolved, {
+          state: 'conflict', trust: 'unavailable', message: document.message,
+        });
+      }
+    }
+    if (operation === 'install') {
+      try {
+        await updateLedgerEntry(stateDirectory, context.environment, resolved.home, {
+          consent: 'granted',
+          ...(document.state === 'installed' && resolved.entry?.managedVersion
+            ? { managedVersion: resolved.entry.managedVersion }
+            : { managedVersion: null }),
+        });
+      } catch (error) {
+        return lifecycleResult(resolved, {
+          state: 'unavailable',
+          trust: 'unavailable',
+          message: `Codex hook consent could not be recorded: ${(error as Error).message}`,
+        });
+      }
+      resolved.entry = {
+        home: resolved.home,
+        consent: 'granted',
+        ...(document.state === 'installed' && resolved.entry?.managedVersion
+          ? { managedVersion: resolved.entry.managedVersion }
+          : {}),
+      };
+    }
+    const ready = await preflight(context, resolved);
+    if ('state' in ready) return ready;
+    if (
+      operation === 'maintain'
+      && document.state === 'absent'
+      && resolved.entry?.consent === 'granted'
+      && resolved.entry.managedVersion
+    ) {
+      return lifecycleResult(resolved, {
+        state: 'conflict',
+        trust: 'unavailable',
+        message: 'The consented Tessera lifecycle hook was removed outside Tessera.',
+      });
+    }
+    if (document.state !== 'installed') {
+      try {
+        await writeHookDocument(
+          document,
+          resolved.style,
+          document.state === 'conflict' ? 'update' : 'install',
+        );
+        materialized = true;
+      } catch (error) {
+        return lifecycleResult(resolved, {
+          state: 'conflict', trust: 'unavailable', message: (error as Error).message,
+        });
+      }
+      document = await inspectHookDocument(resolved.home, resolved.style);
+      if (document.state !== 'installed') {
+        return lifecycleResult(resolved, {
+          state: 'conflict',
+          trust: 'unavailable',
+          message: document.message ?? 'The Tessera lifecycle hook could not be verified after install.',
+        });
+      }
+    } else if (
+      operation === 'maintain'
+      && resolved.entry?.managedVersion === resolved.currentVersion
+    ) {
+      const metadata = managedMetadata(ready.hooksResponse, document.command);
+      if (metadata?.every((hook) => hook.trustStatus === 'trusted')) {
+        return lifecycleResult(resolved, { state: 'installed', trust: 'trusted' });
+      }
+    }
+
+    if (
+      document.state === 'installed'
+      && !materialized
+      && (operation === 'update' || resolved.entry?.managedVersion !== resolved.currentVersion)
+    ) {
+      try {
+        await writeHookDocument(document, resolved.style, 'update');
+      } catch (error) {
+        return lifecycleResult(resolved, {
+          state: 'conflict', trust: 'unavailable', message: (error as Error).message,
+        });
+      }
+      document = await inspectHookDocument(resolved.home, resolved.style);
+      if (document.state !== 'installed') {
+        return lifecycleResult(resolved, {
+          state: 'conflict',
+          trust: 'unavailable',
+          message: document.message ?? 'The Tessera lifecycle hook could not be verified after update.',
+        });
+      }
+    }
+
+    return trustInstalledHook(context, resolved, document);
+  }
+
+  async function remove(context: CodexLifecycleRequestContext): Promise<CodexLifecycleResult> {
+    const resolved = await resolveScope(context);
+    if ('state' in resolved) return resolved;
+    const document = await inspectHookDocument(resolved.home, resolved.style);
+    const knownManagedHome = resolved.entry !== undefined;
+    const removable = document.state === 'installed'
+      || (document.state === 'conflict'
+        && knownManagedHome
+        && document.document !== undefined
+        && document.originalText !== undefined);
+    if (document.state === 'conflict' && !removable) {
+      return lifecycleResult(resolved, {
+        state: 'conflict', trust: 'unavailable', message: document.message,
+      });
+    }
+    if (removable) {
+      try {
+        await writeHookDocument(document, resolved.style, 'remove');
+      } catch (error) {
+        return lifecycleResult(resolved, {
+          state: 'conflict', trust: 'unavailable', message: (error as Error).message,
+        });
+      }
+    }
+    try {
+      await updateLedgerEntry(stateDirectory, context.environment, resolved.home, {
+        consent: 'revoked',
+        managedVersion: null,
+      });
+    } catch (error) {
+      return lifecycleResult(resolved, {
+        state: 'unavailable',
+        trust: 'unavailable',
+        message: `Codex hook revocation could not be recorded: ${(error as Error).message}`,
+      });
+    }
+    return {
+      state: 'absent',
+      trust: 'unchecked',
+      consent: 'revoked',
+      currentVersion: resolved.currentVersion,
+    };
+  }
+
+  return {
+    inspect: (context) => serializeLifecycleOperation(() => inspect(context)),
+    install: (context) => serializeLifecycleOperation(() => installOrUpdate(context, 'install')),
+    update: (context) => serializeLifecycleOperation(() => installOrUpdate(context, 'update')),
+    maintain: (context) => serializeLifecycleOperation(() => installOrUpdate(context, 'maintain')),
+    remove: (context) => serializeLifecycleOperation(() => remove(context)),
+  };
 }

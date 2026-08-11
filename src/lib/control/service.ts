@@ -292,6 +292,12 @@ export interface ControlService {
     request: { consent: 'granted' },
     context: ControlCallerContext,
   ): Promise<ProviderIntegrationLaunchDecision>;
+  updateCodexLifecycle(
+    context: ControlCallerContext,
+  ): Promise<ProviderIntegrationLaunchDecision>;
+  removeCodexLifecycle(
+    context: ControlCallerContext,
+  ): Promise<ProviderIntegrationLaunchDecision>;
   manageProviderSkills(
     request: { operation: 'install' | 'status' | 'update' | 'remove'; providerIds?: ProviderSkillId[] },
     context: ControlCallerContext,
@@ -479,6 +485,42 @@ export function createControlService(options: {
         );
       }
       return providerIntegration.installCodexLifecycle();
+    },
+
+    async updateCodexLifecycle(context) {
+      if (context.projectId || context.worktreeId || context.sessionId) {
+        throw new ControlOperationError(
+          'UNAUTHORIZED',
+          'Managed Sessions cannot update user-wide provider integrations.',
+          403,
+        );
+      }
+      if (!providerIntegration) {
+        throw new ControlOperationError(
+          'INSTANCE_UNAVAILABLE',
+          'This Tessera runtime cannot update provider integrations.',
+          503,
+        );
+      }
+      return providerIntegration.updateCodexLifecycle();
+    },
+
+    async removeCodexLifecycle(context) {
+      if (context.projectId || context.worktreeId || context.sessionId) {
+        throw new ControlOperationError(
+          'UNAUTHORIZED',
+          'Managed Sessions cannot remove user-wide provider integrations.',
+          403,
+        );
+      }
+      if (!providerIntegration) {
+        throw new ControlOperationError(
+          'INSTANCE_UNAVAILABLE',
+          'This Tessera runtime cannot remove provider integrations.',
+          503,
+        );
+      }
+      return providerIntegration.removeCodexLifecycle();
     },
 
     async manageProviderSkills(request, context) {

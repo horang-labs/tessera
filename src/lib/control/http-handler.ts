@@ -108,15 +108,29 @@ export function createControlHttpHandler(options: {
         }
         requireMethod(request, 'POST');
         const body = await readJsonObject(request);
-        rejectUnknownFields(body, ['consent'], 'Codex lifecycle install');
-        if (body.consent !== 'granted') {
+        rejectUnknownFields(body, ['operation', 'consent'], 'Codex lifecycle management');
+        const operation = body.operation ?? 'install';
+        if (operation === 'install') {
+          if (body.consent !== 'granted') {
+            throw new ControlOperationError(
+              'INVALID_USAGE',
+              'Explicit Codex lifecycle hook consent is required.',
+              400,
+            );
+          }
+          writeSuccess(response, await service.installCodexLifecycle({ consent: 'granted' }, context));
+          return true;
+        }
+        if (body.consent !== undefined || !['update', 'remove'].includes(String(operation))) {
           throw new ControlOperationError(
             'INVALID_USAGE',
-            'Explicit Codex lifecycle hook consent is required.',
+            'Codex lifecycle operation must be install, update, or remove.',
             400,
           );
         }
-        writeSuccess(response, await service.installCodexLifecycle({ consent: 'granted' }, context));
+        writeSuccess(response, operation === 'update'
+          ? await service.updateCodexLifecycle(context)
+          : await service.removeCodexLifecycle(context));
         return true;
       }
 
