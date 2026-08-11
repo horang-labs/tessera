@@ -240,7 +240,7 @@ function AllProjectSection({
     <div className="relative mb-3 mt-3 first:mt-1" data-testid={`all-project-section-${project.encodedDir}`}>
       <div
         className={cn(
-          'flex items-center gap-1 rounded-md py-1.5 pl-0.5 pr-2 transition-colors',
+          'flex items-center gap-1 rounded-md py-1.5 pl-0 pr-2 transition-colors',
           'cursor-pointer hover:bg-(--sidebar-hover)',
         )}
         onClick={() => toggleAllProjectsSection(project.encodedDir)}
@@ -252,7 +252,7 @@ function AllProjectSection({
           )}
         />
         <div
-          className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[0.5rem] font-bold text-white select-none"
+          className="flex h-4 w-4 mr-0.5 shrink-0 items-center justify-center rounded text-[0.5rem] font-bold text-white select-none"
           style={{ backgroundColor: color }}
         >
           {project.displayName.charAt(0).toUpperCase()}
