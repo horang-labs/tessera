@@ -96,6 +96,25 @@ export function createControlHttpHandler(options: {
         return true;
       }
 
+      if (pathname === `${CONTROL_ROUTE_PREFIX}/provider-integrations/codex/lifecycle`) {
+        if (request.method === 'GET') {
+          writeSuccess(response, await service.inspectCodexLifecycle(context));
+          return true;
+        }
+        requireMethod(request, 'POST');
+        const body = await readJsonObject(request);
+        rejectUnknownFields(body, ['consent'], 'Codex lifecycle install');
+        if (body.consent !== 'granted') {
+          throw new ControlOperationError(
+            'INVALID_USAGE',
+            'Explicit Codex lifecycle hook consent is required.',
+            400,
+          );
+        }
+        writeSuccess(response, await service.installCodexLifecycle({ consent: 'granted' }, context));
+        return true;
+      }
+
       if (pathname === `${CONTROL_ROUTE_PREFIX}/projects`) {
         requireMethod(request, 'GET');
         writeSuccess(response, await service.listProjects(context));

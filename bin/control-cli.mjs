@@ -27,7 +27,8 @@ export function isControlInvocation(argv) {
   return args[0] === 'status'
     || args[0] === 'project'
     || args[0] === 'worktree'
-    || args[0] === 'session';
+    || args[0] === 'session'
+    || args[0] === 'provider';
 }
 
 export async function runControlCli(options) {
@@ -137,7 +138,11 @@ export async function runControlCli(options) {
     );
   }
 
-  return writeEnvelope(json, { ...response, data: validatedData }, 0, invocation.kind);
+  const exitCode = invocation.kind === 'provider-codex-lifecycle-install'
+    && validatedData.health.state !== 'healthy'
+    ? 1
+    : 0;
+  return writeEnvelope(json, { ...response, data: validatedData }, exitCode, invocation.kind);
 }
 
 export function controlUsage() {
@@ -158,6 +163,8 @@ export function controlUsage() {
   tessera session prompt <session-id> (--text <text> | --file <path|->) [--json]
   tessera session send-keys <session-id> <enter|escape|ctrl-c|up|down|left|right>... [--json]
   tessera session stop <session-id> [--json]
+  tessera provider codex lifecycle status [--json]
+  tessera provider codex lifecycle install --consent [--json]
 
 Runtime selection:
   --control-descriptor PATH  Select one exact local Tessera runtime.
@@ -217,6 +224,36 @@ function parseControlInvocation(argv, env) {
       descriptorPath,
       kind: 'status',
       requestPath: '/__tessera/control/v1/status',
+    };
+  }
+
+  if (
+    commandArgs.length === 4
+    && commandArgs[0] === 'provider'
+    && commandArgs[1] === 'codex'
+    && commandArgs[2] === 'lifecycle'
+    && commandArgs[3] === 'status'
+  ) {
+    return {
+      descriptorPath,
+      kind: 'provider-codex-lifecycle-status',
+      requestPath: '/__tessera/control/v1/provider-integrations/codex/lifecycle',
+    };
+  }
+
+  if (
+    commandArgs.length === 5
+    && commandArgs[0] === 'provider'
+    && commandArgs[1] === 'codex'
+    && commandArgs[2] === 'lifecycle'
+    && commandArgs[3] === 'install'
+    && commandArgs[4] === '--consent'
+  ) {
+    return {
+      descriptorPath,
+      kind: 'provider-codex-lifecycle-install',
+      requestPath: '/__tessera/control/v1/provider-integrations/codex/lifecycle',
+      requestBody: { consent: 'granted' },
     };
   }
 
@@ -1091,6 +1128,12 @@ function isControlEnvelope(value) {
 const INVALID_SUCCESS_DATA = Symbol('invalid-success-data');
 
 function validateSuccessData(kind, data) {
+  if (
+    kind === 'provider-codex-lifecycle-status'
+    || kind === 'provider-codex-lifecycle-install'
+  ) {
+    return parseProviderIntegrationDecision(data) ?? INVALID_SUCCESS_DATA;
+  }
   if (kind === 'session-list') {
     if (!isRecord(data) || !Array.isArray(data.sessions)) return INVALID_SUCCESS_DATA;
     const sessions = data.sessions.map(parsePublicSessionDto);
@@ -1118,6 +1161,54 @@ function validateSuccessData(kind, data) {
     return parseSessionSnapshot(data) ?? INVALID_SUCCESS_DATA;
   }
   return data;
+}
+
+function parseProviderIntegrationDecision(value) {
+  if (!isRecord(value) || !isRecord(value.providerHome) || !isRecord(value.health)) return null;
+  if (
+    value.providerHome.owner !== 'agent-environment'
+    || !['native', 'wsl'].includes(value.providerHome.agentEnvironment)
+    || !['healthy', 'blocked', 'unchecked'].includes(value.health.state)
+  ) return null;
+  const lifecycle = parseArtifactPolicy(value.lifecycle);
+  const skill = parseArtifactPolicy(value.skill);
+  if (!lifecycle || !skill) return null;
+  if (value.guidance !== undefined) {
+    if (
+      !isRecord(value.guidance)
+      || !isNonEmptyString(value.guidance.minimumVersion)
+      || !isNonEmptyString(value.guidance.updateCommand)
+      || !isNonEmptyString(value.guidance.message)
+    ) return null;
+  }
+  return {
+    providerHome: {
+      owner: 'agent-environment',
+      agentEnvironment: value.providerHome.agentEnvironment,
+    },
+    lifecycle,
+    skill,
+    health: { state: value.health.state },
+    ...(value.guidance === undefined ? {} : { guidance: value.guidance }),
+  };
+}
+
+function parseArtifactPolicy(value) {
+  if (!isRecord(value)) return null;
+  if (
+    !['required', 'optional', 'not-applicable'].includes(value.requirement)
+    || !['unchecked', 'ready', 'absent', 'installed', 'conflict', 'unavailable', 'not-applicable'].includes(value.state)
+    || !['unchecked', 'not-required', 'required', 'granted', 'declined'].includes(value.consent)
+    || !['unchecked', 'not-required', 'trusted', 'untrusted', 'unavailable'].includes(value.trust)
+    || (value.message !== undefined && typeof value.message !== 'string')
+  ) return null;
+  return {
+    requirement: value.requirement,
+    state: value.state,
+    consent: value.consent,
+    trust: value.trust,
+    ...(value.message === undefined ? {} : { message: value.message }),
+  };
 }
 
 function parsePublicSessionDto(value) {
@@ -1201,6 +1292,16 @@ function writeEnvelope(json, envelope, exitCode, kind) {
 }
 
 function writeHumanSuccess(kind, data) {
+  if (
+    kind === 'provider-codex-lifecycle-status'
+    || kind === 'provider-codex-lifecycle-install'
+  ) {
+    process.stdout.write(
+      `Codex lifecycle: ${data.lifecycle.state}; trust: ${data.lifecycle.trust}; consent: ${data.lifecycle.consent}; health: ${data.health.state}\n`,
+    );
+    if (data.guidance?.message) process.stdout.write(`${data.guidance.message}\n`);
+    return;
+  }
   if (kind === 'status') {
     process.stdout.write(
       `Connected to Tessera ${data.appVersion} (Control v${data.controlVersion}, instance ${data.instanceId})\n`,

@@ -4,6 +4,10 @@ import test from 'node:test';
 
 const memoryLibSource = fs.readFileSync(new URL('../src/lib/memory/claude-memory.ts', import.meta.url), 'utf8');
 const codexMemorySource = fs.readFileSync(new URL('../src/lib/memory/codex-memory.ts', import.meta.url), 'utf8');
+const codexProviderHomeSource = fs.readFileSync(
+  new URL('../src/lib/cli/providers/codex/provider-home.ts', import.meta.url),
+  'utf8',
+);
 const opencodeMemorySource = fs.readFileSync(new URL('../src/lib/memory/opencode-memory.ts', import.meta.url), 'utf8');
 const memoryProviderSource = fs.readFileSync(new URL('../src/lib/memory/memory-provider.ts', import.meta.url), 'utf8');
 const memoryListRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/memory/route.ts', import.meta.url), 'utf8');
@@ -42,13 +46,15 @@ test('memory dir resolution uses provider-specific environment-aware config dirs
   assert.match(memoryLibSource, /resolveClaudeConfigDirForEnvironment/);
   assert.doesNotMatch(memoryLibSource, /homedir\(\)/);
   assert.match(codexMemorySource, /resolveCodexHomeForEnvironment/);
-  assert.match(codexMemorySource, /process\.env\.CODEX_HOME/);
+  assert.match(codexProviderHomeSource, /\$\{CODEX_HOME:-\$HOME\/\.codex\}/);
+  assert.match(codexProviderHomeSource, /agent login environment/);
   // The fallback must land on the *agent's* home. `homedir()` is the server's,
   // which across a bridge is the wrong filesystem entirely — the panel then
   // stats a path that cannot exist and reports "No user instructions" for a
   // populated home. See tests/memory-bridged-config-home.test.ts.
-  assert.match(codexMemorySource, /resolveAgentHomeFilesystemPath\(environment\), "\.codex"\)/);
-  assert.doesNotMatch(codexMemorySource, /homedir\(\)/);
+  assert.match(codexProviderHomeSource, /failed probe is not permission to guess/);
+  assert.doesNotMatch(codexProviderHomeSource, /resolveAgentHomeFilesystemPath/);
+  assert.doesNotMatch(codexProviderHomeSource, /homedir\(\)/);
 });
 
 test('memory/context is gated to Claude Code, Codex, and OpenCode sessions on both client and server', () => {

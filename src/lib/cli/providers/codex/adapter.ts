@@ -40,6 +40,7 @@ import type {
   CliStatusResult,
   CliRawLogSink,
   ProviderIntegrationRequirements,
+  ProviderLifecycleIntegration,
 } from '../types';
 import { createCodexTerminalSessionObserver } from './terminal-session-observer';
 import {
@@ -64,6 +65,7 @@ import {
   providerIntegration as sharedProviderIntegration,
   type ProviderIntegration,
 } from '../../provider-integration';
+import { createCodexLifecycleHookIntegration } from './lifecycle-hook-integration';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
 import {
   resolveProviderCliCommand,
@@ -290,6 +292,10 @@ export class CodexAdapter implements CliProvider {
       lifecycle: 'required',
       skill: 'optional',
     };
+  }
+
+  getLifecycleIntegration(): ProviderLifecycleIntegration {
+    return createCodexLifecycleHookIntegration();
   }
 
   getDisplayName(): string {

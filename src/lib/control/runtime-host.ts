@@ -15,6 +15,7 @@ import { createDatabaseControlSessionMutator } from './session-mutator';
 import { createTerminalControlSessionObserver } from './session-observer';
 import { resolveControlUserId } from './user-context';
 import { createDatabaseControlWorktreeCreator } from './worktree-creator';
+import { createControlProviderIntegrationManager } from './provider-integration-manager';
 
 export interface ControlRuntimeHost {
   runtimeId: string;
@@ -86,6 +87,9 @@ export async function startControlRuntimeHost(
           resolveUserId: requireUserId,
         }),
         sessionController: createTerminalControlSessionController({
+          resolveUserId: requireUserId,
+        }),
+        providerIntegration: createControlProviderIntegrationManager({
           resolveUserId: requireUserId,
         }),
       }),

@@ -89,6 +89,32 @@ test('posix hook command exits 0 when the local curl fails', async () => {
   }
 });
 
+test('posix lifecycle hook drains stdin and performs no work outside a Managed Session', async (t) => {
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-hook-noop-'));
+  t.after(() => fs.rmSync(stubDir, { recursive: true, force: true }));
+  const marker = path.join(stubDir, 'curl-was-called');
+  fs.writeFileSync(
+    path.join(stubDir, 'curl'),
+    `#!/bin/sh\n: > '${marker}'\ncat >/dev/null\nexit 0\n`,
+    { mode: 0o755 },
+  );
+
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    const child = spawn('sh', ['-c', buildHookCommand('posix')], {
+      env: {
+        PATH: `${stubDir}:${process.env.PATH ?? ''}`,
+      },
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    child.on('error', reject);
+    child.on('close', resolve);
+    child.stdin.end('{"hook_event_name":"Stop"}\n');
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(fs.existsSync(marker), false);
+});
+
 test('posix hook command retries through curl.exe on WSL runtimes', () => {
   const command = buildHookCommand('posix');
   // stdin은 한 번만 읽힌다 — 재시도를 위해 변수로 캡처해야 한다.
@@ -197,7 +223,8 @@ test('posix hook command does not fall through when the owning server accepts', 
 test('windows-cmd hook command uses the fully-qualified curl.exe with %VAR% expansion', () => {
   const command = buildHookCommand('windows-cmd');
   // 경로를 풀로 적어 repo-local curl.exe 하이재킹을 차단(orca와 동일).
-  assert.match(command, /^"%SystemRoot%\\System32\\curl\.exe"/);
+  assert.match(command, /"%SystemRoot%\\System32\\curl\.exe"/);
+  assert.match(command, /^if not defined TESSERA_HOOK_PORT \(more >nul & exit \/b 0\)/);
   assert.match(command, /%TESSERA_HOOK_PORT%/);
   assert.match(command, /%TESSERA_SESSION_ID%/);
   assert.match(command, /%TESSERA_PANE_TOKEN%/);

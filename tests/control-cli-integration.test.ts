@@ -20,6 +20,7 @@ import {
 } from '../src/lib/control/service';
 import { toControlLaunchError } from '../src/lib/control/session-launch-errors';
 import { ProviderLaunchError } from '../src/lib/terminal/provider-launch-module';
+import type { ProviderIntegrationLaunchDecision } from '../src/lib/cli/provider-integration';
 import { runControlCli } from './helpers/control-cli-runner';
 
 const REPO_ROOT = process.cwd();
@@ -34,6 +35,113 @@ interface TestRuntime {
   sessionControls: Array<{ sessionId: string; kind: string; value?: unknown }>;
   close(): Promise<void>;
 }
+
+test('the CLI exposes Codex lifecycle status and requires explicit install consent', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-cli-provider-'));
+  const calls: string[] = [];
+  const absent: ProviderIntegrationLaunchDecision = {
+    providerHome: { owner: 'agent-environment', agentEnvironment: 'wsl' },
+    lifecycle: {
+      requirement: 'required',
+      state: 'absent',
+      consent: 'required',
+      trust: 'unchecked',
+    },
+    skill: {
+      requirement: 'optional',
+      state: 'unchecked',
+      consent: 'unchecked',
+      trust: 'unchecked',
+    },
+    health: { state: 'blocked' },
+  };
+  const installed: ProviderIntegrationLaunchDecision = {
+    ...absent,
+    lifecycle: {
+      ...absent.lifecycle,
+      state: 'installed',
+      consent: 'granted',
+      trust: 'trusted',
+    },
+    health: { state: 'healthy' },
+  };
+  const unavailable: ProviderIntegrationLaunchDecision = {
+    ...absent,
+    lifecycle: {
+      ...absent.lifecycle,
+      state: 'unavailable',
+      trust: 'unavailable',
+      message: 'Codex 0.146.0 or newer is required. Run `codex update` and retry.',
+    },
+    guidance: {
+      minimumVersion: '0.146.0',
+      updateCommand: 'codex update',
+      message: 'Codex 0.146.0 or newer is required. Run `codex update` and retry.',
+    },
+  };
+  let installOutcome = installed;
+  const runtime = await startRuntime(testRoot, 'provider', {
+    id: '/home/work/provider-project',
+    decodedPath: '/home/work/provider-project',
+    displayName: 'Provider Project',
+    visible: true,
+  }, [], {
+    inspectCodexLifecycle: async () => {
+      calls.push('status');
+      return absent;
+    },
+    installCodexLifecycle: async () => {
+      calls.push('install');
+      return installOutcome;
+    },
+  });
+
+  try {
+    const status = await runCli([
+      'provider', 'codex', 'lifecycle', 'status', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(status.code, 0);
+    assert.deepEqual(JSON.parse(status.stdout).data, absent);
+
+    const missingConsent = await runCli([
+      'provider', 'codex', 'lifecycle', 'install', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(missingConsent.code, 2);
+    assert.equal(JSON.parse(missingConsent.stdout).error.code, 'INVALID_USAGE');
+
+    const consented = await runCli([
+      'provider', 'codex', 'lifecycle', 'install', '--consent', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(consented.code, 0);
+    assert.deepEqual(JSON.parse(consented.stdout).data, installed);
+
+    installOutcome = unavailable;
+    const unsupported = await runCli([
+      'provider', 'codex', 'lifecycle', 'install', '--consent', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(unsupported.code, 1);
+    assert.deepEqual(JSON.parse(unsupported.stdout).data, unavailable);
+
+    const managedSessionAttempt = await runCli([
+      'provider', 'codex', 'lifecycle', 'install', '--consent', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ], {
+      TESSERA_PROJECT_ID: 'provider-project',
+      TESSERA_WORKTREE_ID: 'provider-worktree',
+      TESSERA_SESSION_ID: 'managed-session',
+    });
+    assert.equal(managedSessionAttempt.code, 1);
+    assert.equal(JSON.parse(managedSessionAttempt.stdout).error.code, 'UNAUTHORIZED');
+    assert.deepEqual(calls, ['status', 'install', 'install']);
+  } finally {
+    await runtime.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
 
 test('the CLI stays pinned to one of two distinguishable runtimes and their Projects', async () => {
   const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-cli-'));
@@ -798,6 +906,10 @@ async function startRuntime(
   label: string,
   project: { id: string; decodedPath: string; displayName: string; visible: boolean },
   worktrees: ControlWorktreeRecord[] = [],
+  providerIntegration?: {
+    inspectCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
+    installCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
+  },
 ): Promise<TestRuntime> {
   const sessionRecords: ControlSessionRecord[] = [];
   const sessionStarts: TestRuntime['sessionStarts'] = [];
@@ -864,6 +976,7 @@ async function startRuntime(
         return { worktree, startPoint: request.startPoint };
       },
     },
+    providerIntegration,
     sessions: {
       list: (worktreeId: string) => sessionRecords.filter(
         (session) => session.worktreeId === worktreeId,
@@ -1029,5 +1142,13 @@ function runCli(
   args: string[],
   envOverrides: Record<string, string> = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return runControlCli(args, { repoRoot: REPO_ROOT, envOverrides });
+  return runControlCli(args, {
+    repoRoot: REPO_ROOT,
+    envOverrides: {
+      TESSERA_PROJECT_ID: '',
+      TESSERA_WORKTREE_ID: '',
+      TESSERA_SESSION_ID: '',
+      ...envOverrides,
+    },
+  });
 }

@@ -81,11 +81,13 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     requirement: 'required',
     state: 'unchecked',
     consent: 'unchecked',
+    trust: 'unchecked',
   });
   assert.deepEqual(codex.skill, {
     requirement: 'optional',
     state: 'unchecked',
     consent: 'unchecked',
+    trust: 'unchecked',
   });
 
   const providerWithoutRequiredLifecycle = await providerIntegration.resolveLaunch({
@@ -96,6 +98,7 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     requirement: 'not-applicable',
     state: 'not-applicable',
     consent: 'not-required',
+    trust: 'not-required',
   });
 });
 

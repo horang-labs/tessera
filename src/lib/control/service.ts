@@ -19,6 +19,8 @@ import type {
 } from '@/lib/projects/preparation-status-policy';
 import type { WorktreeCreationSource } from '@/lib/worktrees/create';
 import { CONTROL_API_VERSION } from './runtime-descriptor';
+import type { ProviderIntegrationLaunchDecision } from '@/lib/cli/provider-integration';
+import type { ControlProviderIntegrationManager } from './provider-integration-manager';
 
 export type ControlErrorCode =
   | 'BRANCH_REQUIRED'
@@ -258,6 +260,13 @@ export interface ControlStatusDto {
 
 export interface ControlService {
   status(context: ControlCallerContext): Promise<ControlStatusDto>;
+  inspectCodexLifecycle(
+    context: ControlCallerContext,
+  ): Promise<ProviderIntegrationLaunchDecision>;
+  installCodexLifecycle(
+    request: { consent: 'granted' },
+    context: ControlCallerContext,
+  ): Promise<ProviderIntegrationLaunchDecision>;
   listProjects(context: ControlCallerContext): Promise<{ projects: PublicProjectDto[] }>;
   showProject(projectId: string, context: ControlCallerContext): Promise<PublicProjectDto>;
   listWorktrees(
@@ -357,6 +366,7 @@ export function createControlService(options: {
   sessionMutator?: ControlSessionMutator;
   sessionObserver?: ControlSessionObserver;
   sessionController?: ControlSessionRuntimeController;
+  providerIntegration?: ControlProviderIntegrationManager;
 }): ControlService {
   const {
     appVersion,
@@ -368,6 +378,7 @@ export function createControlService(options: {
     sessionMutator,
     sessionObserver,
     sessionController,
+    providerIntegration,
   } = options;
 
   return {
@@ -379,6 +390,42 @@ export function createControlService(options: {
         connectionState: 'connected',
         callerContext: publicCallerContext(context),
       };
+    },
+
+    async inspectCodexLifecycle() {
+      if (!providerIntegration) {
+        throw new ControlOperationError(
+          'INSTANCE_UNAVAILABLE',
+          'This Tessera runtime cannot inspect provider integrations.',
+          503,
+        );
+      }
+      return providerIntegration.inspectCodexLifecycle();
+    },
+
+    async installCodexLifecycle(request, context) {
+      if (request.consent !== 'granted') {
+        throw new ControlOperationError(
+          'INVALID_USAGE',
+          'Explicit Codex lifecycle hook consent is required.',
+          400,
+        );
+      }
+      if (context.projectId || context.worktreeId || context.sessionId) {
+        throw new ControlOperationError(
+          'UNAUTHORIZED',
+          'Managed Sessions cannot consent to user-wide provider integration changes.',
+          403,
+        );
+      }
+      if (!providerIntegration) {
+        throw new ControlOperationError(
+          'INSTANCE_UNAVAILABLE',
+          'This Tessera runtime cannot install provider integrations.',
+          503,
+        );
+      }
+      return providerIntegration.installCodexLifecycle();
     },
 
     async listProjects(context) {
