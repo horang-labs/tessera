@@ -33,6 +33,7 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
+import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
 import {
   completePendingTerminalRebound,
   getPendingTerminalRebound,
@@ -114,6 +115,9 @@ export function handleIncomingServerMessage({
 
     case 'session_stopped': {
       const stoppedSession = sessionStore.getSession(msg.sessionId);
+      const stoppedKind = stoppedSession?.kind
+        ?? useTaskStore.getState().getTaskBySessionId(msg.sessionId)?.sessions
+          .find((session) => session.id === msg.sessionId)?.kind;
       sessionStore.markSessionStopped(msg.sessionId);
       useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, false);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
@@ -129,8 +133,8 @@ export function handleIncomingServerMessage({
       // PTY surfaces retire on terminal_session_runtime so a provider session
       // rebound can transfer the existing panel first. GUI sessions have no
       // later runtime event, so stopping one must retire its surface here.
-      if (stoppedSession && stoppedSession.kind !== 'terminal') {
-        useTabStore.getState().retireSessionSurface(msg.sessionId);
+      if (stoppedKind && stoppedKind !== 'terminal') {
+        retireProjectViewSessionSurfaces(msg.sessionId);
       }
       return { wasReconnect };
     }
@@ -243,16 +247,20 @@ export function handleIncomingServerMessage({
           useTerminalSessionStore.getState().markRuntimeStopped(sessionId);
         }
       }
-      for (const project of sessionStore.projects) {
-        for (const session of project.sessions) {
-          // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
-          // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
-          if (session.id.startsWith('temp-')) continue;
-          if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
-            useTerminalSessionStore.getState().markRuntimeStopped(session.id);
-            if (isPendingTerminalReboundSource(session.id)) continue;
-            retireStoppedTerminalSessionSurface(session.id);
-          }
+      const terminalSnapshotCandidates = new Map(
+        [
+          ...sessionStore.projects.flatMap((project) => project.sessions),
+          ...Object.values(sessionStore.retainedSessions),
+        ].map((session) => [session.id, session]),
+      );
+      for (const session of terminalSnapshotCandidates.values()) {
+        // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
+        // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
+        if (session.id.startsWith('temp-')) continue;
+        if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
+          useTerminalSessionStore.getState().markRuntimeStopped(session.id);
+          if (isPendingTerminalReboundSource(session.id)) continue;
+          retireStoppedTerminalSessionSurface(session.id);
         }
       }
       return { wasReconnect };
@@ -532,7 +540,7 @@ function cancelPendingTerminalReboundsForDestination(sessionId: string): void {
 function retireStoppedTerminalSessionSurface(sessionId: string): void {
   const session = useSessionStore.getState().getSession(sessionId);
   if (session?.kind !== 'terminal' || session.archived) return;
-  useTabStore.getState().retireSessionSurface(sessionId);
+  retireProjectViewSessionSurfaces(sessionId);
 }
 
 function replayEventsIndicateActiveTurn(

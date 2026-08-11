@@ -315,11 +315,29 @@ test('PTY runtime liveness remains active across completed turns', () => {
 
 test('session stop updates a linked Session that only exists in the Task projection', () => {
   const task = taskProjectionSession(true);
+  const tabId = 'task-only-gui-tab';
+  const panelId = 'task-only-gui-panel';
+  task.sessions[0] = { ...task.sessions[0], kind: 'chat' };
   useSessionStore.setState({ projects: [project()] });
   useTaskStore.setState({
     tasks: [task],
     tasksByProject: { '/workspace': [task] },
     currentProjectId: '/workspace',
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
   });
 
   receive({ type: 'session_stopped', sessionId: SESSION_ID });
@@ -330,6 +348,7 @@ test('session stop updates a linked Session that only exists in the Task project
     useTaskStore.getState().tasksByProject['/workspace']?.[0]?.sessions[0]?.isRunning,
     false,
   );
+  assert.equal(useTabStore.getState().findSessionSurface(SESSION_ID), null);
 });
 
 test('PTY runtime exit closes a retained single-panel session tab', () => {

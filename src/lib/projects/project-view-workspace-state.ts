@@ -17,6 +17,7 @@ export interface ProjectViewWorkspaceStateDependencies {
   markNotificationsRead: (sessionId: string) => void;
   acknowledgeSessionRead: (sessionId: string) => void;
   stopSession: (sessionId: string) => void;
+  getOpenSurfaceSessionIds: () => readonly string[];
 }
 
 export interface ProjectViewWorkspaceState {
@@ -34,6 +35,8 @@ export interface ProjectViewWorkspaceState {
   markSessionRead: (sessionId: string) => boolean;
   /** Stop each globally running Session once and clear its unread state everywhere. */
   stopAllRunningSessions: () => string[];
+  /** Sessions kept alive by materialized panels, tab snapshots, or Peek. */
+  getOpenSessionIds: () => string[];
 }
 
 interface TaskSessionAppearance {
@@ -217,6 +220,10 @@ export function createProjectViewWorkspaceState(
     return sessionIds;
   };
 
+  const getOpenSessionIds = (): string[] => {
+    return [...new Set(dependencies.getOpenSurfaceSessionIds())];
+  };
+
   return {
     resolveSession,
     getCanonicalSessions,
@@ -225,5 +232,6 @@ export function createProjectViewWorkspaceState(
     isSessionUnread,
     markSessionRead,
     stopAllRunningSessions,
+    getOpenSessionIds,
   };
 }

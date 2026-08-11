@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import { useSessionStore } from './session-store';
-import { useTabStore } from './tab-store';
+import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { toast } from './notification-store';
 
@@ -629,7 +629,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       if (!res.ok) throw new Error('Failed to update task archive state');
       if (archived) {
         for (const sessionId of linkedSessionIds) {
-          useTabStore.getState().retireSessionSurface(sessionId);
+          retireProjectViewSessionSurfaces(sessionId);
         }
       }
       return true;
