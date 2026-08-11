@@ -24,6 +24,9 @@ type ConsoleBridgeApi = {
 
 type ConsoleMethod = 'debug' | 'log' | 'info' | 'warn' | 'error';
 
+const REMOTE_ERROR_ENDPOINT = '/api/diagnostics/client-error';
+const MAX_REMOTE_ERROR_CHARS = 20_000;
+
 const METHOD_LEVELS: Array<[ConsoleMethod, BridgeLevel]> = [
   ['debug', 'debug'],
   ['log', 'info'],
@@ -130,8 +133,33 @@ export function installRendererConsoleBridge(): void {
   if (typeof window === 'undefined') return;
 
   const api = getBridgeApi();
-  const send = api?.logRendererConsole;
-  if (typeof send !== 'function') return;
+  const electronSend = api?.logRendererConsole;
+
+  // A phone renderer has no Electron preload, so its exception used to disappear at the
+  // browser boundary. In a debug build only, mirror error-level reports back to the packaged
+  // server. This gives the server log the actual Android stack instead of forcing a guess from
+  // the generic Next global-error screen.
+  const remoteSend = (level: BridgeLevel, text: string) => {
+    if (level !== 'error') return;
+    const payload = {
+      level,
+      text: clamp(text, MAX_REMOTE_ERROR_CHARS),
+      url: window.location.href,
+      userAgent: window.navigator.userAgent,
+    };
+    void window.fetch(REMOTE_ERROR_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      credentials: 'same-origin',
+      keepalive: true,
+    }).catch(() => {
+      // Diagnostics must never create a second application failure.
+    });
+  };
+
+  const send = typeof electronSend === 'function' ? electronSend : remoteSend;
 
   installed = true;
 
@@ -169,5 +197,5 @@ export function installRendererConsoleBridge(): void {
 
   // Tells the main process to stop mirroring `console-message` for this window: from here on
   // the same lines arrive through this bridge, with their arguments intact.
-  api?.notifyRendererConsoleBridgeReady?.();
+  if (typeof electronSend === 'function') api?.notifyRendererConsoleBridgeReady?.();
 }
