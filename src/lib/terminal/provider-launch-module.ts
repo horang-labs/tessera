@@ -546,7 +546,7 @@ export function createProviderLaunchModule(
         // matter is long enough for the Session to be deleted inside it — so it
         // is read after the gate, where the answer is still true.
         const integration = await providerIntegration.resolveLaunch({
-          providerId: persisted.providerId,
+          provider: persisted.provider,
           surface: 'direct-tui',
           userId: request.userId,
         });
@@ -616,11 +616,7 @@ export function createProviderLaunchModule(
                 logger.debug({ error }, 'Claude WSL skill overlay cleanup skipped');
               });
           });
-        } else if (
-          decision.providerId === 'codex'
-          && integration.providerHome.mode === 'session-overlay'
-          && wslTerminalRuntime
-        ) {
+        } else if (decision.providerId === 'codex' && wslTerminalRuntime) {
           const pending = createOverlayWithRetry(
             'Codex WSL',
             terminalId,
@@ -730,10 +726,7 @@ export function createProviderLaunchModule(
             }
             claudeArgs.splice(claudePluginFlagIndex, 2);
           };
-        } else if (
-          decision.providerId === 'codex'
-          && integration.providerHome.mode === 'session-overlay'
-        ) {
+        } else if (decision.providerId === 'codex') {
           // Unlike Claude's overlay, this one also carries hooks.json — how
           // Tessera observes turn-complete and every other session state.
           // Launching without it would produce a session that runs but never

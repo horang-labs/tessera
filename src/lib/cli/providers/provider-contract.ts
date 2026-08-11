@@ -48,6 +48,12 @@ export type TerminalResizeScrollbackPolicy = 'native' | 'preserve-on-ed3';
 /** How accepted terminal input indicates an agent-turn interrupt. */
 export type TerminalInterruptInputPolicy = 'none' | 'single-escape';
 
+/** Provider-specific requirements consumed by the shared integration policy. */
+export interface ProviderIntegrationRequirements {
+  lifecycle: 'required' | 'not-applicable';
+  skill: 'required' | 'optional' | 'not-applicable';
+}
+
 export interface ProviderTerminalSessionObservation {
   activation: 'active' | 'background';
   providerSessionId: string;
@@ -140,6 +146,9 @@ export interface CliProvider {
    * Must match the ID used when registering the provider in the registry.
    */
   getProviderId(): string;
+
+  /** Declares provider-specific integration requirements without filesystem details. */
+  getProviderIntegrationRequirements?(): ProviderIntegrationRequirements;
 
   /**
    * Returns the human-readable display name for this CLI provider.

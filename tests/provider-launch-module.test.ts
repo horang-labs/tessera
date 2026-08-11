@@ -236,6 +236,12 @@ async function launchDetached(
   });
 }
 
+function createTestProviderIntegration(agentEnvironment: 'native' | 'wsl') {
+  return modules.createProviderIntegration({
+    resolveAgentEnvironment: async () => agentEnvironment,
+  });
+}
+
 test('direct TUI Codex launch uses the shared Provider Integration policy without changing its overlay', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);
@@ -750,9 +756,7 @@ test('shared provider launches inject the complete control bridge environment fo
     const disposed: string[] = [];
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      providerIntegration: modules.createProviderIntegration({
-        resolveAgentEnvironment: async () => agentEnvironment,
-      }),
+      providerIntegration: createTestProviderIntegration(agentEnvironment),
       prepareControlCliBridge: async (context) => {
         assert.deepEqual(context, {
           agentEnvironment,
@@ -887,9 +891,7 @@ test('managed fake-provider launches discover the canonical skill in a WSL-like 
   try {
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      providerIntegration: modules.createProviderIntegration({
-        resolveAgentEnvironment: async () => 'wsl',
-      }),
+      providerIntegration: createTestProviderIntegration('wsl'),
       prepareControlCliBridge: async ({ projectId, sessionId }) => ({
         commandPath: `/home/agent/.tessera/control/${sessionId}/tessera`,
         environment: {
@@ -1088,9 +1090,7 @@ test('a WSL Claude background attach does not prepare a new plugin overlay', asy
     });
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      providerIntegration: modules.createProviderIntegration({
-        resolveAgentEnvironment: async () => 'wsl',
-      }),
+      providerIntegration: createTestProviderIntegration('wsl'),
     });
 
     await launcher.launch({
@@ -1169,9 +1169,7 @@ test('a preparation timeout removes a Codex overlay that only lands after the ga
     const manager = createManager(captured);
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      providerIntegration: modules.createProviderIntegration({
-        resolveAgentEnvironment: async () => 'wsl',
-      }),
+      providerIntegration: createTestProviderIntegration('wsl'),
       // Shorter than the sleeping guest script, so the gate always loses the race.
       preparationTimeoutMs: 200,
     });
@@ -1279,9 +1277,7 @@ test('a preparation timeout still removes the WSL overlay whose spawn it abandon
     const manager = createManager(captured);
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      providerIntegration: modules.createProviderIntegration({
-        resolveAgentEnvironment: async () => 'wsl',
-      }),
+      providerIntegration: createTestProviderIntegration('wsl'),
       preparationTimeoutMs: 1_000,
     });
 
@@ -1359,9 +1355,7 @@ test('a deterministically failing WSL overlay is not retried: Claude launches an
     createTerminalSession('failing-overlay-claude', 'claude-code');
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
-      providerIntegration: modules.createProviderIntegration({
-        resolveAgentEnvironment: async () => 'wsl',
-      }),
+      providerIntegration: createTestProviderIntegration('wsl'),
     });
 
     await launcher.launch({

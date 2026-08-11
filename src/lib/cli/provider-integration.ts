@@ -1,4 +1,8 @@
 import type { AgentEnvironment } from '@/lib/settings/types';
+import type {
+  CliProvider,
+  ProviderIntegrationRequirements,
+} from './providers/provider-contract';
 import { getAgentEnvironment } from './spawn-cli';
 
 export type ProviderIntegrationLaunchSurface = 'app-server' | 'direct-tui';
@@ -7,7 +11,8 @@ export type ProviderIntegrationArtifactState =
   | 'unchecked'
   | 'ready'
   | 'absent'
-  | 'conflict';
+  | 'conflict'
+  | 'not-applicable';
 
 export type ProviderIntegrationConsentState =
   | 'unchecked'
@@ -16,7 +21,7 @@ export type ProviderIntegrationConsentState =
   | 'declined';
 
 export interface ProviderIntegrationArtifactPolicy {
-  requirement: 'required' | 'optional';
+  requirement: 'required' | 'optional' | 'not-applicable';
   state: ProviderIntegrationArtifactState;
   consent: ProviderIntegrationConsentState;
 }
@@ -31,7 +36,6 @@ export interface ProviderIntegrationLaunchDecision {
   agentEnvironment: AgentEnvironment;
   providerHome: {
     owner: 'agent-environment';
-    mode: 'inherited' | 'session-overlay';
   };
   lifecycle: ProviderIntegrationArtifactPolicy;
   skill: ProviderIntegrationArtifactPolicy;
@@ -39,9 +43,9 @@ export interface ProviderIntegrationLaunchDecision {
 }
 
 export interface ProviderIntegrationLaunchRequest {
-  providerId: string;
+  provider: Pick<CliProvider, 'getProviderId' | 'getProviderIntegrationRequirements'>;
   surface: ProviderIntegrationLaunchSurface;
-  userId?: string;
+  userId: string;
 }
 
 export interface ProviderIntegration {
@@ -51,7 +55,28 @@ export interface ProviderIntegration {
 }
 
 interface ProviderIntegrationOptions {
-  resolveAgentEnvironment?: (userId?: string) => Promise<AgentEnvironment>;
+  resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
+}
+
+const DEFAULT_REQUIREMENTS: ProviderIntegrationRequirements = {
+  lifecycle: 'not-applicable',
+  skill: 'optional',
+};
+
+function resolveArtifactPolicy(
+  requirement: ProviderIntegrationArtifactPolicy['requirement'],
+): ProviderIntegrationArtifactPolicy {
+  return requirement === 'not-applicable'
+    ? {
+        requirement,
+        state: 'not-applicable',
+        consent: 'not-required',
+      }
+    : {
+        requirement,
+        state: 'unchecked',
+        consent: 'unchecked',
+      };
 }
 
 /**
@@ -70,26 +95,18 @@ export function createProviderIntegration(
   return {
     async resolveLaunch(request) {
       const agentEnvironment = await resolveAgentEnvironment(request.userId);
+      const providerId = request.provider.getProviderId();
+      const requirements = request.provider.getProviderIntegrationRequirements?.()
+        ?? DEFAULT_REQUIREMENTS;
       return {
-        providerId: request.providerId,
+        providerId,
         surface: request.surface,
         agentEnvironment,
         providerHome: {
           owner: 'agent-environment',
-          mode: request.providerId === 'codex' && request.surface === 'direct-tui'
-            ? 'session-overlay'
-            : 'inherited',
         },
-        lifecycle: {
-          requirement: 'required',
-          state: 'unchecked',
-          consent: 'unchecked',
-        },
-        skill: {
-          requirement: 'optional',
-          state: 'unchecked',
-          consent: 'unchecked',
-        },
+        lifecycle: resolveArtifactPolicy(requirements.lifecycle),
+        skill: resolveArtifactPolicy(requirements.skill),
         health: { state: 'unchecked' },
       };
     },

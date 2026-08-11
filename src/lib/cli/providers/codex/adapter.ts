@@ -39,6 +39,7 @@ import type {
   CheckStatusOptions,
   CliStatusResult,
   CliRawLogSink,
+  ProviderIntegrationRequirements,
 } from '../types';
 import { createCodexTerminalSessionObserver } from './terminal-session-observer';
 import {
@@ -284,6 +285,13 @@ export class CodexAdapter implements CliProvider {
     return PROVIDER_ID;
   }
 
+  getProviderIntegrationRequirements(): ProviderIntegrationRequirements {
+    return {
+      lifecycle: 'required',
+      skill: 'optional',
+    };
+  }
+
   getDisplayName(): string {
     return 'Codex';
   }
@@ -473,9 +481,12 @@ export class CodexAdapter implements CliProvider {
    * The sessionId in SpawnOptions is used to key the parser's per-session state.
    */
   async spawn(workDir: string, options: SpawnOptions): Promise<SpawnResult> {
+    if (!options.userId) {
+      throw new Error('Codex app-server launch requires user context.');
+    }
     const args = this.getCliArgs(options);
     const integration = await this._providerIntegration.resolveLaunch({
-      providerId: PROVIDER_ID,
+      provider: this,
       surface: 'app-server',
       userId: options.userId,
     });
