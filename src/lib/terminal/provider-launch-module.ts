@@ -547,10 +547,16 @@ export function createProviderLaunchModule(
         // is read after the gate, where the answer is still true.
         const integration = await providerIntegration.resolveLaunch({
           provider: persisted.provider,
-          surface: 'direct-tui',
-          userId: request.userId,
+          agentEnvironmentOwner: { kind: 'user', userId: request.userId },
         });
-        const { agentEnvironment } = integration;
+        if (integration.health.state === 'blocked') {
+          throw providerLaunchError(
+            'LAUNCH_FAILED',
+            'Provider launch is blocked by integration health.',
+            terminalId,
+          );
+        }
+        const agentEnvironment = integration.providerHome.agentEnvironment;
         const wslTerminalRuntime = getRuntimePlatform() === 'win32'
           && agentEnvironment === 'wsl';
         const hookCommandStyle: HookCommandStyle = getRuntimePlatform() === 'win32'
@@ -705,6 +711,9 @@ export function createProviderLaunchModule(
               claudeArgs[claudePluginFlagIndex + 1] = overlay.pluginDir;
               return;
             }
+            if (integration.skill.requirement === 'required') {
+              throw new Error('Failed to prepare the required provider skill integration.');
+            }
             // Drop the flag along with the placeholder there is now no path to
             // fill. What the overlay carries is the tessera-cli skill, a
             // convenience for agent-initiated Worktree and Session control — a
@@ -742,9 +751,10 @@ export function createProviderLaunchModule(
                     }
                     return createCodexOverlay(terminalId, hookCommandStyle);
                   })();
-              if (!overlayHome) {
+              if (!overlayHome && integration.lifecycle.requirement === 'required') {
                 throw new Error('the guest script failed twice');
               }
+              if (!overlayHome) return undefined;
               return { CODEX_HOME: overlayHome, TESSERA_CODEX_HOME: overlayHome };
             } catch (error) {
               logger.error({ error, terminalId }, 'Failed to prepare the Codex overlay');

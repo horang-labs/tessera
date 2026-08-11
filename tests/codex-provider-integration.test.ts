@@ -41,23 +41,23 @@ test.after(() => {
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
 
-test('Codex app-server launch rejects missing user context before resolving integration policy', async () => {
+test('Codex app-server launch preserves explicit server-default ownership without a user', async () => {
   const { CodexAdapter } = await import('@/lib/cli/providers/codex/adapter');
-  let integrationCalled = false;
+  const ownership: unknown[] = [];
   const adapter = new CodexAdapter({
     providerIntegration: {
-      resolveLaunch: async () => {
-        integrationCalled = true;
-        throw new Error('integration received missing user context');
+      resolveLaunch: async (request) => {
+        ownership.push(request.agentEnvironmentOwner);
+        throw new Error('stop after resolving explicit ownership');
       },
     },
   });
 
   await assert.rejects(
     adapter.spawn(workspace, { sessionId: '__provider__' }),
-    /Codex app-server launch requires user context/,
+    /stop after resolving explicit ownership/,
   );
-  assert.equal(integrationCalled, false);
+  assert.deepEqual(ownership, [{ kind: 'server-default' }]);
 });
 
 test('Provider Integration exposes path-free, provider-specific integration state', async () => {
@@ -71,10 +71,12 @@ test('Provider Integration exposes path-free, provider-specific integration stat
 
   const codex = await providerIntegration.resolveLaunch({
     provider: new CodexAdapter(),
-    surface: 'direct-tui',
-    userId: 'provider-integration-user',
+    agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
   });
-  assert.deepEqual(codex.providerHome, { owner: 'agent-environment' });
+  assert.deepEqual(codex.providerHome, {
+    owner: 'agent-environment',
+    agentEnvironment: 'wsl',
+  });
   assert.deepEqual(codex.lifecycle, {
     requirement: 'required',
     state: 'unchecked',
@@ -88,8 +90,7 @@ test('Provider Integration exposes path-free, provider-specific integration stat
 
   const providerWithoutRequiredLifecycle = await providerIntegration.resolveLaunch({
     provider: { getProviderId: () => 'claude-code' },
-    surface: 'direct-tui',
-    userId: 'provider-integration-user',
+    agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
   });
   assert.deepEqual(providerWithoutRequiredLifecycle.lifecycle, {
     requirement: 'not-applicable',

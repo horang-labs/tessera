@@ -3,9 +3,7 @@ import type {
   CliProvider,
   ProviderIntegrationRequirements,
 } from './providers/provider-contract';
-import { getAgentEnvironment } from './spawn-cli';
-
-export type ProviderIntegrationLaunchSurface = 'app-server' | 'direct-tui';
+import { getAgentEnvironment, resolveDefaultAgentEnvironment } from './spawn-cli';
 
 export type ProviderIntegrationArtifactState =
   | 'unchecked'
@@ -31,11 +29,9 @@ export interface ProviderIntegrationHealth {
 }
 
 export interface ProviderIntegrationLaunchDecision {
-  providerId: string;
-  surface: ProviderIntegrationLaunchSurface;
-  agentEnvironment: AgentEnvironment;
   providerHome: {
     owner: 'agent-environment';
+    agentEnvironment: AgentEnvironment;
   };
   lifecycle: ProviderIntegrationArtifactPolicy;
   skill: ProviderIntegrationArtifactPolicy;
@@ -44,8 +40,9 @@ export interface ProviderIntegrationLaunchDecision {
 
 export interface ProviderIntegrationLaunchRequest {
   provider: Pick<CliProvider, 'getProviderId' | 'getProviderIntegrationRequirements'>;
-  surface: ProviderIntegrationLaunchSurface;
-  userId: string;
+  agentEnvironmentOwner:
+    | { kind: 'user'; userId: string }
+    | { kind: 'server-default' };
 }
 
 export interface ProviderIntegration {
@@ -56,6 +53,7 @@ export interface ProviderIntegration {
 
 interface ProviderIntegrationOptions {
   resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
+  resolveDefaultEnvironment?: () => Promise<AgentEnvironment>;
 }
 
 const DEFAULT_REQUIREMENTS: ProviderIntegrationRequirements = {
@@ -91,19 +89,20 @@ export function createProviderIntegration(
   options: ProviderIntegrationOptions = {},
 ): ProviderIntegration {
   const resolveAgentEnvironment = options.resolveAgentEnvironment ?? getAgentEnvironment;
+  const resolveDefaultEnvironment = options.resolveDefaultEnvironment
+    ?? (async () => resolveDefaultAgentEnvironment());
 
   return {
     async resolveLaunch(request) {
-      const agentEnvironment = await resolveAgentEnvironment(request.userId);
-      const providerId = request.provider.getProviderId();
+      const agentEnvironment = request.agentEnvironmentOwner.kind === 'user'
+        ? await resolveAgentEnvironment(request.agentEnvironmentOwner.userId)
+        : await resolveDefaultEnvironment();
       const requirements = request.provider.getProviderIntegrationRequirements?.()
         ?? DEFAULT_REQUIREMENTS;
       return {
-        providerId,
-        surface: request.surface,
-        agentEnvironment,
         providerHome: {
           owner: 'agent-environment',
+          agentEnvironment,
         },
         lifecycle: resolveArtifactPolicy(requirements.lifecycle),
         skill: resolveArtifactPolicy(requirements.skill),

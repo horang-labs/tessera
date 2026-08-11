@@ -481,16 +481,17 @@ export class CodexAdapter implements CliProvider {
    * The sessionId in SpawnOptions is used to key the parser's per-session state.
    */
   async spawn(workDir: string, options: SpawnOptions): Promise<SpawnResult> {
-    if (!options.userId) {
-      throw new Error('Codex app-server launch requires user context.');
-    }
     const args = this.getCliArgs(options);
     const integration = await this._providerIntegration.resolveLaunch({
       provider: this,
-      surface: 'app-server',
-      userId: options.userId,
+      agentEnvironmentOwner: options.userId
+        ? { kind: 'user', userId: options.userId }
+        : { kind: 'server-default' },
     });
-    const agentEnv = integration.agentEnvironment;
+    if (integration.health.state === 'blocked') {
+      throw new Error('Codex app-server launch is blocked by Provider Integration health.');
+    }
+    const agentEnv = integration.providerHome.agentEnvironment;
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
 
