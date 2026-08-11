@@ -56,6 +56,8 @@ interface BoardState {
   setPeekFileSidecarWidth: (width: number) => void;
   closeSessionPeek: () => boolean;
   clearSessionPeek: () => boolean;
+  /** Lifecycle retirement bypasses dirty-file confirmation for a removed Session. */
+  retireSessionPeek: (sessionId: string) => void;
 
   // Kanban drag-and-drop state
   draggingTaskId: string | null;
@@ -397,6 +399,29 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
     return true;
   },
+  retireSessionPeek: (sessionId) => set((state) => {
+    if (
+      state.peekSessionId !== sessionId
+      && state.peekFileRef?.sourceSessionId !== sessionId
+    ) {
+      return state;
+    }
+    if (state.peekSessionId === sessionId) {
+      return {
+        peekSessionId: null,
+        selectedBoardSessionId: null,
+        peekFileRef: null,
+        peekFileDirty: false,
+      };
+    }
+    return {
+      peekFileRef: null,
+      peekFileDirty: false,
+      selectedBoardSessionId: state.selectedBoardSessionId === sessionId
+        ? null
+        : state.selectedBoardSessionId,
+    };
+  }),
 
   draggingTaskId: null,
   dragOverStatus: null,

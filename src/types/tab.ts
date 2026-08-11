@@ -210,6 +210,9 @@ export interface TabStoreActions {
    */
   findSessionSurface(sessionId: string): SessionSurfaceLocation | null;
 
+  /** Materialized panels and inactive Project/global snapshots that own Sessions. */
+  getSessionSurfaceIds(): string[];
+
   /**
    * 실행 중인 PTY의 소유권을 이전 세션에서 새 세션으로 옮긴다.
    * `/clear` 중 현재 범위가 바뀌어도 원래 탭과 패널 ID를 보존한다.

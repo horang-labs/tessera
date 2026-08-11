@@ -203,6 +203,94 @@ function findSessionPanelId(tabData: TabPanelData | undefined, sessionId: string
   return null;
 }
 
+function addTabDataSessionIds(sessionIds: Set<string>, tabData: TabPanelData | undefined): void {
+  if (!tabData) return;
+  for (const panel of Object.values(tabData.panels)) {
+    if (!panel.sessionId) continue;
+    sessionIds.add(getSpecialSessionSourceSessionId(panel.sessionId) ?? panel.sessionId);
+  }
+}
+
+function getSessionRetirement(
+  tabData: TabPanelData,
+  sessionId: string,
+): { panelIds: string[]; removesTab: boolean } | null {
+  const panelIds = Object.values(tabData.panels)
+    .filter((panel) => (
+      panel.sessionId === sessionId
+      || (panel.sessionId !== null
+        && getSpecialSessionSourceSessionId(panel.sessionId) === sessionId)
+    ))
+    .map((panel) => panel.id);
+  if (panelIds.length === 0) return null;
+  return {
+    panelIds,
+    removesTab: panelIds.length === Object.keys(tabData.panels).length,
+  };
+}
+
+function retireSessionFromSnapshot(
+  tabData: TabPanelData | undefined,
+  sessionId: string,
+): TabPanelData | null | undefined {
+  if (!tabData) return tabData;
+  const retirement = getSessionRetirement(tabData, sessionId);
+  if (!retirement) return tabData;
+  if (retirement.removesTab) return null;
+
+  const matching = new Set(retirement.panelIds);
+  return {
+    ...tabData,
+    panels: Object.fromEntries(Object.entries(tabData.panels).map(([panelId, panel]) => [
+      panelId,
+      matching.has(panelId)
+        ? {
+            ...panel,
+            sessionId: null,
+            worktreeId: null,
+            creationMode: null,
+            terminalId: null,
+            terminalSessionId: null,
+            terminalCwd: null,
+          }
+        : panel,
+    ])),
+  };
+}
+
+function retireSessionFromScopedState(
+  scopedState: ProjectTabState | null,
+  sessionId: string,
+): ProjectTabState | null {
+  if (!scopedState?.tabPanelSnapshots) return scopedState;
+  const tabs: Tab[] = [];
+  const tabPanelSnapshots: Record<string, TabPanelData> = {};
+  let changed = false;
+  for (const tab of scopedState.tabs) {
+    const snapshot = scopedState.tabPanelSnapshots[tab.id];
+    const nextSnapshot = retireSessionFromSnapshot(snapshot, sessionId);
+    if (nextSnapshot === null) {
+      changed = true;
+      continue;
+    }
+    tabs.push(tab);
+    if (nextSnapshot) tabPanelSnapshots[tab.id] = nextSnapshot;
+    if (nextSnapshot !== snapshot) changed = true;
+  }
+  if (!changed) return scopedState;
+  if (tabs.length === 0) return null;
+
+  const activeTabId = tabs.some((tab) => tab.id === scopedState.activeTabId)
+    ? scopedState.activeTabId
+    : tabs[0].id;
+  return {
+    tabs,
+    activeTabId,
+    lruTabIds: normalizeLruForTabs(scopedState.lruTabIds, tabs, activeTabId),
+    tabPanelSnapshots,
+  };
+}
+
 function findSessionSurfaceInState(
   state: TabStoreState,
   panelStore: ReturnType<typeof usePanelStore.getState>,
@@ -972,6 +1060,24 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     return findSessionSurfaceInState(get(), usePanelStore.getState(), sessionId);
   },
 
+  getSessionSurfaceIds: (): string[] => {
+    const state = get();
+    const panelStore = usePanelStore.getState();
+    const sessionIds = new Set<string>();
+    const materializedTabIds = new Set(Object.keys(panelStore.tabPanels));
+    for (const tabData of Object.values(panelStore.tabPanels)) {
+      addTabDataSessionIds(sessionIds, tabData);
+    }
+    for (const scopedState of [state.globalTabState, ...Object.values(state.projectTabStates)]) {
+      if (!scopedState) continue;
+      for (const tab of scopedState.tabs) {
+        if (materializedTabIds.has(tab.id)) continue;
+        addTabDataSessionIds(sessionIds, scopedState.tabPanelSnapshots?.[tab.id]);
+      }
+    }
+    return [...sessionIds];
+  },
+
   rebindSessionSurface: (previousSessionIds, sessionId, options) => {
     const supersededSessionIds = new Set(
       previousSessionIds.filter((previousSessionId) => previousSessionId !== sessionId),
@@ -1044,19 +1150,30 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   },
 
   retireSessionSurface: (sessionId: string): void => {
-    const location = get().findSessionLocation(sessionId);
-    if (!location) return;
-
     const panelStore = usePanelStore.getState();
-    const tabData = panelStore.tabPanels[location.tabId];
-    if (!tabData) return;
-
-    if (Object.keys(tabData.panels).length === 1) {
-      get().closeTab(location.tabId);
-      return;
+    const materializedTabIds = new Set(get().tabs.map((tab) => tab.id));
+    for (const [tabId, tabData] of Object.entries(panelStore.tabPanels)) {
+      const retirement = getSessionRetirement(tabData, sessionId);
+      if (!retirement) continue;
+      if (retirement.removesTab) {
+        if (materializedTabIds.has(tabId)) get().closeTab(tabId);
+        else panelStore.removeTab(tabId);
+        continue;
+      }
+      for (const panelId of retirement.panelIds) {
+        panelStore.closePanelInTab(tabId, panelId);
+      }
     }
 
-    panelStore.closePanelInTab(location.tabId, location.panelId);
+    const state = get();
+    const projectTabStates = Object.fromEntries(
+      Object.entries(state.projectTabStates).flatMap(([projectDir, projectState]) => {
+        const nextState = retireSessionFromScopedState(projectState, sessionId);
+        return nextState ? [[projectDir, nextState]] : [];
+      }),
+    ) as Record<string, ProjectTabState>;
+    const globalTabState = retireSessionFromScopedState(state.globalTabState, sessionId);
+    set({ projectTabStates, globalTabState });
   },
 
   getActiveTabSnapshot: (): TabSnapshot => {

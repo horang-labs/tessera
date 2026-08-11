@@ -14,6 +14,7 @@ export interface ProjectViewWorkspaceStateDependencies {
   clearTaskSessionUnread: (sessionId: string) => void;
   markNotificationsRead: (sessionId: string) => void;
   acknowledgeSessionRead: (sessionId: string) => void;
+  getOpenSurfaceSessionIds: () => readonly string[];
 }
 
 export interface ProjectViewWorkspaceState {
@@ -25,6 +26,8 @@ export interface ProjectViewWorkspaceState {
   isSessionUnread: (sessionId: string) => boolean;
   /** Clear every loaded unread representation and acknowledge the transition once. */
   markSessionRead: (sessionId: string) => boolean;
+  /** Sessions kept alive by materialized panels, tab snapshots, or Peek. */
+  getOpenSessionIds: () => string[];
 }
 
 interface TaskSessionAppearance {
@@ -178,5 +181,15 @@ export function createProjectViewWorkspaceState(
     return true;
   };
 
-  return { resolveSession, getCanonicalSessions, isSessionUnread, markSessionRead };
+  const getOpenSessionIds = (): string[] => {
+    return [...new Set(dependencies.getOpenSurfaceSessionIds())];
+  };
+
+  return {
+    resolveSession,
+    getCanonicalSessions,
+    isSessionUnread,
+    markSessionRead,
+    getOpenSessionIds,
+  };
 }

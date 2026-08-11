@@ -4,7 +4,7 @@ import type { WorkflowStatus } from '@/types/task-entity';
 import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
 import { useTaskStore } from './task-store';
-import { useTabStore } from './tab-store';
+import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
 import { toast } from './notification-store';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
@@ -417,14 +417,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (!res.ok) throw new Error('Failed to load projects');
       const data: { projects: any[] } = await res.json();
       // Keep Project-local open conversations addressable even when the live
-      // branch projection hides them. Dynamic import avoids a store init cycle:
-      // panel-store already calls back into session-store for panel actions.
-      const { usePanelStore } = await import('@/stores/panel-store');
-      const openSessionIds = new Set(
-        Object.values(usePanelStore.getState().tabPanels)
-          .flatMap((tab) => Object.values(tab.panels))
-          .flatMap((panel) => panel.sessionId ? [panel.sessionId] : []),
+      // projection hides them. The workspace boundary owns lifetime across
+      // materialized panels, inactive Project snapshots, and Peek. Dynamic
+      // import avoids the existing tab/panel/session store initialization cycle.
+      const { projectViewWorkspaceState } = await import(
+        '@/lib/projects/project-view-workspace-state-client'
       );
+      const openSessionIds = new Set(projectViewWorkspaceState.getOpenSessionIds());
 
       const projects: ProjectGroup[] = data.projects.map((p) => {
         const sessions = p.sessions.map((s: any) => mapApiSessionToUnified(s, p.encodedDir));
@@ -762,7 +761,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  removeSession: (sessionId) =>
+  removeSession: (sessionId) => {
     set((state) => {
       const updatedProjects = state.projects.map((project) => ({
         ...project,
@@ -801,7 +800,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         runningWorkflowSessionIds,
         runtimeLiveness: forgetSessionRuntime(state.runtimeLiveness, sessionId),
       };
-    }),
+    });
+    retireProjectViewSessionSurfaces(sessionId);
+  },
 
   upsertSession: (session) =>
     set((state) => {
@@ -1454,7 +1455,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
 
         if (archived) {
-          useTabStore.getState().retireSessionSurface(sessionId);
+          retireProjectViewSessionSurfaces(sessionId);
         }
 
         if (result.cleanupError) {

@@ -1,4 +1,5 @@
 import { createProjectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state';
+import { getProjectViewOpenSessionIds } from '@/lib/projects/project-view-open-surfaces';
 import { wsClient } from '@/lib/ws/client';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useNotificationStore } from '@/stores/notification-store';
@@ -22,4 +23,5 @@ export const projectViewWorkspaceState = createProjectViewWorkspaceState({
     useNotificationStore.getState().markSessionAsRead(sessionId);
   },
   acknowledgeSessionRead: (sessionId) => wsClient.sendMarkAsRead(sessionId),
+  getOpenSurfaceSessionIds: getProjectViewOpenSessionIds,
 });

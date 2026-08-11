@@ -96,6 +96,7 @@ test('canonical resolution deduplicates direct, retained, and task-summary ident
     clearTaskSessionUnread: () => {},
     markNotificationsRead: () => {},
     acknowledgeSessionRead: () => {},
+    getOpenSurfaceSessionIds: () => [],
   });
 
   assert.strictEqual(workspace.resolveSession('direct'), direct);
@@ -130,6 +131,7 @@ test('retained unread activation keeps Project-local placement and reads every s
     clearTaskSessionUnread: () => { taskUnread = 0; },
     markNotificationsRead: () => { notificationUnread = false; },
     acknowledgeSessionRead: (id) => { acknowledgements.push(id); },
+    getOpenSurfaceSessionIds: () => [],
   });
 
   assert.equal(workspace.isSessionUnread(sessionId), true);
