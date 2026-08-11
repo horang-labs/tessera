@@ -143,6 +143,8 @@ test('an archived task owns every child, including ones archived on their own', 
     taskEntry.sessions.map((session) => session.id).sort(),
     ['task-session-a', 'task-session-b'],
   );
+  assert.equal(taskEntry.sessions.find((session) => session.id === 'task-session-a')?.archived, true);
+  assert.equal(taskEntry.sessions.find((session) => session.id === 'task-session-b')?.archived, false);
 });
 
 test('sessions of an archived task cannot be archived or restored on their own', async () => {

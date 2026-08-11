@@ -115,6 +115,10 @@ test('a linked Worktree opens as an independent Project without changing canonic
   const { archiveSession } = await import('@/lib/session/session-archive');
   const archiveService = await import('@/lib/archive/archive-service');
   await archiveSession('session-c', true);
+  assert.deepEqual(
+    projection.getTaskProjectViewIds('linked-c').sort(),
+    ['project-a', 'project-c'],
+  );
   assert.equal(
     projection.getProjectViewProjection('project-a').linkedWorktrees[0].sessions
       .some((session) => session.id === 'session-c'),

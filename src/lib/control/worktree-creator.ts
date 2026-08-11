@@ -248,6 +248,7 @@ export function createDatabaseControlWorktreeCreator(options: {
       broadcastTaskMutation(userId, {
         kind: 'created',
         projectId: request.project.id,
+        taskId: persisted.taskId,
       });
 
       try {

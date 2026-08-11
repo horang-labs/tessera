@@ -5,6 +5,7 @@ import { useCollectionStore } from '@/stores/collection-store';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
+import type { WorkspaceMutationIdentity } from './project-view-workspace-state';
 
 /** Live adapter that keeps the workspace-state contract beside the existing stores. */
 export const projectViewWorkspaceState = createProjectViewWorkspaceState({
@@ -53,3 +54,16 @@ export const projectViewWorkspaceState = createProjectViewWorkspaceState({
   stopSession: (sessionId) => wsClient.stopSession(sessionId),
   getOpenSurfaceSessionIds: getProjectViewOpenSessionIds,
 });
+
+/** Refresh every loaded Project appearance after a canonical cross-window mutation. */
+export async function refreshProjectViewWorkspaceMutation(
+  identity: WorkspaceMutationIdentity,
+): Promise<void> {
+  const projectViewIds = projectViewWorkspaceState.getAffectedProjectViewIds(identity);
+  await Promise.all([
+    useSessionStore.getState().loadProjects(),
+    ...projectViewIds.map((projectId) => useTaskStore.getState().loadTasks(projectId, {
+      setCurrent: false,
+    })),
+  ]);
+}
