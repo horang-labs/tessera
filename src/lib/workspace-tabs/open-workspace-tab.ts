@@ -14,9 +14,24 @@ import {
   type WorkspaceFileTabKind,
 } from "./special-session";
 import type { MemoryTargetKind } from "@/types/memory";
+import type { WorkspaceTarget } from '@/types/worktree';
 
 interface FileOpenOptions {
   preferKanbanPeek?: boolean;
+}
+
+interface TargetFileOpenOptions extends FileOpenOptions {
+  projectDir?: string | null;
+}
+
+function resolveTargetProjectDir(
+  target: WorkspaceTarget,
+  projectDir: string | null | undefined,
+): string | null {
+  if (target.kind !== 'worktree') return null;
+  if (projectDir !== undefined) return projectDir;
+  const peekTarget = useWorkspacePeekStore.getState().target;
+  return peekTarget?.worktreeId === target.id ? peekTarget.projectDir : null;
 }
 
 function canOpenFileInKanbanPeek(): boolean {
@@ -119,6 +134,42 @@ export function previewWorkspaceFileTab(
   previewSpecialFileTab(buildWorkspaceFileSessionId(sourceSessionId, kind, filePath));
 }
 
+export function openWorkspaceTargetFileTab(
+  target: WorkspaceTarget,
+  kind: WorkspaceFileTabKind,
+  filePath: string,
+  options: TargetFileOpenOptions = {},
+): void {
+  if (target.kind === 'session') {
+    openWorkspaceFileTab(target.id, kind, filePath, options);
+    return;
+  }
+  openWorktreeFileTab(
+    target.id,
+    filePath,
+    resolveTargetProjectDir(target, options.projectDir),
+    kind,
+  );
+}
+
+export function previewWorkspaceTargetFileTab(
+  target: WorkspaceTarget,
+  kind: WorkspaceFileTabKind,
+  filePath: string,
+  options: TargetFileOpenOptions = {},
+): void {
+  if (target.kind === 'session') {
+    previewWorkspaceFileTab(target.id, kind, filePath, options);
+    return;
+  }
+  previewWorktreeFileTab(
+    target.id,
+    filePath,
+    resolveTargetProjectDir(target, options.projectDir),
+    kind,
+  );
+}
+
 export function openMemoryFileTab(
   sourceSessionId: string,
   memoryKind: MemoryTargetKind,
@@ -155,10 +206,11 @@ export function openWorktreeFileTab(
   sourceWorktreeId: string,
   filePath: string,
   projectDir?: string | null,
+  kind: WorkspaceFileTabKind = "file",
 ): void {
   useWorkspacePeekStore.getState().close();
   const tabId = focusOrCreateSpecialTab(
-    buildWorktreeFileSessionId(sourceWorktreeId, filePath),
+    buildWorktreeFileSessionId(sourceWorktreeId, filePath, kind),
     {
       pinExistingPreview: true,
       insertAfterTabId: useTabStore.getState().activeTabId,
@@ -171,9 +223,12 @@ export function previewWorktreeFileTab(
   sourceWorktreeId: string,
   filePath: string,
   projectDir?: string | null,
+  kind: WorkspaceFileTabKind = "file",
 ): void {
   useWorkspacePeekStore.getState().close();
-  const tabId = previewSpecialFileTab(buildWorktreeFileSessionId(sourceWorktreeId, filePath));
+  const tabId = previewSpecialFileTab(
+    buildWorktreeFileSessionId(sourceWorktreeId, filePath, kind),
+  );
   if (projectDir) useTabStore.getState().setTabProject(tabId, projectDir);
 }
 

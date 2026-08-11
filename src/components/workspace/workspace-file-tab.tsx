@@ -9,6 +9,7 @@ import {
   useWorkspaceFilesLiveSync,
 } from "@/hooks/use-workspace-files-live-sync";
 import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
+import { gitPanelDiffPath } from '@/lib/git/git-panel-read';
 import { wsClient } from "@/lib/ws/client";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -49,6 +50,7 @@ const FILE_LOAD_TIMEOUT_MESSAGE =
 function getFileUrl(target: WorkspaceTarget, kind: 'file' | 'diff', filePath: string): string {
   const path = encodeURIComponent(filePath);
   if (target.kind === 'worktree') {
+    if (kind === 'diff') return gitPanelDiffPath(target, filePath);
     return `/api/worktrees/${encodeURIComponent(target.id)}/file?path=${path}`;
   }
   const sessionId = encodeURIComponent(target.id);
@@ -152,7 +154,10 @@ export function WorkspaceFileTab({
   const fileData = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
   // A truncated buffer holds only the first 512 KB: saving it back would delete
   // everything past that. A binary file has no text buffer to edit at all.
-  const editable = fileData !== null && !fileData.binary && !fileData.truncated;
+  const editable = sourceSessionId !== null
+    && fileData !== null
+    && !fileData.binary
+    && !fileData.truncated;
   const dirty = editable && draft !== null && draft !== fileData.content;
   dirtyRef.current = dirty;
 

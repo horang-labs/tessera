@@ -1142,6 +1142,9 @@ async function buildGitPanelData(
         }
       : null;
   const github = resolveGitHubPanelState(remoteUrl, prSummary);
+  if (worktreeId && github.reasonCode === 'unknown') {
+    github.reason = 'Start a session in this worktree to check pull request status.';
+  }
 
   return {
     sessionId: targetId,
@@ -1299,6 +1302,35 @@ export async function getGitDiffData(
   userId?: string,
 ): Promise<GitDiffData> {
   const workDir = await resolveSessionWorkDir(sessionId);
+  return getGitDiffDataForWorkDir(sessionId, workDir, relativePath, userId);
+}
+
+export async function getWorktreeGitDiffData(
+  worktreeId: string,
+  relativePath: string,
+  userId?: string,
+): Promise<GitDiffData> {
+  const worktree = dbWorktrees.getWorktree(worktreeId);
+  if (!worktree) {
+    throw new GitPanelError('session_not_found', 'Worktree not found', 404);
+  }
+  if (!worktree.filesystemPath) {
+    throw new GitPanelError('missing_work_dir', 'Worktree has no checkout path', 422);
+  }
+  return getGitDiffDataForWorkDir(
+    worktreeId,
+    worktree.filesystemPath,
+    relativePath,
+    userId,
+  );
+}
+
+async function getGitDiffDataForWorkDir(
+  targetId: string,
+  workDir: string,
+  relativePath: string,
+  userId?: string,
+): Promise<GitDiffData> {
   const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
   const changedFiles = await getChangedFiles(workDir, agentEnvironment);
@@ -1315,7 +1347,7 @@ export async function getGitDiffData(
   if (fileEntry.state === "untracked") {
     const diff = await buildSyntheticUntrackedDiff(repoRoot, relativePath, workDir);
     return {
-      sessionId,
+      sessionId: targetId,
       workDir,
       path: relativePath,
       diff,
@@ -1338,7 +1370,7 @@ export async function getGitDiffData(
   );
 
   return {
-    sessionId,
+    sessionId: targetId,
     workDir,
     path: relativePath,
     diff: diff || `No textual diff available for ${relativePath}.`,

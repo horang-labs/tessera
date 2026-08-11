@@ -68,7 +68,7 @@ export function GitCommitForm({
   const commitBlocked = message.trim().length === 0 || totals.files === 0;
   // Nothing selected means there is no change set to summarize, so the user is
   // never offered a summary of nothing.
-  const canGenerate = totals.files > 0 && !generating && !busy;
+  const canGenerate = primaryAction.enabled && totals.files > 0 && !generating && !busy;
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-(--divider) bg-(--chat-bg) p-2">

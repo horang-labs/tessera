@@ -1226,6 +1226,7 @@ export const ko: I18nMessages = {
     primary: {
       loading: 'Git',
       stateUnknown: 'git 상태를 읽는 중…',
+      sessionRequired: 'Git 작업을 실행하려면 이 워크트리에서 세션을 시작하세요',
       detachedHead: 'HEAD가 분리되어 있습니다 — 푸시하려면 브랜치를 체크아웃하세요',
       noRemote: '이 저장소에는 푸시할 리모트가 없습니다',
       upToDate: '최신 상태',

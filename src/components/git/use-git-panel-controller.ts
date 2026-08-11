@@ -36,8 +36,13 @@ import {
   deriveGitActionMenu,
   type GitMenuActionId,
 } from "@/lib/git/git-action-menu";
+import {
+  restrictGitMenuToSession,
+  restrictPrimaryGitActionToSession,
+} from '@/lib/git/git-target-capabilities';
+import { resolveWorkspaceTarget } from '@/types/worktree';
 import { startGitPanelPolling } from "@/lib/git/git-panel-poll";
-import { readGitPanelState } from "@/lib/git/git-panel-read";
+import { gitPanelDiffPath, readGitPanelState } from "@/lib/git/git-panel-read";
 import {
   deriveGitConflictHandoffAvailability,
   revalidateGitConflictHandoff,
@@ -149,11 +154,7 @@ export function useGitPanelController(
 ) {
   const { t } = useI18n();
   const target = useMemo<WorkspaceTarget | null>(
-    () => worktreeId
-      ? { kind: 'worktree', id: worktreeId }
-      : sessionId
-        ? { kind: 'session', id: sessionId }
-        : null,
+    () => resolveWorkspaceTarget(sessionId, worktreeId),
     [sessionId, worktreeId],
   );
   const targetKey = sessionId ?? (worktreeId ? `worktree:${worktreeId}` : null);
@@ -482,7 +483,7 @@ export function useGitPanelController(
 
   useEffect(() => {
     lastDiffStatsTokenRef.current = null;
-  }, [sessionId]);
+  }, [targetKey]);
 
   useEffect(() => {
     const diffStatsToken = panelData?.diffStats?.computedAt ?? null;
@@ -512,7 +513,7 @@ export function useGitPanelController(
   ]);
 
   useEffect(() => {
-    if (!sessionId || !selectedPath || diffCache[selectedPath]) {
+    if (!target || !selectedPath || diffCache[selectedPath]) {
       return;
     }
 
@@ -524,7 +525,7 @@ export function useGitPanelController(
 
       try {
         const response = await fetch(
-          `/api/sessions/${encodeURIComponent(sessionId)}/git/diff?path=${encodeURIComponent(selectedPath)}`,
+          gitPanelDiffPath(target, selectedPath),
         );
         const payload = await response.json().catch(() => ({}));
 
@@ -560,7 +561,7 @@ export function useGitPanelController(
     return () => {
       cancelled = true;
     };
-  }, [diffCache, selectedPath, sessionId]);
+  }, [diffCache, selectedPath, target]);
 
   const selectedFile = useMemo(
     () =>
@@ -694,20 +695,23 @@ export function useGitPanelController(
   const commitOrigin = describeGitActionOrigin(panelData);
 
   /**
-   * `null` while this session's Git state is not known — which is a rung of the
+   * `null` while the selected target's Git state is not known — which is a rung of the
    * ladder, not an absence of one. Anything short of loaded state counts:
    * a panel still loading, a panel that failed to load, a session with no data
    * yet. Folding those into "clean tree" is what would make the button flash
    * through Publish Branch on every session switch (ADR 0007).
    */
   const stateSnapshot = useMemo<GitStateSnapshot | null>(
-    () => (!sessionId || loading || error ? null : gitStateSnapshotFromPanel(panelData)),
-    [error, loading, panelData, sessionId],
+    () => (!target || loading || error ? null : gitStateSnapshotFromPanel(panelData)),
+    [error, loading, panelData, target],
   );
 
   const primaryAction = useMemo(
-    () => derivePrimaryGitAction(stateSnapshot),
-    [stateSnapshot],
+    () => restrictPrimaryGitActionToSession(
+      derivePrimaryGitAction(stateSnapshot),
+      Boolean(sessionId),
+    ),
+    [sessionId, stateSnapshot],
   );
   const pullRequestUrl =
     panelData?.prStatus?.url ?? panelData?.github.pullRequest?.url ?? null;
@@ -1033,8 +1037,11 @@ export function useGitPanelController(
    * and what the rest say about why they cannot.
    */
   const menuActions = useMemo(
-    () => deriveGitActionMenu(stateSnapshot),
-    [stateSnapshot],
+    () => restrictGitMenuToSession(
+      deriveGitActionMenu(stateSnapshot),
+      Boolean(sessionId),
+    ),
+    [sessionId, stateSnapshot],
   );
 
   /**

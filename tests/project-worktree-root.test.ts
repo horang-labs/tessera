@@ -101,6 +101,9 @@ test('legacy non-Git Projects remain readable without a synthetic Worktree', asy
 test('a zero-Session Project Worktree provides Git status and Files directly', async () => {
   const { gitPanel, projects, workspaceFiles } = await modules();
   const repository = createRepository('sessionless-routing');
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:example/sessionless.git'], {
+    cwd: repository,
+  });
   fs.writeFileSync(path.join(repository, 'uncommitted.txt'), 'visible without a Session\n');
   projects.registerProject('sessionless-project', repository, 'Sessionless');
   const worktree = projects.getProjectWorktree('sessionless-project');
@@ -110,6 +113,13 @@ test('a zero-Session Project Worktree provides Git status and Files directly', a
   assert.equal(git.worktreeId, worktree.id);
   assert.equal(git.branch, 'main');
   assert.equal(git.changedFiles.some((file) => file.path === 'uncommitted.txt'), true);
+  assert.equal(
+    git.github.reason,
+    'Start a session in this worktree to check pull request status.',
+  );
+  const diff = await gitPanel.getWorktreeGitDiffData(worktree.id, 'uncommitted.txt');
+  assert.equal(diff.sessionId, worktree.id);
+  assert.match(diff.diff, /visible without a Session/);
 
   const files = await workspaceFiles.readWorkspaceRootFiles(worktree.filesystemPath!);
   assert.equal(files.files.includes('README.md'), true);

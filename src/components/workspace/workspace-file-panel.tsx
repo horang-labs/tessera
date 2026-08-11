@@ -36,12 +36,11 @@ import { useSessionStore } from "@/stores/session-store";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
 import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
 import {
-  openWorktreeFileTab,
   openWorkspaceFileTab,
-  previewWorktreeFileTab,
-  previewWorkspaceFileTab,
+  openWorkspaceTargetFileTab,
+  previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
-import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { resolveWorkspaceTarget } from '@/types/worktree';
 import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
@@ -217,6 +216,11 @@ export function WorkspaceFilePanel({
   sessionId: string | null;
   worktreeId?: string | null;
 }) {
+  const canMutate = Boolean(sessionId);
+  const target = useMemo(
+    () => resolveWorkspaceTarget(sessionId, worktreeId),
+    [sessionId, worktreeId],
+  );
   const isDocumentVisible = useDocumentVisibility();
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
@@ -241,9 +245,7 @@ export function WorkspaceFilePanel({
     truncated,
     workDir,
   } = useWorkspaceFileList(
-    worktreeId
-      ? { kind: 'worktree', id: worktreeId }
-      : sessionId,
+    target,
     sessionProjectDir,
   );
 
@@ -421,6 +423,7 @@ export function WorkspaceFilePanel({
    * the input that is about to open.
    */
   function beginRename(node: WorkspaceTreeNode) {
+    if (!canMutate) return;
     clearDeferredToggle();
     inlineInput.startRename({
       isDirectory: node.type === "directory",
@@ -486,6 +489,7 @@ export function WorkspaceFilePanel({
    * the row is sitting in, taking the half-typed name with it.
    */
   function beginNewEntry(kind: "file" | "folder", parentPath: string) {
+    if (!canMutate) return;
     clearDeferredToggle();
     inlineInput.startNew(kind, parentPath);
   }
@@ -545,7 +549,7 @@ export function WorkspaceFilePanel({
             type="button"
             onClick={(event) => handleDirectoryClick(event, node.path)}
             onKeyDown={(event) => {
-              if (event.key !== "F2") return;
+              if (!canMutate || event.key !== "F2") return;
               event.preventDefault();
               beginRename(node);
             }}
@@ -573,6 +577,7 @@ export function WorkspaceFilePanel({
               // empty part of the row.
               {...{ [RENAME_HOTSPOT_ATTR]: "" }}
               onDoubleClick={(event) => {
+                if (!canMutate) return;
                 event.stopPropagation();
                 beginRename(node);
               }}
@@ -616,47 +621,29 @@ export function WorkspaceFilePanel({
           type="button"
           onClick={(event) => {
             setSelectedPath(node.path);
-            if (worktreeId) {
-              const peekTarget = useWorkspacePeekStore.getState().target;
-              previewWorktreeFileTab(
-                worktreeId,
-                node.path,
-                peekTarget?.worktreeId === worktreeId ? peekTarget.projectDir : null,
-              );
-              return;
-            }
-            if (!sessionId) return;
+            if (!target) return;
             // The second click of a double-click on the name means rename, and
             // re-previewing the same file under the input it just opened is
             // nothing anyone asked for.
-            if (!shouldOpenOnRowClick({
+            if (target.kind === 'session' && !shouldOpenOnRowClick({
               clickCount: event.detail,
               fromRenameHotspot: isRenameHotspotTarget(event.target),
             })) return;
-            previewWorkspaceFileTab(sessionId, "file", node.path, {
+            previewWorkspaceTargetFileTab(target, 'file', node.path, {
               preferKanbanPeek: true,
             });
           }}
           onDoubleClick={() => {
             setSelectedPath(node.path);
-            if (worktreeId) {
-              const peekTarget = useWorkspacePeekStore.getState().target;
-              openWorktreeFileTab(
-                worktreeId,
-                node.path,
-                peekTarget?.worktreeId === worktreeId ? peekTarget.projectDir : null,
-              );
-              return;
-            }
-            if (!sessionId) return;
-            openWorkspaceFileTab(sessionId, "file", node.path, {
+            if (!target) return;
+            openWorkspaceTargetFileTab(target, 'file', node.path, {
               preferKanbanPeek: true,
             });
           }}
           onKeyDown={(event) => {
             // F2, not Enter: Enter already activates the row, and taking that
             // to mean rename would stop the keyboard opening a file at all.
-            if (event.key !== "F2") return;
+            if (!canMutate || event.key !== "F2") return;
             event.preventDefault();
             beginRename(node);
           }}
@@ -684,6 +671,7 @@ export function WorkspaceFilePanel({
             // the row keep opening the file the way they always have.
             {...{ [RENAME_HOTSPOT_ATTR]: "" }}
             onDoubleClick={(event) => {
+              if (!canMutate) return;
               event.stopPropagation();
               beginRename(node);
             }}
@@ -725,22 +713,24 @@ export function WorkspaceFilePanel({
           {/* Two buttons for the whole panel, always in the same place. What was
               removed is the strip that followed the pointer down the tree — a
               row's own actions are on its right-click menu. */}
-          <Tooltip content="New file">
+          <Tooltip content={canMutate ? "New file" : "Start a session to edit files"}>
             <button
               type="button"
               onClick={() => beginNewEntry("file", "")}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              disabled={!canMutate}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="New file"
               data-testid="workspace-new-file"
             >
               <FilePlus2 className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
-          <Tooltip content="New folder">
+          <Tooltip content={canMutate ? "New folder" : "Start a session to edit files"}>
             <button
               type="button"
               onClick={() => beginNewEntry("folder", "")}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              disabled={!canMutate}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="New folder"
               data-testid="workspace-new-folder"
             >
@@ -790,7 +780,9 @@ export function WorkspaceFilePanel({
             title={query.trim() ? "No matches" : "No files"}
             body={query.trim()
               ? "Try another search."
-              : "This workspace has no readable files. Right-click to add one."}
+              : canMutate
+                ? "This workspace has no readable files. Right-click to add one."
+                : "This workspace has no readable files."}
           />
         </div>
       ) : (
@@ -821,7 +813,7 @@ export function WorkspaceFilePanel({
         <WorkspaceFileContextMenu
           absolutePath={contextMenu.absolutePath}
           canOpenFile={contextMenu.canOpenFile}
-          entryActions={{
+          entryActions={canMutate ? {
             onDelete: contextMenu.node
               ? () => setDeleteRequest(deleteRequestFor(contextMenu.node!))
               : undefined,
@@ -830,7 +822,7 @@ export function WorkspaceFilePanel({
             onRename: contextMenu.node
               ? () => beginRename(contextMenu.node!)
               : undefined,
-          }}
+          } : undefined}
           onClose={() => setContextMenu(null)}
           position={contextMenu.position}
         />

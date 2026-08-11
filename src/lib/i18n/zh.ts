@@ -1219,6 +1219,7 @@ export const zh: I18nMessages = {
     primary: {
       loading: 'Git',
       stateUnknown: '正在读取 git 状态…',
+      sessionRequired: '要运行 Git 操作，请先在此工作树中启动会话',
       detachedHead: 'HEAD 处于分离状态 — 请先检出分支再推送',
       noRemote: '此仓库没有可推送的远程',
       upToDate: '已是最新',

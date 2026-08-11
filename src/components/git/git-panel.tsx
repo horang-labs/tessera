@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
 import { useGitStore, type GitPanelTab } from "@/stores/git-store";
@@ -21,9 +21,10 @@ import {
 } from "./git-panel-sections";
 import { useSharedGitPanelController } from "./git-panel-controller-context";
 import {
-  openWorkspaceFileTab,
-  previewWorkspaceFileTab,
+  openWorkspaceTargetFileTab,
+  previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
+import { resolveWorkspaceTarget } from '@/types/worktree';
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
 import { MemoryPanel } from "@/components/memory/memory-panel";
 import { cn } from "@/lib/utils";
@@ -111,6 +112,10 @@ export function GitPanel({
   );
   const showMemoryTab = supportsMemoryPanel(sessionProvider);
   const showScriptsTab = useWorktreeScriptsAvailable(sessionId);
+  const fileTarget = useMemo(
+    () => resolveWorkspaceTarget(sessionId, worktreeId),
+    [sessionId, worktreeId],
+  );
 
   // Derive the visible tab instead of forcing state: if the stored selection
   // is one this session can't show, fall back to Git for rendering while
@@ -168,7 +173,7 @@ export function GitPanel({
   ]);
 
   const openDiffFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId) return;
+    if (!fileTarget) return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "preview_diff",
@@ -178,7 +183,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    previewWorkspaceFileTab(sessionId, "diff", file.path, {
+    previewWorkspaceTargetFileTab(fileTarget, 'diff', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -186,11 +191,11 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
 
   const pinDiffFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId) return;
+    if (!fileTarget) return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "open_diff_tab",
@@ -200,7 +205,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    openWorkspaceFileTab(sessionId, "diff", file.path, {
+    openWorkspaceTargetFileTab(fileTarget, 'diff', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -208,11 +213,11 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
 
   const openReadOnlyFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId || file.state === "deleted") return;
+    if (!fileTarget || file.state === "deleted") return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "open_file_tab",
@@ -222,7 +227,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    openWorkspaceFileTab(sessionId, "file", file.path, {
+    openWorkspaceTargetFileTab(fileTarget, 'file', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -230,7 +235,7 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
 
   const summarySection = (

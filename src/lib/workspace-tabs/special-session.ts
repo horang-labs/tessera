@@ -4,6 +4,7 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export const WORKSPACE_FILE_SESSION_PREFIX = "__workspace-file__|" as const;
 export const WORKTREE_FILE_SESSION_PREFIX = "__worktree-file__|" as const;
+export const WORKTREE_DIFF_SESSION_PREFIX = "__worktree-diff__|" as const;
 export const MEMORY_FILE_SESSION_PREFIX = "__memory-file__|" as const;
 
 export type WorkspaceFileTabKind = "file" | "diff";
@@ -18,7 +19,7 @@ export interface WorkspaceFileSessionRef {
 export interface WorktreeFileSessionRef {
   type: "worktree-file";
   sourceWorktreeId: string;
-  kind: "file";
+  kind: WorkspaceFileTabKind;
   path: string;
 }
 
@@ -43,8 +44,10 @@ export function buildWorkspaceFileSessionId(
 export function buildWorktreeFileSessionId(
   sourceWorktreeId: string,
   filePath: string,
+  kind: WorkspaceFileTabKind = "file",
 ): string {
-  return `${WORKTREE_FILE_SESSION_PREFIX}${encodeURIComponent(sourceWorktreeId)}|${encodeURIComponent(filePath)}`;
+  const prefix = kind === "diff" ? WORKTREE_DIFF_SESSION_PREFIX : WORKTREE_FILE_SESSION_PREFIX;
+  return `${prefix}${encodeURIComponent(sourceWorktreeId)}|${encodeURIComponent(filePath)}`;
 }
 
 export function parseWorkspaceFileSessionId(
@@ -71,16 +74,22 @@ export function parseWorkspaceFileSessionId(
 export function parseWorktreeFileSessionId(
   sessionId: string,
 ): WorktreeFileSessionRef | null {
-  if (!sessionId.startsWith(WORKTREE_FILE_SESSION_PREFIX)) return null;
+  const kind = sessionId.startsWith(WORKTREE_DIFF_SESSION_PREFIX)
+    ? "diff"
+    : sessionId.startsWith(WORKTREE_FILE_SESSION_PREFIX)
+      ? "file"
+      : null;
+  if (!kind) return null;
+  const prefix = kind === "diff" ? WORKTREE_DIFF_SESSION_PREFIX : WORKTREE_FILE_SESSION_PREFIX;
   const [encodedWorktreeId, encodedPath] = sessionId
-    .slice(WORKTREE_FILE_SESSION_PREFIX.length)
+    .slice(prefix.length)
     .split("|");
   if (!encodedWorktreeId || !encodedPath) return null;
   try {
     return {
       type: "worktree-file",
       sourceWorktreeId: decodeURIComponent(encodedWorktreeId),
-      kind: "file",
+      kind,
       path: decodeURIComponent(encodedPath),
     };
   } catch {

@@ -154,6 +154,7 @@ export function ChatLayout() {
     ?? (isKanbanPeekMode && selectedBoardSessionId
       ? null
       : activePanelWorktreeId ?? compositeWorktreeId);
+  const activeGitTargetSessionId = peekWorktreeId ? null : activeGitSessionId;
 
   const markSessionAsRead = useNotificationStore(
     (state) => state.markSessionAsRead,
@@ -559,7 +560,7 @@ export function ChatLayout() {
     <KeyboardShortcutProvider>
       <ElectronTitlebarThemeSync />
       <GitPanelControllerProvider
-        sessionId={activeGitWorktreeId ? null : activeGitSessionId}
+        sessionId={activeGitTargetSessionId}
         worktreeId={activeGitWorktreeId}
       >
       <div className="flex h-dvh flex-col overflow-hidden" data-testid="chat-layout">
@@ -638,7 +639,7 @@ export function ChatLayout() {
                 </div>
               )}
               <GitPanel
-                sessionId={activeGitWorktreeId ? null : activeGitSessionId}
+                sessionId={activeGitTargetSessionId}
                 worktreeId={activeGitWorktreeId}
                 width={isCompactViewport ? "100vw" : gitPanelWidth}
                 className={cn(

@@ -110,7 +110,10 @@ test('the save is guarded by the optimistic lock unless the user chose to overwr
 });
 
 test('only a whole, textual buffer is editable', () => {
-  assert.match(fileTabSource, /!fileData\.binary && !fileData\.truncated/);
+  assert.match(
+    fileTabSource,
+    /sourceSessionId !== null\s*&& fileData !== null\s*&& !fileData\.binary\s*&& !fileData\.truncated/,
+  );
   assert.match(fileTabSource, /data\.binary \|\| data\.truncated \|\| draft === null/);
   // Diff tabs get no editable buffer: editable is only ever computed for files.
   assert.match(fileTabSource, /kind === "file" \? \(state\.data as WorkspaceFileData \| null\) : null/);
