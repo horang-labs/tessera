@@ -128,6 +128,13 @@ try {
     assert.equal(await row.getAttribute('data-linked-worktree-density'), 'composite');
   }
 
+  async function archiveAndWait(action) {
+    const completed = page.waitForResponse((response) => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname === `/api/sessions/${created.sessionId}/archive`);
+    await action();
+    assert.equal((await completed).ok(), true);
+  }
+
   async function expectZeroSessionWorktree() {
     await row.waitFor();
     await page.waitForFunction((id) => document.querySelector(
@@ -140,20 +147,20 @@ try {
   const quickArchive = page.getByTestId(`collection-session-quick-archive-${created.sessionId}`);
   await page.screenshot({ path: path.join(evidenceDir, '01-composite-session-action.png') });
   await quickArchive.click();
-  await quickArchive.click();
+  await archiveAndWait(() => quickArchive.click());
   await expectZeroSessionWorktree();
   await restoreSession();
 
   await row.click();
   await page.getByTestId('panel-title-drag-handle').click({ button: 'right' });
-  await page.getByTestId('ctx-archive').click();
+  await archiveAndWait(() => page.getByTestId('ctx-archive').click());
   await expectZeroSessionWorktree();
   await restoreSession();
 
   await row.click();
   const composer = page.locator(`textarea[data-session-input="${created.sessionId}"]`);
   await composer.fill('/archive');
-  await composer.press('Enter');
+  await archiveAndWait(() => composer.press('Enter'));
   await expectZeroSessionWorktree();
   await page.screenshot({ path: path.join(evidenceDir, '02-zero-session-worktree.png') });
   await restoreSession();
