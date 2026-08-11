@@ -53,6 +53,7 @@ import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { buildTaskChildSession } from '@/lib/session/task-child-session';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -570,8 +571,14 @@ export const KanbanBoard = memo(function KanbanBoard() {
       return;
     }
 
-    const draggingSession = useSessionStore.getState().getSession(draggingSessionId);
-    const targetSession = useSessionStore.getState().getSession(sessionId);
+    const draggingSession = projectViewWorkspaceState.resolveSession(
+      draggingSessionId,
+      focusedProjectId ?? undefined,
+    );
+    const targetSession = projectViewWorkspaceState.resolveSession(
+      sessionId,
+      focusedProjectId ?? undefined,
+    );
     const draggingStatus = draggingSession?.workflowStatus ?? 'chat';
     if (!draggingSession || !targetSession) {
       if (useBoardStore.getState().dropIndicator) {
@@ -608,7 +615,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
     if (current?.targetSessionId !== sessionId || current.position !== position) {
       useBoardStore.getState().setDropIndicator({ targetSessionId: sessionId, position });
     }
-  }, []);
+  }, [focusedProjectId]);
 
   const handleChatColumnDragOver = useCallback((status: string, e: React.DragEvent) => {
     const hasChatDrag = e.dataTransfer.types.includes(TASK_DND_MIME);
@@ -639,7 +646,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
     const sessionId = hasChatDrag ? e.dataTransfer.getData(TASK_DND_MIME) : '';
     const indicator = useBoardStore.getState().dropIndicator;
-    const session = sessionId ? useSessionStore.getState().getSession(sessionId) : undefined;
+    const session = sessionId
+      ? projectViewWorkspaceState.resolveSession(sessionId, focusedProjectId ?? undefined)
+      : undefined;
     const multiSessionIds = getKanbanMultiSessionDragIds(e.dataTransfer);
 
     if (multiSessionIds.length > 1) {
@@ -647,7 +656,10 @@ export const KanbanBoard = memo(function KanbanBoard() {
       let movedCount = 0;
 
       for (const selectedSessionId of multiSessionIds) {
-        const selectedSession = sessionStore.getSession(selectedSessionId);
+        const selectedSession = projectViewWorkspaceState.resolveSession(
+          selectedSessionId,
+          focusedProjectId ?? undefined,
+        );
         if (
           !selectedSession ||
           selectedSession.taskId ||
@@ -657,7 +669,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
           continue;
         }
 
-        sessionStore.updateChatWorkflowStatus(selectedSessionId, null);
+        sessionStore.updateChatWorkflowStatus(
+          selectedSessionId,
+          null,
+          focusedProjectId ?? undefined,
+        );
         movedCount += 1;
       }
 
@@ -673,7 +689,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
     }
 
     if (sessionId && session?.workflowStatus) {
-      useSessionStore.getState().updateChatWorkflowStatus(sessionId, null);
+      useSessionStore.getState().updateChatWorkflowStatus(
+        sessionId,
+        null,
+        focusedProjectId ?? undefined,
+      );
       useBoardStore.getState().flashDrop(sessionId);
     } else if (sessionId && session) {
       const ids = filteredChats
@@ -691,14 +711,17 @@ export const KanbanBoard = memo(function KanbanBoard() {
         filtered.push(sessionId);
       }
 
-      useSessionStore.getState().reorderProjectSessions(session.projectDir, filtered);
+      useSessionStore.getState().reorderProjectSessions(
+        focusedProjectId ?? session.projectDir,
+        filtered,
+      );
       useBoardStore.getState().flashDrop(sessionId);
     }
 
     useBoardStore.getState().setDragging(null);
     useBoardStore.getState().setDragOver(null);
     useBoardStore.getState().setDropIndicator(null);
-  }, [filteredChats, scopeProjectIds]);
+  }, [filteredChats, focusedProjectId, scopeProjectIds]);
 
   const [quickCreateTarget, setQuickCreateTarget] = useState<{
     column: 'chat' | WorkflowStatus;
@@ -730,8 +753,9 @@ export const KanbanBoard = memo(function KanbanBoard() {
     useSessionStore.getState().updateChatWorkflowStatus(
       sessionId,
       status === 'chat' ? null : status as WorkflowStatus,
+      focusedProjectId ?? undefined,
     );
-  }, []);
+  }, [focusedProjectId]);
 
   const handleCardArchive = useCallback((taskId: string) => {
     useSessionStore.getState().toggleArchive(taskId, true);
@@ -939,8 +963,12 @@ export const KanbanBoard = memo(function KanbanBoard() {
   }, [taskMenuAnchor]);
 
   const handleChatMoveToCollection = useCallback((sessionId: string, collectionId: string | null) => {
-    useSessionStore.getState().updateSessionCollection(sessionId, collectionId);
-  }, []);
+    useSessionStore.getState().updateSessionCollection(
+      sessionId,
+      collectionId,
+      focusedProjectId ?? undefined,
+    );
+  }, [focusedProjectId]);
 
   const handleTaskMoveToCollection = useCallback((collectionId: string | null) => {
     if (!taskMenuAnchor) return;
@@ -1006,6 +1034,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
             <KanbanWorkflowColumn
               key={status}
               status={status}
+              projectViewId={focusedProjectId}
               tasks={tasksByStatus[status]}
               chats={workflowChatsByStatus[status]}
               collection={activeCollection}

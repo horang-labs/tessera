@@ -31,7 +31,10 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { collectionId } = body as { collectionId?: unknown };
+  const { collectionId, projectViewId } = body as {
+    collectionId?: unknown;
+    projectViewId?: unknown;
+  };
 
   // collectionId must be null or a valid string
   if (collectionId !== null && collectionId !== undefined && typeof collectionId !== 'string') {
@@ -39,7 +42,10 @@ export async function PATCH(
   }
 
   // If collectionId is a non-null string, verify the collection exists
-  if (typeof collectionId === 'string' && !collectionExists(collectionId, session.project_id)) {
+  const collectionProjectId = typeof projectViewId === 'string' && projectViewId.length > 0
+    ? projectViewId
+    : session.project_id;
+  if (typeof collectionId === 'string' && !collectionExists(collectionId, collectionProjectId)) {
     return NextResponse.json({ error: 'Collection not found' }, { status: 404 });
   }
 
@@ -60,7 +66,7 @@ export async function PATCH(
     }
     broadcastSessionMutation(auth.userId, {
       kind: 'updated',
-      projectId: session.project_id,
+      projectId: collectionProjectId,
       originClientId: getOriginClientIdFromRequest(req),
     });
     return NextResponse.json({ ok: true });

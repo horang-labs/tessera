@@ -15,6 +15,6 @@ test('cross-project chat card positions show the native forbidden drop indicator
 test('cross-project task card positions show the native forbidden drop indicator', () => {
   assert.match(
     columnSource,
-    /draggingTask\.projectId !== targetTask\.projectId[\s\S]*?e\.preventDefault\(\);[\s\S]*?e\.stopPropagation\(\);[\s\S]*?e\.dataTransfer\.dropEffect = 'none';/,
+    /draggingTask\.projectViewId !== targetTask\.projectViewId[\s\S]*?e\.preventDefault\(\);[\s\S]*?e\.stopPropagation\(\);[\s\S]*?e\.dataTransfer\.dropEffect = 'none';/,
   );
 });
