@@ -45,7 +45,11 @@ export function useSessionClickHandlers(options?: {
   /** Optional normal-click destination used by surfaces such as Kanban Peek. */
   onOpenSession?: (session: UnifiedSession) => void | Promise<void>;
 }): {
-  handleSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => Promise<void>;
+  handleSessionClick: (
+    session: UnifiedSession,
+    event?: React.MouseEvent,
+    orderedIdsOverride?: string[],
+  ) => Promise<void>;
   handleSessionDoubleClick: (session: UnifiedSession) => Promise<void>;
 } {
   const orderedIds = options?.orderedIds;
@@ -63,7 +67,11 @@ export function useSessionClickHandlers(options?: {
 
   // Handle session click — multi-tab aware rewrite (BR-SIDEBAR-009, BR-SIDEBAR-001 through BR-SIDEBAR-007)
   const handleSessionClick = useCallback(
-    async (session: UnifiedSession, event?: React.MouseEvent): Promise<void> => {
+    async (
+      session: UnifiedSession,
+      event?: React.MouseEvent,
+      orderedIdsOverride?: string[],
+    ): Promise<void> => {
       // BRANCH A — Ctrl/Meta+click: multi-select toggle
       if (event && (event.ctrlKey || event.metaKey)) {
         const selStore = useSelectionStore.getState();
@@ -81,7 +89,7 @@ export function useSessionClickHandlers(options?: {
       // BRANCH A2 — Shift+click: range select from active session
       if (event && event.shiftKey) {
         const selStore = useSelectionStore.getState();
-        const oids = orderedIds ?? [];
+        const oids = orderedIdsOverride ?? orderedIds ?? [];
         // Use active session as anchor when no prior Ctrl+Click anchor exists
         if (!selStore.lastClickedId) {
           const activeId = getSessionSelectionId(useSessionStore.getState().activeSessionId);
