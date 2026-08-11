@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type MouseEvent } from 'react';
 import { Check, CircleDot, CircleStop, ListCollapse, ListTree } from 'lucide-react';
 import { useSessionStore } from '@/stores/session-store';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
@@ -405,13 +406,8 @@ export function Sidebar() {
     void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
-  const handleTaskArchive = useCallback((taskId: string) => {
-    const task = useTaskStore.getState().getTask(taskId);
-    if (task) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, true);
-      return;
-    }
-    useSessionStore.getState().toggleArchive(taskId, true);
+  const handleSessionArchive = useCallback((sessionId: string) => {
+    requestSessionArchive(sessionId);
   }, []);
 
   const handleTaskRename = useCallback(async (taskId: string, newTitle: string) => {
@@ -768,7 +764,7 @@ export function Sidebar() {
                   onChatStatusChange={handleChatStatusChangeById}
                   onSessionRename={handleTaskRename}
                   onSessionDelete={handleTaskDelete}
-                  onSessionArchive={handleTaskArchive}
+                  onSessionArchive={handleSessionArchive}
                   onSessionOpenInNewTab={handleTaskOpenInNewTab}
                   onSessionGenerateTitle={handleTaskGenerateTitle}
                   onSessionStopProcess={handleTaskStopProcess}
@@ -779,7 +775,7 @@ export function Sidebar() {
                 isRunningFilterActive={isRunningFilterActive}
                 onSessionClick={handleSessionClick}
                 onSessionDoubleClick={handleSessionDoubleClick}
-                onSessionArchive={handleTaskArchive}
+                onSessionArchive={handleSessionArchive}
                 onChatStatusChange={handleChatStatusChangeById}
                 onSessionRename={handleTaskRename}
                 onSessionDelete={handleTaskDelete}
@@ -847,7 +843,7 @@ export function Sidebar() {
                 onChatStatusChange={handleChatStatusChangeById}
                 onSessionRename={handleTaskRename}
                 onSessionDelete={handleTaskDelete}
-                onSessionArchive={handleTaskArchive}
+                onSessionArchive={handleSessionArchive}
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
                 onSessionStopProcess={handleTaskStopProcess}
@@ -872,7 +868,7 @@ export function Sidebar() {
                     onChatStatusChange={handleChatStatusChangeById}
                     onSessionRename={handleTaskRename}
                     onSessionDelete={handleTaskDelete}
-                    onSessionArchive={handleTaskArchive}
+                    onSessionArchive={handleSessionArchive}
                     onSessionOpenInNewTab={handleTaskOpenInNewTab}
                     onSessionGenerateTitle={handleTaskGenerateTitle}
                     onSessionStopProcess={handleTaskStopProcess}
@@ -930,7 +926,7 @@ export function Sidebar() {
                       onChatStatusChange={handleChatStatusChangeById}
                       onSessionRename={handleTaskRename}
                       onSessionDelete={handleTaskDelete}
-                      onSessionArchive={handleTaskArchive}
+                      onSessionArchive={handleSessionArchive}
                       onSessionOpenInNewTab={handleTaskOpenInNewTab}
                       onSessionGenerateTitle={handleTaskGenerateTitle}
                       onSessionStopProcess={handleTaskStopProcess}

@@ -60,7 +60,7 @@ export function TaskContextMenu({
 }: TaskContextMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
-  const hasArchiveAction = Boolean(onArchive && onUnarchive);
+  const hasArchiveAction = isArchived ? Boolean(onUnarchive) : Boolean(onArchive);
 
   useCloseOnEscape(onClose, { capture: true });
 
@@ -167,11 +167,10 @@ export function TaskContextMenu({
   }, [onClose, onStatusChange]);
 
   const handleArchiveToggle = useCallback(() => {
-    if (!onArchive || !onUnarchive) return;
     if (isArchived) {
-      onUnarchive();
+      onUnarchive?.();
     } else {
-      onArchive();
+      onArchive?.();
     }
     onClose();
   }, [isArchived, onArchive, onClose, onUnarchive]);
