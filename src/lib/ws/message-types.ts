@@ -8,6 +8,8 @@ import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type { PreparationStatus } from '@/lib/projects/preparation-status-policy';
+import type { WorkflowStatus } from '@/types/task-entity';
 import type {
   TerminalAppearance,
   TerminalLaunchIntent,
@@ -623,6 +625,10 @@ export type AppServerMessage =
       originClientId?: string;
       projectId: string;
       taskId?: string;
+      sessionId?: string;
+      title?: string;
+      workflowStatus?: WorkflowStatus;
+      preparationStatus?: PreparationStatus;
       archived?: boolean;
       affectedProjectIds?: string[];
     }

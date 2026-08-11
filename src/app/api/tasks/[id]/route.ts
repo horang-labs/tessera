@@ -134,7 +134,7 @@ export async function PATCH(
   }
 
   try {
-    const linkedSession = typeof patch.title === 'string' && task.sessions.length === 1
+    const linkedSession = task.sessions.length === 1
       ? dbSessions.getSession(task.sessions[0].id)
       : undefined;
     const applyPatch = async () => {
@@ -160,7 +160,7 @@ export async function PATCH(
         throw error;
       }
     };
-    if (linkedSession) {
+    if (linkedSession && typeof patch.title === 'string') {
       await withExclusiveTesseraSessionOperation(linkedSession.id, applyPatch);
     } else {
       await applyPatch();
@@ -171,6 +171,11 @@ export async function PATCH(
       kind: 'updated',
       projectId: task.projectId,
       taskId: id,
+      sessionId: linkedSession?.id,
+      ...(typeof patch.title === 'string' && { title: patch.title }),
+      ...(typeof patch.workflow_status === 'string' && {
+        workflowStatus: patch.workflow_status as typeof task.workflowStatus,
+      }),
       originClientId,
     });
     if (patch.workflow_status !== undefined) {

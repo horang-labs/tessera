@@ -397,6 +397,8 @@ function updateRetainedSession(
   );
 }
 
+let latestProjectLoadRequest = 0;
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   projects: [],
@@ -412,6 +414,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // Project loading
   loadProjects: async () => {
+    const requestId = ++latestProjectLoadRequest;
     try {
       const res = await fetch('/api/sessions/projects');
       if (!res.ok) throw new Error('Failed to load projects');
@@ -453,6 +456,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           cursorByStatus,
         };
       });
+
+      if (requestId !== latestProjectLoadRequest) return;
 
       set((state) => {
         const nextProjects = applySessionRuntimeLiveness(projects, state.runtimeLiveness);

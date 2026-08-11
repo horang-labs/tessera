@@ -67,6 +67,7 @@ export interface ArchiveItem {
     provider?: string;
     lastModified: string;
     isRunning: boolean;
+    archived: boolean;
   }>;
 }
 
@@ -209,6 +210,7 @@ async function mapChat(
       provider: row.provider,
       lastModified: row.updated_at,
       isRunning: getActiveSessionIds().has(row.id),
+      archived: true,
     }],
   };
 }
@@ -239,7 +241,10 @@ async function mapTask(
     canRestore: Boolean(task.workDir) && worktreeStatus === 'present',
     sharedWorktree: false,
     affectedProjectIds,
-    sessions: task.sessions,
+    sessions: task.sessions.map((session) => ({
+      ...session,
+      archived: session.archived ?? false,
+    })),
   };
 }
 

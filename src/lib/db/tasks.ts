@@ -271,6 +271,7 @@ function loadTaskSessions(
       provider: r.provider,
       lastModified: r.updated_at,
       isRunning: activeSessionIds.has(r.id),
+      archived: Boolean(r.archived),
       kind: extractSessionKind(r.provider_state),
       sortOrder: r.sort_order,
     }));

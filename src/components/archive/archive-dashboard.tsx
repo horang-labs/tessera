@@ -88,7 +88,7 @@ function primarySessionFromItem(item: ArchiveItem): UnifiedSession | null {
   return {
     id: session.id,
     title: session.title,
-    projectDir: item.projectId,
+    projectDir: item.workDir ?? item.projectId,
     originProjectId: item.projectId,
     isRunning: session.isRunning,
     status: session.isRunning ? 'running' : 'completed',
@@ -137,7 +137,9 @@ function taskFromArchiveItem(item: ArchiveItem): TaskEntity {
     archived: false,
     worktreeDeletedAt: item.worktreeDeletedAt,
     sortOrder: 0,
-    sessions: item.sessions.map((session) => taskSessionFromArchiveItem(session, item.projectId)),
+    sessions: item.sessions
+      .filter((session) => !session.archived)
+      .map((session) => taskSessionFromArchiveItem(session, item.projectId)),
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };

@@ -1,4 +1,6 @@
 import { wsServer } from './server';
+import type { PreparationStatus } from '@/lib/projects/preparation-status-policy';
+import type { WorkflowStatus } from '@/types/task-entity';
 
 export function getOriginClientIdFromRequest(req: Request | { headers: Headers }): string | undefined {
   const value = req.headers.get('x-tessera-client-id');
@@ -34,6 +36,10 @@ export function broadcastTaskMutation(userId: string, params: {
   originClientId?: string;
   projectId: string;
   taskId?: string;
+  sessionId?: string;
+  title?: string;
+  workflowStatus?: WorkflowStatus;
+  preparationStatus?: PreparationStatus;
   archived?: boolean;
   affectedProjectIds?: string[];
 }): void {

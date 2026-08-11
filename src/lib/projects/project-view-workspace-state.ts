@@ -4,12 +4,17 @@ import { buildOriginProjectRepresentation } from '@/lib/projects/origin-project-
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
+import type { PreparationStatus } from '@/lib/projects/preparation-status-policy';
 
 export interface TaskDerivedWorkspaceMutation {
   taskId: string;
+  /** Linked canonical Session whose title changed with a single-Session Task. */
+  sessionId?: string;
   /** Required for Project-local fields such as Collection placement. */
   projectViewId?: string;
+  title?: string;
   workflowStatus?: WorkflowStatus;
+  preparationStatus?: PreparationStatus;
   collectionId?: string | null;
   archived?: boolean;
 }
@@ -380,11 +385,17 @@ export function createProjectViewWorkspaceState(
       const taskAppearances = Object.values(tasksByProject)
         .flat()
         .filter((task) => task.id === mutation.taskId);
-      if (taskAppearances.length === 0) continue;
 
       const linkedSessionIds = new Set(
         taskAppearances.flatMap((task) => task.sessions.map((session) => session.id)),
       );
+      if (mutation.sessionId) linkedSessionIds.add(mutation.sessionId);
+      const hasSessionAppearance = projects.some((project) => project.sessions.some((session) => (
+        session.taskId === mutation.taskId || linkedSessionIds.has(session.id)
+      ))) || Object.values(retainedSessions).some((session) => (
+        session.taskId === mutation.taskId || linkedSessionIds.has(session.id)
+      ));
+      if (taskAppearances.length === 0 && !hasSessionAppearance) continue;
       const hasCollectionMutation = Object.hasOwn(mutation, 'collectionId');
       const hasArchiveMutation = Object.hasOwn(mutation, 'archived');
 
@@ -399,8 +410,17 @@ export function createProjectViewWorkspaceState(
               if (task.id !== mutation.taskId) return task;
               return {
                 ...task,
+                ...(mutation.title !== undefined && { title: mutation.title }),
                 ...(mutation.workflowStatus !== undefined && {
                   workflowStatus: mutation.workflowStatus,
+                }),
+                ...(mutation.preparationStatus !== undefined && {
+                  preparationStatus: mutation.preparationStatus,
+                }),
+                ...(mutation.title !== undefined && mutation.sessionId && {
+                  sessions: task.sessions.map((session) => session.id === mutation.sessionId
+                    ? { ...session, title: mutation.title! }
+                    : session),
                 }),
                 ...(hasCollectionMutation && {
                   collectionId: projectId === mutation.projectViewId
@@ -432,6 +452,10 @@ export function createProjectViewWorkspaceState(
           if (session.taskId !== mutation.taskId && !linkedSessionIds.has(session.id)) return session;
           return {
             ...session,
+            ...(mutation.title !== undefined && session.id === mutation.sessionId && {
+              title: mutation.title,
+              hasCustomTitle: true,
+            }),
             ...(hasCollectionMutation && {
               collectionId: project.encodedDir === mutation.projectViewId
                 ? mutation.collectionId ?? undefined
@@ -453,6 +477,10 @@ export function createProjectViewWorkspaceState(
           }
           return [sessionId, {
             ...session,
+            ...(mutation.title !== undefined && session.id === mutation.sessionId && {
+              title: mutation.title,
+              hasCustomTitle: true,
+            }),
             ...(mutation.workflowStatus !== undefined && {
               workflowStatus: mutation.workflowStatus,
             }),
@@ -576,7 +604,7 @@ export function createProjectViewWorkspaceState(
     ));
     dependencies.replaceProjects(previousProjects.map((project) => {
       if (
-        !projectViewIds.has(project.encodedDir)
+        project.encodedDir !== restoredSession.projectDir
         || project.sessions.some((session) => session.id === restoredSession.id)
       ) {
         return project;
@@ -646,7 +674,7 @@ export function createProjectViewWorkspaceState(
     ));
     dependencies.replaceProjects(previousProjects.map((project) => {
       const restoredTask = restoredTasks.get(project.encodedDir);
-      if (!restoredTask) return project;
+      if (!restoredTask || project.encodedDir !== restoredTask.workDir) return project;
       const existingSessionIds = new Set(project.sessions.map((session) => session.id));
       const sessions = restoredTask.sessions
         .filter((session) => !existingSessionIds.has(session.id))

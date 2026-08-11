@@ -101,6 +101,8 @@ export interface TaskSession {
   provider?: string;
   lastModified: string;
   isRunning: boolean;
+  /** Preserved only when an archive projection intentionally includes inactive children. */
+  archived?: boolean;
   /** Live canonical unread state when the Session is present in client workspace state. */
   unreadCount?: number;
   /** Fixed execution surface inherited from the linked session. */

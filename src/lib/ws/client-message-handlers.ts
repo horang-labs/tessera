@@ -450,10 +450,21 @@ export function handleIncomingServerMessage({
       if (msg.originClientId && msg.originClientId === getClientId()) {
         return { wasReconnect };
       }
-      if (msg.taskId && msg.archived !== undefined) {
+      if (msg.taskId && (
+        msg.title !== undefined
+        || msg.workflowStatus !== undefined
+        || msg.preparationStatus !== undefined
+        || msg.archived !== undefined
+      )) {
         projectViewWorkspaceState.applyTaskMutation({
           taskId: msg.taskId,
-          archived: msg.archived,
+          sessionId: msg.sessionId,
+          ...(msg.title !== undefined && { title: msg.title }),
+          ...(msg.workflowStatus !== undefined && { workflowStatus: msg.workflowStatus }),
+          ...(msg.preparationStatus !== undefined && {
+            preparationStatus: msg.preparationStatus,
+          }),
+          ...(msg.archived !== undefined && { archived: msg.archived }),
         });
       }
       void refreshProjectViewWorkspaceMutation(msg);
