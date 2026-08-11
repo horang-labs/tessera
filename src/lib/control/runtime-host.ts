@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import { providerIntegration } from '@/lib/cli/provider-integration';
 import { configureSharedProviderControlCliBridge } from '@/lib/terminal/shared-provider-launch-module';
 import { createControlCliBridgeFactory } from './cli-bridge';
 import { createDatabaseControlProjectSource } from './database-project-source';
@@ -88,6 +89,8 @@ export async function startControlRuntimeHost(
         sessionController: createTerminalControlSessionController({
           resolveUserId: requireUserId,
         }),
+        providerIntegration,
+        resolveUserId: requireUserId,
       }),
     });
   } catch (error) {

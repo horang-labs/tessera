@@ -7,7 +7,6 @@ import {
   cleanupCodexOverlayForTerminal,
   createCodexOverlay,
 } from '@/lib/terminal/codex-overlay';
-import { createClaudeSkillOverlay } from '@/lib/terminal/claude-skill-overlay';
 import { createOpenCodeOverlay } from '@/lib/terminal/opencode-overlay';
 
 const REPO_ROOT = process.cwd();
@@ -24,18 +23,6 @@ const FORBIDDEN_WORKFLOW_VOCABULARY = [
   /\bworker\s+completion\s+reports?\b/i,
   /\bprovider-native\s+subagent\s+management\b/i,
 ] as const;
-
-const CANONICAL_SKILL_FILES = ['SKILL.md', 'agents/openai.yaml'] as const;
-
-function assertCanonicalSkillDirectory(skillDir: string): void {
-  for (const relativePath of CANONICAL_SKILL_FILES) {
-    assert.equal(
-      fs.readFileSync(path.join(skillDir, relativePath), 'utf8'),
-      fs.readFileSync(path.join(SKILL_DIR, relativePath), 'utf8'),
-      relativePath,
-    );
-  }
-}
 
 test('the bundled Tessera CLI skill has concise canonical instructions and matching metadata', () => {
   const skill = fs.readFileSync(SKILL_PATH, 'utf8');
@@ -75,7 +62,7 @@ test('npm and Electron runtime packaging include the canonical skill folder', ()
   );
 });
 
-test('the Codex overlay exposes the canonical skill without changing user-owned skills', () => {
+test('the Codex overlay preserves a user-owned same-name skill without injecting Tessera content', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-skill-overlay-'));
   const dataDir = path.join(root, 'data');
   const accountHome = path.join(root, 'account');
@@ -90,7 +77,10 @@ test('the Codex overlay exposes the canonical skill without changing user-owned 
 
   try {
     const overlayHome = createCodexOverlay('control-skill-codex');
-    assertCanonicalSkillDirectory(path.join(overlayHome, 'skills', 'tessera-cli'));
+    assert.equal(
+      fs.readFileSync(path.join(overlayHome, 'skills', 'tessera-cli', 'SKILL.md'), 'utf8'),
+      userSkill,
+    );
     assert.equal(fs.readFileSync(accountSkill, 'utf8'), userSkill);
 
     cleanupCodexOverlayForTerminal('control-skill-codex');
@@ -105,7 +95,7 @@ test('the Codex overlay exposes the canonical skill without changing user-owned 
   }
 });
 
-test('the OpenCode overlay exposes the canonical skill without changing global config', () => {
+test('the OpenCode lifecycle overlay does not inject a skill or change global config', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-skill-overlay-'));
   const dataDir = path.join(root, 'data');
   const globalConfig = path.join(root, 'global-config');
@@ -120,8 +110,9 @@ test('the OpenCode overlay exposes the canonical skill without changing global c
 
   try {
     const overlay = createOpenCodeOverlay('control-skill-opencode');
-    assertCanonicalSkillDirectory(
-      path.join(overlay.configDir, 'skills', 'tessera-cli'),
+    assert.equal(
+      fs.existsSync(path.join(overlay.configDir, 'skills', 'tessera-cli')),
+      false,
     );
     assert.equal(fs.readFileSync(globalSkill, 'utf8'), userSkill);
 
@@ -133,47 +124,6 @@ test('the OpenCode overlay exposes the canonical skill without changing global c
     else process.env.TESSERA_DATA_DIR = previousDataDir;
     if (previousOpenCodeConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previousOpenCodeConfigDir;
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('the Claude plugin overlay exposes the canonical skill without changing user config', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-skill-overlay-'));
-  const dataDir = path.join(root, 'data');
-  const accountHome = path.join(root, 'account');
-  const accountSettings = path.join(accountHome, 'settings.json');
-  const previousDataDir = process.env.TESSERA_DATA_DIR;
-  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  fs.mkdirSync(accountHome, { recursive: true });
-  fs.writeFileSync(accountSettings, '{"theme":"dark"}\n');
-  process.env.TESSERA_DATA_DIR = dataDir;
-  process.env.CLAUDE_CONFIG_DIR = accountHome;
-
-  try {
-    const overlay = createClaudeSkillOverlay('control-skill-claude');
-    assertCanonicalSkillDirectory(
-      path.join(overlay.pluginDir, 'skills', 'tessera-cli'),
-    );
-    assert.deepEqual(
-      JSON.parse(
-        fs.readFileSync(path.join(overlay.pluginDir, '.claude-plugin', 'plugin.json'), 'utf8'),
-      ),
-      {
-        name: 'tessera',
-        description: 'Operate Tessera resources through the injected control CLI',
-      },
-    );
-    assert.equal(fs.readFileSync(accountSettings, 'utf8'), '{"theme":"dark"}\n');
-
-    overlay.dispose();
-    overlay.dispose();
-    assert.equal(fs.existsSync(overlay.pluginDir), false);
-    assert.equal(fs.readFileSync(accountSettings, 'utf8'), '{"theme":"dark"}\n');
-  } finally {
-    if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
-    else process.env.TESSERA_DATA_DIR = previousDataDir;
-    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-    else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

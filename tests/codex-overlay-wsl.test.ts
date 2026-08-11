@@ -73,14 +73,7 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
     assert.equal(fs.readlinkSync(path.join(overlay!, '.hidden-file')), path.join(codexHome, '.hidden-file'));
     assert.equal(
       fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/SKILL.md'), 'utf8'),
-      fs.readFileSync(path.join(process.cwd(), 'skills/tessera-cli/SKILL.md'), 'utf8'),
-    );
-    assert.equal(
-      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/agents/openai.yaml'), 'utf8'),
-      fs.readFileSync(
-        path.join(process.cwd(), 'skills/tessera-cli/agents/openai.yaml'),
-        'utf8',
-      ),
+      'user-owned Tessera skill\n',
     );
     assert.equal(
       fs.readlinkSync(path.join(overlay!, 'skills/user-skill')),

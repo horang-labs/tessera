@@ -24,10 +24,6 @@ import {
   writeCodexConfigAtomically,
   writeCodexTrustBaseline,
 } from './codex-trust-state';
-import {
-  materializeTesseraControlSkill,
-  TESSERA_CONTROL_SKILL_NAME,
-} from './tessera-control-skill';
 
 /**
  * 실 CODEX_HOME. process.env.CODEX_HOME은 절대 오버레이로 덮어쓰지 않는다
@@ -222,7 +218,6 @@ export function createCodexOverlay(
   }
   const accountSkillsDir = path.join(systemHome, 'skills');
   for (const entry of accountSkillEntries) {
-    if (entry === TESSERA_CONTROL_SKILL_NAME) continue;
     const source = path.join(accountSkillsDir, entry);
     const target = path.join(overlaySkillsDir, entry);
     try {
@@ -242,8 +237,6 @@ export function createCodexOverlay(
       logger.warn({ error, entry }, 'codex overlay: user skill could not be mirrored');
     }
   }
-  materializeTesseraControlSkill(overlaySkillsDir);
-
   const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksPath = path.join(overlayDir, 'hooks.json');
   writeCodexTrustBaseline(overlayDir, configToml);

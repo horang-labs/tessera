@@ -4,10 +4,26 @@ import type {
   ProviderIntegrationRequirements,
 } from './providers/provider-contract';
 import { getAgentEnvironment, resolveDefaultAgentEnvironment } from './spawn-cli';
+import {
+  createProviderSkillManager,
+  detectSupportedProviderSkills,
+  resolveOwnedProviderSkillHome,
+  type ProviderSkillId,
+  type ProviderSkillManagementRequest,
+  type ProviderSkillManagementResult,
+  type ProviderSkillManagerOptions,
+} from './provider-skill-management';
+
+export type {
+  ProviderSkillId,
+  ProviderSkillManagementRequest,
+  ProviderSkillManagementResult,
+} from './provider-skill-management';
 
 export type ProviderIntegrationArtifactState =
   | 'unchecked'
   | 'ready'
+  | 'stale'
   | 'absent'
   | 'conflict'
   | 'not-applicable';
@@ -16,6 +32,7 @@ export type ProviderIntegrationConsentState =
   | 'unchecked'
   | 'not-required'
   | 'granted'
+  | 'revoked'
   | 'declined';
 
 export interface ProviderIntegrationArtifactPolicy {
@@ -49,9 +66,13 @@ export interface ProviderIntegration {
   resolveLaunch(
     request: ProviderIntegrationLaunchRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
+  manageSkills(request: ProviderSkillManagementRequest): Promise<ProviderSkillManagementResult>;
 }
 
-interface ProviderIntegrationOptions {
+interface ProviderIntegrationOptions extends Partial<Omit<
+  ProviderSkillManagerOptions,
+  'resolveAgentEnvironment' | 'resolveDefaultEnvironment'
+>> {
   resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
   resolveDefaultEnvironment?: () => Promise<AgentEnvironment>;
 }
@@ -80,10 +101,8 @@ function resolveArtifactPolicy(
 /**
  * Shared policy boundary for provider launches.
  *
- * This prefactor deliberately records current policy without implementing the
- * later real-home, hook, skill-management, consent, conflict, or health work.
- * Callers receive domain decisions only; filesystem paths stay behind their
- * existing launch mechanisms.
+ * Callers receive domain decisions only; provider-home paths and skill
+ * ownership stay behind the shared integration boundary.
  */
 export function createProviderIntegration(
   options: ProviderIntegrationOptions = {},
@@ -91,25 +110,79 @@ export function createProviderIntegration(
   const resolveAgentEnvironment = options.resolveAgentEnvironment ?? getAgentEnvironment;
   const resolveDefaultEnvironment = options.resolveDefaultEnvironment
     ?? (async () => resolveDefaultAgentEnvironment());
+  const skillManager = createProviderSkillManager({
+    resolveAgentEnvironment,
+    resolveDefaultEnvironment,
+    detectSkillProviders: options.detectSkillProviders ?? detectSupportedProviderSkills,
+    resolveProviderSkillHome: options.resolveProviderSkillHome ?? resolveOwnedProviderSkillHome,
+    ...(options.providerSkillStateDirectory
+      ? { providerSkillStateDirectory: options.providerSkillStateDirectory }
+      : {}),
+    ...(options.readProviderSkillFiles
+      ? { readProviderSkillFiles: options.readProviderSkillFiles }
+      : {}),
+  });
 
   return {
+    manageSkills: (request) => skillManager.manage(request),
     async resolveLaunch(request) {
       const agentEnvironment = request.agentEnvironmentOwner.kind === 'user'
         ? await resolveAgentEnvironment(request.agentEnvironmentOwner.userId)
         : await resolveDefaultEnvironment();
       const requirements = request.provider.getProviderIntegrationRequirements?.()
         ?? DEFAULT_REQUIREMENTS;
+      let skill = resolveArtifactPolicy(requirements.skill);
+      let health: ProviderIntegrationHealth = { state: 'unchecked' };
+      if (requirements.skill !== 'not-applicable') {
+        try {
+          const maintained = await skillManager.maintain(
+            request.agentEnvironmentOwner,
+            normalizeProviderSkillId(request.provider.getProviderId()),
+            agentEnvironment,
+          );
+          skill = {
+            requirement: requirements.skill,
+            state: maintained.status.state === 'unavailable'
+              ? 'conflict'
+              : maintained.status.state,
+            consent: maintained.status.consent === 'not-granted'
+              ? 'declined'
+              : maintained.status.consent,
+          };
+          health = maintained.status.state === 'ready'
+            ? { state: 'healthy' }
+            : maintained.status.state === 'conflict' || maintained.status.state === 'unavailable'
+              ? { state: 'degraded' }
+              : { state: 'unchecked' };
+        } catch {
+          // Provider skills are optional. Environment, ownership, and filesystem
+          // failures are surfaced by management commands but never block launch.
+          skill = {
+            requirement: requirements.skill,
+            state: 'conflict',
+            consent: 'unchecked',
+          };
+          health = { state: 'degraded' };
+        }
+      }
       return {
         providerHome: {
           owner: 'agent-environment',
           agentEnvironment,
         },
         lifecycle: resolveArtifactPolicy(requirements.lifecycle),
-        skill: resolveArtifactPolicy(requirements.skill),
-        health: { state: 'unchecked' },
+        skill,
+        health,
       };
     },
   };
+}
+
+function normalizeProviderSkillId(providerId: string): ProviderSkillId {
+  if (providerId === 'claude-code' || providerId === 'codex' || providerId === 'opencode') {
+    return providerId;
+  }
+  throw new Error(`Provider ${providerId} does not support the tessera-cli skill.`);
 }
 
 export const providerIntegration = createProviderIntegration();

@@ -84,8 +84,8 @@ test('Provider Integration exposes path-free, provider-specific integration stat
   });
   assert.deepEqual(codex.skill, {
     requirement: 'optional',
-    state: 'unchecked',
-    consent: 'unchecked',
+    state: 'absent',
+    consent: 'declined',
   });
 
   const providerWithoutRequiredLifecycle = await providerIntegration.resolveLaunch({

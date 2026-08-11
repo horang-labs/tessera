@@ -25,6 +25,7 @@ export function isControlInvocation(argv) {
   }
   const args = withoutDescriptorSelector(argv);
   return args[0] === 'status'
+    || args[0] === 'skills'
     || args[0] === 'project'
     || args[0] === 'worktree'
     || args[0] === 'session';
@@ -143,6 +144,10 @@ export async function runControlCli(options) {
 export function controlUsage() {
   return `Control commands:
   tessera status [--json]
+  tessera skills status [--provider <claude-code|codex|opencode>]... [--json]
+  tessera skills install [--provider <claude-code|codex|opencode>]... [--json]
+  tessera skills update [--provider <claude-code|codex|opencode>]... [--json]
+  tessera skills remove [--provider <claude-code|codex|opencode>]... [--json]
   tessera project list [--json]
   tessera project show <project-id> [--json]
   tessera worktree list (--current | --project <project-id>) [--json]
@@ -217,6 +222,31 @@ function parseControlInvocation(argv, env) {
       descriptorPath,
       kind: 'status',
       requestPath: '/__tessera/control/v1/status',
+    };
+  }
+
+  if (
+    commandArgs.length >= 2
+    && commandArgs[0] === 'skills'
+    && ['status', 'install', 'update', 'remove'].includes(commandArgs[1])
+  ) {
+    const operation = commandArgs[1];
+    const providerIds = parseProviderSkillSelection(commandArgs.slice(2));
+    if (operation === 'status') {
+      const query = providerIds.length === 0
+        ? ''
+        : `?${providerIds.map((providerId) => `provider=${encodeURIComponent(providerId)}`).join('&')}`;
+      return {
+        descriptorPath,
+        kind: 'provider-skills-status',
+        requestPath: `/__tessera/control/v1/provider-skills${query}`,
+      };
+    }
+    return {
+      descriptorPath,
+      kind: `provider-skills-${operation}`,
+      requestPath: `/__tessera/control/v1/provider-skills/${operation}`,
+      requestBody: providerIds.length === 0 ? {} : { providerIds },
     };
   }
 
@@ -459,6 +489,25 @@ function parseControlInvocation(argv, env) {
   }
 
   throw new Error('Invalid Control command. Run tessera --help for usage.');
+}
+
+function parseProviderSkillSelection(args) {
+  const providerIds = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== '--provider') {
+      throw new Error(`Unknown provider skill option: ${args[index]}`);
+    }
+    const providerId = args[index + 1];
+    if (!providerId || providerId.startsWith('-')) {
+      throw new Error('--provider requires a provider ID.');
+    }
+    if (!['claude-code', 'codex', 'opencode'].includes(providerId)) {
+      throw new Error(`Unsupported provider skill target: ${providerId}`);
+    }
+    if (!providerIds.includes(providerId)) providerIds.push(providerId);
+    index += 1;
+  }
+  return providerIds;
 }
 
 function parseRequiredNamedValue(args, option, label) {
@@ -1091,6 +1140,9 @@ function isControlEnvelope(value) {
 const INVALID_SUCCESS_DATA = Symbol('invalid-success-data');
 
 function validateSuccessData(kind, data) {
+  if (kind.startsWith('provider-skills-')) {
+    return parseProviderSkillManagementResult(data) ?? INVALID_SUCCESS_DATA;
+  }
   if (kind === 'session-list') {
     if (!isRecord(data) || !Array.isArray(data.sessions)) return INVALID_SUCCESS_DATA;
     const sessions = data.sessions.map(parsePublicSessionDto);
@@ -1118,6 +1170,40 @@ function validateSuccessData(kind, data) {
     return parseSessionSnapshot(data) ?? INVALID_SUCCESS_DATA;
   }
   return data;
+}
+
+function parseProviderSkillManagementResult(value) {
+  if (
+    !isRecord(value)
+    || value.success !== true
+    || !['install', 'status', 'update', 'remove'].includes(value.operation)
+    || !['native', 'wsl'].includes(value.agentEnvironment)
+    || !Array.isArray(value.providers)
+  ) return null;
+  const providers = value.providers.map((provider) => {
+    if (
+      !isRecord(provider)
+      || !['claude-code', 'codex', 'opencode'].includes(provider.providerId)
+      || typeof provider.detected !== 'boolean'
+      || !['absent', 'ready', 'stale', 'conflict', 'unavailable'].includes(provider.state)
+      || !['granted', 'revoked', 'not-granted'].includes(provider.consent)
+      || !['none', 'tessera', 'user', 'unknown'].includes(provider.ownership)
+    ) return null;
+    return {
+      providerId: provider.providerId,
+      detected: provider.detected,
+      state: provider.state,
+      consent: provider.consent,
+      ownership: provider.ownership,
+    };
+  });
+  if (providers.some((provider) => provider === null)) return null;
+  return {
+    success: true,
+    operation: value.operation,
+    agentEnvironment: value.agentEnvironment,
+    providers,
+  };
 }
 
 function parsePublicSessionDto(value) {
@@ -1201,6 +1287,14 @@ function writeEnvelope(json, envelope, exitCode, kind) {
 }
 
 function writeHumanSuccess(kind, data) {
+  if (kind.startsWith('provider-skills-')) {
+    for (const provider of data.providers) {
+      process.stdout.write(
+        `${provider.providerId}\t${provider.state}\t${provider.consent}\t${provider.ownership}\n`,
+      );
+    }
+    return;
+  }
   if (kind === 'status') {
     process.stdout.write(
       `Connected to Tessera ${data.appVersion} (Control v${data.controlVersion}, instance ${data.instanceId})\n`,

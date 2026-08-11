@@ -5,6 +5,10 @@ import {
   type TerminalNamedKey,
 } from '@/lib/terminal/session-control-input';
 import type { WorktreeCreationSource } from '@/lib/worktrees/create';
+import {
+  PROVIDER_SKILL_IDS,
+  type ProviderSkillId,
+} from '@/lib/cli/provider-skill-management';
 import type { RuntimeDescriptor } from './runtime-descriptor';
 import {
   ControlOperationError,
@@ -99,6 +103,27 @@ export function createControlHttpHandler(options: {
       if (pathname === `${CONTROL_ROUTE_PREFIX}/projects`) {
         requireMethod(request, 'GET');
         writeSuccess(response, await service.listProjects(context));
+        return true;
+      }
+
+      if (pathname === `${CONTROL_ROUTE_PREFIX}/provider-skills`) {
+        requireMethod(request, 'GET');
+        writeSuccess(response, await service.manageProviderSkills({
+          operation: 'status',
+          ...readProviderSkillSelection(requestUrl),
+        }, context));
+        return true;
+      }
+
+      const providerSkillMutationMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/provider-skills/(install|update|remove)$`),
+      );
+      if (providerSkillMutationMatch) {
+        requireMethod(request, 'POST');
+        writeSuccess(response, await service.manageProviderSkills({
+          operation: providerSkillMutationMatch[1] as 'install' | 'update' | 'remove',
+          ...await readProviderSkillMutationBody(request),
+        }, context));
         return true;
       }
 
@@ -285,6 +310,42 @@ export function createControlHttpHandler(options: {
       return true;
     }
   };
+}
+
+function readProviderSkillSelection(requestUrl: URL | null): { providerIds?: ProviderSkillId[] } {
+  const values = requestUrl?.searchParams.getAll('provider') ?? [];
+  if (values.length === 0) return {};
+  return { providerIds: parseProviderSkillIds(values) };
+}
+
+async function readProviderSkillMutationBody(
+  request: IncomingMessage,
+): Promise<{ providerIds?: ProviderSkillId[] }> {
+  const body = await readJsonObject(request);
+  rejectUnknownFields(body, ['providerIds'], 'Provider skill mutation');
+  if (body.providerIds === undefined) return {};
+  if (!Array.isArray(body.providerIds) || body.providerIds.some((value) => typeof value !== 'string')) {
+    throw new ControlOperationError('INVALID_USAGE', 'Provider skill IDs are invalid.', 400);
+  }
+  return { providerIds: parseProviderSkillIds(body.providerIds as string[]) };
+}
+
+function parseProviderSkillIds(values: string[]): ProviderSkillId[] {
+  const providerIds = [...new Set(values)];
+  if (providerIds.length === 0) {
+    throw new ControlOperationError('INVALID_USAGE', 'At least one provider is required.', 400);
+  }
+  const unsupported = providerIds.find((value) => (
+    !(PROVIDER_SKILL_IDS as readonly string[]).includes(value)
+  ));
+  if (unsupported) {
+    throw new ControlOperationError(
+      'PROVIDER_NOT_SUPPORTED',
+      `Provider ${unsupported} does not support the tessera-cli skill.`,
+      400,
+    );
+  }
+  return providerIds as ProviderSkillId[];
 }
 
 function requireMethod(request: IncomingMessage, expected: 'GET' | 'POST'): void {

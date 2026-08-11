@@ -1,4 +1,9 @@
 import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
+import type {
+  ProviderIntegration,
+  ProviderSkillId,
+  ProviderSkillManagementResult,
+} from '@/lib/cli/provider-integration';
 import {
   validateProjectEnvironment,
   type ProjectFilesystemKind,
@@ -36,6 +41,10 @@ export type ControlErrorCode =
   | 'PREPARATION_FAILED'
   | 'PREPARATION_TIMEOUT'
   | 'PROVIDER_NOT_SUPPORTED'
+  | 'PROVIDER_SKILL_CONFLICT'
+  | 'PROVIDER_SKILL_CONSENT_REQUIRED'
+  | 'PROVIDER_SKILL_NO_PROVIDERS'
+  | 'PROVIDER_SKILL_TRANSACTION_FAILED'
   | 'INITIAL_PROMPT_TOO_LARGE'
   | 'INPUT_NOT_ACCEPTED'
   | 'SESSION_NOT_FOUND'
@@ -258,6 +267,10 @@ export interface ControlStatusDto {
 
 export interface ControlService {
   status(context: ControlCallerContext): Promise<ControlStatusDto>;
+  manageProviderSkills(
+    request: { operation: 'install' | 'status' | 'update' | 'remove'; providerIds?: ProviderSkillId[] },
+    context: ControlCallerContext,
+  ): Promise<ProviderSkillManagementResult>;
   listProjects(context: ControlCallerContext): Promise<{ projects: PublicProjectDto[] }>;
   showProject(projectId: string, context: ControlCallerContext): Promise<PublicProjectDto>;
   listWorktrees(
@@ -357,6 +370,8 @@ export function createControlService(options: {
   sessionMutator?: ControlSessionMutator;
   sessionObserver?: ControlSessionObserver;
   sessionController?: ControlSessionRuntimeController;
+  providerIntegration?: ProviderIntegration;
+  resolveUserId?: () => Promise<string>;
 }): ControlService {
   const {
     appVersion,
@@ -368,6 +383,8 @@ export function createControlService(options: {
     sessionMutator,
     sessionObserver,
     sessionController,
+    providerIntegration,
+    resolveUserId,
   } = options;
 
   return {
@@ -379,6 +396,30 @@ export function createControlService(options: {
         connectionState: 'connected',
         callerContext: publicCallerContext(context),
       };
+    },
+
+    async manageProviderSkills(request, _context) {
+      if (!providerIntegration || !resolveUserId) {
+        throw new ControlOperationError(
+          'PROVIDER_SKILL_TRANSACTION_FAILED',
+          'Provider skill management is unavailable in this Tessera runtime.',
+          503,
+        );
+      }
+      const userId = await resolveUserId();
+      const result = await providerIntegration.manageSkills({
+        ...request,
+        agentEnvironmentOwner: { kind: 'user', userId },
+      });
+      if (!result.success) {
+        throw new ControlOperationError(
+          result.error?.code ?? 'PROVIDER_SKILL_TRANSACTION_FAILED',
+          result.error?.message ?? 'Provider skill management failed.',
+          result.error?.code === 'PROVIDER_SKILL_CONFLICT' ? 409 : 400,
+          { result },
+        );
+      }
+      return result;
     },
 
     async listProjects(context) {

@@ -14,10 +14,6 @@ import {
   serializeCodexTrustBaseline,
 } from './codex-trust-state';
 import type { HookCommandStyle } from './hook-command';
-import {
-  buildPosixTesseraControlSkillMaterialization,
-  TESSERA_CONTROL_SKILL_NAME,
-} from './tessera-control-skill';
 
 /**
  * WSL 게스트 안에 per-terminal CODEX_HOME 오버레이를 만든다 (win32 호스트 +
@@ -132,12 +128,11 @@ export function buildWslCodexOverlayCreateScript(
     'if [ -d "$src/skills" ]; then',
     '  for entry in "$src"/skills/* "$src"/skills/.*; do',
     '    name="${entry##*/}"',
-    `    case "$name" in .|..|${TESSERA_CONTROL_SKILL_NAME}) continue ;; esac`,
+    '    case "$name" in .|..) continue ;; esac',
     '    [ -e "$entry" ] || continue',
     '    ln -s "$src/skills/$name" "$skills/$name" 2>/dev/null || true',
     '  done',
     'fi',
-    ...buildPosixTesseraControlSkillMaterialization('skills', env),
     `printf '%s' '${hooksJsonB64}' | base64 -d > "$overlay/hooks.json"`,
     'chmod 600 "$overlay/hooks.json"',
     // 호스트가 파싱하는 보고 라인들. --exec sh는 non-login이라 rc 노이즈가 없다.
