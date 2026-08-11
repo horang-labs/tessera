@@ -680,6 +680,7 @@ export const CollectionGroup = memo(function CollectionGroup({
       {contextMenu && (
         <CollectionContextMenu
           menu={contextMenu}
+          projectViewId={projectId}
           collections={contextMenuCollections}
           onClose={closeContextMenu}
           onRename={handleContextMenuRename}

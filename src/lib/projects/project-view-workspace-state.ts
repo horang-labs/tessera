@@ -267,8 +267,10 @@ export function createProjectViewWorkspaceState(
                 ...(mutation.workflowStatus !== undefined && {
                   workflowStatus: mutation.workflowStatus,
                 }),
-                ...(hasCollectionMutation && projectId === mutation.projectViewId && {
-                  collectionId: mutation.collectionId ?? undefined,
+                ...(hasCollectionMutation && {
+                  collectionId: projectId === mutation.projectViewId
+                    ? mutation.collectionId ?? undefined
+                    : undefined,
                 }),
                 ...(hasArchiveMutation && {
                   archived: mutation.archived,
@@ -295,8 +297,10 @@ export function createProjectViewWorkspaceState(
           if (session.taskId !== mutation.taskId && !linkedSessionIds.has(session.id)) return session;
           return {
             ...session,
-            ...(hasCollectionMutation && project.encodedDir === mutation.projectViewId && {
-              collectionId: mutation.collectionId ?? undefined,
+            ...(hasCollectionMutation && {
+              collectionId: project.encodedDir === mutation.projectViewId
+                ? mutation.collectionId ?? undefined
+                : undefined,
             }),
             ...(hasArchiveMutation && {
               archived: mutation.archived,
@@ -317,8 +321,10 @@ export function createProjectViewWorkspaceState(
             ...(mutation.workflowStatus !== undefined && {
               workflowStatus: mutation.workflowStatus,
             }),
-            ...(hasCollectionMutation && session.projectDir === mutation.projectViewId && {
-              collectionId: mutation.collectionId ?? undefined,
+            ...(hasCollectionMutation && {
+              collectionId: session.projectDir === mutation.projectViewId
+                ? mutation.collectionId ?? undefined
+                : undefined,
             }),
             ...(hasArchiveMutation && {
               archived: mutation.archived,

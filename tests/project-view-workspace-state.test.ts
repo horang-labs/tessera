@@ -228,9 +228,9 @@ test('Task-derived mutation matrix updates A/C appearances, retained state, and 
     collectionId: null,
   });
   assert.ok(collectionRollback);
-  assert.equal(tasksByProject['project-a'][0]?.collectionId, 'collection-a');
+  assert.equal(tasksByProject['project-a'][0]?.collectionId, undefined);
   assert.equal(tasksByProject['project-c'][0]?.collectionId, undefined);
-  assert.equal(projects[0]?.sessions[0]?.collectionId, 'collection-a');
+  assert.equal(projects[0]?.sessions[0]?.collectionId, undefined);
   assert.equal(projects[1]?.sessions[0]?.collectionId, undefined);
   assert.equal(retainedSessions[sessionId]?.collectionId, undefined);
   collectionRollback();

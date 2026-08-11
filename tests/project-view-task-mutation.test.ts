@@ -136,13 +136,41 @@ test('canonical Task mutations update every cached Project appearance without le
   assert.equal(await useTaskStore.getState().updateTask('shared-worktree', {
     collectionId: null,
   }), true);
-  assert.equal(useTaskStore.getState().tasksByProject['project-a'][0]?.collectionId, 'collection-a');
+  assert.equal(useTaskStore.getState().tasksByProject['project-a'][0]?.collectionId, undefined);
   assert.equal(useTaskStore.getState().tasksByProject['project-c'][0]?.collectionId, undefined);
-  assert.equal(useSessionStore.getState().projects[0]?.sessions[0]?.collectionId, 'collection-a');
+  assert.equal(useSessionStore.getState().projects[0]?.sessions[0]?.collectionId, undefined);
   assert.equal(useSessionStore.getState().projects[1]?.sessions[0]?.collectionId, undefined);
   assert.equal(useSessionStore.getState().retainedSessions['session-c']?.collectionId, undefined);
   assert.equal(useTaskStore.getState().tasks[0]?.projectViewId, 'project-c');
   assert.deepEqual(requestBodies[1], { collectionId: null, projectViewId: 'project-c' });
+});
+
+test('Collection mutation honors the requested Project appearance over currentProjectId', async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response('{}', { status: 200 });
+  };
+  seedAppearances();
+
+  assert.equal(await useTaskStore.getState().updateTask(
+    'shared-worktree',
+    { collectionId: 'collection-a-next' },
+    'project-a',
+  ), true);
+
+  assert.equal(
+    useTaskStore.getState().tasksByProject['project-a'][0]?.collectionId,
+    'collection-a-next',
+  );
+  assert.equal(useTaskStore.getState().tasksByProject['project-c'][0]?.collectionId, undefined);
+  assert.equal(useSessionStore.getState().projects[0]?.sessions[0]?.collectionId, 'collection-a-next');
+  assert.equal(useSessionStore.getState().projects[1]?.sessions[0]?.collectionId, undefined);
+  assert.equal(useSessionStore.getState().retainedSessions['session-c']?.collectionId, undefined);
+  assert.deepEqual(requestBody, {
+    collectionId: 'collection-a-next',
+    projectViewId: 'project-a',
+  });
 });
 
 test('failed workflow mutation rolls back every loaded appearance', async () => {

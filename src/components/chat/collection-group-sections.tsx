@@ -248,6 +248,7 @@ export function CollectionHeaderMenu({
 
 export function CollectionContextMenu({
   menu,
+  projectViewId,
   collections,
   onClose,
   onRename,
@@ -260,6 +261,7 @@ export function CollectionContextMenu({
   onRunPreparation,
 }: {
   menu: ContextMenuState;
+  projectViewId: string;
   collections?: Collection[];
   onClose: () => void;
   onRename?: () => void;
@@ -340,9 +342,9 @@ export function CollectionContextMenu({
         return;
       }
 
-      await useTaskStore.getState().updateTask(menu.targetId, { collectionId });
+      await useTaskStore.getState().updateTask(menu.targetId, { collectionId }, projectViewId);
     },
-    [menu, onClose],
+    [menu, onClose, projectViewId],
   );
 
   const menuItemClass = cn(
