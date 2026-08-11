@@ -78,6 +78,8 @@ interface TaskState {
   getTaskBySessionId: (sessionId: string) => TaskEntity | undefined;
   /** Get cached tasks for a specific project */
   getTasksForProject: (projectId: string) => TaskEntity[];
+  /** Mirror runtime liveness into linked Sessions projected only through Tasks. */
+  setLinkedSessionRunning: (sessionId: string, running: boolean) => void;
   /**
    * Update a linked session title in local task cache.
    * Single-session tasks also mirror the parent task title.
@@ -160,6 +162,28 @@ function syncLinkedTaskTitleInList(tasks: TaskEntity[], sessionId: string, title
       ...task,
       ...(shouldSyncTaskTitle && { title }),
       sessions: nextSessions,
+    };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function setLinkedSessionRunningInList(
+  tasks: TaskEntity[],
+  sessionId: string,
+  running: boolean,
+): TaskEntity[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    const session = task.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session || session.isRunning === running) return task;
+
+    changed = true;
+    return {
+      ...task,
+      sessions: task.sessions.map((candidate) =>
+        candidate.id === sessionId ? { ...candidate, isRunning: running } : candidate
+      ),
     };
   });
 
@@ -654,6 +678,17 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     if (get().currentProjectId === projectId) return get().tasks;
     return [];
   },
+
+  setLinkedSessionRunning: (sessionId, running) =>
+    set((state) => ({
+      tasks: setLinkedSessionRunningInList(state.tasks, sessionId, running),
+      tasksByProject: Object.fromEntries(
+        Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
+          projectId,
+          setLinkedSessionRunningInList(tasks, sessionId, running),
+        ])
+      ),
+    })),
 
   syncLinkedTaskTitle: (sessionId, title) =>
     set((state) => ({

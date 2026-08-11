@@ -84,6 +84,60 @@ async function openProject() {
   await page.getByTestId('sidebar').waitFor({ state: 'visible', timeout: 30_000 });
 }
 
+async function openRightPanel() {
+  await page.getByRole('button', {
+    name: /Open right Git panel|오른쪽 Git 패널 열기/,
+  }).click({ timeout: 30_000 });
+  await page.getByTestId('git-panel').waitFor({ state: 'visible', timeout: 30_000 });
+}
+
+async function startRightPanelSampler() {
+  await page.evaluate(() => {
+    window.__sentWebSocketMessages = [];
+    const originalSend = WebSocket.prototype.send;
+    WebSocket.prototype.send = function captureWebSocketSend(payload) {
+      if (typeof payload === 'string') window.__sentWebSocketMessages.push(payload);
+      return originalSend.call(this, payload);
+    };
+    const state = {
+      stopped: false,
+      loadingTransitions: 0,
+      readingLogTransitions: 0,
+      targetTransitions: [],
+      lastLoading: false,
+      lastReadingLog: false,
+      lastTarget: null,
+    };
+    const sample = () => {
+      const panel = document.querySelector('[data-testid="git-panel"]');
+      const text = panel?.textContent ?? '';
+      const loading = text.includes('Loading git surface…');
+      const readingLog = text.includes('Reading the log...') || text.includes('로그를 불러오는 중...');
+      const target = panel
+        ? `${panel.getAttribute('data-session-target') ?? ''}|${panel.getAttribute('data-worktree-target') ?? ''}`
+        : 'detached';
+
+      if (loading && !state.lastLoading) state.loadingTransitions += 1;
+      if (readingLog && !state.lastReadingLog) state.readingLogTransitions += 1;
+      if (target !== state.lastTarget) state.targetTransitions.push(target);
+
+      state.lastLoading = loading;
+      state.lastReadingLog = readingLog;
+      state.lastTarget = target;
+      if (!state.stopped) requestAnimationFrame(sample);
+    };
+    window.__rightPanelSampler = state;
+    requestAnimationFrame(sample);
+  });
+}
+
+async function stopRightPanelSampler() {
+  return page.evaluate(() => {
+    window.__rightPanelSampler.stopped = true;
+    return window.__rightPanelSampler;
+  });
+}
+
 async function startTitlePositionSampler(title) {
   await page.evaluate((targetTitle) => {
     const state = { stopped: false, positions: [] };
@@ -134,9 +188,11 @@ try {
   await addBrowserAuthCookie(context, server);
   page = await context.newPage();
   await openProject();
+  await openRightPanel();
 
   const title = 'stable-sidebar-worktree';
   await startTitlePositionSampler(title);
+  await startRightPanelSampler();
   await submitWorktree(title);
 
   const taskRow = page.locator('.task-item-container > [data-testid^="collection-task-"]')
@@ -154,7 +210,36 @@ try {
     1,
     `new Worktree title shifted horizontally while creation state changed: ${titlePositions.join(' -> ')}`,
   );
+  const rightPanel = await stopRightPanelSampler();
+
+  await taskRow.hover();
+  const stopButton = taskRow.locator('[data-testid^="collection-task-quick-stop-"]');
+  await stopButton.waitFor({ state: 'visible', timeout: 30_000 });
+  const sessionId = await taskRow.getAttribute('data-session-id');
+  assert.ok(sessionId, 'the created Worktree task did not expose its Session ID');
+  await stopButton.click();
+  await page.waitForFunction(() => (
+    document.querySelector('[data-testid^="collection-task-quick-stop-"]')
+      ?.getAttribute('title') === 'Click again to stop process'
+  ));
+  await stopButton.click();
+  await stopButton.waitFor({ state: 'detached', timeout: 10_000 });
+  const sentStopMessages = await page.evaluate(() => window.__sentWebSocketMessages
+    .map((payload) => {
+      try { return JSON.parse(payload); } catch { return null; }
+    })
+    .filter((message) => message?.type === 'stop_session'));
+  assert.equal(sentStopMessages.length, 1, 'the stop control did not send exactly one stop request');
+  assert.equal(sentStopMessages[0].sessionId, sessionId, 'the stop control targeted the Task instead of its Session');
+
+  assert.equal(
+    rightPanel.loadingTransitions,
+    0,
+    `right Git panel flashed its loading surface during Worktree creation; targets: ${rightPanel.targetTransitions.join(' -> ')}`,
+  );
+
   console.log(`Sidebar Worktree title stayed fixed at x=${titlePositions[0]}px during creation.`);
+  console.log(`Right panel targets: ${rightPanel.targetTransitions.join(' -> ')}`);
 } finally {
   await browser?.close().catch(() => {});
   await server?.stop().catch(() => {});

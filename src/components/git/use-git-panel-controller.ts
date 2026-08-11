@@ -40,7 +40,6 @@ import {
   restrictGitMenuToSession,
   restrictPrimaryGitActionToSession,
 } from '@/lib/git/git-target-capabilities';
-import { resolveWorkspaceTarget } from '@/types/worktree';
 import { startGitPanelPolling } from "@/lib/git/git-panel-poll";
 import { gitPanelDiffPath, readGitPanelState } from "@/lib/git/git-panel-read";
 import {
@@ -153,11 +152,18 @@ export function useGitPanelController(
   worktreeId: string | null = null,
 ) {
   const { t } = useI18n();
+  const targetKind = sessionId ? 'session' : worktreeId ? 'worktree' : null;
+  const targetId = sessionId ?? worktreeId;
   const target = useMemo<WorkspaceTarget | null>(
-    () => resolveWorkspaceTarget(sessionId, worktreeId),
-    [sessionId, worktreeId],
+    () => targetKind && targetId ? { kind: targetKind, id: targetId } : null,
+    [targetId, targetKind],
   );
-  const targetKey = sessionId ?? (worktreeId ? `worktree:${worktreeId}` : null);
+  const targetKey = target?.kind === 'session'
+    ? target.id
+    : target?.kind === 'worktree'
+      ? `worktree:${target.id}`
+      : null;
+  const targetWorktreeId = target?.kind === 'worktree' ? target.id : null;
   const initialCache = getPanelSessionCache(targetKey);
   const data = useGitPanelStore((state) =>
     targetKey ? state.dataBySessionId[targetKey] ?? null : null,
@@ -189,6 +195,7 @@ export function useGitPanelController(
     if (!target || (sessionId && isTransientSessionId(sessionId))) return false;
     return !useGitPanelStore.getState().dataBySessionId[targetKey!];
   });
+  const previousSessionIdRef = useRef(sessionId);
   const [error, setError] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(
     () => initialCache?.selectedPath ?? null,
@@ -302,9 +309,9 @@ export function useGitPanelController(
       }
 
       applyGitPanelData(targetKey, result.data);
-      if (worktreeId) {
+      if (targetWorktreeId) {
         useSessionStore.getState().updateProjectWorktreeBranch(
-          worktreeId,
+          targetWorktreeId,
           result.data.detached ? null : result.data.branch,
         );
       }
@@ -312,7 +319,7 @@ export function useGitPanelController(
     } finally {
       setLoading(false);
     }
-  }, [applyGitPanelData, sessionId, target, targetKey, worktreeId]);
+  }, [applyGitPanelData, sessionId, target, targetKey, targetWorktreeId]);
 
   const loadChangedFiles = useCallback(async () => {
     if (!sessionId) return;
@@ -351,6 +358,8 @@ export function useGitPanelController(
 
   useEffect(() => {
     const cached = getPanelSessionCache(targetKey);
+    const previousSessionId = previousSessionIdRef.current;
+    previousSessionIdRef.current = sessionId;
 
     setError(null);
     setSelectedPath(cached?.selectedPath ?? null);
@@ -372,10 +381,19 @@ export function useGitPanelController(
     const hasStoreData = Boolean(
       useGitPanelStore.getState().dataBySessionId[targetKey],
     );
-    setLoading(!hasStoreData);
+    const resolvedOptimisticSession = isTransientSessionId(previousSessionId)
+      && Boolean(sessionId)
+      && !isTransientSessionId(sessionId);
+    const resolvedWorktreeSessionFromEmptyTarget = previousSessionId === null
+      && Boolean(sessionId)
+      && Boolean(worktreeId);
+    const showLoading = !hasStoreData
+      && !resolvedOptimisticSession
+      && !resolvedWorktreeSessionFromEmptyTarget;
+    setLoading(showLoading);
 
-    void loadPanel({ silent: hasStoreData });
-  }, [loadPanel, sessionId, target, targetKey]);
+    void loadPanel({ silent: !showLoading });
+  }, [loadPanel, sessionId, target, targetKey, worktreeId]);
 
   useEffect(() => {
     if (!targetKey) return;
@@ -428,16 +446,16 @@ export function useGitPanelController(
       target,
       apply: (nextData) => {
         applyGitPanelData(targetKey, nextData);
-        if (worktreeId) {
+        if (targetWorktreeId) {
           useSessionStore.getState().updateProjectWorktreeBranch(
-            worktreeId,
+            targetWorktreeId,
             nextData.detached ? null : nextData.branch,
           );
         }
       },
       isVisible: () => document.visibilityState === "visible",
     });
-  }, [applyGitPanelData, sessionId, target, targetKey, worktreeId]);
+  }, [applyGitPanelData, sessionId, target, targetKey, targetWorktreeId]);
 
   const panelData = useMemo<GitPanelData | null>(() => {
     if (!data) return null;
