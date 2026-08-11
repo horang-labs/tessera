@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execCli, isRunningInWsl, type CliEnvironment } from '@/lib/cli/cli-exec';
 import { buildWslFilesystemPathProbe } from '@/lib/filesystem/wsl-path-probe';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
@@ -7,6 +8,17 @@ interface CodexProviderHomeDependencies {
   exec?: typeof execCli;
   runtimePlatform?: () => NodeJS.Platform;
   runningInWsl?: () => boolean;
+}
+
+/** Stable, path-free identity for one Codex home in one Agent Environment. */
+export function fingerprintCodexProviderHome(
+  environment: CliEnvironment,
+  providerHomeFilesystemPath: string,
+): string {
+  const normalized = path.normalize(providerHomeFilesystemPath).replace(/[\\/]+$/u, '');
+  return `codex-home:v1:${createHash('sha256')
+    .update(`${environment}\0${normalized}`)
+    .digest('hex')}`;
 }
 
 function lastNonEmptyLine(value: string): string | null {

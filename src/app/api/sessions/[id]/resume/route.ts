@@ -4,6 +4,7 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { resolveSessionWorkspaceRoot } from '@/lib/session/session-workspace-root';
 import logger from '@/lib/logger';
 import { isTerminalHandoffConflictError } from '@/lib/terminal/terminal-handoff-lock';
+import { isProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
 
 /**
  * POST /api/sessions/[id]/resume - Resume a session
@@ -67,6 +68,12 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (err: any) {
+    if (isProviderSessionResumeUnavailableError(err)) {
+      return NextResponse.json(
+        { error: err.code, reason: err.reason, detail: err.message },
+        { status: 409 },
+      );
+    }
     if (isTerminalHandoffConflictError(err)) {
       return NextResponse.json(
         { error: err.code, detail: err.message },

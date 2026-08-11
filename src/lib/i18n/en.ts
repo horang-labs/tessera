@@ -357,6 +357,11 @@ export const en: I18nMessages = {
       nativeDesc: 'Run the agent directly in Windows',
       wsl: 'Windows Subsystem for Linux',
       wslDesc: 'Run the agent inside WSL',
+      changeTitle: 'Change the Codex home?',
+      changeDescription: '{{count}} managed Codex session(s) will be unavailable until you switch back. Their provider conversations will not be moved or deleted.',
+      cancelChange: 'Keep current environment',
+      confirmChange: 'Change environment',
+      changing: 'Changing…',
     },
     worktree: {
       title: 'Worktree',

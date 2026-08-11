@@ -357,6 +357,11 @@ export const zh: I18nMessages = {
       nativeDesc: '直接在Windows中运行代理',
       wsl: 'Windows Subsystem for Linux',
       wslDesc: '在WSL内运行代理',
+      changeTitle: '更改 Codex 主目录？',
+      changeDescription: '{{count}} 个受管 Codex 会话将不可用，直到切回原环境。提供方对话不会被移动或删除。',
+      cancelChange: '保留当前环境',
+      confirmChange: '更改环境',
+      changing: '正在更改…',
     },
     worktree: {
       title: '工作树',

@@ -211,29 +211,21 @@ test('archiving a task stops the live PTY runtimes of its sessions', async (t) =
   assert.equal(terminalManager.getActiveSessionIds('user-1').has(sessionId), false);
 });
 
-test('delete preserves local data on remote failure and removes it after success', async () => {
+test('deleting a management record never deletes provider-owned Codex history', async () => {
   dbSessions.createSession('delete-codex', 'project-lifecycle', 'Delete me', 'codex', {
     workDir: dataDir,
     providerState: JSON.stringify({ threadId: 'thread-delete' }),
   });
-  sessionHistory.recordUserMessage('delete-codex', 'must survive failure');
-  setCodexThreadControlRequestExecutorForTests(async () => {
-    throw new Error('delete rejected');
-  });
-  await assert.rejects(
-    sessionOrchestrator.deleteSession('user-1', 'delete-codex'),
-    /delete rejected/,
-  );
-  assert.equal(dbSessions.getSession('delete-codex')?.deleted, 0);
-  assert.equal(await sessionHistory.historyExists('delete-codex'), true);
+  sessionHistory.recordUserMessage('delete-codex', 'local management history');
+  const providerMethods: string[] = [];
 
-  setCodexThreadControlRequestExecutorForTests(async (_context, method, params) => {
-    assert.equal(method, 'thread/delete');
-    assert.deepEqual(params, { threadId: 'thread-delete' });
-    assert.equal(dbSessions.getSession('delete-codex')?.deleted, 0);
+  setCodexThreadControlRequestExecutorForTests(async (_context, method) => {
+    providerMethods.push(method);
     return {};
   });
   await sessionOrchestrator.deleteSession('user-1', 'delete-codex');
+
+  assert.deepEqual(providerMethods, []);
   assert.equal(dbSessions.getSession('delete-codex'), undefined);
   assert.equal(await sessionHistory.historyExists('delete-codex'), false);
 });

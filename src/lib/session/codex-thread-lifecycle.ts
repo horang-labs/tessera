@@ -1,7 +1,6 @@
 import { existsSync } from 'fs';
 
 import {
-  deleteCodexThread,
   renameCodexThread,
   setCodexThreadArchived,
   type CodexThreadControlContext,
@@ -37,6 +36,7 @@ function getMutationTarget(
     context: {
       userId,
       workDir: sessionWorkDir ?? projectWorkDir,
+      requiredProviderHomeIdentity: session.origin_provider_home_identity ?? undefined,
     },
   };
 }
@@ -49,15 +49,6 @@ export async function syncCodexThreadName(
   const target = getMutationTarget(session, userId);
   if (!target) return;
   await renameCodexThread(target.context, target.threadId, name);
-}
-
-export async function syncCodexThreadDelete(
-  session: dbSessions.SessionRow,
-  userId?: string,
-): Promise<void> {
-  const target = getMutationTarget(session, userId);
-  if (!target) return;
-  await deleteCodexThread(target.context, target.threadId);
 }
 
 /**

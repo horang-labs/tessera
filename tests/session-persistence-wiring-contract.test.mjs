@@ -50,6 +50,14 @@ test('resume falls back to the persisted model/effort when the caller omits them
   assert.match(lifecycle, /if \(!modelOption\) \{[\s\S]*return options;/);
 });
 
+test('Codex resume never replaces missing provider history with a fresh thread', () => {
+  assert.doesNotMatch(lifecycle, /Codex resume failed without canonical history; retrying with thread\/start/);
+  assert.doesNotMatch(
+    lifecycle,
+    /providerId === 'codex'[\s\S]{0,500}resume:\s*false/,
+  );
+});
+
 test('API mapping exposes model + reasoningEffort for stopped sessions', () => {
   const sessions = read('../src/lib/db/sessions.ts');
   assert.match(sessions, /model: row\.model \?\? undefined/);

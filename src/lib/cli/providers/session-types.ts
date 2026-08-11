@@ -43,6 +43,8 @@ export interface SpawnOptions extends ProviderRuntimeControls {
    * sessions.provider_state as {"threadId": "..."}.
    */
   threadId?: string;
+  /** Opaque origin-home binding for a managed provider session. */
+  originProviderHomeIdentity?: string;
   /**
    * OpenCode: ACP sessionId from session/new, stored in sessions.provider_state
    * as {"opencodeSessionId": "..."}.

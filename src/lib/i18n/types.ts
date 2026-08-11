@@ -332,6 +332,11 @@ export interface I18nMessages {
       nativeDesc: string;
       wsl: string;
       wslDesc: string;
+      changeTitle: string;
+      changeDescription: string;
+      cancelChange: string;
+      confirmChange: string;
+      changing: string;
     };
     worktree: {
       title: string;

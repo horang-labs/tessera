@@ -58,6 +58,7 @@ function withTestTerminalSessionObserver(
         && !preserveLaunchPreparation
       ) {
         return async () => ({
+          providerHomeIdentity: 'codex-home:test',
           buildEnvironment: (baseEnvironment: NodeJS.ProcessEnv) => ({
             ...baseEnvironment,
             CODEX_HOME: process.platform === 'win32'
@@ -65,6 +66,7 @@ function withTestTerminalSessionObserver(
               : process.env.CODEX_HOME,
             TESSERA_CODEX_HOME: undefined,
           }),
+          inspectResume: async () => ({ state: 'available' as const }),
         });
       }
       const value = Reflect.get(target, property, target) as unknown;

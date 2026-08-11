@@ -357,6 +357,11 @@ export const ko: I18nMessages = {
       nativeDesc: 'Windows에서 직접 에이전트 실행',
       wsl: 'Windows Subsystem for Linux',
       wslDesc: 'WSL 내부에서 에이전트 실행',
+      changeTitle: 'Codex 홈을 변경할까요?',
+      changeDescription: '관리형 Codex 세션 {{count}}개는 원래 환경으로 돌아올 때까지 사용할 수 없습니다. 제공자 대화는 이동되거나 삭제되지 않습니다.',
+      cancelChange: '현재 환경 유지',
+      confirmChange: '환경 변경',
+      changing: '변경 중…',
     },
     worktree: {
       title: '워크트리',

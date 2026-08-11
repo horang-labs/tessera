@@ -226,6 +226,7 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'model', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'origin_provider_home_identity', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'worktree_id', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'scope_branch', 'TEXT');
@@ -1089,6 +1090,11 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
   if (fromVersion < 40) {
     ensureControlAuditHistory(db);
     logger.info('Migration v40 applied: Project-owned Control audit history added');
+  }
+
+  if (fromVersion < 41) {
+    addColumnIfMissing(db, 'sessions', 'origin_provider_home_identity', 'TEXT');
+    logger.info('Migration v41 applied: managed Codex origin home binding added');
   }
 }
 

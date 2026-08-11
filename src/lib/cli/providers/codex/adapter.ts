@@ -69,6 +69,8 @@ import {
 } from '../../provider-integration';
 import { createCodexLifecycleHookIntegration } from './lifecycle-hook-integration';
 import { resolveCodexHomeForEnvironment } from './provider-home';
+import { fingerprintCodexProviderHome } from './provider-home';
+import { inspectCodexManagedSessionResume } from './managed-session';
 import { buildCodexAppServerRequestEnvironment } from './app-server-request-client';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
 import {
@@ -82,7 +84,10 @@ import {
   synthesizeRunnableStatus,
   summarizeExecProbe,
 } from '../../status-detection';
-import { updateProviderStateWithRetry } from '../../process-manager-side-effects';
+import {
+  bindProviderHomeWithRetry,
+  updateProviderStateWithRetry,
+} from '../../process-manager-side-effects';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
@@ -177,6 +182,7 @@ interface CodexRuntimeConfig {
   collaborationMode?: CodexCollaborationMode;
   approvalPolicy?: CodexApprovalPolicy;
   sandboxMode?: CodexSandboxMode;
+  providerHomeIdentity?: string;
 }
 
 function resolveCodexAccessConfig(runtimeConfig?: CodexRuntimeConfig): {
@@ -324,7 +330,9 @@ export class CodexAdapter implements CliProvider {
     context: ProviderLaunchEnvironmentContext,
   ): Promise<ProviderLaunchPreparation> {
     const providerHome = await this._resolveProviderHome(context.environment);
+    const providerHomeIdentity = fingerprintCodexProviderHome(context.environment, providerHome);
     return {
+      providerHomeIdentity,
       lifecycle: this._createLifecycleIntegration({
         resolveProviderHome: async () => providerHome,
       }),
@@ -333,6 +341,12 @@ export class CodexAdapter implements CliProvider {
         context.environment,
         providerHome,
       ),
+      inspectResume: (providerSessionId) => inspectCodexManagedSessionResume({
+        environment: context.environment,
+        userId: context.userId,
+        workDir: context.workDir,
+        providerHomeFilesystemPath: providerHome,
+      }, providerSessionId),
     };
   }
 
@@ -532,6 +546,12 @@ export class CodexAdapter implements CliProvider {
         ? { kind: 'user', userId: options.userId }
         : { kind: 'server-default' },
       workDir,
+      ...(options.originProviderHomeIdentity
+        ? { requiredProviderHomeIdentity: options.originProviderHomeIdentity }
+        : {}),
+      ...(options.resume && options.threadId
+        ? { resumeProviderSessionId: options.threadId }
+        : {}),
     });
     const agentEnv = integration.providerHome.agentEnvironment;
     const launchEnvironment = this._providerIntegration.buildLaunchEnvironment(
@@ -589,6 +609,7 @@ export class CodexAdapter implements CliProvider {
       collaborationMode: options.collaborationMode as CodexCollaborationMode | undefined,
       approvalPolicy: options.approvalPolicy as CodexApprovalPolicy | undefined,
       sandboxMode: options.sandboxMode as CodexSandboxMode | undefined,
+      providerHomeIdentity: integration.providerHome.identity,
     });
 
     codexProtocolParser.setSessionModel(options.sessionId ?? '__provider__', options.model);
@@ -1238,6 +1259,10 @@ export class CodexAdapter implements CliProvider {
       this._processThreadIds.set(proc, tid);
       if (sessionId !== '__provider__') {
         updateProviderStateWithRetry(sessionId, { threadId: tid });
+        const providerHomeIdentity = this._processRuntimeConfig.get(proc)?.providerHomeIdentity;
+        if (providerHomeIdentity) {
+          bindProviderHomeWithRetry(sessionId, providerHomeIdentity);
+        }
       }
       logger.info(`CodexAdapter: ${threadMethod} handshake complete`, {
         sessionId,

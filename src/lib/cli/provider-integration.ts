@@ -19,6 +19,14 @@ import {
   type ProviderSkillManagementResult,
   type ProviderSkillManagerOptions,
 } from './provider-skill-management';
+import {
+  ProviderSessionResumeUnavailableError,
+} from './provider-session-resume';
+
+export {
+  ProviderSessionResumeUnavailableError,
+  isProviderSessionResumeUnavailableError,
+} from './provider-session-resume';
 
 export type {
   ProviderSkillId,
@@ -67,6 +75,7 @@ export interface ProviderIntegrationLaunchDecision {
   providerHome: {
     owner: 'agent-environment';
     agentEnvironment: AgentEnvironment;
+    identity?: string;
   };
   lifecycle: ProviderIntegrationArtifactPolicy;
   skill: ProviderIntegrationArtifactPolicy;
@@ -92,6 +101,8 @@ export interface ProviderIntegrationLaunchRequest {
     | { kind: 'server-default' };
   workDir?: string | null;
   compatibility?: 'exact-legacy-overlay-resume';
+  requiredProviderHomeIdentity?: string;
+  resumeProviderSessionId?: string;
 }
 
 export interface ProviderIntegrationLifecycleRequest extends ProviderIntegrationLaunchRequest {
@@ -103,7 +114,20 @@ export interface ProviderIntegrationLifecycleInstallRequest
   consent: 'granted' | 'declined';
 }
 
+export interface ProviderHomeResolutionRequest {
+  provider: Pick<
+    CliProvider,
+    'getProviderId' | 'getProviderIntegrationRequirements' | 'prepareLaunchIntegration'
+  >;
+  agentEnvironment: AgentEnvironment;
+  userId?: string;
+  workDir?: string | null;
+}
+
 export interface ProviderIntegration {
+  resolveProviderHome(
+    request: ProviderHomeResolutionRequest,
+  ): Promise<ProviderIntegrationLaunchDecision['providerHome']>;
   resolveLaunch(
     request: ProviderIntegrationLaunchRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
@@ -256,6 +280,21 @@ export function createProviderIntegration(
 
   return {
     manageSkills: (request) => skillManager.manage(request),
+    async resolveProviderHome(request) {
+      const preparation = await request.provider.prepareLaunchIntegration?.({
+        environment: request.agentEnvironment,
+        userId: request.userId,
+        workDir: request.workDir,
+      });
+      if (!preparation?.providerHomeIdentity) {
+        throw new Error(`${request.provider.getProviderId()} did not provide an Authoritative Provider Home identity.`);
+      }
+      return {
+        owner: 'agent-environment',
+        agentEnvironment: request.agentEnvironment,
+        identity: preparation.providerHomeIdentity,
+      };
+    },
     async resolveLaunch(request) {
       const agentEnvironment = await resolveEnvironment(request);
       const requirements = request.provider.getProviderIntegrationRequirements();
@@ -347,6 +386,24 @@ export function createProviderIntegration(
           );
         }
       }
+      if (launchPreparation?.providerHomeIdentity) {
+        decision = {
+          ...decision,
+          providerHome: {
+            ...decision.providerHome,
+            identity: launchPreparation.providerHomeIdentity,
+          },
+        };
+      }
+      if (
+        request.requiredProviderHomeIdentity
+        && launchPreparation?.providerHomeIdentity !== request.requiredProviderHomeIdentity
+      ) {
+        throw new ProviderSessionResumeUnavailableError(
+          'origin-home-not-authoritative',
+          'This managed session belongs to a different Codex home. Switch back to its origin Agent Environment to resume it.',
+        );
+      }
       if (requirements.lifecycle === 'required') {
         const lifecycle = options.lifecycle
           ?? launchPreparation?.lifecycle
@@ -391,6 +448,24 @@ export function createProviderIntegration(
           throw new ProviderIntegrationLaunchBlockedError(
             decision,
             launchBlockedMessage(request.provider.getProviderId(), decision),
+          );
+        }
+      }
+
+      if (request.resumeProviderSessionId) {
+        const inspection = launchPreparation?.inspectResume
+          ? await launchPreparation.inspectResume(request.resumeProviderSessionId)
+          : { state: 'missing' as const };
+        if (inspection.state === 'missing') {
+          throw new ProviderSessionResumeUnavailableError(
+            'provider-history-missing',
+            'The Codex conversation is missing from its origin home. Tessera kept the management record but cannot resume it.',
+          );
+        }
+        if (inspection.state === 'already-loaded') {
+          throw new ProviderSessionResumeUnavailableError(
+            'provider-session-already-running',
+            'This Codex conversation is already loaded by another runtime. Fork it to work in parallel.',
           );
         }
       }

@@ -25,6 +25,7 @@ export type {
   ProviderLifecycleIntegration,
   ProviderLaunchEnvironmentContext,
   ProviderLaunchPreparation,
+  ProviderSessionResumeInspection,
   ProviderLifecycleResult,
   ProviderLifecycleState,
   ProviderLifecycleTrust,

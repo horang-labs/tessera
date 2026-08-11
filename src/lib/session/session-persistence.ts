@@ -19,6 +19,7 @@ interface PersistCreatedSessionRecordOptions {
   reasoningEffort?: string | null;
   serviceTier?: string | null;
   providerState?: string | null;
+  originProviderHomeIdentity?: string | null;
 }
 
 interface PersistedSessionProject {
@@ -69,6 +70,7 @@ export function persistCreatedSessionRecord(
       reasoningEffort: options.reasoningEffort,
       serviceTier: options.serviceTier,
       providerState: options.providerState,
+      originProviderHomeIdentity: options.originProviderHomeIdentity,
     },
   );
 

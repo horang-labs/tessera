@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 40;
+export const SCHEMA_VERSION = 41;
 
 /**
  * v38 needs the authenticated agent environment before legacy path evidence
@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   has_custom_title INTEGER NOT NULL DEFAULT 0,
   provider         TEXT NOT NULL,
   provider_state   TEXT,
+  origin_provider_home_identity TEXT,
   model            TEXT,
   reasoning_effort TEXT,
   service_tier     TEXT,

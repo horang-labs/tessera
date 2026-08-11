@@ -41,6 +41,24 @@ export function updateProviderStateWithRetry(
   doUpdate(false);
 }
 
+export function bindProviderHomeWithRetry(sessionId: string, identity: string): void {
+  const bind = (isRetry: boolean) => {
+    try {
+      // Adapter harnesses and provider probes do not necessarily own a Tessera
+      // database record. A managed runtime does, and is bound exactly once.
+      if (!dbSessions.getSession(sessionId)) return;
+      dbSessions.bindSessionOriginProviderHome(sessionId, identity);
+    } catch (error) {
+      if (!isRetry) {
+        setTimeout(() => bind(true), 50);
+      } else {
+        logger.error({ sessionId, error }, 'Provider home binding failed');
+      }
+    }
+  };
+  bind(false);
+}
+
 function parseProviderState(providerState: string | null): Record<string, unknown> {
   if (!providerState) {
     return {};

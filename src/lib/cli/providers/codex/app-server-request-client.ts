@@ -11,7 +11,8 @@ import {
   normalizeCwdForCliEnvironment,
   spawnCli,
 } from '@/lib/cli/spawn-cli';
-import { resolveCodexHomeForEnvironment } from './provider-home';
+import { fingerprintCodexProviderHome, resolveCodexHomeForEnvironment } from './provider-home';
+import { ProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -35,6 +36,10 @@ export interface CodexAppServerRequestContext {
   environment?: CliEnvironment;
   /** Host-openable spelling of the authoritative home this request must use. */
   providerHomeFilesystemPath?: string;
+  /** Opaque immutable binding for a managed conversation mutation. */
+  requiredProviderHomeIdentity?: string;
+  /** Internal handoff for callers that create a new provider conversation. */
+  onProviderHomeIdentityResolved?: (identity: string) => void;
 }
 
 export type CodexAppServerRequestExecutor = (
@@ -158,6 +163,20 @@ export async function runCodexAppServerRequest<T>(
   const agentEnvironment = context.environment ?? await getAgentEnvironment(context.userId);
   const providerHomeFilesystemPath = context.providerHomeFilesystemPath
     ?? await resolveCodexHomeForEnvironment(agentEnvironment);
+  const providerHomeIdentity = fingerprintCodexProviderHome(
+    agentEnvironment,
+    providerHomeFilesystemPath,
+  );
+  if (
+    context.requiredProviderHomeIdentity
+    && context.requiredProviderHomeIdentity !== providerHomeIdentity
+  ) {
+    throw new ProviderSessionResumeUnavailableError(
+      'origin-home-not-authoritative',
+      'This managed session belongs to a different Codex home. Switch back to its origin Agent Environment.',
+    );
+  }
+  context.onProviderHomeIdentityResolved?.(providerHomeIdentity);
   const command = await resolveProviderCliCommand(
     'codex',
     'codex',

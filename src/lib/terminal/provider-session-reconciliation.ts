@@ -58,6 +58,7 @@ function createChildSession(
   providerState: string,
   workDir?: string,
   onCreated?: (sessionId: string) => void,
+  providerHomeIdentity?: string,
 ): string {
   const sessionId = randomUUID();
   const title = childTitle(source, origin);
@@ -83,6 +84,8 @@ function createChildSession(
       reasoningEffort: source.reasoning_effort,
       serviceTier: source.service_tier,
       providerState,
+      originProviderHomeIdentity: providerHomeIdentity
+        ?? source.origin_provider_home_identity,
     });
     dbSessions.updateSession(sessionId, {
       worktree_branch: inheritsCheckout ? effectiveCheckout?.worktreeBranch ?? null : null,
@@ -170,8 +173,16 @@ export function reconcileTerminalProviderSession(options: {
    * its own. Already translated to a path this server can open.
    */
   workDir?: string;
+  providerHomeIdentity?: string;
 }): TerminalProviderSessionReconciliationResult {
-  const { activation, identity, origin = 'fork', sourceSessionId, workDir } = options;
+  const {
+    activation,
+    identity,
+    origin = 'fork',
+    sourceSessionId,
+    workDir,
+    providerHomeIdentity,
+  } = options;
   const source = dbSessions.getSession(sourceSessionId);
   if (
     !source
@@ -200,6 +211,9 @@ export function reconcileTerminalProviderSession(options: {
   }
 
   if (sourceBinding?.provider_session_id === identity.providerSessionId) {
+    if (identity.providerId === 'codex' && providerHomeIdentity) {
+      dbSessions.bindSessionOriginProviderHome(sourceSessionId, providerHomeIdentity);
+    }
     registerIdentity(sourceSessionId, identity);
     return { kind: 'unchanged', sessionId: sourceSessionId, previousSessionId: sourceSessionId };
   }
@@ -222,6 +236,7 @@ export function reconcileTerminalProviderSession(options: {
     buildTerminalProviderState(identity, activation),
     workDir,
     (created) => registerIdentity(created, identity),
+    identity.providerId === 'codex' ? providerHomeIdentity : undefined,
   );
   return {
     kind: 'created',

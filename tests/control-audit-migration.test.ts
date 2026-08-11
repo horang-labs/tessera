@@ -30,7 +30,7 @@ test('v39 databases gain Project-owned Control audit persistence', async () => {
     `)[0]?.values[0]?.[0];
     db.close();
 
-    assert.equal(schemaVersion, '40');
+    assert.equal(schemaVersion, '41');
     assert.equal(auditTable, 'control_audit_history');
     assert.equal(deleteTrigger, 'trg_projects_delete_control_audit');
   } finally {

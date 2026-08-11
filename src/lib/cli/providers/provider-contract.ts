@@ -82,10 +82,19 @@ export interface ProviderLifecycleIntegration {
 
 export type ProviderLaunchEnvironmentContext = ProviderLifecycleContext;
 
+export type ProviderSessionResumeInspection =
+  | { state: 'available' }
+  | { state: 'missing' }
+  | { state: 'already-loaded' };
+
 /** Provider-owned launch authority resolved once for lifecycle and process environment. */
 export interface ProviderLaunchPreparation {
+  /** Opaque stable identity; callers can compare it but cannot recover the home path. */
+  providerHomeIdentity?: string;
   lifecycle?: ProviderLifecycleIntegration;
   buildEnvironment(baseEnvironment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+  /** Read-only existence/liveness check pinned to the exact prepared home. */
+  inspectResume?(providerSessionId: string): Promise<ProviderSessionResumeInspection>;
 }
 
 export interface ProviderTerminalSessionObservation {

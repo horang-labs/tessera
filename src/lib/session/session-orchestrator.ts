@@ -25,7 +25,6 @@ import {
   withTesseraSessionOperation,
 } from '../terminal/terminal-handoff-lock';
 import {
-  syncCodexThreadDelete,
   syncCodexThreadName,
 } from './codex-thread-lifecycle';
 
@@ -174,9 +173,8 @@ export class SessionOrchestrator {
           await this.processManager.closeSession(sessionId);
         }
 
-        // Remote-first: a failed Codex delete must preserve local metadata and
-        // canonical history so the stopped session can still be resumed.
-        await syncCodexThreadDelete(session, userId);
+        // Tessera owns only the management record. Provider conversation
+        // history remains provider-owned and can still be opened externally.
         dbSessions.softDeleteSession(sessionId);
 
         try {

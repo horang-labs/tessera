@@ -43,6 +43,7 @@ import type {
   PreparedControlCliBridge,
 } from '@/lib/control/cli-bridge';
 import { isExactLegacyCodexOverlayResume } from '@/lib/codex-home';
+import { isProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
 
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -60,6 +61,7 @@ export type ProviderLaunchErrorCode =
   | 'INITIAL_PROMPT_TOO_LARGE'
   | 'PREPARATION_FAILED'
   | 'PREPARATION_TIMEOUT'
+  | 'SESSION_RESUME_UNAVAILABLE'
   | 'LAUNCH_FAILED';
 
 export type ProviderLaunchRuntimeState = TerminalLaunchRuntimeState;
@@ -151,6 +153,8 @@ interface ProviderLaunchModuleOptions {
     };
     identity: TerminalProviderSessionIdentity;
     activation: 'active' | 'background';
+    workDir?: string;
+    providerHomeIdentity?: string;
   }) => void;
   prepareControlCliBridge?: (
     context: ControlCliBridgeContext,
@@ -231,6 +235,7 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
   model?: string;
   reasoningEffort: string | null;
   serviceTier: string | null;
+  originProviderHomeIdentity: string | null;
 } {
   const session = dbSessions.getSession(request.sessionId);
   if (!session || session.deleted === 1) {
@@ -264,6 +269,7 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
       provider: cliProviderRegistry.getProvider(session.provider),
       providerId: session.provider,
       providerState: session.provider_state,
+      originProviderHomeIdentity: session.origin_provider_home_identity,
       model: session.model ?? undefined,
       reasoningEffort: session.reasoning_effort,
       serviceTier: session.service_tier,
@@ -546,6 +552,14 @@ export function createProviderLaunchModule(
           provider: persisted.provider,
           agentEnvironmentOwner: { kind: 'user', userId: request.userId },
           workDir,
+          ...(!exactLegacyCodexOverlayResume && persisted.originProviderHomeIdentity
+            ? { requiredProviderHomeIdentity: persisted.originProviderHomeIdentity }
+            : {}),
+          ...(!exactLegacyCodexOverlayResume
+            && persisted.providerId === 'codex'
+            && codexProviderSession?.provider_session_id
+            ? { resumeProviderSessionId: codexProviderSession.provider_session_id }
+            : {}),
           ...(exactLegacyCodexOverlayResume
             ? { compatibility: 'exact-legacy-overlay-resume' as const }
             : {}),
@@ -802,6 +816,9 @@ export function createProviderLaunchModule(
                 identity,
                 activation,
                 ...(observedWorkDir ? { workDir: observedWorkDir } : {}),
+                ...(integration.providerHome.identity
+                  ? { providerHomeIdentity: integration.providerHome.identity }
+                  : {}),
               });
             } catch (error) {
               logger.warn(
@@ -894,7 +911,9 @@ export function createProviderLaunchModule(
           );
         }
         throw providerLaunchError(
-          'LAUNCH_FAILED',
+          isProviderSessionResumeUnavailableError(error)
+            ? 'SESSION_RESUME_UNAVAILABLE'
+            : 'LAUNCH_FAILED',
           error instanceof Error ? error.message : 'Failed to launch the provider terminal.',
           terminalId,
           error,

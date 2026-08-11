@@ -357,6 +357,11 @@ export const ja: I18nMessages = {
       nativeDesc: 'Windowsで直接エージェントを実行',
       wsl: 'Windows Subsystem for Linux',
       wslDesc: 'WSL内でエージェントを実行',
+      changeTitle: 'Codex ホームを変更しますか？',
+      changeDescription: '{{count}} 件の管理対象 Codex セッションは、元の環境に戻すまで利用できません。プロバイダーの会話は移動も削除もされません。',
+      cancelChange: '現在の環境を維持',
+      confirmChange: '環境を変更',
+      changing: '変更中…',
     },
     worktree: {
       title: 'ワークツリー',

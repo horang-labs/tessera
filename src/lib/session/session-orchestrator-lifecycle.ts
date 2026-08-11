@@ -253,39 +253,14 @@ export async function resumeSessionWithLifecycle({
       sandboxMode: options.sandboxMode,
       serviceTier: runtimeDefaults.serviceTier,
       fastMode: options.fastMode,
+      ...(providerId === 'codex' && session.origin_provider_home_identity
+        ? { originProviderHomeIdentity: session.origin_provider_home_identity }
+        : {}),
     },
   );
 
   if (hasTesseraHistory === null) {
     hasTesseraHistory = await sessionHistory.historyExists(sessionId);
-  }
-
-  if (!cliSessionId && providerId === 'codex' && threadId && !hasTesseraHistory) {
-    logger.warn('Codex resume failed without canonical history; retrying with thread/start', {
-      userId,
-      sessionId,
-      threadId,
-    });
-
-    cliSessionId = await processManager.resumeSession(
-      sessionId,
-      userId,
-      provider,
-      workDir,
-      options.permissionMode,
-      runtimeDefaults.model,
-      runtimeDefaults.reasoningEffort,
-      {
-        resume: false,
-        sessionMode: options.sessionMode,
-        accessMode: options.accessMode,
-        collaborationMode: options.collaborationMode,
-        approvalPolicy: options.approvalPolicy,
-        sandboxMode: options.sandboxMode,
-        serviceTier: runtimeDefaults.serviceTier,
-        fastMode: options.fastMode,
-      },
-    );
   }
 
   if (!cliSessionId && providerId === 'opencode' && opencodeSessionId && !hasTesseraHistory) {

@@ -6,6 +6,7 @@ import type { CliProvider, ParsedMessage, ParsedMessageSideEffect, SpawnOptions 
 import type { ContentBlock } from '../ws/message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import logger from '../logger';
+import { isProviderSessionResumeUnavailableError } from './provider-session-resume';
 import { sessionHistory } from '../session-history';
 import {
   enqueueProcessInput,
@@ -231,6 +232,7 @@ export class ProcessManager {
         error: err as Error,
       }, `Failed to ${lifecycle === 'spawned' ? 'spawn' : 'resume'} process`);
       this.clearSessionRuntimeState(sessionId);
+      if (isProviderSessionResumeUnavailableError(err)) throw err;
       return false;
     }
   }

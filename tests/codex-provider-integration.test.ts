@@ -96,10 +96,14 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     provider,
     agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
   });
-  assert.deepEqual(codex.providerHome, {
+  assert.deepEqual({
+    owner: codex.providerHome.owner,
+    agentEnvironment: codex.providerHome.agentEnvironment,
+  }, {
     owner: 'agent-environment',
     agentEnvironment: 'wsl',
   });
+  assert.match(codex.providerHome.identity ?? '', /^codex-home:v1:[a-f0-9]{64}$/);
   assert.deepEqual(codex.lifecycle, {
     requirement: 'required',
     state: 'installed',
