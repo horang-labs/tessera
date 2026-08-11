@@ -12,6 +12,7 @@ export function broadcastSessionMutation(userId: string, params: {
   sessionId?: string;
   taskId?: string;
   archived?: boolean;
+  affectedProjectIds?: string[];
 }): void {
   wsServer.sendToUser(userId, { type: 'session_mutated', ...params });
 }
@@ -34,6 +35,7 @@ export function broadcastTaskMutation(userId: string, params: {
   projectId: string;
   taskId?: string;
   archived?: boolean;
+  affectedProjectIds?: string[];
 }): void {
   wsServer.sendToUser(userId, { type: 'task_mutated', ...params });
 }

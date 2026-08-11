@@ -15,6 +15,7 @@ import {
   broadcastTaskMutation,
   getOriginClientIdFromRequest,
 } from '@/lib/ws/mutation-broadcast';
+import { getTaskProjectViewIds } from '@/lib/projects/project-view-projection';
 
 export async function PATCH(
   req: NextRequest,
@@ -42,18 +43,29 @@ export async function PATCH(
 
   try {
     const projectId = dbTasks.getTask(id)?.projectId;
+    const affectedProjectIds = getTaskProjectViewIds(id);
     await setTaskArchived(id, archived, auth.userId);
     if (projectId) {
       const originClientId = getOriginClientIdFromRequest(req);
       broadcastTaskMutation(auth.userId, {
-        kind: 'updated', projectId, taskId: id, archived, originClientId,
+        kind: 'updated',
+        projectId,
+        taskId: id,
+        archived,
+        affectedProjectIds,
+        originClientId,
       });
       // Sessions linked to this task carry archived/isReadOnly state too.
       broadcastSessionMutation(auth.userId, {
-        kind: 'updated', projectId, taskId: id, archived, originClientId,
+        kind: 'updated',
+        projectId,
+        taskId: id,
+        archived,
+        affectedProjectIds,
+        originClientId,
       });
     }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, affectedProjectIds });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update task archive state';
     const handoffConflict = isTerminalHandoffConflictError(error) || isSessionOperationConflictError(error);

@@ -615,6 +615,7 @@ export type AppServerMessage =
       sessionId?: string;
       taskId?: string;
       archived?: boolean;
+      affectedProjectIds?: string[];
     }
   | {
       type: 'task_mutated';
@@ -623,6 +624,7 @@ export type AppServerMessage =
       projectId: string;
       taskId?: string;
       archived?: boolean;
+      affectedProjectIds?: string[];
     }
   | {
       type: 'collection_mutated';

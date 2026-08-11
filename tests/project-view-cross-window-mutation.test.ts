@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { handleIncomingServerMessage } from '@/lib/ws/client-message-handlers';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
@@ -165,6 +166,14 @@ test('a Task mutation from another window refreshes its A and C appearances', as
 test('restoring a task Session refreshes zero-to-one density in A and C', async () => {
   const requestedProjects: string[] = [];
   seedAppearances([]);
+  useTaskStore.setState({
+    tasks: [],
+    tasksByProject: { 'project-a': [], 'project-c': [] },
+  });
+  useSessionStore.setState({
+    projects: [project('project-a', []), project('project-c', [])],
+    retainedSessions: {},
+  });
   globalThis.fetch = async (input) => {
     const url = new URL(String(input), 'http://localhost');
     if (url.pathname === '/api/tasks') {
@@ -183,12 +192,13 @@ test('restoring a task Session refreshes zero-to-one density in A and C', async 
     projectId: 'project-a',
     sessionId: 'session-c',
     taskId: 'shared-worktree',
+    affectedProjectIds: ['project-a', 'project-c'],
   } as ServerTransportMessage);
 
   await waitFor(() => (
     requestedProjects.length === 2
     && Object.values(useTaskStore.getState().tasksByProject)
-      .every(([appearance]) => appearance.sessions.length === 1)
+      .every(([appearance]) => appearance?.sessions.length === 1)
   ));
   assert.deepEqual(requestedProjects.sort(), ['project-a', 'project-c']);
   assert.deepEqual(
@@ -276,4 +286,41 @@ test('a remote Session archive updates A and C density plus retained read-only s
 
   releaseRequests();
   await waitFor(() => requestedUrls.length === 3);
+});
+
+test('the source restore transition materializes Session and Task density in A and C', () => {
+  seedAppearances([]);
+  useSessionStore.setState({
+    projects: [project('project-a', []), project('project-c', [])],
+    retainedSessions: {},
+  });
+
+  projectViewWorkspaceState.applySessionRestoreMutation({
+    session: sessionAppearance('project-a'),
+    taskSession: taskSession(),
+    affectedProjectIds: ['project-a', 'project-c'],
+  });
+  assert.deepEqual(
+    Object.values(useTaskStore.getState().tasksByProject)
+      .map(([appearance]) => appearance.sessions.map(({ id }) => id)),
+    [['session-c'], ['session-c']],
+  );
+
+  useTaskStore.setState({
+    tasks: [],
+    tasksByProject: { 'project-a': [], 'project-c': [] },
+  });
+  useSessionStore.setState({
+    projects: [project('project-a', []), project('project-c', [])],
+    retainedSessions: {},
+  });
+  projectViewWorkspaceState.applyTaskRestoreMutation({
+    task: taskAppearance('project-a'),
+    affectedProjectIds: ['project-a', 'project-c'],
+  });
+  assert.deepEqual(
+    Object.values(useTaskStore.getState().tasksByProject)
+      .map(([appearance]) => appearance.sessions.map(({ id }) => id)),
+    [['session-c'], ['session-c']],
+  );
 });
