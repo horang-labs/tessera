@@ -79,6 +79,11 @@ export interface ProviderLifecycleIntegration {
   install(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
 }
 
+export interface ProviderLaunchEnvironmentContext extends ProviderLifecycleContext {
+  /** Environment inherited by the server before provider-owned launch policy is applied. */
+  baseEnvironment: NodeJS.ProcessEnv;
+}
+
 export interface ProviderTerminalSessionObservation {
   activation: 'active' | 'background';
   providerSessionId: string;
@@ -177,6 +182,11 @@ export interface CliProvider {
 
   /** Implements provider-owned lifecycle artifact management behind this provider seam. */
   getLifecycleIntegration?(): ProviderLifecycleIntegration;
+
+  /** Selects the provider-owned environment for a managed launch. */
+  resolveLaunchEnvironment?(
+    context: ProviderLaunchEnvironmentContext,
+  ): Promise<NodeJS.ProcessEnv>;
 
   /**
    * Returns the human-readable display name for this CLI provider.

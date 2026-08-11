@@ -41,6 +41,7 @@ import type {
   CliRawLogSink,
   ProviderIntegrationRequirements,
   ProviderLifecycleIntegration,
+  ProviderLaunchEnvironmentContext,
 } from '../types';
 import { createCodexTerminalSessionObserver } from './terminal-session-observer';
 import {
@@ -66,6 +67,8 @@ import {
   type ProviderIntegration,
 } from '../../provider-integration';
 import { createCodexLifecycleHookIntegration } from './lifecycle-hook-integration';
+import { resolveCodexHomeForEnvironment } from './provider-home';
+import { buildCodexAppServerRequestEnvironment } from './app-server-request-client';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
 import {
   resolveProviderCliCommand,
@@ -231,13 +234,16 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
 
 export interface CodexAdapterOptions {
   providerIntegration?: ProviderIntegration;
+  resolveProviderHome?: typeof resolveCodexHomeForEnvironment;
 }
 
 export class CodexAdapter implements CliProvider {
   private readonly _providerIntegration: ProviderIntegration;
+  private readonly _resolveProviderHome: typeof resolveCodexHomeForEnvironment;
 
   constructor(options: CodexAdapterOptions = {}) {
     this._providerIntegration = options.providerIntegration ?? sharedProviderIntegration;
+    this._resolveProviderHome = options.resolveProviderHome ?? resolveCodexHomeForEnvironment;
   }
 
   /**
@@ -296,6 +302,17 @@ export class CodexAdapter implements CliProvider {
 
   getLifecycleIntegration(): ProviderLifecycleIntegration {
     return createCodexLifecycleHookIntegration();
+  }
+
+  async resolveLaunchEnvironment(
+    context: ProviderLaunchEnvironmentContext,
+  ): Promise<NodeJS.ProcessEnv> {
+    const providerHome = await this._resolveProviderHome(context.environment);
+    return buildCodexAppServerRequestEnvironment(
+      context.baseEnvironment,
+      context.environment,
+      providerHome,
+    );
   }
 
   getDisplayName(): string {
@@ -493,15 +510,29 @@ export class CodexAdapter implements CliProvider {
       agentEnvironmentOwner: options.userId
         ? { kind: 'user', userId: options.userId }
         : { kind: 'server-default' },
+      workDir,
     });
     const agentEnv = integration.providerHome.agentEnvironment;
+    let launchEnvironment: NodeJS.ProcessEnv;
+    try {
+      launchEnvironment = await this.resolveLaunchEnvironment({
+        environment: agentEnv,
+        userId: options.userId,
+        workDir,
+        baseEnvironment: process.env,
+      });
+    } catch (error) {
+      throw new Error(
+        `Codex launch is blocked because the Authoritative Provider Home could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
 
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
       shell: false,
-      env: process.env as NodeJS.ProcessEnv,
+      env: launchEnvironment,
       detached: getRuntimePlatform() !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     }, agentEnv);

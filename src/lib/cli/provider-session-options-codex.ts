@@ -5,6 +5,8 @@ import {
 } from './provider-session-option-definitions';
 import { resolveProviderCliCommand } from './provider-command';
 import { getAgentEnvironment, spawnCli } from './spawn-cli';
+import { resolveCodexHomeForEnvironment } from './providers/codex/provider-home';
+import { buildCodexAppServerRequestEnvironment } from './providers/codex/app-server-request-client';
 import type { AgentEnvironment } from '../settings/types';
 import type {
   CodexModelEntry,
@@ -119,12 +121,17 @@ async function probeCodexModels(
   agentEnvironment?: AgentEnvironment,
 ): Promise<CodexModelResponse> {
   const resolvedAgentEnvironment = agentEnvironment ?? await getAgentEnvironment(userId);
+  const providerHome = await resolveCodexHomeForEnvironment(resolvedAgentEnvironment);
   const command = await resolveProviderCliCommand('codex', 'codex', resolvedAgentEnvironment, userId);
 
   return new Promise((resolve, reject) => {
     const proc = spawnCli(command, ['app-server'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env as NodeJS.ProcessEnv,
+      env: buildCodexAppServerRequestEnvironment(
+        process.env,
+        resolvedAgentEnvironment,
+        providerHome,
+      ),
     }, resolvedAgentEnvironment);
 
     let buffer = '';

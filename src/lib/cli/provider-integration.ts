@@ -57,16 +57,21 @@ export interface ProviderIntegrationLaunchDecision {
     updateCommand: string;
     message: string;
   };
+  compatibility?: 'exact-legacy-overlay-resume';
 }
 
 export interface ProviderIntegrationLaunchRequest {
   provider: Pick<
     CliProvider,
-    'getProviderId' | 'getProviderIntegrationRequirements' | 'getLifecycleIntegration'
+    | 'getProviderId'
+    | 'getProviderIntegrationRequirements'
+    | 'getLifecycleIntegration'
   >;
   agentEnvironmentOwner:
     | { kind: 'user'; userId: string }
     | { kind: 'server-default' };
+  workDir?: string | null;
+  compatibility?: 'exact-legacy-overlay-resume';
 }
 
 export interface ProviderIntegrationLifecycleRequest extends ProviderIntegrationLaunchRequest {
@@ -103,6 +108,13 @@ export class ProviderIntegrationEnvironmentError extends Error {
   }
 }
 
+export class ProviderIntegrationLaunchBlockedError extends Error {
+  constructor(readonly decision: ProviderIntegrationLaunchDecision, message: string) {
+    super(message);
+    this.name = 'ProviderIntegrationLaunchBlockedError';
+  }
+}
+
 const DEFAULT_REQUIREMENTS: ProviderIntegrationRequirements = {
   lifecycle: 'not-applicable',
   skill: 'optional',
@@ -126,13 +138,26 @@ function resolveArtifactPolicy(
       };
 }
 
+function launchBlockedMessage(
+  providerId: string,
+  decision: ProviderIntegrationLaunchDecision,
+): string {
+  const displayName = providerId === 'codex' ? 'Codex' : providerId;
+  const lifecycle = decision.lifecycle;
+  if (lifecycle.state === 'absent') {
+    return `${displayName} launch is blocked because the required Tessera lifecycle hook is not installed in the Authoritative Provider Home. Run \`tessera provider ${providerId} lifecycle install --consent\` and retry.`;
+  }
+  if (lifecycle.state === 'installed' && lifecycle.trust !== 'trusted') {
+    return `${displayName} launch is blocked because the required Tessera lifecycle hook is not trusted. Run \`tessera provider ${providerId} lifecycle install --consent\` and retry.${lifecycle.message ? ` ${lifecycle.message}` : ''}`;
+  }
+  return `${displayName} launch is blocked because the required Tessera lifecycle hook is unavailable or unhealthy. Run \`tessera provider ${providerId} lifecycle status\` and follow its guidance before retrying.${lifecycle.message ? ` ${lifecycle.message}` : ''}`;
+}
+
 /**
  * Shared policy boundary for provider launches.
  *
- * This prefactor deliberately records current policy without implementing the
- * later real-home, hook, skill-management, consent, conflict, or health work.
- * Callers receive domain decisions only; filesystem paths stay behind their
- * existing launch mechanisms.
+ * Callers receive domain decisions only. Provider homes and launch environment
+ * values remain behind each provider adapter so this contract stays path-free.
  */
 export function createProviderIntegration(
   options: ProviderIntegrationOptions = {},
@@ -191,7 +216,23 @@ export function createProviderIntegration(
       const agentEnvironment = await resolveEnvironment(request);
       const requirements = request.provider.getProviderIntegrationRequirements?.()
         ?? DEFAULT_REQUIREMENTS;
-      return {
+      if (
+        request.provider.getProviderId() === 'codex'
+        && request.compatibility === 'exact-legacy-overlay-resume'
+      ) {
+        return {
+          providerHome: {
+            owner: 'agent-environment',
+            agentEnvironment,
+          },
+          lifecycle: resolveArtifactPolicy(requirements.lifecycle),
+          skill: resolveArtifactPolicy(requirements.skill),
+          health: { state: 'healthy' },
+          compatibility: request.compatibility,
+        };
+      }
+
+      let decision: ProviderIntegrationLaunchDecision = {
         providerHome: {
           owner: 'agent-environment',
           agentEnvironment,
@@ -200,6 +241,45 @@ export function createProviderIntegration(
         skill: resolveArtifactPolicy(requirements.skill),
         health: { state: 'unchecked' },
       };
+      if (requirements.lifecycle === 'required') {
+        const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
+        let result: ProviderLifecycleResult;
+        try {
+          result = lifecycle
+            ? await lifecycle.inspect({
+                environment: agentEnvironment,
+                userId: request.agentEnvironmentOwner.kind === 'user'
+                  ? request.agentEnvironmentOwner.userId
+                  : undefined,
+                workDir: request.workDir,
+              })
+            : {
+                state: 'unavailable',
+                trust: 'unavailable',
+                message: 'The provider does not expose required lifecycle management.',
+              };
+        } catch (error) {
+          result = {
+            state: 'unavailable',
+            trust: 'unavailable',
+            message: `Lifecycle status could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+        decision = lifecycleDecision(
+          agentEnvironment,
+          requirements,
+          result,
+          result.state === 'installed' ? 'granted' : 'required',
+        );
+        if (decision.health.state !== 'healthy') {
+          throw new ProviderIntegrationLaunchBlockedError(
+            decision,
+            launchBlockedMessage(request.provider.getProviderId(), decision),
+          );
+        }
+      }
+
+      return decision;
     },
     async inspectLifecycle(request) {
       const agentEnvironment = await resolveEnvironment(request);

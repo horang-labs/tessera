@@ -23,6 +23,7 @@ export type {
   ProviderIntegrationRequirements,
   ProviderLifecycleContext,
   ProviderLifecycleIntegration,
+  ProviderLaunchEnvironmentContext,
   ProviderLifecycleResult,
   ProviderLifecycleState,
   ProviderLifecycleTrust,

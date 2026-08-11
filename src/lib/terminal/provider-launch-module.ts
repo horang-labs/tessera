@@ -47,6 +47,7 @@ import type {
   ControlCliBridgeContext,
   PreparedControlCliBridge,
 } from '@/lib/control/cli-bridge';
+import { isExactLegacyCodexOverlayResume } from '@/lib/codex-home';
 
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -545,9 +546,23 @@ export function createProviderLaunchModule(
         // as the check that the Session still exists, and a wait long enough to
         // matter is long enough for the Session to be deleted inside it — so it
         // is read after the gate, where the answer is still true.
+        const codexProviderSession = persisted.providerId === 'codex'
+          && dbSessions.extractCodexTerminalSessionId(persisted.providerState)
+          ? getTerminalProviderSessionForTesseraSession(request.sessionId)
+          : undefined;
+        const codexResumeTranscriptPath = codexProviderSession?.transcript_path;
+        const exactLegacyCodexOverlayResume = persisted.providerId === 'codex'
+          && isExactLegacyCodexOverlayResume(
+            codexResumeTranscriptPath,
+            requestedTerminalId,
+          );
         const integration = await providerIntegration.resolveLaunch({
           provider: persisted.provider,
           agentEnvironmentOwner: { kind: 'user', userId: request.userId },
+          workDir,
+          ...(exactLegacyCodexOverlayResume
+            ? { compatibility: 'exact-legacy-overlay-resume' as const }
+            : {}),
         });
         const agentEnvironment = integration.providerHome.agentEnvironment;
         const wslTerminalRuntime = getRuntimePlatform() === 'win32'
@@ -573,12 +588,23 @@ export function createProviderLaunchModule(
           claudePluginDir,
         );
         decision.launchSpec.cwd = workDir;
-        const codexResumeTranscriptPath = decision.providerId === 'codex'
-          && dbSessions.extractCodexTerminalSessionId(decision.providerState)
-          ? getTerminalProviderSessionForTesseraSession(request.sessionId)?.transcript_path
-          : undefined;
 
         let launchEnv: Record<string, string | undefined> | undefined;
+        if (!exactLegacyCodexOverlayResume && persisted.provider.resolveLaunchEnvironment) {
+          try {
+            launchEnv = await persisted.provider.resolveLaunchEnvironment({
+              environment: agentEnvironment,
+              userId: request.userId,
+              workDir,
+              baseEnvironment: process.env,
+            });
+          } catch (error) {
+            const displayName = persisted.provider.getDisplayName();
+            throw new Error(
+              `${displayName} launch is blocked because the Authoritative Provider Home could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
         let prepareLaunch: (() => Promise<void>) | undefined;
         let launchEnvFactory:
           (() => Promise<Record<string, string | undefined> | undefined>) | undefined;
@@ -615,7 +641,11 @@ export function createProviderLaunchModule(
                 logger.debug({ error }, 'Claude WSL skill overlay cleanup skipped');
               });
           });
-        } else if (decision.providerId === 'codex' && wslTerminalRuntime) {
+        } else if (
+          decision.providerId === 'codex'
+          && exactLegacyCodexOverlayResume
+          && wslTerminalRuntime
+        ) {
           const pending = createOverlayWithRetry(
             'Codex WSL',
             terminalId,
@@ -725,12 +755,10 @@ export function createProviderLaunchModule(
             }
             claudeArgs.splice(claudePluginFlagIndex, 2);
           };
-        } else if (decision.providerId === 'codex') {
-          // Unlike Claude's overlay, this one also carries hooks.json — how
-          // Tessera observes turn-complete and every other session state.
-          // Launching without it would produce a session that runs but never
-          // reports, which reads as a hang rather than a missing convenience,
-          // so a failed overlay still fails the launch here.
+        } else if (decision.providerId === 'codex' && exactLegacyCodexOverlayResume) {
+          // Exact pre-cutover resumes keep the overlay that originally owned the
+          // rollout. New, forked, copied, and reset Sessions use the authoritative
+          // provider-home environment prepared by Provider Integration above.
           launchEnvFactory = async () => {
             try {
               const overlayHome = codexOverlayPromise
