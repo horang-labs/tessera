@@ -26,6 +26,7 @@ import type {
   GeneratedTitle,
   TranslatedText,
   CliRawLogSink,
+  ProviderIntegrationRequirements,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import { claudeCodeProtocolParser } from './protocol-parser';
@@ -132,6 +133,14 @@ export class ClaudeCodeAdapter implements CliProvider {
       windowsHostedWslExpression: '${CLAUDE_CONFIG_DIR:-$HOME/.claude}',
       resolveSharedFilesystemHome: () => resolveClaudeConfigDirForEnvironment(environment),
     });
+  }
+
+  getProviderIntegrationRequirements(): ProviderIntegrationRequirements {
+    return {
+      lifecycle: 'not-applicable',
+      skill: 'optional',
+      launchEnvironment: 'not-applicable',
+    };
   }
 
   /**

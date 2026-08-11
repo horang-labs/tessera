@@ -17,6 +17,8 @@ type Modules = {
   sessions: typeof import('@/lib/db/sessions');
   tasks: typeof import('@/lib/db/tasks');
   taskPreparation: typeof import('@/lib/db/task-preparation');
+  terminalProviderSessions: typeof import('@/lib/db/terminal-provider-sessions');
+  registry: typeof import('@/lib/cli/providers/registry');
   TerminalManager: typeof import('@/lib/terminal/terminal-manager').TerminalManager;
   createProviderLaunchModule:
     typeof import('@/lib/terminal/provider-launch-module').createProviderLaunchModule;
@@ -32,7 +34,10 @@ let workspace: string;
 const managers: Array<InstanceType<Modules['TerminalManager']>> = [];
 const observerDisposeCounts = new Map<string, number>();
 
-function withTestTerminalSessionObserver(provider: CliProvider): CliProvider {
+function withTestTerminalSessionObserver(
+  provider: CliProvider,
+  preserveLaunchPreparation = false,
+): CliProvider {
   return new Proxy(provider, {
     get(target, property) {
       if (property === 'createTerminalSessionObserver') {
@@ -45,6 +50,21 @@ function withTestTerminalSessionObserver(provider: CliProvider): CliProvider {
               (observerDisposeCounts.get(providerId) ?? 0) + 1,
             );
           },
+        });
+      }
+      if (
+        target.getProviderId() === 'codex'
+        && property === 'prepareLaunchIntegration'
+        && !preserveLaunchPreparation
+      ) {
+        return async () => ({
+          buildEnvironment: (baseEnvironment: NodeJS.ProcessEnv) => ({
+            ...baseEnvironment,
+            CODEX_HOME: process.platform === 'win32'
+              ? path.join(process.env.HOME!, '.codex')
+              : process.env.CODEX_HOME,
+            TESSERA_CODEX_HOME: undefined,
+          }),
         });
       }
       const value = Reflect.get(target, property, target) as unknown;
@@ -71,6 +91,7 @@ before(async () => {
     opencode,
     paneTokens,
     providerIntegration,
+    terminalProviderSessions,
   ] = await Promise.all([
     import('@/lib/db/database'),
     import('@/lib/db/projects'),
@@ -85,6 +106,7 @@ before(async () => {
     import('@/lib/cli/providers/opencode/adapter'),
     import('@/lib/terminal/pane-token-registry'),
     import('@/lib/cli/provider-integration'),
+    import('@/lib/db/terminal-provider-sessions'),
   ]);
   registry.cliProviderRegistry.register(
     'claude-code',
@@ -108,6 +130,8 @@ before(async () => {
     createProviderLaunchModule: launcher.createProviderLaunchModule,
     ProviderLaunchError: launcher.ProviderLaunchError,
     createProviderIntegration: providerIntegration.createProviderIntegration,
+    registry,
+    terminalProviderSessions,
     resolvePaneToken: paneTokens.resolvePaneToken,
   };
 });
@@ -227,7 +251,10 @@ async function launchDetached(
   sessionId: string,
   initialPrompt?: string,
 ): Promise<void> {
-  const launcher = modules.createProviderLaunchModule({ terminalManager: manager });
+  const launcher = modules.createProviderLaunchModule({
+    terminalManager: manager,
+    providerIntegration: createTestProviderIntegration('wsl'),
+  });
   await launcher.launch({
     sessionId,
     userId: 'provider-launch-user',
@@ -239,10 +266,14 @@ async function launchDetached(
 function createTestProviderIntegration(agentEnvironment: 'native' | 'wsl') {
   return modules.createProviderIntegration({
     resolveAgentEnvironment: async () => agentEnvironment,
+    lifecycle: {
+      inspect: async () => ({ state: 'installed', trust: 'trusted' }),
+      install: async () => ({ state: 'installed', trust: 'trusted' }),
+    },
   });
 }
 
-test('direct TUI Codex launch uses the shared Provider Integration policy without changing its overlay', async () => {
+test('new direct TUI Codex launch uses the authoritative provider home without an overlay', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);
   const resolvedUsers: Array<string | undefined> = [];
@@ -250,6 +281,10 @@ test('direct TUI Codex launch uses the shared Provider Integration policy withou
     resolveAgentEnvironment: async (userId) => {
       resolvedUsers.push(userId);
       return 'wsl';
+    },
+    lifecycle: {
+      inspect: async () => ({ state: 'installed', trust: 'trusted' }),
+      install: async () => ({ state: 'installed', trust: 'trusted' }),
     },
   });
   const launcher = modules.createProviderLaunchModule({
@@ -265,13 +300,217 @@ test('direct TUI Codex launch uses the shared Provider Integration policy withou
   });
 
   assert.deepEqual(resolvedUsers, ['provider-launch-user']);
-  assert.match(
-    captured[0]?.env?.CODEX_HOME ?? '',
-    /codex-overlay[\\/]session-shared-policy-direct-codex$/,
-  );
-  assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, captured[0]?.env?.CODEX_HOME);
+  assert.equal(captured[0]?.env?.CODEX_HOME, process.env.CODEX_HOME);
+  assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, undefined);
 
   await manager.closeSession('shared-policy-direct-codex', 'provider-launch-user');
+});
+
+test('direct TUI uses exact custom native and Windows-backend-to-WSL Codex homes', async () => {
+  const { CodexAdapter } = await import('@/lib/cli/providers/codex/adapter');
+  const originalProvider = modules.registry.cliProviderRegistry.getProvider('codex');
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const cases = [
+    {
+      id: 'custom-native-home',
+      environment: 'native' as const,
+      platform: 'linux' as const,
+      providerHome: '/mnt/c/Users/owner/custom-codex-home',
+      expectedHome: 'C:\\Users\\owner\\custom-codex-home',
+    },
+    {
+      id: 'custom-bridged-wsl-home',
+      environment: 'wsl' as const,
+      platform: 'win32' as const,
+      providerHome: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\owner\\custom-codex-home',
+      expectedHome: '/home/owner/custom-codex-home',
+    },
+  ];
+
+  try {
+    for (const testCase of cases) {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        enumerable: true,
+        value: testCase.platform,
+      });
+      const provider = new CodexAdapter({
+        resolveProviderHome: async () => testCase.providerHome,
+      });
+      modules.registry.cliProviderRegistry.register(
+        'codex',
+        withTestTerminalSessionObserver(provider, true),
+      );
+      const captured: CapturedSpawn[] = [];
+      const manager = createManager(captured);
+      const launcher = modules.createProviderLaunchModule({
+        terminalManager: manager,
+        providerIntegration: modules.createProviderIntegration({
+          resolveAgentEnvironment: async () => testCase.environment,
+          lifecycle: {
+            inspect: async () => ({ state: 'installed', trust: 'trusted' }),
+            install: async () => ({ state: 'installed', trust: 'trusted' }),
+          },
+        }),
+      });
+      createTerminalSession(testCase.id, 'codex');
+
+      await launcher.launch({
+        sessionId: testCase.id,
+        userId: 'provider-launch-user',
+        mode: 'detached',
+      });
+
+      assert.equal(captured[0]?.env?.CODEX_HOME, testCase.expectedHome);
+      assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, undefined);
+      if (testCase.environment === 'wsl') {
+        assert.equal(
+          captured[0]?.env?.WSLENV?.split(':').some(
+            (entry) => entry.split('/')[0] === 'TESSERA_CODEX_HOME',
+          ),
+          false,
+        );
+      }
+      await manager.closeSession(testCase.id, 'provider-launch-user');
+    }
+  } finally {
+    modules.registry.cliProviderRegistry.register('codex', originalProvider);
+    if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
+  }
+});
+
+test('only an exact legacy Codex overlay Session resume keeps the compatibility home', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const lifecycleCalls: string[] = [];
+  const providerIntegration = modules.createProviderIntegration({
+    resolveAgentEnvironment: async () => 'wsl',
+    lifecycle: {
+      inspect: async () => {
+        lifecycleCalls.push('inspect');
+        return { state: 'absent', trust: 'unchecked' };
+      },
+      install: async () => ({ state: 'installed', trust: 'trusted' }),
+    },
+  });
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager, providerIntegration });
+  const legacySessionId = 'exact-legacy-codex';
+  createTerminalSession(legacySessionId, 'codex', {
+    kind: 'terminal',
+    codexSessionId: 'legacy-provider-session',
+  });
+  modules.terminalProviderSessions.bindTerminalProviderSession({
+    providerId: 'codex',
+    providerSessionId: 'legacy-provider-session',
+    tesseraSessionId: legacySessionId,
+    transcriptPath: path.join(
+      testRoot,
+      'data',
+      'codex-overlay',
+      `session-${legacySessionId}`,
+      'sessions',
+      'legacy-rollout.jsonl',
+    ),
+  });
+
+  await launcher.launch({
+    sessionId: legacySessionId,
+    userId: 'provider-launch-user',
+    mode: 'detached',
+  });
+
+  assert.match(
+    captured[0]?.env?.CODEX_HOME ?? '',
+    new RegExp(`codex-overlay[\\\\/]session-${legacySessionId}$`),
+  );
+  assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, captured[0]?.env?.CODEX_HOME);
+  assert.deepEqual(lifecycleCalls, []);
+  await manager.closeSession(legacySessionId, 'provider-launch-user');
+});
+
+test('a Codex Session derived inside a legacy overlay resumes from the authoritative home', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const providerIntegration = modules.createProviderIntegration({
+    resolveAgentEnvironment: async () => 'wsl',
+    lifecycle: {
+      inspect: async () => ({ state: 'installed', trust: 'trusted' }),
+      install: async () => ({ state: 'installed', trust: 'trusted' }),
+    },
+  });
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager, providerIntegration });
+  const derivedSessionId = 'derived-codex';
+  createTerminalSession(derivedSessionId, 'codex', {
+    kind: 'terminal',
+    codexSessionId: 'derived-provider-session',
+  });
+  modules.terminalProviderSessions.bindTerminalProviderSession({
+    providerId: 'codex',
+    providerSessionId: 'derived-provider-session',
+    tesseraSessionId: derivedSessionId,
+    transcriptPath: path.join(
+      testRoot,
+      'data',
+      'codex-overlay',
+      'session-parent-codex',
+      'sessions',
+      'derived-rollout.jsonl',
+    ),
+  });
+
+  await launcher.launch({
+    sessionId: derivedSessionId,
+    userId: 'provider-launch-user',
+    mode: 'detached',
+  });
+
+  assert.equal(captured[0]?.env?.CODEX_HOME, process.env.CODEX_HOME);
+  assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, undefined);
+  await manager.closeSession(derivedSessionId, 'provider-launch-user');
+});
+
+test('a blocked Codex lifecycle gate leaves Claude Code and OpenCode launches available', async () => {
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const providerIntegration = modules.createProviderIntegration({
+    resolveAgentEnvironment: async () => 'wsl',
+    lifecycle: {
+      inspect: async () => ({ state: 'absent', trust: 'unchecked' }),
+      install: async () => ({ state: 'installed', trust: 'trusted' }),
+    },
+  });
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager, providerIntegration });
+  createTerminalSession('isolated-block-codex', 'codex');
+  createTerminalSession('isolated-block-claude', 'claude-code');
+  createTerminalSession('isolated-block-opencode', 'opencode');
+
+  await assert.rejects(
+    launcher.launch({
+      sessionId: 'isolated-block-codex',
+      userId: 'provider-launch-user',
+      mode: 'detached',
+    }),
+    (error: unknown) => error instanceof modules.ProviderLaunchError
+      && error.code === 'LAUNCH_FAILED'
+      && /lifecycle hook is not installed.*lifecycle install --consent/i.test(error.message),
+  );
+  assert.equal(captured.length, 0);
+
+  await launcher.launch({
+    sessionId: 'isolated-block-claude',
+    userId: 'provider-launch-user',
+    mode: 'detached',
+  });
+  await launcher.launch({
+    sessionId: 'isolated-block-opencode',
+    userId: 'provider-launch-user',
+    mode: 'detached',
+  });
+  assert.equal(captured.length, 2);
+  assert.match(captured[0]?.args.join(' ') ?? '', /claude/);
+  assert.match(captured[1]?.args.join(' ') ?? '', /opencode/);
+  await manager.closeSession('isolated-block-claude', 'provider-launch-user');
+  await manager.closeSession('isolated-block-opencode', 'provider-launch-user');
 });
 
 test('launch preparation finalizes provider argv before shell resolution', async () => {
@@ -817,7 +1056,8 @@ test('shared provider launches inject the control bridge without per-Session ski
     if (provider === 'claude-code') {
       assert.doesNotMatch(captured[0]?.args.join(' ') ?? '', /--plugin-dir/);
     } else if (provider === 'codex') {
-      assert.ok(childEnv?.CODEX_HOME, 'Codex launch should include its overlay home');
+      assert.equal(childEnv?.CODEX_HOME, process.env.CODEX_HOME);
+      assert.equal(childEnv?.TESSERA_CODEX_HOME, undefined);
       assert.equal(
         fs.existsSync(path.join(childEnv.CODEX_HOME, 'skills', 'tessera-cli')),
         false,
@@ -856,7 +1096,6 @@ test('managed WSL-like launches preserve global skills without per-Session injec
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);
   const sessionIds = ['managed-wsl-claude-code', 'managed-wsl-codex', 'managed-wsl-opencode'];
-  const transientOverlayDirs: string[] = [];
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.writeFileSync(
@@ -925,8 +1164,8 @@ test('managed WSL-like launches preserve global skills without per-Session injec
       if (provider === 'claude-code') {
         assert.doesNotMatch(spawned?.args.join(' ') ?? '', /--plugin-dir/);
       } else if (provider === 'codex') {
-        assert.ok(spawned?.env?.CODEX_HOME?.startsWith(guestHome));
-        transientOverlayDirs.push(spawned.env.CODEX_HOME);
+        assert.equal(spawned?.env?.CODEX_HOME, path.join(guestHome, '.codex'));
+        assert.equal(spawned?.env?.TESSERA_CODEX_HOME, undefined);
         assert.equal(
           fs.readFileSync(
             path.join(spawned.env.CODEX_HOME, 'skills/tessera-cli/SKILL.md'),
@@ -945,12 +1184,6 @@ test('managed WSL-like launches preserve global skills without per-Session injec
 
     for (const sessionId of sessionIds) {
       await manager.closeSession(sessionId, 'provider-launch-user');
-    }
-    for (let retry = 0; retry < 50 && transientOverlayDirs.some(fs.existsSync); retry += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    for (const overlayDir of transientOverlayDirs) {
-      assert.equal(fs.existsSync(overlayDir), false);
     }
     for (const userFile of userFiles) {
       assert.equal(
@@ -1138,9 +1371,21 @@ test('a preparation timeout removes a Codex overlay that only lands after the ga
     'codex',
     {
       taskId: 'late-codex-overlay-task',
-      providerState: JSON.stringify({ kind: 'terminal' }),
+      providerState: JSON.stringify({
+        kind: 'terminal',
+        codexSessionId: 'late-codex-provider-session',
+      }),
     },
   );
+  modules.terminalProviderSessions.bindTerminalProviderSession({
+    providerId: 'codex',
+    providerSessionId: 'late-codex-provider-session',
+    tesseraSessionId: 'late-codex-overlay-session',
+    transcriptPath: path.join(
+      guestHome,
+      '.tessera/codex-overlay/session-late-codex-overlay-session/sessions/rollout.jsonl',
+    ),
+  });
   assert.equal(modules.taskPreparation.startTaskPreparation(
     'late-codex-overlay-task',
     { before: 'prepare-before', after: null },
@@ -1352,7 +1597,19 @@ test('Claude avoids WSL skill overlays while a deterministic Codex overlay failu
     // successful run from another test in this file leaves a resolved promise
     // behind that this fake-wsl failure would never see. Codex exercises the
     // exact same launchEnvFactory failure path, so it alone is enough to cover it.
-    createTerminalSession('failing-overlay-codex', 'codex');
+    createTerminalSession('failing-overlay-codex', 'codex', {
+      kind: 'terminal',
+      codexSessionId: 'failing-overlay-codex-provider-session',
+    });
+    modules.terminalProviderSessions.bindTerminalProviderSession({
+      providerId: 'codex',
+      providerSessionId: 'failing-overlay-codex-provider-session',
+      tesseraSessionId: 'failing-overlay-codex',
+      transcriptPath: path.join(
+        guestHome,
+        '.tessera/codex-overlay/session-failing-overlay-codex/sessions/rollout.jsonl',
+      ),
+    });
     await assert.rejects(
       launcher.launch({
         sessionId: 'failing-overlay-codex',

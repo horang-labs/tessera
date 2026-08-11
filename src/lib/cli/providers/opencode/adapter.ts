@@ -10,6 +10,7 @@ import type {
   SpawnResult,
   CliRawLogSink,
   TranslatedText,
+  ProviderIntegrationRequirements,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { SessionHistoryEvent } from '@/lib/session-replay-types';
@@ -120,6 +121,14 @@ export class OpenCodeAdapter implements CliProvider {
       windowsHostedWslExpression: '${XDG_CONFIG_HOME:-$HOME/.config}/opencode',
       resolveSharedFilesystemHome: () => resolveOpenCodeConfigDirForEnvironment(environment),
     });
+  }
+
+  getProviderIntegrationRequirements(): ProviderIntegrationRequirements {
+    return {
+      lifecycle: 'not-applicable',
+      skill: 'optional',
+      launchEnvironment: 'not-applicable',
+    };
   }
 
   getDisplayName(): string {

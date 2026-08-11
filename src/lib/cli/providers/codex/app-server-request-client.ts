@@ -11,6 +11,7 @@ import {
   normalizeCwdForCliEnvironment,
   spawnCli,
 } from '@/lib/cli/spawn-cli';
+import { resolveCodexHomeForEnvironment } from './provider-home';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -74,6 +75,11 @@ export function buildCodexAppServerRequestEnvironment(
   dependencies: CodexAppServerEnvironmentDependencies = {},
 ): NodeJS.ProcessEnv {
   const env = buildCodexAccountEnvironment(baseEnv, agentEnvironment);
+  // Direct processes receive a complete environment, while terminal launches
+  // merge this object over their inherited environment. Keep an explicit
+  // deletion marker so both paths discard a legacy overlay value inherited
+  // from the Tessera server itself.
+  env.TESSERA_CODEX_HOME = undefined;
   if (!providerHomeFilesystemPath) return env;
   const formatProviderHome = dependencies.formatProviderHome ?? formatPathForAgentDisplay;
   const isBridged = dependencies.isBridged ?? isBridgedAgentEnvironment;
@@ -85,6 +91,7 @@ export function buildCodexAppServerRequestEnvironment(
   if (agentEnvironment === 'wsl' && isBridged(agentEnvironment)) {
     const entries = (env.WSLENV ?? '').split(':').filter(Boolean);
     const byName = new Map(entries.map((entry) => [entry.split('/')[0], entry]));
+    byName.delete('TESSERA_CODEX_HOME');
     // The value is already expressed as a WSL path, so pass it unchanged.
     byName.set('CODEX_HOME', 'CODEX_HOME');
     env.WSLENV = [...byName.values()].join(':');
@@ -149,6 +156,8 @@ export async function runCodexAppServerRequest<T>(
   params: Record<string, unknown>,
 ): Promise<T> {
   const agentEnvironment = context.environment ?? await getAgentEnvironment(context.userId);
+  const providerHomeFilesystemPath = context.providerHomeFilesystemPath
+    ?? await resolveCodexHomeForEnvironment(agentEnvironment);
   const command = await resolveProviderCliCommand(
     'codex',
     'codex',
@@ -165,7 +174,7 @@ export async function runCodexAppServerRequest<T>(
       env: buildCodexAppServerRequestEnvironment(
         process.env,
         agentEnvironment,
-        context.providerHomeFilesystemPath,
+        providerHomeFilesystemPath,
       ),
       stdio: ['pipe', 'pipe', 'pipe'],
     }, agentEnvironment);

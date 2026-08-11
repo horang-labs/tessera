@@ -11,6 +11,17 @@ import {
 const PROVIDERS: ProviderSkillId[] = ['claude-code', 'codex', 'opencode'];
 const TEST_SKILL = '---\nname: tessera-cli\ndescription: test\n---\nUse TESSERA_CLI_COMMAND.\n';
 
+function skillOnlyProvider(providerId: ProviderSkillId) {
+  return {
+    getProviderId: () => providerId,
+    getProviderIntegrationRequirements: () => ({
+      lifecycle: 'not-applicable' as const,
+      skill: 'optional' as const,
+      launchEnvironment: 'not-applicable' as const,
+    }),
+  };
+}
+
 function createHarness() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-skills-'));
   const homes = Object.fromEntries(
@@ -218,7 +229,7 @@ test('a newly detected provider stays absent until a fresh explicit install gran
     ]);
 
     const launch = await expandedIntegration.resolveLaunch({
-      provider: { getProviderId: () => 'claude-code' },
+      provider: skillOnlyProvider('claude-code'),
       agentEnvironmentOwner: { kind: 'user', userId: 'new-provider-user' },
     });
     assert.equal(launch.skill.state, 'absent');
@@ -398,7 +409,7 @@ test('Session launch refreshes a consented stale skill through Provider Integrat
     });
 
     const launch = await harness.createIntegration('native', updatedSkill).resolveLaunch({
-      provider: { getProviderId: () => 'opencode' },
+      provider: skillOnlyProvider('opencode'),
       agentEnvironmentOwner: { kind: 'user', userId: 'launch-refresh-user' },
     });
 
@@ -433,7 +444,7 @@ test('Session launch reports an externally modified skill but remains nonblockin
     fs.appendFileSync(skillPath, '\nexternal launch edit\n');
 
     const launch = await harness.integration.resolveLaunch({
-      provider: { getProviderId: () => 'codex' },
+      provider: skillOnlyProvider('codex'),
       agentEnvironmentOwner: { kind: 'user', userId: 'launch-conflict-user' },
     });
 
@@ -458,7 +469,7 @@ test('Session launch reports a user-owned collision before consent without chang
   fs.writeFileSync(skillPath, 'user-owned before consent\n');
   try {
     const launch = await harness.integration.resolveLaunch({
-      provider: { getProviderId: () => 'claude-code' },
+      provider: skillOnlyProvider('claude-code'),
       agentEnvironmentOwner: { kind: 'user', userId: 'pre-consent-conflict-user' },
     });
 
@@ -485,7 +496,7 @@ test('Session launch remains nonblocking when its provider home cannot be inspec
     });
 
     const launch = await integration.resolveLaunch({
-      provider: { getProviderId: () => 'opencode' },
+      provider: skillOnlyProvider('opencode'),
       agentEnvironmentOwner: { kind: 'user', userId: 'unavailable-home-user' },
     });
 
@@ -521,7 +532,7 @@ test('Session maintenance remains pinned to the launch Agent Environment during 
     });
 
     const launch = await racingIntegration.resolveLaunch({
-      provider: { getProviderId: () => 'codex' },
+      provider: skillOnlyProvider('codex'),
       agentEnvironmentOwner: { kind: 'user', userId: 'settings-race-user' },
     });
 
@@ -559,7 +570,7 @@ test('Session launch does not reinstall a skill after explicit removal revoked c
     });
 
     const launch = await harness.createIntegration().resolveLaunch({
-      provider: { getProviderId: () => 'claude-code' },
+      provider: skillOnlyProvider('claude-code'),
       agentEnvironmentOwner: { kind: 'user', userId: 'launch-revoked-user' },
     });
 

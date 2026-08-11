@@ -52,6 +52,7 @@ export type TerminalInterruptInputPolicy = 'none' | 'single-escape';
 export interface ProviderIntegrationRequirements {
   lifecycle: 'required' | 'not-applicable';
   skill: 'required' | 'optional' | 'not-applicable';
+  launchEnvironment: 'required' | 'not-applicable';
 }
 
 export interface ProviderLifecycleContext {
@@ -77,6 +78,14 @@ export interface ProviderLifecycleResult {
 export interface ProviderLifecycleIntegration {
   inspect(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
   install(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+}
+
+export type ProviderLaunchEnvironmentContext = ProviderLifecycleContext;
+
+/** Provider-owned launch authority resolved once for lifecycle and process environment. */
+export interface ProviderLaunchPreparation {
+  lifecycle?: ProviderLifecycleIntegration;
+  buildEnvironment(baseEnvironment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 }
 
 export interface ProviderTerminalSessionObservation {
@@ -173,13 +182,18 @@ export interface CliProvider {
   getProviderId(): string;
 
   /** Declares provider-specific integration requirements without filesystem details. */
-  getProviderIntegrationRequirements?(): ProviderIntegrationRequirements;
+  getProviderIntegrationRequirements(): ProviderIntegrationRequirements;
 
   /** Implements provider-owned lifecycle artifact management behind this provider seam. */
   getLifecycleIntegration?(): ProviderLifecycleIntegration;
 
   /** Resolves the provider-owned home where global discovery skills live. */
   resolveSkillHome?(environment: CliEnvironment): Promise<string>;
+
+  /** Resolves one provider-owned launch authority without exposing its home path. */
+  prepareLaunchIntegration?(
+    context: ProviderLaunchEnvironmentContext,
+  ): Promise<ProviderLaunchPreparation>;
 
   /**
    * Returns the human-readable display name for this CLI provider.

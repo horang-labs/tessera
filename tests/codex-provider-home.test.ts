@@ -84,7 +84,11 @@ test('the trust API process is pinned to the same authoritative native home', ()
 
 test('a Windows-to-WSL trust process exports the already translated WSL home without path rewriting', () => {
   const env = buildCodexAppServerRequestEnvironment(
-    { CODEX_HOME: 'C:\\Users\\server\\.codex', WSLENV: 'HTTPS_PROXY' },
+    {
+      CODEX_HOME: 'C:\\Users\\server\\.codex',
+      TESSERA_CODEX_HOME: 'C:\\server\\legacy-overlay',
+      WSLENV: 'HTTPS_PROXY:TESSERA_CODEX_HOME/p',
+    },
     'wsl',
     '\\\\wsl.localhost\\Ubuntu-24.04\\home\\owner\\.codex',
     {
@@ -94,6 +98,7 @@ test('a Windows-to-WSL trust process exports the already translated WSL home wit
   );
 
   assert.equal(env.CODEX_HOME, '/home/owner/.codex');
+  assert.equal(env.TESSERA_CODEX_HOME, undefined);
   assert.deepEqual(env.WSLENV?.split(':'), ['HTTPS_PROXY', 'CODEX_HOME']);
   assert.doesNotMatch(env.WSLENV ?? '', /CODEX_HOME\/p/);
 });

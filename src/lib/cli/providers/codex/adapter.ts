@@ -41,6 +41,8 @@ import type {
   CliRawLogSink,
   ProviderIntegrationRequirements,
   ProviderLifecycleIntegration,
+  ProviderLaunchEnvironmentContext,
+  ProviderLaunchPreparation,
 } from '../types';
 import { createCodexTerminalSessionObserver } from './terminal-session-observer';
 import {
@@ -66,6 +68,8 @@ import {
   type ProviderIntegration,
 } from '../../provider-integration';
 import { createCodexLifecycleHookIntegration } from './lifecycle-hook-integration';
+import { resolveCodexHomeForEnvironment } from './provider-home';
+import { buildCodexAppServerRequestEnvironment } from './app-server-request-client';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
 import {
   resolveProviderCliCommand,
@@ -84,7 +88,6 @@ import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
-import { resolveCodexHomeForEnvironment } from './provider-home';
 import { resolveProviderOwnedSkillHome } from '../provider-skill-home';
 
 const CLI_TIMEOUT_MS = 120_000;
@@ -233,13 +236,20 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
 
 export interface CodexAdapterOptions {
   providerIntegration?: ProviderIntegration;
+  resolveProviderHome?: typeof resolveCodexHomeForEnvironment;
+  createLifecycleIntegration?: typeof createCodexLifecycleHookIntegration;
 }
 
 export class CodexAdapter implements CliProvider {
   private readonly _providerIntegration: ProviderIntegration;
+  private readonly _resolveProviderHome: typeof resolveCodexHomeForEnvironment;
+  private readonly _createLifecycleIntegration: typeof createCodexLifecycleHookIntegration;
 
   constructor(options: CodexAdapterOptions = {}) {
     this._providerIntegration = options.providerIntegration ?? sharedProviderIntegration;
+    this._resolveProviderHome = options.resolveProviderHome ?? resolveCodexHomeForEnvironment;
+    this._createLifecycleIntegration = options.createLifecycleIntegration
+      ?? createCodexLifecycleHookIntegration;
   }
 
   /**
@@ -302,11 +312,28 @@ export class CodexAdapter implements CliProvider {
     return {
       lifecycle: 'required',
       skill: 'optional',
+      launchEnvironment: 'required',
     };
   }
 
   getLifecycleIntegration(): ProviderLifecycleIntegration {
-    return createCodexLifecycleHookIntegration();
+    return this._createLifecycleIntegration();
+  }
+
+  async prepareLaunchIntegration(
+    context: ProviderLaunchEnvironmentContext,
+  ): Promise<ProviderLaunchPreparation> {
+    const providerHome = await this._resolveProviderHome(context.environment);
+    return {
+      lifecycle: this._createLifecycleIntegration({
+        resolveProviderHome: async () => providerHome,
+      }),
+      buildEnvironment: (baseEnvironment) => buildCodexAppServerRequestEnvironment(
+        baseEnvironment,
+        context.environment,
+        providerHome,
+      ),
+    };
   }
 
   getDisplayName(): string {
@@ -504,15 +531,23 @@ export class CodexAdapter implements CliProvider {
       agentEnvironmentOwner: options.userId
         ? { kind: 'user', userId: options.userId }
         : { kind: 'server-default' },
+      workDir,
     });
     const agentEnv = integration.providerHome.agentEnvironment;
+    const launchEnvironment = this._providerIntegration.buildLaunchEnvironment(
+      integration,
+      process.env,
+    );
+    if (!launchEnvironment) {
+      throw new Error('Codex launch is blocked because no Authoritative Provider Home environment was prepared.');
+    }
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
 
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
       shell: false,
-      env: process.env as NodeJS.ProcessEnv,
+      env: launchEnvironment,
       detached: getRuntimePlatform() !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     }, agentEnv);

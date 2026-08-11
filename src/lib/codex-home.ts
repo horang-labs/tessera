@@ -121,6 +121,17 @@ export function extractCodexOverlayTerminalId(
   return overlayName;
 }
 
+/** Exact legacy resumes alone may recreate the overlay that originally owned the rollout. */
+export function isExactLegacyCodexOverlayResume(
+  transcriptPath: string | null | undefined,
+  terminalId: string,
+): boolean {
+  return Boolean(
+    transcriptPath
+    && extractCodexOverlayTerminalId(transcriptPath) === terminalId,
+  );
+}
+
 /**
  * Map a rollout path recorded under a per-session overlay home back to the real
  * account home.
