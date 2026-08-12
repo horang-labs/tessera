@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AppServerMessage } from '@/lib/ws/message-types';
+import type { TerminalInterruptInputPolicy } from '@/lib/cli/providers/types';
 
 export type TerminalSessionStatus = 'running' | 'completed' | 'input_required' | 'idle';
 
@@ -8,6 +9,7 @@ export interface TerminalSessionState {
   hookEvent: string;
   terminalId: string;
   preview?: string;
+  interruptInputPolicy?: TerminalInterruptInputPolicy;
   updatedAt: number;
   /**
    * 이 세션의 런타임이 종료됐다는 명시 신호(terminal_session_runtime running=false /
@@ -46,6 +48,11 @@ export function isTerminalTurnProcessing(
 export const selectIsTerminalTurnProcessing = (sessionId: string) =>
   (state: TerminalSessionStore): boolean => isTerminalTurnProcessing(state, sessionId);
 
+export const selectCanEscapeInterruptTerminal = (sessionId: string) =>
+  (state: TerminalSessionStore): boolean => (
+    state.bySessionId[sessionId]?.interruptInputPolicy === 'single-escape'
+  );
+
 /** AskUserQuestion 카드 등 사람 입력 대기 상태 — 사이드바 노란 깜빡점의 PTY 소스. */
 export function isTerminalAwaitingInput(
   state: TerminalSessionStore,
@@ -77,6 +84,7 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
       && current.hookEvent === msg.hookEvent
       && current.terminalId === msg.terminalId
       && current.preview === msg.preview
+      && current.interruptInputPolicy === msg.interruptInputPolicy
     ) {
       return false;
     }
@@ -88,6 +96,7 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
           hookEvent: msg.hookEvent,
           terminalId: msg.terminalId,
           preview: msg.preview,
+          interruptInputPolicy: msg.interruptInputPolicy,
           updatedAt: Date.now(),
           ...(current?.runtimeExited ? { runtimeExited: true } : {}),
         },

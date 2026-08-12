@@ -160,7 +160,10 @@ export function ToastContainer() {
       <NotificationSound />
       <div
         data-testid="toast-container"
-        className="flex flex-col-reverse items-start gap-2.5 pointer-events-none"
+        className={cn(
+          'flex flex-col-reverse items-start gap-2.5 pointer-events-none',
+          'max-sm:flex-col max-sm:!top-4 max-sm:!bottom-auto',
+        )}
         style={{
           position: 'fixed',
           bottom: '1.25rem',

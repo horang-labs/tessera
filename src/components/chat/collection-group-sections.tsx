@@ -71,6 +71,10 @@ import {
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  SIDEBAR_TREE_LEADING_SLOT,
+  SIDEBAR_TREE_ROW_GUTTER,
+} from './sidebar-tree-layout';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { getLinkedWorktreeDensity, toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
@@ -1031,7 +1035,8 @@ export function TaskItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/task relative mx-1 flex select-none items-center gap-2 rounded-lg px-3 py-1.5 transition-all duration-150',
+          'group/task relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150',
+          SIDEBAR_TREE_ROW_GUTTER,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1057,7 +1062,7 @@ export function TaskItemRow({
         data-testid={`collection-task-${task.id}`}
       >
         {/* Pending, preparation, and ready states share one slot so the title stays put. */}
-        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+        <span className={SIDEBAR_TREE_LEADING_SLOT}>
           {hasPreparationBadge ? (
             <TaskPreparationBadge
               status={task.preparationStatus}
@@ -1421,7 +1426,8 @@ export function ChatItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/chat relative mx-1 flex select-none items-center gap-2 rounded-lg px-3 py-1.5 transition-all duration-150',
+          'group/chat relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150',
+          SIDEBAR_TREE_ROW_GUTTER,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1450,7 +1456,7 @@ export function ChatItemRow({
         data-item-id={session.id}
         data-testid={`collection-chat-${session.id}`}
       >
-        <span className="relative flex shrink-0 items-center">
+        <span className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
           {showProviderIcons ? (
             <ProviderLogoMark
               providerId={session.provider}

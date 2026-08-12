@@ -64,6 +64,7 @@ import { WorktreePeek } from "@/components/worktree/worktree-peek";
 import { useWorkspacePeekStore } from "@/stores/workspace-peek-store";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
 import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace-state-client";
+import { PHONE_VIEWPORT_BREAKPOINT } from "@/lib/viewport/phone-viewport";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -74,6 +75,7 @@ const FALLBACK_VIEWPORT_WIDTH = 1440;
 const KANBAN_SCROLL_AREA_SELECTOR = '[data-kanban-scroll-area="true"]';
 const KANBAN_SCROLL_END_SNAP_THRESHOLD = 16;
 const PROJECT_STRIP_WIDTH = 44;
+const PHONE_PROJECT_STRIP_WIDTH = 32;
 
 function getViewportWidth(): number {
   return typeof window === "undefined"
@@ -198,6 +200,7 @@ export function ChatLayout() {
   const projectsLoadedRef = useRef(initiallyHasProjects);
   const [projectsLoaded, setProjectsLoaded] = useState(initiallyHasProjects);
   const isCompactViewport = viewportWidth < COMPACT_VIEWPORT_BREAKPOINT;
+  const isPhoneViewport = viewportWidth < PHONE_VIEWPORT_BREAKPOINT;
   const isKanbanPeekLayout = isKanbanPeekMode && !sidebarCollapsed;
   const visibleWorkspaceSessionId = resolveVisibleWorkspaceSessionId({
     activeSessionId,
@@ -579,7 +582,9 @@ export function ChatLayout() {
           {/* Left panel — project strip + header + content (list/kanban) */}
           <LeftPanel
             width={sidebarCollapsed
-              ? PROJECT_STRIP_WIDTH
+              ? isPhoneViewport
+                ? PHONE_PROJECT_STRIP_WIDTH
+                : PROJECT_STRIP_WIDTH
               : isCompactViewport
                 ? "100vw"
                 : effectiveSidebarWidth}

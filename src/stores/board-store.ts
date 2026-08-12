@@ -88,6 +88,10 @@ interface BoardState {
   isListRunningFilterActive: boolean;
   setListRunningFilterActive: (active: boolean) => void;
 
+  // Kanban card filter (false = all, true = runtime-live cards only)
+  isKanbanRunningFilterActive: boolean;
+  setKanbanRunningFilterActive: (active: boolean) => void;
+
   // Kanban quick create sheet — tracks which column's sheet is open (null = closed)
   kanbanAddMenuColumn: string | null;
   setKanbanAddMenuColumn: (column: string | null) => void;
@@ -148,6 +152,7 @@ const COLLAPSED_COLLECTIONS_KEY = 'ccw:collapsedCollections';
 const SELECTED_PROJECT_DIR_KEY = 'ccw:selectedProjectDir';
 const ALL_PROJECTS_EXPANDED_SECTIONS_KEY = 'ccw:allProjectsExpandedSections';
 const LIST_RUNNING_FILTER_KEY = 'ccw:listRunningFilterActive';
+const KANBAN_RUNNING_FILTER_KEY = 'ccw:kanbanRunningFilterActive';
 const ACTIVE_COLLECTION_FILTER_KEY = 'ccw:activeCollectionFilter';
 const PEEK_FILE_SIDECAR_WIDTH_KEY = 'ccw:peekFileSidecarWidth';
 
@@ -499,6 +504,12 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   setListRunningFilterActive: (active) => {
     saveBooleanFlag(LIST_RUNNING_FILTER_KEY, active);
     set({ isListRunningFilterActive: active });
+  },
+
+  isKanbanRunningFilterActive: loadBooleanFlag(KANBAN_RUNNING_FILTER_KEY),
+  setKanbanRunningFilterActive: (active) => {
+    saveBooleanFlag(KANBAN_RUNNING_FILTER_KEY, active);
+    set({ isKanbanRunningFilterActive: active });
   },
 
   kanbanAddMenuColumn: null,

@@ -1,6 +1,16 @@
 'use client';
 
-import { memo, useCallback, useState, useEffect, useId, useMemo, useRef } from 'react';
+import {
+  memo,
+  useCallback,
+  useState,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from 'react';
+import { CircleDot } from 'lucide-react';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useCollectionStore } from '@/stores/collection-store';
@@ -27,8 +37,10 @@ import type { WorkflowStatus, TaskEntity } from '@/types/task-entity';
 import { TASK_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
 import type { UnifiedSession } from '@/types/chat';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
+import { selectRunningKanbanItems } from '@/lib/kanban/running-filter';
 import { CollectionFilterBar } from './collection-filter-bar';
 import { PortfolioFilterBar } from './portfolio-filter-bar';
+import { KanbanItemFilter } from './kanban-item-filter';
 import { KanbanChatColumn, KanbanWorkflowColumn } from './kanban-column';
 import { KanbanScrollControls } from './kanban-scroll-controls';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
@@ -58,6 +70,7 @@ import {
   useProjectViewSessions,
 } from '@/hooks/use-project-view-workspace-state';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -82,6 +95,7 @@ interface ScrollSnapshot {
 }
 
 export const KanbanBoard = memo(function KanbanBoard() {
+  const { t } = useI18n();
   const scrollAreaId = useId();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const scrollSnapshotRef = useRef<ScrollSnapshot>({
@@ -99,6 +113,8 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const selectedProjectDir = useBoardStore((s) => s.selectedProjectDir);
   const activeCollectionFilter = useBoardStore((s) => s.activeCollectionFilter);
   const setCollectionFilter = useBoardStore((s) => s.setCollectionFilter);
+  const isKanbanRunningFilterActive = useBoardStore((s) => s.isKanbanRunningFilterActive);
+  const setKanbanRunningFilterActive = useBoardStore((s) => s.setKanbanRunningFilterActive);
   const peekSessionId = useBoardStore((s) => s.peekSessionId);
   const peekFileRef = useBoardStore((s) => s.peekFileRef);
   const openSessionPeek = useBoardStore((s) => s.openSessionPeek);
@@ -118,7 +134,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
     peekSessionId,
     isKanbanPeekLayout: kanbanSessionOpenMode === 'peek',
   });
-  const scrollPositionKey = getKanbanScrollPositionKey(selectedProjectDir, activeCollectionFilter);
+  const scrollPositionKey = getKanbanScrollPositionKey(
+    selectedProjectDir,
+    activeCollectionFilter,
+    isKanbanRunningFilterActive,
+  );
   const [portfolioProjectFilter, setPortfolioProjectFilter] = useState<string | null>(null);
   const isAllProjects = selectedProjectDir === ALL_PROJECTS_SENTINEL;
   const selectedRepresentation = useProjectViewRepresentation(
@@ -329,7 +349,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
     };
   }, []);
 
-  useEffect(function restoreKanbanScrollPosition() {
+  useLayoutEffect(function restoreKanbanScrollPosition() {
     const scrollArea = scrollAreaRef.current;
     if (!scrollArea) return;
 
@@ -337,7 +357,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
     scrollPositionKeyRef.current = scrollPositionKey;
 
     const savedScrollLeft = getKanbanScrollPosition(scrollPositionKey);
-    const restoreFrame = requestAnimationFrame(() => {
+    const restore = () => {
       const maxScrollLeft = Math.max(0, scrollArea.scrollWidth - scrollArea.clientWidth);
       scrollArea.scrollLeft = Math.max(0, Math.min(maxScrollLeft, savedScrollLeft));
       scrollSnapshotRef.current = {
@@ -347,7 +367,12 @@ export const KanbanBoard = memo(function KanbanBoard() {
       };
       hasRestoredScrollPositionRef.current = true;
       saveKanbanScrollPosition(scrollPositionKey, scrollArea.scrollLeft);
-    });
+    };
+
+    // Restore once during the commit so a filter-mode transition cannot paint at
+    // scrollLeft=0, then once more after layout settles (cards may resize the row).
+    restore();
+    const restoreFrame = requestAnimationFrame(restore);
 
     return () => {
       cancelAnimationFrame(restoreFrame);
@@ -409,7 +434,21 @@ export const KanbanBoard = memo(function KanbanBoard() {
     () => selectKanbanProjectionItems({ sessions: allSessions, tasks }, activeCollectionFilter),
     [activeCollectionFilter, allSessions, tasks],
   );
-  const chatSessions = projectionItems.chats;
+  const liveProjectionItems = useMemo(() => ({
+    tasks: mergeTasksWithLiveSessions(projectionItems.tasks, allSessions),
+    chats: projectionItems.chats,
+  }), [allSessions, projectionItems.chats, projectionItems.tasks]);
+  const runningProjectionItems = useMemo(
+    () => selectRunningKanbanItems({
+      tasks: liveProjectionItems.tasks,
+      chats: liveProjectionItems.chats,
+    }),
+    [liveProjectionItems.chats, liveProjectionItems.tasks],
+  );
+  const visibleProjectionItems = isKanbanRunningFilterActive
+    ? runningProjectionItems
+    : liveProjectionItems;
+  const chatSessions = visibleProjectionItems.chats;
 
   // Apply collection filter
   const filteredChats = useMemo(() => {
@@ -438,7 +477,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return map;
   }, [chatSessions]);
 
-  const filteredTasks = projectionItems.tasks;
+  const filteredTasks = visibleProjectionItems.tasks;
 
   useEffect(() => {
     if (!activeCollectionFilter) return;
@@ -485,32 +524,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return map;
   }, [filteredTasks]);
 
-  const sessionsByTaskId = useMemo(() => {
-    const map: Record<string, UnifiedSession[]> = {};
-    for (const session of allSessions) {
-      if (!session.taskId) continue;
-      const taskSessions = map[session.taskId] ?? [];
-      taskSessions.push(session);
-      map[session.taskId] = taskSessions;
-    }
-    return map;
-  }, [allSessions]);
-
-  const mergedTasksByStatus = useMemo(() => {
-    const map: Record<WorkflowStatus, TaskEntity[]> = {
-      todo: [],
-      in_progress: [],
-      in_review: [],
-      done: [],
-    };
-
-    for (const status of WORKFLOW_STATUS_ORDER) {
-      map[status] = mergeTasksWithLiveSessions(tasksByStatus[status], allSessions);
-    }
-
-    return map;
-  }, [allSessions, tasksByStatus]);
-
   // Compute ordered IDs for Shift+Click range select
   const orderedIds = useMemo(() => {
     const ids: string[] = [];
@@ -519,7 +532,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
     for (const status of WORKFLOW_STATUS_ORDER) {
       if (isAllProjects) {
         for (const project of visibleProjects) {
-          for (const task of mergedTasksByStatus[status]) {
+          for (const task of tasksByStatus[status]) {
             if (task.projectId !== project.encodedDir) continue;
             for (const session of task.sessions) {
               ids.push(session.id);
@@ -532,7 +545,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
           }
         }
       } else {
-        for (const task of mergedTasksByStatus[status]) {
+        for (const task of tasksByStatus[status]) {
           for (const session of task.sessions) {
             ids.push(session.id);
           }
@@ -546,7 +559,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
       ids.push(session.id);
     }
     return ids;
-  }, [filteredChats, isAllProjects, mergedTasksByStatus, visibleProjects, workflowChatsByStatus]);
+  }, [filteredChats, isAllProjects, tasksByStatus, visibleProjects, workflowChatsByStatus]);
 
   // Click handlers
   const handleOpenSessionPeek = useCallback((session: UnifiedSession) => {
@@ -768,6 +781,19 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const handleCloseQuickCreate = useCallback(() => {
     setQuickCreateTarget(null);
   }, []);
+
+  const handleKanbanRunningFilterChange = useCallback((active: boolean) => {
+    const scrollArea = scrollAreaRef.current;
+    if (scrollArea) {
+      saveKanbanScrollPosition(scrollPositionKey, scrollArea.scrollLeft);
+    }
+    setQuickCreateTarget(null);
+    setKanbanRunningFilterActive(active);
+    const boardStore = useBoardStore.getState();
+    boardStore.setDragging(null);
+    boardStore.setDragOver(null);
+    boardStore.setDropIndicator(null);
+  }, [scrollPositionKey, setKanbanRunningFilterActive]);
 
   const handlePortfolioProjectFilter = useCallback((projectId: string | null) => {
     setQuickCreateTarget(null);
@@ -1032,6 +1058,17 @@ export const KanbanBoard = memo(function KanbanBoard() {
     setTaskMenuAnchor(null);
   }, [taskMenuAnchor]);
 
+  const itemFilter = (
+    <KanbanItemFilter
+      running={isKanbanRunningFilterActive}
+      runningCount={runningProjectionItems.count}
+      onChange={handleKanbanRunningFilterChange}
+    />
+  );
+  const columnInteractionMode = isKanbanRunningFilterActive ? 'filtered' : 'editable';
+  const showRunningEmptyState =
+    isKanbanRunningFilterActive && runningProjectionItems.count === 0;
+
   return (
     <div
       className="relative flex h-full w-full flex-col overflow-hidden bg-(--board-bg)"
@@ -1042,16 +1079,18 @@ export const KanbanBoard = memo(function KanbanBoard() {
           projects={scopeData.projects}
           activeProjectId={portfolioProjectFilter}
           onProjectFilter={handlePortfolioProjectFilter}
+          trailingControls={itemFilter}
         />
       ) : (
         <CollectionFilterBar
           collections={collections}
           activeFilter={activeCollectionFilter}
           onFilter={setCollectionFilter}
+          trailingControls={itemFilter}
         />
       )}
 
-      {/* Horizontal scroll container */}
+      {/* Horizontal scroll container stays mounted so resize/scroll observers remain valid. */}
       <div
         id={scrollAreaId}
         ref={scrollAreaRef}
@@ -1059,89 +1098,106 @@ export const KanbanBoard = memo(function KanbanBoard() {
         data-kanban-scroll-area="true"
         data-testid="kanban-scroll-area"
       >
-        <div
-          className="inline-flex gap-3 h-full px-4 py-4 min-w-max"
-          data-testid="kanban-columns-row"
-        >
-          {/* Workflow columns */}
-          {WORKFLOW_STATUS_ORDER.map((status) => (
-            <KanbanWorkflowColumn
-              key={status}
-              status={status}
-              projectViewId={focusedProjectId}
-              tasks={tasksByStatus[status]}
-              chats={workflowChatsByStatus[status]}
+        {showRunningEmptyState ? (
+          <div
+            className="flex h-full min-w-full items-center justify-center px-6"
+            data-testid="kanban-running-empty"
+          >
+            <div className="rounded-xl border border-dashed border-(--divider) px-8 py-7 text-center">
+              <div className="mx-auto mb-2.5 flex h-9 w-9 items-center justify-center rounded-lg bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)">
+                <CircleDot className="h-4.5 w-4.5" aria-hidden="true" />
+              </div>
+              <p className="text-[0.8125rem] font-medium text-(--text-secondary)">
+                {t('status.noRunningProcesses')}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div
+            className="inline-flex gap-3 h-full px-4 py-4 min-w-max"
+            data-testid="kanban-columns-row"
+          >
+            {/* Workflow columns */}
+            {WORKFLOW_STATUS_ORDER.map((status) => (
+              <KanbanWorkflowColumn
+                key={status}
+                status={status}
+                projectViewId={focusedProjectId}
+                tasks={tasksByStatus[status]}
+                chats={workflowChatsByStatus[status]}
+                collection={activeCollection}
+                collections={collections}
+                collectionsByProject={scopeData.collectionsByProject}
+                projects={visibleProjects}
+                groupByProject={isAllProjects}
+                createProject={selectedProject}
+                activeSessionId={selectionSessionId}
+                quickCreateProjectId={
+                  quickCreateTarget?.column === status ? quickCreateTarget.projectId : null
+                }
+                interactionMode={columnInteractionMode}
+                onToggleQuickCreate={handleToggleQuickCreate}
+                onCloseQuickCreate={handleCloseQuickCreate}
+                onSessionClick={handleChatClick}
+                onSessionDoubleClick={handleChatDoubleClick}
+                onChatDragStart={handleChatDragStart}
+                onChatDragEnd={handleChatDragEnd}
+                onChatDragOver={handleChatSessionDragOver}
+                onAddSession={handleCreateSessionInTask}
+                onTaskContextMenu={handleTaskContextMenu}
+                onTaskRename={handleTaskRename}
+                onChatArchive={handleCardArchive}
+                onChatUnarchive={handleCardUnarchive}
+                onChatStatusChange={handleCardStatusChange}
+                onSessionRename={handleCardRename}
+                onSessionDelete={handleCardDelete}
+                onSessionOpenInNewTab={handleCardOpenInNewTab}
+                onSessionGenerateTitle={handleCardGenerateTitle}
+                onSessionStopProcess={handleCardStopProcess}
+                renamingTaskId={renamingTaskId}
+                onTaskRenameComplete={handleTaskRenameComplete}
+              />
+            ))}
+
+            {/* Divider */}
+            <div className="w-px bg-(--divider) mx-2 self-stretch opacity-50 shrink-0" />
+
+            {/* Chat column */}
+            <KanbanChatColumn
+              chats={filteredChats}
               collection={activeCollection}
               collections={collections}
               collectionsByProject={scopeData.collectionsByProject}
               projects={visibleProjects}
               groupByProject={isAllProjects}
               createProject={selectedProject}
-              sessionsByTaskId={sessionsByTaskId}
               activeSessionId={selectionSessionId}
               quickCreateProjectId={
-                quickCreateTarget?.column === status ? quickCreateTarget.projectId : null
+                quickCreateTarget?.column === 'chat' ? quickCreateTarget.projectId : null
               }
+              interactionMode={columnInteractionMode}
+              onCardDragStart={handleChatDragStart}
+              onCardDragEnd={handleChatDragEnd}
+              onCardDragOver={handleChatSessionDragOver}
+              onColumnDragOver={handleChatColumnDragOver}
+              onColumnDragLeave={handleChatColumnDragLeave}
+              onColumnDrop={handleChatColumnDrop}
+              onCardClick={handleChatClick}
+              onCardDoubleClick={handleChatDoubleClick}
               onToggleQuickCreate={handleToggleQuickCreate}
               onCloseQuickCreate={handleCloseQuickCreate}
-              onSessionClick={handleChatClick}
-              onSessionDoubleClick={handleChatDoubleClick}
-              onChatDragStart={handleChatDragStart}
-              onChatDragEnd={handleChatDragEnd}
-              onChatDragOver={handleChatSessionDragOver}
-              onAddSession={handleCreateSessionInTask}
-              onTaskContextMenu={handleTaskContextMenu}
-              onTaskRename={handleTaskRename}
-              onChatArchive={handleCardArchive}
-              onChatUnarchive={handleCardUnarchive}
-              onChatStatusChange={handleCardStatusChange}
-              onSessionRename={handleCardRename}
-              onSessionDelete={handleCardDelete}
-              onSessionOpenInNewTab={handleCardOpenInNewTab}
-              onSessionGenerateTitle={handleCardGenerateTitle}
-              onSessionStopProcess={handleCardStopProcess}
-              renamingTaskId={renamingTaskId}
-              onTaskRenameComplete={handleTaskRenameComplete}
+              onCardStatusChange={handleCardStatusChange}
+              onCardArchive={handleCardArchive}
+              onCardUnarchive={handleCardUnarchive}
+              onCardRename={handleCardRename}
+              onCardDelete={handleCardDelete}
+              onCardOpenInNewTab={handleCardOpenInNewTab}
+              onCardGenerateTitle={handleCardGenerateTitle}
+              onCardMoveToCollection={handleChatMoveToCollection}
+              onCardStopProcess={handleCardStopProcess}
             />
-          ))}
-
-          {/* Divider */}
-          <div className="w-px bg-(--divider) mx-2 self-stretch opacity-50 shrink-0" />
-
-          {/* Chat column */}
-          <KanbanChatColumn
-            chats={filteredChats}
-            collection={activeCollection}
-            collections={collections}
-            collectionsByProject={scopeData.collectionsByProject}
-            projects={visibleProjects}
-            groupByProject={isAllProjects}
-            createProject={selectedProject}
-            activeSessionId={selectionSessionId}
-            quickCreateProjectId={
-              quickCreateTarget?.column === 'chat' ? quickCreateTarget.projectId : null
-            }
-            onCardDragStart={handleChatDragStart}
-            onCardDragEnd={handleChatDragEnd}
-            onCardDragOver={handleChatSessionDragOver}
-            onColumnDragOver={handleChatColumnDragOver}
-            onColumnDragLeave={handleChatColumnDragLeave}
-            onColumnDrop={handleChatColumnDrop}
-            onCardClick={handleChatClick}
-            onCardDoubleClick={handleChatDoubleClick}
-            onToggleQuickCreate={handleToggleQuickCreate}
-            onCloseQuickCreate={handleCloseQuickCreate}
-            onCardStatusChange={handleCardStatusChange}
-            onCardArchive={handleCardArchive}
-            onCardUnarchive={handleCardUnarchive}
-            onCardRename={handleCardRename}
-            onCardDelete={handleCardDelete}
-            onCardOpenInNewTab={handleCardOpenInNewTab}
-            onCardGenerateTitle={handleCardGenerateTitle}
-            onCardMoveToCollection={handleChatMoveToCollection}
-            onCardStopProcess={handleCardStopProcess}
-          />
-        </div>
+          </div>
+        )}
       </div>
       <KanbanScrollControls scrollAreaId={scrollAreaId} scrollAreaRef={scrollAreaRef} />
 

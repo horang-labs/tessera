@@ -48,6 +48,11 @@ import {
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { buildTaskChildSession } from '@/lib/session/task-child-session';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import {
+  SIDEBAR_TREE_CHILD_INDENT,
+  SIDEBAR_TREE_LEADING_SLOT,
+  SIDEBAR_TREE_ROW_GUTTER,
+} from './sidebar-tree-layout';
 
 async function createSessionInTask(
   task: TaskEntity,
@@ -532,7 +537,8 @@ export const CollectionGroup = memo(function CollectionGroup({
           }
           onDragEnd={!disableDnd && !isUncategorized ? onGroupDragEnd : undefined}
           className={cn(
-            'group/collection relative mx-1 flex select-none items-center gap-2 rounded-lg px-3 py-1.5 transition-colors duration-150',
+            'group/collection relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-colors duration-150',
+            SIDEBAR_TREE_ROW_GUTTER,
             !isEmpty && 'cursor-pointer',
             !disableDnd && !isUncategorized && 'cursor-grab active:cursor-grabbing',
             'hover:bg-(--sidebar-hover)/60',
@@ -543,15 +549,15 @@ export const CollectionGroup = memo(function CollectionGroup({
           onClick={isEmpty ? undefined : onToggleCollapse}
           data-testid={`collection-header-${collectionId}`}
         >
-          <div className="relative h-3 w-3 shrink-0">
+          <div className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
             {isEmpty ? (
-              <Tag className="absolute inset-0 h-3 w-3 text-(--text-muted)" />
+              <Tag className="absolute inset-0 h-3.5 w-3.5 text-(--text-muted)" />
             ) : (
               <>
-                <Tag className="absolute inset-0 h-3 w-3 text-(--text-muted) transition-opacity duration-150 group-hover/collection:opacity-0" />
+                <Tag className="absolute inset-0 h-3.5 w-3.5 text-(--text-muted) transition-opacity duration-150 group-hover/collection:opacity-0" />
                 <ChevronRight
                   className={cn(
-                    'absolute inset-0 h-3 w-3 text-(--text-muted) opacity-0 transition-all duration-150 group-hover/collection:opacity-100',
+                    'absolute inset-0 h-3.5 w-3.5 text-(--text-muted) opacity-0 transition-all duration-150 group-hover/collection:opacity-100',
                     !isCollapsed && 'rotate-90',
                   )}
                 />
@@ -648,7 +654,7 @@ export const CollectionGroup = memo(function CollectionGroup({
 
       {!isCollapsed && (
         <div
-          className={cn(hideHeader ? 'space-y-0.5' : 'ml-4 space-y-0.5')}
+          className={cn('space-y-0.5', !hideHeader && SIDEBAR_TREE_CHILD_INDENT)}
         >
           {orderedItems ? (
             orderedItems.map((item) => {

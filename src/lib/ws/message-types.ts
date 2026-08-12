@@ -10,6 +10,7 @@ import type { ProviderRuntimeControls } from '@/lib/session/session-control-type
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import type { PreparationStatus } from '@/lib/projects/preparation-status-policy';
 import type { WorkflowStatus } from '@/types/task-entity';
+import type { TerminalInterruptInputPolicy } from '@/lib/cli/providers/types';
 import type {
   TerminalAppearance,
   TerminalLaunchIntent,
@@ -291,6 +292,8 @@ export type AppServerMessage =
       status: 'running' | 'completed' | 'input_required' | 'idle';
       hookEvent: string;
       preview?: string;
+      /** Provider-declared input gesture available while this terminal turn is active. */
+      interruptInputPolicy?: TerminalInterruptInputPolicy;
       /** Active child work prevents an Escape fallback from settling the turn. */
       hasWorkingSubagents?: boolean;
       /**
@@ -376,6 +379,8 @@ export type AppServerMessage =
       shell: string;
       reattached: boolean;
       appearance?: TerminalAppearance;
+      /** Provider-declared input gesture for cancelling an active terminal turn. */
+      interruptInputPolicy?: TerminalInterruptInputPolicy;
     }
   | {
       type: 'terminal_snapshot';

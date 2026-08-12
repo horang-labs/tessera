@@ -121,6 +121,17 @@ test('collection filter changes are mirrored between main and board popouts', ()
   assert.match(electronPreloadSource, /onUiCollectionFilterChanged/);
 });
 
+test('kanban running filter changes are mirrored between main and board popouts', () => {
+  assert.match(crossWindowUiSyncSource, /uiKanbanRunningFilterChanged\?: \(active: boolean\) => void;/);
+  assert.match(crossWindowUiSyncSource, /onUiKanbanRunningFilterChanged/);
+  assert.match(crossWindowUiSyncSource, /isKanbanRunningFilterActive/);
+  assert.match(crossWindowUiSyncSource, /setKanbanRunningFilterActive\(active\);/);
+  assert.match(electronMainSource, /ipcMain\.on\('ui-kanban-running-filter-changed'/);
+  assert.match(electronMainSource, /win\.webContents\.send\('ui-kanban-running-filter-changed', \{ active \}\);/);
+  assert.match(electronPreloadSource, /uiKanbanRunningFilterChanged: \(active: boolean\) =>/);
+  assert.match(electronPreloadSource, /onUiKanbanRunningFilterChanged/);
+});
+
 test('task reloads requested during an in-flight reload are replayed for popout creation sync', () => {
   assert.match(taskStoreSource, /queuedProjectLoads: Record<string, QueuedProjectLoad>;/);
   assert.match(taskStoreSource, /if \(get\(\)\.loadingProjectIds\[projectId\]\) \{/);

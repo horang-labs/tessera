@@ -45,6 +45,7 @@ test('Project Worktree rows render detailed and compact variants', () => {
   assert.match(row, /feature\/root-target/);
   assert.match(row, /aria-current="true"/);
   assert.match(row, /data-variant="detailed"/);
+  assert.match(row, /mb-0\.5[^\"]*py-2(?:\s|\")/);
 
   const compactRow = renderToStaticMarkup(createElement(CompactProjectWorktreeRow, {
     active: false,
@@ -57,6 +58,7 @@ test('Project Worktree rows render detailed and compact variants', () => {
   assert.match(compactRow, /\/repo\/tessera-dev/);
   assert.match(compactRow, /feature\/root-target/);
   assert.match(compactRow, /data-variant="compact"/);
+  assert.match(compactRow, /mb-0\.5[^\"]*py-1(?:\s|\")/);
 });
 
 test('Worktree overview renders branch, path, and creation actions', () => {
