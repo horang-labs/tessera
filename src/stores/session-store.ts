@@ -75,8 +75,6 @@ export interface SessionState {
   removeSession: (sessionId: string) => void;
   /** Retain a navigable Session without inserting it into a direct Project Session page. */
   retainSession: (session: UnifiedSession) => void;
-  /** Return the latest explicitly materialized appearance before its canonical fallback. */
-  getMaterializedSession: (sessionId: string) => UnifiedSession | undefined;
   upsertSession: (session: UnifiedSession) => void;
   removeProject: (encodedDir: string) => void;
   updateSessionTitle: (sessionId: string, title: string, hasCustomTitle?: boolean) => void;
@@ -1187,11 +1185,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * Used to display loading indicator in the session item during message fetch.
    */
   setLoadingSession: (sessionId) => set({ loadingSessionId: sessionId }),
-
-  getMaterializedSession: (sessionId: string): UnifiedSession | undefined => {
-    const state = get();
-    return state.retainedSessions[sessionId] ?? findStoredSession(state, sessionId);
-  },
 
   // Unread count actions
   incrementUnreadCount: (sessionId) => {

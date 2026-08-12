@@ -132,7 +132,7 @@ interface TaskSessionAppearance {
 
 const projectedSessionCache = new WeakMap<
   UnifiedSession,
-  Map<string, UnifiedSession>
+  Map<string, Map<string | undefined, UnifiedSession>>
 >();
 
 function projectSessionIntoView(
@@ -145,12 +145,16 @@ function projectSessionIntoView(
     projections = new Map();
     projectedSessionCache.set(session, projections);
   }
-  const cacheKey = `${projectViewId}\u0000${collectionId ?? ''}`;
-  const cached = projections.get(cacheKey);
+  let collectionProjections = projections.get(projectViewId);
+  if (!collectionProjections) {
+    collectionProjections = new Map();
+    projections.set(projectViewId, collectionProjections);
+  }
+  const cached = collectionProjections.get(collectionId);
   if (cached) return cached;
 
   const projected = { ...session, projectDir: projectViewId, collectionId };
-  projections.set(cacheKey, projected);
+  collectionProjections.set(collectionId, projected);
   return projected;
 }
 

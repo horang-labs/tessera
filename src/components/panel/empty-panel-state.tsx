@@ -33,6 +33,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
 import { resolveLastActiveProjectDir } from '@/lib/session/last-active-project';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 
 interface EmptyPanelStateProps {
   panelId: string;
@@ -136,6 +137,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     selectedProjectDir,
     allProjectsProjectId,
   );
+  const selectionSession = useProjectViewSession(getSessionSelectionId(activeSessionId));
 
   const activeProject = useMemo(() => {
     if (resolvedProjectId) {
@@ -143,14 +145,13 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     }
     if (requiresProjectSelection) return null;
 
-    const selectionSessionId = getSessionSelectionId(activeSessionId);
-    if (selectionSessionId) {
-      return projects.find((project) =>
-        project.sessions.some((session) => session.id === selectionSessionId)
+    if (selectionSession) {
+      return projects.find((candidate) =>
+        candidate.encodedDir === selectionSession.projectDir
       ) ?? null;
     }
     return projects[0] ?? null;
-  }, [activeSessionId, projects, requiresProjectSelection, resolvedProjectId]);
+  }, [projects, requiresProjectSelection, resolvedProjectId, selectionSession]);
   const activeProjectId = activeProject?.encodedDir ?? null;
   const collections = useCollectionStore((state) =>
     activeProjectId ? state.collectionsByProject?.[activeProjectId] ?? EMPTY_COLLECTIONS : EMPTY_COLLECTIONS

@@ -1,21 +1,19 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { hasAnyAwaitingUserPrompt, isAwaitingUserPrompt, useChatStore } from '@/stores/chat-store';
 import {
   isTerminalAwaitingInput,
   selectIsTerminalAwaitingInput,
   useTerminalSessionStore,
 } from '@/stores/terminal-session-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import {
-  useProjectViewSession,
-  useProjectViewSessions,
-} from '@/hooks/use-project-view-workspace-state';
-import { resolveIsTerminalSession } from './use-session-processing';
+  resolveIsTerminalSession,
+  useSessionKindGroups,
+  type SessionKindTarget,
+} from './use-session-kind-groups';
 import type { UnifiedSession } from '@/types/chat';
-
-type SessionAwaitingTarget = string | Pick<UnifiedSession, 'id' | 'kind'>;
 
 /**
  * "사용자 입력 대기"(노란 깜빡점) 판정을 GUI/PTY lifecycle을 섞지 않고 합성한다.
@@ -41,42 +39,9 @@ export function useIsSessionAwaitingUser(
 
 /** 여러 세션 중 하나라도 입력 대기인지 — 탭/컬렉션/칸반 집계용. */
 export function useAnySessionAwaitingUser(
-  sessions: readonly SessionAwaitingTarget[],
+  sessions: readonly SessionKindTarget[],
 ): boolean {
-  const targetsKey = JSON.stringify(
-    sessions
-      .map((session) => typeof session === 'string'
-        ? { id: session, kind: undefined }
-        : { id: session.id, kind: session.kind })
-      .sort((left, right) => left.id.localeCompare(right.id)),
-  );
-  const targets = useMemo(
-    () => JSON.parse(targetsKey) as Array<{ id: string; kind?: UnifiedSession['kind'] }>,
-    [targetsKey],
-  );
-  const ids = useMemo(() => targets.map((target) => target.id), [targets]);
-  const fallbackKinds = useMemo(
-    () => new Map(targets.map((target) => [target.id, target.kind])),
-    [targets],
-  );
-
-  const resolvedSessions = useProjectViewSessions(ids);
-  const kindsById = new Map(resolvedSessions.map((session) => [session.id, session.kind]));
-  const terminalIdsKey = ids
-    .filter((sessionId) => resolveIsTerminalSession(
-      kindsById.get(sessionId),
-      fallbackKinds.get(sessionId),
-    ))
-    .join(',');
-  const terminalIds = useMemo(
-    () => terminalIdsKey ? terminalIdsKey.split(',') : [],
-    [terminalIdsKey],
-  );
-  const terminalIdSet = useMemo(() => new Set(terminalIds), [terminalIds]);
-  const guiIds = useMemo(
-    () => ids.filter((sessionId) => !terminalIdSet.has(sessionId)),
-    [ids, terminalIdSet],
-  );
+  const { guiIds, terminalIds } = useSessionKindGroups(sessions);
 
   const hasGuiAwaiting = useChatStore(useCallback(
     (state) => hasAnyAwaitingUserPrompt(state, guiIds),

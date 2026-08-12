@@ -107,9 +107,19 @@ const config = [
             "UI Session resolution must use useProjectViewSession/useProjectViewSessions or projectViewWorkspaceState, not session-store.getSession().",
         },
         {
+          selector: "MemberExpression[property.name='getMaterializedSession']",
+          message:
+            "UI Session resolution must use the Project View workspace-state contract; the legacy materialized-session compatibility path has been removed.",
+        },
+        {
           selector: "MemberExpression[property.name='retainedSessions']",
           message:
             "UI code must subscribe through Project View workspace-state hooks instead of reading retainedSessions directly.",
+        },
+        {
+          selector: "MemberExpression[object.name='project'][property.name='sessions']",
+          message:
+            "UI code must consume a Project View or origin representation instead of reconstructing Session truth from project.sessions.",
         },
       ],
       "no-restricted-imports": [

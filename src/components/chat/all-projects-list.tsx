@@ -183,8 +183,11 @@ function AllProjectSection({
   }, [isRunningFilterActive, visibleCollectionGroups]);
 
   const visibleSessionCount = useMemo(
-    () => project.sessions.filter((session) => !session.archived).length,
-    [project.sessions]
+    () => new Set(collectionGroups.flatMap((group) => [
+      ...group.chats.map((session) => session.id),
+      ...group.tasks.flatMap((task) => task.sessions.map((session) => session.id)),
+    ])).size,
+    [collectionGroups],
   );
   const runningSessionCount = useMemo(
     () => countRunningCollectionGroupItems(collectionGroups),

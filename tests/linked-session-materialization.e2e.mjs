@@ -152,6 +152,11 @@ try {
   await page.goto(`${origin}/chat`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   const card = page.locator(`[data-testid="kanban-card"][data-task-id="${task.id}"]`);
   await card.waitFor({ timeout: 120_000 });
+  assert.equal(
+    await page.getByTestId(`kanban-chat-bubble-${createdSession.sessionId}`).count(),
+    0,
+    'summary-only linked Session must not also render as an independent Chat card',
+  );
   await card.click();
   await page.getByTestId('kanban-session-peek').waitFor();
   await page.locator('[data-testid="message-input-row"]:visible').waitFor();

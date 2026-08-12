@@ -69,9 +69,16 @@ function isFileLikeSessionId(sessionId: string | null): boolean {
     || parseMemoryFileSessionId(sessionId) !== null;
 }
 
-function inferSessionWorktreeId(sessionId: string | null | undefined): string | null {
+function inferSessionWorktreeId(
+  sessionId: string | null | undefined,
+  projectViewId?: string | null,
+): string | null {
   if (!sessionId || isSpecialSession(sessionId)) return null;
-  return useSessionStore.getState().getMaterializedSession(sessionId)?.worktreeId ?? null;
+  const requestedProjectViewId = projectViewId && !isAllProjectsScope(projectViewId)
+    ? projectViewId
+    : undefined;
+  return projectViewWorkspaceState.resolveSession(sessionId, requestedProjectViewId)?.worktreeId
+    ?? null;
 }
 
 function isWorkspaceFilePreviewTab(
@@ -148,8 +155,10 @@ function inferPersistedTabProjectDir(t: PersistedTab, fallbackProjectDir: string
   const activeSessionId = t.snapshot?.panels?.[t.snapshot.activePanelId]?.sessionId ?? null;
   const sourceSessionId = activeSessionId ? getSpecialSessionSourceSessionId(activeSessionId) : null;
   if (sourceSessionId) {
-    return useSessionStore.getState().getMaterializedSession(sourceSessionId)?.projectDir
-      ?? fallbackProjectDir;
+    return projectViewWorkspaceState.resolveSession(
+      sourceSessionId,
+      fallbackProjectDir ?? undefined,
+    )?.projectDir ?? fallbackProjectDir;
   }
   if (activeSessionId && isSpecialSession(activeSessionId)) return null;
   return fallbackProjectDir;
@@ -595,7 +604,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         [newPanelId]: {
           id: newPanelId,
           sessionId: initialSessionId ?? null,
-          worktreeId: inferSessionWorktreeId(initialSessionId),
+          worktreeId: inferSessionWorktreeId(initialSessionId, projectDir),
         },
       },
       activePanelId: newPanelId,
@@ -885,7 +894,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       panelStore.assignSession(
         tabData.activePanelId,
         sessionId,
-        inferSessionWorktreeId(sessionId),
+        inferSessionWorktreeId(sessionId, state.currentProjectDir),
       );
       get().syncTabProjectFromSession(state.activeTabId, sessionId);
       get().pinTab(state.activeTabId);
@@ -925,7 +934,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         panelStore.assignSession(
           tabData.activePanelId,
           sessionId,
-          inferSessionWorktreeId(sessionId),
+          inferSessionWorktreeId(sessionId, existingPreview.projectDir),
         );
         set({ tabs: [...get().tabs] });
       }
@@ -940,7 +949,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         panelStore.assignSession(
           tabData!.activePanelId,
           sessionId,
-          inferSessionWorktreeId(sessionId),
+          inferSessionWorktreeId(sessionId, state.currentProjectDir),
         );
         set({
           tabs: get().tabs.map((tab): Tab =>

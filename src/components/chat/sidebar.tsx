@@ -57,7 +57,10 @@ import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
-import { useCanonicalProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
+import {
+  useOriginProjectRepresentation,
+  useProjectViewRepresentation,
+} from '@/hooks/use-project-view-workspace-state';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -310,6 +313,7 @@ export function Sidebar() {
 
   // Board store — status group collapse state
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const isAllMode = selectedProjectDir === ALL_PROJECTS_SENTINEL;
   const collapsedCollections = useBoardStore((state) => state.collapsedCollections ?? {});
   const toggleCollectionCollapse = useBoardStore((state) => state.toggleCollectionCollapse ?? (() => {}));
   const setCollectionCollapsed = useBoardStore((state) => state.setCollectionCollapsed ?? (() => {}));
@@ -331,7 +335,6 @@ export function Sidebar() {
   const tasks = useTaskStore((state) =>
     selectSidebarProjectTasks(state, selectedProjectDir)
   );
-  const tasksByProject = useTaskStore((state) => state.tasksByProject);
   const loadedTaskProjects = useTaskStore((state) => state.loadedProjects);
   const loadingTaskProjects = useTaskStore((state) => state.loadingProjectIds);
   const allProjectsTaskLoadAttemptsRef = useRef(new Set<string>());
@@ -533,6 +536,9 @@ export function Sidebar() {
   const selectedProject = useMemo(() => {
     return findSidebarProject(projects, selectedProjectDir);
   }, [projects, selectedProjectDir]);
+  const selectedProjectRepresentation = useProjectViewRepresentation(
+    isAllMode ? null : selectedProjectDir,
+  );
 
   const handleProjectWorktreeSelect = useCallback(() => {
     const projectWorktree = selectedProject?.projectWorktree;
@@ -560,14 +566,22 @@ export function Sidebar() {
     },
     [setStoredRunningFilterActive],
   );
-  const isAllMode = selectedProjectDir === ALL_PROJECTS_SENTINEL;
-
   const allProjectSectionIds = useMemo(
     () => projects.map((project) => project.encodedDir),
     [projects],
   );
 
-  const canonicalSessions = useCanonicalProjectViewSessions();
+  const originRepresentation = useOriginProjectRepresentation();
+  const allProjectsOrderedSessionIds = useMemo(
+    () => originRepresentation.projects.flatMap((projectView) =>
+      projectView.sessions
+        .filter((session) => !session.archived)
+        .slice()
+        .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+        .map((session) => session.id),
+    ),
+    [originRepresentation],
+  );
   const allProjectsRunningSessionIds = projectViewWorkspaceState
     .getCanonicalRunningSessions()
     .map((session) => session.id);
@@ -618,11 +632,11 @@ export function Sidebar() {
   const orderedIds = useMemo(() => {
     return buildSidebarOrderedSessionIds({
       selectedProjectDir,
-      projects,
+      allProjectsSessionIds: allProjectsOrderedSessionIds,
       selectedProject,
       collectionGroups: visibleCollectionGroups,
     });
-  }, [projects, selectedProject, selectedProjectDir, visibleCollectionGroups]);
+  }, [allProjectsOrderedSessionIds, selectedProject, selectedProjectDir, visibleCollectionGroups]);
 
   const showRecentWork = useSettingsStore((state) => state.settings.showRecentWork);
 
@@ -630,19 +644,29 @@ export function Sidebar() {
     if (!showRecentWork) return [];
 
     const scopedProjects = isAllMode
-      ? projects
-      : selectedProject
-        ? [selectedProject]
+      ? originRepresentation.projects
+      : selectedProjectRepresentation
+        ? [selectedProjectRepresentation.project]
         : [];
+    const scopedTasksByProject = isAllMode
+      ? originRepresentation.tasksByProject
+      : selectedProjectRepresentation
+        ? {
+            [selectedProjectRepresentation.project.encodedDir]: selectedProjectRepresentation.tasks,
+          }
+        : {};
 
     return buildRecentWorkItems({
       projects: scopedProjects,
-      tasksByProject,
-      canonicalSessions: isAllMode ? canonicalSessions : undefined,
+      tasksByProject: scopedTasksByProject,
       limit: 8,
-      originOnly: isAllMode,
     });
-  }, [canonicalSessions, isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
+  }, [
+    isAllMode,
+    originRepresentation,
+    selectedProjectRepresentation,
+    showRecentWork,
+  ]);
 
   const recentWorkOrderedIds = useMemo(
     () => buildRecentWorkOrderedSessionIds(recentWorkItems),

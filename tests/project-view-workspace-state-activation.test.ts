@@ -237,7 +237,7 @@ test('a linked Task Session with a direct origin stays resolvable and targets it
     'wt-linked',
   );
   assert.equal(
-    useSessionStore.getState().getMaterializedSession('session-linked')?.worktreeId,
+    projectViewWorkspaceState.resolveSession('session-linked', 'project-c')?.worktreeId,
     'wt-linked',
   );
   useBoardStore.getState().openSessionPeek('session-linked');
