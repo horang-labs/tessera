@@ -123,6 +123,6 @@ Nothing in the ticket's required packaged Windows Electron + WSL topology was re
 
 ## Commit
 
-Implementation commit: **PENDING COMMIT**.
+Implementation commit: `e39b813743d349c17248a213197c2b1fbdd4176f` (`feat: match Orca Codex setup lifecycle`).
 
 The report is updated in a report-only follow-up commit so it can contain the immutable implementation hash without attempting a self-referential hash.
