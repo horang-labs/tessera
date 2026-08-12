@@ -83,6 +83,20 @@ export interface ProviderLifecycleResult {
   };
 }
 
+export type ProviderLifecycleCleanupState = 'removed' | 'absent' | 'conflict' | 'failed';
+
+export interface ProviderLifecycleCleanupArtifact {
+  environment: CliEnvironment;
+  providerHome: string;
+  state: ProviderLifecycleCleanupState;
+  message?: string;
+}
+
+export interface ProviderLifecycleCleanupResult {
+  artifacts: ProviderLifecycleCleanupArtifact[];
+  discoveryErrors: string[];
+}
+
 export interface ProviderLifecycleIntegration {
   inspect(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
   install(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
@@ -95,6 +109,11 @@ export interface ProviderLifecycleIntegration {
   remove?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
   /** Refreshes a consented artifact before launch without resolving conflicts. */
   maintain?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+  /**
+   * Application-removal cleanup for every home previously recorded by this
+   * lifecycle integration. Ordinary per-environment management never calls it.
+   */
+  cleanupKnownArtifacts?(): Promise<ProviderLifecycleCleanupResult>;
 }
 
 export type ProviderLaunchEnvironmentContext = ProviderLifecycleContext;

@@ -49,6 +49,19 @@ export interface ProviderSkillManagementRequest {
   providerIds?: ProviderSkillId[];
 }
 
+export interface ProviderSkillCleanupArtifact {
+  providerId: ProviderSkillId;
+  agentEnvironment: AgentEnvironment;
+  providerHome?: string;
+  state: 'removed' | 'absent' | 'conflict' | 'failed';
+  message?: string;
+}
+
+export interface ProviderSkillCleanupResult {
+  artifacts: ProviderSkillCleanupArtifact[];
+  discoveryErrors: string[];
+}
+
 export interface ProviderSkillManagerOptions {
   resolveAgentEnvironment: (userId: string) => Promise<AgentEnvironment>;
   resolveDefaultEnvironment: () => Promise<AgentEnvironment>;
@@ -67,6 +80,8 @@ export interface ProviderSkillManagerOptions {
 
 interface ProviderLedgerEntry {
   consent: 'granted' | 'revoked';
+  /** Provider homes where Tessera has installed this artifact over time. */
+  knownHomes?: string[];
 }
 
 interface ProviderSkillLedger {
@@ -80,6 +95,7 @@ const MARKER_FILE = '.tessera-managed.json';
 interface InspectedProviderSkill {
   providerId: ProviderSkillId;
   detected: boolean;
+  providerHome: string;
   targetDir: string;
   status: ProviderSkillStatus;
 }
@@ -103,6 +119,7 @@ export interface ProviderSkillManager {
     providerId: ProviderSkillId,
     resolvedAgentEnvironment?: AgentEnvironment,
   ): Promise<{ agentEnvironment: AgentEnvironment; status: ProviderSkillStatus }>;
+  cleanupKnownArtifacts(): Promise<ProviderSkillCleanupResult>;
 }
 
 export async function detectSupportedProviderSkills(
@@ -154,6 +171,7 @@ export function createProviderSkillManager(
   };
 
   return {
+    cleanupKnownArtifacts: () => serialize(cleanupKnownArtifacts),
     async maintain(agentEnvironmentOwner, providerId, resolvedAgentEnvironment) {
       return serialize(async () => {
         const agentEnvironment = resolvedAgentEnvironment ?? (
@@ -203,6 +221,86 @@ export function createProviderSkillManager(
     manage: (request) => serialize(() => manageResolved(request)),
   };
 
+  async function cleanupKnownArtifacts(): Promise<ProviderSkillCleanupResult> {
+    const discovered = await discoverKnownProviderSkillScopes(stateDirectory);
+    const artifacts: ProviderSkillCleanupArtifact[] = [];
+
+    for (const { agentEnvironment, providerId, knownHome } of discovered.scopes) {
+      let providerHome: string;
+      try {
+        // Re-enter the owning Agent Environment even when an earlier validated
+        // home is recorded. An unreachable WSL/native boundary must not be
+        // mistaken for an absent artifact on the server's filesystem.
+        const currentOwnedHome = await options.resolveProviderSkillHome(
+          providerId,
+          agentEnvironment,
+        );
+        providerHome = knownHome ?? currentOwnedHome;
+      } catch (error) {
+        artifacts.push({
+          providerId,
+          agentEnvironment,
+          ...(knownHome ? { providerHome: knownHome } : {}),
+          state: 'failed',
+          message: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+      const targetDir = path.join(providerHome, 'skills', TESSERA_CONTROL_SKILL_NAME);
+
+      try {
+        const status = await inspectProviderSkill(
+          providerId,
+          targetDir,
+          undefined,
+          'not-granted',
+        );
+        if (status.state === 'absent') {
+          artifacts.push({ providerId, agentEnvironment, providerHome, state: 'absent' });
+          continue;
+        }
+        if (status.state === 'conflict' || status.state === 'unavailable') {
+          artifacts.push({
+            providerId,
+            agentEnvironment,
+            providerHome,
+            state: status.state === 'conflict' ? 'conflict' : 'failed',
+            message: status.state === 'conflict'
+              ? 'The known tessera-cli skill is user-owned or externally modified.'
+              : 'The known tessera-cli skill could not be inspected.',
+          });
+          continue;
+        }
+        await fs.rm(targetDir, { recursive: true });
+        const verified = await inspectProviderSkill(
+          providerId,
+          targetDir,
+          undefined,
+          'not-granted',
+        );
+        artifacts.push({
+          providerId,
+          agentEnvironment,
+          providerHome,
+          state: verified.state === 'absent' ? 'removed' : 'failed',
+          ...(verified.state === 'absent'
+            ? {}
+            : { message: 'The tessera-cli skill remained after cleanup.' }),
+        });
+      } catch (error) {
+        artifacts.push({
+          providerId,
+          agentEnvironment,
+          providerHome,
+          state: 'failed',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { artifacts, discoveryErrors: discovered.errors };
+  }
+
   async function manageResolved(
     request: ProviderSkillManagementRequest,
     execution?: ProviderSkillManagementExecution,
@@ -249,6 +347,7 @@ export function createProviderSkillManager(
           inspected.push({
             providerId,
             detected: isDetected,
+            providerHome,
             targetDir,
             status: {
               ...await inspectProviderSkill(providerId, targetDir, digest, consent),
@@ -299,15 +398,23 @@ export function createProviderSkillManager(
           ? await prepareRemoveMutations(inspected)
           : await prepareInstallMutations(inspected, files, digest);
         await commitMutations(prepared, renameProviderSkillPath);
-        if (request.operation === 'install') {
+        if (request.operation === 'install' || request.operation === 'update') {
           ledger.environments[environment] ??= {};
-          for (const providerId of selected) {
-            ledger.environments[environment]![providerId] = { consent: 'granted' };
+          for (const provider of inspected) {
+            const existing = ledger.environments[environment]![provider.providerId];
+            ledger.environments[environment]![provider.providerId] = {
+              consent: 'granted',
+              knownHomes: [...new Set([...(existing?.knownHomes ?? []), provider.providerHome])],
+            };
           }
         } else if (request.operation === 'remove') {
           ledger.environments[environment] ??= {};
           for (const providerId of selected) {
-            ledger.environments[environment]![providerId] = { consent: 'revoked' };
+            const existing = ledger.environments[environment]![providerId];
+            ledger.environments[environment]![providerId] = {
+              consent: 'revoked',
+              ...(existing?.knownHomes ? { knownHomes: existing.knownHomes } : {}),
+            };
           }
         }
         try {
@@ -351,10 +458,100 @@ export function createProviderSkillManager(
     }
 }
 
+async function discoverKnownProviderSkillScopes(stateDirectory: string): Promise<{
+  scopes: Array<{
+    agentEnvironment: AgentEnvironment;
+    providerId: ProviderSkillId;
+    knownHome?: string;
+  }>;
+  errors: string[];
+}> {
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await fs.readdir(stateDirectory, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { scopes: [], errors: [] };
+    return {
+      scopes: [],
+      errors: [`Known provider skill state could not be listed: ${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
+
+  const known = new Map<string, {
+    agentEnvironment: AgentEnvironment;
+    providerId: ProviderSkillId;
+    knownHome?: string;
+  }>();
+  const errors: string[] = [];
+  for (const entry of entries.filter((candidate) => candidate.isFile() && candidate.name.endsWith('.json'))) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(path.join(stateDirectory, entry.name), 'utf8')) as unknown;
+      if (!isProviderSkillLedger(parsed)) {
+        throw new Error('the consent ledger has an unsupported shape');
+      }
+      for (const agentEnvironment of ['native', 'wsl'] as const) {
+        for (const providerId of PROVIDER_SKILL_IDS) {
+          const ledgerEntry = parsed.environments[agentEnvironment]?.[providerId];
+          if (!ledgerEntry) continue;
+          if (ledgerEntry.knownHomes?.length) {
+            for (const knownHome of ledgerEntry.knownHomes) {
+              known.set(
+                JSON.stringify([agentEnvironment, providerId, knownHome]),
+                { agentEnvironment, providerId, knownHome },
+              );
+            }
+          } else {
+            known.set(
+              JSON.stringify([agentEnvironment, providerId]),
+              { agentEnvironment, providerId },
+            );
+          }
+        }
+      }
+    } catch (error) {
+      errors.push(
+        `Known provider skill state ${entry.name} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return {
+    scopes: [...known.values()].sort((left, right) => (
+      left.agentEnvironment.localeCompare(right.agentEnvironment)
+      || PROVIDER_SKILL_IDS.indexOf(left.providerId) - PROVIDER_SKILL_IDS.indexOf(right.providerId)
+      || (left.knownHome ?? '').localeCompare(right.knownHome ?? '')
+    )),
+    errors,
+  };
+}
+
+function isProviderSkillLedger(value: unknown): value is ProviderSkillLedger {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<ProviderSkillLedger>;
+  if (candidate.version !== 1 || !candidate.environments || typeof candidate.environments !== 'object') {
+    return false;
+  }
+  for (const environment of Object.keys(candidate.environments)) {
+    if (environment !== 'native' && environment !== 'wsl') return false;
+    const providers = candidate.environments[environment];
+    if (!providers || typeof providers !== 'object' || Array.isArray(providers)) return false;
+    for (const [providerId, entry] of Object.entries(providers)) {
+      if (!(PROVIDER_SKILL_IDS as readonly string[]).includes(providerId)) return false;
+      if (!entry || !['granted', 'revoked'].includes(String(entry.consent))) return false;
+      if (
+        entry.knownHomes !== undefined
+        && (!Array.isArray(entry.knownHomes)
+          || entry.knownHomes.some((home) => typeof home !== 'string' || !home))
+      ) return false;
+    }
+  }
+  return true;
+}
+
 async function inspectProviderSkill(
   providerId: ProviderSkillId,
   targetDir: string,
-  currentDigest: string,
+  currentDigest: string | undefined,
   consent: ProviderSkillStatus['consent'],
 ): Promise<ProviderSkillStatus> {
   try {
@@ -396,7 +593,7 @@ async function inspectProviderSkill(
   return {
     providerId,
     detected: false,
-    state: actualDigest === currentDigest ? 'ready' : 'stale',
+    state: currentDigest === undefined || actualDigest === currentDigest ? 'ready' : 'stale',
     consent,
     ownership: 'tessera',
   };
