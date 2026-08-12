@@ -771,7 +771,7 @@ export const en: I18nMessages = {
     skillPickerInactive: 'Start the session by sending a message before using skills',
     skillPickerEmpty: 'No skills are available for this session.',
     skillsLoading: 'Loading skills...',
-    sessionStopped: 'Claude Code stopped (exit code: {{exitCode}}): {{message}}',
+    sessionStopped: '{{providerName}} stopped (exit code: {{exitCode}}): {{message}}',
     sessionDefaultTitle: 'Session {{count}}',
     imageFallback: '[image]',
     tabList: 'Tab list',

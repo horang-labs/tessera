@@ -138,7 +138,17 @@ export function handleManagedProcessExit({
   clearSessionRuntimeState(sessionId);
 
   if (provider?.handleSessionExit) {
-    const messages = provider.handleSessionExit(sessionId, exitCode);
+    const providerName = provider.getDisplayName();
+    const messages = provider.handleSessionExit(sessionId, exitCode).map((parsedMessage) => {
+      if (parsedMessage.serverMessage?.type !== 'cli_down') return parsedMessage;
+      return {
+        ...parsedMessage,
+        serverMessage: {
+          ...parsedMessage.serverMessage,
+          providerName,
+        },
+      };
+    });
     if (exitCode !== 0) {
       dispatchParsedMessages(sessionId, userId, messages);
     }

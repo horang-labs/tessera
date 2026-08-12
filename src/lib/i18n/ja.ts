@@ -756,7 +756,7 @@ export const ja: I18nMessages = {
     skillPickerInactive: 'メッセージを送信してセッションを開始するとスキルを使用できます',
     skillPickerEmpty: 'このセッションで利用できるスキルはありません。',
     skillsLoading: 'スキルを読み込み中...',
-    sessionStopped: 'Claude Code が停止しました (exit code: {{exitCode}}): {{message}}',
+    sessionStopped: '{{providerName}} が停止しました (exit code: {{exitCode}}): {{message}}',
     sessionDefaultTitle: 'セッション {{count}}',
     imageFallback: '[画像]',
     tabList: 'タブ一覧',

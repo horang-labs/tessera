@@ -465,7 +465,13 @@ export type AppServerMessage =
         planFilePath?: string;
       };
     }
-  | { type: 'cli_down'; sessionId: string; exitCode: number; message: string }
+  | {
+      type: 'cli_down';
+      sessionId: string;
+      exitCode: number;
+      message: string;
+      providerName?: string;
+    }
   | {
       type: 'session_history';
       sessionId: string;
