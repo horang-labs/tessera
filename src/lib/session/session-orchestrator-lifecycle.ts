@@ -192,20 +192,29 @@ export async function resumeSessionWithLifecycle({
     useResume = !!opencodeSessionId;
   }
 
-  // Fall back to the persisted model/effort when the caller didn't supply them.
-  // Every resume path converges here (REST resume, WS resume, retry), and the WS
-  // path in particular sends no model/effort — without this, a cold resume after
-  // the in-memory store is gone would silently drop the session's ultracode/model
-  // choice and spawn at the global default.
+  // A fresh Codex Session can be created outside the renderer with explicit
+  // launch options. The first composer send still carries the renderer defaults,
+  // so the persisted creator choices must win field-by-field while those defaults
+  // fill only values the creator omitted. Once provider history exists, explicit
+  // resume options retain their established precedence.
+  const preferPersistedLaunchOptions = providerId === 'codex'
+    && !useResume
+    && hasTesseraHistory === false;
   const optionsWithPersisted: SessionResumeOptions = {
     ...options,
-    model: options.model ?? session.model ?? undefined,
-    reasoningEffort: options.reasoningEffort !== undefined
-      ? options.reasoningEffort
-      : (session.reasoning_effort ?? undefined),
-    serviceTier: options.serviceTier !== undefined
-      ? options.serviceTier
-      : (session.service_tier ?? undefined),
+    model: preferPersistedLaunchOptions
+      ? session.model ?? options.model
+      : options.model ?? session.model ?? undefined,
+    reasoningEffort: preferPersistedLaunchOptions
+      ? session.reasoning_effort ?? options.reasoningEffort
+      : options.reasoningEffort !== undefined
+        ? options.reasoningEffort
+        : (session.reasoning_effort ?? undefined),
+    serviceTier: preferPersistedLaunchOptions
+      ? session.service_tier ?? options.serviceTier
+      : options.serviceTier !== undefined
+        ? options.serviceTier
+        : (session.service_tier ?? undefined),
   };
 
   // Persist a deliberate change (e.g. the user picked a new model/effort before
@@ -225,7 +234,11 @@ export async function resumeSessionWithLifecycle({
     );
   }
 
-  if (providerId === 'codex' && options.serviceTier !== undefined) {
+  if (
+    providerId === 'codex'
+    && options.serviceTier !== undefined
+    && !preferPersistedLaunchOptions
+  ) {
     dbSessions.updateSession(
       sessionId,
       { service_tier: options.serviceTier },
@@ -292,6 +305,21 @@ export async function resumeSessionWithLifecycle({
   }
 
   if (cliSessionId) {
+    if (preferPersistedLaunchOptions) {
+      dbSessions.updateSession(
+        sessionId,
+        {
+          ...(runtimeDefaults.model !== undefined ? { model: runtimeDefaults.model } : {}),
+          ...(runtimeDefaults.reasoningEffort !== undefined
+            ? { reasoning_effort: runtimeDefaults.reasoningEffort }
+            : {}),
+          ...(runtimeDefaults.serviceTier !== undefined
+            ? { service_tier: runtimeDefaults.serviceTier }
+            : {}),
+        },
+        { skipTimestamp: true },
+      );
+    }
     logger.info({ userId, sessionId }, 'Session resumed (running)');
     return {
       sessionId,
@@ -299,7 +327,7 @@ export async function resumeSessionWithLifecycle({
       status: 'running',
       model: runtimeDefaults.model,
       reasoningEffort: runtimeDefaults.reasoningEffort,
-      serviceTier: optionsWithPersisted.serviceTier,
+      serviceTier: runtimeDefaults.serviceTier,
       fastMode: options.fastMode,
       sessionMode: options.sessionMode,
       accessMode: options.accessMode,
