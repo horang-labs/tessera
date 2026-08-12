@@ -532,6 +532,7 @@ export class CodexAdapter implements CliProvider {
         ? { kind: 'user', userId: options.userId }
         : { kind: 'server-default' },
       workDir,
+      ...(options.sessionId ? { managedSessionId: options.sessionId } : {}),
     });
     const agentEnv = integration.providerHome.agentEnvironment;
     const launchEnvironment = this._providerIntegration.buildLaunchEnvironment(
@@ -575,6 +576,7 @@ export class CodexAdapter implements CliProvider {
     });
 
     if (!spawnResult.ok) {
+      if (options.sessionId) this._providerIntegration.releaseManagedSession(options.sessionId);
       return { process: cliProcess, ok: false, error: spawnResult.error };
     }
 
@@ -602,11 +604,18 @@ export class CodexAdapter implements CliProvider {
         sessionId: options.sessionId,
       });
       cliProcess.kill('SIGTERM');
+      if (options.sessionId) this._providerIntegration.releaseManagedSession(options.sessionId);
       return {
         process: cliProcess,
         ok: false,
         error: err instanceof Error ? err : new Error(String(err)),
       };
+    }
+
+    if (options.sessionId) {
+      cliProcess.once('exit', () => {
+        this._providerIntegration.releaseManagedSession(options.sessionId!);
+      });
     }
 
     return { process: cliProcess, ok: true };

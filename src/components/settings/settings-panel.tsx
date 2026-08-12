@@ -21,6 +21,7 @@ import CliCommandOverrideSettings from './cli-command-override-settings';
 import WorktreeSettings from './worktree-settings';
 import CliStatusList from './cli-status-list';
 import CliDiagnosticsPanel from './cli-diagnostics-panel';
+import CodexLifecycleSettings from './codex-lifecycle-settings';
 import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 import AgentExecutionModeSettings from './agent-execution-mode-settings';
@@ -217,6 +218,9 @@ export default function SettingsPanel() {
             )}
             <SettingsCard testId="settings-section-development-cli-overrides">
               <CliCommandOverrideSettings />
+            </SettingsCard>
+            <SettingsCard testId="settings-section-development-codex-lifecycle">
+              <CodexLifecycleSettings />
             </SettingsCard>
             <SettingsCard testId="settings-section-development-worktrees">
               <WorktreeSettings />

@@ -22,3 +22,29 @@ test('Control Session observation maps terminal wait timeouts to the stable Cont
       && error.details.timeoutSeconds === 0.01,
   );
 });
+
+test('Control Session observation reports degraded integration health without changing runtime state', async () => {
+  const runningSnapshot = {
+    screen: 'still running',
+    cols: 80,
+    rows: 24,
+    alternateScreen: false,
+    outputSequence: 3,
+    terminalId: 'terminal-a',
+    runtimeState: 'running' as const,
+    stateAt: 123,
+  };
+  const observer = createTerminalControlSessionObserver({
+    userId: 'control-user',
+    manager: {
+      readSessionSnapshot: async () => runningSnapshot,
+      waitForSessionState: async () => runningSnapshot,
+    },
+    readIntegrationHealth: () => 'degraded',
+  });
+
+  const snapshot = await observer.read('active-degraded-session');
+  assert.equal(snapshot.runtimeState, 'running');
+  assert.equal(snapshot.screen, 'still running');
+  assert.equal(snapshot.integrationHealth, 'degraded');
+});

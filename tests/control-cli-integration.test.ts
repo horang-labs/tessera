@@ -83,7 +83,15 @@ test('the CLI exposes Codex lifecycle status and requires explicit install conse
       message: 'Codex 0.146.0 or newer is required. Run `codex update` and retry.',
     },
   };
+  const removed: ProviderIntegrationLaunchDecision = {
+    ...absent,
+    lifecycle: {
+      ...absent.lifecycle,
+      consent: 'revoked',
+    },
+  };
   let installOutcome = installed;
+  let removeOutcome = removed;
   const runtime = await startRuntime(testRoot, 'provider', {
     id: '/home/work/provider-project',
     decodedPath: '/home/work/provider-project',
@@ -97,6 +105,14 @@ test('the CLI exposes Codex lifecycle status and requires explicit install conse
     installCodexLifecycle: async () => {
       calls.push('install');
       return installOutcome;
+    },
+    updateCodexLifecycle: async () => {
+      calls.push('update');
+      return installed;
+    },
+    removeCodexLifecycle: async () => {
+      calls.push('remove');
+      return removeOutcome;
     },
   });
 
@@ -122,6 +138,28 @@ test('the CLI exposes Codex lifecycle status and requires explicit install conse
     assert.equal(consented.code, 0);
     assert.deepEqual(JSON.parse(consented.stdout).data, installed);
 
+    const updated = await runCli([
+      'provider', 'codex', 'lifecycle', 'update', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(updated.code, 0);
+    assert.deepEqual(JSON.parse(updated.stdout).data, installed);
+
+    const revoked = await runCli([
+      'provider', 'codex', 'lifecycle', 'remove', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(revoked.code, 0);
+    assert.deepEqual(JSON.parse(revoked.stdout).data, removed);
+
+    removeOutcome = unavailable;
+    const failedRemoval = await runCli([
+      'provider', 'codex', 'lifecycle', 'remove', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(failedRemoval.code, 1);
+    assert.deepEqual(JSON.parse(failedRemoval.stdout).data, unavailable);
+
     installOutcome = unavailable;
     const unsupported = await runCli([
       'provider', 'codex', 'lifecycle', 'install', '--consent', '--json',
@@ -140,7 +178,7 @@ test('the CLI exposes Codex lifecycle status and requires explicit install conse
     });
     assert.equal(managedSessionAttempt.code, 1);
     assert.equal(JSON.parse(managedSessionAttempt.stdout).error.code, 'UNAUTHORIZED');
-    assert.deepEqual(calls, ['status', 'install', 'install']);
+    assert.deepEqual(calls, ['status', 'install', 'update', 'remove', 'remove', 'install']);
   } finally {
     await runtime.close();
     await fs.rm(testRoot, { recursive: true, force: true });
@@ -997,6 +1035,8 @@ async function startRuntime(
   providerIntegration?: {
     inspectCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
     installCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
+    updateCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
+    removeCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
   },
 ): Promise<TestRuntime> {
   const sessionRecords: ControlSessionRecord[] = [];

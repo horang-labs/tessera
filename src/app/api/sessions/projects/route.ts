@@ -15,6 +15,7 @@ import {
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
 import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { withManagedSessionIntegrationHealth } from '@/lib/session/managed-session-integration-health';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -63,13 +64,15 @@ export async function GET(req: NextRequest) {
         activeSessionIds,
       });
 
-      const mapped = result.sessions.map((row) => ({
-        ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
-        projectDir: project.id,
-        lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
-        ...(runtimeConfigs.get(row.id) ?? {}),
-        sortOrder: row.sort_order,
-      }));
+      const mapped = result.sessions.map((row) => (
+        withManagedSessionIntegrationHealth({
+          ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
+          projectDir: project.id,
+          lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
+          ...(runtimeConfigs.get(row.id) ?? {}),
+          sortOrder: row.sort_order,
+        })
+      ));
       // Diff badge for any session whose work dir is a git worktree (standalone
       // chats included). Cache-miss workDirs schedule a compute + WS push.
       const diffStatsByWorkDir = getCachedOrScheduleBulk(

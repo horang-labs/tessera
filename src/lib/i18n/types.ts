@@ -269,6 +269,37 @@ export interface I18nMessages {
         not_installed: string;
       };
     };
+    codexLifecycle: {
+      title: string;
+      description: string;
+      refresh: string;
+      environment: string;
+      consent: string;
+      version: string;
+      conflictHelp: string;
+      consentPrompt: string;
+      install: string;
+      update: string;
+      remove: string;
+      removeConfirm: string;
+      cancel: string;
+      confirmRemove: string;
+      working: string;
+      health: {
+        unchecked: string;
+        healthy: string;
+        degraded: string;
+        blocked: string;
+      };
+      consentState: {
+        unchecked: string;
+        'not-required': string;
+        required: string;
+        granted: string;
+        revoked: string;
+        declined: string;
+      };
+    };
     cliDiagnostics: {
       title: string;
       run: string;
@@ -597,6 +628,7 @@ export interface I18nMessages {
     currentBranchLabel: string;
     presentationScopeHint: string;
     worktreeDeleted: string;
+    integrationDegraded: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
     promptDensityDecrease: string;

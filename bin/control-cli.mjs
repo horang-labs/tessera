@@ -143,10 +143,16 @@ export async function runControlCli(options) {
     );
   }
 
-  const exitCode = invocation.kind === 'provider-codex-lifecycle-install'
-    && validatedData.health.state !== 'healthy'
-    ? 1
-    : 0;
+  const unhealthyInstallOrUpdate = [
+    'provider-codex-lifecycle-install',
+    'provider-codex-lifecycle-update',
+  ].includes(invocation.kind) && validatedData.health.state !== 'healthy';
+  const incompleteRemoval = invocation.kind === 'provider-codex-lifecycle-remove'
+    && (
+      validatedData.lifecycle.state !== 'absent'
+      || validatedData.lifecycle.consent !== 'revoked'
+    );
+  const exitCode = unhealthyInstallOrUpdate || incompleteRemoval ? 1 : 0;
   return writeEnvelope(json, { ...response, data: validatedData }, exitCode, invocation.kind);
 }
 
@@ -175,6 +181,8 @@ export function controlUsage() {
   tessera session stop <session-id> [--json]
   tessera provider codex lifecycle status [--json]
   tessera provider codex lifecycle install --consent [--json]
+  tessera provider codex lifecycle update [--json]
+  tessera provider codex lifecycle remove [--json]
 
 Runtime selection:
   --control-descriptor PATH  Select one exact local Tessera runtime.
@@ -248,6 +256,21 @@ function parseControlInvocation(argv, env) {
       descriptorPath,
       kind: 'provider-codex-lifecycle-status',
       requestPath: '/__tessera/control/v1/provider-integrations/codex/lifecycle',
+    };
+  }
+
+  if (
+    commandArgs.length === 4
+    && commandArgs[0] === 'provider'
+    && commandArgs[1] === 'codex'
+    && commandArgs[2] === 'lifecycle'
+    && ['update', 'remove'].includes(commandArgs[3])
+  ) {
+    return {
+      descriptorPath,
+      kind: `provider-codex-lifecycle-${commandArgs[3]}`,
+      requestPath: '/__tessera/control/v1/provider-integrations/codex/lifecycle',
+      requestBody: { operation: commandArgs[3] },
     };
   }
 
@@ -1208,6 +1231,8 @@ function validateSuccessData(kind, data) {
   if (
     kind === 'provider-codex-lifecycle-status'
     || kind === 'provider-codex-lifecycle-install'
+    || kind === 'provider-codex-lifecycle-update'
+    || kind === 'provider-codex-lifecycle-remove'
   ) {
     return parseProviderIntegrationDecision(data) ?? INVALID_SUCCESS_DATA;
   }
@@ -1313,6 +1338,8 @@ function parseArtifactPolicy(value) {
     || !['unchecked', 'ready', 'stale', 'absent', 'installed', 'conflict', 'unavailable', 'not-applicable'].includes(value.state)
     || !['unchecked', 'not-required', 'required', 'granted', 'revoked', 'declined'].includes(value.consent)
     || !['unchecked', 'not-required', 'trusted', 'untrusted', 'unavailable'].includes(value.trust)
+    || !(value.installedVersion === undefined || isNonEmptyString(value.installedVersion))
+    || !(value.currentVersion === undefined || isNonEmptyString(value.currentVersion))
     || (value.message !== undefined && typeof value.message !== 'string')
   ) return null;
   return {
@@ -1320,6 +1347,8 @@ function parseArtifactPolicy(value) {
     state: value.state,
     consent: value.consent,
     trust: value.trust,
+    ...(value.installedVersion === undefined ? {} : { installedVersion: value.installedVersion }),
+    ...(value.currentVersion === undefined ? {} : { currentVersion: value.currentVersion }),
     ...(value.message === undefined ? {} : { message: value.message }),
   };
 }
@@ -1397,6 +1426,8 @@ function parseSessionSnapshot(value) {
     || !validRuntimeState
     || !(value.stateAt === null || (Number.isFinite(value.stateAt) && value.stateAt >= 0))
     || !(value.lifecyclePreview === undefined || typeof value.lifecyclePreview === 'string')
+    || !(value.integrationHealth === undefined
+      || ['healthy', 'degraded'].includes(value.integrationHealth))
   ) return null;
   return {
     screen: value.screen,
@@ -1408,6 +1439,7 @@ function parseSessionSnapshot(value) {
     runtimeState: value.runtimeState,
     stateAt: value.stateAt,
     ...(value.lifecyclePreview === undefined ? {} : { lifecyclePreview: value.lifecyclePreview }),
+    ...(value.integrationHealth === undefined ? {} : { integrationHealth: value.integrationHealth }),
   };
 }
 
@@ -1442,6 +1474,8 @@ function writeHumanSuccess(kind, data) {
   if (
     kind === 'provider-codex-lifecycle-status'
     || kind === 'provider-codex-lifecycle-install'
+    || kind === 'provider-codex-lifecycle-update'
+    || kind === 'provider-codex-lifecycle-remove'
   ) {
     process.stdout.write(
       `Codex lifecycle: ${data.lifecycle.state}; trust: ${data.lifecycle.trust}; consent: ${data.lifecycle.consent}; health: ${data.health.state}\n`,
@@ -1517,7 +1551,7 @@ function writeHumanSuccess(kind, data) {
     || kind === 'session-stop'
   ) {
     process.stdout.write(
-      `${data.runtimeState}\t${data.terminalId ?? ''}\t${data.cols ?? ''}x${data.rows ?? ''}\tseq ${data.outputSequence}\n${data.screen}${data.screen ? '\n' : ''}`,
+      `${data.runtimeState}\t${data.terminalId ?? ''}\t${data.cols ?? ''}x${data.rows ?? ''}\tseq ${data.outputSequence}${data.integrationHealth === 'degraded' ? '\tintegration degraded' : ''}\n${data.screen}${data.screen ? '\n' : ''}`,
     );
   }
 }

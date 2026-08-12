@@ -112,7 +112,7 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     consent: 'declined',
     trust: 'not-required',
   });
-  assert.deepEqual(codex.health, { state: 'unchecked' });
+  assert.deepEqual(codex.health, { state: 'healthy' });
   assert.equal('launchEnvironment' in codex, false);
 
   await providerIntegration.manageSkills({
@@ -125,7 +125,7 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
   });
   assert.equal(codexWithReadyOptionalSkill.skill.state, 'ready');
-  assert.equal(codexWithReadyOptionalSkill.health.state, 'unchecked');
+  assert.equal(codexWithReadyOptionalSkill.health.state, 'healthy');
 
   const providerWithoutRequiredLifecycle = await providerIntegration.resolveLaunch({
     provider: {

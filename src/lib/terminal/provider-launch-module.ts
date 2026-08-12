@@ -546,10 +546,16 @@ export function createProviderLaunchModule(
           provider: persisted.provider,
           agentEnvironmentOwner: { kind: 'user', userId: request.userId },
           workDir,
+          managedSessionId: request.sessionId,
           ...(exactLegacyCodexOverlayResume
             ? { compatibility: 'exact-legacy-overlay-resume' as const }
             : {}),
         });
+        if (!exactLegacyCodexOverlayResume) {
+          resourceDisposers.add(() => {
+            providerIntegration.releaseManagedSession(request.sessionId);
+          });
+        }
         const agentEnvironment = integration.providerHome.agentEnvironment;
         const wslTerminalRuntime = getRuntimePlatform() === 'win32'
           && agentEnvironment === 'wsl';

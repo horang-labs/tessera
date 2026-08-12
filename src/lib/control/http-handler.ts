@@ -9,6 +9,10 @@ import {
   PROVIDER_SKILL_IDS,
   type ProviderSkillId,
 } from '@/lib/cli/provider-skill-management';
+import {
+  dispatchCodexLifecycleOperation,
+  parseCodexLifecycleMutation,
+} from '@/lib/cli/codex-lifecycle-operations';
 import type { RuntimeDescriptor } from './runtime-descriptor';
 import {
   ControlOperationError,
@@ -108,15 +112,24 @@ export function createControlHttpHandler(options: {
         }
         requireMethod(request, 'POST');
         const body = await readJsonObject(request);
-        rejectUnknownFields(body, ['consent'], 'Codex lifecycle install');
-        if (body.consent !== 'granted') {
+        rejectUnknownFields(body, ['operation', 'consent'], 'Codex lifecycle management');
+        const parsed = parseCodexLifecycleMutation({
+          ...body,
+          operation: body.operation ?? 'install',
+        });
+        if ('error' in parsed) {
           throw new ControlOperationError(
             'INVALID_USAGE',
-            'Explicit Codex lifecycle hook consent is required.',
+            parsed.error,
             400,
           );
         }
-        writeSuccess(response, await service.installCodexLifecycle({ consent: 'granted' }, context));
+        writeSuccess(response, await dispatchCodexLifecycleOperation(parsed.operation, {
+          status: () => service.inspectCodexLifecycle(context),
+          install: () => service.installCodexLifecycle({ consent: 'granted' }, context),
+          update: () => service.updateCodexLifecycle(context),
+          remove: () => service.removeCodexLifecycle(context),
+        }));
         return true;
       }
 

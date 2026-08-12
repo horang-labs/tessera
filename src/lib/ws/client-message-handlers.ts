@@ -206,6 +206,13 @@ export function handleIncomingServerMessage({
       }
       return { wasReconnect };
 
+    case 'provider_integration_health':
+      sessionStore.updateSessionIntegrationHealth(
+        msg.sessionId,
+        msg.integrationHealth ?? undefined,
+      );
+      return { wasReconnect };
+
     case 'terminal_session_rebound':
       applyTerminalSessionRebound(msg.terminalId, msg.previousSessionId, msg.sessionId);
       return { wasReconnect };

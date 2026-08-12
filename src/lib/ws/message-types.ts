@@ -324,6 +324,11 @@ export type AppServerMessage =
       running: boolean;
     }
   | {
+      type: 'provider_integration_health';
+      sessionId: string;
+      integrationHealth: 'healthy' | 'degraded' | null;
+    }
+  | {
       type: 'terminal_session_rebound';
       previousSessionId: string;
       sessionId: string;

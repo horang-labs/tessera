@@ -59,14 +59,22 @@ export interface ProviderLifecycleContext {
   environment: CliEnvironment;
   userId?: string;
   workDir?: string | null;
+  /** Internal launch-time scope identity used to keep active health checks pinned. */
+  scopeId?: string;
 }
 
-export type ProviderLifecycleState = 'absent' | 'installed' | 'conflict' | 'unavailable';
+export type ProviderLifecycleState = 'absent' | 'installed' | 'stale' | 'conflict' | 'unavailable';
 export type ProviderLifecycleTrust = 'unchecked' | 'trusted' | 'untrusted' | 'unavailable';
+export type ProviderLifecycleConsent = 'granted' | 'revoked' | 'not-granted';
 
 export interface ProviderLifecycleResult {
   state: ProviderLifecycleState;
   trust: ProviderLifecycleTrust;
+  consent?: ProviderLifecycleConsent;
+  installedVersion?: string;
+  currentVersion?: string;
+  /** Internal identity for one Authoritative Provider Home; never expose in UI/CLI DTOs. */
+  scopeId?: string;
   message?: string;
   guidance?: {
     minimumVersion: string;
@@ -78,6 +86,15 @@ export interface ProviderLifecycleResult {
 export interface ProviderLifecycleIntegration {
   inspect(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
   install(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+  /** Refreshes a consented artifact, including explicit conflict resolution. */
+  update?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+  /**
+   * Removes the managed artifact from this Authoritative Provider Home and revokes
+   * automatic management consent for that home. This is not an all-home uninstall.
+   */
+  remove?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
+  /** Refreshes a consented artifact before launch without resolving conflicts. */
+  maintain?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
 }
 
 export type ProviderLaunchEnvironmentContext = ProviderLifecycleContext;

@@ -1,28 +1,23 @@
 import {
-  createProviderIntegration,
   ProviderIntegrationEnvironmentError,
   type ProviderIntegrationLaunchDecision,
 } from '@/lib/cli/provider-integration';
-import { codexAdapter } from '@/lib/cli/providers/codex/adapter';
+import { manageCodexLifecycleForUser } from '@/lib/cli/codex-lifecycle-policy';
 import { ControlOperationError } from './service';
 
 export interface ControlProviderIntegrationManager {
   inspectCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
   installCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
+  updateCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
+  removeCodexLifecycle(): Promise<ProviderIntegrationLaunchDecision>;
 }
 
 export function createControlProviderIntegrationManager(options: {
   resolveUserId: () => Promise<string>;
 }): ControlProviderIntegrationManager {
-  const integration = createProviderIntegration();
-  const request = async () => ({
-    provider: codexAdapter,
-    agentEnvironmentOwner: {
-      kind: 'user' as const,
-      userId: await options.resolveUserId(),
-    },
-    workDir: null,
-  });
+  const manage = async (operation: 'status' | 'install' | 'update' | 'remove') => (
+    manageCodexLifecycleForUser(await options.resolveUserId(), operation)
+  );
   const failClosed = async (
     operation: () => Promise<ProviderIntegrationLaunchDecision>,
   ): Promise<ProviderIntegrationLaunchDecision> => {
@@ -40,13 +35,16 @@ export function createControlProviderIntegrationManager(options: {
 
   return {
     async inspectCodexLifecycle() {
-      return failClosed(async () => integration.inspectLifecycle(await request()));
+      return failClosed(async () => manage('status'));
     },
     async installCodexLifecycle() {
-      return failClosed(async () => integration.installLifecycle({
-        ...await request(),
-        consent: 'granted',
-      }));
+      return failClosed(async () => manage('install'));
+    },
+    async updateCodexLifecycle() {
+      return failClosed(async () => manage('update'));
+    },
+    async removeCodexLifecycle() {
+      return failClosed(async () => manage('remove'));
     },
   };
 }

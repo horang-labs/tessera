@@ -3,6 +3,7 @@ import { IncomingMessage } from 'http';
 import { randomUUID } from 'crypto';
 import { ServerTransportMessage } from './message-types';
 import { processManager } from '../cli/process-manager';
+import { providerIntegration } from '../cli/provider-integration';
 import { protocolAdapter } from '../cli/protocol-adapter';
 import {
   evaluateRequestAndLog,
@@ -107,6 +108,7 @@ export class WebSocketServer {
   private connections = new Map<string, Set<AuthenticatedWebSocket>>();
   private rateLimitCache = new Map<string, Map<string, Extract<ServerTransportMessage, { type: 'rate_limit_update' }>>>();
   private analysisUnsubscribe: (() => void) | null = null;
+  private integrationHealthUnsubscribe: (() => void) | null = null;
   private readonly maxConnections: number;
   private readonly rejectionGraceMs: number;
   private readonly heartbeatIntervalMs: number;
@@ -141,6 +143,15 @@ export class WebSocketServer {
     bindTerminalRuntimeSender((userId, message) => {
       this.sendToUser(userId, message);
     });
+    this.integrationHealthUnsubscribe = providerIntegration.subscribeManagedSessionHealth(
+      ({ userId, sessionId, integrationHealth }) => {
+        this.sendToUser(userId, {
+          type: 'provider_integration_health',
+          sessionId,
+          integrationHealth: integrationHealth ?? null,
+        });
+      },
+    );
 
     // Relay worktree diff-stats updates to connected users
     installDiffStatsBroadcast();
@@ -565,6 +576,8 @@ export class WebSocketServer {
     uninstallDiffStatsSafetySweep();
     this.analysisUnsubscribe?.();
     this.analysisUnsubscribe = null;
+    this.integrationHealthUnsubscribe?.();
+    this.integrationHealthUnsubscribe = null;
     await terminalManager.shutdownAll();
 
     if (!this.wss) return;

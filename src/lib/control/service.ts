@@ -292,6 +292,12 @@ export interface ControlService {
     request: { consent: 'granted' },
     context: ControlCallerContext,
   ): Promise<ProviderIntegrationLaunchDecision>;
+  updateCodexLifecycle(
+    context: ControlCallerContext,
+  ): Promise<ProviderIntegrationLaunchDecision>;
+  removeCodexLifecycle(
+    context: ControlCallerContext,
+  ): Promise<ProviderIntegrationLaunchDecision>;
   manageProviderSkills(
     request: { operation: 'install' | 'status' | 'update' | 'remove'; providerIds?: ProviderSkillId[] },
     context: ControlCallerContext,
@@ -422,6 +428,27 @@ export function createControlService(options: {
     resolveUserId,
   } = options;
 
+  const requireUserGlobalProviderIntegration = (
+    context: ControlCallerContext,
+    action: string,
+  ): ControlProviderIntegrationManager => {
+    if (context.projectId || context.worktreeId || context.sessionId) {
+      throw new ControlOperationError(
+        'UNAUTHORIZED',
+        `Managed Sessions cannot ${action} user-wide provider integrations.`,
+        403,
+      );
+    }
+    if (!providerIntegration) {
+      throw new ControlOperationError(
+        'INSTANCE_UNAVAILABLE',
+        `This Tessera runtime cannot ${action} provider integrations.`,
+        503,
+      );
+    }
+    return providerIntegration;
+  };
+
   return {
     assertAuthority(context) {
       requireControlAuthority(authority, context);
@@ -439,21 +466,8 @@ export function createControlService(options: {
     },
 
     async inspectCodexLifecycle(context) {
-      if (context.projectId || context.worktreeId || context.sessionId) {
-        throw new ControlOperationError(
-          'UNAUTHORIZED',
-          'Managed Sessions cannot inspect user-wide provider integration state.',
-          403,
-        );
-      }
-      if (!providerIntegration) {
-        throw new ControlOperationError(
-          'INSTANCE_UNAVAILABLE',
-          'This Tessera runtime cannot inspect provider integrations.',
-          503,
-        );
-      }
-      return providerIntegration.inspectCodexLifecycle();
+      return requireUserGlobalProviderIntegration(context, 'inspect')
+        .inspectCodexLifecycle();
     },
 
     async installCodexLifecycle(request, context) {
@@ -464,21 +478,18 @@ export function createControlService(options: {
           400,
         );
       }
-      if (context.projectId || context.worktreeId || context.sessionId) {
-        throw new ControlOperationError(
-          'UNAUTHORIZED',
-          'Managed Sessions cannot consent to user-wide provider integration changes.',
-          403,
-        );
-      }
-      if (!providerIntegration) {
-        throw new ControlOperationError(
-          'INSTANCE_UNAVAILABLE',
-          'This Tessera runtime cannot install provider integrations.',
-          503,
-        );
-      }
-      return providerIntegration.installCodexLifecycle();
+      return requireUserGlobalProviderIntegration(context, 'install')
+        .installCodexLifecycle();
+    },
+
+    async updateCodexLifecycle(context) {
+      return requireUserGlobalProviderIntegration(context, 'update')
+        .updateCodexLifecycle();
+    },
+
+    async removeCodexLifecycle(context) {
+      return requireUserGlobalProviderIntegration(context, 'remove')
+        .removeCodexLifecycle();
     },
 
     async manageProviderSkills(request, context) {
