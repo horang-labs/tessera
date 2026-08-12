@@ -13,6 +13,13 @@ import type { RuntimeDescriptor } from './runtime-descriptor';
 
 const execFileAsync = promisify(execFile);
 const SAFE_RUNTIME_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const WSL_BRIDGE_OPERATION_TIMEOUTS_MS = [10_000, 30_000] as const;
+const TRANSIENT_WSL_NTSTATUS_CODES = new Set([
+  0xC000_0017, // STATUS_NO_MEMORY
+  0xC000_009A, // STATUS_INSUFFICIENT_RESOURCES
+  0xC000_012D, // STATUS_COMMITMENT_LIMIT
+  0xC000_0142, // STATUS_DLL_INIT_FAILED
+]);
 
 export interface ControlCliBridgeContext {
   agentEnvironment: AgentEnvironment;
@@ -35,6 +42,21 @@ export interface ControlCliBridgeFactory {
 export interface WslExecutableStore {
   create(contents: string): Promise<string>;
   remove(commandPath: string): Promise<void>;
+  dispose?(): Promise<void>;
+}
+
+interface WslExecutableCommandOptions {
+  encoding: 'utf8';
+  timeout: number;
+  windowsHide: true;
+}
+
+export interface DefaultWslExecutableStoreOptions {
+  runWslCommand?: (
+    executable: string,
+    args: readonly string[],
+    options: WslExecutableCommandOptions,
+  ) => Promise<{ stdout: string }>;
 }
 
 export interface ControlCliBridgeFactoryOptions {
@@ -222,6 +244,7 @@ export function createControlCliBridgeFactory(
         const results = await Promise.allSettled([
           ...[...owned].map(disposeOwned),
           ...pendingDisposals,
+          ...(wslExecutableStore.dispose ? [wslExecutableStore.dispose()] : []),
         ]);
         let firstError = results.find((result) => result.status === 'rejected')?.reason;
         try {
@@ -423,44 +446,155 @@ function buildWslLauncher(hostBridgePath: string): string {
   ].join('\n');
 }
 
-function createDefaultWslExecutableStore(): WslExecutableStore {
+export function createDefaultWslExecutableStore(
+  options: DefaultWslExecutableStoreOptions = {},
+): WslExecutableStore {
+  const runWslCommand = options.runWslCommand ?? (async (executable, args, commandOptions) => {
+    const { stdout } = await execFileAsync(executable, [...args], commandOptions);
+    return { stdout };
+  });
+  const pendingOwnershipIds = new Set<string>();
+  const runWslCommandWithRetry = async (args: readonly string[]): Promise<{ stdout: string }> => {
+    let lastError: unknown;
+    for (const timeout of WSL_BRIDGE_OPERATION_TIMEOUTS_MS) {
+      try {
+        return await runWslCommand(
+          'wsl.exe',
+          args,
+          { encoding: 'utf8', timeout, windowsHide: true },
+        );
+      } catch (error) {
+        lastError = error;
+        if (!isTransientWslBridgeFailure(error)) break;
+      }
+    }
+    throw lastError;
+  };
+  const removeOwnedArtifact = async (ownershipId: string): Promise<void> => {
+    const script = [
+      'set -eu',
+      'artifact_id=$1',
+      'base="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/tessera/control-bridges"',
+      'rm -rf -- "$base/bridge.$artifact_id"',
+    ].join('; ');
+    await runWslCommandWithRetry(
+      ['-e', 'sh', '-c', script, 'sh', ownershipId],
+    );
+  };
   return {
     async create(contents): Promise<string> {
       const encoded = Buffer.from(contents, 'utf8').toString('base64');
+      const ownershipId = randomUUID();
+      pendingOwnershipIds.add(ownershipId);
       const script = [
         'set -eu',
+        'artifact_id=$1',
         'base="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/tessera/control-bridges"',
         'mkdir -p "$base"',
         'chmod 700 "$base"',
-        'bridge_dir=$(mktemp -d "$base/bridge.XXXXXX")',
-        `printf %s ${quotePosix(encoded)} | base64 -d > "$bridge_dir/tessera"`,
-        'chmod 700 "$bridge_dir/tessera"',
+        'bridge_dir="$base/bridge.$artifact_id"',
+        'mkdir -p "$bridge_dir"',
+        'chmod 700 "$bridge_dir"',
+        'temp_path="$bridge_dir/tessera.tmp.$$"',
+        'trap \'rm -f -- "$temp_path"\' EXIT HUP INT TERM',
+        `printf %s ${quotePosix(encoded)} | base64 -d > "$temp_path"`,
+        'chmod 700 "$temp_path"',
+        'mv -f -- "$temp_path" "$bridge_dir/tessera"',
+        'trap - EXIT HUP INT TERM',
         'printf %s "$bridge_dir/tessera"',
       ].join('; ');
-      const { stdout } = await execFileAsync(
-        'wsl.exe',
-        ['-e', 'sh', '-c', script],
-        { encoding: 'utf8', timeout: 10_000, windowsHide: true },
-      );
-      const commandPath = stdout.trim();
-      if (!commandPath.startsWith('/')) {
-        throw new Error('The WSL Control CLI bridge path is unavailable.');
+      let lastError: unknown;
+      let attempts = 0;
+      for (const timeout of WSL_BRIDGE_OPERATION_TIMEOUTS_MS) {
+        attempts += 1;
+        try {
+          const { stdout } = await runWslCommand(
+            'wsl.exe',
+            ['-e', 'sh', '-c', script, 'sh', ownershipId],
+            { encoding: 'utf8', timeout, windowsHide: true },
+          );
+          const commandPath = stdout.trim();
+          if (!commandPath.startsWith('/')) {
+            throw new Error('The WSL Control CLI bridge path is unavailable.');
+          }
+          pendingOwnershipIds.delete(ownershipId);
+          return commandPath;
+        } catch (error) {
+          lastError = error;
+          if (!isTransientWslBridgeFailure(error)) break;
+        }
       }
-      return commandPath;
+      const failure = new Error(
+        `Unable to create the WSL Control CLI bridge after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}: ${describeWslBridgeFailure(lastError)}. Check that WSL is running and its filesystem is writable, then retry.`,
+        { cause: lastError },
+      );
+      try {
+        await removeOwnedArtifact(ownershipId);
+        pendingOwnershipIds.delete(ownershipId);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [failure, cleanupError],
+          `${failure.message} Cleanup of the owned WSL bridge artifact also failed: ${describeWslBridgeFailure(cleanupError)}.`,
+        );
+      }
+      throw failure;
     },
 
     async remove(commandPath): Promise<void> {
-      await execFileAsync(
-        'wsl.exe',
+      await runWslCommandWithRetry(
         [
           '-e', 'sh', '-c',
           'target=$1; rm -f -- "$target"; rmdir -- "$(dirname "$target")" 2>/dev/null || true',
           'sh', commandPath,
         ],
-        { encoding: 'utf8', timeout: 10_000, windowsHide: true },
       );
     },
+
+    async dispose(): Promise<void> {
+      const results = await Promise.allSettled(
+        [...pendingOwnershipIds].map(async (ownershipId) => {
+          await removeOwnedArtifact(ownershipId);
+          pendingOwnershipIds.delete(ownershipId);
+        }),
+      );
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+    },
   };
+}
+
+function isTransientWslBridgeFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const commandError = error as Error & {
+    code?: string | number | null;
+    killed?: boolean;
+  };
+  if (commandError.killed || /timed?\s*out/i.test(commandError.message)) return true;
+  if (
+    typeof commandError.code === 'string'
+    && ['EAGAIN', 'EBUSY', 'ENOMEM', 'ETIMEDOUT'].includes(commandError.code)
+  ) {
+    return true;
+  }
+  return typeof commandError.code === 'number'
+    && TRANSIENT_WSL_NTSTATUS_CODES.has(commandError.code >>> 0);
+}
+
+function describeWslBridgeFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const commandError = error as Error & {
+    code?: string | number | null;
+    killed?: boolean;
+    stderr?: string;
+  };
+  if (commandError.killed || /timed?\s*out/i.test(commandError.message)) {
+    return 'wsl.exe did not complete before the launch timeout';
+  }
+  if (commandError.code !== undefined && commandError.code !== null) {
+    const stderr = commandError.stderr?.trim().split('\n', 1)[0];
+    return `wsl.exe failed with ${String(commandError.code)}${stderr ? `: ${stderr}` : ''}`;
+  }
+  return error.message.split('\n', 1)[0] || 'wsl.exe failed without an error message';
 }
 
 function quotePosix(value: string): string {

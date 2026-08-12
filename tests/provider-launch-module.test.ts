@@ -1313,9 +1313,28 @@ test('a managed top-level session omits Worktree caller context', async () => {
   }
 });
 
-test('fresh and resumed launches preserve each provider wrapper contract', async () => {
+test('fresh and resumed launches preserve each provider wrapper contract and Control bridge path', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);
+  const preparedBridgeSessions: string[] = [];
+  const launcher = modules.createProviderLaunchModule({
+    terminalManager: manager,
+    providerIntegration: createTestProviderIntegration('wsl'),
+    prepareControlCliBridge: async (context) => {
+      preparedBridgeSessions.push(context.sessionId);
+      const commandPath = `/home/test/.cache/tessera/${context.sessionId}/tessera`;
+      return {
+        commandPath,
+        environment: {
+          TESSERA_ENV: '1',
+          TESSERA_CLI_COMMAND: commandPath,
+          TESSERA_PROJECT_ID: context.projectId,
+          TESSERA_SESSION_ID: context.sessionId,
+        },
+        dispose: async () => {},
+      };
+    },
+  });
   const prompt = '-leading-option\nsecond line';
   const launches = [
     {
@@ -1365,14 +1384,24 @@ test('fresh and resumed launches preserve each provider wrapper contract', async
 
   for (const launch of launches) {
     createTerminalSession(launch.sessionId, launch.provider, launch.state);
-    await launchDetached(manager, launch.sessionId, launch.prompt);
+    await launcher.launch({
+      sessionId: launch.sessionId,
+      userId: 'provider-launch-user',
+      mode: 'detached',
+      ...(launch.prompt === undefined ? {} : { initialPrompt: launch.prompt }),
+    });
     const spawned = captured.at(-1);
     assert.ok(spawned);
     assert.match(spawned.args.join('\n'), launch.expected);
+    assert.equal(
+      spawned.env?.TESSERA_CLI_COMMAND,
+      `/home/test/.cache/tessera/${launch.sessionId}/tessera`,
+    );
     await manager.closeSession(launch.sessionId, 'provider-launch-user');
   }
 
   assert.equal(captured.length, launches.length);
+  assert.deepEqual(preparedBridgeSessions, launches.map((launch) => launch.sessionId));
 });
 
 test('a WSL Claude background attach does not prepare a new plugin overlay', async () => {
