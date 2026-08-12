@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import type { SessionHistoryEvent } from '@/lib/session-replay-types';
-import { selectProviderResumeHistorySuffix } from '@/lib/session/provider-resume-history';
+import { selectCodexResumeHistorySuffix } from '@/lib/cli/providers/codex/resume-history';
 
 const user = (content: string, timestamp: string): SessionHistoryEvent => ({
   v: 1,
@@ -15,6 +16,11 @@ const assistant = (content: string, timestamp: string): SessionHistoryEvent => (
   type: 'assistant_message',
   timestamp,
   content,
+});
+
+test('shared resume-history persistence stays provider-neutral', () => {
+  const source = fs.readFileSync('src/lib/session/provider-resume-history.ts', 'utf8');
+  assert.doesNotMatch(source, /codex|commandActions|processId/i);
 });
 
 test('provider resume history appends only turns added outside Tessera', () => {
@@ -37,11 +43,11 @@ test('provider resume history appends only turns added outside Tessera', () => {
   ];
 
   assert.deepEqual(
-    selectProviderResumeHistorySuffix(canonical, [...canonical, ...external]),
+    selectCodexResumeHistorySuffix(canonical, [...canonical, ...external]),
     external,
   );
   assert.deepEqual(
-    selectProviderResumeHistorySuffix([...canonical, ...external], [...canonical, ...external]),
+    selectCodexResumeHistorySuffix([...canonical, ...external], [...canonical, ...external]),
     [],
     'a second resume must not duplicate the imported suffix',
   );
@@ -49,7 +55,7 @@ test('provider resume history appends only turns added outside Tessera', () => {
 
 test('provider resume history refuses to merge a different conversation', () => {
   assert.equal(
-    selectProviderResumeHistorySuffix(
+    selectCodexResumeHistorySuffix(
       [user('managed conversation', '2026-08-12T00:00:00.000Z')],
       [user('unrelated provider history', '2026-08-12T00:00:00.000Z')],
     ),
@@ -105,7 +111,7 @@ test('provider resume history compares provider-facing translations and stable t
   ];
 
   assert.deepEqual(
-    selectProviderResumeHistorySuffix(canonical, provider),
+    selectCodexResumeHistorySuffix(canonical, provider),
     [provider[2]],
     'display translations and live-only tool metadata must not hide an external suffix',
   );

@@ -99,6 +99,7 @@ import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conve
 import { resolveProviderOwnedSkillHome } from '../provider-skill-home';
 import { ProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
 import { mergeProviderResumeHistory } from '@/lib/session/provider-resume-history';
+import { selectCodexResumeHistorySuffix } from './resume-history';
 
 const CLI_TIMEOUT_MS = 120_000;
 const SKILLS_REQUEST_TIMEOUT_MS = 10_000;
@@ -615,7 +616,11 @@ export class CodexAdapter implements CliProvider {
         );
       }
       if (providerEvents) {
-        const merged = await mergeProviderResumeHistory(options.sessionId, providerEvents);
+        const merged = await mergeProviderResumeHistory(
+          options.sessionId,
+          providerEvents,
+          selectCodexResumeHistorySuffix,
+        );
         if (merged.state === 'diverged') {
           logger.warn(
             { sessionId: options.sessionId },
