@@ -50,8 +50,9 @@ test('origin provider home identity is immutable and legacy/unmanaged rows stay 
   assert.equal(dbSessions.getSession('managed-a')?.origin_provider_home_identity, 'codex-home:a');
   assert.equal(dbSessions.getSession('legacy')?.origin_provider_home_identity, null);
   assert.equal(
-    dbSessions.countManagedSessionsUnavailableInHome(
+    dbSessions.countManagedSessionsTransitioningUnavailable(
       'codex',
+      asProviderHomeIdentity('codex-home:a'),
       asProviderHomeIdentity('codex-home:b'),
     ),
     1,
@@ -246,17 +247,19 @@ test('provider home fingerprints canonicalize aliases and agent-visible path spe
   );
 });
 
-test('Agent Environment impact counts bound sessions without adopting legacy rows', async () => {
+test('Agent Environment impact counts only sessions newly stranded by the change', async () => {
   const { inspectProviderHomeChange } = await import('@/lib/settings/provider-home-change');
-  const impact = await inspectProviderHomeChange('managed-home-user', 'wsl', {
-    resolveTargetHomes: async (_userId, target) => [{
+  const impact = await inspectProviderHomeChange('managed-home-user', 'native', 'wsl', {
+    resolveHomes: async (_userId, environment) => [{
       providerId: 'codex',
-      identity: asProviderHomeIdentity(`codex-home:${target}`),
+      identity: asProviderHomeIdentity(
+        environment === 'native' ? 'codex-home:a' : 'codex-home:b',
+      ),
     }],
-    countUnavailable: dbSessions.countManagedSessionsUnavailableInHome,
+    countTransitioningUnavailable: dbSessions.countManagedSessionsTransitioningUnavailable,
   });
   assert.deepEqual(impact, {
-    unavailableManagedSessionCount: 3,
+    unavailableManagedSessionCount: 1,
   });
   assert.equal(dbSessions.getSession('legacy')?.origin_provider_home_identity, null);
 });

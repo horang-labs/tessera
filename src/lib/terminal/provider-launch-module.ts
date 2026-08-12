@@ -543,11 +543,12 @@ export function createProviderLaunchModule(
         // as the check that the Session still exists, and a wait long enough to
         // matter is long enough for the Session to be deleted inside it — so it
         // is read after the gate, where the answer is still true.
-        const codexProviderSession = persisted.providerId === 'codex'
-          && dbSessions.extractCodexTerminalSessionId(persisted.providerState)
+        const homeBoundProviderSession = persisted.provider.bindsManagedSessionsToProviderHome?.()
           ? getTerminalProviderSessionForTesseraSession(request.sessionId)
           : undefined;
-        const codexResumeTranscriptPath = codexProviderSession?.transcript_path;
+        const codexResumeTranscriptPath = persisted.providerId === 'codex'
+          ? homeBoundProviderSession?.transcript_path
+          : undefined;
         const exactLegacyCodexOverlayResume = persisted.providerId === 'codex'
           && isExactLegacyCodexOverlayResume(
             codexResumeTranscriptPath,
@@ -561,9 +562,8 @@ export function createProviderLaunchModule(
             ? { requiredProviderHomeIdentity: persisted.originProviderHomeIdentity }
             : {}),
           ...(!exactLegacyCodexOverlayResume
-            && persisted.providerId === 'codex'
-            && codexProviderSession?.provider_session_id
-            ? { resumeProviderSessionId: codexProviderSession.provider_session_id }
+            && homeBoundProviderSession?.provider_session_id
+            ? { resumeProviderSessionId: homeBoundProviderSession.provider_session_id }
             : {}),
           ...(exactLegacyCodexOverlayResume
             ? { compatibility: 'exact-legacy-overlay-resume' as const }

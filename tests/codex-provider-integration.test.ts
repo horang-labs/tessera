@@ -317,7 +317,7 @@ test('Codex app-server launch uses the shared Provider Integration policy and au
   await closed;
 });
 
-test('app-server resume rechecks and monitors ownership without binding a legacy row', async () => {
+test('app-server resume rechecks ownership and binds a verified legacy row', async () => {
   const [
     { CodexAdapter },
     { createProviderIntegration },
@@ -325,6 +325,7 @@ test('app-server resume rechecks and monitors ownership without binding a legacy
     database,
     projects,
     dbSessions,
+    { sessionHistory },
   ] = await Promise.all([
     import('@/lib/cli/providers/codex/adapter'),
     import('@/lib/cli/provider-integration'),
@@ -332,6 +333,7 @@ test('app-server resume rechecks and monitors ownership without binding a legacy
     import('@/lib/db/database'),
     import('@/lib/db/projects'),
     import('@/lib/db/sessions'),
+    import('@/lib/session-history'),
   ]);
   await database.initDatabase();
   projects.registerProject('app-server-ownership-project', workspace, 'Ownership');
@@ -383,6 +385,32 @@ test('app-server resume rechecks and monitors ownership without binding a legacy
       lifecycle.push('inspect');
       return { state: 'available', runtimeGuard };
     },
+    readResumeHistory: async () => [
+      {
+        v: 1,
+        type: 'user_message' as const,
+        timestamp: '2026-08-12T00:00:00.000Z',
+        content: 'inside question',
+      },
+      {
+        v: 1,
+        type: 'assistant_message' as const,
+        timestamp: '2026-08-12T00:00:01.000Z',
+        content: 'inside answer',
+      },
+      {
+        v: 1,
+        type: 'user_message' as const,
+        timestamp: '2026-08-12T00:01:00.000Z',
+        content: 'outside follow-up',
+      },
+      {
+        v: 1,
+        type: 'assistant_message' as const,
+        timestamp: '2026-08-12T00:01:01.000Z',
+        content: 'outside answer',
+      },
+    ],
   });
 
   dbSessions.createSession(
@@ -392,6 +420,18 @@ test('app-server resume rechecks and monitors ownership without binding a legacy
     'codex',
     { providerState: JSON.stringify({ threadId: 'legacy-thread' }) },
   );
+  sessionHistory.recordUserMessage(
+    'app-server-legacy-row',
+    'inside question',
+    '2026-08-12T00:00:00.000Z',
+  );
+  sessionHistory.recordServerMessage('app-server-legacy-row', {
+    type: 'message',
+    role: 'assistant',
+    content: 'inside answer',
+    timestamp: '2026-08-12T00:00:01.000Z',
+  });
+  sessionHistory.flushSession('app-server-legacy-row');
   const resumed = await adapter.spawn(workspace, {
     userId,
     sessionId: 'app-server-legacy-row',
@@ -403,7 +443,13 @@ test('app-server resume rechecks and monitors ownership without binding a legacy
   assert.deepEqual(lifecycle, ['inspect', 'reinspect', 'start']);
   assert.equal(
     dbSessions.getSession('app-server-legacy-row')?.origin_provider_home_identity,
-    null,
+    'codex-home:app-server',
+  );
+  assert.deepEqual(
+    (await sessionHistory.readEvents('app-server-legacy-row'))
+      .filter((event) => event.type === 'user_message' || event.type === 'assistant_message')
+      .map((event) => event.content),
+    ['inside question', 'inside answer', 'outside follow-up', 'outside answer'],
   );
 
   const closed = once(resumed.process, 'close');

@@ -94,7 +94,11 @@ export async function PUT(request: NextRequest) {
     });
 
     if (previousSettings.agentEnvironment !== settings.agentEnvironment) {
-      const impact = await inspectProviderHomeChange(userId, settings.agentEnvironment);
+      const impact = await inspectProviderHomeChange(
+        userId,
+        previousSettings.agentEnvironment,
+        settings.agentEnvironment,
+      );
       if (impact.unavailableManagedSessionCount > 0 && confirmProviderHomeChange !== true) {
         return NextResponse.json({
           error: 'Changing Agent Environment makes managed Codex sessions unavailable until you switch back.',

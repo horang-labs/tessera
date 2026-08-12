@@ -108,6 +108,8 @@ export interface ProviderLaunchPreparation {
   buildEnvironment(baseEnvironment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   /** Read-only existence/liveness check pinned to the exact prepared home. */
   inspectResume?(providerSessionId: string): Promise<ProviderSessionResumeInspection>;
+  /** Read provider-owned history from the exact prepared home before resume. */
+  readResumeHistory?(providerSessionId: string): Promise<SessionHistoryEvent[] | null>;
 }
 
 export interface ProviderTerminalSessionObservation {

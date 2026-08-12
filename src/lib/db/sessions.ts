@@ -342,18 +342,19 @@ export function bindSessionOriginProviderHome(
   return true;
 }
 
-export function countManagedSessionsUnavailableInHome(
+export function countManagedSessionsTransitioningUnavailable(
   providerId: string,
-  identity: ProviderHomeIdentity,
+  currentIdentity: ProviderHomeIdentity,
+  targetIdentity: ProviderHomeIdentity,
 ): number {
   const row = getDb().prepare(`
     SELECT COUNT(*) AS count
     FROM sessions
     WHERE provider = ?
       AND deleted = 0
-      AND origin_provider_home_identity IS NOT NULL
+      AND origin_provider_home_identity = ?
       AND origin_provider_home_identity != ?
-  `).get(providerId, identity) as { count: number } | undefined;
+  `).get(providerId, currentIdentity, targetIdentity) as { count: number } | undefined;
   return row?.count ?? 0;
 }
 

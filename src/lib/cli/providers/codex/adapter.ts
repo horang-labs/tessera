@@ -98,6 +98,7 @@ import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 import { resolveProviderOwnedSkillHome } from '../provider-skill-home';
 import { ProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
+import { mergeProviderResumeHistory } from '@/lib/session/provider-resume-history';
 
 const CLI_TIMEOUT_MS = 120_000;
 const SKILLS_REQUEST_TIMEOUT_MS = 10_000;
@@ -106,6 +107,43 @@ const TITLE_REASONING_EFFORT = 'low';
 const PROVIDER_ID = 'codex';
 const DEFAULT_COMMAND = 'codex';
 const CODEX_ATTACHMENTS_DIR = getTesseraDataPath('attachments', 'codex');
+
+async function readCodexTranscriptEvents(options: {
+  sessionId: string;
+  providerSessionId: string;
+  transcriptPath?: string | null;
+  environment: AgentEnvironment;
+  sessionsDir?: string;
+}): Promise<SessionHistoryEvent[] | null> {
+  const filePath = await resolveCodexTranscriptPath({
+    providerSessionId: options.providerSessionId,
+    transcriptPath: options.transcriptPath ?? null,
+    environment: options.environment,
+    ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
+  });
+  if (!filePath) return null;
+
+  const decoderState = createCodexTranscriptDecoderState();
+  const events: SessionHistoryEvent[] = [];
+  const stream = createReadStream(filePath, { encoding: 'utf-8' });
+  try {
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    for await (const line of lines) {
+      events.push(...decodeCodexTranscriptLine(line, decoderState));
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    logger.warn({
+      sessionId: options.sessionId,
+      filePath,
+      error: (error as Error).message,
+    }, 'Failed to read Codex transcript');
+    return null;
+  } finally {
+    stream.destroy();
+  }
+  return events;
+}
 
 type CodexInputItem =
   | { type: 'text'; text: string }
@@ -359,6 +397,12 @@ export class CodexAdapter implements CliProvider {
         workDir: context.workDir,
         providerHomeFilesystemPath: providerHome,
       }, providerSessionId),
+      readResumeHistory: (providerSessionId) => readCodexTranscriptEvents({
+        sessionId: '__resume__',
+        providerSessionId,
+        environment: context.environment,
+        sessionsDir: path.join(providerHome, 'sessions'),
+      }),
     };
   }
 
@@ -406,37 +450,10 @@ export class CodexAdapter implements CliProvider {
     transcriptPath?: string | null;
     userId?: string;
   }): Promise<SessionHistoryEvent[] | null> {
-    const filePath = await resolveCodexTranscriptPath({
-      providerSessionId: options.providerSessionId,
-      transcriptPath: options.transcriptPath ?? null,
+    return readCodexTranscriptEvents({
+      ...options,
       environment: await getAgentEnvironment(options.userId),
     });
-    if (!filePath) return null;
-
-    const decoderState = createCodexTranscriptDecoderState();
-    const events: SessionHistoryEvent[] = [];
-    const stream = createReadStream(filePath, { encoding: 'utf-8' });
-
-    try {
-      const lines = createInterface({ input: stream, crlfDelay: Infinity });
-      for await (const line of lines) {
-        events.push(...decodeCodexTranscriptLine(line, decoderState));
-      }
-    } catch (error) {
-      // A rollout that vanished mid-read (overlay cleaned up) is the same
-      // "nothing to show" case as never finding one.
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-      logger.warn({
-        sessionId: options.sessionId,
-        filePath,
-        error: (error as Error).message,
-      }, 'Failed to read Codex terminal transcript');
-      return null;
-    } finally {
-      stream.destroy();
-    }
-
-    return events;
   }
 
   canResumeTerminalAfterRestart(providerState: string | null): boolean {
@@ -586,6 +603,28 @@ export class CodexAdapter implements CliProvider {
       }
     }
 
+    if (options.resume && options.threadId && options.sessionId) {
+      const providerEvents = await this._providerIntegration.readResumeHistory?.(
+        integration,
+        options.threadId,
+      );
+      if (providerEvents === null) {
+        throw new ProviderSessionResumeUnavailableError(
+          'provider-history-missing',
+          'The provider conversation disappeared before its history could be synchronized.',
+        );
+      }
+      if (providerEvents) {
+        const merged = await mergeProviderResumeHistory(options.sessionId, providerEvents);
+        if (merged.state === 'diverged') {
+          logger.warn(
+            { sessionId: options.sessionId },
+            'Provider resume history did not match canonical Tessera history; external suffix was not imported',
+          );
+        }
+      }
+    }
+
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
       shell: false,
@@ -632,12 +671,10 @@ export class CodexAdapter implements CliProvider {
       approvalPolicy: options.approvalPolicy as CodexApprovalPolicy | undefined,
       sandboxMode: options.sandboxMode as CodexSandboxMode | undefined,
       providerHomeIdentity: integration.providerHome.identity,
-      // A migrated row with a provider thread but no origin identity is not
-      // evidence that the currently selected home created it. Keep that legacy
-      // record unbound; only fresh conversations establish a new binding.
-      bindProviderHomeOnHandshake: !options.resume
-        || !options.threadId
-        || Boolean(options.originProviderHomeIdentity),
+      // A successful resume has already proven that this exact prepared home
+      // owns the provider history, so legacy unbound GUI rows can be bound now
+      // without guessing, copying, or rerouting provider state.
+      bindProviderHomeOnHandshake: Boolean(integration.providerHome.identity),
     });
 
     codexProtocolParser.setSessionModel(options.sessionId ?? '__provider__', options.model);

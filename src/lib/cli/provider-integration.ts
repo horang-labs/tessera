@@ -25,6 +25,7 @@ import {
   ProviderSessionResumeUnavailableError,
 } from './provider-session-resume';
 import type { ProviderHomeIdentity } from './providers/provider-home-identity';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 
 export {
   ProviderSessionResumeUnavailableError,
@@ -142,6 +143,11 @@ export interface ProviderIntegration {
   getResumeRuntimeGuard?(
     decision: ProviderIntegrationLaunchDecision,
   ): ProviderSessionRuntimeGuard | undefined;
+  /** Read history from the provider home captured by this launch decision. */
+  readResumeHistory?(
+    decision: ProviderIntegrationLaunchDecision,
+    providerSessionId: string,
+  ): Promise<SessionHistoryEvent[] | null | undefined>;
   inspectLifecycle(
     request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
@@ -486,6 +492,9 @@ export function createProviderIntegration(
     },
     getResumeRuntimeGuard(decision) {
       return resumeRuntimeGuards.get(decision);
+    },
+    async readResumeHistory(decision, providerSessionId) {
+      return await launchPreparations.get(decision)?.readResumeHistory?.(providerSessionId);
     },
     async inspectLifecycle(request) {
       const agentEnvironment = await resolveEnvironment(request);
