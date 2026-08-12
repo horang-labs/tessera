@@ -443,9 +443,17 @@ export function CollectionContextMenu({
         )}
 
         {onArchive && (
-          <button className={menuItemClass} onClick={() => { onArchive(); onClose(); }}>
+          <button
+            className={menuItemClass}
+            onClick={() => { onArchive(); onClose(); }}
+            data-testid={menu.type === 'task' && !menu.isSubSession
+              ? 'ctx-archive-worktree-task'
+              : 'ctx-archive-session'}
+          >
             <Archive className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-            <span>Archive</span>
+            <span>{menu.type === 'task' && !menu.isSubSession
+              ? 'Archive worktree task'
+              : 'Archive session'}</span>
           </button>
         )}
 
@@ -860,15 +868,20 @@ export function TaskItemRow({
       }
     : undefined;
 
-  const handleArchiveTask = useCallback(() => {
+  const archivesCompositeSession = density === 'composite' && Boolean(primarySessionId);
+  const handleArchive = useCallback(() => {
+    if (archivesCompositeSession && primarySessionId) {
+      onSessionArchive?.(primarySessionId);
+      return;
+    }
     void useTaskStore.getState().toggleTaskArchive(task.id, true);
-  }, [task.id]);
+  }, [archivesCompositeSession, onSessionArchive, primarySessionId, task.id]);
 
   const {
     isConfirmingArchive,
     handleArchiveClick,
     resetArchiveConfirm,
-  } = useArchiveConfirm(handleArchiveTask);
+  } = useArchiveConfirm(handleArchive);
 
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -1159,9 +1172,13 @@ export function TaskItemRow({
                   ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                   : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
               )}
-              testId={`collection-task-quick-archive-${task.id}`}
-              confirmTitle="Click again to archive task"
-              idleTitle="Archive task"
+              testId={archivesCompositeSession
+                ? `collection-session-quick-archive-${primarySessionId}`
+                : `collection-task-quick-archive-${task.id}`}
+              confirmTitle={archivesCompositeSession
+                ? 'Click again to archive session'
+                : 'Click again to archive worktree task'}
+              idleTitle={archivesCompositeSession ? 'Archive session' : 'Archive worktree task'}
             />
             <button
               ref={addButtonRef}

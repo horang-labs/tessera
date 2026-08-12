@@ -37,6 +37,7 @@ import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-supp
 import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { resolveSessionBranchPresentation } from '@/lib/session/session-branch-presentation';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
 
 interface HeaderProps {
   sessionId: string;
@@ -93,8 +94,6 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
 
   // session-store에서 상태 변경 액션 가져오기
   const updateLinkedTaskWorkflowStatus = useSessionStore((state) => state.updateLinkedTaskWorkflowStatus);
-  const toggleArchive = useSessionStore((state) => state.toggleArchive);
-
   // Unit 4: 패널 닫기 버튼 (REQ-13, BR-CLOSE-004)
   const panels = usePanelStore((state) => selectActiveTab(state)?.panels ?? EMPTY_PANELS);
   const closePanel = usePanelStore((state) => state.closePanel);
@@ -161,20 +160,12 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
   const currentTaskStatus = linkedTask?.workflowStatus ?? session?.workflowStatus;
 
   const handleArchive = useCallback(() => {
-    if (taskId) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, true);
-      return;
-    }
-    toggleArchive(sessionId, true);
-  }, [sessionId, taskId, toggleArchive]);
+    requestSessionArchive(sessionId);
+  }, [sessionId]);
 
   const handleUnarchive = useCallback(() => {
-    if (taskId) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, false);
-      return;
-    }
-    toggleArchive(sessionId, false);
-  }, [sessionId, taskId, toggleArchive]);
+    requestSessionArchive(sessionId, false);
+  }, [sessionId]);
 
   const handleDelete = useCallback(() => {
     deleteSession(sessionId);
@@ -535,7 +526,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
           isArchived={session.archived ?? false}
           isRunning={runtimePresentation.showRunning}
           onStatusChange={isSingleSessionTask ? handleStatusChange : undefined}
-          onArchive={session.taskId ? undefined : handleArchive}
+          onArchive={handleArchive}
           onUnarchive={session.taskId ? undefined : handleUnarchive}
           onRename={handleRenameFromMenu}
           onDelete={handleDelete}

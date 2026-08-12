@@ -17,6 +17,7 @@ import {
   useChatStore,
 } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSessionResume } from '@/hooks/use-session-resume';
@@ -1036,11 +1037,7 @@ export function MessageInput({
       }
       clearInput();
     } else if (match.nativeCommand === 'archive') {
-      if (session?.taskId) {
-        void useTaskStore.getState().toggleTaskArchive(session.taskId, true);
-      } else {
-        useSessionStore.getState().toggleArchive(sessionId, true);
-      }
+      requestSessionArchive(sessionId);
       clearInput();
     } else if (match.nativeCommand === 'new' || match.nativeCommand === 'clear') {
       void createSession({
