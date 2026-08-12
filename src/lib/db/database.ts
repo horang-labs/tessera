@@ -1300,3 +1300,8 @@ export function getDb(): DatabaseWrapper {
   }
   return _g[DB_KEY];
 }
+
+/** Provider harnesses can run without Tessera persistence; managed runtimes cannot. */
+export function isDatabaseInitialized(): boolean {
+  return Boolean(_g[DB_KEY]);
+}

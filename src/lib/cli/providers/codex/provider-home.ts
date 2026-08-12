@@ -5,6 +5,10 @@ import { execCli, isRunningInWsl, type CliEnvironment } from '@/lib/cli/cli-exec
 import { buildWslFilesystemPathProbe } from '@/lib/filesystem/wsl-path-probe';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
+import {
+  asProviderHomeIdentity,
+  type ProviderHomeIdentity,
+} from '../provider-home-identity';
 
 interface CodexProviderHomeDependencies {
   exec?: typeof execCli;
@@ -34,7 +38,7 @@ export function fingerprintCodexProviderHome(
   environment: CliEnvironment,
   providerHomeFilesystemPath: string,
   dependencies: CodexProviderHomeFingerprintDependencies = {},
-): string {
+): ProviderHomeIdentity {
   let canonicalFilesystemPath = providerHomeFilesystemPath.trim();
   try {
     canonicalFilesystemPath = (dependencies.realpath ?? fs.realpathSync.native)(
@@ -60,9 +64,9 @@ export function fingerprintCodexProviderHome(
         ?? ''
       ).trim().toLowerCase()
     : '';
-  return `codex-home:v1:${createHash('sha256')
+  return asProviderHomeIdentity(`codex-home:v1:${createHash('sha256')
     .update(`${environment}\0${wslDistro}\0${canonicalKey}`)
-    .digest('hex')}`;
+    .digest('hex')}`);
 }
 
 /**
@@ -74,7 +78,7 @@ export async function resolveCodexProviderHomeIdentity(
   environment: CliEnvironment,
   providerHomeFilesystemPath: string,
   dependencies: CodexProviderHomeIdentityDependencies = {},
-): Promise<string> {
+): Promise<ProviderHomeIdentity> {
   if (environment !== 'wsl') {
     return fingerprintCodexProviderHome(
       environment,

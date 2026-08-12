@@ -15,6 +15,7 @@ import {
   type TerminalProviderSessionActivation,
   type TerminalProviderSessionIdentity,
 } from './provider-session-identity';
+import type { ProviderHomeIdentity } from '@/lib/cli/providers/provider-home-identity';
 
 /** How the provider's new session came to exist. */
 export type TerminalProviderSessionOrigin = 'fork' | 'reset';
@@ -58,7 +59,7 @@ function createChildSession(
   providerState: string,
   workDir?: string,
   onCreated?: (sessionId: string) => void,
-  providerHomeIdentity?: string,
+  providerHomeIdentity?: ProviderHomeIdentity,
 ): string {
   const sessionId = randomUUID();
   const title = childTitle(source, origin);
@@ -166,6 +167,8 @@ export function reconcileTerminalProviderSession(options: {
   sourceSessionId: string;
   identity: TerminalProviderSessionIdentity;
   activation?: TerminalProviderSessionActivation;
+  /** Provider-owned evidence that an unknown identity descends from the source. */
+  allowCreate?: boolean;
   /** Whether the CLI branched the current conversation or started an empty one. */
   origin?: TerminalProviderSessionOrigin;
   /**
@@ -173,10 +176,11 @@ export function reconcileTerminalProviderSession(options: {
    * its own. Already translated to a path this server can open.
    */
   workDir?: string;
-  providerHomeIdentity?: string;
+  providerHomeIdentity?: ProviderHomeIdentity;
 }): TerminalProviderSessionReconciliationResult {
   const {
     activation,
+    allowCreate = false,
     identity,
     origin = 'fork',
     sourceSessionId,
@@ -215,8 +219,7 @@ export function reconcileTerminalProviderSession(options: {
 
   if (sourceBinding?.provider_session_id === identity.providerSessionId) {
     if (
-      identity.providerId === 'codex'
-      && providerHomeIdentity
+      providerHomeIdentity
       && (Boolean(source.origin_provider_home_identity) || mayEstablishOriginBinding)
     ) {
       dbSessions.bindSessionOriginProviderHome(sourceSessionId, providerHomeIdentity);
@@ -237,13 +240,17 @@ export function reconcileTerminalProviderSession(options: {
     };
   }
 
+  if (!allowCreate) {
+    return { kind: 'ignored', sessionId: sourceSessionId, previousSessionId: sourceSessionId };
+  }
+
   const sessionId = createChildSession(
     source,
     origin,
     buildTerminalProviderState(identity, activation),
     workDir,
     (created) => registerIdentity(created, identity),
-    identity.providerId === 'codex' ? providerHomeIdentity : undefined,
+    providerHomeIdentity,
   );
   return {
     kind: 'created',

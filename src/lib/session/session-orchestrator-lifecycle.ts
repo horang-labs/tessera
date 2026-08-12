@@ -253,7 +253,7 @@ export async function resumeSessionWithLifecycle({
       sandboxMode: options.sandboxMode,
       serviceTier: runtimeDefaults.serviceTier,
       fastMode: options.fastMode,
-      ...(providerId === 'codex' && session.origin_provider_home_identity
+      ...(session.origin_provider_home_identity
         ? { originProviderHomeIdentity: session.origin_provider_home_identity }
         : {}),
     },

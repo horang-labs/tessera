@@ -7,18 +7,29 @@ import {
   type TerminalProviderSessionOrigin,
 } from './provider-session-reconciliation';
 import { terminalManager } from './shared-terminal-manager';
+import type { ProviderHomeIdentity } from '@/lib/cli/providers/provider-home-identity';
 
 /** Applies one provider identity observation to the common PTY session model. */
 export function observeTerminalProviderSession(options: {
   pane: PaneTokenEntry;
   identity: TerminalProviderSessionIdentity;
   activation: 'active' | 'background';
+  /** True only when provider-owned lineage proves this is a managed child. */
+  allowCreate?: boolean;
   origin?: TerminalProviderSessionOrigin;
   /** Where the observed conversation runs, when it left the parent's directory. */
   workDir?: string;
-  providerHomeIdentity?: string;
+  providerHomeIdentity?: ProviderHomeIdentity;
 }): { ignored: boolean; sessionId: string | null } {
-  const { pane, identity, activation, origin, workDir, providerHomeIdentity } = options;
+  const {
+    pane,
+    identity,
+    activation,
+    allowCreate,
+    origin,
+    workDir,
+    providerHomeIdentity,
+  } = options;
   const activeSessionId = pane.sessionId
     ? terminalManager.getSessionIdForTerminal(pane.terminalId, pane.userId)
     : null;
@@ -54,10 +65,14 @@ export function observeTerminalProviderSession(options: {
     sourceSessionId: activeSessionId,
     identity,
     activation,
+    allowCreate,
     ...(origin ? { origin } : {}),
     ...(workDir ? { workDir } : {}),
     ...(providerHomeIdentity ? { providerHomeIdentity } : {}),
   });
+  if (reconciliation.kind === 'ignored') {
+    return { ignored: true, sessionId: activeSessionId };
+  }
   if (reconciliation.kind === 'created') {
     broadcastSessionMutation(pane.userId, {
       kind: 'created',

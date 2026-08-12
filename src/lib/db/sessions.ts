@@ -12,6 +12,10 @@ import {
 } from './worktree-identity';
 import type { ProjectViewMembership } from '@/lib/projects/project-view-membership';
 import { getWorktree, resolveCanonicalWorktree } from './worktrees';
+import {
+  asProviderHomeIdentity,
+  type ProviderHomeIdentity,
+} from '@/lib/cli/providers/provider-home-identity';
 
 export interface SessionRow {
   id: string;
@@ -20,7 +24,7 @@ export interface SessionRow {
   has_custom_title: number; // 0 | 1
   provider: string;
   provider_state: string | null;
-  origin_provider_home_identity: string | null;
+  origin_provider_home_identity: ProviderHomeIdentity | null;
   model: string | null;
   reasoning_effort: string | null;
   service_tier: string | null;
@@ -235,7 +239,7 @@ export function createSession(
     reasoningEffort?: string | null;
     serviceTier?: string | null;
     providerState?: string | null;
-    originProviderHomeIdentity?: string | null;
+    originProviderHomeIdentity?: ProviderHomeIdentity | null;
   } = {}
 ): void {
   const db = getDb();
@@ -313,10 +317,12 @@ export function createSession(
   );
 }
 
-/** Bind a managed Codex session once, after Codex returns its real thread id. */
-export function bindSessionOriginProviderHome(id: string, identity: string): boolean {
-  const normalizedIdentity = identity.trim();
-  if (!normalizedIdentity) throw new Error('Provider home identity is required');
+/** Bind a managed provider session once, after the provider confirms creation. */
+export function bindSessionOriginProviderHome(
+  id: string,
+  identity: ProviderHomeIdentity,
+): boolean {
+  const normalizedIdentity = asProviderHomeIdentity(identity);
 
   const row = getDb().prepare(`
     SELECT provider, origin_provider_home_identity
@@ -324,12 +330,9 @@ export function bindSessionOriginProviderHome(id: string, identity: string): boo
     WHERE id = ? AND deleted = 0
   `).get(id) as Pick<SessionRow, 'provider' | 'origin_provider_home_identity'> | undefined;
   if (!row) return false;
-  if (row.provider !== 'codex') {
-    throw new Error('Only managed Codex sessions may be bound to a Codex home');
-  }
   if (row.origin_provider_home_identity === normalizedIdentity) return true;
   if (row.origin_provider_home_identity) {
-    throw new Error('Managed Codex session is already bound to a different provider home');
+    throw new Error('Managed provider session is already bound to a different provider home');
   }
   getDb().prepare(`
     UPDATE sessions
@@ -339,15 +342,18 @@ export function bindSessionOriginProviderHome(id: string, identity: string): boo
   return true;
 }
 
-export function countManagedCodexSessionsUnavailableInHome(identity: string): number {
+export function countManagedSessionsUnavailableInHome(
+  providerId: string,
+  identity: ProviderHomeIdentity,
+): number {
   const row = getDb().prepare(`
     SELECT COUNT(*) AS count
     FROM sessions
-    WHERE provider = 'codex'
+    WHERE provider = ?
       AND deleted = 0
       AND origin_provider_home_identity IS NOT NULL
       AND origin_provider_home_identity != ?
-  `).get(identity) as { count: number } | undefined;
+  `).get(providerId, identity) as { count: number } | undefined;
   return row?.count ?? 0;
 }
 

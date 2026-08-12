@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import type { CliProvider } from '@/lib/cli/providers/types';
+import { asProviderHomeIdentity } from '@/lib/cli/providers/provider-home-identity';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-managed-codex-home-'));
 process.env.TESSERA_DATA_DIR = dataDir;
@@ -49,8 +50,37 @@ test('origin provider home identity is immutable and legacy/unmanaged rows stay 
   assert.equal(dbSessions.getSession('managed-a')?.origin_provider_home_identity, 'codex-home:a');
   assert.equal(dbSessions.getSession('legacy')?.origin_provider_home_identity, null);
   assert.equal(
-    dbSessions.countManagedCodexSessionsUnavailableInHome('codex-home:b'),
+    dbSessions.countManagedSessionsUnavailableInHome(
+      'codex',
+      asProviderHomeIdentity('codex-home:b'),
+    ),
     1,
+  );
+});
+
+test('a fresh managed runtime fails closed when its origin-home binding cannot persist', async () => {
+  const { bindProviderHomeOrThrow } = await import('@/lib/cli/process-manager-side-effects');
+  dbSessions.createSession('binding-conflict', 'managed-home-project', 'Conflict', 'codex', {
+    originProviderHomeIdentity: asProviderHomeIdentity('codex-home:existing'),
+  });
+
+  await assert.rejects(
+    bindProviderHomeOrThrow(
+      'binding-conflict',
+      asProviderHomeIdentity('codex-home:new'),
+    ),
+    /already bound to a different provider home/i,
+  );
+  assert.equal(
+    dbSessions.getSession('binding-conflict')?.origin_provider_home_identity,
+    'codex-home:existing',
+  );
+  await assert.rejects(
+    bindProviderHomeOrThrow(
+      'missing-managed-session',
+      asProviderHomeIdentity('codex-home:new'),
+    ),
+    /unavailable for provider-home binding/i,
   );
 });
 
@@ -219,12 +249,14 @@ test('provider home fingerprints canonicalize aliases and agent-visible path spe
 test('Agent Environment impact counts bound sessions without adopting legacy rows', async () => {
   const { inspectProviderHomeChange } = await import('@/lib/settings/provider-home-change');
   const impact = await inspectProviderHomeChange('managed-home-user', 'wsl', {
-    resolveTargetIdentity: async (_userId, target) => `codex-home:${target}`,
-    countUnavailable: dbSessions.countManagedCodexSessionsUnavailableInHome,
+    resolveTargetHomes: async (_userId, target) => [{
+      providerId: 'codex',
+      identity: asProviderHomeIdentity(`codex-home:${target}`),
+    }],
+    countUnavailable: dbSessions.countManagedSessionsUnavailableInHome,
   });
   assert.deepEqual(impact, {
-    targetProviderHomeIdentity: 'codex-home:wsl',
-    unavailableManagedSessionCount: 2,
+    unavailableManagedSessionCount: 3,
   });
   assert.equal(dbSessions.getSession('legacy')?.origin_provider_home_identity, null);
 });

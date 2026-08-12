@@ -13,6 +13,9 @@ import type {
   TranslatedText,
 } from './session-types';
 import type { SkillSource } from './skill-types';
+import type { ProviderHomeIdentity } from './provider-home-identity';
+
+export type { ProviderHomeIdentity } from './provider-home-identity';
 
 /**
  * Three-state connection status for a given CLI × environment combination.
@@ -100,7 +103,7 @@ export type ProviderSessionResumeInspection =
 /** Provider-owned launch authority resolved once for lifecycle and process environment. */
 export interface ProviderLaunchPreparation {
   /** Opaque stable identity; callers can compare it but cannot recover the home path. */
-  providerHomeIdentity?: string;
+  providerHomeIdentity?: ProviderHomeIdentity;
   lifecycle?: ProviderLifecycleIntegration;
   buildEnvironment(baseEnvironment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   /** Read-only existence/liveness check pinned to the exact prepared home. */
@@ -202,6 +205,9 @@ export interface CliProvider {
 
   /** Declares provider-specific integration requirements without filesystem details. */
   getProviderIntegrationRequirements(): ProviderIntegrationRequirements;
+
+  /** Whether managed sessions remain bound to the provider home that created them. */
+  bindsManagedSessionsToProviderHome?(): boolean;
 
   /** Implements provider-owned lifecycle artifact management behind this provider seam. */
   getLifecycleIntegration?(): ProviderLifecycleIntegration;

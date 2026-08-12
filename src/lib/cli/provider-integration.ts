@@ -21,8 +21,10 @@ import {
   type ProviderSkillManagerOptions,
 } from './provider-skill-management';
 import {
+  assertProviderHomeAuthority,
   ProviderSessionResumeUnavailableError,
 } from './provider-session-resume';
+import type { ProviderHomeIdentity } from './providers/provider-home-identity';
 
 export {
   ProviderSessionResumeUnavailableError,
@@ -76,7 +78,7 @@ export interface ProviderIntegrationLaunchDecision {
   providerHome: {
     owner: 'agent-environment';
     agentEnvironment: AgentEnvironment;
-    identity?: string;
+    identity?: ProviderHomeIdentity;
   };
   lifecycle: ProviderIntegrationArtifactPolicy;
   skill: ProviderIntegrationArtifactPolicy;
@@ -102,7 +104,7 @@ export interface ProviderIntegrationLaunchRequest {
     | { kind: 'server-default' };
   workDir?: string | null;
   compatibility?: 'exact-legacy-overlay-resume';
-  requiredProviderHomeIdentity?: string;
+  requiredProviderHomeIdentity?: ProviderHomeIdentity;
   resumeProviderSessionId?: string;
 }
 
@@ -404,15 +406,10 @@ export function createProviderIntegration(
           },
         };
       }
-      if (
-        request.requiredProviderHomeIdentity
-        && launchPreparation?.providerHomeIdentity !== request.requiredProviderHomeIdentity
-      ) {
-        throw new ProviderSessionResumeUnavailableError(
-          'origin-home-not-authoritative',
-          'This managed session belongs to a different provider home. Switch back to its origin Agent Environment to resume it.',
-        );
-      }
+      assertProviderHomeAuthority(
+        request.requiredProviderHomeIdentity,
+        launchPreparation?.providerHomeIdentity,
+      );
       if (requirements.lifecycle === 'required') {
         const lifecycle = options.lifecycle
           ?? launchPreparation?.lifecycle

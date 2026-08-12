@@ -212,16 +212,21 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         : null;
       const discoveredInBackground = payload.tessera_session_activation === 'background'
         || Boolean(backgroundFork);
+      const reset = event === 'SessionStart' && readString(payload.source) === 'clear';
       const observation = observeTerminalProviderSession({
         pane: entry,
         identity: providerIdentity,
         activation: discoveredInBackground ? 'background' : 'active',
+        ...(reset || backgroundFork ? { allowCreate: true } : {}),
+        ...(entry.providerHomeIdentity
+          ? { providerHomeIdentity: entry.providerHomeIdentity }
+          : {}),
         // A fork out of a worktree runs in the origin checkout, so the child
         // must not inherit the parent's directory.
         ...(backgroundFork?.workDir ? { workDir: backgroundFork.workDir } : {}),
         // SessionStart(source=clear) is a conversation reset, not a branch of the
         // current one: the child starts empty and must be titled like a new session.
-        ...(event === 'SessionStart' && readString(payload.source) === 'clear'
+        ...(reset
           ? { origin: 'reset' as const }
           : {}),
       });

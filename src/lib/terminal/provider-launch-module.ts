@@ -1,5 +1,6 @@
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import type { CliProvider } from '@/lib/cli/providers/types';
+import type { ProviderHomeIdentity } from '@/lib/cli/providers/provider-home-identity';
 import {
   providerIntegration as sharedProviderIntegration,
   type ProviderIntegration,
@@ -156,8 +157,9 @@ interface ProviderLaunchModuleOptions {
     };
     identity: TerminalProviderSessionIdentity;
     activation: 'active' | 'background';
+    allowCreate?: boolean;
     workDir?: string;
-    providerHomeIdentity?: string;
+    providerHomeIdentity?: ProviderHomeIdentity;
   }) => void;
   prepareControlCliBridge?: (
     context: ControlCliBridgeContext,
@@ -238,7 +240,7 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
   model?: string;
   reasoningEffort: string | null;
   serviceTier: string | null;
-  originProviderHomeIdentity: string | null;
+  originProviderHomeIdentity: ProviderHomeIdentity | null;
 } {
   const session = dbSessions.getSession(request.sessionId);
   if (!session || session.deleted === 1) {
@@ -797,6 +799,9 @@ export function createProviderLaunchModule(
           userId: request.userId,
           sessionId: request.sessionId,
           providerId: decision.providerId,
+          ...(integration.providerHome.identity
+            ? { providerHomeIdentity: integration.providerHome.identity }
+            : {}),
         });
         const providerSessionObserver = createTerminalProviderSessionObserver({
           provider: decision.provider,
@@ -820,6 +825,7 @@ export function createProviderLaunchModule(
                 },
                 identity,
                 activation,
+                allowCreate: true,
                 ...(observedWorkDir ? { workDir: observedWorkDir } : {}),
                 ...(integration.providerHome.identity
                   ? { providerHomeIdentity: integration.providerHome.identity }

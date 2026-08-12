@@ -725,6 +725,7 @@ export class TerminalManager {
         ?? (options.launchEnvFactory ? await options.launchEnvFactory() : undefined);
       assertOpeningActive();
       const extraEnv: Record<string, string | undefined> = {
+        ...(launchEnv ?? {}),
         ...(options.paneToken
           ? {
               TESSERA_PANE_TOKEN: options.paneToken,
@@ -732,7 +733,6 @@ export class TerminalManager {
               TESSERA_HOOK_PORT: String(getServerPort()),
             }
           : {}),
-        ...(launchEnv ?? {}),
       };
       const terminalEnv = buildTerminalEnv(
         process.env,

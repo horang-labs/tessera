@@ -72,6 +72,7 @@ import {
   resolveCodexHomeForEnvironment,
   resolveCodexProviderHomeIdentity,
 } from './provider-home';
+import type { ProviderHomeIdentity } from '../provider-home-identity';
 import { inspectCodexManagedSessionResume } from './managed-session';
 import { buildCodexAppServerRequestEnvironment } from './app-server-request-client';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
@@ -87,7 +88,7 @@ import {
   summarizeExecProbe,
 } from '../../status-detection';
 import {
-  bindProviderHomeWithRetry,
+  bindProviderHomeOrThrow,
   updateProviderStateWithRetry,
 } from '../../process-manager-side-effects';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
@@ -185,7 +186,7 @@ interface CodexRuntimeConfig {
   collaborationMode?: CodexCollaborationMode;
   approvalPolicy?: CodexApprovalPolicy;
   sandboxMode?: CodexSandboxMode;
-  providerHomeIdentity?: string;
+  providerHomeIdentity?: ProviderHomeIdentity;
   bindProviderHomeOnHandshake: boolean;
 }
 
@@ -324,6 +325,10 @@ export class CodexAdapter implements CliProvider {
       skill: 'optional',
       launchEnvironment: 'required',
     };
+  }
+
+  bindsManagedSessionsToProviderHome(): boolean {
+    return true;
   }
 
   getLifecycleIntegration(): ProviderLifecycleIntegration {
@@ -1306,7 +1311,7 @@ export class CodexAdapter implements CliProvider {
         const runtimeConfig = this._processRuntimeConfig.get(proc);
         const providerHomeIdentity = runtimeConfig?.providerHomeIdentity;
         if (runtimeConfig?.bindProviderHomeOnHandshake && providerHomeIdentity) {
-          bindProviderHomeWithRetry(sessionId, providerHomeIdentity);
+          await bindProviderHomeOrThrow(sessionId, providerHomeIdentity);
         }
       }
       logger.info(`CodexAdapter: ${threadMethod} handshake complete`, {
