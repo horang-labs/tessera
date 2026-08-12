@@ -595,7 +595,7 @@ export function createCodexLifecycleHookIntegration(
   ): Promise<Scope | CodexLifecycleResult> {
     let home: string;
     try {
-      home = await resolveProviderHome(context.environment);
+      home = context.scopeId ?? await resolveProviderHome(context.environment);
     } catch (error) {
       return unavailableResult((error as Error).message);
     }

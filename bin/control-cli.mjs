@@ -143,13 +143,16 @@ export async function runControlCli(options) {
     );
   }
 
-  const exitCode = [
+  const unhealthyInstallOrUpdate = [
     'provider-codex-lifecycle-install',
     'provider-codex-lifecycle-update',
-  ].includes(invocation.kind)
-    && validatedData.health.state !== 'healthy'
-    ? 1
-    : 0;
+  ].includes(invocation.kind) && validatedData.health.state !== 'healthy';
+  const incompleteRemoval = invocation.kind === 'provider-codex-lifecycle-remove'
+    && (
+      validatedData.lifecycle.state !== 'absent'
+      || validatedData.lifecycle.consent !== 'revoked'
+    );
+  const exitCode = unhealthyInstallOrUpdate || incompleteRemoval ? 1 : 0;
   return writeEnvelope(json, { ...response, data: validatedData }, exitCode, invocation.kind);
 }
 

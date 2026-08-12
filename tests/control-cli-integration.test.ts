@@ -91,6 +91,7 @@ test('the CLI exposes Codex lifecycle status and requires explicit install conse
     },
   };
   let installOutcome = installed;
+  let removeOutcome = removed;
   const runtime = await startRuntime(testRoot, 'provider', {
     id: '/home/work/provider-project',
     decodedPath: '/home/work/provider-project',
@@ -111,7 +112,7 @@ test('the CLI exposes Codex lifecycle status and requires explicit install conse
     },
     removeCodexLifecycle: async () => {
       calls.push('remove');
-      return removed;
+      return removeOutcome;
     },
   });
 
@@ -151,6 +152,14 @@ test('the CLI exposes Codex lifecycle status and requires explicit install conse
     assert.equal(revoked.code, 0);
     assert.deepEqual(JSON.parse(revoked.stdout).data, removed);
 
+    removeOutcome = unavailable;
+    const failedRemoval = await runCli([
+      'provider', 'codex', 'lifecycle', 'remove', '--json',
+      '--control-descriptor', runtime.descriptor.path,
+    ]);
+    assert.equal(failedRemoval.code, 1);
+    assert.deepEqual(JSON.parse(failedRemoval.stdout).data, unavailable);
+
     installOutcome = unavailable;
     const unsupported = await runCli([
       'provider', 'codex', 'lifecycle', 'install', '--consent', '--json',
@@ -169,7 +178,7 @@ test('the CLI exposes Codex lifecycle status and requires explicit install conse
     });
     assert.equal(managedSessionAttempt.code, 1);
     assert.equal(JSON.parse(managedSessionAttempt.stdout).error.code, 'UNAUTHORIZED');
-    assert.deepEqual(calls, ['status', 'install', 'update', 'remove', 'install']);
+    assert.deepEqual(calls, ['status', 'install', 'update', 'remove', 'remove', 'install']);
   } finally {
     await runtime.close();
     await fs.rm(testRoot, { recursive: true, force: true });

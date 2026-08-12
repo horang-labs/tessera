@@ -552,7 +552,7 @@ test('consent is scoped to one Authoritative Provider Home and does not transfer
       resolveProviderHome: async () => activeHome,
       readVersion: async () => '0.146.0',
       request: (context, method, params) => (
-        activeHome === firstHome
+        (context.providerHomeFilesystemPath ?? activeHome) === firstHome
           ? firstApi.request(context, method, params)
           : secondApi.request(context, method, params)
       ),
@@ -568,6 +568,9 @@ test('consent is scoped to one Authoritative Provider Home and does not transfer
   const first = await integration.installLifecycle({ ...request, consent: 'granted' });
   assert.equal(first.lifecycle.state, 'installed');
   const firstText = fs.readFileSync(path.join(firstHome, 'hooks.json'), 'utf8');
+  const managedSessionId = 'first-home-session';
+  await integration.resolveLaunch({ ...request, managedSessionId });
+  assert.equal(integration.getManagedSessionHealth(managedSessionId), 'healthy');
 
   activeHome = secondHome;
   const secondStatus = await integration.inspectLifecycle(request);
@@ -583,6 +586,21 @@ test('consent is scoped to one Authoritative Provider Home and does not transfer
   const originalHome = await integration.inspectLifecycle(request);
   assert.equal(originalHome.lifecycle.consent, 'granted');
   assert.equal(originalHome.health.state, 'healthy');
+
+  activeHome = secondHome;
+  const externallyModified = readHookDocument(firstHome);
+  externallyModified.hooks.SessionStart.at(-1).hooks[0].timeout = 99;
+  fs.writeFileSync(
+    path.join(firstHome, 'hooks.json'),
+    `${JSON.stringify(externallyModified, null, 2)}\n`,
+  );
+  assert.equal(await integration.refreshManagedSessionHealth(managedSessionId), 'degraded');
+  assert.equal(
+    firstApi.calls.at(-1)?.providerHomeFilesystemPath,
+    firstHome,
+    'active health remains pinned to the launch-time home',
+  );
+  integration.releaseManagedSession(managedSessionId);
 
   activeEnvironment = 'wsl';
   activeHome = secondHome;

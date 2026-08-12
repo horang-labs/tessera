@@ -59,6 +59,8 @@ export interface ProviderLifecycleContext {
   environment: CliEnvironment;
   userId?: string;
   workDir?: string | null;
+  /** Internal launch-time scope identity used to keep active health checks pinned. */
+  scopeId?: string;
 }
 
 export type ProviderLifecycleState = 'absent' | 'installed' | 'stale' | 'conflict' | 'unavailable';

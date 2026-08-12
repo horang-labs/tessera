@@ -575,7 +575,9 @@ export function createProviderIntegration(
           );
         }
         activeLifecycle = lifecycleIntegration;
-        activeLifecycleContext = lifecycleContext;
+        activeLifecycleContext = result.scopeId
+          ? { ...lifecycleContext, scopeId: result.scopeId }
+          : lifecycleContext;
         activeLifecycleScopeId = result.scopeId;
       }
 
