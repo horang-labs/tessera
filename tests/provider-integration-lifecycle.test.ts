@@ -902,3 +902,14 @@ test('non-Codex lifecycle management is not applicable and never touches Codex b
   }
   assert.deepEqual(calls, []);
 });
+
+test('the exported provider integration survives server bundle module boundaries', async () => {
+  const { providerIntegration } = await import('@/lib/cli/provider-integration');
+  const globalProviderIntegration = (
+    globalThis as typeof globalThis & {
+      [key: symbol]: typeof providerIntegration | undefined;
+    }
+  )[Symbol.for('tessera.providerIntegration')];
+
+  assert.equal(globalProviderIntegration, providerIntegration);
+});

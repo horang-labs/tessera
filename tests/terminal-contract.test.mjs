@@ -643,7 +643,7 @@ test('codex overlay placement and hook style follow the terminal runtime', () =>
   // win32 + agentEnvironment 'wsl' → 게스트 파일시스템 오버레이(게스트 심링크),
   // 그 외 → 호스트 오버레이. 훅 스타일도 같은 판정을 공유한다(스폰과 일치).
   assert.match(providerLaunchModuleSource, /wslTerminalRuntime = getRuntimePlatform\(\) === 'win32'/);
-  assert.match(providerLaunchModuleSource, /await createCodexOverlayInWsl\(terminalId, hookCommandStyle\)/);
+  assert.match(providerLaunchModuleSource, /return createCodexOverlayInWsl\(terminalId, hookCommandStyle\)/);
   assert.match(providerLaunchModuleSource, /createCodexOverlay\(terminalId, hookCommandStyle\)/);
   assert.match(providerLaunchModuleSource, /buildClaudeHookSettingsJson\(hookCommandStyle\)/);
   // 오버레이 실패는 제네릭 error가 아니라 terminal_error로 표면에 알린다.

@@ -1,0 +1,8 @@
+fixture_root=${ZDOTDIR%/shell}
+export TESSERA_ACCEPTANCE_FIXTURE_ROOT=$fixture_root
+export CODEX_HOME=$fixture_root/codex-home
+export CLAUDE_CONFIG_DIR=$fixture_root/claude-home
+export XDG_CONFIG_HOME=$fixture_root/xdg-config
+export XDG_DATA_HOME=$fixture_root/xdg-data
+export PATH=$fixture_root/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+unset fixture_root
