@@ -38,7 +38,9 @@ export function useSessionResume() {
 
       try {
         const settings = useSettingsStore.getState().settings;
-        const providerId = sessionStore.getSession(sessionId)?.provider?.trim();
+        const session = sessionStore.getSession(sessionId);
+        const providerId = session?.provider?.trim();
+        const shouldOfferSkillOnboarding = session?.hasStarted === false;
         if (!providerId) {
           throw new Error('Session has no provider');
         }
@@ -52,8 +54,6 @@ export function useSessionResume() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(runtimeConfig),
         });
-        offerProviderSkillOnboarding(providerId);
-
         if (!response.ok) {
           if (response.status === 404) {
             // Session metadata or workDir not found — load canonical Tessera history read-only
@@ -81,6 +81,7 @@ export function useSessionResume() {
           return;
         }
 
+        if (shouldOfferSkillOnboarding) offerProviderSkillOnboarding(providerId);
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
@@ -110,7 +111,9 @@ export function useSessionResume() {
 
       try {
         const settings = useSettingsStore.getState().settings;
-        const providerId = sessionStore.getSession(sessionId)?.provider?.trim();
+        const session = sessionStore.getSession(sessionId);
+        const providerId = session?.provider?.trim();
+        const shouldOfferSkillOnboarding = session?.hasStarted === false;
         if (!providerId) {
           throw new Error('Session has no provider');
         }
@@ -124,8 +127,6 @@ export function useSessionResume() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(runtimeConfig),
         });
-        offerProviderSkillOnboarding(providerId);
-
         if (!response.ok) {
           throw new Error('Failed to resume session');
         }
@@ -140,6 +141,7 @@ export function useSessionResume() {
           return false;
         }
 
+        if (shouldOfferSkillOnboarding) offerProviderSkillOnboarding(providerId);
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
           model: result.model,
           reasoningEffort: result.reasoningEffort,

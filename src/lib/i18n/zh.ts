@@ -334,7 +334,7 @@ export const zh: I18nMessages = {
       environment: '{{environment}} 代理环境',
       detected: '已检测到提供商',
       notDetected: '未检测到提供商',
-      needsConsent: '新增 · 需要同意',
+      needsConsent: '需要同意',
       consent: '同意',
       ownership: '所有权',
       consentPrompt: '我同意 Tessera 为 {{provider}} 安装并自动更新其发现技能。',

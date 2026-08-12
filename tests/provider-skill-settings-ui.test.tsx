@@ -12,6 +12,7 @@ test('GUI presents provider skill health as optional and scoped to its owning en
       state: 'absent',
       consent: 'not-granted',
       ownership: 'none',
+      policy: { onboarding: 'offer', canInstall: true, canUpdate: false, canRemove: false },
     },
     agentEnvironment: 'wsl',
     consented: false,
@@ -24,7 +25,7 @@ test('GUI presents provider skill health as optional and scoped to its owning en
   assert.match(html, /data-state="absent"/);
   assert.match(html, /Optional/);
   assert.match(html, /WSL Agent Environment/);
-  assert.match(html, /New · consent needed/);
+  assert.match(html, /Consent needed/);
   assert.match(html, /Consent &amp; install/);
   assert.doesNotMatch(html, /OpenCode/);
 });
@@ -37,6 +38,7 @@ test('GUI conflict recovery names only the owning provider and Agent Environment
       state: 'conflict',
       consent: 'not-granted',
       ownership: 'user',
+      policy: { onboarding: 'none', canInstall: false, canUpdate: false, canRemove: false },
     },
     agentEnvironment: 'native',
     consented: false,
@@ -59,6 +61,7 @@ test('GUI reports an undetected provider independently without offering installa
       state: 'absent',
       consent: 'not-granted',
       ownership: 'none',
+      policy: { onboarding: 'none', canInstall: false, canUpdate: false, canRemove: false },
     },
     agentEnvironment: 'wsl',
     consented: false,
@@ -69,6 +72,6 @@ test('GUI reports an undetected provider independently without offering installa
 
   assert.match(html, /OpenCode/);
   assert.match(html, /Provider not detected/);
-  assert.doesNotMatch(html, /New · consent needed/);
+  assert.doesNotMatch(html, /Consent needed/);
   assert.doesNotMatch(html, /Consent &amp; install/);
 });

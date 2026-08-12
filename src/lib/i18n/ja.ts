@@ -334,7 +334,7 @@ export const ja: I18nMessages = {
       environment: '{{environment}} エージェント環境',
       detected: 'プロバイダーを検出',
       notDetected: 'プロバイダー未検出',
-      needsConsent: '新規 · 同意が必要',
+      needsConsent: '同意が必要',
       consent: '同意',
       ownership: '所有権',
       consentPrompt: 'Tessera が {{provider}} の検出スキルをインストールし、自動更新することに同意します。',

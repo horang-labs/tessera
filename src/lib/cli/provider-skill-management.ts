@@ -36,6 +36,7 @@ export interface ProviderSkillManagementResult {
       | 'PROVIDER_SKILL_CONFLICT'
       | 'PROVIDER_SKILL_CONSENT_REQUIRED'
       | 'PROVIDER_SKILL_NO_PROVIDERS'
+      | 'PROVIDER_SKILL_ENVIRONMENT_CHANGED'
       | 'PROVIDER_SKILL_TRANSACTION_FAILED';
     message: string;
   };
@@ -47,6 +48,7 @@ export interface ProviderSkillManagementRequest {
     | { kind: 'user'; userId: string }
     | { kind: 'server-default' };
   providerIds?: ProviderSkillId[];
+  expectedAgentEnvironment?: AgentEnvironment;
 }
 
 export interface ProviderSkillManagerOptions {
@@ -212,6 +214,22 @@ export function createProviderSkillManager(
           ? await options.resolveAgentEnvironment(request.agentEnvironmentOwner.userId)
           : await options.resolveDefaultEnvironment()
       );
+      if (
+        request.expectedAgentEnvironment
+        && request.expectedAgentEnvironment !== environment
+      ) {
+        return {
+          success: false,
+          operation: request.operation,
+          agentEnvironment: environment,
+          providers: [],
+          error: {
+            code: 'PROVIDER_SKILL_ENVIRONMENT_CHANGED',
+            message: 'The Agent Environment changed after this provider skill action was offered. '
+              + 'Refresh the integration state and consent again for the current environment.',
+          },
+        };
+      }
       const userId = request.agentEnvironmentOwner.kind === 'user'
         ? request.agentEnvironmentOwner.userId
         : 'server-default';
@@ -241,20 +259,36 @@ export function createProviderSkillManager(
       const inspected: InspectedProviderSkill[] = [];
       try {
         for (const providerId of selected) {
-          const providerHome = await options.resolveProviderSkillHome(providerId, environment);
-          const targetDir = path.join(providerHome, 'skills', TESSERA_CONTROL_SKILL_NAME);
           const consent = ledger.environments[environment]?.[providerId]?.consent
             ?? 'not-granted';
           const isDetected = detected.includes(providerId);
-          inspected.push({
-            providerId,
-            detected: isDetected,
-            targetDir,
-            status: {
-              ...await inspectProviderSkill(providerId, targetDir, digest, consent),
+          try {
+            const providerHome = await options.resolveProviderSkillHome(providerId, environment);
+            const targetDir = path.join(providerHome, 'skills', TESSERA_CONTROL_SKILL_NAME);
+            inspected.push({
+              providerId,
               detected: isDetected,
-            },
-          });
+              targetDir,
+              status: {
+                ...await inspectProviderSkill(providerId, targetDir, digest, consent),
+                detected: isDetected,
+              },
+            });
+          } catch (error) {
+            if (request.operation !== 'status') throw error;
+            inspected.push({
+              providerId,
+              detected: isDetected,
+              targetDir: '',
+              status: {
+                providerId,
+                detected: isDetected,
+                state: 'unavailable',
+                consent,
+                ownership: 'unknown',
+              },
+            });
+          }
         }
 
         if (request.operation === 'status') {

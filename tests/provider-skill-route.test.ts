@@ -4,9 +4,29 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import type {
-  ProviderSkillManagementResult,
   ProviderSkillOperation,
+  ProviderSkillStatus,
 } from '@/lib/cli/provider-skill-management';
+import type {
+  ProviderSkillIntegrationResult,
+  ProviderSkillIntegrationStatus,
+} from '@/lib/cli/provider-integration';
+
+function integratedStatus(
+  status: ProviderSkillStatus,
+  policy: Partial<ProviderSkillIntegrationStatus['policy']> = {},
+): ProviderSkillIntegrationStatus {
+  return {
+    ...status,
+    policy: {
+      onboarding: 'none',
+      canInstall: false,
+      canUpdate: false,
+      canRemove: false,
+      ...policy,
+    },
+  };
+}
 
 test('the authenticated GUI route exposes shared provider skill operations', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-skill-route-'));
@@ -31,19 +51,20 @@ test('the authenticated GUI route exposes shared provider skill operations', asy
     userId: string;
     operation: ProviderSkillOperation;
     providerIds?: string[];
+    expectedAgentEnvironment?: string;
   }> = [];
-  const result: ProviderSkillManagementResult = {
+  const result: ProviderSkillIntegrationResult = {
     success: true,
     operation: 'status',
     agentEnvironment: 'wsl',
     providers: [
-      {
+      integratedStatus({
         providerId: 'codex',
         detected: true,
         state: 'absent',
         consent: 'not-granted',
         ownership: 'none',
-      },
+      }, { onboarding: 'offer', canInstall: true }),
     ],
   };
   const handlers = route.createProviderSkillRoute(async (userId, request) => {
@@ -60,7 +81,11 @@ test('the authenticated GUI route exposes shared provider skill operations', asy
     const response = await handlers.POST(new NextRequest(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ operation, providerIds: ['codex'] }),
+      body: JSON.stringify({
+        operation,
+        providerIds: ['codex'],
+        expectedAgentEnvironment: 'wsl',
+      }),
     }));
     assert.equal(response.status, 200);
     assert.equal((await response.json()).operation, operation);
@@ -73,6 +98,10 @@ test('the authenticated GUI route exposes shared provider skill operations', asy
     { operation: 'remove', providerIds: ['codex'] },
   ]);
   assert.equal(calls.every(({ userId }) => userId.length > 0), true);
+  assert.deepEqual(
+    calls.slice(1).map(({ expectedAgentEnvironment }) => expectedAgentEnvironment),
+    ['wsl', 'wsl', 'wsl'],
+  );
 });
 
 test('the GUI route preserves independent provider and Agent Environment snapshots', async (t) => {
@@ -93,14 +122,17 @@ test('the GUI route preserves independent provider and Agent Environment snapsho
     host: 'localhost:32123',
     origin: 'http://localhost:32123',
   };
-  const snapshots: ProviderSkillManagementResult[] = [
+  const snapshots: ProviderSkillIntegrationResult[] = [
     {
       success: true,
       operation: 'status',
       agentEnvironment: 'native',
       providers: [
-        { providerId: 'codex', detected: true, state: 'ready', consent: 'granted', ownership: 'tessera' },
-        { providerId: 'opencode', detected: true, state: 'conflict', consent: 'not-granted', ownership: 'user' },
+        integratedStatus(
+          { providerId: 'codex', detected: true, state: 'ready', consent: 'granted', ownership: 'tessera' },
+          { canUpdate: true, canRemove: true },
+        ),
+        integratedStatus({ providerId: 'opencode', detected: true, state: 'conflict', consent: 'not-granted', ownership: 'user' }),
       ],
     },
     {
@@ -108,8 +140,11 @@ test('the GUI route preserves independent provider and Agent Environment snapsho
       operation: 'status',
       agentEnvironment: 'wsl',
       providers: [
-        { providerId: 'codex', detected: true, state: 'absent', consent: 'not-granted', ownership: 'none' },
-        { providerId: 'opencode', detected: false, state: 'absent', consent: 'revoked', ownership: 'none' },
+        integratedStatus(
+          { providerId: 'codex', detected: true, state: 'absent', consent: 'not-granted', ownership: 'none' },
+          { onboarding: 'offer', canInstall: true },
+        ),
+        integratedStatus({ providerId: 'opencode', detected: false, state: 'absent', consent: 'revoked', ownership: 'none' }),
       ],
     },
   ];
@@ -124,8 +159,11 @@ test('the GUI route preserves independent provider and Agent Environment snapsho
     operation: 'status',
     agentEnvironment: 'native',
     providers: [
-      { providerId: 'codex', detected: true, state: 'ready', consent: 'granted', ownership: 'tessera' },
-      { providerId: 'opencode', detected: true, state: 'conflict', consent: 'not-granted', ownership: 'user' },
+      integratedStatus(
+        { providerId: 'codex', detected: true, state: 'ready', consent: 'granted', ownership: 'tessera' },
+        { canUpdate: true, canRemove: true },
+      ),
+      integratedStatus({ providerId: 'opencode', detected: true, state: 'conflict', consent: 'not-granted', ownership: 'user' }),
     ],
   });
   assert.deepEqual(await (await handlers.GET(request())).json(), {
@@ -133,8 +171,11 @@ test('the GUI route preserves independent provider and Agent Environment snapsho
     operation: 'status',
     agentEnvironment: 'wsl',
     providers: [
-      { providerId: 'codex', detected: true, state: 'absent', consent: 'not-granted', ownership: 'none' },
-      { providerId: 'opencode', detected: false, state: 'absent', consent: 'revoked', ownership: 'none' },
+      integratedStatus(
+        { providerId: 'codex', detected: true, state: 'absent', consent: 'not-granted', ownership: 'none' },
+        { onboarding: 'offer', canInstall: true },
+      ),
+      integratedStatus({ providerId: 'opencode', detected: false, state: 'absent', consent: 'revoked', ownership: 'none' }),
     ],
   });
 });
@@ -174,11 +215,25 @@ test('the GUI route requires an explicit provider for consent-changing operation
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ operation: 'install', ...(providerIds ? { providerIds } : {}) }),
+        body: JSON.stringify({
+          operation: 'install',
+          expectedAgentEnvironment: 'native',
+          ...(providerIds ? { providerIds } : {}),
+        }),
       },
     ));
     assert.equal(response.status, 400);
     assert.match((await response.json()).error, /explicitly select/);
   }
+  const missingEnvironment = await handlers.POST(new NextRequest(
+    'http://localhost/api/provider-integrations/skills',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operation: 'install', providerIds: ['codex'] }),
+    },
+  ));
+  assert.equal(missingEnvironment.status, 400);
+  assert.match((await missingEnvironment.json()).error, /expectedAgentEnvironment/);
   assert.equal(called, false);
 });

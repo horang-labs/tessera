@@ -2,24 +2,23 @@ import { i18n } from '@/lib/i18n';
 import { useNotificationStore } from '@/stores/notification-store';
 import type {
   ProviderSkillId,
-  ProviderSkillManagementResult,
 } from './provider-skill-management';
-import {
-  PROVIDER_SKILL_DISPLAY_NAMES,
-  shouldOfferProviderSkillOnboarding,
-} from './provider-skill-view-policy';
-
-const ENDPOINT = '/api/provider-integrations/skills';
+import type { ProviderSkillIntegrationResult } from './provider-integration';
+import { inspectProviderSkills, mutateProviderSkill } from './provider-skill-client';
+import { PROVIDER_SKILL_DISPLAY_NAMES } from './provider-skill-view-policy';
 
 export interface ProviderSkillOnboardingOffer {
   providerId: ProviderSkillId;
-  agentEnvironment: ProviderSkillManagementResult['agentEnvironment'];
-  install(): Promise<ProviderSkillManagementResult>;
+  agentEnvironment: ProviderSkillIntegrationResult['agentEnvironment'];
+  install(): Promise<ProviderSkillIntegrationResult>;
 }
 
 interface ProviderSkillOnboardingOptions {
-  readStatus(providerId: ProviderSkillId): Promise<ProviderSkillManagementResult>;
-  install(providerId: ProviderSkillId): Promise<ProviderSkillManagementResult>;
+  readStatus(providerId: ProviderSkillId): Promise<ProviderSkillIntegrationResult>;
+  install(
+    providerId: ProviderSkillId,
+    expectedAgentEnvironment: ProviderSkillIntegrationResult['agentEnvironment'],
+  ): Promise<ProviderSkillIntegrationResult>;
   showOffer(offer: ProviderSkillOnboardingOffer): void;
 }
 
@@ -28,18 +27,6 @@ export interface ProviderSkillOnboarding {
 }
 
 type ProviderSkillOnboardingOutcome = 'offered' | 'already-offered' | 'not-needed' | 'unavailable';
-
-async function readResult(response: Response): Promise<ProviderSkillManagementResult> {
-  const result = await response.json() as ProviderSkillManagementResult | { error?: unknown };
-  if (!response.ok) {
-    throw new Error(
-      typeof (result as { error?: unknown }).error === 'string'
-        ? (result as { error: string }).error
-        : `Provider skill request failed (${response.status}).`,
-    );
-  }
-  return result as ProviderSkillManagementResult;
-}
 
 function providerSkillId(providerId: string): ProviderSkillId | null {
   return providerId === 'claude-code' || providerId === 'codex' || providerId === 'opencode'
@@ -64,14 +51,14 @@ export function createProviderSkillOnboarding(
         try {
           const result = await options.readStatus(normalizedProviderId);
           const status = result.providers.find(({ providerId }) => providerId === normalizedProviderId);
-          if (!status || !shouldOfferProviderSkillOnboarding(status)) return 'not-needed' as const;
+          if (!status || status.policy.onboarding !== 'offer') return 'not-needed' as const;
           const scope = `${result.agentEnvironment}:${normalizedProviderId}`;
           if (offeredScopes.has(scope)) return 'already-offered' as const;
           offeredScopes.add(scope);
           options.showOffer({
             providerId: normalizedProviderId,
             agentEnvironment: result.agentEnvironment,
-            install: () => options.install(normalizedProviderId),
+            install: () => options.install(normalizedProviderId, result.agentEnvironment),
           });
           return 'offered' as const;
         } catch {
@@ -87,16 +74,13 @@ export function createProviderSkillOnboarding(
 }
 
 const providerSkillOnboarding = createProviderSkillOnboarding({
-  readStatus: async (providerId) => readResult(await fetch(
-    `${ENDPOINT}?provider=${encodeURIComponent(providerId)}`,
-    { cache: 'no-store' },
-  )),
-  install: async (providerId) => {
-    const result = await readResult(await fetch(ENDPOINT, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ operation: 'install', providerIds: [providerId] }),
-    }));
+  readStatus: async (providerId) => inspectProviderSkills({ providerId }),
+  install: async (providerId, expectedAgentEnvironment) => {
+    const result = await mutateProviderSkill({
+      operation: 'install',
+      providerId,
+      expectedAgentEnvironment,
+    });
     if (!result.success) throw new Error(result.error?.message ?? 'Provider skill installation failed.');
     return result;
   },

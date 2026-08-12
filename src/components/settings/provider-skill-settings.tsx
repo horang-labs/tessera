@@ -7,29 +7,14 @@ import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
 import type {
   ProviderSkillId,
-  ProviderSkillManagementResult,
   ProviderSkillOperation,
-  ProviderSkillStatus,
 } from '@/lib/cli/provider-skill-management';
-import {
-  getProviderSkillActions,
-  PROVIDER_SKILL_DISPLAY_NAMES,
-  shouldOfferProviderSkillOnboarding,
-} from '@/lib/cli/provider-skill-view-policy';
-
-const ENDPOINT = '/api/provider-integrations/skills';
-async function readResult(response: Response): Promise<ProviderSkillManagementResult> {
-  const body = await response.json() as ProviderSkillManagementResult | { error?: unknown };
-  if (!response.ok) {
-    if ('providers' in body) return body;
-    throw new Error(
-      typeof body.error === 'string'
-        ? body.error
-        : `Provider skill request failed (${response.status}).`,
-    );
-  }
-  return body as ProviderSkillManagementResult;
-}
+import type {
+  ProviderSkillIntegrationResult,
+  ProviderSkillIntegrationStatus,
+} from '@/lib/cli/provider-integration';
+import { inspectProviderSkills, mutateProviderSkill } from '@/lib/cli/provider-skill-client';
+import { PROVIDER_SKILL_DISPLAY_NAMES } from '@/lib/cli/provider-skill-view-policy';
 
 export function ProviderSkillStatusCard({
   status,
@@ -39,15 +24,15 @@ export function ProviderSkillStatusCard({
   onConsentChange,
   onMutate,
 }: {
-  status: ProviderSkillStatus;
-  agentEnvironment: ProviderSkillManagementResult['agentEnvironment'];
+  status: ProviderSkillIntegrationStatus;
+  agentEnvironment: ProviderSkillIntegrationResult['agentEnvironment'];
   consented: boolean;
   pending: ProviderSkillOperation | null;
   onConsentChange(consented: boolean): void;
   onMutate(operation: Exclude<ProviderSkillOperation, 'status'>): void;
 }) {
   const { t } = useI18n();
-  const actions = getProviderSkillActions(status);
+  const actions = status.policy;
   const ready = status.state === 'ready';
   const environment = agentEnvironment === 'wsl' ? 'WSL' : 'Native';
 
@@ -64,7 +49,7 @@ export function ProviderSkillStatusCard({
             <span className="rounded-full border border-(--divider) px-2 py-0.5 text-xs font-medium text-(--text-muted)">
               {t('settings.providerSkills.optional')}
             </span>
-            {shouldOfferProviderSkillOnboarding(status) ? (
+            {status.policy.onboarding === 'offer' ? (
               <span className="rounded-full bg-(--sidebar-hover) px-2 py-0.5 text-xs font-medium text-(--accent)">
                 {t('settings.providerSkills.needsConsent')}
               </span>
@@ -172,7 +157,7 @@ export default function ProviderSkillSettings() {
   const selectedAgentEnvironment = useSettingsStore((state) => state.settings.agentEnvironment);
   const pendingSettingsSaveCount = useSettingsStore((state) => state.pendingSaveCount);
   const requestGeneration = useRef(0);
-  const [result, setResult] = useState<ProviderSkillManagementResult | null>(null);
+  const [result, setResult] = useState<ProviderSkillIntegrationResult | null>(null);
   const [consented, setConsented] = useState<Partial<Record<ProviderSkillId, boolean>>>({});
   const [pending, setPending] = useState<{ providerId: ProviderSkillId; operation: ProviderSkillOperation } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -181,7 +166,7 @@ export default function ProviderSkillSettings() {
     const generation = ++requestGeneration.current;
     setError(null);
     try {
-      const nextResult = await readResult(await fetch(`${ENDPOINT}?all=1`, { cache: 'no-store' }));
+      const nextResult = await inspectProviderSkills({ all: true });
       if (requestGeneration.current !== generation) return;
       setResult(nextResult);
       if (!nextResult.success) {
@@ -210,11 +195,13 @@ export default function ProviderSkillSettings() {
     setPending({ providerId, operation });
     setError(null);
     try {
-      const mutation = await readResult(await fetch(ENDPOINT, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ operation, providerIds: [providerId] }),
-      }));
+      const expectedAgentEnvironment = result?.agentEnvironment;
+      if (!expectedAgentEnvironment) throw new Error(t('settings.providerSkills.requestFailed'));
+      const mutation = await mutateProviderSkill({
+        operation,
+        providerId,
+        expectedAgentEnvironment,
+      });
       if (!mutation.success) throw new Error(mutation.error?.message ?? t('settings.providerSkills.requestFailed'));
       if (requestGeneration.current !== generation) return;
       setConsented((current) => ({ ...current, [providerId]: false }));
@@ -226,7 +213,7 @@ export default function ProviderSkillSettings() {
     } finally {
       if (requestGeneration.current === generation) setPending(null);
     }
-  }, [refresh, t]);
+  }, [refresh, result?.agentEnvironment, t]);
 
   return (
     <div data-testid="provider-skill-settings">

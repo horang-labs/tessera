@@ -334,7 +334,7 @@ export const en: I18nMessages = {
       environment: '{{environment}} Agent Environment',
       detected: 'Provider detected',
       notDetected: 'Provider not detected',
-      needsConsent: 'New · consent needed',
+      needsConsent: 'Consent needed',
       consent: 'Consent',
       ownership: 'Ownership',
       consentPrompt: 'I consent to Tessera installing and automatically refreshing its discovery skill for {{provider}}.',

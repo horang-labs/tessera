@@ -334,7 +334,7 @@ export const ko: I18nMessages = {
       environment: '{{environment}} 에이전트 환경',
       detected: '프로바이더 감지됨',
       notDetected: '프로바이더 감지 안 됨',
-      needsConsent: '새 항목 · 동의 필요',
+      needsConsent: '동의 필요',
       consent: '동의',
       ownership: '소유권',
       consentPrompt: 'Tessera가 {{provider}}용 검색 스킬을 설치하고 자동으로 갱신하는 데 동의합니다.',

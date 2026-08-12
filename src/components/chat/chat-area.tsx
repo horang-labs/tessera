@@ -270,6 +270,7 @@ export const ChatArea = memo(function ChatArea({
               surfaceActive={isPeek}
               startupOverlay={shouldShowPeekLoading ? <SessionPeekLoading /> : undefined}
               launch={{ providerId: sessionProvider, sessionId }}
+              offerSkillOnboarding={session.hasStarted === false}
             />
           ) : null
         ) : (

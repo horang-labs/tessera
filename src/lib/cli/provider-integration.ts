@@ -18,6 +18,7 @@ import {
   type ProviderSkillManagementRequest,
   type ProviderSkillManagementResult,
   type ProviderSkillManagerOptions,
+  type ProviderSkillStatus,
 } from './provider-skill-management';
 
 export type {
@@ -87,6 +88,22 @@ export interface ProviderIntegrationLaunchDecision {
   compatibility?: 'exact-legacy-overlay-resume';
 }
 
+export interface ProviderSkillIntegrationPolicy {
+  onboarding: 'offer' | 'none';
+  canInstall: boolean;
+  canUpdate: boolean;
+  canRemove: boolean;
+}
+
+export interface ProviderSkillIntegrationStatus extends ProviderSkillStatus {
+  policy: ProviderSkillIntegrationPolicy;
+}
+
+export interface ProviderSkillIntegrationResult
+  extends Omit<ProviderSkillManagementResult, 'providers'> {
+  providers: ProviderSkillIntegrationStatus[];
+}
+
 export interface ProviderIntegrationLaunchRequest {
   provider: Pick<
     CliProvider,
@@ -143,7 +160,7 @@ export interface ProviderIntegration {
   subscribeManagedSessionHealth(
     listener: (change: ManagedSessionIntegrationHealthChange) => void,
   ): () => void;
-  manageSkills(request: ProviderSkillManagementRequest): Promise<ProviderSkillManagementResult>;
+  manageSkills(request: ProviderSkillManagementRequest): Promise<ProviderSkillIntegrationResult>;
 }
 
 interface ProviderIntegrationOptions extends Partial<Omit<
@@ -168,6 +185,33 @@ export class ProviderIntegrationLaunchBlockedError extends Error {
     super(message);
     this.name = 'ProviderIntegrationLaunchBlockedError';
   }
+}
+
+function resolveProviderSkillPolicy(status: ProviderSkillStatus): ProviderSkillIntegrationPolicy {
+  const hasConsent = status.consent === 'granted';
+  const canInstall = status.detected
+    && status.state === 'absent'
+    && status.ownership === 'none'
+    && !hasConsent;
+  const blocked = status.state === 'conflict' || status.state === 'unavailable';
+  return {
+    onboarding: canInstall && status.consent === 'not-granted' ? 'offer' : 'none',
+    canInstall,
+    canUpdate: hasConsent && !blocked,
+    canRemove: hasConsent && (status.state === 'ready' || status.state === 'stale'),
+  };
+}
+
+function exposeProviderSkillPolicy(
+  result: ProviderSkillManagementResult,
+): ProviderSkillIntegrationResult {
+  return {
+    ...result,
+    providers: result.providers.map((status) => ({
+      ...status,
+      policy: resolveProviderSkillPolicy(status),
+    })),
+  };
 }
 
 function resolveArtifactPolicy(
@@ -432,7 +476,7 @@ export function createProviderIntegration(
   };
 
   return {
-    manageSkills: (request) => skillManager.manage(request),
+    manageSkills: async (request) => exposeProviderSkillPolicy(await skillManager.manage(request)),
     async resolveLaunch(request) {
       const agentEnvironment = await resolveEnvironment(request);
       const requirements = request.provider.getProviderIntegrationRequirements();

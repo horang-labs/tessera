@@ -3,14 +3,15 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import {
   PROVIDER_SKILL_IDS,
   type ProviderSkillId,
-  type ProviderSkillManagementResult,
 } from './provider-skill-management';
+import type { AgentEnvironment } from '@/lib/settings/types';
+import type { ProviderSkillIntegrationResult } from './provider-integration';
 import type { ProviderSkillGuiRequest } from './provider-skill-policy';
 
 export type ProviderSkillRouteManager = (
   userId: string,
   request: ProviderSkillGuiRequest,
-) => Promise<ProviderSkillManagementResult>;
+) => Promise<ProviderSkillIntegrationResult>;
 
 type ResolveUserId = (request: NextRequest) => Promise<string | NextResponse>;
 
@@ -33,9 +34,10 @@ function parseProviderIds(value: unknown): { providerIds?: ProviderSkillId[]; er
     : { providerIds: providerIds as ProviderSkillId[] };
 }
 
-function responseStatus(result: ProviderSkillManagementResult): number {
+function responseStatus(result: ProviderSkillIntegrationResult): number {
   if (result.success) return 200;
   if (result.error?.code === 'PROVIDER_SKILL_CONFLICT') return 409;
+  if (result.error?.code === 'PROVIDER_SKILL_ENVIRONMENT_CHANGED') return 409;
   if (result.error?.code === 'PROVIDER_SKILL_TRANSACTION_FAILED') return 503;
   return 400;
 }
@@ -91,7 +93,9 @@ export function createProviderSkillRoute(
       } catch {
         return NextResponse.json({ error: 'A JSON provider skill operation is required.' }, { status: 400 });
       }
-      const unknownField = Object.keys(body).find((key) => !['operation', 'providerIds'].includes(key));
+      const unknownField = Object.keys(body).find((key) => (
+        !['operation', 'providerIds', 'expectedAgentEnvironment'].includes(key)
+      ));
       if (unknownField) {
         return NextResponse.json({ error: `Unknown provider skill field: ${unknownField}` }, { status: 400 });
       }
@@ -105,8 +109,14 @@ export function createProviderSkillRoute(
           error: 'providerIds must explicitly select at least one provider.',
         }, { status: 400 });
       }
+      if (body.expectedAgentEnvironment !== 'native' && body.expectedAgentEnvironment !== 'wsl') {
+        return NextResponse.json({
+          error: 'expectedAgentEnvironment must identify the environment shown to the user.',
+        }, { status: 400 });
+      }
       return respond(userId, {
         operation: body.operation as 'install' | 'update' | 'remove',
+        expectedAgentEnvironment: body.expectedAgentEnvironment as AgentEnvironment,
         ...parsed,
       });
     },

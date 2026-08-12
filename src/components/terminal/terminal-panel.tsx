@@ -32,7 +32,7 @@ import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
 import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
-import { startProviderSessionWithOptionalSkill } from '@/lib/cli/provider-skill-onboarding';
+import { offerProviderSkillOnboarding } from '@/lib/cli/provider-skill-onboarding';
 
 interface TerminalPanelProps {
   panelId: string;
@@ -52,6 +52,7 @@ interface TerminalPanelProps {
   /** Optional overlay shown until the terminal surface reports that it is running. */
   startupOverlay?: ReactNode;
   launch?: { providerId: string; sessionId: string };
+  offerSkillOnboarding?: boolean;
   /**
    * The panel's own title bar — drag handle, path, close button.
    *
@@ -92,6 +93,7 @@ export function TerminalPanel({
   detachOnUnmount = false,
   startupOverlay,
   launch,
+  offerSkillOnboarding = false,
   showHeader = true,
 }: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
@@ -280,15 +282,14 @@ export function TerminalPanel({
     if (connectionStatus !== 'connected' || !isTabActive) return;
     const connect = () => {
       void surface.ensureConnected().then((connected) => {
+        if (connected && launchProviderId && offerSkillOnboarding) {
+          offerProviderSkillOnboarding(launchProviderId);
+        }
         if (connected && isPanelActive) surface.activate();
       });
     };
-    if (launchProviderId) {
-      startProviderSessionWithOptionalSkill(launchProviderId, connect);
-    } else {
-      connect();
-    }
-  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, launchProviderId, surface]);
+    connect();
+  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, offerSkillOnboarding, launchProviderId, surface]);
 
   const canRestart = status === 'exited' || status === 'error';
   const handleThemeRestart = useCallback(() => {
