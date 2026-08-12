@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type MouseEvent } from 'react';
 import { Check, CircleDot, CircleStop, ListCollapse, ListTree } from 'lucide-react';
 import { useSessionStore } from '@/stores/session-store';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
@@ -33,7 +34,6 @@ import { useCollectionStore } from '@/stores/collection-store';
 import { useTaskStore } from '@/stores/task-store';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
-import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import { Tooltip } from '@/components/ui/tooltip';
 import {
@@ -47,7 +47,10 @@ import {
   findSidebarProject,
   selectSidebarProjectTasks,
 } from './sidebar-utils';
-import { buildRecentWorkItems } from '@/lib/chat/recent-work';
+import {
+  buildProjectViewRecentWorkItems,
+  buildRecentWorkItems,
+} from '@/lib/chat/recent-work';
 import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
@@ -56,6 +59,13 @@ import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import {
+  useLoadedProjectViews,
+  useOriginProjectRepresentation,
+  useProjectViewRepresentation,
+} from '@/hooks/use-project-view-workspace-state';
+import { getOriginProjectOrderedSessionIds } from '@/lib/projects/origin-project-representation';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -280,7 +290,7 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 
 export function Sidebar() {
   const { t } = useI18n();
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const dismissBranchRenameWarning = useSessionStore(
     (state) => state.dismissBranchRenameWarning,
   );
@@ -308,6 +318,7 @@ export function Sidebar() {
 
   // Board store — status group collapse state
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const isAllMode = selectedProjectDir === ALL_PROJECTS_SENTINEL;
   const collapsedCollections = useBoardStore((state) => state.collapsedCollections ?? {});
   const toggleCollectionCollapse = useBoardStore((state) => state.toggleCollectionCollapse ?? (() => {}));
   const setCollectionCollapsed = useBoardStore((state) => state.setCollectionCollapsed ?? (() => {}));
@@ -329,7 +340,6 @@ export function Sidebar() {
   const tasks = useTaskStore((state) =>
     selectSidebarProjectTasks(state, selectedProjectDir)
   );
-  const tasksByProject = useTaskStore((state) => state.tasksByProject);
   const loadedTaskProjects = useTaskStore((state) => state.loadedProjects);
   const loadingTaskProjects = useTaskStore((state) => state.loadingProjectIds);
   const allProjectsTaskLoadAttemptsRef = useRef(new Set<string>());
@@ -404,13 +414,8 @@ export function Sidebar() {
     void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
-  const handleTaskArchive = useCallback((taskId: string) => {
-    const task = useTaskStore.getState().getTask(taskId);
-    if (task) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, true);
-      return;
-    }
-    useSessionStore.getState().toggleArchive(taskId, true);
+  const handleSessionArchive = useCallback((sessionId: string) => {
+    requestSessionArchive(sessionId);
   }, []);
 
   const handleTaskRename = useCallback(async (taskId: string, newTitle: string) => {
@@ -420,7 +425,7 @@ export function Sidebar() {
   const [sessionToDelete, setSessionToDelete] = useState<UnifiedSession | null>(null);
 
   const handleTaskDelete = useCallback((taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
+    const session = projectViewWorkspaceState.resolveSession(taskId);
     if (session) setSessionToDelete(session);
   }, []);
 
@@ -431,7 +436,7 @@ export function Sidebar() {
   }, [sessionToDelete, deleteSession]);
 
   const handleTaskOpenInNewTab = useCallback(async (taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
+    const session = projectViewWorkspaceState.resolveSession(taskId);
     if (!session) return;
     useTabStore.getState().createTabWithSession(taskId);
     await viewSession(session);
@@ -465,8 +470,7 @@ export function Sidebar() {
   const [isInitialized, setIsInitialized] = useState(false);
   const handleTaskStopProcess = useCallback((taskId: string) => {
     wsClient.stopSession(taskId);
-    useSessionStore.getState().clearUnreadCount(taskId);
-    wsClient.sendMarkAsRead(taskId);
+    projectViewWorkspaceState.markSessionRead(taskId);
   }, []);
 
   const prevActivePanelIdRef = useRef<string | null>(null);
@@ -519,7 +523,7 @@ export function Sidebar() {
 
     const activeId = useSessionStore.getState().activeSessionId;
     if (activeId) {
-      const session = useSessionStore.getState().getSession(activeId);
+      const session = projectViewWorkspaceState.resolveSession(activeId);
       if (session) {
         viewSession(session).catch((err) => {
           logger.error('Failed to load active session', {
@@ -537,6 +541,9 @@ export function Sidebar() {
   const selectedProject = useMemo(() => {
     return findSidebarProject(projects, selectedProjectDir);
   }, [projects, selectedProjectDir]);
+  const selectedProjectRepresentation = useProjectViewRepresentation(
+    isAllMode ? null : selectedProjectDir,
+  );
 
   const handleProjectWorktreeSelect = useCallback(() => {
     const projectWorktree = selectedProject?.projectWorktree;
@@ -564,26 +571,19 @@ export function Sidebar() {
     },
     [setStoredRunningFilterActive],
   );
-  const isAllMode = selectedProjectDir === ALL_PROJECTS_SENTINEL;
-
   const allProjectSectionIds = useMemo(
     () => projects.map((project) => project.encodedDir),
     [projects],
   );
 
-  const allProjectsRunningSessionIds = useMemo(() => {
-    const sessionIds = new Set<string>();
-
-    for (const project of projects) {
-      for (const session of project.sessions) {
-        if (!session.archived && resolveSessionRuntimePresentation(session).canStop) {
-          sessionIds.add(session.id);
-        }
-      }
-    }
-
-    return Array.from(sessionIds);
-  }, [projects]);
+  const originRepresentation = useOriginProjectRepresentation();
+  const allProjectsOrderedSessionIds = useMemo(
+    () => getOriginProjectOrderedSessionIds(originRepresentation),
+    [originRepresentation],
+  );
+  const allProjectsRunningSessionIds = projectViewWorkspaceState
+    .getCanonicalRunningSessions()
+    .map((session) => session.id);
 
   const runningItemCount = useMemo(() => {
     if (!collectionGroups) return 0;
@@ -617,43 +617,45 @@ export function Sidebar() {
   }, [isRunningFilterActive, visibleCollectionGroups]);
 
   const handleStopAllRunning = useCallback(() => {
-    const sessionStore = useSessionStore.getState();
-    const sessionIds = isAllMode ? allProjectsRunningSessionIds : runningSessionIds;
-
-    for (const sessionId of sessionIds) {
-      wsClient.stopSession(sessionId);
-      sessionStore.clearUnreadCount(sessionId);
-      wsClient.sendMarkAsRead(sessionId);
+    if (isAllMode) {
+      projectViewWorkspaceState.stopAllRunningSessions();
+      return;
     }
-  }, [allProjectsRunningSessionIds, isAllMode, runningSessionIds]);
+
+    for (const sessionId of runningSessionIds) {
+      wsClient.stopSession(sessionId);
+      projectViewWorkspaceState.markSessionRead(sessionId);
+    }
+  }, [isAllMode, runningSessionIds]);
 
   const orderedIds = useMemo(() => {
     return buildSidebarOrderedSessionIds({
       selectedProjectDir,
-      projects,
+      allProjectsSessionIds: allProjectsOrderedSessionIds,
       selectedProject,
       collectionGroups: visibleCollectionGroups,
     });
-  }, [projects, selectedProject, selectedProjectDir, visibleCollectionGroups]);
+  }, [allProjectsOrderedSessionIds, selectedProject, selectedProjectDir, visibleCollectionGroups]);
 
   const showRecentWork = useSettingsStore((state) => state.settings.showRecentWork);
 
   const recentWorkItems = useMemo(() => {
     if (!showRecentWork) return [];
-
-    const scopedProjects = isAllMode
-      ? projects
-      : selectedProject
-        ? [selectedProject]
-        : [];
+    if (!isAllMode) {
+      return buildProjectViewRecentWorkItems(selectedProjectRepresentation, 8);
+    }
 
     return buildRecentWorkItems({
-      projects: scopedProjects,
-      tasksByProject,
+      projects: originRepresentation.projects,
+      tasksByProject: originRepresentation.tasksByProject,
       limit: 8,
-      originOnly: isAllMode,
     });
-  }, [isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
+  }, [
+    isAllMode,
+    originRepresentation,
+    selectedProjectRepresentation,
+    showRecentWork,
+  ]);
 
   const recentWorkOrderedIds = useMemo(
     () => buildRecentWorkOrderedSessionIds(recentWorkItems),
@@ -772,7 +774,7 @@ export function Sidebar() {
                   onChatStatusChange={handleChatStatusChangeById}
                   onSessionRename={handleTaskRename}
                   onSessionDelete={handleTaskDelete}
-                  onSessionArchive={handleTaskArchive}
+                  onSessionArchive={handleSessionArchive}
                   onSessionOpenInNewTab={handleTaskOpenInNewTab}
                   onSessionGenerateTitle={handleTaskGenerateTitle}
                   onSessionStopProcess={handleTaskStopProcess}
@@ -783,7 +785,7 @@ export function Sidebar() {
                 isRunningFilterActive={isRunningFilterActive}
                 onSessionClick={handleSessionClick}
                 onSessionDoubleClick={handleSessionDoubleClick}
-                onSessionArchive={handleTaskArchive}
+                onSessionArchive={handleSessionArchive}
                 onChatStatusChange={handleChatStatusChangeById}
                 onSessionRename={handleTaskRename}
                 onSessionDelete={handleTaskDelete}
@@ -851,7 +853,7 @@ export function Sidebar() {
                 onChatStatusChange={handleChatStatusChangeById}
                 onSessionRename={handleTaskRename}
                 onSessionDelete={handleTaskDelete}
-                onSessionArchive={handleTaskArchive}
+                onSessionArchive={handleSessionArchive}
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
                 onSessionStopProcess={handleTaskStopProcess}
@@ -876,7 +878,7 @@ export function Sidebar() {
                     onChatStatusChange={handleChatStatusChangeById}
                     onSessionRename={handleTaskRename}
                     onSessionDelete={handleTaskDelete}
-                    onSessionArchive={handleTaskArchive}
+                    onSessionArchive={handleSessionArchive}
                     onSessionOpenInNewTab={handleTaskOpenInNewTab}
                     onSessionGenerateTitle={handleTaskGenerateTitle}
                     onSessionStopProcess={handleTaskStopProcess}
@@ -934,7 +936,7 @@ export function Sidebar() {
                       onChatStatusChange={handleChatStatusChangeById}
                       onSessionRename={handleTaskRename}
                       onSessionDelete={handleTaskDelete}
-                      onSessionArchive={handleTaskArchive}
+                      onSessionArchive={handleSessionArchive}
                       onSessionOpenInNewTab={handleTaskOpenInNewTab}
                       onSessionGenerateTitle={handleTaskGenerateTitle}
                       onSessionStopProcess={handleTaskStopProcess}

@@ -33,6 +33,11 @@ export type RecentWorkItem =
       diffStats?: TaskEntity['diffStats'] | UnifiedSession['diffStats'];
     };
 
+export interface ProjectViewRecentWorkRepresentation {
+  project: ProjectGroup;
+  tasks: TaskEntity[];
+}
+
 function timeValue(value: string | undefined): number {
   if (!value) return 0;
   const timestamp = new Date(value).getTime();
@@ -202,17 +207,19 @@ function chatToRecentItem(project: ProjectGroup, session: UnifiedSession): Recen
 export function buildRecentWorkItems({
   projects,
   tasksByProject,
+  canonicalSessions,
   limit = 8,
   originOnly = false,
 }: {
   projects: ProjectGroup[];
   tasksByProject: Record<string, TaskEntity[]>;
+  canonicalSessions?: readonly UnifiedSession[];
   limit?: number;
   originOnly?: boolean;
 }): RecentWorkItem[] {
   const items: RecentWorkItem[] = [];
   const representation = originOnly
-    ? buildOriginProjectRepresentation(projects, tasksByProject)
+    ? buildOriginProjectRepresentation(projects, tasksByProject, canonicalSessions)
     : { projects, tasksByProject };
 
   for (const project of representation.projects) {
@@ -258,4 +265,19 @@ export function buildRecentWorkItems({
       return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
     })
     .slice(0, limit);
+}
+
+/** Build one selected Project's Recent Work from its resolved workspace representation. */
+export function buildProjectViewRecentWorkItems(
+  representation: ProjectViewRecentWorkRepresentation | undefined,
+  limit = 8,
+): RecentWorkItem[] {
+  if (!representation) return [];
+  return buildRecentWorkItems({
+    projects: [representation.project],
+    tasksByProject: {
+      [representation.project.encodedDir]: representation.tasks,
+    },
+    limit,
+  });
 }

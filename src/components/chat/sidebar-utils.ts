@@ -21,7 +21,7 @@ export function selectSidebarProjectTasks(
 }
 
 export function findSidebarProject(
-  projects: ProjectGroup[],
+  projects: readonly ProjectGroup[],
   selectedProjectDir: string | null,
 ): ProjectGroup | null {
   if (!selectedProjectDir) return null;
@@ -57,23 +57,17 @@ export function buildRecentWorkOrderedSessionIds(items: RecentWorkItem[]): strin
 
 export function buildSidebarOrderedSessionIds({
   selectedProjectDir,
-  projects,
+  allProjectsSessionIds,
   selectedProject,
   collectionGroups,
 }: {
   selectedProjectDir: string | null;
-  projects: ProjectGroup[];
+  allProjectsSessionIds: readonly string[];
   selectedProject: ProjectGroup | null;
   collectionGroups: CollectionGroupData[] | null;
 }): string[] {
   if (selectedProjectDir === ALL_PROJECTS_SENTINEL) {
-    return projects.flatMap((project) =>
-      project.sessions
-        .filter((session) => !session.archived)
-        .slice()
-        .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
-        .map((session) => session.id),
-    );
+    return [...allProjectsSessionIds];
   }
 
   if (!selectedProjectDir || !selectedProject || !collectionGroups) {

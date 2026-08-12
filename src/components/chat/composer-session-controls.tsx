@@ -8,6 +8,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { wsClient } from '@/lib/ws/client';
 import type { PermissionMode } from '@/lib/ws/message-types';
 import type { ShortcutId } from '@/lib/keyboard/registry';
@@ -1004,7 +1005,7 @@ export function ComposerSessionControls({
   providerSessionOptions,
   surfaceActive = false,
 }: ComposerSessionControlsProps) {
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useProjectViewSession(sessionId);
   const settings = useSettingsStore((state) => state.settings);
   const providerId = session?.provider?.trim();
   const resolvedProviderId = providerId ?? '';

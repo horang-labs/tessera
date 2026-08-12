@@ -258,9 +258,10 @@ function runCommand(
     };
 
     child.stdout?.on('data', (chunk: Buffer) => {
+      const remaining = Math.max(0, maxOutputBytes - stdoutLength);
+      if (remaining > 0) stdoutChunks.push(chunk.subarray(0, remaining));
       stdoutLength += chunk.length;
-      if (stdoutLength <= maxOutputBytes) stdoutChunks.push(chunk);
-      else truncated = true;
+      if (stdoutLength > maxOutputBytes) truncated = true;
 
       if (stoppedEarly || settled) return;
       if (options.onStdout?.(chunk) !== 'stop') return;
@@ -274,9 +275,10 @@ function runCommand(
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
+      const remaining = Math.max(0, maxOutputBytes - stderrLength);
+      if (remaining > 0) stderrChunks.push(chunk.subarray(0, remaining));
       stderrLength += chunk.length;
-      if (stderrLength <= maxOutputBytes) stderrChunks.push(chunk);
-      else truncated = true;
+      if (stderrLength > maxOutputBytes) truncated = true;
     });
 
     child.on('close', (code) => {

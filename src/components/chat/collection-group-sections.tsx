@@ -21,6 +21,14 @@ import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useInlineRename } from '@/hooks/use-inline-rename';
 import { useSubSessionCap } from '@/hooks/use-sub-session-cap';
 import { useSubSessionReorder } from '@/hooks/use-sub-session-reorder';
+import {
+  useAnyProjectViewSessionUnread,
+  useProjectViewSessionUnread,
+} from '@/hooks/use-project-view-session-unread';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { cn } from '@/lib/utils';
@@ -68,6 +76,7 @@ import {
   SIDEBAR_TREE_ROW_GUTTER,
 } from './sidebar-tree-layout';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { getLinkedWorktreeDensity, toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
@@ -248,6 +257,7 @@ export function CollectionHeaderMenu({
 
 export function CollectionContextMenu({
   menu,
+  projectViewId,
   collections,
   onClose,
   onRename,
@@ -260,6 +270,7 @@ export function CollectionContextMenu({
   onRunPreparation,
 }: {
   menu: ContextMenuState;
+  projectViewId: string;
   collections?: Collection[];
   onClose: () => void;
   onRename?: () => void;
@@ -340,9 +351,9 @@ export function CollectionContextMenu({
         return;
       }
 
-      await useTaskStore.getState().updateTask(menu.targetId, { collectionId });
+      await useTaskStore.getState().updateTask(menu.targetId, { collectionId }, projectViewId);
     },
-    [menu, onClose],
+    [menu, onClose, projectViewId],
   );
 
   const menuItemClass = cn(
@@ -441,9 +452,17 @@ export function CollectionContextMenu({
         )}
 
         {onArchive && (
-          <button className={menuItemClass} onClick={() => { onArchive(); onClose(); }}>
+          <button
+            className={menuItemClass}
+            onClick={() => { onArchive(); onClose(); }}
+            data-testid={menu.type === 'task' && !menu.isSubSession
+              ? 'ctx-archive-worktree-task'
+              : 'ctx-archive-session'}
+          >
             <Archive className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-            <span>Archive</span>
+            <span>{menu.type === 'task' && !menu.isSubSession
+              ? 'Archive worktree task'
+              : 'Archive session'}</span>
           </button>
         )}
 
@@ -511,33 +530,19 @@ function SubSessionRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
-  const liveSession = useSessionStore((state) => {
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return session;
-    }
-    return undefined;
-  });
+  const liveSession = useProjectViewSession(sess.id, task.projectViewId);
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? sess.kind,
     isRunning: liveSession?.isRunning ?? sess.isRunning,
   });
-  const hasUnread = useSessionStore((state) => {
-    if (isActive) return false;
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return (session.unreadCount ?? 0) > 0;
-    }
-    return false;
-  });
+  const hasCanonicalUnread = useProjectViewSessionUnread(sess.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const asUnifiedSession = useCallback(
     () => toLinkedWorktreeSession(task, sess, liveSession),
     [liveSession, sess, task],
   );
   const openSession = useCallback(() => {
-    const session = asUnifiedSession();
-    useSessionStore.getState().upsertSession(session);
-    return session;
+    return asUnifiedSession();
   }, [asUnifiedSession]);
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -827,34 +832,27 @@ export function TaskItemRow({
     getSidebarActionSurface({ isActive: isTaskActive, isSelected }),
   );
   const taskSessionIds = task.sessions.map((session) => session.id);
-  const hasVisibleRuntimeSession = useSessionStore((state) =>
-    taskSessionIds.some((id) => {
-      for (const project of state.projects) {
-        const session = project.sessions.find((item) => item.id === id);
-        if (session) return resolveSessionRuntimePresentation(session).showRunning;
-      }
-      const snapshot = task.sessions.find((session) => session.id === id);
-      return snapshot
-        ? resolveSessionRuntimePresentation(snapshot).showRunning
-        : false;
-    }),
+  const resolvedTaskSessions = useProjectViewSessions(taskSessionIds, task.projectViewId);
+  const resolvedTaskSessionsById = new Map(
+    resolvedTaskSessions.map((session) => [session.id, session]),
   );
+  const hasVisibleRuntimeSession = taskSessionIds.some((id) => {
+    const snapshot = task.sessions.find((session) => session.id === id);
+    const session = resolvedTaskSessionsById.get(id) ?? snapshot;
+    return session
+      ? resolveSessionRuntimePresentation(session).showRunning
+      : false;
+  });
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
-  const hasUnreadSession = useSessionStore((state) =>
-    !isTaskActive &&
-    taskSessionIds.some((id) => {
-      if (id === activeSessionId) return false;
-      for (const project of state.projects) {
-        const session = project.sessions.find((item) => item.id === id);
-        if (session) return (session.unreadCount ?? 0) > 0;
-      }
-      return false;
-    }),
+  const hasCanonicalUnreadSession = useAnyProjectViewSessionUnread(
+    taskSessionIds,
+    activeSessionId,
   );
+  const hasUnreadSession = !isTaskActive && hasCanonicalUnreadSession;
   const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasVisibleRuntimeSession;
   const {
     inputRef: renameInputRef,
@@ -881,27 +879,35 @@ export function TaskItemRow({
       }
     : undefined;
 
-  const handleArchiveTask = useCallback(() => {
+  const archivesCompositeSession = density === 'composite' && Boolean(primarySessionId);
+  const handleArchive = useCallback(() => {
+    if (archivesCompositeSession && primarySessionId) {
+      onSessionArchive?.(primarySessionId);
+      return;
+    }
     void useTaskStore.getState().toggleTaskArchive(task.id, true);
-  }, [task.id]);
+  }, [archivesCompositeSession, onSessionArchive, primarySessionId, task.id]);
 
   const {
     isConfirmingArchive,
     handleArchiveClick,
     resetArchiveConfirm,
-  } = useArchiveConfirm(handleArchiveTask);
+  } = useArchiveConfirm(handleArchive);
 
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     event.preventDefault();
 
     for (const session of task.sessions) {
-      const liveSession = useSessionStore.getState().getSession(session.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        task.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onStopProcess?.(session.id);
       }
     }
-  }, [onStopProcess, task.sessions]);
+  }, [onStopProcess, task.projectViewId, task.sessions]);
 
   const handleDragStart = useCallback((event: React.DragEvent) => {
     if (disableDnd) {
@@ -926,17 +932,7 @@ export function TaskItemRow({
     const session = task.sessions[0];
     if (!session) return;
     const unifiedSession = toLinkedWorktreeSession(task, session);
-    useSessionStore.getState().upsertSession(unifiedSession);
     await open(unifiedSession);
-    const location = useTabStore.getState().findSessionLocation(unifiedSession.id);
-    if (location && task.worktreeId) {
-      usePanelStore.getState().assignSessionInTab(
-        location.tabId,
-        location.panelId,
-        unifiedSession.id,
-        task.worktreeId,
-      );
-    }
   }, [task]);
 
   const handleClick = useCallback(
@@ -1191,9 +1187,13 @@ export function TaskItemRow({
                   ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                   : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
               )}
-              testId={`collection-task-quick-archive-${task.id}`}
-              confirmTitle="Click again to archive task"
-              idleTitle="Archive task"
+              testId={archivesCompositeSession
+                ? `collection-session-quick-archive-${primarySessionId}`
+                : `collection-task-quick-archive-${task.id}`}
+              confirmTitle={archivesCompositeSession
+                ? 'Click again to archive session'
+                : 'Click again to archive worktree task'}
+              idleTitle={archivesCompositeSession ? 'Archive session' : 'Archive worktree task'}
             />
             <button
               ref={addButtonRef}
@@ -1341,7 +1341,7 @@ export function ChatItemRow({
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
-  const liveSession = useSessionStore((state) => state.getSession(session.id));
+  const liveSession = useProjectViewSession(session.id);
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? session.kind,
@@ -1363,7 +1363,8 @@ export function ChatItemRow({
   // rows already carry the bubble in the leading slot instead.
   const showTrailingDiff = !!session.diffStats && session.diffStats.changedFiles > 0;
   const showTrailingBubble = showProviderIcons;
-  const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
+  const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
     isConfirmingArchive,

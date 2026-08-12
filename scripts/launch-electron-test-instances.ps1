@@ -381,15 +381,39 @@ if ($wslFixtureRoot -and $Count -ne 1) {
   throw 'An isolated WSL provider fixture may be attached only to one Electron test instance'
 }
 
-$environmentNames = @(
+$isolatedLaunchEnvironmentNames = [System.Collections.Generic.HashSet[string]]::new(
+  [StringComparer]::OrdinalIgnoreCase
+)
+foreach ($name in @(
   'TESSERA_ELECTRON_TEST_INSTANCE',
   'TESSERA_ELECTRON_TEST_ROOT',
   'TESSERA_ELECTRON_TEST_SERVER_PORT',
   'TESSERA_ELECTRON_TEST_WSL_FIXTURE_ROOT',
-  'WSL_DISTRO_NAME',
+  'WSL_DISTRO_NAME'
+)) {
+  $isolatedLaunchEnvironmentNames.Add($name) | Out-Null
+}
+
+$inheritedAgentEnvironmentNames = @(
+  [Environment]::GetEnvironmentVariables('Process').Keys |
+    ForEach-Object { [string]$_ } |
+    Where-Object {
+      -not $isolatedLaunchEnvironmentNames.Contains($_) -and (
+        $_ -like 'TESSERA_*' -or
+        $_ -like 'CODEX_*' -or
+        $_ -like 'CLAUDE_*' -or
+        $_ -eq 'CLAUDECODE' -or
+        $_ -like 'OPENCODE_*'
+      )
+    }
+)
+$clearedEnvironmentNames = @(
   'WSLENV',
   'ZDOTDIR'
-) + $launchScrubEnvironmentNames
+) + $launchScrubEnvironmentNames + $inheritedAgentEnvironmentNames |
+  Sort-Object -Unique
+$environmentNames = @($isolatedLaunchEnvironmentNames) + $clearedEnvironmentNames |
+  Sort-Object -Unique
 $savedEnvironment = @{}
 foreach ($name in $environmentNames) {
   $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -445,7 +469,7 @@ try {
     $env:TESSERA_ELECTRON_TEST_ROOT = $TestRoot
     $env:TESSERA_ELECTRON_TEST_SERVER_PORT = [string]$testServerPort
     $env:WSL_DISTRO_NAME = $WslDistro
-    foreach ($name in $launchScrubEnvironmentNames) {
+    foreach ($name in $clearedEnvironmentNames) {
       Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
     }
     $env:WSLENV = Get-IsolatedWslEnvironment `

@@ -15,6 +15,7 @@ import {
 } from '@/stores/board-store';
 import { useI18n } from '@/lib/i18n';
 import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
@@ -57,7 +58,7 @@ export function SessionPeek({
   const projectViewDir = selectedProjectDir === ALL_PROJECTS_SENTINEL
     ? null
     : selectedProjectDir;
-  const session = useSessionStore((state) => state.getSession(sessionId, projectViewDir));
+  const session = useProjectViewSession(sessionId, projectViewDir);
   const peekFileRef = useBoardStore((state) => state.peekFileRef);
   const persistedFileWidth = useBoardStore((state) => state.peekFileSidecarWidth);
   const closePeekFile = useBoardStore((state) => state.closePeekFile);

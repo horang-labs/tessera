@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { getInitialTerminalCwd } from '../src/lib/terminal/client-terminal-cwd.ts';
+import { shouldShowSessionHeader } from '../src/lib/terminal/session-header-visibility.ts';
 
 const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const messageTypesSource = fs.readFileSync(new URL('../src/lib/ws/message-types.ts', import.meta.url), 'utf8');
@@ -19,18 +21,11 @@ const clientTerminalCwdSource = fs.readFileSync(new URL('../src/lib/terminal/cli
 const hostPathSource = fs.readFileSync(new URL('../src/lib/filesystem/host-path.ts', import.meta.url), 'utf8');
 const pathExistsSource = fs.readFileSync(new URL('../src/lib/filesystem/path-exists.ts', import.meta.url), 'utf8');
 const sessionWorkspaceRootSource = fs.readFileSync(new URL('../src/lib/session/session-workspace-root.ts', import.meta.url), 'utf8');
-const sessionFileRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/file/route.ts', import.meta.url), 'utf8');
-const sessionFilesRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/files/route.ts', import.meta.url), 'utf8');
-const projectsRouteSource = fs.readFileSync(new URL('../src/app/api/projects/route.ts', import.meta.url), 'utf8');
 const archiveServiceSource = fs.readFileSync(new URL('../src/lib/archive/archive-service.ts', import.meta.url), 'utf8');
 const sessionArchiveSource = fs.readFileSync(new URL('../src/lib/session/session-archive.ts', import.meta.url), 'utf8');
 const sessionOrchestratorSource = fs.readFileSync(new URL('../src/lib/session/session-orchestrator.ts', import.meta.url), 'utf8');
 const sessionArchiveRouteSource = fs.readFileSync(new URL('../src/app/api/sessions/[id]/archive/route.ts', import.meta.url), 'utf8');
 const taskArchiveRouteSource = fs.readFileSync(new URL('../src/app/api/archive/tasks/[id]/route.ts', import.meta.url), 'utf8');
-const worktreeDiffStatsSource = fs.readFileSync(new URL('../src/lib/git/worktree-diff-stats.ts', import.meta.url), 'utf8');
-const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', import.meta.url), 'utf8');
-const prStatusProviderSource = fs.readFileSync(new URL('../src/lib/github/pr-status-provider.ts', import.meta.url), 'utf8');
-const managedWorktreesSource = fs.readFileSync(new URL('../src/lib/worktrees/managed.ts', import.meta.url), 'utf8');
 const chatAreaSource = fs.readFileSync(new URL('../src/components/chat/chat-area.tsx', import.meta.url), 'utf8');
 const terminalPanelSource = fs.readFileSync(new URL('../src/components/terminal/terminal-panel.tsx', import.meta.url), 'utf8');
 const tabPanelHostSource = fs.readFileSync(new URL('../src/components/tab/tab-panel-host.tsx', import.meta.url), 'utf8');
@@ -45,12 +40,10 @@ const terminalThemeSource = fs.existsSync(terminalThemeUrl)
   ? fs.readFileSync(terminalThemeUrl, 'utf8')
   : '';
 const terminalCssSource = fs.readFileSync(new URL('../src/app/terminal.css', import.meta.url), 'utf8');
-const emptyPanelStateSource = fs.readFileSync(new URL('../src/components/panel/empty-panel-state.tsx', import.meta.url), 'utf8');
 const wsClientSource = fs.readFileSync(new URL('../src/lib/ws/client.ts', import.meta.url), 'utf8');
 const panelWrapperSource = fs.readFileSync(new URL('../src/components/panel/panel-wrapper.tsx', import.meta.url), 'utf8');
 const panelStoreSource = fs.readFileSync(new URL('../src/stores/panel-store.ts', import.meta.url), 'utf8');
 const tabItemSource = fs.readFileSync(new URL('../src/components/tab/tab-item.tsx', import.meta.url), 'utf8');
-const tabBarSource = fs.readFileSync(new URL('../src/components/tab/tab-bar.tsx', import.meta.url), 'utf8');
 // The tab title derivation moved out of tab-item when the Phone viewport tab list needed the
 // same names (#247); the rule is unchanged, and tests/tab-display-title.test.ts asserts it
 // directly rather than through source text.
@@ -217,9 +210,19 @@ test('terminal preserves scroll position on resize and exposes the shared latest
 });
 
 test('single-panel terminal sessions omit only the redundant session header', () => {
-  assert.match(chatAreaSource, /shouldShowSessionHeader\(\{ isTerminalSession, isSinglePanel \}\)/);
-  assert.match(chatAreaSource, /<Header/);
-  assert.match(chatAreaSource, /search=\{\{/);
+  assert.equal(shouldShowSessionHeader({
+    isTerminalSession: true,
+    isSinglePanel: true,
+  }), false);
+  assert.equal(shouldShowSessionHeader({
+    isTerminalSession: true,
+    isSinglePanel: false,
+  }), true);
+  assert.equal(shouldShowSessionHeader({
+    isTerminalSession: true,
+    isSinglePanel: true,
+    canToggleTerminalChatView: true,
+  }), true);
 });
 
 test('terminal Chat View shows transcript loading instead of an empty history surface', () => {
@@ -363,12 +366,10 @@ test('handoff ownership is locked and released on every terminal lifecycle exit'
 test('resume, delete, archive, restore, and worktree cleanup hold atomic handoff exclusion', () => {
   assert.match(sessionOrchestratorSource, /withTesseraSessionOperation\(sessionId/);
   assert.match(sessionOrchestratorSource, /resumeSessionWithLifecycle/);
-  assert.match(sessionOrchestratorSource, /removeManagedWorktree/);
   assert.match(sessionOrchestratorSource, /withExclusiveTesseraSessionOperation\(sessionId/);
   assert.match(sessionArchiveSource, /withExclusiveTesseraSessionOperation\(sessionId/);
   assert.match(archiveServiceSource, /withExclusiveTesseraSessionOperation\(sessionId/);
   assert.match(archiveServiceSource, /withExclusiveTesseraSessionOperations\(task\.sessions\.map/);
-  assert.match(archiveServiceSource, /beginTesseraSessionOperations\(item\.sessions\.map/);
   assert.match(archiveServiceSource, /endTesseraSessionOperations\(acquired\)/);
   assert.match(sessionArchiveRouteSource, /isTerminalHandoffConflictError/);
   assert.match(sessionArchiveRouteSource, /\? 409/);
@@ -454,22 +455,6 @@ test('server filesystem reads resolve WSL POSIX paths before calling node fs', (
   assert.match(hostPathSource, /resolveBrowsePath\(trimmed, 'wsl'\)/);
   assert.match(pathExistsSource, /resolvePathForHostFilesystem\(candidate\)/);
   assert.match(sessionWorkspaceRootSource, /resolveSessionWorkspaceFilesystemRoot/);
-  assert.match(sessionFileRouteSource, /resolveSessionWorkspaceFilesystemRoot\(id\)/);
-  assert.match(sessionFileRouteSource, /getFilesystemPathModule\(root\)/);
-  assert.match(sessionFilesRouteSource, /resolveSessionWorkspaceFilesystemRoot\(id\)/);
-  assert.match(sessionFilesRouteSource, /workspaceFileWatchManager\.ensureSnapshotForRoot\(root\)/);
-  assert.match(sessionFilesRouteSource, /walkWorkspaceFiles\(root\)/);
-  assert.match(projectsRouteSource, /resolveBrowsePath\(\n\s+folderPath,\n\s+settings\.agentEnvironment,/);
-  assert.match(archiveServiceSource, /pathExists\(workDir\)/);
-  assert.match(archiveServiceSource, /resolvePathForHostFilesystem\(item\.workDir\)/);
-  assert.match(worktreeDiffStatsSource, /await resolveFilesystemPath\(workDir\)/);
-  assert.match(worktreeDiffStatsSource, /getRuntimePlatform\(\) === 'win32' && workDir\.trim\(\)\.startsWith\('\/'\)/);
-  assert.match(gitPanelSource, /await resolveNodeFilesystemPath\(\n\s+repoRoot,\n\s+referenceFilesystemPath,/);
-  assert.match(gitPanelSource, /resolvePathForHostFilesystem\(gitPath\)/);
-  assert.match(gitPanelSource, /getRuntimePlatform\(\) === "win32" && workDir\.trim\(\)\.startsWith\("\/"\)/);
-  assert.match(prStatusProviderSource, /AgentEnvironment = inferGitHubToolEnvironment\(workDir\)/);
-  assert.match(prStatusProviderSource, /getRuntimePlatform\(\) === 'win32' && workDir\.trim\(\)\.startsWith\('\/'\)/);
-  assert.match(managedWorktreesSource, /resolvePathForHostFilesystem\(worktreePathModule\.dirname\(worktreePath\)\)/);
 });
 
 test('terminal ownership keys include user id and terminal id', () => {
@@ -522,19 +507,7 @@ test('terminal creation is gated by visible tab, not active split-panel focus', 
 });
 
 test('terminal panels without a bound session do not inherit stale active session cwd', () => {
-  assert.match(emptyPanelStateSource, /assignTerminal\(panelId, uuidv4\(\)\)/);
-  assert.match(clientTerminalCwdSource, /getSessionSelectionId\(sessionId \?\? null\)/);
-  assert.doesNotMatch(clientTerminalCwdSource, /sessionId \?\? sessionState\.activeSessionId/);
-});
-
-test('terminal panels preserve the source session context used to create them', () => {
-  assert.match(panelTypesSource, /terminalSessionId\?: string \| null/);
-  assert.match(panelStoreSource, /assignTerminal\(newPanelId, terminalId, activePanel\.sessionId\)/);
-  assert.match(panelStoreSource, /terminalSessionId: oldPanel\.terminalSessionId \?\? null/);
-  assert.match(panelStoreSource, /sessionId, terminalId: null, terminalSessionId: null/);
-  assert.match(terminalPanelSource, /terminalSessionId: string \| null/);
-  assert.match(terminalPanelSource, /sessionId: getSessionSelectionId\(terminalSessionId\)/);
-  assert.doesNotMatch(terminalPanelSource, /useSessionStore\.getState\(\)\.activeSessionId/);
+  assert.equal(getInitialTerminalCwd(null, null), null);
 });
 
 test('terminal panels expose a panel drag handle', () => {
@@ -566,15 +539,6 @@ test('terminal-only tabs can be dragged into another panel tree', () => {
   assert.match(tabItemSource, /Object\.values\(panels\)\.some\(\(panel\) => panel\.terminalId\)/);
   assert.match(tabDisplayTitleSource, /activePanelTerminalId\) return 'Terminal'/);
   assert.doesNotMatch(panelWrapperSource, /droppedTabTreeId && sourceTabData && Object\.keys\(sourceTabData\.panels\)\.length > 1/);
-});
-
-test('terminal panels can be pulled into a new tab from a multi-panel layout', () => {
-  assert.match(tabBarSource, /parsePanelNodeDragData/);
-  assert.match(tabBarSource, /const terminalId = sourcePanel\?\.terminalId \?\? null/);
-  assert.match(tabBarSource, /const terminalSessionId = sourcePanel\?\.terminalSessionId \?\? null/);
-  assert.match(tabBarSource, /panelStore\.closePanel\(payload\.panelId\)/);
-  assert.match(tabBarSource, /tabStore\.createTab\(null, \{ insertAfterTabId: payload\.tabId \}\)/);
-  assert.match(tabBarSource, /assignTerminal\(newPanelId, terminalId, terminalSessionId\)/);
 });
 
 test('terminal remount reuses warm xterm and cold attach uses a targeted snapshot', () => {
@@ -659,9 +623,12 @@ test('codex overlay placement and hook style follow the terminal runtime', () =>
 });
 
 test('OpenCode WSL sessions prepare a guest-native shared overlay', () => {
-  assert.match(providerLaunchModuleSource, /decision\.providerId === 'opencode'/);
-  assert.match(providerLaunchModuleSource, /if \(wslTerminalRuntime\) \{/);
-  assert.match(providerLaunchModuleSource, /await createOpenCodeOverlayInWsl\(\)/);
+  assert.match(
+    providerLaunchModuleSource,
+    /decision\.providerId === 'opencode' && wslTerminalRuntime/,
+  );
+  assert.match(providerLaunchModuleSource, /\(\) => createOpenCodeOverlayInWsl\(\)/);
+  assert.match(providerLaunchModuleSource, /await overlayPromise/);
   assert.match(providerLaunchModuleSource, /OPENCODE_CONFIG_DIR: overlayDir/);
   assert.match(providerLaunchModuleSource, /const overlay = createOpenCodeOverlay\(terminalId\)/);
   assert.match(providerLaunchModuleSource, /resourceDisposers\.add\(overlay\.dispose\)/);

@@ -56,8 +56,9 @@ function projectWorktrees(
   membership: ProjectViewMembership,
   activeSessionIds: Set<string>,
   projectCollectionIds: Set<string>,
+  options: { includeArchived?: boolean } = {},
 ) {
-  const worktrees = dbTasks.getTasksForProjectView(membership, activeSessionIds);
+  const worktrees = dbTasks.getTasksForProjectView(membership, activeSessionIds, options);
 
   return worktrees.map((worktree) => ({
     ...worktree,
@@ -111,12 +112,61 @@ export function getProjectViewProjection(
 export function getProjectViewWorktrees(
   projectId: string,
   activeSessionIds: Set<string> = new Set(),
+  options: { includeArchived?: boolean } = {},
 ) {
   return projectWorktrees(
     projectId,
     getViewMembership(projectId),
     activeSessionIds,
     getProjectCollectionIds(projectId),
+    options,
+  );
+}
+
+/** Project Views that show a canonical Task or open its Worktree directly, including archives. */
+export function getTaskProjectViewIds(taskId: string): string[] {
+  return getTaskProjectViewIdsByTask([taskId]).get(taskId) ?? [];
+}
+
+/** Resolve several archived Task appearances with one projection pass per Project. */
+export function getTaskProjectViewIdsByTask(
+  taskIds: readonly string[],
+): Map<string, string[]> {
+  const targets = new Set(taskIds);
+  const projectViewIdsByTask = new Map<string, Set<string>>();
+  if (targets.size === 0) return new Map();
+  const targetTasks = new Map(
+    [...targets].flatMap((taskId) => {
+      const task = dbTasks.getTask(taskId);
+      return task ? [[taskId, task] as const] : [];
+    }),
+  );
+  const addAppearance = (taskId: string, projectViewId: string) => {
+    const projectViewIds = projectViewIdsByTask.get(taskId) ?? new Set<string>();
+    projectViewIds.add(projectViewId);
+    projectViewIdsByTask.set(taskId, projectViewIds);
+  };
+  for (const project of dbProjects.getVisibleProjects()) {
+    const projectWorktreeId = dbProjects.getProjectWorktree(project.id)?.id;
+    if (projectWorktreeId) {
+      for (const [taskId, task] of targetTasks) {
+        if (task.worktreeId === projectWorktreeId) addAppearance(taskId, project.id);
+      }
+    }
+    for (const task of getProjectViewWorktrees(
+      project.id,
+      new Set(),
+      { includeArchived: true },
+    )) {
+      if (!targets.has(task.id)) continue;
+      addAppearance(task.id, project.id);
+    }
+  }
+  return new Map(
+    [...projectViewIdsByTask].map(([taskId, projectViewIds]) => [
+      taskId,
+      [...projectViewIds],
+    ]),
   );
 }
 

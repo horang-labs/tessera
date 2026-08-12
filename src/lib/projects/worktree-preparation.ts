@@ -22,6 +22,7 @@ import { getProject, readProjectPreparationScript } from '@/lib/db/projects';
 import {
   finishPreparationStage,
   finishTaskPreparation,
+  getTaskPreparation,
   getTaskPreparationContext,
   recordPreparationScripts,
   startTaskPreparation,
@@ -263,9 +264,12 @@ async function continuePreparation(
 
 /** Tell the user's windows that a task's preparation status moved. */
 function announcePreparationStatus(request: WorktreePreparationRequest): void {
+  const preparationStatus = getTaskPreparation(request.taskId)?.status;
   broadcastTaskMutation(request.userId, {
     kind: 'updated',
     projectId: request.projectId ?? request.projectDir,
+    taskId: request.taskId,
+    preparationStatus,
   });
 }
 

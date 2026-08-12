@@ -19,6 +19,10 @@ import { useTaskStore } from '@/stores/task-store';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/stores/panel-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useIsSessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
@@ -38,6 +42,7 @@ import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-supp
 import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { resolveSessionBranchPresentation } from '@/lib/session/session-branch-presentation';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
 
 interface HeaderProps {
   sessionId: string;
@@ -61,15 +66,13 @@ interface HeaderProps {
 export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search }: HeaderProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
-  const session = useSessionStore((state) =>
-    state.getSession(sessionId, projectViewDir)
-  );
-  const liveWorktreeBranch = useSessionStore((state) => {
-    if (!session?.worktreeId) return null;
-    return state.projects
+  const session = useProjectViewSession(sessionId, projectViewDir);
+  const projects = useLoadedProjectViews();
+  const liveWorktreeBranch = session?.worktreeId
+    ? projects
       .map((project) => project.projectWorktree)
-      .find((worktree) => worktree?.id === session.worktreeId)?.currentBranch ?? null;
-  });
+      .find((worktree) => worktree?.id === session.worktreeId)?.currentBranch ?? null
+    : null;
   const dragSessionId = session?.id ?? null;
   const taskId = session?.taskId;
   const linkedTask = useTaskStore((state) =>
@@ -94,8 +97,6 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
 
   // session-store에서 상태 변경 액션 가져오기
   const updateLinkedTaskWorkflowStatus = useSessionStore((state) => state.updateLinkedTaskWorkflowStatus);
-  const toggleArchive = useSessionStore((state) => state.toggleArchive);
-
   // Unit 4: 패널 닫기 버튼 (REQ-13, BR-CLOSE-004)
   const panels = usePanelStore((state) => selectActiveTab(state)?.panels ?? EMPTY_PANELS);
   const closePanel = usePanelStore((state) => state.closePanel);
@@ -162,20 +163,12 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
   const currentTaskStatus = linkedTask?.workflowStatus ?? session?.workflowStatus;
 
   const handleArchive = useCallback(() => {
-    if (taskId) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, true);
-      return;
-    }
-    toggleArchive(sessionId, true);
-  }, [sessionId, taskId, toggleArchive]);
+    requestSessionArchive(sessionId);
+  }, [sessionId]);
 
   const handleUnarchive = useCallback(() => {
-    if (taskId) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, false);
-      return;
-    }
-    toggleArchive(sessionId, false);
-  }, [sessionId, taskId, toggleArchive]);
+    requestSessionArchive(sessionId, false);
+  }, [sessionId]);
 
   const handleDelete = useCallback(() => {
     deleteSession(sessionId);
@@ -547,7 +540,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
           isArchived={session.archived ?? false}
           isRunning={runtimePresentation.showRunning}
           onStatusChange={isSingleSessionTask ? handleStatusChange : undefined}
-          onArchive={session.taskId ? undefined : handleArchive}
+          onArchive={handleArchive}
           onUnarchive={session.taskId ? undefined : handleUnarchive}
           onRename={handleRenameFromMenu}
           onDelete={handleDelete}

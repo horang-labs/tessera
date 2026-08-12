@@ -1,6 +1,7 @@
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 
 export function getSessionOriginProjectId(session: UnifiedSession): string {
   return session.originProjectId;
@@ -25,6 +26,26 @@ export function originProjectContainsRunningSession(
   ));
 }
 
+/** Count canonical running Sessions already assigned to one origin representation. */
+export function countOriginProjectRunningSessions(project: ProjectGroup): number {
+  return project.sessions.filter((session) =>
+    !session.archived && resolveSessionRuntimePresentation(session).showRunning
+  ).length;
+}
+
+/** Preserve Project strip/sidebar ordering without exposing backing Session scans to UI code. */
+export function getOriginProjectOrderedSessionIds(
+  representation: ReturnType<typeof buildOriginProjectRepresentation>,
+): string[] {
+  return representation.projects.flatMap((project) =>
+    project.sessions
+      .filter((session) => !session.archived)
+      .slice()
+      .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+      .map((session) => session.id),
+  );
+}
+
 /**
  * Global aggregate surfaces deliberately use the persisted origin Project as
  * the one representative location. Alternate Project View appearances are
@@ -33,20 +54,34 @@ export function originProjectContainsRunningSession(
 export function buildOriginProjectRepresentation(
   projects: ProjectGroup[],
   tasksByProject: Record<string, TaskEntity[]>,
+  canonicalSessions?: readonly UnifiedSession[],
 ) {
   const seenSessionIds = new Set<string>();
   const seenTaskIds = new Set<string>();
   const sessionsByProject = new Map<string, UnifiedSession[]>();
   const tasksByOriginProject = new Map<string, TaskEntity[]>();
 
-  for (const project of projects) {
-    for (const session of project.sessions) {
-      if (getSessionOriginProjectId(session) !== project.encodedDir) continue;
+  if (canonicalSessions) {
+    for (const session of canonicalSessions) {
       if (seenSessionIds.has(session.id)) continue;
       seenSessionIds.add(session.id);
-      const sessions = sessionsByProject.get(project.encodedDir) ?? [];
-      sessions.push(session);
-      sessionsByProject.set(project.encodedDir, sessions);
+      const originProjectId = getSessionOriginProjectId(session);
+      const sessions = sessionsByProject.get(originProjectId) ?? [];
+      sessions.push(session.projectDir === originProjectId
+        ? session
+        : { ...session, projectDir: originProjectId });
+      sessionsByProject.set(originProjectId, sessions);
+    }
+  } else {
+    for (const project of projects) {
+      for (const session of project.sessions) {
+        if (getSessionOriginProjectId(session) !== project.encodedDir) continue;
+        if (seenSessionIds.has(session.id)) continue;
+        seenSessionIds.add(session.id);
+        const sessions = sessionsByProject.get(project.encodedDir) ?? [];
+        sessions.push(session);
+        sessionsByProject.set(project.encodedDir, sessions);
+      }
     }
   }
 
@@ -67,7 +102,12 @@ export function buildOriginProjectRepresentation(
   const representedTasksByProject = Object.fromEntries(
     projects.map((project) => [
       project.encodedDir,
-      tasksByOriginProject.get(project.encodedDir) ?? [],
+      canonicalSessions
+        ? mergeTasksWithLiveSessions(
+            tasksByOriginProject.get(project.encodedDir) ?? [],
+            sessionsByProject.get(project.encodedDir) ?? [],
+          )
+        : tasksByOriginProject.get(project.encodedDir) ?? [],
     ]),
   );
 
@@ -79,34 +119,4 @@ export function buildOriginProjectRepresentation(
     ),
     tasksByProject: representedTasksByProject,
   };
-}
-
-/** Stable canonical Session rows for navigation-only global surfaces. */
-export function getCanonicalSessionRepresentatives(
-  projects: ProjectGroup[],
-): UnifiedSession[] {
-  const representatives = new Map<string, UnifiedSession>();
-
-  for (const project of projects) {
-    for (const session of project.sessions) {
-      const originProjectId = getSessionOriginProjectId(session);
-      const current = representatives.get(session.id);
-      const isOriginAppearance = project.encodedDir === originProjectId;
-      if (!current || isOriginAppearance) {
-        representatives.set(session.id, {
-          ...session,
-          projectDir: originProjectId,
-          originProjectId,
-        });
-      }
-    }
-  }
-
-  return Array.from(representatives.values());
-}
-
-export function getCanonicalRunningSessionRepresentatives(
-  projects: ProjectGroup[],
-): UnifiedSession[] {
-  return getCanonicalSessionRepresentatives(projects).filter((session) => session.isRunning);
 }

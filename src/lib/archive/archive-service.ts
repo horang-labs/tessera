@@ -27,6 +27,7 @@ import {
 import type { SessionRow } from '@/lib/db/sessions';
 import type { TaskEntity } from '@/types/task-entity';
 import { syncCodexThreadsArchived } from '@/lib/session/codex-thread-lifecycle';
+import { getTaskProjectViewIdsByTask } from '@/lib/projects/project-view-projection';
 
 export type ArchiveItemKind = 'chat' | 'task';
 export type WorktreeArchiveStatus = 'none' | 'present' | 'deleted' | 'missing';
@@ -56,12 +57,17 @@ export interface ArchiveItem {
    * or by retention) must skip these entries.
    */
   sharedWorktree: boolean;
+  /** Owning Worktree Task for an individually archived child Session. */
+  taskId?: string;
+  /** Every visible Project View where restoring this canonical entity must reappear. */
+  affectedProjectIds: string[];
   sessions: Array<{
     id: string;
     title: string;
     provider?: string;
     lastModified: string;
     isRunning: boolean;
+    archived: boolean;
   }>;
 }
 
@@ -165,7 +171,10 @@ function isRecordedManagedWorktree(
   return worktreeManaged === true || worktreeManaged === 1 || isManagedWorktreePath(workDir);
 }
 
-async function mapChat(row: SessionRow): Promise<ArchiveItem> {
+async function mapChat(
+  row: SessionRow,
+  affectedProjectIds: string[],
+): Promise<ArchiveItem> {
   const checkout = dbSessions.getSessionWorktreeContext(row.id);
   const workDir = checkout?.workDir ?? row.work_dir;
   const worktreeBranch = checkout?.worktreeBranch ?? row.worktree_branch;
@@ -193,17 +202,23 @@ async function mapChat(row: SessionRow): Promise<ArchiveItem> {
     worktreeStatus,
     canRestore: hasWorktreeDependency ? worktreeStatus === 'present' : true,
     sharedWorktree: Boolean(row.task_id),
+    taskId: row.task_id ?? undefined,
+    affectedProjectIds,
     sessions: [{
       id: row.id,
       title: row.title,
       provider: row.provider,
       lastModified: row.updated_at,
       isRunning: getActiveSessionIds().has(row.id),
+      archived: true,
     }],
   };
 }
 
-async function mapTask(task: TaskEntity): Promise<ArchiveItem> {
+async function mapTask(
+  task: TaskEntity,
+  affectedProjectIds: string[],
+): Promise<ArchiveItem> {
   const worktreeStatus = await getWorktreeStatus(task.workDir, task.worktreeDeletedAt);
   const worktreeManaged = isRecordedManagedWorktree(task.workDir, task.worktreeManaged);
   return {
@@ -225,7 +240,11 @@ async function mapTask(task: TaskEntity): Promise<ArchiveItem> {
     worktreeStatus,
     canRestore: Boolean(task.workDir) && worktreeStatus === 'present',
     sharedWorktree: false,
-    sessions: task.sessions,
+    affectedProjectIds,
+    sessions: task.sessions.map((session) => ({
+      ...session,
+      archived: session.archived ?? false,
+    })),
   };
 }
 
@@ -248,9 +267,22 @@ export async function listArchiveItems(options: ArchiveListOptions = {}): Promis
   const tasks = kind === 'chat'
     ? []
     : dbTasks.getArchivedTasks(activeSessionIds, normalizedProjectId, pageOptions);
+  const taskIds = [
+    ...chatRows.flatMap((row) => row.task_id ? [row.task_id] : []),
+    ...tasks.map((task) => task.id),
+  ];
+  const affectedProjectIdsByTask = getTaskProjectViewIdsByTask(taskIds);
   const items = [
-    ...(await Promise.all(chatRows.map(mapChat))),
-    ...(await Promise.all(tasks.map(mapTask))),
+    ...(await Promise.all(chatRows.map((row) => mapChat(
+      row,
+      row.task_id
+        ? affectedProjectIdsByTask.get(row.task_id) ?? [row.project_id]
+        : [row.project_id],
+    )))),
+    ...(await Promise.all(tasks.map((task) => mapTask(
+      task,
+      affectedProjectIdsByTask.get(task.id) ?? [task.projectId],
+    )))),
   ].sort((a, b) => (b.archivedAt ?? b.updatedAt).localeCompare(a.archivedAt ?? a.updatedAt));
   const pageTotal = kind === 'chat'
     ? chatTotal

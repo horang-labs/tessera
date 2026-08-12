@@ -8,6 +8,8 @@ import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type { PreparationStatus } from '@/lib/projects/preparation-status-policy';
+import type { WorkflowStatus } from '@/types/task-entity';
 import type { TerminalInterruptInputPolicy } from '@/lib/cli/providers/types';
 import type {
   TerminalAppearance,
@@ -622,12 +624,23 @@ export type AppServerMessage =
       kind: 'created' | 'updated' | 'deleted' | 'reordered' | 'project_reordered' | 'project_deleted';
       originClientId?: string;
       projectId?: string;
+      sessionId?: string;
+      taskId?: string;
+      archived?: boolean;
+      affectedProjectIds?: string[];
     }
   | {
       type: 'task_mutated';
       kind: 'created' | 'updated' | 'deleted' | 'reordered';
       originClientId?: string;
       projectId: string;
+      taskId?: string;
+      sessionId?: string;
+      title?: string;
+      workflowStatus?: WorkflowStatus;
+      preparationStatus?: PreparationStatus;
+      archived?: boolean;
+      affectedProjectIds?: string[];
     }
   | {
       type: 'collection_mutated';

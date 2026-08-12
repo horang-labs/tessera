@@ -99,7 +99,7 @@ test('Shift range selection includes rendered task sessions missing from the dir
 
   const orderedIds = buildSidebarOrderedSessionIds({
     selectedProjectDir: project.encodedDir,
-    projects: [project],
+    allProjectsSessionIds: [],
     selectedProject: project,
     collectionGroups: [{
       collectionId: null,

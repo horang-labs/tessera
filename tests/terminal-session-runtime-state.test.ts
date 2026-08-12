@@ -13,6 +13,7 @@ import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const SESSION_ID = 'terminal-session-a';
 
@@ -165,7 +166,7 @@ test('PTY UserPromptSubmit marks only the terminal state as processing', () => {
     'single-escape',
   );
   assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
 });
 
 test('live provider integration health projects onto and clears from a running Session', () => {
@@ -175,7 +176,7 @@ test('live provider integration health projects onto and clears from a running S
     integrationHealth: 'degraded',
   });
   assert.equal(
-    useSessionStore.getState().getSession(SESSION_ID)?.integrationHealth,
+    projectViewWorkspaceState.resolveSession(SESSION_ID)?.integrationHealth,
     'degraded',
   );
 
@@ -185,7 +186,7 @@ test('live provider integration health projects onto and clears from a running S
     integrationHealth: null,
   });
   assert.equal(
-    useSessionStore.getState().getSession(SESSION_ID)?.integrationHealth,
+    projectViewWorkspaceState.resolveSession(SESSION_ID)?.integrationHealth,
     undefined,
   );
 });
@@ -288,7 +289,7 @@ test('PTY runtime liveness remains active across completed turns', () => {
     sessionId: SESSION_ID,
     running: true,
   } as ServerTransportMessage);
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
 
   receive({
     type: 'session_state',
@@ -315,14 +316,14 @@ test('PTY runtime liveness remains active across completed turns', () => {
     'completed',
   );
   assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
 
   receive({
     type: 'terminal_session_runtime',
     sessionId: SESSION_ID,
     running: false,
   } as ServerTransportMessage);
-  const stopped = useSessionStore.getState().getSession(SESSION_ID);
+  const stopped = projectViewWorkspaceState.resolveSession(SESSION_ID);
   assert.equal(stopped?.isRunning, false);
   assert.equal(stopped?.status, 'stopped');
 
@@ -334,7 +335,7 @@ test('PTY runtime liveness remains active across completed turns', () => {
     terminalId: `session-${SESSION_ID}`,
     running: true,
   } as ServerTransportMessage);
-  const reopened = useSessionStore.getState().getSession(SESSION_ID);
+  const reopened = projectViewWorkspaceState.resolveSession(SESSION_ID);
   assert.equal(reopened?.id, SESSION_ID);
   assert.equal(reopened?.isRunning, true);
   assert.equal(reopened?.status, 'running');
@@ -342,21 +343,42 @@ test('PTY runtime liveness remains active across completed turns', () => {
 
 test('session stop updates a linked Session that only exists in the Task projection', () => {
   const task = taskProjectionSession(true);
+  const tabId = 'task-only-gui-tab';
+  const panelId = 'task-only-gui-panel';
+  task.sessions[0] = { ...task.sessions[0], kind: 'chat' };
   useSessionStore.setState({ projects: [project()] });
   useTaskStore.setState({
     tasks: [task],
     tasksByProject: { '/workspace': [task] },
     currentProjectId: '/workspace',
   });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
 
   receive({ type: 'session_stopped', sessionId: SESSION_ID });
 
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID), undefined);
+  const stopped = projectViewWorkspaceState.resolveSession(SESSION_ID);
+  assert.equal(stopped?.isRunning, false);
+  assert.equal(stopped?.status, 'completed');
   assert.equal(useTaskStore.getState().getTaskBySessionId(SESSION_ID)?.sessions[0]?.isRunning, false);
   assert.equal(
     useTaskStore.getState().tasksByProject['/workspace']?.[0]?.sessions[0]?.isRunning,
     false,
   );
+  assert.equal(useTabStore.getState().findSessionSurface(SESSION_ID), null);
 });
 
 test('PTY runtime exit closes a retained single-panel session tab', () => {
@@ -505,8 +527,8 @@ test('PTY session rebound keeps the panel and transfers its session ownership at
     useTabStore.getState().findSessionLocation(childSessionId),
     { tabId, panelId },
   );
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, false);
-  assert.equal(useSessionStore.getState().getSession(childSessionId)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, false);
+  assert.equal(projectViewWorkspaceState.resolveSession(childSessionId)?.isRunning, true);
 });
 
 test('PTY session rebound transfers an in-flight turn to the destination menu row', () => {
@@ -1236,8 +1258,8 @@ test('starting the fork parent in another terminal does not cancel the original 
 
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
   assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
-  assert.equal(useSessionStore.getState().getSession(childSessionId)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(childSessionId)?.isRunning, true);
 });
 
 test('reconnect snapshot cancels a stale pending rebound omitted by the server', async (t) => {
@@ -1525,7 +1547,7 @@ test('a running hook state is kept even while the session list still reads stale
   // 세션 목록(HTTP)이 낡아 isRunning=false인 동안 hook의 running이 먼저 도착하는
   // 실측 시나리오 — runtime 종료 신호를 받은 적이 없으므로 버려선 안 된다.
   // (버리면 session_state는 재전송이 없어 다음 hook 이벤트까지 스피너가 영영 없다.)
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, false);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, false);
 
   receive({
     type: 'session_state',
@@ -1759,7 +1781,7 @@ test('new PTY sessions are stopped until their terminal is opened', () => {
     provider: 'claude-code',
   });
 
-  const created = useSessionStore.getState().getSession('new-terminal-session');
+  const created = projectViewWorkspaceState.resolveSession('new-terminal-session');
   assert.equal(created?.projectDir, '/workspace-project');
   assert.equal(created?.originProjectId, '/workspace-project');
   assert.equal(created?.isRunning, false);
@@ -1799,13 +1821,13 @@ test('PTY runtime snapshot reconciles sessions after a WebSocket reconnect', () 
     activeSessionIds: [SESSION_ID],
   } as ServerTransportMessage);
 
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
   assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
   assert.equal(
     useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
     'running',
   );
-  const inactive = useSessionStore.getState().getSession(inactiveSessionId);
+  const inactive = projectViewWorkspaceState.resolveSession(inactiveSessionId);
   assert.equal(inactive?.isRunning, false);
   assert.equal(inactive?.status, 'stopped');
   assert.notEqual(
@@ -1838,7 +1860,7 @@ test('PTY runtime snapshot received before project loading keeps the menu runnin
   }));
   await loading;
 
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
 });
 
 test('GUI runtime start received during project loading keeps the menu running state', async (t) => {
@@ -1867,7 +1889,7 @@ test('GUI runtime start received during project loading keeps the menu running s
   }));
   await loading;
 
-  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(guiSessionId)?.isRunning, true);
 });
 
 test('GUI runtime snapshot clears stale menu running state after reconnect', () => {
@@ -1882,7 +1904,7 @@ test('GUI runtime snapshot clears stale menu running state after reconnect', () 
     titleGeneratingSessionIds: [],
   });
 
-  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, false);
+  assert.equal(projectViewWorkspaceState.resolveSession(guiSessionId)?.isRunning, false);
 });
 
 test('GUI runtime event received during reconnect outranks the initial snapshot', () => {
@@ -1901,5 +1923,5 @@ test('GUI runtime event received during reconnect outranks the initial snapshot'
     titleGeneratingSessionIds: [],
   });
 
-  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(guiSessionId)?.isRunning, true);
 });

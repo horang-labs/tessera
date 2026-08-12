@@ -129,6 +129,7 @@ function renderLinkedWorktree(sessionIds: string[]): string {
     onDragEnd: () => {},
     onDragOverItem: () => {},
     onAddSession: () => {},
+    onSessionArchive: () => {},
   }));
 }
 
@@ -162,6 +163,22 @@ test('provider-enabled composite rows keep both agent and Worktree identity', ()
   const composite = renderLinkedWorktree(['one']);
   assert.match(composite, /collection-task-agent-icon-task-1/);
   assert.match(composite, /collection-task-worktree-icon-task-1/);
+});
+
+test('adaptive Worktree rows distinguish Session archive from Worktree Task archive', () => {
+  const standalone = renderLinkedWorktree([]);
+  assert.match(standalone, /data-testid="collection-task-quick-archive-task-0"/);
+  assert.match(standalone, /title="Archive worktree task"/);
+
+  const composite = renderLinkedWorktree(['one']);
+  assert.match(composite, /data-testid="collection-session-quick-archive-one"/);
+  assert.match(composite, /title="Archive session"/);
+  assert.doesNotMatch(composite, /collection-task-quick-archive-task-1/);
+
+  const expanded = renderLinkedWorktree(['one', 'two']);
+  assert.match(expanded, /data-testid="collection-task-quick-archive-task-2"/);
+  assert.match(expanded, /title="Archive worktree task"/);
+  assert.match(expanded, /data-testid="collection-subsession-quick-archive-one"/);
 });
 
 test('direct Project Worktree Sessions keep their chat identity', () => {

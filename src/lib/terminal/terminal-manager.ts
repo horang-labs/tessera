@@ -1463,7 +1463,7 @@ export class TerminalManager {
         waiters.add(waiter);
         this.sessionWaiters.set(sessionKey, waiters);
       });
-      this.closeRuntime(runtime);
+      this.closeRuntime(runtime, true);
       return await exited;
     } finally {
       this.blockedSessions.delete(sessionKey);
@@ -1683,7 +1683,7 @@ export class TerminalManager {
     await this.close(terminalId, userId);
   }
 
-  private closeRuntime(runtime: TerminalRuntime): void {
+  private closeRuntime(runtime: TerminalRuntime, keepProcessAlive = false): void {
     if (runtime.ended || runtime.closing) return;
     const { terminalId, userId } = runtime;
     runtime.closing = true;
@@ -1708,6 +1708,7 @@ export class TerminalManager {
         runtime,
         key,
         this.managerOptions.closeExitGraceMs ?? CLOSE_EXIT_GRACE_MS,
+        keepProcessAlive,
       );
     }
   }
@@ -1738,7 +1739,12 @@ export class TerminalManager {
     runtime.automatedResponseCandidate = undefined;
   }
 
-  private scheduleCloseWatchdog(runtime: TerminalRuntime, key: string, delayMs: number): void {
+  private scheduleCloseWatchdog(
+    runtime: TerminalRuntime,
+    key: string,
+    delayMs: number,
+    keepProcessAlive: boolean,
+  ): void {
     if (runtime.closeWatchdog) clearTimeout(runtime.closeWatchdog);
     runtime.closeWatchdog = setTimeout(() => {
       runtime.closeWatchdog = undefined;
@@ -1765,9 +1771,13 @@ export class TerminalManager {
         runtime,
         key,
         this.managerOptions.closeExitPollMs ?? CLOSE_EXIT_POLL_MS,
+        keepProcessAlive,
       );
     }, Math.max(0, delayMs));
-    runtime.closeWatchdog.unref?.();
+    // An explicitly awaited Session stop must reach an observable exit even in
+    // a short-lived command/test process. Fire-and-forget surface closes keep
+    // the historical unref behavior so a stuck PTY cannot own server shutdown.
+    if (!keepProcessAlive) runtime.closeWatchdog.unref?.();
   }
 
   private finalizeRuntimeExit(

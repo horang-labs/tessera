@@ -10,6 +10,7 @@ import { useCollectionStore } from '@/stores/collection-store';
 import { COLLECTION_ITEM_DND_MIME, COLLECTION_GROUP_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
 import { setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 /**
  * useCollectionDnd
@@ -110,7 +111,7 @@ export function useCollectionDnd(): UseCollectionDndReturn {
     const selStore = useSelectionStore.getState();
     // For tasks, the selection store uses session IDs — resolve the primary session ID for matching
     const sessionId = type === 'chat' ? id : (() => {
-      const task = useTaskStore.getState().getTask(id);
+      const task = projectViewWorkspaceState.resolveTask(id, projectId);
       return task?.sessions[0]?.id ?? null;
     })();
     const isMulti = selStore.selectedIds.size > 1 && sessionId != null && selStore.selectedIds.has(sessionId);
@@ -370,14 +371,19 @@ export function useCollectionDnd(): UseCollectionDndReturn {
       const taskStore = useTaskStore.getState();
 
       for (const sessionId of multiSessionIds) {
-        const session = useSessionStore.getState().getSession(sessionId);
-        if (session && session.projectDir !== targetProjectId) continue;
-
-        const task = taskStore.getTaskBySessionId(sessionId);
+        const session = projectViewWorkspaceState.resolveSession(sessionId, targetProjectId);
+        const task = projectViewWorkspaceState.resolveTaskBySessionId(
+          sessionId,
+          targetProjectId,
+        );
         if (task) {
-          taskStore.updateTask(task.id, { collectionId: targetCollectionId });
-        } else {
-          useSessionStore.getState().updateSessionCollection(sessionId, targetCollectionId);
+          taskStore.updateTask(task.id, { collectionId: targetCollectionId }, targetProjectId);
+        } else if (session) {
+          useSessionStore.getState().updateSessionCollection(
+            sessionId,
+            targetCollectionId,
+            targetProjectId,
+          );
         }
       }
       useSelectionStore.getState().clearSelection();
@@ -385,16 +391,16 @@ export function useCollectionDnd(): UseCollectionDndReturn {
     } else if (sourceCollectionId !== targetCollectionId) {
       // Single-item move to different collection (optimistic)
       if (type === 'task') {
-        useTaskStore.getState().updateTask(id, { collectionId: targetCollectionId });
+        useTaskStore.getState().updateTask(id, { collectionId: targetCollectionId }, targetProjectId);
       } else {
-        useSessionStore.getState().updateSessionCollection(id, targetCollectionId);
+        useSessionStore.getState().updateSessionCollection(id, targetCollectionId, targetProjectId);
       }
       useBoardStore.getState().flashDrop(id);
     } else if (indicator) {
       // Same collection — reorder within collection
       if (type === 'task') {
         const taskStore = useTaskStore.getState();
-        const draggingTask = taskStore.getTask(id);
+        const draggingTask = projectViewWorkspaceState.resolveTask(id, targetProjectId);
         if (!draggingTask) {
           useBoardStore.getState().setDraggingCollectionItem(null);
           useBoardStore.getState().setDragOverCollection(null);
@@ -403,7 +409,7 @@ export function useCollectionDnd(): UseCollectionDndReturn {
         }
 
         const colTasks = taskStore
-          .getTasksForProject(draggingTask.projectViewId)
+          .getTasksForProject(targetProjectId)
           .filter((t) => (t.collectionId ?? null) === (targetCollectionId ?? null))
           .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
         const ids = colTasks.map((t) => t.id);
@@ -412,26 +418,27 @@ export function useCollectionDnd(): UseCollectionDndReturn {
         if (targetIdx !== -1) {
           const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
           filtered.splice(insertIdx, 0, id);
-          taskStore.reorderTasks(filtered, draggingTask.projectViewId);
+          taskStore.reorderTasks(filtered, targetProjectId);
           useBoardStore.getState().flashDrop(id);
         }
       } else {
         // Chat session reorder
         const sessionStore = useSessionStore.getState();
-        const project = sessionStore.projects.find((p) => p.encodedDir === targetProjectId);
-        if (project) {
-          const colChats = project.sessions
-            .filter((s) => !s.archived && (s.collectionId ?? null) === (targetCollectionId ?? null) && !s.taskId)
-            .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-          const ids = colChats.map((s) => s.id);
-          const filtered = ids.filter((sid) => sid !== id);
-          const targetIdx = filtered.indexOf(indicator.targetId);
-          if (targetIdx !== -1) {
-            const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
-            filtered.splice(insertIdx, 0, id);
-            sessionStore.reorderSessionsByIds(filtered);
-            useBoardStore.getState().flashDrop(id);
-          }
+        const colChats = projectViewWorkspaceState.getProjectViewSessions(targetProjectId)
+          .filter((session) => (
+            !session.archived
+            && (session.collectionId ?? null) === (targetCollectionId ?? null)
+            && !session.taskId
+          ))
+          .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0));
+        const ids = colChats.map((session) => session.id);
+        const filtered = ids.filter((sessionId) => sessionId !== id);
+        const targetIdx = filtered.indexOf(indicator.targetId);
+        if (targetIdx !== -1) {
+          const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
+          filtered.splice(insertIdx, 0, id);
+          sessionStore.reorderProjectSessions(targetProjectId, filtered);
+          useBoardStore.getState().flashDrop(id);
         }
       }
     }

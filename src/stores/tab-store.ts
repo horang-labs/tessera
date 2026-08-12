@@ -18,6 +18,7 @@ import { PANEL_LAYOUT_STORAGE_KEY } from '@/types/panel';
 import type { PersistedPanelLayout, PanelNode, TabPanelData } from '@/types/panel';
 import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { getSpecialSessionSourceSessionId, isSpecialSession } from '@/lib/constants/special-sessions';
 import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
@@ -66,6 +67,18 @@ function isFileLikeSessionId(sessionId: string | null): boolean {
   return parseWorkspaceFileSessionId(sessionId) !== null
     || parseWorktreeFileSessionId(sessionId) !== null
     || parseMemoryFileSessionId(sessionId) !== null;
+}
+
+function inferSessionWorktreeId(
+  sessionId: string | null | undefined,
+  projectViewId?: string | null,
+): string | null {
+  if (!sessionId || isSpecialSession(sessionId)) return null;
+  const requestedProjectViewId = projectViewId && !isAllProjectsScope(projectViewId)
+    ? projectViewId
+    : undefined;
+  return projectViewWorkspaceState.resolveSession(sessionId, requestedProjectViewId)?.worktreeId
+    ?? null;
 }
 
 function isWorkspaceFilePreviewTab(
@@ -142,7 +155,10 @@ function inferPersistedTabProjectDir(t: PersistedTab, fallbackProjectDir: string
   const activeSessionId = t.snapshot?.panels?.[t.snapshot.activePanelId]?.sessionId ?? null;
   const sourceSessionId = activeSessionId ? getSpecialSessionSourceSessionId(activeSessionId) : null;
   if (sourceSessionId) {
-    return useSessionStore.getState().getSession(sourceSessionId)?.projectDir ?? fallbackProjectDir;
+    return projectViewWorkspaceState.resolveSession(
+      sourceSessionId,
+      fallbackProjectDir ?? undefined,
+    )?.projectDir ?? fallbackProjectDir;
   }
   if (activeSessionId && isSpecialSession(activeSessionId)) return null;
   return fallbackProjectDir;
@@ -151,12 +167,16 @@ function inferPersistedTabProjectDir(t: PersistedTab, fallbackProjectDir: string
 function inferTabProjectDir(initialSessionId: string | null | undefined, currentProjectDir: string | null): string | null {
   const sourceSessionId = initialSessionId ? getSpecialSessionSourceSessionId(initialSessionId) : null;
   if (sourceSessionId) {
-    return useSessionStore.getState().getSession(sourceSessionId, currentProjectDir)?.projectDir ?? null;
+    return projectViewWorkspaceState.resolveSession(sourceSessionId, currentProjectDir ?? undefined)
+      ?.projectDir ?? null;
   }
   if (initialSessionId && isSpecialSession(initialSessionId)) return null;
 
   if (initialSessionId) {
-    const session = useSessionStore.getState().getSession(initialSessionId, currentProjectDir);
+    const session = projectViewWorkspaceState.resolveSession(
+      initialSessionId,
+      currentProjectDir ?? undefined,
+    );
     if (session?.projectDir) return session.projectDir;
   }
 
@@ -201,6 +221,94 @@ function findSessionPanelId(tabData: TabPanelData | undefined, sessionId: string
     if (panel.sessionId === sessionId) return panelId;
   }
   return null;
+}
+
+function addTabDataSessionIds(sessionIds: Set<string>, tabData: TabPanelData | undefined): void {
+  if (!tabData) return;
+  for (const panel of Object.values(tabData.panels)) {
+    if (!panel.sessionId) continue;
+    sessionIds.add(getSpecialSessionSourceSessionId(panel.sessionId) ?? panel.sessionId);
+  }
+}
+
+function getSessionRetirement(
+  tabData: TabPanelData,
+  sessionId: string,
+): { panelIds: string[]; removesTab: boolean } | null {
+  const panelIds = Object.values(tabData.panels)
+    .filter((panel) => (
+      panel.sessionId === sessionId
+      || (panel.sessionId !== null
+        && getSpecialSessionSourceSessionId(panel.sessionId) === sessionId)
+    ))
+    .map((panel) => panel.id);
+  if (panelIds.length === 0) return null;
+  return {
+    panelIds,
+    removesTab: panelIds.length === Object.keys(tabData.panels).length,
+  };
+}
+
+function retireSessionFromSnapshot(
+  tabData: TabPanelData | undefined,
+  sessionId: string,
+): TabPanelData | null | undefined {
+  if (!tabData) return tabData;
+  const retirement = getSessionRetirement(tabData, sessionId);
+  if (!retirement) return tabData;
+  if (retirement.removesTab) return null;
+
+  const matching = new Set(retirement.panelIds);
+  return {
+    ...tabData,
+    panels: Object.fromEntries(Object.entries(tabData.panels).map(([panelId, panel]) => [
+      panelId,
+      matching.has(panelId)
+        ? {
+            ...panel,
+            sessionId: null,
+            worktreeId: null,
+            creationMode: null,
+            terminalId: null,
+            terminalSessionId: null,
+            terminalCwd: null,
+          }
+        : panel,
+    ])),
+  };
+}
+
+function retireSessionFromScopedState(
+  scopedState: ProjectTabState | null,
+  sessionId: string,
+): ProjectTabState | null {
+  if (!scopedState?.tabPanelSnapshots) return scopedState;
+  const tabs: Tab[] = [];
+  const tabPanelSnapshots: Record<string, TabPanelData> = {};
+  let changed = false;
+  for (const tab of scopedState.tabs) {
+    const snapshot = scopedState.tabPanelSnapshots[tab.id];
+    const nextSnapshot = retireSessionFromSnapshot(snapshot, sessionId);
+    if (nextSnapshot === null) {
+      changed = true;
+      continue;
+    }
+    tabs.push(tab);
+    if (nextSnapshot) tabPanelSnapshots[tab.id] = nextSnapshot;
+    if (nextSnapshot !== snapshot) changed = true;
+  }
+  if (!changed) return scopedState;
+  if (tabs.length === 0) return null;
+
+  const activeTabId = tabs.some((tab) => tab.id === scopedState.activeTabId)
+    ? scopedState.activeTabId
+    : tabs[0].id;
+  return {
+    tabs,
+    activeTabId,
+    lruTabIds: normalizeLruForTabs(scopedState.lruTabIds, tabs, activeTabId),
+    tabPanelSnapshots,
+  };
 }
 
 function findSessionSurfaceInState(
@@ -493,7 +601,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     const panelData: TabPanelData = {
       layout: { type: 'leaf' as const, panelId: newPanelId },
       panels: {
-        [newPanelId]: { id: newPanelId, sessionId: initialSessionId ?? null },
+        [newPanelId]: {
+          id: newPanelId,
+          sessionId: initialSessionId ?? null,
+          worktreeId: inferSessionWorktreeId(initialSessionId, projectDir),
+        },
       },
       activePanelId: newPanelId,
     };
@@ -779,7 +891,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     // 선택된 New Tab은 이미 세션을 담기 위한 빈 화면이다. 새 탭을 하나 더
     // 만들지 않고 이 탭을 고정 세션 탭으로 채운다.
     if (tabData?.layout.type === 'leaf' && activePanel?.sessionId === null) {
-      panelStore.assignSession(tabData.activePanelId, sessionId);
+      panelStore.assignSession(
+        tabData.activePanelId,
+        sessionId,
+        inferSessionWorktreeId(sessionId, state.currentProjectDir),
+      );
       get().syncTabProjectFromSession(state.activeTabId, sessionId);
       get().pinTab(state.activeTabId);
       return;
@@ -815,7 +931,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       // 활성 패널의 세션을 교체
       const tabData = panelStore.tabPanels[panelStore.activeTabId];
       if (tabData) {
-        panelStore.assignSession(tabData.activePanelId, sessionId);
+        panelStore.assignSession(
+          tabData.activePanelId,
+          sessionId,
+          inferSessionWorktreeId(sessionId, existingPreview.projectDir),
+        );
         set({ tabs: [...get().tabs] });
       }
     } else {
@@ -826,7 +946,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
       if (activePanel?.sessionId === null) {
         // 빈 패널: 세션 할당 + 현재 탭을 프리뷰로 변환
-        panelStore.assignSession(tabData!.activePanelId, sessionId);
+        panelStore.assignSession(
+          tabData!.activePanelId,
+          sessionId,
+          inferSessionWorktreeId(sessionId, state.currentProjectDir),
+        );
         set({
           tabs: get().tabs.map((tab): Tab =>
             tab.id === state.activeTabId ? { ...tab, isPreview: true } : tab,
@@ -972,6 +1096,24 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     return findSessionSurfaceInState(get(), usePanelStore.getState(), sessionId);
   },
 
+  getSessionSurfaceIds: (): string[] => {
+    const state = get();
+    const panelStore = usePanelStore.getState();
+    const sessionIds = new Set<string>();
+    const materializedTabIds = new Set(Object.keys(panelStore.tabPanels));
+    for (const tabData of Object.values(panelStore.tabPanels)) {
+      addTabDataSessionIds(sessionIds, tabData);
+    }
+    for (const scopedState of [state.globalTabState, ...Object.values(state.projectTabStates)]) {
+      if (!scopedState) continue;
+      for (const tab of scopedState.tabs) {
+        if (materializedTabIds.has(tab.id)) continue;
+        addTabDataSessionIds(sessionIds, scopedState.tabPanelSnapshots?.[tab.id]);
+      }
+    }
+    return [...sessionIds];
+  },
+
   rebindSessionSurface: (previousSessionIds, sessionId, options) => {
     const supersededSessionIds = new Set(
       previousSessionIds.filter((previousSessionId) => previousSessionId !== sessionId),
@@ -1044,19 +1186,30 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   },
 
   retireSessionSurface: (sessionId: string): void => {
-    const location = get().findSessionLocation(sessionId);
-    if (!location) return;
-
     const panelStore = usePanelStore.getState();
-    const tabData = panelStore.tabPanels[location.tabId];
-    if (!tabData) return;
-
-    if (Object.keys(tabData.panels).length === 1) {
-      get().closeTab(location.tabId);
-      return;
+    const materializedTabIds = new Set(get().tabs.map((tab) => tab.id));
+    for (const [tabId, tabData] of Object.entries(panelStore.tabPanels)) {
+      const retirement = getSessionRetirement(tabData, sessionId);
+      if (!retirement) continue;
+      if (retirement.removesTab) {
+        if (materializedTabIds.has(tabId)) get().closeTab(tabId);
+        else panelStore.removeTab(tabId);
+        continue;
+      }
+      for (const panelId of retirement.panelIds) {
+        panelStore.closePanelInTab(tabId, panelId);
+      }
     }
 
-    panelStore.closePanelInTab(location.tabId, location.panelId);
+    const state = get();
+    const projectTabStates = Object.fromEntries(
+      Object.entries(state.projectTabStates).flatMap(([projectDir, projectState]) => {
+        const nextState = retireSessionFromScopedState(projectState, sessionId);
+        return nextState ? [[projectDir, nextState]] : [];
+      }),
+    ) as Record<string, ProjectTabState>;
+    const globalTabState = retireSessionFromScopedState(state.globalTabState, sessionId);
+    set({ projectTabStates, globalTabState });
   },
 
   getActiveTabSnapshot: (): TabSnapshot => {

@@ -1,7 +1,6 @@
 "use client";
 
 import { useSessionStore } from "@/stores/session-store";
-import { useNotificationStore } from "@/stores/notification-store";
 import {
   BOARD_SIDEBAR_DEFAULT_WIDTH,
   BOARD_SIDEBAR_MIN_WIDTH,
@@ -12,6 +11,10 @@ import {
 import { useBoardStore } from "@/stores/board-store";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useCrossWindowUiSync } from "@/hooks/use-cross-window-ui-sync";
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from "@/hooks/use-project-view-workspace-state";
 import { useResize } from "@/hooks/use-resize";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -47,6 +50,7 @@ import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { ALL_PROJECTS_SENTINEL } from "@/lib/constants/project-strip";
 import {
+  resolveCanonicalGitTargetSessionId,
   resolveActiveWorkspaceSessionId,
   resolveVisibleWorkspaceSessionId,
 } from "@/lib/session/active-workspace-session";
@@ -59,6 +63,7 @@ import { findCompositeWorktreeId } from "@/lib/worktrees/linked-worktree-present
 import { WorktreePeek } from "@/components/worktree/worktree-peek";
 import { useWorkspacePeekStore } from "@/stores/workspace-peek-store";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
+import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace-state-client";
 import { PHONE_VIEWPORT_BREAKPOINT } from "@/lib/viewport/phone-viewport";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
@@ -115,6 +120,12 @@ export function ChatLayout() {
   const renderedViewMode = useEffectiveViewMode();
   const peekSessionId = useBoardStore((state) => state.peekSessionId);
   const selectedBoardSessionId = useBoardStore((state) => state.selectedBoardSessionId);
+  const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const selectedBoardSession = useProjectViewSession(
+    selectedBoardSessionId,
+    selectedProjectDir,
+  );
+  const selectedBoardWorktreeId = selectedBoardSession?.worktreeId ?? null;
   const kanbanSessionOpenMode = useSettingsStore(
     (state) => state.settings.kanbanSessionOpenMode,
   );
@@ -155,17 +166,14 @@ export function ChatLayout() {
       });
   const activeGitWorktreeId = peekWorktreeId
     ?? (isKanbanPeekMode && selectedBoardSessionId
-      ? null
+      ? selectedBoardWorktreeId
       : activePanelWorktreeId ?? compositeWorktreeId);
-  const activeGitTargetSessionId = peekWorktreeId || activeGitSessionId?.startsWith('temp-')
-    ? null
-    : activeGitSessionId;
+  const activeGitTargetSessionId = resolveCanonicalGitTargetSessionId({
+    activeSessionId: activeGitSessionId,
+    peekWorktreeId,
+  });
 
-  const markSessionAsRead = useNotificationStore(
-    (state) => state.markSessionAsRead,
-  );
   const sidebarCollapsed = useSettingsStore((state) => state.sidebarCollapsed);
-  const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const sidebarWidth = useSettingsStore(
     (state) => state.getSidebarWidth(viewMode, selectedProjectDir),
   );
@@ -174,7 +182,7 @@ export function ChatLayout() {
     (state) => state.setSidebarCollapsed,
   );
   const setSidebarWidth = useSettingsStore((state) => state.setSidebarWidth);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const gitPanelWidth = useGitStore((state) => state.panelWidth);
   const setGitPanelWidth = useGitStore((state) => state.setPanelWidth);
@@ -460,9 +468,9 @@ export function ChatLayout() {
 
   useEffect(() => {
     if (visibleWorkspaceSessionId) {
-      markSessionAsRead(visibleWorkspaceSessionId);
+      projectViewWorkspaceState.markSessionRead(visibleWorkspaceSessionId);
     }
-  }, [markSessionAsRead, visibleWorkspaceSessionId]);
+  }, [visibleWorkspaceSessionId]);
 
   // Bridge Effect: sync activeSessionId from session-store → panel-store.
   useEffect(
@@ -522,7 +530,7 @@ export function ChatLayout() {
       }
       const tabStore = useTabStore.getState();
       const location = tabStore.findSessionLocation(sessionId);
-      const session = useSessionStore.getState().getSession(sessionId);
+      const session = projectViewWorkspaceState.resolveSession(sessionId);
       const shouldPin = action === 'pin'
         || (session ? resolveSessionTabOpenMode(session) === 'pinned' : false);
       if (shouldPin) {

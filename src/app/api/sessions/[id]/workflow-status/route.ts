@@ -57,6 +57,7 @@ export async function PATCH(
     broadcastSessionMutation(auth.userId, {
       kind: 'updated',
       projectId: session.project_id,
+      sessionId: id,
       originClientId: getOriginClientIdFromRequest(req),
     });
     return NextResponse.json({ ok: true });

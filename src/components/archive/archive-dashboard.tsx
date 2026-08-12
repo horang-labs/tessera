@@ -16,9 +16,13 @@ import { useI18n } from '@/lib/i18n';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
 import { useSessionStore } from '@/stores/session-store';
-import { useTaskStore } from '@/stores/task-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import {
+  projectViewWorkspaceState,
+  refreshProjectViewWorkspaceMutation,
+} from '@/lib/projects/project-view-workspace-state-client';
 import type { UnifiedSession } from '@/types/chat';
+import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import type { ArchiveItem, ArchiveProjectOption } from '@/lib/archive/archive-service';
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
@@ -84,7 +88,7 @@ function primarySessionFromItem(item: ArchiveItem): UnifiedSession | null {
   return {
     id: session.id,
     title: session.title,
-    projectDir: item.projectId,
+    projectDir: item.workDir ?? item.projectId,
     originProjectId: item.projectId,
     isRunning: session.isRunning,
     status: session.isRunning ? 'running' : 'completed',
@@ -97,9 +101,47 @@ function primarySessionFromItem(item: ArchiveItem): UnifiedSession | null {
     workDir: item.workDir,
     worktreeDeletedAt: item.worktreeDeletedAt,
     workflowStatus: item.workflowStatus as UnifiedSession['workflowStatus'],
-    taskId: item.kind === 'task' ? item.id : undefined,
+    taskId: item.kind === 'task' ? item.id : item.taskId,
     collectionId: item.collectionId,
     sortOrder: 0,
+  };
+}
+
+function taskSessionFromArchiveItem(
+  session: ArchiveItem['sessions'][number],
+  projectId: string,
+): TaskSession {
+  return {
+    id: session.id,
+    originProjectId: projectId,
+    title: session.title,
+    provider: session.provider,
+    lastModified: session.lastModified,
+    isRunning: session.isRunning,
+    sortOrder: 0,
+  };
+}
+
+function taskFromArchiveItem(item: ArchiveItem): TaskEntity {
+  return {
+    id: item.id,
+    worktreeId: item.worktreeId,
+    projectId: item.projectId,
+    projectViewId: item.projectId,
+    title: item.title,
+    collectionId: item.collectionId,
+    workflowStatus: (item.workflowStatus ?? 'todo') as WorkflowStatus,
+    worktreeBranch: item.worktreeBranch,
+    workDir: item.workDir,
+    worktreeManaged: item.worktreeManaged,
+    archived: false,
+    worktreeDeletedAt: item.worktreeDeletedAt,
+    sortOrder: 0,
+    sessions: item.sessions
+      .filter((session) => !session.archived)
+      .map((session) => taskSessionFromArchiveItem(session, item.projectId)),
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
   };
 }
 
@@ -244,27 +286,57 @@ export function ArchiveDashboard() {
   }, [handleSessionClick]);
 
   const restoreItem = useCallback(async (item: ArchiveItem) => {
+    const restoredSession = primarySessionFromItem(item);
+    const rollbackWorkspace = item.kind === 'task'
+      ? projectViewWorkspaceState.applyTaskRestoreMutation({
+          task: taskFromArchiveItem(item),
+          affectedProjectIds: item.affectedProjectIds,
+        })
+      : restoredSession
+        ? projectViewWorkspaceState.applySessionRestoreMutation({
+            session: restoredSession,
+            taskSession: taskSessionFromArchiveItem(item.sessions[0], item.projectId),
+            affectedProjectIds: item.affectedProjectIds,
+          })
+        : undefined;
     const endpoint = item.kind === 'task'
       ? `/api/archive/tasks/${item.id}`
       : `/api/sessions/${item.id}/archive`;
-    const res = await fetchWithClientId(endpoint, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ archived: false }),
-    });
+    let res: Response;
+    try {
+      res = await fetchWithClientId(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: false }),
+      });
+    } catch {
+      rollbackWorkspace?.();
+      setError(t('archive.errors.restoreFailed'));
+      return;
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
+      rollbackWorkspace?.();
       setError(body.error ?? t('archive.errors.restoreFailed'));
       return;
     }
-    await Promise.all([
-      loadArchive(),
-      useSessionStore.getState().loadProjects(),
-    ]);
-    // A restored chat that belongs to a task rejoins its task's session list, so
-    // the task cache has to be refreshed for those too.
-    if (item.kind === 'task' || item.sharedWorktree) {
-      await useTaskStore.getState().loadTasks(item.projectId, { setCurrent: false });
+    const result = await res.json().catch(() => ({})) as {
+      taskId?: string;
+      affectedProjectIds?: string[];
+    };
+    try {
+      await Promise.all([
+        loadArchive(),
+        refreshProjectViewWorkspaceMutation({
+          projectId: item.projectId,
+          sessionId: item.kind === 'chat' ? item.id : undefined,
+          taskId: item.kind === 'task' ? item.id : result.taskId,
+          affectedProjectIds: result.affectedProjectIds ?? item.affectedProjectIds,
+        }),
+      ]);
+    } catch (error) {
+      console.error(error);
+      setError(t('archive.errors.loadFailed'));
     }
   }, [loadArchive, t]);
 

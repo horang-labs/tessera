@@ -3,7 +3,7 @@ import { wsClient } from '@/lib/ws/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import { notifyProviderSessionStarted } from '@/lib/cli/provider-skill-onboarding';
 import type { ContentBlock, SessionSpawnConfig } from '@/lib/ws/message-types';
@@ -33,7 +33,7 @@ export function useWebSocket() {
       spawnConfig?: SessionSpawnConfig,
       options?: { forceTranslateInput?: boolean },
     ) => {
-      const session = useSessionStore.getState().getSession(sessionId);
+      const session = projectViewWorkspaceState.resolveSession(sessionId);
       const providerId = session?.provider?.trim();
       wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
       if (providerId) notifyProviderSessionStarted(providerId, session?.hasStarted === true);

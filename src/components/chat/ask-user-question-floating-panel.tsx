@@ -9,6 +9,7 @@ import {
   getOptionKey,
 } from '@/hooks/use-ask-user-question';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import {
@@ -41,7 +42,7 @@ export function AskUserQuestionFloatingPanel({
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const { sendInteractiveResponse } = useWebSocket();
-  const providerId = useSessionStore((state) => state.getSession(sessionId)?.provider);
+  const providerId = useProjectViewSession(sessionId)?.provider;
   const providerBrand = getProviderBrand(providerId);
 
   const density = usePromptDensityStore((s) => s.density);

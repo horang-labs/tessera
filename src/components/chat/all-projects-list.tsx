@@ -9,6 +9,7 @@ import { useBoardStore } from '@/stores/board-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useCollectionDnd } from '@/hooks/use-collection-dnd';
+import { useOriginProjectRepresentation } from '@/hooks/use-project-view-workspace-state';
 import { CollectionGroup } from './collection-group';
 import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import { getProjectColor } from '@/lib/constants/project-strip';
@@ -22,7 +23,6 @@ import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
 import {
-  buildOriginProjectRepresentation,
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
 import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
@@ -59,12 +59,7 @@ export function AllProjectsList({
   onSessionStopProcess,
   onChatStatusChange,
 }: AllProjectsListProps) {
-  const projects = useSessionStore((state) => state.projects);
-  const tasksByProject = useTaskStore((state) => state.tasksByProject);
-  const representation = useMemo(
-    () => buildOriginProjectRepresentation(projects, tasksByProject),
-    [projects, tasksByProject],
-  );
+  const representation = useOriginProjectRepresentation();
   const visibleProjects = useMemo(() => {
     if (!isRunningFilterActive) return representation.projects;
     return representation.projects.filter((project) => originProjectContainsRunningSession(
@@ -188,8 +183,11 @@ function AllProjectSection({
   }, [isRunningFilterActive, visibleCollectionGroups]);
 
   const visibleSessionCount = useMemo(
-    () => project.sessions.filter((session) => !session.archived).length,
-    [project.sessions]
+    () => new Set(collectionGroups.flatMap((group) => [
+      ...group.chats.map((session) => session.id),
+      ...group.tasks.flatMap((task) => task.sessions.map((session) => session.id)),
+    ])).size,
+    [collectionGroups],
   );
   const runningSessionCount = useMemo(
     () => countRunningCollectionGroupItems(collectionGroups),

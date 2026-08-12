@@ -32,7 +32,7 @@ import {
   useWorkspaceFilesLiveSync,
 } from "@/hooks/use-workspace-files-live-sync";
 import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
-import { useSessionStore } from "@/stores/session-store";
+import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
 import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
 import {
@@ -70,6 +70,10 @@ import {
   repointWorkspaceFileTabs,
 } from "@/lib/workspace-tabs/workspace-tab-sync";
 import { cn } from "@/lib/utils";
+import {
+  buildWorkspacePathContextMenuState,
+  type WorkspacePathContextMenuState,
+} from '@/lib/workspace-files/workspace-context-menu-state';
 
 interface WorkspaceFileNode {
   type: "file";
@@ -88,13 +92,7 @@ interface WorkspaceDirectoryNode {
 
 type WorkspaceTreeNode = WorkspaceDirectoryNode | WorkspaceFileNode;
 
-interface PathContextMenuState {
-  absolutePath: string;
-  canOpenFile: boolean;
-  /** The row it was opened on, or null for the panel's empty background. */
-  node: WorkspaceTreeNode | null;
-  position: { x: number; y: number };
-}
+type PathContextMenuState = WorkspacePathContextMenuState<WorkspaceTreeNode>;
 
 interface MutableDirectoryNode {
   name: string;
@@ -231,10 +229,9 @@ export function WorkspaceFilePanel({
   const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
   const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
   // The sessions/[id]/files route scopes Project View references by projectId;
-  // resolve it from the session store so the panel can list files at all.
-  const sessionProjectDir = useSessionStore((state) =>
-    sessionId ? state.getSession(sessionId)?.projectDir ?? null : null,
-  );
+  // resolve it from canonical workspace state so linked Task-only Sessions can
+  // list files too.
+  const sessionProjectDir = useProjectViewSession(sessionId)?.projectDir ?? null;
   const {
     directories,
     error,
@@ -442,28 +439,32 @@ export function WorkspaceFilePanel({
     node: WorkspaceTreeNode,
     absolutePath: string | null,
   ) {
-    if (!absolutePath) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setContextMenu({
+    const nextContextMenu = buildWorkspacePathContextMenuState({
       absolutePath,
       canOpenFile: true,
       node,
-      position: { x: event.clientX, y: event.clientY },
+      x: event.clientX,
+      y: event.clientY,
     });
+    if (!nextContextMenu) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu(nextContextMenu);
   }
 
   /** Right-click past the last row: the actions that need no row. */
   function openBackgroundContextMenu(event: MouseEvent) {
     const rootPath = toAbsoluteWorkspacePath(workDir, "");
-    if (!rootPath) return;
-    event.preventDefault();
-    setContextMenu({
+    const nextContextMenu = buildWorkspacePathContextMenuState<WorkspaceTreeNode>({
       absolutePath: rootPath,
       canOpenFile: false,
       node: null,
-      position: { x: event.clientX, y: event.clientY },
+      x: event.clientX,
+      y: event.clientY,
     });
+    if (!nextContextMenu) return;
+    event.preventDefault();
+    setContextMenu(nextContextMenu);
   }
 
   /** A folder takes its contents with it; a file may take an unsaved draft. */

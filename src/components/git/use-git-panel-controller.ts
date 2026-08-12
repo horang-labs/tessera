@@ -8,10 +8,13 @@ import {
   type GitPendingVerb,
 } from "@/stores/git-panel-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
+import { isOptimisticSessionId } from '@/lib/session/session-id';
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
 import { useGitStore } from "@/stores/git-store";
 import { useChatStore } from "@/stores/chat-store";
+import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace-state-client";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
@@ -64,10 +67,6 @@ import type { WorkspaceTarget } from '@/types/worktree';
 // Optimistic session IDs created by use-session-crud.ts before the server
 // responds with the real id. These never exist in the server DB, so any
 // /git fetch against them would 404 with "Session not found".
-function isTransientSessionId(id: string | null): boolean {
-  return typeof id === "string" && id.startsWith("temp-");
-}
-
 interface GitPanelSessionCacheEntry {
   diffCache: Record<string, GitDiffData>;
   selectedPath: string | null;
@@ -192,7 +191,7 @@ export function useGitPanelController(
     (state) => state.setActionFailure,
   );
   const [loading, setLoading] = useState(() => {
-    if (!target || (sessionId && isTransientSessionId(sessionId))) return false;
+    if (!target || isOptimisticSessionId(sessionId)) return false;
     return !useGitPanelStore.getState().dataBySessionId[targetKey!];
   });
   const previousSessionIdRef = useRef(sessionId);
@@ -265,9 +264,7 @@ export function useGitPanelController(
   const actionFailure = delivery?.actionFailure ?? null;
   const lastDiffStatsTokenRef = useRef<string | null>(null);
 
-  const sessionSnapshot = useSessionStore((state) =>
-    sessionId ? state.getSession(sessionId) : undefined,
-  );
+  const sessionSnapshot = useProjectViewSession(sessionId);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const taskSnapshot = useTaskStore((state) =>
     sessionId ? state.getTaskBySessionId(sessionId) : undefined,
@@ -282,7 +279,7 @@ export function useGitPanelController(
   const loadPanel = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
 
-    if (!target || !targetKey || (sessionId && isTransientSessionId(sessionId))) {
+    if (!target || !targetKey || isOptimisticSessionId(sessionId)) {
       setError(null);
       setLoading(false);
       return;
@@ -373,7 +370,7 @@ export function useGitPanelController(
     // ago; answering it here would push a different session's branch.
     setPushConfirmation(null);
 
-    if (!target || !targetKey || (sessionId && isTransientSessionId(sessionId))) {
+    if (!target || !targetKey || isOptimisticSessionId(sessionId)) {
       setLoading(false);
       return;
     }
@@ -381,9 +378,9 @@ export function useGitPanelController(
     const hasStoreData = Boolean(
       useGitPanelStore.getState().dataBySessionId[targetKey],
     );
-    const resolvedOptimisticSession = isTransientSessionId(previousSessionId)
+    const resolvedOptimisticSession = isOptimisticSessionId(previousSessionId)
       && Boolean(sessionId)
-      && !isTransientSessionId(sessionId);
+      && !isOptimisticSessionId(sessionId);
     const resolvedWorktreeSessionFromEmptyTarget = previousSessionId === null
       && Boolean(sessionId)
       && Boolean(worktreeId);
@@ -412,7 +409,7 @@ export function useGitPanelController(
       // Ask the server to re-probe git state + PR status (covers work done
       // outside Tessera — CLI push, external gh pr create, etc.). Don't await:
       // the WS broadcast and the loadPanel re-read below converge the UI.
-      if (sessionId && !isTransientSessionId(sessionId)) {
+      if (sessionId && !isOptimisticSessionId(sessionId)) {
         void fetch(
           `/api/sessions/${encodeURIComponent(sessionId)}/refresh-git`,
           { method: "POST" },
@@ -439,7 +436,7 @@ export function useGitPanelController(
    * the push confirmation (§8), the pull rung and the pull-request rung.
    */
   useEffect(() => {
-    if (!target || !targetKey || (sessionId && isTransientSessionId(sessionId))) return;
+    if (!target || !targetKey || isOptimisticSessionId(sessionId)) return;
     if (typeof document === "undefined" || typeof window === "undefined") return;
 
     return startGitPanelPolling({
@@ -760,7 +757,7 @@ export function useGitPanelController(
       const result = await revalidateGitConflictHandoff(
         panelData,
         () => ({
-          session: useSessionStore.getState().getSession(sessionId),
+          session: projectViewWorkspaceState.resolveSession(sessionId),
           connectionStatus: useChatStore.getState().connectionStatus,
         }),
         () => readGitPanelState(sessionId),

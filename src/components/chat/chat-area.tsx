@@ -4,6 +4,7 @@ import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } f
 import { selectIsTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionNavigation } from "@/hooks/use-session-navigation";
+import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { useWindowedMessages } from "@/hooks/use-windowed-messages";
 import { useMessageSearch } from "@/hooks/use-message-search";
 import { groupMessages } from "@/lib/chat/group-messages";
@@ -82,7 +83,7 @@ export const ChatArea = memo(function ChatArea({
       || Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length <= 1,
   );
 
-  const session = useSessionStore((state) => state.getSession(sessionId, projectViewDir));
+  const session = useProjectViewSession(sessionId, projectViewDir);
   // 생성 중(낙관적 temp 세션): 서버 세션이 아직 없어서 PTY attach가 불가능하다 —
   // TerminalPanel을 붙이면 존재하지 않는 세션으로 terminal_create가 나가 에러가 뜬다.
   // 전역 creatingSessionId 슬롯은 동시 생성 시 덮여서 믿을 수 없다 — temp- 접두가

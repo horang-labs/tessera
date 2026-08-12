@@ -42,14 +42,34 @@ function sessionlessWorktree(): TaskEntity {
   };
 }
 
-test('selected Project Kanban renders direct Sessions as Chat cards and linked Worktrees as cards', () => {
+function linkedWorktree(session: UnifiedSession): TaskEntity {
+  return {
+    ...sessionlessWorktree(),
+    id: 'linked-summary',
+    worktreeId: 'wt_linked_summary',
+    title: 'Linked Summary',
+    sessions: [{
+      id: session.id,
+      originProjectId: session.originProjectId,
+      title: session.title,
+      lastModified: session.lastModified,
+      isRunning: session.isRunning,
+      sortOrder: session.sortOrder,
+    }],
+  };
+}
+
+test('selected Project Kanban renders each linked Session only through its Worktree card', () => {
+  const linkedSummary = directSession('summary-only-session', 'project-a');
+  linkedSummary.taskId = 'linked-summary';
   const sessions = [
     directSession('canonical-c-session', 'project-a'),
     directSession('direct-c-session', 'project-c'),
+    linkedSummary,
   ];
   const items = selectKanbanProjectionItems({
     sessions,
-    tasks: [sessionlessWorktree()],
+    tasks: [sessionlessWorktree(), linkedWorktree(linkedSummary)],
   }, null);
   const chatMarkup = items.chats.map((session) => renderToStaticMarkup(createElement(
     KanbanChatCard,
@@ -74,6 +94,11 @@ test('selected Project Kanban renders direct Sessions as Chat cards and linked W
   assert.match(markup, /canonical-c-session/);
   assert.match(markup, /direct-c-session/);
   assert.match(markup, /Descendant D/);
+  assert.match(markup, /Linked Summary/);
+  assert.deepEqual(items.chats.map((session) => session.id), [
+    'canonical-c-session',
+    'direct-c-session',
+  ]);
   assert.equal((markup.match(/kanban-chat-bubble-/g) ?? []).length, 2);
-  assert.equal((markup.match(/data-testid="kanban-card"/g) ?? []).length, 3);
+  assert.equal((markup.match(/data-testid="kanban-card"/g) ?? []).length, 4);
 });

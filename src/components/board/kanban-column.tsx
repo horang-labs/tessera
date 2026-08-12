@@ -23,6 +23,7 @@ import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import { CollectionQuickCreateSheet } from '@/components/chat/collection-quick-create-sheet';
 import { KanbanChatCard, KanbanTaskCard } from './kanban-card';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 type KanbanQuickCreateColumn = 'chat' | WorkflowStatus;
 export type KanbanColumnInteractionMode = 'editable' | 'filtered';
@@ -361,6 +362,8 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
 
 interface KanbanWorkflowColumnProps {
   status: WorkflowStatus;
+  /** The Project View currently on screen; null only for unfiltered All Projects. */
+  projectViewId: string | null;
   tasks: TaskEntity[];
   chats: UnifiedSession[];
   collection: Collection | null;
@@ -396,6 +399,7 @@ interface KanbanWorkflowColumnProps {
 
 export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   status,
+  projectViewId,
   tasks,
   chats,
   collection,
@@ -472,9 +476,14 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       return;
     }
 
-    const taskStore = useTaskStore.getState();
-    const draggingTask = taskStore.getTask(draggingTaskId);
-    const targetTask = taskStore.getTask(taskId);
+    const draggingTask = projectViewWorkspaceState.resolveTask(
+      draggingTaskId,
+      projectViewId ?? undefined,
+    );
+    const targetTask = projectViewWorkspaceState.resolveTask(
+      taskId,
+      projectViewId ?? undefined,
+    );
     if (!draggingTask || !targetTask) {
       if (useBoardStore.getState().dropIndicator) {
         useBoardStore.getState().setDropIndicator(null);
@@ -482,7 +491,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       return;
     }
 
-    if (draggingTask.projectId !== targetTask.projectId) {
+    if (draggingTask.projectViewId !== targetTask.projectViewId) {
       if (useBoardStore.getState().dropIndicator) {
         useBoardStore.getState().setDropIndicator(null);
       }
@@ -510,7 +519,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     if (current?.targetSessionId !== taskId || current.position !== position) {
       useBoardStore.getState().setDropIndicator({ targetSessionId: taskId, position });
     }
-  }, [status]);
+  }, [projectViewId, status]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (
@@ -561,10 +570,14 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     const taskId = e.dataTransfer.getData(TASK_ENTITY_DND_MIME);
     const chatSessionId = e.dataTransfer.getData(TASK_DND_MIME);
     const multiSessionIds = getKanbanMultiSessionDragIds(e.dataTransfer);
-    const draggedTask = taskId ? taskStore.getTask(taskId) : undefined;
+    const draggedTask = taskId
+      ? projectViewWorkspaceState.resolveTask(taskId, projectViewId ?? undefined)
+      : undefined;
     const sessionStore = useSessionStore.getState();
-    const draggedChatSession = chatSessionId ? sessionStore.getSession(chatSessionId) : undefined;
-    const sourceProjectId = draggedTask?.projectId ?? draggedChatSession?.projectDir;
+    const draggedChatSession = chatSessionId
+      ? projectViewWorkspaceState.resolveSession(chatSessionId, projectViewId ?? undefined)
+      : undefined;
+    const sourceProjectId = draggedTask?.projectViewId ?? draggedChatSession?.projectDir;
     const visibleProjectIds = new Set(projects.map((project) => project.encodedDir));
 
     const isProjectInDropScope = (projectId: string) => {
@@ -581,10 +594,13 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       const seenChatIds = new Set<string>();
 
       for (const selectedSessionId of multiSessionIds) {
-        const selectedTask = taskStore.getTaskBySessionId(selectedSessionId);
+        const selectedTask = projectViewWorkspaceState.resolveTaskBySessionId(
+          selectedSessionId,
+          projectViewId ?? undefined,
+        );
         if (selectedTask) {
           if (
-            !isProjectInDropScope(selectedTask.projectId) ||
+            !isProjectInDropScope(selectedTask.projectViewId) ||
             seenTaskIds.has(selectedTask.id)
           ) {
             continue;
@@ -594,7 +610,10 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
           continue;
         }
 
-        const selectedSession = sessionStore.getSession(selectedSessionId);
+        const selectedSession = projectViewWorkspaceState.resolveSession(
+          selectedSessionId,
+          projectViewId ?? undefined,
+        );
         if (
           !selectedSession ||
           selectedSession.taskId ||
@@ -608,20 +627,34 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       }
 
       const movingTaskIds = selectedTaskIds.filter((selectedTaskId) => {
-        const selectedTask = taskStore.getTask(selectedTaskId);
+        const selectedTask = projectViewWorkspaceState.resolveTask(
+          selectedTaskId,
+          projectViewId ?? undefined,
+        );
         return selectedTask && selectedTask.workflowStatus !== status;
       });
       const movingChatIds = selectedChatIds.filter((selectedChatId) => {
-        const selectedSession = sessionStore.getSession(selectedChatId);
+        const selectedSession = projectViewWorkspaceState.resolveSession(
+          selectedChatId,
+          projectViewId ?? undefined,
+        );
         return selectedSession && selectedSession.workflowStatus !== status;
       });
 
       if (movingTaskIds.length + movingChatIds.length > 0) {
         for (const movingTaskId of movingTaskIds) {
-          taskStore.updateTask(movingTaskId, { workflowStatus: status });
+          taskStore.updateTask(
+            movingTaskId,
+            { workflowStatus: status },
+            projectViewId ?? undefined,
+          );
         }
         for (const movingChatId of movingChatIds) {
-          sessionStore.updateChatWorkflowStatus(movingChatId, status);
+          sessionStore.updateChatWorkflowStatus(
+            movingChatId,
+            status,
+            projectViewId ?? undefined,
+          );
         }
         boardStore.flashDrop(taskId || chatSessionId || movingTaskIds[0] || movingChatIds[0]);
         useSelectionStore.getState().clearSelection();
@@ -646,11 +679,18 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         if (targetIdx !== -1) {
           const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
           filtered.splice(insertIdx, 0, chatSessionId);
-          sessionStore.reorderProjectSessions(session.projectDir, filtered);
+          sessionStore.reorderProjectSessions(
+            projectViewId ?? session.projectDir,
+            filtered,
+          );
           boardStore.flashDrop(chatSessionId);
         }
       } else if (session && !session.taskId && session.workflowStatus !== status) {
-        sessionStore.updateChatWorkflowStatus(chatSessionId, status);
+        sessionStore.updateChatWorkflowStatus(
+          chatSessionId,
+          status,
+          projectViewId ?? undefined,
+        );
         boardStore.flashDrop(chatSessionId);
       }
 
@@ -659,7 +699,8 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     }
 
     if (taskId) {
-      const task = draggedTask ?? taskStore.getTask(taskId);
+      const task = draggedTask
+        ?? projectViewWorkspaceState.resolveTask(taskId, projectViewId ?? undefined);
       const indicator = boardStore.dropIndicator;
 
       if (task && task.workflowStatus === status && indicator) {
@@ -674,17 +715,21 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         if (targetIdx !== -1) {
           const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
           filtered.splice(insertIdx, 0, taskId);
-          taskStore.reorderTasks(filtered, task.projectViewId);
+          taskStore.reorderTasks(filtered, projectViewId ?? task.projectViewId);
           boardStore.flashDrop(taskId);
         }
       } else if (task && task.workflowStatus !== status) {
-        taskStore.updateTask(taskId, { workflowStatus: status });
+        taskStore.updateTask(
+          taskId,
+          { workflowStatus: status },
+          projectViewId ?? undefined,
+        );
         boardStore.flashDrop(taskId);
       }
     }
 
     finishDrop();
-  }, [chats, groupByProject, projects, status, tasks]);
+  }, [chats, groupByProject, projectViewId, projects, status, tasks]);
 
   // Card drag-over: Ring Gradient highlight using column status color
   const dragOverStyle = isDragOver
@@ -853,7 +898,11 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     onOpenInNewTab={onSessionOpenInNewTab}
                     onGenerateTitle={onSessionGenerateTitle}
                     onMoveToCollection={(sessionId, collectionId) =>
-                      useSessionStore.getState().updateSessionCollection(sessionId, collectionId)
+                      useSessionStore.getState().updateSessionCollection(
+                        sessionId,
+                        collectionId,
+                        session.projectDir,
+                      )
                     }
                     onStopProcess={onSessionStopProcess}
                     collections={collectionsByProject[session.projectDir]}

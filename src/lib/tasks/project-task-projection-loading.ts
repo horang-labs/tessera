@@ -1,7 +1,7 @@
 import type { ProjectGroup } from '@/types/chat';
 
 export function getProjectIdsMissingTaskProjection(
-  projects: Array<Pick<ProjectGroup, 'encodedDir'>>,
+  projects: ReadonlyArray<Pick<ProjectGroup, 'encodedDir'>>,
   loadedProjects: Record<string, boolean>,
   loadingProjects: Record<string, boolean>,
   attemptedProjectIds: ReadonlySet<string>,

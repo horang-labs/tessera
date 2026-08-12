@@ -6,6 +6,8 @@ import { CheckCircle, AlertTriangle, Shield, MessageCircleQuestion, X, Loader2 }
 import { Notification } from '@/types/notification';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -34,8 +36,7 @@ export const TOAST_DISMISS_TOUCH_TARGET =
 
 export function ToastNotification({ notification, onDismiss, onClick }: ToastNotificationProps) {
   const { t, language } = useI18n();
-  const getSession = useSessionStore((s) => s.getSession);
-  const session = getSession(notification.sessionId);
+  const session = useProjectViewSession(notification.sessionId);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -74,9 +75,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
     const sent = wsClient.sendInteractiveResponse(notification.sessionId, '', action.value.toString());
     if (sent) {
       onDismissRef.current();
-      useNotificationStore.getState().markSessionAsRead(notification.sessionId);
-      useSessionStore.getState().clearUnreadCount(notification.sessionId);
-      wsClient.sendMarkAsRead(notification.sessionId);
+      projectViewWorkspaceState.markSessionRead(notification.sessionId);
       logger.info('Interactive response sent from toast', {
         sessionId: notification.sessionId,
         action: action.value,

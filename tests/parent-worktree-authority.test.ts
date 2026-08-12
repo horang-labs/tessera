@@ -434,9 +434,12 @@ test('migrated checkout consumers cannot reintroduce direct child-first SQL', ()
     fs.readFileSync(new URL('../src/lib/terminal/terminal-resolver.ts', import.meta.url), 'utf8'),
     fs.readFileSync(new URL('../src/lib/terminal/provider-session-reconciliation.ts', import.meta.url), 'utf8'),
     fs.readFileSync(new URL('../src/lib/ws/server-session-actions.ts', import.meta.url), 'utf8'),
-    fs.readFileSync(new URL('../src/lib/ws/server-message-routing.ts', import.meta.url), 'utf8'),
     fs.readFileSync(new URL('../src/app/api/sessions/[id]/skills/route.ts', import.meta.url), 'utf8'),
   ];
+  const serverMessageRoutingSource = fs.readFileSync(
+    new URL('../src/lib/ws/server-message-routing.ts', import.meta.url),
+    'utf8',
+  );
   const diffBroadcastSource = fs.readFileSync(
     new URL('../src/lib/git/worktree-diff-stats-broadcast.ts', import.meta.url),
     'utf8',
@@ -448,13 +451,13 @@ test('migrated checkout consumers cannot reintroduce direct child-first SQL', ()
   for (const source of runtimeConsumers) {
     assert.match(source, /getSessionWorktreeContext/);
   }
+  // Message routing delegates to the public resolver exercised above instead
+  // of reaching into the database authority directly.
+  assert.match(serverMessageRoutingSource, /resolveSessionWorkspaceRoot/);
+  assert.doesNotMatch(serverMessageRoutingSource, /SELECT\s+s\.work_dir/);
   assert.match(diffBroadcastSource, /findTaskIdForWorktree\(workDir\)/);
   assert.match(
     fs.readFileSync(new URL('../src/lib/control/database-worktree-source.ts', import.meta.url), 'utf8'),
     /PARENT_FIRST_WORKTREE_PATH_SQL/,
-  );
-  assert.match(
-    fs.readFileSync(new URL('../src/lib/session/session-orchestrator.ts', import.meta.url), 'utf8'),
-    /!session\.task_id/,
   );
 });

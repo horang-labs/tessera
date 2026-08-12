@@ -1,4 +1,5 @@
 import logger from '@/lib/logger';
+import * as dbSessions from '@/lib/db/sessions';
 import { broadcastSessionMutation } from '@/lib/ws/mutation-broadcast';
 import type { PaneTokenEntry } from './pane-token-registry';
 import type { TerminalProviderSessionIdentity } from './provider-session-identity';
@@ -77,6 +78,8 @@ export function observeTerminalProviderSession(options: {
     broadcastSessionMutation(pane.userId, {
       kind: 'created',
       projectId: reconciliation.projectId,
+      sessionId: reconciliation.sessionId,
+      taskId: dbSessions.getSession(reconciliation.sessionId)?.task_id ?? undefined,
     });
   }
   const rebound = !isBackgroundIdentity

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { buildTaskChildSession } from '../src/lib/session/task-child-session.ts';
 
 const chatTypesSource = fs.readFileSync(
   new URL('../src/types/chat.ts', import.meta.url),
@@ -62,6 +63,24 @@ test('Codex model defaults are not special-cased by model id', () => {
 });
 
 test('deferred session creation stays pre-start until the provider starts', () => {
-  assert.match(collectionGroupSource, /isRunning: false,[\s\S]*hasStarted: false,[\s\S]*status: sessionData\.status \|\| 'starting'/);
-  assert.match(kanbanBoardSource, /isRunning: false,[\s\S]*hasStarted: false,[\s\S]*status: data\.status \|\| 'starting'/);
+  const session = buildTaskChildSession({
+    id: 'task-1',
+    projectId: 'origin-project',
+    projectViewId: 'project-view',
+    title: 'Task',
+    workflowStatus: 'todo',
+    sortOrder: 0,
+    sessions: [],
+    createdAt: '2026-08-12T00:00:00.000Z',
+    updatedAt: '2026-08-12T00:00:00.000Z',
+  }, {
+    sessionId: 'deferred-session',
+    status: 'starting',
+  }, '2026-08-12T00:00:01.000Z');
+
+  assert.equal(session.isRunning, false);
+  assert.equal(session.hasStarted, false);
+  assert.equal(session.status, 'starting');
+  assert.match(collectionGroupSource, /buildTaskChildSession\(task, sessionData\)/);
+  assert.match(kanbanBoardSource, /buildTaskChildSession\(task, data\)/);
 });

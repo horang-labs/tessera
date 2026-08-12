@@ -6,6 +6,7 @@
 
 import { useCallback, useState } from 'react';
 import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { wsClient } from '@/lib/ws/client';
@@ -38,7 +39,7 @@ export function useSessionResume() {
 
       try {
         const settings = useSettingsStore.getState().settings;
-        const session = sessionStore.getSession(sessionId);
+        const session = projectViewWorkspaceState.resolveSession(sessionId);
         const providerId = session?.provider?.trim();
         const shouldOfferSkillOnboarding = session?.hasStarted === false;
         if (!providerId) {
@@ -46,7 +47,7 @@ export function useSessionResume() {
         }
         const runtimeConfig = applyProviderSessionRuntimeOverrides(
           getProviderSessionRuntimeConfig(settings, providerId),
-          sessionStore.getSession(sessionId),
+          session,
           providerId,
         );
         const response = await fetch(`/api/sessions/${sessionId}/resume`, {
@@ -111,7 +112,7 @@ export function useSessionResume() {
 
       try {
         const settings = useSettingsStore.getState().settings;
-        const session = sessionStore.getSession(sessionId);
+        const session = projectViewWorkspaceState.resolveSession(sessionId);
         const providerId = session?.provider?.trim();
         const shouldOfferSkillOnboarding = session?.hasStarted === false;
         if (!providerId) {
@@ -119,7 +120,7 @@ export function useSessionResume() {
         }
         const runtimeConfig = applyProviderSessionRuntimeOverrides(
           getProviderSessionRuntimeConfig(settings, providerId),
-          sessionStore.getSession(sessionId),
+          session,
           providerId,
         );
         const response = await fetch(`/api/sessions/${sessionId}/resume`, {

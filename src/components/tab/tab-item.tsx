@@ -7,6 +7,11 @@ import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
 import type { Tab } from '@/types/tab';
@@ -228,16 +233,10 @@ export const TabItem = memo(function TabItem({
   const activePanelSessionId = isActive ? liveSessionId : snapshotSessionId;
   const activePanelTerminalId = isActive ? liveTerminalId : snapshotTerminalId;
 
-  // Targeted session-store subscription — re-renders only when the specific
-  // session's title changes, not on unrelated session updates.
-  const session = useSessionStore(
-    useCallback(
-      (state) =>
-        activePanelSessionId && !isSpecialSession(activePanelSessionId)
-          ? state.getSession(activePanelSessionId)
-          : undefined,
-      [activePanelSessionId],
-    ),
+  const session = useProjectViewSession(
+    activePanelSessionId && !isSpecialSession(activePanelSessionId)
+      ? activePanelSessionId
+      : null,
   );
 
   // Derive display values
@@ -293,33 +292,18 @@ export const TabItem = memo(function TabItem({
   );
 
   // Runtime liveness — the green "session is up but idle" dot the sidebar shows.
-  const isRunning = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return panelSessionIds.split(',').some((id) => {
-          const s = state.getSession(id);
-          return s ? resolveSessionRuntimePresentation(s).showRunning : false;
-        });
-      },
-      [panelSessionIds],
-    ),
+  const resolvedPanelSessions = useProjectViewSessions(
+    panelSessionIds ? panelSessionIds.split(',') : [],
+  );
+  const isRunning = resolvedPanelSessions.some(
+    (resolvedSession) => resolveSessionRuntimePresentation(resolvedSession).showRunning,
   );
 
   // Unread indicator — any session in this tab has unreadCount > 0.
   // Active panel's unread is auto-cleared by panel-wrapper; this surfaces
   // unread in inactive panels (same tab) and any panel of inactive tabs.
-  const hasUnread = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return panelSessionIds.split(',').some((id) => {
-          const s = state.getSession(id);
-          return s ? (s.unreadCount ?? 0) > 0 : false;
-        });
-      },
-      [panelSessionIds],
-    ),
+  const hasUnread = useAnyProjectViewSessionUnread(
+    panelSessionIds ? panelSessionIds.split(',') : [],
   );
 
   // Mirror ItemStatusIndicator's own priority so the label/testid describe the

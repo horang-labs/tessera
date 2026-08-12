@@ -15,6 +15,8 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { useBoardStore } from '@/stores/board-store';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
+import { useProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
 import { useChatStore } from '@/stores/chat-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
@@ -45,6 +47,7 @@ import {
 } from '@/hooks/use-worktree-preparation';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { buildTaskChildSession } from '@/lib/session/task-child-session';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import {
   SIDEBAR_TREE_CHILD_INDENT,
   SIDEBAR_TREE_LEADING_SLOT,
@@ -252,31 +255,22 @@ export const CollectionGroup = memo(function CollectionGroup({
     () => collectionSessionSnapshots.map((session) => session.id),
     [collectionSessionSnapshots],
   );
-  const hasVisibleRuntimeSession = useSessionStore((state) =>
-    collectionSessionSnapshots.some((snapshot) => {
-      for (const project of state.projects) {
-        const liveSession = project.sessions.find((session) => session.id === snapshot.id);
-        if (liveSession) return resolveSessionRuntimePresentation(liveSession).showRunning;
-      }
-
-      return resolveSessionRuntimePresentation(snapshot).showRunning;
-    }),
+  const resolvedCollectionSessions = useProjectViewSessions(collectionSessionIds, projectId);
+  const resolvedCollectionSessionsById = new Map(
+    resolvedCollectionSessions.map((session) => [session.id, session]),
   );
+  const hasVisibleRuntimeSession = collectionSessionSnapshots.some((snapshot) => (
+    resolveSessionRuntimePresentation(
+      resolvedCollectionSessionsById.get(snapshot.id) ?? snapshot,
+    ).showRunning
+  ));
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(collectionSessionSnapshots);
-  const hasUnreadSession = useSessionStore((state) =>
-    collectionSessionSnapshots.some((snapshot) => {
-      if (snapshot.id === activeSessionId) return false;
-
-      for (const project of state.projects) {
-        const liveSession = project.sessions.find((session) => session.id === snapshot.id);
-        if (liveSession) return (liveSession.unreadCount ?? 0) > 0;
-      }
-
-      return (snapshot.unreadCount ?? 0) > 0;
-    }),
+  const hasUnreadSession = useAnyProjectViewSessionUnread(
+    collectionSessionIds,
+    activeSessionId,
   );
   const hasAwaitingUserSession = useAnySessionAwaitingUser(collectionSessionSnapshots);
   const collectionIndicatorStatus = getPrioritizedCollectionIndicatorStatus({
@@ -327,15 +321,20 @@ export const CollectionGroup = memo(function CollectionGroup({
       const isRunning =
         type === 'chat'
           ? resolveSessionRuntimePresentation(
-              useSessionStore.getState().getSession(id) ?? chatById.get(id) ?? { isRunning: false },
+              projectViewWorkspaceState.resolveSession(id, projectId)
+                ?? chatById.get(id)
+                ?? { isRunning: false },
             ).canStop
           : task?.sessions.some((session) => {
-              const liveSession = useSessionStore.getState().getSession(session.id);
+              const liveSession = projectViewWorkspaceState.resolveSession(
+                session.id,
+                projectId,
+              );
               return resolveSessionRuntimePresentation(liveSession ?? session).canStop;
             }) ?? false;
 
       const session = type === 'chat'
-        ? useSessionStore.getState().getSession(id) ?? chatById.get(id)
+        ? projectViewWorkspaceState.resolveSession(id, projectId) ?? chatById.get(id)
         : undefined;
       const currentStatus =
         type === 'task'
@@ -355,7 +354,7 @@ export const CollectionGroup = memo(function CollectionGroup({
         currentStatus,
       });
     },
-    [chatById, taskById],
+    [chatById, projectId, taskById],
   );
 
   const startEditingCollection = useCallback(() => {
@@ -439,7 +438,10 @@ export const CollectionGroup = memo(function CollectionGroup({
 
     const task = useTaskStore.getState().getTask(contextMenu.targetId) ?? taskById.get(contextMenu.targetId);
     for (const session of task?.sessions ?? []) {
-      const liveSession = useSessionStore.getState().getSession(session.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        task?.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onSessionStopProcess(session.id);
       }
@@ -697,6 +699,7 @@ export const CollectionGroup = memo(function CollectionGroup({
       {contextMenu && (
         <CollectionContextMenu
           menu={contextMenu}
+          projectViewId={projectId}
           collections={contextMenuCollections}
           onClose={closeContextMenu}
           onRename={handleContextMenuRename}
