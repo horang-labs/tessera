@@ -12,9 +12,10 @@ const stopSource = fs.readFileSync(
   new URL('../scripts/stop-electron-test-session.ps1', import.meta.url),
   'utf8',
 );
+const windowsPowerShellPath = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
 const canRunWindowsPowerShell = Boolean(
   process.env.WSL_DISTRO_NAME
-  && fs.existsSync('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'),
+  && fs.existsSync(windowsPowerShellPath),
 );
 
 function runLaunchEnvironmentHarness(mode) {
@@ -27,7 +28,7 @@ function runLaunchEnvironmentHarness(mode) {
   const toWindowsPath = (value) => execFileSync('wslpath', ['-w', value], {
     encoding: 'utf8',
   }).trim();
-  const stdout = execFileSync('powershell.exe', [
+  const stdout = execFileSync(windowsPowerShellPath, [
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-File', toWindowsPath(harnessPath),
@@ -50,6 +51,12 @@ function expectedRestoredEnvironment(result) {
   };
 }
 
+function assertHostileEnvironmentCleared(result, launch, context) {
+  for (const name of Object.keys(result.hostileEnvironment)) {
+    assert.equal(launch.environment[name], null, `${name} leaked ${context}`);
+  }
+}
+
 test('isolated Electron child launches cannot inherit caller agent-session state', {
   skip: !canRunWindowsPowerShell,
 }, () => {
@@ -58,9 +65,7 @@ test('isolated Electron child launches cannot inherit caller agent-session state
   assert.equal(result.launchError, null);
   assert.equal(result.launches.length, 2);
   for (const [index, launch] of result.launches.entries()) {
-    for (const name of Object.keys(result.hostileEnvironment)) {
-      assert.equal(launch.environment[name], null, `${name} leaked into launch ${index + 1}`);
-    }
+    assertHostileEnvironmentCleared(result, launch, `into launch ${index + 1}`);
     assert.equal(launch.environment.TESSERA_ELECTRON_TEST_INSTANCE, `env-contract-${index + 1}`);
     assert.equal(launch.environment.TESSERA_ELECTRON_TEST_ROOT.endsWith('tessera-launch-env-'), false);
     assert.match(launch.environment.TESSERA_ELECTRON_TEST_ROOT, /tessera-launch-env-[a-f0-9]{32}$/);
@@ -77,9 +82,7 @@ test('isolated Electron launcher restores caller environment when child launch f
 
   assert.match(result.launchError, /Synthetic Start-Process failure/);
   assert.equal(result.launches.length, 1);
-  for (const name of Object.keys(result.hostileEnvironment)) {
-    assert.equal(result.launches[0].environment[name], null, `${name} leaked before failure`);
-  }
+  assertHostileEnvironmentCleared(result, result.launches[0], 'before failure');
   assert.deepEqual(result.restoredEnvironment, expectedRestoredEnvironment(result));
 });
 
