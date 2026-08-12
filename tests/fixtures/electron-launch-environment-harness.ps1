@@ -6,7 +6,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$Stopper,
 
-  [ValidateSet('Success', 'Failure', 'MismatchedOwner')]
+  [ValidateSet('Success', 'Failure', 'MismatchedOwner', 'LegacyRestart', 'MissingArtifact')]
   [string]$Mode = 'Success'
 )
 
@@ -199,6 +199,9 @@ $launchError = $null
 $cleanupError = $null
 $finalCleanupError = $null
 $mismatchedMarkerPreserved = $null
+$cleanupFailurePreservedRoots = $null
+$legacyRestartSucceeded = $null
+$restartOwnerTokenPreserved = $null
 $wslStateRoots = @()
 try {
   foreach ($entry in $hostileEnvironment.GetEnumerator()) {
@@ -224,7 +227,7 @@ try {
   try {
     & $Launcher `
       -Executable "$env:SystemRoot\System32\cmd.exe" `
-      -Count $(if ($Mode -eq 'Success') { 2 } else { 1 }) `
+      -Count $(if ($Mode -in @('Success', 'MismatchedOwner')) { 2 } else { 1 }) `
       -SessionId $sessionId `
       -TestRoot $testRoot `
       -CdpBasePort 48371 `
@@ -234,11 +237,35 @@ try {
     $launchError = $_.Exception.Message
   }
 
+  if ($Mode -eq 'LegacyRestart' -and -not $launchError) {
+    $legacyManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $originalOwnerToken = [string]$legacyManifest.instances[0].ownerToken
+    $legacyManifest.PSObject.Properties.Remove('portableArtifact')
+    $legacyManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    try {
+      & $Launcher `
+        -Executable "$env:SystemRoot\System32\cmd.exe" `
+        -Count 1 `
+        -SessionId $sessionId `
+        -TestRoot $testRoot `
+        -CdpBasePort 48371 `
+        -ServerBasePort 49371 `
+        -WslDistro 'Ubuntu-24.04' | Out-Null
+      $legacyRestartSucceeded = $true
+      $restartedManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+      $restartOwnerTokenPreserved = [string]$restartedManifest.instances[0].ownerToken -eq $originalOwnerToken
+    } catch {
+      $launchError = $_.Exception.Message
+      $legacyRestartSucceeded = $false
+      $restartOwnerTokenPreserved = $false
+    }
+  }
+
   $instances = @(Get-ManifestInstances)
   $wslStateRoots = @($instances | ForEach-Object { [string]$_.wslStateRoot })
 
-  if ($Mode -eq 'MismatchedOwner' -and $instances.Count -eq 1) {
-    $instance = $instances[0]
+  if ($Mode -eq 'MismatchedOwner' -and $instances.Count -eq 2) {
+    $instance = $instances[-1]
     $mismatchedToken = [Guid]::NewGuid().ToString('N')
     Set-ExactWslOwnerMarker `
       -Root ([string]$instance.wslStateRoot) `
@@ -249,6 +276,10 @@ try {
     } catch {
       $cleanupError = $_.Exception.Message
     }
+    $cleanupFailurePreservedRoots = @($instances | Where-Object {
+      (Test-Path -LiteralPath $_.instanceRoot -PathType Container) -and
+      (Test-WslStateRootExists -Root ([string]$_.wslStateRoot))
+    }).Count -eq $instances.Count
     $mismatchedMarkerPreserved = Test-ExactWslOwnerMarker `
       -Root ([string]$instance.wslStateRoot) `
       -ExpectedToken $mismatchedToken
@@ -256,6 +287,25 @@ try {
       -Root ([string]$instance.wslStateRoot) `
       -ExpectedToken $mismatchedToken `
       -ReplacementToken ([string]$instance.wslStateOwnerToken)
+    try {
+      Invoke-ManifestCleanup
+    } catch {
+      $finalCleanupError = $_.Exception.Message
+    }
+  } elseif ($Mode -eq 'MissingArtifact' -and (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    try {
+      & $Stopper `
+        -SessionId $sessionId `
+        -TestRoot $testRoot `
+        -RemoveData `
+        -RemoveBuildArtifacts | Out-Null
+    } catch {
+      $cleanupError = $_.Exception.Message
+    }
+    $cleanupFailurePreservedRoots = @($instances | Where-Object {
+      (Test-Path -LiteralPath $_.instanceRoot -PathType Container) -and
+      (Test-WslStateRootExists -Root ([string]$_.wslStateRoot))
+    }).Count -eq $instances.Count
     try {
       Invoke-ManifestCleanup
     } catch {
@@ -285,6 +335,9 @@ try {
     cleanupError = $cleanupError
     finalCleanupError = $finalCleanupError
     mismatchedMarkerPreserved = $mismatchedMarkerPreserved
+    cleanupFailurePreservedRoots = $cleanupFailurePreservedRoots
+    legacyRestartSucceeded = $legacyRestartSucceeded
+    restartOwnerTokenPreserved = $restartOwnerTokenPreserved
     wslStateRoots = $wslStateRoots
     remainingWslStateRoots = $remainingWslStateRoots
     launches = @($global:tesseraCapturedLaunches)

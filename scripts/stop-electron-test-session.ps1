@@ -100,6 +100,26 @@ function Stop-RecordedProcessTree {
   }
 }
 
+function Assert-OwnedWslFixture {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$OwnerToken,
+    [Parameter(Mandatory = $true)][string]$Distro
+  )
+
+  if ($Root -notmatch '^/home/[A-Za-z0-9._-]+/\.tessera/(?:test-fixtures|test-instances)/[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+    throw "Refusing to remove non-owned WSL fixture root: $Root"
+  }
+  if ($OwnerToken -notmatch '^[A-Fa-f0-9]{32}$') {
+    throw 'Refusing WSL cleanup without an exact GUID-N ownership token.'
+  }
+  $script = 'set -eu; root=$1; token=$2; marker=$root/.tessera-owner; [ ${#token} -eq 32 ]; case $token in *[!A-Fa-f0-9]*) exit 46;; esac; [ -f $marker ]; [ $(wc -c < $marker) -eq 33 ]; [ $(wc -l < $marker) -eq 1 ]; IFS= read -r recorded < $marker; [ ${#recorded} -eq 32 ]; case $recorded in *[!A-Fa-f0-9]*) exit 47;; esac; case $recorded in $token) ;; *) exit 48;; esac; case $root in /home/*/.tessera/test-fixtures/*|/home/*/.tessera/test-instances/*) ;; *) exit 43 ;; esac'
+  & wsl.exe --distribution $Distro --exec sh -c $script tessera-fixture $Root $OwnerToken
+  if ($LASTEXITCODE -ne 0) {
+    throw "Refusing to remove non-owned WSL fixture root: $Root"
+  }
+}
+
 function Remove-OwnedWslFixture {
   param(
     [Parameter(Mandatory = $true)][string]$Root,
@@ -138,6 +158,9 @@ if ($manifest.schemaVersion -notin @(2, 3) -or $manifest.sessionId -ne $SessionI
 $buildArtifactPaths = $null
 if ($RemoveBuildArtifacts) {
   $downloads = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads'
+  if (-not $manifest.portableArtifact) {
+    throw 'Refusing to remove a portable artifact that was not recorded by the launcher.'
+  }
   $executable = [IO.Path]::GetFullPath([string]$manifest.executable)
   $appDirectory = Split-Path -Parent $executable
   $appDirectoryName = Split-Path -Leaf $appDirectory
@@ -156,16 +179,7 @@ if ($RemoveBuildArtifacts) {
     throw "Refusing to remove a nested build directory: $appDirectory"
   }
 
-  if ($manifest.portableArtifact) {
-    $portableArtifact = [IO.Path]::GetFullPath([string]$manifest.portableArtifact)
-  } else {
-    # Compatibility for manifests written before portableArtifact was recorded.
-    $portableBaseName = $appDirectoryName.Substring(0, $appDirectoryName.Length - ('-unpacked').Length)
-    if (-not $portableBaseName) {
-      throw "Refusing to remove build artifacts without a portable base name: $appDirectory"
-    }
-    $portableArtifact = Join-Path $downloads "$portableBaseName.exe"
-  }
+  $portableArtifact = [IO.Path]::GetFullPath([string]$manifest.portableArtifact)
   if (-not (Test-PathWithinRoot -Path $portableArtifact -Root $downloads)) {
     throw "Refusing to remove a portable artifact outside Downloads: $portableArtifact"
   }
@@ -183,8 +197,7 @@ if ($RemoveBuildArtifacts) {
   }
 }
 
-$stopped = @()
-$recordedProcessIds = @()
+$recordedRuntimes = @()
 foreach ($instance in @($manifest.instances)) {
   $launcher = Get-RecordedProcess -ProcessId $instance.launcherProcessId
   $electron = Get-RecordedProcess -ProcessId $instance.electronProcessId
@@ -213,20 +226,15 @@ foreach ($instance in @($manifest.instances)) {
     throw "Refusing to stop reused or non-owned Electron PID $($instance.electronProcessId)"
   }
 
-  if ($launcherOwned) {
-    Stop-RecordedProcessTree -ProcessId ([int]$instance.launcherProcessId)
-    $stopped += [int]$instance.launcherProcessId
-  } elseif ($electronOwned) {
-    Stop-RecordedProcessTree -ProcessId ([int]$instance.electronProcessId)
-    $stopped += [int]$instance.electronProcessId
+  $recordedRuntimes += [pscustomobject]@{
+    Instance = $instance
+    LauncherOwned = $launcherOwned
+    ElectronOwned = $electronOwned
   }
-
-  $recordedProcessIds += @($instance.launcherProcessId, $instance.electronProcessId)
 }
 
-Wait-RecordedProcessesExit -ProcessIds $recordedProcessIds
-
-foreach ($instance in @($manifest.instances)) {
+foreach ($runtime in $recordedRuntimes) {
+  $instance = $runtime.Instance
   if ($RemoveData) {
     if (-not (Test-PathWithinRoot -Path $instance.instanceRoot -Root $TestRoot)) {
       throw "Refusing to remove data outside the test root: $($instance.instanceRoot)"
@@ -235,7 +243,7 @@ foreach ($instance in @($manifest.instances)) {
       if (-not $instance.wslStateOwnerToken -or -not $instance.wslDistro) {
         throw "Refusing to remove non-owned WSL test state root: $($instance.wslStateRoot)"
       }
-      Remove-OwnedWslFixture `
+      Assert-OwnedWslFixture `
         -Root ([string]$instance.wslStateRoot) `
         -OwnerToken ([string]$instance.wslStateOwnerToken) `
         -Distro ([string]$instance.wslDistro)
@@ -244,6 +252,40 @@ foreach ($instance in @($manifest.instances)) {
       if (-not $instance.wslFixtureOwnerToken -or -not $instance.wslDistro) {
         throw "Refusing to remove non-owned WSL fixture root: $($instance.wslFixtureRoot)"
       }
+      Assert-OwnedWslFixture `
+        -Root ([string]$instance.wslFixtureRoot) `
+        -OwnerToken ([string]$instance.wslFixtureOwnerToken) `
+        -Distro ([string]$instance.wslDistro)
+    }
+  }
+}
+
+$stopped = @()
+$recordedProcessIds = @()
+foreach ($runtime in $recordedRuntimes) {
+  $instance = $runtime.Instance
+  if ($runtime.LauncherOwned) {
+    Stop-RecordedProcessTree -ProcessId ([int]$instance.launcherProcessId)
+    $stopped += [int]$instance.launcherProcessId
+  } elseif ($runtime.ElectronOwned) {
+    Stop-RecordedProcessTree -ProcessId ([int]$instance.electronProcessId)
+    $stopped += [int]$instance.electronProcessId
+  }
+  $recordedProcessIds += @($instance.launcherProcessId, $instance.electronProcessId)
+}
+
+Wait-RecordedProcessesExit -ProcessIds $recordedProcessIds
+
+foreach ($runtime in $recordedRuntimes) {
+  $instance = $runtime.Instance
+  if ($RemoveData) {
+    if ($instance.wslStateRoot) {
+      Remove-OwnedWslFixture `
+        -Root ([string]$instance.wslStateRoot) `
+        -OwnerToken ([string]$instance.wslStateOwnerToken) `
+        -Distro ([string]$instance.wslDistro)
+    }
+    if ($instance.wslFixtureRoot) {
       Remove-OwnedWslFixture `
         -Root ([string]$instance.wslFixtureRoot) `
         -OwnerToken ([string]$instance.wslFixtureOwnerToken) `

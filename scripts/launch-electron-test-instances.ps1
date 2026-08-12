@@ -348,6 +348,16 @@ $sessionManifestPath = Join-Path $sessionDirectory "$SessionId.json"
 $restartManifest = $null
 if (-not $PrepareOnly -and (Test-Path -LiteralPath $sessionManifestPath -PathType Leaf)) {
   $existingManifest = Get-Content -LiteralPath $sessionManifestPath -Raw | ConvertFrom-Json
+  $existingPortableArtifact = if ([string]::IsNullOrWhiteSpace([string]$existingManifest.portableArtifact)) {
+    $null
+  } else {
+    [string]$existingManifest.portableArtifact
+  }
+  $requestedPortableArtifact = if ([string]::IsNullOrWhiteSpace($PortableArtifact)) {
+    $null
+  } else {
+    $PortableArtifact
+  }
   $activeInstances = @($existingManifest.instances | Where-Object {
     (Test-RecordedProcessAlive -ProcessId $_.launcherProcessId) -or
     (Test-RecordedProcessAlive -ProcessId $_.electronProcessId)
@@ -359,7 +369,7 @@ if (-not $PrepareOnly -and (Test-Path -LiteralPath $sessionManifestPath -PathTyp
     $existingManifest.schemaVersion -eq 3 -and
     $existingManifest.sessionId -eq $SessionId -and
     $existingManifest.executable -eq $Executable -and
-    $existingManifest.portableArtifact -eq $PortableArtifact
+    $existingPortableArtifact -eq $requestedPortableArtifact
   ) {
     # A stop without -RemoveData deliberately retains the manifest and ownership
     # token so the same isolated app/data namespace can be restarted safely.

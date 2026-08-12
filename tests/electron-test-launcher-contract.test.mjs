@@ -132,10 +132,37 @@ test('launcher cleanup fails closed without changing a mismatched WSL owner mark
 
   assert.match(result.cleanupError, /Refusing to remove non-owned WSL fixture root/);
   assert.equal(result.mismatchedMarkerPreserved, true);
+  assert.equal(result.cleanupFailurePreservedRoots, true);
   assert.equal(result.finalCleanupError, null);
   assert.equal(result.remainingWslStateRoots.length, 0);
   for (const root of result.wslStateRoots) {
     assert.equal(fs.existsSync(root), false, `restored owner cleanup left WSL state: ${root}`);
+  }
+});
+
+test('a retained schema-3 manifest without portableArtifact restarts with the same owner', {
+  skip: !canRunWindowsPowerShell,
+}, () => {
+  const result = runLaunchEnvironmentHarness('LegacyRestart');
+
+  assert.equal(result.launchError, null);
+  assert.equal(result.legacyRestartSucceeded, true);
+  assert.equal(result.restartOwnerTokenPreserved, true);
+  assert.equal(result.launches.length, 2);
+  assertHarnessCleanup(result);
+});
+
+test('final cleanup without a recorded portable artifact fails before removing state', {
+  skip: !canRunWindowsPowerShell,
+}, () => {
+  const result = runLaunchEnvironmentHarness('MissingArtifact');
+
+  assert.match(result.cleanupError, /portable artifact that was not recorded by the launcher/);
+  assert.equal(result.cleanupFailurePreservedRoots, true);
+  assert.equal(result.finalCleanupError, null);
+  assert.equal(result.remainingWslStateRoots.length, 0);
+  for (const root of result.wslStateRoots) {
+    assert.equal(fs.existsSync(root), false, `final cleanup left WSL state: ${root}`);
   }
 });
 
@@ -318,7 +345,9 @@ test('stopping without data removal preserves restart authority until final clea
   assert.match(launcherSource, /\$restartInstance\.wslStateOwnerToken -ne \$ownerToken/);
   assert.match(launcherSource, /\$restartInstance\.wslFixtureOwnerToken -ne \$ownerToken/);
   assert.match(launcherSource, /Restart must reuse the exact retained Electron test instance set/);
-  assert.match(launcherSource, /\$existingManifest\.portableArtifact -eq \$PortableArtifact/);
+  assert.match(launcherSource, /\[string\]::IsNullOrWhiteSpace\(\[string\]\$existingManifest\.portableArtifact\)/);
+  assert.match(launcherSource, /\[string\]::IsNullOrWhiteSpace\(\$PortableArtifact\)/);
+  assert.match(launcherSource, /\$existingPortableArtifact -eq \$requestedPortableArtifact/);
 });
 
 test('PowerShell isolation policies expand to flat environment-name sets', (t) => {
@@ -362,6 +391,8 @@ test('owned Downloads artifacts can be permanently removed without the Linux tra
   assert.match(stopSource, /\[switch\]\$RemoveBuildArtifacts/);
   assert.match(stopSource, /if \(\$RemoveBuildArtifacts -and -not \$RemoveData\)/);
   assert.match(stopSource, /\$manifest\.portableArtifact/);
+  assert.match(stopSource, /portable artifact that was not recorded by the launcher/);
+  assert.doesNotMatch(stopSource, /portableBaseName/);
   assert.match(stopSource, /GetFolderPath\('UserProfile'\)/);
   assert.match(stopSource, /Test-PathWithinRoot -Path \$appDirectory -Root \$downloads/);
   assert.match(stopSource, /Refusing to remove a nested build directory/);
