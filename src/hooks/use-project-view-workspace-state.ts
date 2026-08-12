@@ -1,5 +1,8 @@
 'use client';
+'use no memo';
 
+// The adapter resolves from mutable Zustand stores after these subscriptions fire.
+// React Compiler must not cache the imperative reads only by the explicit Session/View IDs.
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -57,4 +60,13 @@ export function useOriginProjectRepresentation(): ReturnType<
 > {
   useProjectViewWorkspaceStateSubscription();
   return projectViewWorkspaceState.getOriginProjectRepresentation();
+}
+
+export function useProjectViewRepresentation(
+  projectViewId: string | null | undefined,
+): ReturnType<typeof projectViewWorkspaceState.getProjectViewRepresentation> {
+  useProjectViewWorkspaceStateSubscription();
+  return projectViewId
+    ? projectViewWorkspaceState.getProjectViewRepresentation(projectViewId)
+    : undefined;
 }

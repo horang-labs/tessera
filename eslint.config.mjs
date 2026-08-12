@@ -112,6 +112,25 @@ const config = [
             "UI code must subscribe through Project View workspace-state hooks instead of reading retainedSessions directly.",
         },
       ],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/lib/kanban/board-scope",
+              importNames: ["collectKanbanScopeData"],
+              message:
+                "UI Kanban consumers must use Project View workspace-state representations, not rebuild them from backing stores.",
+            },
+            {
+              name: "@/lib/projects/origin-project-representation",
+              importNames: ["buildOriginProjectRepresentation"],
+              message:
+                "UI global consumers must use useOriginProjectRepresentation/projectViewWorkspaceState.",
+            },
+          ],
+        },
+      ],
     },
   },
 ];

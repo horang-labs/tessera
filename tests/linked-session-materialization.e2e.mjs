@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from '@playwright/test';
+import {
+  addBrowserAuthCookie,
+  seedBrowserUser,
+} from './helpers/dev-server.mjs';
 
 const run = promisify(execFile);
 const port = Number(process.env.TESSERA_E2E_PORT ?? 34333);
@@ -42,7 +46,8 @@ async function startServer() {
   for (const key of [
     'ELECTRON_RUN_AS_NODE', 'ELECTRON_CHILD', 'TESSERA_APP_ROOT',
     'TESSERA_ELECTRON_SERVER', 'TESSERA_PRODUCTION_DB', 'TESSERA_HOOK_PORT',
-    'TESSERA_PANE_TOKEN', 'TESSERA_SESSION_ID',
+    'TESSERA_PANE_TOKEN', 'TESSERA_SESSION_ID', 'TESSERA_PROJECT_ID',
+    'TESSERA_WORKTREE_ID', '__CFBundleIdentifier',
   ]) delete env[key];
   server = spawn(process.execPath, ['./node_modules/.bin/tsx', 'server.ts'], {
     cwd: process.cwd(),
@@ -83,6 +88,7 @@ async function stopServer() {
 
 try {
   await fs.mkdir(evidenceDir, { recursive: true });
+  await seedBrowserUser(dataDir);
   await fs.mkdir(projectDir, { recursive: true });
   await fs.writeFile(path.join(projectDir, 'README.md'), '# Issue 333\n');
   await run('git', ['init', '-b', 'main'], { cwd: projectDir });
@@ -131,6 +137,7 @@ try {
     viewport: { width: 1280, height: 800 },
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
   });
+  await addBrowserAuthCookie(context, { dataDir });
   await context.addInitScript((projectId) => {
     localStorage.setItem('ccw:viewMode', 'board');
     localStorage.setItem('ccw:projectViewModes', JSON.stringify({ [projectId]: 'board' }));

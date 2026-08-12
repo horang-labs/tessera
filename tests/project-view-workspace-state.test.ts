@@ -124,9 +124,19 @@ test('Project appearance lists direct, retained, and Task-only Sessions once thr
   });
   const retained = session({ id: 'retained-c', projectDir: 'project-c' });
   const summary = taskSession('summary-c');
+  const liveSummary = session({
+    id: summary.id,
+    projectDir: 'project-c',
+    title: 'Live summary Session',
+    isRunning: true,
+    status: 'running',
+  });
   const workspace = createProjectViewWorkspaceState({
     getProjects: () => [project('project-c', [direct])],
-    getRetainedSessions: () => ({ [retained.id]: retained }),
+    getRetainedSessions: () => ({
+      [retained.id]: retained,
+      [liveSummary.id]: liveSummary,
+    }),
     getTasksByProject: () => ({
       'project-c': [task('project-c', 'collection-c', summary)],
     }),
@@ -157,6 +167,9 @@ test('Project appearance lists direct, retained, and Task-only Sessions once thr
       ['summary-c', 'project-c'],
     ],
   );
+  const representation = workspace.getProjectViewRepresentation('project-c');
+  assert.equal(representation?.tasks[0]?.sessions[0]?.title, 'Live summary Session');
+  assert.equal(representation?.tasks[0]?.sessions[0]?.isRunning, true);
 });
 
 test('Project-scoped DnD resolution selects the visible Task appearance when origin loaded first', () => {

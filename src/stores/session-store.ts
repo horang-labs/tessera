@@ -28,31 +28,19 @@ import {
   resolveSessionRuntimeLiveness,
   type SessionRuntimeLiveness,
 } from '@/lib/session/session-runtime-liveness';
+import { resolveStoredSessionAppearance } from '@/lib/projects/stored-session-resolution';
 
 function findStoredSession(
   state: Pick<SessionState, 'projects' | 'retainedSessions'>,
   sessionId: string,
   projectDir?: string | null,
 ): UnifiedSession | undefined {
-  if (projectDir) {
-    const projected = state.projects
-      .find((project) => project.encodedDir === projectDir)
-      ?.sessions.find((session) => session.id === sessionId);
-    if (projected) return projected;
-
-    const canonical = state.projects
-      .flatMap((project) => project.sessions)
-      .find((session) => session.id === sessionId)
-      ?? state.retainedSessions[sessionId];
-    return canonical
-      ? { ...canonical, projectDir, collectionId: undefined }
-      : undefined;
-  }
-  for (const project of state.projects) {
-    const session = project.sessions.find((candidate) => candidate.id === sessionId);
-    if (session) return session;
-  }
-  return state.retainedSessions[sessionId];
+  return resolveStoredSessionAppearance(
+    state.projects,
+    state.retainedSessions,
+    sessionId,
+    projectDir,
+  );
 }
 
 

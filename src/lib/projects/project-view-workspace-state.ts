@@ -1,6 +1,8 @@
 import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { buildOriginProjectRepresentation } from '@/lib/projects/origin-project-representation';
+import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
+import { resolveStoredCanonicalSession } from '@/lib/projects/stored-session-resolution';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
@@ -68,6 +70,12 @@ export interface ProjectViewWorkspaceState {
   resolveSession: (sessionId: string, projectViewId?: string) => UnifiedSession | undefined;
   /** Return every Session appearance currently represented in one Project View. */
   getProjectViewSessions: (projectViewId: string) => UnifiedSession[];
+  /** Return one loaded Project appearance with live Session-derived Task state. */
+  getProjectViewRepresentation: (projectViewId: string) => {
+    project: ProjectGroup;
+    sessions: UnifiedSession[];
+    tasks: TaskEntity[];
+  } | undefined;
   /** Make a resolved Session appearance available to tabs, Peek, and workspace side panels. */
   materializeSession: (
     sessionId: string,
@@ -167,20 +175,6 @@ function chooseCanonicalTaskAppearance(
     ?? appearances[0];
 }
 
-function chooseCanonicalDirectSession(
-  projects: readonly ProjectGroup[],
-  sessionId: string,
-): UnifiedSession | undefined {
-  let fallback: UnifiedSession | undefined;
-  for (const project of projects) {
-    const session = project.sessions.find((candidate) => candidate.id === sessionId);
-    if (!session) continue;
-    if (project.encodedDir === session.originProjectId) return session;
-    fallback ??= session;
-  }
-  return fallback;
-}
-
 function resolveCollectionPlacement(
   collectionsByProject: Readonly<Record<string, readonly Collection[]>>,
   projectViewId: string,
@@ -256,11 +250,12 @@ export function createProjectViewWorkspaceState(
   };
 
   const resolveCanonicalSession = (sessionId: string): UnifiedSession | undefined => {
-    const direct = chooseCanonicalDirectSession(dependencies.getProjects(), sessionId);
-    if (direct) return direct;
-
-    const retained = dependencies.getRetainedSessions()[sessionId];
-    if (retained) return retained;
+    const stored = resolveStoredCanonicalSession(
+      dependencies.getProjects(),
+      dependencies.getRetainedSessions(),
+      sessionId,
+    );
+    if (stored) return stored;
 
     const taskAppearance = chooseCanonicalTaskAppearance(
       findTaskSessionAppearances(dependencies.getTasksByProject(), sessionId),
@@ -352,6 +347,22 @@ export function createProjectViewWorkspaceState(
 
     return Array.from(sessionIds, (sessionId) => resolveSession(sessionId, projectViewId))
       .filter((session): session is UnifiedSession => session !== undefined);
+  };
+
+  const getProjectViewRepresentation = (projectViewId: string) => {
+    const project = dependencies.getProjects().find(
+      (candidate) => candidate.encodedDir === projectViewId,
+    );
+    if (!project) return undefined;
+    const sessions = getProjectViewSessions(projectViewId);
+    return {
+      project: { ...project, sessions },
+      sessions,
+      tasks: mergeTasksWithLiveSessions(
+        [...(dependencies.getTasksByProject()[projectViewId] ?? [])],
+        sessions,
+      ),
+    };
   };
 
   const getCanonicalRunningSessions = (): UnifiedSession[] => (
@@ -827,6 +838,7 @@ export function createProjectViewWorkspaceState(
   return {
     resolveSession,
     getProjectViewSessions,
+    getProjectViewRepresentation,
     materializeSession,
     resolveTask,
     resolveTaskBySessionId,

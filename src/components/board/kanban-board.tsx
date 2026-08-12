@@ -19,9 +19,7 @@ import {
 } from '@/hooks/use-session-click-handlers';
 import { getKanbanMultiSessionDragIds, setKanbanChatDragData } from '@/lib/dnd/panel-session-drag';
 import {
-  collectKanbanScopeData,
   getKanbanScopeProjectIds,
-  resolveKanbanScope,
   selectKanbanProjectionItems,
 } from '@/lib/kanban/board-scope';
 import { WORKFLOW_STATUS_ORDER } from '@/types/task-entity';
@@ -54,7 +52,12 @@ import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { buildTaskChildSession } from '@/lib/session/task-child-session';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
-import { useProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
+import {
+  useOriginProjectRepresentation,
+  useProjectViewRepresentation,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
+import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -108,8 +111,6 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const collectionsByProject = useCollectionStore((s) => s.collectionsByProject);
   const loadedCollectionProjects = useCollectionStore((s) => s.loadedProjects);
 
-  // Task store
-  const tasksByProject = useTaskStore((s) => s.tasksByProject);
   // Session store
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const selectionSessionId = resolveVisibleWorkspaceSessionId({
@@ -117,22 +118,46 @@ export const KanbanBoard = memo(function KanbanBoard() {
     peekSessionId,
     isKanbanPeekLayout: kanbanSessionOpenMode === 'peek',
   });
-  const projects = useSessionStore((s) => s.projects);
   const scrollPositionKey = getKanbanScrollPositionKey(selectedProjectDir, activeCollectionFilter);
   const [portfolioProjectFilter, setPortfolioProjectFilter] = useState<string | null>(null);
-  const scope = useMemo(
-    () => resolveKanbanScope(selectedProjectDir, projects),
-    [projects, selectedProjectDir],
+  const isAllProjects = selectedProjectDir === ALL_PROJECTS_SENTINEL;
+  const selectedRepresentation = useProjectViewRepresentation(
+    isAllProjects ? null : selectedProjectDir,
   );
+  const originRepresentation = useOriginProjectRepresentation();
+  const scope = selectedProjectDir
+    ? isAllProjects
+      ? { kind: 'all-projects' as const, projectIds: originRepresentation.projects.map(
+          (project) => project.encodedDir,
+        ) }
+      : { kind: 'project' as const, projectId: selectedProjectDir }
+    : null;
   const scopeProjectIdsKey = JSON.stringify(getKanbanScopeProjectIds(scope));
   const scopeProjectIds = useMemo(
     () => JSON.parse(scopeProjectIdsKey) as string[],
     [scopeProjectIdsKey],
   );
-  const isAllProjects = scope?.kind === 'all-projects';
   const scopeData = useMemo(
-    () => collectKanbanScopeData(scope, projects, tasksByProject, collectionsByProject),
-    [collectionsByProject, projects, scope, tasksByProject],
+    () => {
+      const representation = isAllProjects
+        ? originRepresentation
+        : selectedRepresentation
+          ? {
+              projects: [selectedRepresentation.project],
+              sessions: selectedRepresentation.sessions,
+              tasks: selectedRepresentation.tasks,
+            }
+          : { projects: [], sessions: [], tasks: [] };
+      return {
+        ...representation,
+        collectionsByProject: Object.fromEntries(
+          scopeProjectIds.map((projectId) => [
+            projectId,
+            collectionsByProject[projectId] ?? EMPTY_COLLECTIONS,
+          ]),
+        ),
+      };
+    }, [collectionsByProject, isAllProjects, originRepresentation, scopeProjectIds, selectedRepresentation],
   );
   const focusedProjectId = isAllProjects
     ? portfolioProjectFilter
@@ -427,8 +452,8 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   const selectedProject = useMemo(() => {
     if (!focusedProjectId) return null;
-    return projects.find((project) => project.encodedDir === focusedProjectId) ?? null;
-  }, [focusedProjectId, projects]);
+    return scopeData.projects.find((project) => project.encodedDir === focusedProjectId) ?? null;
+  }, [focusedProjectId, scopeData.projects]);
 
   const visibleProjects = useMemo(() => {
     if (!isAllProjects || !portfolioProjectFilter) return scopeData.projects;
