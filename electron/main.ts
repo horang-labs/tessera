@@ -1637,15 +1637,19 @@ ipcMain.handle('open-board-window', (_event, payload?: unknown) => {
   if (!serverPort) return { ok: false };
   const params = new URLSearchParams();
   if (payload && typeof payload === 'object') {
-    const { projectDir, collectionFilter } = payload as {
+    const { projectDir, collectionFilter, runningFilter } = payload as {
       projectDir?: unknown;
       collectionFilter?: unknown;
+      runningFilter?: unknown;
     };
     if (typeof projectDir === 'string' && projectDir.length > 0) {
       params.set('projectDir', projectDir);
     }
     if (typeof collectionFilter === 'string' && collectionFilter.length > 0) {
       params.set('collectionFilter', collectionFilter);
+    }
+    if (typeof runningFilter === 'boolean') {
+      params.set('runningFilter', String(runningFilter));
     }
   }
   const query = params.toString();
@@ -1719,6 +1723,20 @@ ipcMain.on('ui-collection-filter-changed', (event, payload: unknown) => {
     if (win.isDestroyed()) continue;
     if (win.webContents.id === senderId) continue;
     win.webContents.send('ui-collection-filter-changed', { collectionId });
+  }
+});
+ipcMain.on('ui-kanban-running-filter-changed', (event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return;
+  const { active } = payload as { active?: unknown };
+  if (typeof active !== 'boolean') return;
+  const senderId = event.sender.id;
+  const targets: BrowserWindow[] = [];
+  if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
+  for (const win of popoutWindows) targets.push(win);
+  for (const win of targets) {
+    if (win.isDestroyed()) continue;
+    if (win.webContents.id === senderId) continue;
+    win.webContents.send('ui-kanban-running-filter-changed', { active });
   }
 });
 ipcMain.on(

@@ -125,6 +125,7 @@ test('concurrent session opens spawn once and disconnect only detaches its surfa
   );
 
   const first = manager.create(createOptions({
+    interruptInputPolicy: 'single-escape',
     launchObserverDisposer: () => { firstLaunchObserverDisposeCount += 1; },
   }));
   const second = manager.create(createOptions({
@@ -142,6 +143,9 @@ test('concurrent session opens spawn once and disconnect only detaches its surfa
   const starts = delivered.filter(({ message }) => message.type === 'terminal_started');
   assert.deepEqual(starts.map(({ connectionId }) => connectionId).sort(), ['connection-a', 'connection-b']);
   assert.ok(starts.every(({ message }) => message.type === 'terminal_started' && message.terminalId === 'terminal-a'));
+  assert.ok(starts.every(({ message }) => (
+    message.type === 'terminal_started' && message.interruptInputPolicy === 'single-escape'
+  )));
   assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 1, sessionCount: 1 });
 
   delivered.length = 0;

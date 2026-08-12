@@ -1404,6 +1404,7 @@ export class TerminalManager {
       status: 'running',
       hookEvent: 'ControlPromptSubmit',
       stateAt,
+      interruptInputPolicy: runtime.interruptInputPolicy,
     };
     runtime.lastSessionState = message;
     runtime.runtimeStateAt = stateAt;
@@ -1474,6 +1475,7 @@ export class TerminalManager {
   recordSessionState(message: TerminalSessionStateMessage, userId: string): boolean {
     const runtime = this.getOwnedTerminal(message.terminalId, userId);
     if (!runtime || runtime.sessionId !== message.sessionId || runtime.ended) return false;
+    message.interruptInputPolicy = runtime.interruptInputPolicy;
     this.clearInterruptInference(runtime);
     if (
       runtime.interruptInferredAt
@@ -2235,6 +2237,7 @@ export class TerminalManager {
       shell: runtime.shell,
       reattached,
       appearance: runtime.appearanceController?.getAppearance(),
+      interruptInputPolicy: runtime.interruptInputPolicy,
     });
   }
 
@@ -2336,6 +2339,7 @@ export class TerminalManager {
       status: 'idle',
       hookEvent: 'InterruptFallback',
       stateAt,
+      interruptInputPolicy: runtime.interruptInputPolicy,
     };
     runtime.interruptInferredAt = stateAt;
     runtime.lastSessionState = message;

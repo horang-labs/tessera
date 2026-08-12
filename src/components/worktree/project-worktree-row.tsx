@@ -18,7 +18,7 @@ export function ProjectWorktreeRow({ active, branch, name, displayPath, onSelect
       aria-label={`${name}, ${displayPath}, branch ${branchLabel}`}
       title={displayPath}
       className={cn(
-        'mb-2 flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2.5 text-left transition-colors',
+        'mb-0.5 flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors',
         active
           ? 'bg-(--sidebar-hover) text-(--text-primary)'
           : 'text-(--text-secondary) hover:bg-(--sidebar-hover)',
@@ -63,7 +63,7 @@ export function CompactProjectWorktreeRow({ active, branch, displayPath, onSelec
       aria-label={`${displayPath}, branch ${branchLabel}`}
       title={displayPath}
       className={cn(
-        'mb-1.5 flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
+        'mb-0.5 flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left transition-colors',
         active
           ? 'bg-(--sidebar-hover) text-(--text-primary)'
           : 'text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-secondary)',

@@ -18,14 +18,19 @@ import { cn } from '@/lib/utils';
 interface PopoutHydrationParams {
   projectDir: string | null;
   collectionFilter: string | null;
+  runningFilter: boolean | null;
 }
 
 function readPopoutHydrationParams(): PopoutHydrationParams {
-  if (typeof window === 'undefined') return { projectDir: null, collectionFilter: null };
+  if (typeof window === 'undefined') {
+    return { projectDir: null, collectionFilter: null, runningFilter: null };
+  }
   const params = new URLSearchParams(window.location.search);
+  const runningFilterParam = params.get('runningFilter');
   return {
     projectDir: params.get('projectDir'),
     collectionFilter: params.get('collectionFilter'),
+    runningFilter: runningFilterParam === null ? null : runningFilterParam === 'true',
   };
 }
 
@@ -47,7 +52,11 @@ export function BoardPopoutLayout() {
   const projects = useSessionStore((s) => s.projects);
   const loadSettings = useSettingsStore((state) => state.load);
   const [projectsLoaded, setProjectsLoaded] = useState(projects.length > 0);
-  const hydrationRef = useRef<PopoutHydrationParams>({ projectDir: null, collectionFilter: null });
+  const hydrationRef = useRef<PopoutHydrationParams>({
+    projectDir: null,
+    collectionFilter: null,
+    runningFilter: null,
+  });
   const hasHydratedRef = useRef(false);
 
   if (!hasHydratedRef.current && typeof window !== 'undefined') {
@@ -59,6 +68,9 @@ export function BoardPopoutLayout() {
       boardState.setSelectedProjectDir(params.projectDir);
     }
     boardState.setCollectionFilter(params.collectionFilter ?? null);
+    if (params.runningFilter !== null) {
+      boardState.setKanbanRunningFilterActive(params.runningFilter);
+    }
   }
 
   useWebSocket();

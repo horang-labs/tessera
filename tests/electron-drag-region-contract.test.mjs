@@ -11,10 +11,12 @@ const tabBarSource = fs.readFileSync(
   'utf8',
 );
 
-test('project header static content remains draggable in Electron titlebars', () => {
+test('project header keeps an explicit drag lane around its view controls', () => {
   assert.match(appHeaderSource, /const isLinuxElectron = electronPlatform === 'linux'/);
   assert.match(appHeaderSource, /isMacElectron \|\| isWindowsElectron \|\| isLinuxElectron/);
   assert.match(appHeaderSource, /isElectronTitlebar && 'electron-drag pointer-events-none'/);
+  assert.match(appHeaderSource, /<ProjectViewModeToggle[\s\S]*labelMode="short"/);
+  assert.doesNotMatch(appHeaderSource, /projectDisplayName|projectInitial|getProjectColor/);
 });
 
 test('tab bar empty spacer remains an explicit Electron drag region', () => {

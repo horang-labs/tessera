@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { selectIsTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionNavigation } from "@/hooks/use-session-navigation";
@@ -28,9 +28,12 @@ import { supportsTerminalChatView } from "@/lib/terminal/terminal-chat-view-supp
 import { cancelTerminalChatRefresh } from "@/lib/chat/terminal-chat-live-refresh";
 import { useTerminalViewMode } from "@/hooks/use-terminal-view-mode";
 import {
+  selectCanEscapeInterruptTerminal,
   selectIsTerminalTurnProcessing,
   useTerminalSessionStore,
 } from "@/stores/terminal-session-store";
+import { sendTerminalChatInterrupt } from '@/lib/terminal/terminal-chat-send';
+import { toast } from '@/stores/notification-store';
 
 interface ChatAreaProps {
   sessionId: string;
@@ -142,6 +145,9 @@ export const ChatArea = memo(function ChatArea({
   const isTerminalTurnProcessing = useTerminalSessionStore(
     selectIsTerminalTurnProcessing(sessionId),
   );
+  const canEscapeInterrupt = useTerminalSessionStore(
+    selectCanEscapeInterruptTerminal(sessionId),
+  );
   const canToggleTerminalChatView = isTerminalSession && supportsTerminalChatView(sessionProvider);
   const isTerminalChatView = canToggleTerminalChatView
     && !isPendingCreation
@@ -149,6 +155,7 @@ export const ChatArea = memo(function ChatArea({
   // 터미널에서 대화가 계속 진행되므로, 채팅으로 넘어올 때마다 transcript를 다시 읽는다.
   // 전환 순간에만 걸리도록 ref로 가드 — forceReload가 매 렌더 반복되면 안 된다.
   const reloadedChatViewKeyRef = useRef<string | null>(null);
+  const terminalChatOverlayRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!session || !isTerminalChatView) {
       if (!isTerminalChatView) {
@@ -162,6 +169,32 @@ export const ChatArea = memo(function ChatArea({
     reloadedChatViewKeyRef.current = sessionId;
     void viewSession(session, { forceReload: true, activate: false });
   }, [session, sessionId, isTerminalChatView, viewSession]);
+
+  const interruptTerminalChat = useCallback(() => {
+    if (!sendTerminalChatInterrupt(sessionId)) {
+      toast.error(t('chat.terminalSendFailed'));
+      return;
+    }
+    requestAnimationFrame(() => {
+      terminalChatOverlayRef.current
+        ?.querySelector<HTMLTextAreaElement>('[data-testid="terminal-chat-composer-input"]')
+        ?.focus();
+    });
+  }, [sessionId, t]);
+
+  const handleTerminalChatKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (
+        event.key !== 'Escape'
+        || event.nativeEvent.isComposing
+        || !isTerminalTurnProcessing
+        || !canEscapeInterrupt
+      ) return;
+      event.preventDefault();
+      interruptTerminalChat();
+    },
+    [canEscapeInterrupt, interruptTerminalChat, isTerminalTurnProcessing],
+  );
 
   if (!sessionId) {
     return (
@@ -295,8 +328,10 @@ export const ChatArea = memo(function ChatArea({
         {/* PTY 위에 덮는 읽기 전용 대화. 밑의 TerminalPanel은 계속 살아 있다. */}
         {isTerminalChatView && (
           <div
+            ref={terminalChatOverlayRef}
             className="absolute inset-0 z-10 flex flex-col bg-(--chat-bg)"
             data-testid="terminal-chat-overlay"
+            onKeyDownCapture={handleTerminalChatKeyDown}
           >
             {/* MessageList는 h-full이라 높이를 부모가 확정해줘야 한다. flex 아이템의
                 기본 min-height:auto 때문에 min-h-0이 없으면 목록이 자연 높이로
@@ -321,7 +356,11 @@ export const ChatArea = memo(function ChatArea({
                 }}
               />
             </div>
-            <TerminalChatComposer sessionId={sessionId} isSinglePanel={isSinglePanel} />
+            <TerminalChatComposer
+              sessionId={sessionId}
+              isSinglePanel={isSinglePanel}
+              onInterrupt={interruptTerminalChat}
+            />
           </div>
         )}
       </div>
