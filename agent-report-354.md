@@ -1,8 +1,8 @@
 # Agent report — GitHub issue #354
 
-Date: 2026-08-12 KST  
-Branch: `feature/0812-t354`  
-Fixed point: `b1b7e50299d441d1e9b68f23ebf98443be496f2d`  
+Date: 2026-08-12 KST
+Branch: `feature/0812-t354`
+Fixed point: `b1b7e50299d441d1e9b68f23ebf98443be496f2d`
 Implementation commit: `be466581bd009f347da5feeda406ef6d87277b60`
 
 ## What changed and why
@@ -106,8 +106,8 @@ real Tessera-managed authority, including `CODEX_HOME`, `TESSERA_CODEX_HOME`,
   - Exit 0 with 0 errors and 3 pre-existing warnings in
     `preview-markdown.tsx`, `use-virtual-message-list.ts`, and `spawn-cli-runtime.ts`.
     Re-run after review fixes had the same result.
-- `git diff --check`
-  - Exit 0.
+- `git diff --check b1b7e50..HEAD`
+  - Exit 0 against the final ticket HEAD after the report correction.
 - `graphify update .`
   - Exit 0 after the final code changes: 11,353 nodes, 30,150 edges, 445 communities.
   - Existing warning: `provider-skill-ids.json` produced zero graph nodes.
