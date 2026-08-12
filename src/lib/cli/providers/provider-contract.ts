@@ -247,6 +247,9 @@ export interface CliProvider {
   /** Whether managed sessions remain bound to the provider home that created them. */
   bindsManagedSessionsToProviderHome?(): boolean;
 
+  /** Whether creator-supplied options outrank renderer defaults on a fresh Session launch. */
+  prefersPersistedLaunchOptionsForFreshSession?(): boolean;
+
   /** Implements provider-owned lifecycle artifact management behind this provider seam. */
   getLifecycleIntegration?(): ProviderLifecycleIntegration;
 
