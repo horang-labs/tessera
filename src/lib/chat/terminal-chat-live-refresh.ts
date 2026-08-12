@@ -96,13 +96,14 @@ export function reconcilePendingTerminalChatMessages(
  * The chat view has no stream of its own, so without this the send appears to
  * do nothing until the agent finishes its turn.
  */
-export function registerPendingTerminalChatMessage(sessionId: string, text: string): void {
+export function registerPendingTerminalChatMessage(sessionId: string, text: string): string {
   const message: EnhancedMessage = {
     id: `terminal-chat-pending-${Date.now()}`,
     type: 'text',
     role: 'user',
     content: text,
     timestamp: new Date().toISOString(),
+    deliveryStatus: 'pending',
   };
 
   const queue = pendingSends.get(sessionId) ?? [];
@@ -111,12 +112,31 @@ export function registerPendingTerminalChatMessage(sessionId: string, text: stri
   useChatStore.getState().addMessage(sessionId, message);
 
   setTimeout(() => {
-    const current = pendingSends.get(sessionId);
-    if (!current) return;
-    const remaining = current.filter((entry) => entry !== message);
-    if (remaining.length) pendingSends.set(sessionId, remaining);
-    else pendingSends.delete(sessionId);
+    failPendingTerminalChatMessage(sessionId, message.id);
   }, PENDING_SEND_TTL_MS).unref?.();
+
+  return message.id;
+}
+
+/** Marks an optimistic prompt as not delivered and stops replaying it as pending. */
+export function failPendingTerminalChatMessage(sessionId: string, messageId: string): boolean {
+  const current = pendingSends.get(sessionId);
+  if (!current?.some((message) => message.id === messageId)) return false;
+
+  const remaining = current.filter((message) => message.id !== messageId);
+  if (remaining.length) pendingSends.set(sessionId, remaining);
+  else pendingSends.delete(sessionId);
+
+  const messages = useChatStore.getState().messages.get(sessionId) ?? [];
+  useChatStore.getState().replaceMessages(
+    sessionId,
+    messages.map((message) => (
+      message.id === messageId && message.type === 'text'
+        ? { ...message, deliveryStatus: 'failed' as const }
+        : message
+    )),
+  );
+  return true;
 }
 
 /**

@@ -41,6 +41,8 @@ export interface TextMessage extends BaseEnhancedMessage {
   translationStatus?: 'pending' | 'completed' | 'error';
   /** translatedContent 의 언어 코드. */
   translationLang?: string;
+  /** Client-only delivery state for optimistic terminal-chat prompts. */
+  deliveryStatus?: 'pending' | 'failed';
 }
 
 // Tool call message (NEW)

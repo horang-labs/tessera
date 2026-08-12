@@ -721,6 +721,7 @@ export const zh: I18nMessages = {
     terminalComposerBlocked: '请在终端中回复',
     terminalComposerBlockedLabel: '终端正在等待回答 \u2014 请在终端中回复',
     terminalSendFailed: '没有正在运行的终端可发送',
+    terminalDeliveryFailed: '未送达终端',
     terminalInputBar: {
       label: '终端输入',
       placeholder: '输入到终端',

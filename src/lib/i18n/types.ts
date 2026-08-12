@@ -713,6 +713,7 @@ export interface I18nMessages {
     terminalComposerBlocked: string;
     terminalComposerBlockedLabel: string;
     terminalSendFailed: string;
+    terminalDeliveryFailed: string;
     terminalInputBar: {
       label: string;
       placeholder: string;

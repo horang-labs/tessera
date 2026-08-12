@@ -631,6 +631,11 @@ export class TerminalSurface {
     return this.options.terminalId === terminalId || this.actualTerminalId === terminalId;
   }
 
+  /** Server runtime generation this surface last attached to, for input routing. */
+  getInputGeneration(): number {
+    return this.serverGeneration ?? -1;
+  }
+
   /**
    * Client-coordinate band covering the CLI's input box, or null when the
    * terminal is not mounted. A TUI frames its prompt with a border and a status
@@ -2006,29 +2011,50 @@ export function closeAndDisposeTerminalSurface(surface: TerminalSurface): void {
   surface.dispose({ detach: false });
 }
 
+function getTerminalInputCandidates(terminalId: string): TerminalSurface[] {
+  const matching = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
+  const running = matching.filter((surface) => surface.getSnapshot().status === 'running');
+  const candidates = running.length ? running : matching;
+  const newestGeneration = candidates.reduce(
+    (newest, surface) => Math.max(newest, surface.getInputGeneration()),
+    -1,
+  );
+  return newestGeneration < 0
+    ? candidates
+    : candidates.filter((surface) => surface.getInputGeneration() === newestGeneration);
+}
+
 /** Send through an already-attached surface, preferring the visible/running one. */
 export function sendInputToTerminal(terminalId: string, data: string): boolean {
-  const candidates = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
-  for (const surface of candidates) {
-    if (surface.getSnapshot().status === 'running' && surface.sendInput(data)) return true;
-  }
-  return candidates.some((surface) => surface.sendInput(data));
+  return getTerminalInputCandidates(terminalId).some((surface) => surface.sendInput(data));
 }
 
 /** Whether the provider attached behind this terminal declares one-Escape cancellation. */
 export function terminalSupportsEscapeInterrupt(terminalId: string): boolean {
-  return [...surfaces.values()].some(
-    (surface) => surface.matchesTerminal(terminalId) && surface.supportsEscapeInterrupt(),
+  return getTerminalInputCandidates(terminalId).some(
+    (surface) => surface.supportsEscapeInterrupt(),
   );
 }
 
 /** Paste-mode counterpart of sendInputToTerminal (see TerminalSurface.pasteInput). */
-export function pasteInputToTerminal(terminalId: string, data: string): boolean {
-  const candidates = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
-  for (const surface of candidates) {
-    if (surface.getSnapshot().status === 'running' && surface.pasteInput(data)) return true;
+export interface TerminalInputRoute {
+  send(data: string): boolean;
+}
+
+export function pasteInputToTerminal(terminalId: string, data: string): TerminalInputRoute | null {
+  for (const surface of getTerminalInputCandidates(terminalId)) {
+    const generation = surface.getInputGeneration();
+    if (!surface.pasteInput(data)) continue;
+    return {
+      send: (nextData) => {
+        const isCurrent = getTerminalInputCandidates(terminalId).some(
+          (candidate) => candidate === surface && candidate.getInputGeneration() === generation,
+        );
+        return isCurrent && surface.sendInput(nextData);
+      },
+    };
   }
-  return candidates.some((surface) => surface.pasteInput(data));
+  return null;
 }
 
 export function getSessionTerminalId(sessionId: string): string {

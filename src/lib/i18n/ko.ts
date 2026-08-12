@@ -723,6 +723,7 @@ export const ko: I18nMessages = {
     terminalComposerBlocked: '터미널에서 답하세요',
     terminalComposerBlockedLabel: '터미널이 응답을 기다리는 중 \u2014 터미널에서 답하세요',
     terminalSendFailed: '전송할 터미널이 실행 중이 아닙니다',
+    terminalDeliveryFailed: '터미널에 전달되지 않았습니다',
     terminalInputBar: {
       label: '터미널 입력',
       placeholder: '터미널에 입력',

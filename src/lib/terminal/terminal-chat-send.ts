@@ -38,6 +38,8 @@ const SUBMIT_SEQUENCE = '\r';
 export interface TerminalChatSendHandle {
   /** Cancels the pending Enter. The pasted body stays in the TUI's input. */
   cancel: () => void;
+  /** Whether Enter reached the same live surface generation that received the paste. */
+  submitted: Promise<boolean>;
 }
 
 /**
@@ -57,13 +59,24 @@ export function sendTerminalChatMessage(
   if (!body.trim()) return null;
 
   const terminalId = getSessionTerminalId(sessionId);
-  if (!pasteInputToTerminal(terminalId, body)) return null;
+  const route = pasteInputToTerminal(terminalId, body);
+  if (!route) return null;
 
+  let resolveSubmitted!: (submitted: boolean) => void;
+  const submitted = new Promise<boolean>((resolve) => {
+    resolveSubmitted = resolve;
+  });
   const timer = setTimeout(() => {
-    sendInputToTerminal(terminalId, SUBMIT_SEQUENCE);
+    resolveSubmitted(route.send(SUBMIT_SEQUENCE));
   }, TERMINAL_CHAT_SUBMIT_DELAY_MS);
 
-  return { cancel: () => clearTimeout(timer) };
+  return {
+    submitted,
+    cancel: () => {
+      clearTimeout(timer);
+      resolveSubmitted(false);
+    },
+  };
 }
 
 /** Sends the provider-native interrupt gesture to the live PTY behind chat view. */

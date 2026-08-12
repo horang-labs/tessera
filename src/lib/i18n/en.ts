@@ -736,6 +736,7 @@ export const en: I18nMessages = {
     terminalComposerBlocked: 'Answer in the terminal',
     terminalComposerBlockedLabel: 'The terminal is waiting for an answer \u2014 reply there',
     terminalSendFailed: 'No running terminal to send to',
+    terminalDeliveryFailed: 'Not delivered to the terminal',
     terminalInputBar: {
       label: 'Terminal input',
       placeholder: 'Type into the terminal',

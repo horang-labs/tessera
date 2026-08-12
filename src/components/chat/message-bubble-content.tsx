@@ -334,6 +334,7 @@ const UserMessage = memo(function UserMessage({
   const showTranslation = view === 'translation' && hasTranslation;
   const renderedUserContent = showTranslation ? message.translatedContent! : message.content;
   const isTranslating = message.translationStatus === 'pending';
+  const deliveryFailed = message.deliveryStatus === 'failed';
 
   const getTextContent = useCallback(() => extractTextContent(message.content), [message.content]);
 
@@ -388,7 +389,7 @@ const UserMessage = memo(function UserMessage({
               )}
             </button>
             <MessageTranslateButton message={message} />
-            {onForkFromMessage && (
+            {onForkFromMessage && !message.deliveryStatus && (
               <button
                 type="button"
                 onClick={(event) => onForkFromMessage(message, event.currentTarget)}
@@ -412,6 +413,11 @@ const UserMessage = memo(function UserMessage({
         {isTranslating && (
           <div className="mt-1 text-[11px] text-(--text-muted) italic">
             {t('chat.translating')}
+          </div>
+        )}
+        {deliveryFailed && (
+          <div className="mt-1 text-[11px] text-(--status-error-text)" data-testid="terminal-message-delivery-failed">
+            {t('chat.terminalDeliveryFailed')}
           </div>
         )}
       </div>

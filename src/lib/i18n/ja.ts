@@ -721,6 +721,7 @@ export const ja: I18nMessages = {
     terminalComposerBlocked: 'ターミナルで答えてください',
     terminalComposerBlockedLabel: 'ターミナルが応答を待機中 \u2014 ターミナルで答えてください',
     terminalSendFailed: '送信先のターミナルが実行されていません',
+    terminalDeliveryFailed: 'ターミナルに配信されませんでした',
     terminalInputBar: {
       label: 'ターミナル入力',
       placeholder: 'ターミナルに入力',
