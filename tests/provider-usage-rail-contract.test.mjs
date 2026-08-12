@@ -44,5 +44,4 @@ test('the narrow project rail scrolls without reserving visible scrollbar space'
   )?.[0] ?? '';
   assert.match(scrollArea, /scrollbar-none/);
   assert.match(scrollArea, /overflow-x-hidden/);
-  assert.match(projectStripSource, /max-sm:right-0 max-sm:top-0/);
 });

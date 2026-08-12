@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  resolveCanonicalGitTargetSessionId,
   resolveActiveWorkspaceSessionId,
   resolveVisibleWorkspaceSessionId,
 } from '../src/lib/session/active-workspace-session';
@@ -89,5 +90,29 @@ test('split and list layouts continue using the active workspace session', () =>
       peekSessionId: null,
     }),
     'active-session',
+  );
+});
+
+test('Git drops optimistic sessions and any Session target hidden by Worktree Peek', () => {
+  assert.equal(
+    resolveCanonicalGitTargetSessionId({
+      activeSessionId: 'real-session',
+      peekWorktreeId: 'worktree-1',
+    }),
+    null,
+  );
+  assert.equal(
+    resolveCanonicalGitTargetSessionId({
+      activeSessionId: 'temp-optimistic',
+      peekWorktreeId: null,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveCanonicalGitTargetSessionId({
+      activeSessionId: 'real-session',
+      peekWorktreeId: null,
+    }),
+    'real-session',
   );
 });

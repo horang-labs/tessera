@@ -3,9 +3,9 @@
 import { useEffect, type MouseEvent } from 'react';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useTabStore } from '@/stores/tab-store';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { cn } from '@/lib/utils';
+import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
 
@@ -124,7 +124,7 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
     return electronApi.onTitlebarMenuCommand((command) => {
       switch (command) {
         case 'new-tab':
-          useTabStore.getState().openNewTab();
+          openSingletonNewTab();
           break;
         case 'open-settings':
           useSettingsStore.getState().open();

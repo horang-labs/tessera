@@ -28,6 +28,8 @@ import {
 import { GitDesktopDeliveryControl } from '@/components/git/git-desktop-commit-control';
 import { useSharedGitPanelController } from '@/components/git/git-panel-controller-context';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
+import { moveTerminalPanelToNewTab } from '@/lib/tab/terminal-panel-to-new-tab';
 
 const TAB_SCROLL_MIN_STEP = 180;
 
@@ -306,7 +308,7 @@ export const TabBar = memo(function TabBar() {
 
   const handleAddTab = useCallback(function handleAddTab() {
     useWorkspacePeekStore.getState().close();
-    useTabStore.getState().openNewTab();
+    openSingletonNewTab();
   }, []);
 
   const clearTabDragState = useCallback(function clearTabDragState() {
@@ -351,36 +353,7 @@ export const TabBar = memo(function TabBar() {
     const payload = parsePanelNodeDragData(e.dataTransfer);
     if (!payload) return false;
 
-    const panelStore = usePanelStore.getState();
-    const tabStore = useTabStore.getState();
-    const previousActiveTabId = tabStore.activeTabId;
-    const sourceTabData = panelStore.tabPanels[payload.tabId];
-    const sourcePanel = sourceTabData?.panels[payload.panelId];
-    const terminalId = sourcePanel?.terminalId ?? null;
-    const terminalSessionId = sourcePanel?.terminalSessionId ?? null;
-    const terminalCwd = sourcePanel?.terminalCwd ?? null;
-    const sourceProjectDir = tabStore.tabs.find((tab) => tab.id === payload.tabId)?.projectDir ?? null;
-    if (!sourceTabData || !terminalId || payload.tabId !== previousActiveTabId) return false;
-
-    if (Object.keys(sourceTabData.panels).length > 1) {
-      panelStore.closePanel(payload.panelId);
-    } else {
-      panelStore.assignTerminal(payload.panelId, null);
-    }
-
-    const newTabId = tabStore.createTab(null, { insertAfterTabId: payload.tabId });
-    const newTabData = usePanelStore.getState().tabPanels[newTabId];
-    const newPanelId = newTabData?.activePanelId;
-    if (!newPanelId) return false;
-    usePanelStore.getState().assignTerminal(newPanelId, terminalId, terminalSessionId, terminalCwd);
-    if (sourceProjectDir) {
-      useTabStore.getState().setTabProject(newTabId, sourceProjectDir);
-    }
-
-    if (previousActiveTabId && previousActiveTabId !== newTabId) {
-      useTabStore.getState().setActiveTab(previousActiveTabId);
-    }
-    return true;
+    return moveTerminalPanelToNewTab(payload);
   }, []);
 
   const handleCreateTabDragOver = useCallback(function handleCreateTabDragOver(e: React.DragEvent) {

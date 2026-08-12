@@ -22,6 +22,17 @@ export function resolveActiveWorkspaceSessionId({
     ?? getWorkspaceSourceSessionId(activeSessionId);
 }
 
+export function resolveCanonicalGitTargetSessionId({
+  activeSessionId,
+  peekWorktreeId,
+}: {
+  activeSessionId: string | null | undefined;
+  peekWorktreeId: string | null | undefined;
+}): string | null {
+  if (peekWorktreeId || activeSessionId?.startsWith('temp-')) return null;
+  return activeSessionId ?? null;
+}
+
 /**
  * Resolve the session whose conversation is actually visible.
  *

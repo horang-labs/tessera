@@ -50,6 +50,7 @@ import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { ALL_PROJECTS_SENTINEL } from "@/lib/constants/project-strip";
 import {
+  resolveCanonicalGitTargetSessionId,
   resolveActiveWorkspaceSessionId,
   resolveVisibleWorkspaceSessionId,
 } from "@/lib/session/active-workspace-session";
@@ -165,9 +166,10 @@ export function ChatLayout() {
     ?? (isKanbanPeekMode && selectedBoardSessionId
       ? selectedBoardWorktreeId
       : activePanelWorktreeId ?? compositeWorktreeId);
-  const activeGitTargetSessionId = peekWorktreeId || activeGitSessionId?.startsWith('temp-')
-    ? null
-    : activeGitSessionId;
+  const activeGitTargetSessionId = resolveCanonicalGitTargetSessionId({
+    activeSessionId: activeGitSessionId,
+    peekWorktreeId,
+  });
 
   const sidebarCollapsed = useSettingsStore((state) => state.sidebarCollapsed);
   const sidebarWidth = useSettingsStore(

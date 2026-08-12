@@ -27,6 +27,7 @@ import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { v4 as uuidv4 } from 'uuid';
+import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
 
 export interface UseKeyboardShortcutsOptions {
   /** Reserved for future use (help toggle). Currently unused. */
@@ -128,7 +129,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   // Use the same code path as the UI "+" button (tab-bar.tsx) — reuses a pristine
   // empty tab when available. A session is materialized lazily on first send.
   const handleNewTab = useCallback(() => {
-    useTabStore.getState().openNewTab();
+    openSingletonNewTab();
   }, []);
 
   // Same code path as the tab × button (tab-item.tsx) — closes the currently-active tab.

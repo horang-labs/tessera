@@ -48,6 +48,7 @@ test('workspace file drags carry both panel and composer payloads', () => {
     sourceSessionId: 'source-session',
     kind: 'file',
     path: 'docs/readme.md',
+    absolutePath: undefined,
   });
   assert.equal(transfer.getData('text/plain'), 'docs/readme.md');
   assert.equal(transfer.effectAllowed, 'copyMove');
@@ -56,6 +57,22 @@ test('workspace file drags carry both panel and composer payloads', () => {
   assert.equal(hasWorkspaceFileDragData(transfer), true);
   assert.equal(isSessionReferenceDragData(transfer), false);
   assert.equal(getWorkspaceFileDragPath(transfer), 'docs/readme.md');
+});
+
+test('workspace file drags preserve the host absolute path when supplied', () => {
+  const transfer = new FakeDataTransfer();
+  setWorkspaceFileDragData(
+    transfer,
+    'source-session',
+    'file',
+    'docs/readme.md',
+    '/workspace/docs/readme.md',
+  );
+
+  assert.equal(
+    parseWorkspaceFileDragData(transfer)?.absolutePath,
+    '/workspace/docs/readme.md',
+  );
 });
 
 test('workspace file drag parser rejects malformed payloads', () => {

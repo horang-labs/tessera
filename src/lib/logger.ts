@@ -3,6 +3,7 @@ import pino from 'pino';
 // globalThis to survive Next.js hot reload (prevents WriteStream listener leak)
 const _g = globalThis as unknown as Record<symbol, pino.Logger>;
 const kLogger = Symbol.for('app.logger');
+const isNodeTestRunner = Boolean(process.env.NODE_TEST_CONTEXT);
 const defaultLogLevel =
   process.env.NODE_ENV === 'production' || process.env.TESSERA_CLI === '1'
     ? 'error'
@@ -25,9 +26,9 @@ function serializeError(val: unknown): unknown {
 }
 
 if (!_g[kLogger]) {
-  _g[kLogger] = pino({
+  const options: pino.LoggerOptions = {
     level: process.env.LOG_LEVEL || defaultLogLevel,
-    transport: process.env.NODE_ENV !== 'production' ? {
+    transport: process.env.NODE_ENV !== 'production' && !isNodeTestRunner ? {
       target: 'pino-pretty',
       options: {
         colorize: true,
@@ -48,7 +49,15 @@ if (!_g[kLogger]) {
         return { level: label.toUpperCase() };
       },
     },
-  });
+  };
+
+  // pino-pretty runs through thread-stream. Node's test runner waits for that
+  // worker's MessagePort, so a test file that merely imports server code never
+  // exits after its assertions. Keep the same level/serializers in tests, but
+  // write synchronously; normal development and production logging is unchanged.
+  _g[kLogger] = isNodeTestRunner
+    ? pino(options, pino.destination({ sync: true }))
+    : pino(options);
 }
 
 const logger = _g[kLogger];

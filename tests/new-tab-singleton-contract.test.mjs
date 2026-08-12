@@ -15,20 +15,13 @@ const titlebarSource = fs.readFileSync(
   'utf8',
 );
 
-test('every user-facing New Tab command reuses an existing pristine empty tab', () => {
-  assert.equal(
-    /function handleAddTab\(\) \{\s*useTabStore\.getState\(\)\.openNewTab\(\);/.test(tabBarSource),
-    true,
-    'the tab-bar + button must use openNewTab()',
-  );
-  assert.equal(
-    /const handleNewTab = useCallback\(\(\) => \{\s*useTabStore\.getState\(\)\.openNewTab\(\);/.test(keyboardSource),
-    true,
-    'the New Tab keyboard shortcut must use openNewTab()',
-  );
-  assert.equal(
-    /case 'new-tab':\s*useTabStore\.getState\(\)\.openNewTab\(\);/.test(titlebarSource),
-    true,
-    'the Electron titlebar command must use openNewTab()',
-  );
+test('every user-facing New Tab entry point routes through the shared command', () => {
+  for (const [name, source] of [
+    ['tab-bar + button', tabBarSource],
+    ['keyboard shortcut', keyboardSource],
+    ['Electron titlebar', titlebarSource],
+  ]) {
+    assert.match(source, /import \{ openSingletonNewTab \}/, `${name} must import the command`);
+    assert.match(source, /openSingletonNewTab\(\);/, `${name} must invoke the command`);
+  }
 });

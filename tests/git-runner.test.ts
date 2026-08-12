@@ -231,6 +231,19 @@ test('output past the cap is dropped rather than buffered', async (t) => {
   );
 });
 
+test('an oversized first stdout chunk preserves the capped prefix', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  const runShell = createGitShellRunner(LOCAL_ENVIRONMENT, {
+    timeoutMs: 10_000,
+    maxOutputBytes: 512,
+  });
+  const result = await runShell("head -c 4096 /dev/zero | tr '\\0' x");
+
+  assert.equal(result.truncated, true);
+  assert.equal(result.stdout, 'x'.repeat(512));
+});
+
 test('a caller watching stdout can stop the command early and keep what arrived', async (t) => {
   if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
 
