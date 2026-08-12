@@ -322,7 +322,8 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
     }
 
-    case 'cli_down':
+    case 'cli_down': {
+      const providerName = msg.providerName?.trim() || 'Agent';
       applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
       // The CLI parser now synthesizes a failed workflow_event on exit
@@ -340,10 +341,15 @@ export function handleIncomingServerMessage({
         id: uuidv4(),
         type: 'text',
         role: 'system',
-        content: i18n.t('chat.sessionStopped', { exitCode: msg.exitCode, message: msg.message }),
+        content: i18n.t('chat.sessionStopped', {
+          providerName,
+          exitCode: msg.exitCode,
+          message: msg.message,
+        }),
         timestamp: new Date().toISOString(),
       });
       return { wasReconnect };
+    }
 
     case 'session_history':
       restoreSessionReplay(msg.sessionId, {

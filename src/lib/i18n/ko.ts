@@ -758,7 +758,7 @@ export const ko: I18nMessages = {
     skillPickerInactive: '메시지를 보내 세션을 시작하면 스킬을 사용할 수 있습니다',
     skillPickerEmpty: '이 세션에서 사용할 수 있는 스킬이 없습니다.',
     skillsLoading: '스킬 목록 로딩 중...',
-    sessionStopped: 'Claude Code가 중단되었습니다 (exit code: {{exitCode}}): {{message}}',
+    sessionStopped: '{{providerName}}가 중단되었습니다 (exit code: {{exitCode}}): {{message}}',
     sessionDefaultTitle: '세션 {{count}}',
     imageFallback: '[이미지]',
     tabList: '탭 목록',

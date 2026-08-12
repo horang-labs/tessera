@@ -756,7 +756,7 @@ export const zh: I18nMessages = {
     skillPickerInactive: '发送消息启动会话后即可使用技能',
     skillPickerEmpty: '此会话没有可用技能。',
     skillsLoading: '正在加载技能...',
-    sessionStopped: 'Claude Code 已停止（退出码：{{exitCode}}）：{{message}}',
+    sessionStopped: '{{providerName}} 已停止（退出码：{{exitCode}}）：{{message}}',
     sessionDefaultTitle: '会话 {{count}}',
     imageFallback: '[图片]',
     tabList: '标签列表',
