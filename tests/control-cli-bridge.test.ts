@@ -406,6 +406,94 @@ test('persistent WSL bridge timeouts fail closed and remove every owned resource
   }
 });
 
+test('a non-transient WSL filesystem failure fails fast with its actionable cause', async () => {
+  let createAttempts = 0;
+  let cleanupAttempts = 0;
+  const wslExecutableStore = createDefaultWslExecutableStore({
+    runWslCommand: async (_executable, args) => {
+      const script = args[3] ?? '';
+      if (script.includes('bridge_dir=')) {
+        createAttempts += 1;
+        throw Object.assign(new Error('Command failed: wsl.exe -e sh -c bridge-create'), {
+          code: 0xC000_0022,
+          stderr: 'mkdir: cannot create directory: Permission denied\n',
+        });
+      }
+      cleanupAttempts += 1;
+      return { stdout: '' };
+    },
+  });
+
+  await assert.rejects(
+    wslExecutableStore.create('#!/bin/sh\n'),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /after 1 attempt/i);
+      assert.match(error.message, /Permission denied/i);
+      return true;
+    },
+  );
+  assert.equal(createAttempts, 1);
+  assert.equal(cleanupAttempts, 1);
+});
+
+test('runtime cleanup retains ownership when immediate guest cleanup is also saturated', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-wsl-retained-cleanup-'));
+  const guestArtifacts = new Set<string>();
+  const cleanupOwnershipIds: string[] = [];
+  let cleanupAvailable = false;
+  const wslExecutableStore = createDefaultWslExecutableStore({
+    runWslCommand: async (_executable, args) => {
+      const script = args[3] ?? '';
+      const ownershipId = args[5] ?? '';
+      if (script.includes('bridge_dir=')) {
+        guestArtifacts.add(ownershipId);
+        throw transientWslTimeout();
+      }
+      if (script.includes('rm -rf')) {
+        cleanupOwnershipIds.push(ownershipId);
+        if (!cleanupAvailable) throw transientWslTimeout();
+        guestArtifacts.delete(ownershipId);
+        return { stdout: '' };
+      }
+      throw new Error('Unexpected WSL command');
+    },
+  });
+  const factory = createControlCliBridgeFactory({
+    authority: createControlAuthorityRegistry(),
+    registerManagedCredential,
+    runtimeId: 'runtime-wsl-retained-cleanup',
+    runtimeDescriptor: fakeRuntimeDescriptor('runtime-wsl-retained-cleanup'),
+    cliEntryPath: 'C:\\Tessera\\bin\\tessera.mjs',
+    hostExecutablePath: 'C:\\Tessera\\Tessera.exe',
+    hostPlatform: 'win32',
+    artifactRoot: testRoot,
+    wslExecutableStore,
+  });
+
+  try {
+    await assert.rejects(
+      factory.create({
+        agentEnvironment: 'wsl',
+        projectId: 'project-wsl-retained-cleanup',
+        sessionId: 'session-wsl-retained-cleanup',
+      }),
+      /Cleanup of the owned WSL bridge artifact also failed/i,
+    );
+    assert.equal(guestArtifacts.size, 1);
+    assert.equal(new Set(cleanupOwnershipIds).size, 1);
+
+    cleanupAvailable = true;
+    await factory.dispose();
+    assert.equal(guestArtifacts.size, 0);
+    assert.equal(new Set(cleanupOwnershipIds).size, 1);
+  } finally {
+    cleanupAvailable = true;
+    await factory.dispose().catch(() => undefined);
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
 test('the host CLI resolves WSL file inputs from the exact caller context', async () => {
   const { resolveCallerFilePath } = await import('../bin/control-cli.mjs');
   const translated: string[] = [];
