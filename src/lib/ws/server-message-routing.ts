@@ -289,6 +289,21 @@ export async function routeClientTransportMessage({
       });
       return;
 
+    case 'terminal_chat_input': {
+      const written = await bindTerminalSender(sendToConnection).submitSessionChatInput(
+        message.sessionId,
+        userId,
+        message.text,
+      );
+      sendToConnection(connectionId, {
+        type: 'terminal_chat_input_result',
+        requestId: message.requestId,
+        sessionId: message.sessionId,
+        written,
+      });
+      return;
+    }
+
     case 'translate_message':
       translateMessageFromWebSocket({
         userId,

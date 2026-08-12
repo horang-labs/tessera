@@ -74,6 +74,7 @@ export type ClientMessage =
   | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null; executionMode?: AgentExecutionMode } & ProviderRuntimeControls)
   | { type: 'close_session'; requestId: string; sessionId: string }
   | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string }
+  | { type: 'terminal_chat_input'; requestId: string; sessionId: string; text: string }
   | { type: 'translate_message'; requestId: string; sessionId: string; messageId: string }
   | ({ type: 'resume_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'retry_session'; requestId: string; sessionId: string }
@@ -349,6 +350,12 @@ export type AppServerMessage =
       }>;
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
+  | {
+      type: 'terminal_chat_input_result';
+      requestId: string;
+      sessionId: string;
+      written: boolean;
+    }
   /**
    * The message landed, but the agent it is for cannot start yet: the
    * worktree's blocking preparation is still running. Sent only when a message

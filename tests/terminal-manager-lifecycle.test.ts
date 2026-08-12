@@ -416,6 +416,74 @@ test('semantic Session prompts use one bracketed paste, synthesize running, and 
   ]);
 });
 
+test('terminal chat delivery follows a resumed runtime generation and submits exactly once', async () => {
+  const spawned: FakePty[] = [];
+  const delivered: ServerTransportMessage[] = [];
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+    undefined,
+    { semanticPromptSubmitDelayMs: 5 },
+  );
+
+  await manager.create(createOptions());
+  await manager.close('terminal-a', 'user-a');
+  // The ownership-conflict window has no managed runtime, so chat delivery
+  // must fail without writing to the stopped generation.
+  assert.equal(
+    await manager.submitSessionChatInput('session-a', 'user-a', 'blocked while external'),
+    false,
+  );
+
+  await manager.create(createOptions());
+  assert.equal(
+    await manager.submitSessionChatInput('session-a', 'user-a', 'post-resume prompt'),
+    true,
+  );
+  assert.deepEqual(spawned[0].writes, []);
+  assert.deepEqual(spawned[1].writes, [
+    '\x15',
+    '\x1b[200~post-resume prompt\x1b[201~',
+    '\r',
+  ]);
+  assert.deepEqual(
+    delivered
+      .filter((message) => message.type === 'terminal_started')
+      .map((message) => message.type === 'terminal_started' ? message.generation : -1),
+    [1, 2],
+  );
+
+  await manager.shutdownAll();
+});
+
+test('terminal chat never sends Enter to a replacement runtime generation', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    { semanticPromptSubmitDelayMs: 20 },
+  );
+
+  await manager.startDetached(createOptions());
+  const submitted = manager.submitSessionChatInput(
+    'session-a',
+    'user-a',
+    'one generation only',
+  );
+  await manager.close('terminal-a', 'user-a');
+  await manager.startDetached(createOptions());
+
+  assert.equal(await submitted, false);
+  assert.deepEqual(spawned[0].writes, [
+    '\x15',
+    '\x1b[200~one generation only\x1b[201~',
+  ]);
+  assert.deepEqual(spawned[1].writes, []);
+
+  await manager.shutdownAll();
+});
+
 test('named Session keys preserve their closed-set order and unavailable input writes nothing', async () => {
   const spawned: FakePty[] = [];
   const manager = new TerminalManager(
