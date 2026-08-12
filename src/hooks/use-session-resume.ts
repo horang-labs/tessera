@@ -17,6 +17,7 @@ import {
 import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
 import type { ContentBlock } from '@/lib/ws/message-types';
+import { offerProviderSkillOnboarding } from '@/lib/cli/provider-skill-onboarding';
 
 export function useSessionResume() {
   const sessionStore = useSessionStore();
@@ -51,6 +52,7 @@ export function useSessionResume() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(runtimeConfig),
         });
+        offerProviderSkillOnboarding(providerId);
 
         if (!response.ok) {
           if (response.status === 404) {
@@ -122,6 +124,7 @@ export function useSessionResume() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(runtimeConfig),
         });
+        offerProviderSkillOnboarding(providerId);
 
         if (!response.ok) {
           throw new Error('Failed to resume session');

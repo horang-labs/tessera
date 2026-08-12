@@ -32,6 +32,7 @@ import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
 import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
+import { startProviderSessionWithOptionalSkill } from '@/lib/cli/provider-skill-onboarding';
 
 interface TerminalPanelProps {
   panelId: string;
@@ -107,6 +108,7 @@ export function TerminalPanel({
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const sessionOwned = runtimeOwnership !== 'standalone';
+  const launchProviderId = launch?.providerId;
   const previewOwnsRuntimeRef = useRef(runtimeOwnership === 'session-preview');
   const handleTerminalInput = useCallback(() => {
     if (runtimeOwnership === 'standalone' || runtimeOwnership === 'session-peek') return;
@@ -276,10 +278,17 @@ export function TerminalPanel({
 
   useEffect(() => {
     if (connectionStatus !== 'connected' || !isTabActive) return;
-    void surface.ensureConnected().then((connected) => {
-      if (connected && isPanelActive) surface.activate();
-    });
-  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, surface]);
+    const connect = () => {
+      void surface.ensureConnected().then((connected) => {
+        if (connected && isPanelActive) surface.activate();
+      });
+    };
+    if (launchProviderId) {
+      startProviderSessionWithOptionalSkill(launchProviderId, connect);
+    } else {
+      connect();
+    }
+  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, launchProviderId, surface]);
 
   const canRestart = status === 'exited' || status === 'error';
   const handleThemeRestart = useCallback(() => {

@@ -3,7 +3,9 @@ import { wsClient } from '@/lib/ws/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useSessionStore } from '@/stores/session-store';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
+import { startProviderSessionWithOptionalSkill } from '@/lib/cli/provider-skill-onboarding';
 import type { ContentBlock, SessionSpawnConfig } from '@/lib/ws/message-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
@@ -31,7 +33,15 @@ export function useWebSocket() {
       spawnConfig?: SessionSpawnConfig,
       options?: { forceTranslateInput?: boolean },
     ) => {
-      wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
+      const session = useSessionStore.getState().getSession(sessionId);
+      const providerId = session?.provider?.trim();
+      if (!providerId || session?.hasStarted) {
+        wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
+        return;
+      }
+      startProviderSessionWithOptionalSkill(providerId, () => {
+        wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
+      });
     },
     [],
   );

@@ -271,6 +271,7 @@ export interface I18nMessages {
     };
     codexLifecycle: {
       title: string;
+      required: string;
       description: string;
       refresh: string;
       environment: string;
@@ -298,6 +299,47 @@ export interface I18nMessages {
         granted: string;
         revoked: string;
         declined: string;
+      };
+    };
+    providerSkills: {
+      title: string;
+      description: string;
+      optional: string;
+      refresh: string;
+      environment: string;
+      detected: string;
+      notDetected: string;
+      needsConsent: string;
+      consent: string;
+      ownership: string;
+      consentPrompt: string;
+      install: string;
+      update: string;
+      remove: string;
+      working: string;
+      requestFailed: string;
+      onboardingPrompt: string;
+      installSuccess: string;
+      installFailed: string;
+      conflictHelp: string;
+      unavailableHelp: string;
+      state: {
+        absent: string;
+        ready: string;
+        stale: string;
+        conflict: string;
+        unavailable: string;
+      };
+      consentState: {
+        granted: string;
+        revoked: string;
+        'not-granted': string;
+      };
+      ownershipState: {
+        none: string;
+        tessera: string;
+        user: string;
+        unknown: string;
       };
     };
     cliDiagnostics: {

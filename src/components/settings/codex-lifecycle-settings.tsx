@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, CircleAlert, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import type { ProviderIntegrationLaunchDecision } from '@/lib/cli/provider-integration';
 import { getCodexLifecycleActions } from '@/lib/cli/codex-lifecycle-view-policy';
+import { useSettingsStore } from '@/stores/settings-store';
 
 const ENDPOINT = '/api/provider-integrations/codex/lifecycle';
 
@@ -25,6 +26,9 @@ async function readDecision(response: Response): Promise<ProviderIntegrationLaun
 
 export default function CodexLifecycleSettings() {
   const { t } = useI18n();
+  const selectedAgentEnvironment = useSettingsStore((state) => state.settings.agentEnvironment);
+  const pendingSettingsSaveCount = useSettingsStore((state) => state.pendingSaveCount);
+  const requestGeneration = useRef(0);
   const [decision, setDecision] = useState<ProviderIntegrationLaunchDecision | null>(null);
   const [consented, setConsented] = useState(false);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
@@ -32,22 +36,32 @@ export default function CodexLifecycleSettings() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    const generation = ++requestGeneration.current;
     setPending('status');
     setError(null);
     try {
-      setDecision(await readDecision(await fetch(ENDPOINT, { cache: 'no-store' })));
+      const nextDecision = await readDecision(await fetch(ENDPOINT, { cache: 'no-store' }));
+      if (requestGeneration.current === generation) setDecision(nextDecision);
     } catch (cause) {
+      if (requestGeneration.current !== generation) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setPending(null);
+      if (requestGeneration.current === generation) setPending(null);
     }
   }, []);
 
   useEffect(function loadCodexLifecycleStatus() {
+    requestGeneration.current += 1;
+    setDecision(null);
+    setConsented(false);
+    setConfirmingRemoval(false);
+    setPending('status');
+    if (pendingSettingsSaveCount > 0) return;
     void refresh();
-  }, [refresh]);
+  }, [pendingSettingsSaveCount, refresh, selectedAgentEnvironment]);
 
   const mutate = useCallback(async (operation: MutationOperation) => {
+    const generation = ++requestGeneration.current;
     setPending(operation);
     setError(null);
     try {
@@ -58,13 +72,16 @@ export default function CodexLifecycleSettings() {
           ? { operation, consent: 'granted' }
           : { operation }),
       });
-      setDecision(await readDecision(response));
+      const nextDecision = await readDecision(response);
+      if (requestGeneration.current !== generation) return;
+      setDecision(nextDecision);
       if (operation === 'install' || operation === 'remove') setConsented(false);
       if (operation === 'remove') setConfirmingRemoval(false);
     } catch (cause) {
+      if (requestGeneration.current !== generation) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setPending(null);
+      if (requestGeneration.current === generation) setPending(null);
     }
   }, []);
 
@@ -81,6 +98,9 @@ export default function CodexLifecycleSettings() {
             <h3 className="font-medium text-(--text-primary)">
               {t('settings.codexLifecycle.title')}
             </h3>
+            <span className="rounded-full border border-(--divider) px-2 py-0.5 text-xs font-medium text-(--text-muted)">
+              {t('settings.codexLifecycle.required')}
+            </span>
           </div>
           <p className="mt-1 text-sm leading-6 text-(--text-secondary)">
             {t('settings.codexLifecycle.description')}
@@ -137,7 +157,9 @@ export default function CodexLifecycleSettings() {
           ) : null}
           {lifecycle?.state === 'conflict' ? (
             <p className="mt-2 text-xs leading-5 text-(--text-secondary)">
-              {t('settings.codexLifecycle.conflictHelp')}
+              {t('settings.codexLifecycle.conflictHelp', {
+                environment: decision.providerHome.agentEnvironment === 'wsl' ? 'WSL' : 'Native',
+              })}
             </p>
           ) : null}
         </div>
