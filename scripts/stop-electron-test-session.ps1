@@ -158,9 +158,6 @@ if ($manifest.schemaVersion -notin @(2, 3) -or $manifest.sessionId -ne $SessionI
 $buildArtifactPaths = $null
 if ($RemoveBuildArtifacts) {
   $downloads = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads'
-  if (-not $manifest.portableArtifact) {
-    throw 'Refusing to remove a portable artifact that was not recorded by the launcher.'
-  }
   $executable = [IO.Path]::GetFullPath([string]$manifest.executable)
   $appDirectory = Split-Path -Parent $executable
   $appDirectoryName = Split-Path -Leaf $appDirectory
@@ -179,16 +176,19 @@ if ($RemoveBuildArtifacts) {
     throw "Refusing to remove a nested build directory: $appDirectory"
   }
 
-  $portableArtifact = [IO.Path]::GetFullPath([string]$manifest.portableArtifact)
-  if (-not (Test-PathWithinRoot -Path $portableArtifact -Root $downloads)) {
-    throw "Refusing to remove a portable artifact outside Downloads: $portableArtifact"
-  }
-  if ([IO.Path]::GetFullPath((Split-Path -Parent $portableArtifact)).TrimEnd('\') -ne
-      [IO.Path]::GetFullPath($downloads).TrimEnd('\')) {
-    throw "Refusing to remove a nested portable artifact: $portableArtifact"
-  }
-  if ([IO.Path]::GetExtension($portableArtifact) -ne '.exe') {
-    throw "Refusing to remove a portable artifact without an .exe extension: $portableArtifact"
+  $portableArtifact = $null
+  if ($manifest.portableArtifact) {
+    $portableArtifact = [IO.Path]::GetFullPath([string]$manifest.portableArtifact)
+    if (-not (Test-PathWithinRoot -Path $portableArtifact -Root $downloads)) {
+      throw "Refusing to remove a portable artifact outside Downloads: $portableArtifact"
+    }
+    if ([IO.Path]::GetFullPath((Split-Path -Parent $portableArtifact)).TrimEnd('\') -ne
+        [IO.Path]::GetFullPath($downloads).TrimEnd('\')) {
+      throw "Refusing to remove a nested portable artifact: $portableArtifact"
+    }
+    if ([IO.Path]::GetExtension($portableArtifact) -ne '.exe') {
+      throw "Refusing to remove a portable artifact without an .exe extension: $portableArtifact"
+    }
   }
 
   $buildArtifactPaths = [pscustomobject]@{
@@ -305,7 +305,8 @@ if ($buildArtifactPaths) {
     Remove-PathWithRetry -Path $buildArtifactPaths.AppDirectory
     $removedBuildArtifacts += $buildArtifactPaths.AppDirectory
   }
-  if (Test-Path -LiteralPath $buildArtifactPaths.PortableArtifact) {
+  if ($buildArtifactPaths.PortableArtifact -and
+      (Test-Path -LiteralPath $buildArtifactPaths.PortableArtifact)) {
     Remove-PathWithRetry -Path $buildArtifactPaths.PortableArtifact
     $removedBuildArtifacts += $buildArtifactPaths.PortableArtifact
   }

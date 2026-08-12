@@ -152,13 +152,13 @@ test('a retained schema-3 manifest without portableArtifact restarts with the sa
   assertHarnessCleanup(result);
 });
 
-test('final cleanup without a recorded portable artifact fails before removing state', {
+test('final cleanup without an optional portable artifact removes only recorded owned state', {
   skip: !canRunWindowsPowerShell,
 }, () => {
   const result = runLaunchEnvironmentHarness('MissingArtifact');
 
-  assert.match(result.cleanupError, /portable artifact that was not recorded by the launcher/);
-  assert.equal(result.cleanupFailurePreservedRoots, true);
+  assert.equal(result.cleanupError, null);
+  assert.equal(result.testBuildRemoved, true);
   assert.equal(result.finalCleanupError, null);
   assert.equal(result.remainingWslStateRoots.length, 0);
   for (const root of result.wslStateRoots) {
@@ -391,7 +391,6 @@ test('owned Downloads artifacts can be permanently removed without the Linux tra
   assert.match(stopSource, /\[switch\]\$RemoveBuildArtifacts/);
   assert.match(stopSource, /if \(\$RemoveBuildArtifacts -and -not \$RemoveData\)/);
   assert.match(stopSource, /\$manifest\.portableArtifact/);
-  assert.match(stopSource, /portable artifact that was not recorded by the launcher/);
   assert.doesNotMatch(stopSource, /portableBaseName/);
   assert.match(stopSource, /GetFolderPath\('UserProfile'\)/);
   assert.match(stopSource, /Test-PathWithinRoot -Path \$appDirectory -Root \$downloads/);

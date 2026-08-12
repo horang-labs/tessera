@@ -62,6 +62,15 @@ $testRootOwnerToken = [Guid]::NewGuid().ToString('N')
 $testRootOwnerMarker = Join-Path $testRoot '.tessera-harness-owner'
 $sessionId = "env-contract-t355-$PID-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
 $manifestPath = Join-Path (Join-Path $testRoot 'sessions') "$sessionId.json"
+$testExecutable = "$env:SystemRoot\System32\cmd.exe"
+$testBuildRoot = $null
+if ($Mode -eq 'MissingArtifact') {
+  $downloads = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads'
+  $testBuildRoot = Join-Path $downloads "tessera-contract-$([Guid]::NewGuid().ToString('N'))-unpacked"
+  New-Item -ItemType Directory -Path $testBuildRoot | Out-Null
+  $testExecutable = Join-Path $testBuildRoot 'Tessera.exe'
+  New-Item -ItemType File -Path $testExecutable | Out-Null
+}
 $global:tesseraShouldFail = $Mode -eq 'Failure'
 $global:tesseraSyntheticProcessId = 2147483000
 
@@ -226,7 +235,7 @@ try {
 
   try {
     & $Launcher `
-      -Executable "$env:SystemRoot\System32\cmd.exe" `
+      -Executable $testExecutable `
       -Count $(if ($Mode -in @('Success', 'MismatchedOwner')) { 2 } else { 1 }) `
       -SessionId $sessionId `
       -TestRoot $testRoot `
@@ -244,7 +253,7 @@ try {
     $legacyManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
     try {
       & $Launcher `
-        -Executable "$env:SystemRoot\System32\cmd.exe" `
+        -Executable $testExecutable `
         -Count 1 `
         -SessionId $sessionId `
         -TestRoot $testRoot `
@@ -287,10 +296,12 @@ try {
       -Root ([string]$instance.wslStateRoot) `
       -ExpectedToken $mismatchedToken `
       -ReplacementToken ([string]$instance.wslStateOwnerToken)
-    try {
-      Invoke-ManifestCleanup
-    } catch {
-      $finalCleanupError = $_.Exception.Message
+    if ($cleanupError) {
+      try {
+        Invoke-ManifestCleanup
+      } catch {
+        $finalCleanupError = $_.Exception.Message
+      }
     }
   } elseif ($Mode -eq 'MissingArtifact' -and (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     try {
@@ -306,10 +317,12 @@ try {
       (Test-Path -LiteralPath $_.instanceRoot -PathType Container) -and
       (Test-WslStateRootExists -Root ([string]$_.wslStateRoot))
     }).Count -eq $instances.Count
-    try {
-      Invoke-ManifestCleanup
-    } catch {
-      $finalCleanupError = $_.Exception.Message
+    if ($cleanupError) {
+      try {
+        Invoke-ManifestCleanup
+      } catch {
+        $finalCleanupError = $_.Exception.Message
+      }
     }
   } elseif (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
     try {
@@ -336,6 +349,7 @@ try {
     finalCleanupError = $finalCleanupError
     mismatchedMarkerPreserved = $mismatchedMarkerPreserved
     cleanupFailurePreservedRoots = $cleanupFailurePreservedRoots
+    testBuildRemoved = -not $testBuildRoot -or -not (Test-Path -LiteralPath $testBuildRoot)
     legacyRestartSucceeded = $legacyRestartSucceeded
     restartOwnerTokenPreserved = $restartOwnerTokenPreserved
     wslStateRoots = $wslStateRoots
@@ -350,6 +364,9 @@ try {
   }
   if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     Remove-OwnedHarnessTestRoot
+  }
+  if ($testBuildRoot -and (Test-Path -LiteralPath $testBuildRoot)) {
+    Remove-Item -LiteralPath $testBuildRoot -Recurse -Force
   }
   Remove-Variable -Name tesseraCapturedLaunches -Scope Global -ErrorAction SilentlyContinue
   Remove-Variable -Name tesseraShouldFail -Scope Global -ErrorAction SilentlyContinue
