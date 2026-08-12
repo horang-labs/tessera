@@ -3,6 +3,7 @@ import { useNotificationStore } from '@/stores/notification-store';
 import type {
   ProviderSkillId,
 } from './provider-skill-management';
+import { isProviderSkillId } from './provider-skill-management';
 import type { ProviderSkillIntegrationResult } from './provider-integration';
 import { inspectProviderSkills, mutateProviderSkill } from './provider-skill-client';
 import { PROVIDER_SKILL_DISPLAY_NAMES } from './provider-skill-view-policy';
@@ -29,9 +30,7 @@ export interface ProviderSkillOnboarding {
 type ProviderSkillOnboardingOutcome = 'offered' | 'already-offered' | 'not-needed' | 'unavailable';
 
 function providerSkillId(providerId: string): ProviderSkillId | null {
-  return providerId === 'claude-code' || providerId === 'codex' || providerId === 'opencode'
-    ? providerId
-    : null;
+  return isProviderSkillId(providerId) ? providerId : null;
 }
 
 export function createProviderSkillOnboarding(
@@ -118,12 +117,12 @@ export function offerProviderSkillOnboarding(providerId: string): void {
   void providerSkillOnboarding.offer(providerId).catch(() => undefined);
 }
 
-export function startProviderSessionWithOptionalSkill<T>(
+export function notifyProviderSessionStarted(
   providerId: string,
-  start: () => T,
+  wasAlreadyStarted: boolean,
+  startSucceeded = true,
   offer: (providerId: string) => Promise<unknown> = (id) => providerSkillOnboarding.offer(id),
-): T {
-  const result = start();
+): void {
+  if (wasAlreadyStarted || !startSucceeded) return;
   void offer(providerId).catch(() => undefined);
-  return result;
 }

@@ -16,6 +16,10 @@ export type ProviderSkillId = keyof typeof providerSkillManifest;
 export const PROVIDER_SKILL_IDS: readonly ProviderSkillId[] = Object.keys(
   providerSkillManifest,
 ) as ProviderSkillId[];
+
+export function isProviderSkillId(providerId: string): providerId is ProviderSkillId {
+  return (PROVIDER_SKILL_IDS as readonly string[]).includes(providerId);
+}
 export type ProviderSkillOperation = 'install' | 'status' | 'update' | 'remove';
 
 export interface ProviderSkillStatus {
@@ -398,6 +402,9 @@ async function inspectProviderSkill(
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (consent === 'granted') {
+        return { providerId, detected: false, state: 'conflict', consent, ownership: 'tessera' };
+      }
       return { providerId, detected: false, state: 'absent', consent, ownership: 'none' };
     }
     throw error;

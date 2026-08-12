@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createProviderSkillOnboarding,
-  startProviderSessionWithOptionalSkill,
+  notifyProviderSessionStarted,
 } from '@/lib/cli/provider-skill-onboarding';
 import type {
   ProviderSkillIntegrationResult,
@@ -44,24 +44,22 @@ function snapshot(
   };
 }
 
-test('Session start returns without waiting for optional skill onboarding', async () => {
+test('Session start notification is nonblocking and only offers after a successful first start', async () => {
   let resolveOnboarding!: () => void;
   const onboarding = new Promise<void>((resolve) => {
     resolveOnboarding = resolve;
   });
-  let started = false;
+  let offers = 0;
+  const offer = async () => {
+    offers += 1;
+    await onboarding;
+  };
 
-  const result = startProviderSessionWithOptionalSkill(
-    'codex',
-    () => {
-      started = true;
-      return 'session-started';
-    },
-    async () => onboarding,
-  );
+  notifyProviderSessionStarted('codex', false, true, offer);
+  notifyProviderSessionStarted('codex', true, true, offer);
+  notifyProviderSessionStarted('codex', false, false, offer);
 
-  assert.equal(started, true);
-  assert.equal(result, 'session-started');
+  assert.equal(offers, 1);
   resolveOnboarding();
   await onboarding;
 });

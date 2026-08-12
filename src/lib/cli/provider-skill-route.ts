@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import {
+  isProviderSkillId,
   PROVIDER_SKILL_IDS,
   type ProviderSkillId,
 } from './provider-skill-management';
@@ -27,7 +28,7 @@ function parseProviderIds(value: unknown): { providerIds?: ProviderSkillId[]; er
   if (value.length === 0) return {};
   const providerIds = [...new Set(value)] as string[];
   const unsupported = providerIds.find((providerId) => (
-    !(PROVIDER_SKILL_IDS as readonly string[]).includes(providerId)
+    !isProviderSkillId(providerId)
   ));
   return unsupported
     ? { error: `Unsupported provider: ${unsupported}` }

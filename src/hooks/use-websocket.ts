@@ -5,7 +5,7 @@ import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
-import { startProviderSessionWithOptionalSkill } from '@/lib/cli/provider-skill-onboarding';
+import { notifyProviderSessionStarted } from '@/lib/cli/provider-skill-onboarding';
 import type { ContentBlock, SessionSpawnConfig } from '@/lib/ws/message-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 
@@ -35,13 +35,8 @@ export function useWebSocket() {
     ) => {
       const session = useSessionStore.getState().getSession(sessionId);
       const providerId = session?.provider?.trim();
-      if (!providerId || session?.hasStarted) {
-        wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
-        return;
-      }
-      startProviderSessionWithOptionalSkill(providerId, () => {
-        wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
-      });
+      wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
+      if (providerId) notifyProviderSessionStarted(providerId, session?.hasStarted === true);
     },
     [],
   );

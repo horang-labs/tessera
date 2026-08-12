@@ -12,7 +12,7 @@ import type {
 import {
   createProviderSkillManager,
   detectSupportedProviderSkills,
-  PROVIDER_SKILL_IDS,
+  isProviderSkillId,
   resolveOwnedProviderSkillHome,
   type ProviderSkillId,
   type ProviderSkillManagementRequest,
@@ -760,9 +760,7 @@ export function createProviderIntegration(
 }
 
 function normalizeProviderSkillId(providerId: string): ProviderSkillId {
-  if ((PROVIDER_SKILL_IDS as readonly string[]).includes(providerId)) {
-    return providerId as ProviderSkillId;
-  }
+  if (isProviderSkillId(providerId)) return providerId;
   throw new Error(`Provider ${providerId} does not support the tessera-cli skill.`);
 }
 

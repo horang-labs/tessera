@@ -32,7 +32,7 @@ import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
 import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
-import { offerProviderSkillOnboarding } from '@/lib/cli/provider-skill-onboarding';
+import { notifyProviderSessionStarted } from '@/lib/cli/provider-skill-onboarding';
 
 interface TerminalPanelProps {
   panelId: string;
@@ -282,8 +282,8 @@ export function TerminalPanel({
     if (connectionStatus !== 'connected' || !isTabActive) return;
     const connect = () => {
       void surface.ensureConnected().then((connected) => {
-        if (connected && launchProviderId && offerSkillOnboarding) {
-          offerProviderSkillOnboarding(launchProviderId);
+        if (launchProviderId) {
+          notifyProviderSessionStarted(launchProviderId, !offerSkillOnboarding, connected);
         }
         if (connected && isPanelActive) surface.activate();
       });

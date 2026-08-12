@@ -17,7 +17,7 @@ import {
 import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
 import type { ContentBlock } from '@/lib/ws/message-types';
-import { offerProviderSkillOnboarding } from '@/lib/cli/provider-skill-onboarding';
+import { notifyProviderSessionStarted } from '@/lib/cli/provider-skill-onboarding';
 
 export function useSessionResume() {
   const sessionStore = useSessionStore();
@@ -81,7 +81,7 @@ export function useSessionResume() {
           return;
         }
 
-        if (shouldOfferSkillOnboarding) offerProviderSkillOnboarding(providerId);
+        notifyProviderSessionStarted(providerId, !shouldOfferSkillOnboarding);
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
           model: result.model,
           reasoningEffort: result.reasoningEffort,
@@ -141,7 +141,7 @@ export function useSessionResume() {
           return false;
         }
 
-        if (shouldOfferSkillOnboarding) offerProviderSkillOnboarding(providerId);
+        notifyProviderSessionStarted(providerId, !shouldOfferSkillOnboarding);
         sessionStore.markSessionRunning(sessionId, result.sessionId || sessionId, {
           model: result.model,
           reasoningEffort: result.reasoningEffort,

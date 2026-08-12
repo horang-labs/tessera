@@ -364,6 +364,49 @@ test('external modification stops automatic management and is reported without o
   }
 });
 
+test('external deletion stops automatic management instead of recreating a consented skill', async () => {
+  const harness = createHarness();
+  const skillDir = path.join(harness.homes['native:codex'], 'skills', 'tessera-cli');
+  try {
+    await harness.integration.manageSkills({
+      operation: 'install',
+      agentEnvironmentOwner: { kind: 'user', userId: 'deleted-user' },
+      providerIds: ['codex'],
+    });
+    fs.rmSync(skillDir, { recursive: true });
+
+    const launch = await harness.createIntegration().resolveLaunch({
+      provider: skillOnlyProvider('codex'),
+      agentEnvironmentOwner: { kind: 'user', userId: 'deleted-user' },
+    });
+
+    assert.deepEqual(launch.skill, {
+      requirement: 'optional',
+      state: 'conflict',
+      consent: 'granted',
+      trust: 'not-required',
+    });
+    assert.equal(launch.providerHome.agentEnvironment, 'native');
+    assert.equal(fs.existsSync(skillDir), false);
+
+    const status = await harness.integration.manageSkills({
+      operation: 'status',
+      agentEnvironmentOwner: { kind: 'user', userId: 'deleted-user' },
+      providerIds: ['codex'],
+    });
+    assert.deepEqual(status.providers, [{
+      providerId: 'codex',
+      detected: true,
+      state: 'conflict',
+      consent: 'granted',
+      ownership: 'tessera',
+      policy: { onboarding: 'none', canInstall: false, canUpdate: false, canRemove: false },
+    }]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test('remove is all-or-nothing when one selected provider has an ownership conflict', async () => {
   const harness = createHarness();
   const claudeSkill = path.join(
