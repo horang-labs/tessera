@@ -103,6 +103,9 @@ export async function startControlRuntimeHost(
         }),
         sessionObserver: createTerminalControlSessionObserver({
           resolveUserId: requireUserId,
+          readIntegrationHealth: (sessionId) => (
+            providerIntegration.getManagedSessionHealth(sessionId)
+          ),
         }),
         sessionController: createTerminalControlSessionController({
           resolveUserId: requireUserId,

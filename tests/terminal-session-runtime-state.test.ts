@@ -163,6 +163,28 @@ test('PTY UserPromptSubmit marks only the terminal state as processing', () => {
   assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
 });
 
+test('live provider integration health projects onto and clears from a running Session', () => {
+  receive({
+    type: 'provider_integration_health',
+    sessionId: SESSION_ID,
+    integrationHealth: 'degraded',
+  });
+  assert.equal(
+    useSessionStore.getState().getSession(SESSION_ID)?.integrationHealth,
+    'degraded',
+  );
+
+  receive({
+    type: 'provider_integration_health',
+    sessionId: SESSION_ID,
+    integrationHealth: null,
+  });
+  assert.equal(
+    useSessionStore.getState().getSession(SESSION_ID)?.integrationHealth,
+    undefined,
+  );
+});
+
 test('PTY interrupt fallback clears the menu processing indicator', () => {
   receive({
     type: 'session_state',

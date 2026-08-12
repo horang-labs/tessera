@@ -651,6 +651,7 @@ export const ja: I18nMessages = {
     currentBranchLabel: '現在',
     presentationScopeHint: '表示範囲のみです。ブランチ変更後も送信できます。',
     worktreeDeleted: 'ワークツリー削除済み',
+    integrationDegraded: '連携が低下',
     askUserTitle: '入力が必要です',
     askUserKeyboardHint: '↑↓: 移動 · Space: 選択 · Enter: 送信 · Esc: 辞退',
     promptDensityDecrease: 'パネルを小さく',

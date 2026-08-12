@@ -65,6 +65,12 @@ export interface ProviderIntegrationHealth {
   state: 'unchecked' | 'healthy' | 'degraded' | 'blocked';
 }
 
+export interface ManagedSessionIntegrationHealthChange {
+  userId: string;
+  sessionId: string;
+  integrationHealth: 'healthy' | 'degraded' | undefined;
+}
+
 export interface ProviderIntegrationLaunchDecision {
   providerHome: {
     owner: 'agent-environment';
@@ -93,6 +99,8 @@ export interface ProviderIntegrationLaunchRequest {
     | { kind: 'user'; userId: string }
     | { kind: 'server-default' };
   workDir?: string | null;
+  /** Managed Session that will own this runtime after a successful provider spawn. */
+  managedSessionId?: string;
   compatibility?: 'exact-legacy-overlay-resume';
 }
 
@@ -125,6 +133,12 @@ export interface ProviderIntegration {
   removeLifecycle(
     request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
+  getManagedSessionHealth(sessionId: string): 'healthy' | 'degraded' | undefined;
+  refreshManagedSessionHealth(sessionId: string): Promise<'healthy' | 'degraded' | undefined>;
+  releaseManagedSession(sessionId: string): void;
+  subscribeManagedSessionHealth(
+    listener: (change: ManagedSessionIntegrationHealthChange) => void,
+  ): () => void;
   manageSkills(request: ProviderSkillManagementRequest): Promise<ProviderSkillManagementResult>;
 }
 
@@ -135,6 +149,7 @@ interface ProviderIntegrationOptions extends Partial<Omit<
   resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
   resolveDefaultEnvironment?: () => Promise<AgentEnvironment>;
   lifecycle?: ProviderLifecycleIntegration;
+  healthRefreshIntervalMs?: number;
 }
 
 export class ProviderIntegrationEnvironmentError extends Error {
@@ -216,6 +231,20 @@ export function createProviderIntegration(
       ? { renameProviderSkillPath: options.renameProviderSkillPath }
       : {}),
   });
+  type ActiveHealth = 'healthy' | 'degraded';
+  interface ManagedSessionScope {
+    health: ActiveHealth;
+    refresh: () => Promise<ProviderIntegrationLaunchDecision>;
+    sessionIds: Set<string>;
+    userId: string;
+    timer?: NodeJS.Timeout;
+  }
+  const managedSessionScopes = new Map<string, ManagedSessionScope>();
+  const managedSessionScopeKeys = new Map<string, string>();
+  const managedSessionHealthListeners = new Set<(
+    change: ManagedSessionIntegrationHealthChange,
+  ) => void>();
+  const healthRefreshIntervalMs = options.healthRefreshIntervalMs ?? 30_000;
 
   const resolveEnvironment = async (
     request: ProviderIntegrationLaunchRequest,
@@ -272,6 +301,133 @@ export function createProviderIntegration(
     },
     ...(result.guidance ? { guidance: result.guidance } : {}),
   });
+
+  const activeHealth = (decision: ProviderIntegrationLaunchDecision): ActiveHealth => (
+    decision.lifecycle.state === 'installed'
+      && decision.lifecycle.trust === 'trusted'
+      && decision.lifecycle.consent === 'granted'
+      ? 'healthy'
+      : 'degraded'
+  );
+
+  const notifyManagedSessionHealth = (
+    userId: string,
+    sessionId: string,
+    integrationHealth: ActiveHealth | undefined,
+  ): void => {
+    for (const listener of managedSessionHealthListeners) {
+      try {
+        listener({ userId, sessionId, integrationHealth });
+      } catch {
+        // Projection listeners must never affect provider lifecycle policy.
+      }
+    }
+  };
+
+  const setManagedScopeHealth = (
+    scope: ManagedSessionScope,
+    integrationHealth: ActiveHealth,
+  ): void => {
+    if (scope.health === integrationHealth) return;
+    scope.health = integrationHealth;
+    for (const sessionId of scope.sessionIds) {
+      notifyManagedSessionHealth(scope.userId, sessionId, integrationHealth);
+    }
+  };
+
+  const lifecycleScopeKey = (
+    request: ProviderIntegrationLifecycleRequest,
+    agentEnvironment: AgentEnvironment,
+    scopeId: string | undefined,
+  ): string | undefined => request.agentEnvironmentOwner.kind === 'user' && scopeId
+    ? JSON.stringify([
+        request.agentEnvironmentOwner.userId,
+        agentEnvironment,
+        request.provider.getProviderId(),
+        scopeId,
+      ])
+    : undefined;
+
+  const updateManagedScopeHealth = (
+    request: ProviderIntegrationLifecycleRequest,
+    decision: ProviderIntegrationLaunchDecision,
+    scopeId: string | undefined,
+  ): void => {
+    const key = lifecycleScopeKey(
+      request,
+      decision.providerHome.agentEnvironment,
+      scopeId,
+    );
+    const scope = key ? managedSessionScopes.get(key) : undefined;
+    if (scope) setManagedScopeHealth(scope, activeHealth(decision));
+  };
+
+  const releaseManagedSession = (sessionId: string): void => {
+    const key = managedSessionScopeKeys.get(sessionId);
+    if (!key) return;
+    managedSessionScopeKeys.delete(sessionId);
+    const scope = managedSessionScopes.get(key);
+    if (!scope) return;
+    scope.sessionIds.delete(sessionId);
+    notifyManagedSessionHealth(scope.userId, sessionId, undefined);
+    if (scope.sessionIds.size > 0) return;
+    if (scope.timer) clearInterval(scope.timer);
+    managedSessionScopes.delete(key);
+  };
+
+  const registerManagedSession = (
+    request: ProviderIntegrationLaunchRequest,
+    decision: ProviderIntegrationLaunchDecision,
+    scopeId: string | undefined,
+    refresh: () => Promise<ProviderIntegrationLaunchDecision>,
+  ): void => {
+    if (!request.managedSessionId || request.compatibility || !scopeId) return;
+    if (request.agentEnvironmentOwner.kind !== 'user') return;
+    const key = lifecycleScopeKey(request, decision.providerHome.agentEnvironment, scopeId);
+    if (!key) return;
+    releaseManagedSession(request.managedSessionId);
+    let scope = managedSessionScopes.get(key);
+    if (!scope) {
+      scope = {
+        health: activeHealth(decision),
+        refresh,
+        sessionIds: new Set(),
+        userId: request.agentEnvironmentOwner.userId,
+      };
+      if (healthRefreshIntervalMs > 0) {
+        scope.timer = setInterval(() => {
+          void scope?.refresh().catch(() => {
+            if (scope) setManagedScopeHealth(scope, 'degraded');
+          });
+        }, healthRefreshIntervalMs);
+        scope.timer.unref();
+      }
+      managedSessionScopes.set(key, scope);
+    }
+    setManagedScopeHealth(scope, activeHealth(decision));
+    scope.refresh = refresh;
+    scope.sessionIds.add(request.managedSessionId);
+    managedSessionScopeKeys.set(request.managedSessionId, key);
+    notifyManagedSessionHealth(scope.userId, request.managedSessionId, scope.health);
+  };
+
+  const resolveLifecycleOperation = async (request: ProviderIntegrationLifecycleRequest) => {
+    const agentEnvironment = await resolveEnvironment(request);
+    const requirements = request.provider.getProviderIntegrationRequirements();
+    const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
+    return {
+      agentEnvironment,
+      requirements,
+      lifecycle,
+      context: {
+        environment: agentEnvironment,
+        userId: request.agentEnvironmentOwner.kind === 'user'
+          ? request.agentEnvironmentOwner.userId
+          : undefined,
+        workDir: request.workDir,
+      },
+    };
+  };
 
   return {
     manageSkills: (request) => skillManager.manage(request),
@@ -342,6 +498,9 @@ export function createProviderIntegration(
         };
       }
       let launchPreparation: ProviderLaunchPreparation | undefined;
+      let activeLifecycle: ProviderLifecycleIntegration | undefined;
+      let activeLifecycleContext: Parameters<ProviderLifecycleIntegration['inspect']>[0] | undefined;
+      let activeLifecycleScopeId: string | undefined;
       if (requirements.launchEnvironment === 'required') {
         if (!request.provider.prepareLaunchIntegration) {
           decision.health = { state: 'blocked' };
@@ -367,19 +526,20 @@ export function createProviderIntegration(
         }
       }
       if (requirements.lifecycle === 'required') {
-        const lifecycle = options.lifecycle
+        const lifecycleIntegration = options.lifecycle
           ?? launchPreparation?.lifecycle
           ?? request.provider.getLifecycleIntegration?.();
+        const lifecycleContext = {
+          environment: agentEnvironment,
+          userId: request.agentEnvironmentOwner.kind === 'user'
+            ? request.agentEnvironmentOwner.userId
+            : undefined,
+          workDir: request.workDir,
+        };
         let result: ProviderLifecycleResult;
         try {
-          result = lifecycle
-            ? await (lifecycle.maintain ?? lifecycle.inspect)({
-                environment: agentEnvironment,
-                userId: request.agentEnvironmentOwner.kind === 'user'
-                  ? request.agentEnvironmentOwner.userId
-                  : undefined,
-                workDir: request.workDir,
-              })
+          result = lifecycleIntegration
+            ? await (lifecycleIntegration.maintain ?? lifecycleIntegration.inspect)(lifecycleContext)
             : {
                 state: 'unavailable',
                 trust: 'unavailable',
@@ -412,9 +572,36 @@ export function createProviderIntegration(
             launchBlockedMessage(request.provider.getProviderId(), decision),
           );
         }
+        activeLifecycle = lifecycleIntegration;
+        activeLifecycleContext = lifecycleContext;
+        activeLifecycleScopeId = result.scopeId;
       }
 
       if (launchPreparation) launchPreparations.set(decision, launchPreparation);
+      if (activeLifecycle && activeLifecycleContext) {
+        const refresh = async (): Promise<ProviderIntegrationLaunchDecision> => {
+          let result: ProviderLifecycleResult;
+          try {
+            result = await activeLifecycle.inspect(activeLifecycleContext);
+          } catch (error) {
+            result = {
+              state: 'unavailable',
+              trust: 'unavailable',
+              scopeId: activeLifecycleScopeId,
+              message: `Lifecycle status could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+            };
+          }
+          const refreshed = lifecycleDecision(
+            agentEnvironment,
+            requirements,
+            result,
+            result.state === 'installed' ? 'granted' : 'required',
+          );
+          updateManagedScopeHealth(request, refreshed, result.scopeId ?? activeLifecycleScopeId);
+          return refreshed;
+        };
+        registerManagedSession(request, decision, activeLifecycleScopeId, refresh);
+      }
 
       return decision;
     },
@@ -422,39 +609,33 @@ export function createProviderIntegration(
       return launchPreparations.get(decision)?.buildEnvironment(baseEnvironment);
     },
     async inspectLifecycle(request) {
-      const agentEnvironment = await resolveEnvironment(request);
-      const requirements = request.provider.getProviderIntegrationRequirements();
+      const { agentEnvironment, requirements, lifecycle, context } =
+        await resolveLifecycleOperation(request);
       if (requirements.lifecycle === 'not-applicable') {
         return notApplicableDecision(agentEnvironment, requirements);
       }
-      const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
       const result = lifecycle
-        ? await lifecycle.inspect({
-            environment: agentEnvironment,
-            userId: request.agentEnvironmentOwner.kind === 'user'
-              ? request.agentEnvironmentOwner.userId
-              : undefined,
-            workDir: request.workDir,
-          })
+        ? await lifecycle.inspect(context)
         : {
             state: 'unavailable' as const,
             trust: 'unavailable' as const,
             message: 'The provider does not expose required lifecycle management.',
           };
-      return lifecycleDecision(
+      const decision = lifecycleDecision(
         agentEnvironment,
         requirements,
         result,
         result.state === 'installed' ? 'granted' : 'required',
       );
+      updateManagedScopeHealth(request, decision, result.scopeId);
+      return decision;
     },
     async installLifecycle(request) {
-      const agentEnvironment = await resolveEnvironment(request);
-      const requirements = request.provider.getProviderIntegrationRequirements();
+      const { agentEnvironment, requirements, lifecycle, context } =
+        await resolveLifecycleOperation(request);
       if (requirements.lifecycle === 'not-applicable') {
         return notApplicableDecision(agentEnvironment, requirements);
       }
-      const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
       if (!lifecycle) {
         return lifecycleDecision(agentEnvironment, requirements, {
           state: 'unavailable',
@@ -462,34 +643,23 @@ export function createProviderIntegration(
           message: 'The provider does not expose required lifecycle management.',
         }, request.consent);
       }
-      const context = {
-        environment: agentEnvironment,
-        userId: request.agentEnvironmentOwner.kind === 'user'
-          ? request.agentEnvironmentOwner.userId
-          : undefined,
-        workDir: request.workDir,
-      };
       if (request.consent === 'declined') {
         const result = await lifecycle.inspect(context);
-        return lifecycleDecision(agentEnvironment, requirements, result, 'declined');
+        const decision = lifecycleDecision(agentEnvironment, requirements, result, 'declined');
+        updateManagedScopeHealth(request, decision, result.scopeId);
+        return decision;
       }
       const result = await lifecycle.install(context);
-      return lifecycleDecision(agentEnvironment, requirements, result, 'granted');
+      const decision = lifecycleDecision(agentEnvironment, requirements, result, 'granted');
+      updateManagedScopeHealth(request, decision, result.scopeId);
+      return decision;
     },
     async updateLifecycle(request) {
-      const agentEnvironment = await resolveEnvironment(request);
-      const requirements = request.provider.getProviderIntegrationRequirements();
+      const { agentEnvironment, requirements, lifecycle, context } =
+        await resolveLifecycleOperation(request);
       if (requirements.lifecycle === 'not-applicable') {
         return notApplicableDecision(agentEnvironment, requirements);
       }
-      const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
-      const context = {
-        environment: agentEnvironment,
-        userId: request.agentEnvironmentOwner.kind === 'user'
-          ? request.agentEnvironmentOwner.userId
-          : undefined,
-        workDir: request.workDir,
-      };
       const result = lifecycle?.update
         ? await lifecycle.update(context)
         : {
@@ -497,22 +667,16 @@ export function createProviderIntegration(
             trust: 'unavailable' as const,
             message: 'The provider does not expose lifecycle updates.',
           };
-      return lifecycleDecision(agentEnvironment, requirements, result, 'required');
+      const decision = lifecycleDecision(agentEnvironment, requirements, result, 'required');
+      updateManagedScopeHealth(request, decision, result.scopeId);
+      return decision;
     },
     async removeLifecycle(request) {
-      const agentEnvironment = await resolveEnvironment(request);
-      const requirements = request.provider.getProviderIntegrationRequirements();
+      const { agentEnvironment, requirements, lifecycle, context } =
+        await resolveLifecycleOperation(request);
       if (requirements.lifecycle === 'not-applicable') {
         return notApplicableDecision(agentEnvironment, requirements);
       }
-      const lifecycle = options.lifecycle ?? request.provider.getLifecycleIntegration?.();
-      const context = {
-        environment: agentEnvironment,
-        userId: request.agentEnvironmentOwner.kind === 'user'
-          ? request.agentEnvironmentOwner.userId
-          : undefined,
-        workDir: request.workDir,
-      };
       const result = lifecycle?.remove
         ? await lifecycle.remove(context)
         : {
@@ -520,7 +684,29 @@ export function createProviderIntegration(
             trust: 'unavailable' as const,
             message: 'The provider does not expose lifecycle removal.',
           };
-      return lifecycleDecision(agentEnvironment, requirements, result, 'revoked');
+      const decision = lifecycleDecision(agentEnvironment, requirements, result, 'revoked');
+      updateManagedScopeHealth(request, decision, result.scopeId);
+      return decision;
+    },
+    getManagedSessionHealth(sessionId) {
+      const key = managedSessionScopeKeys.get(sessionId);
+      return key ? managedSessionScopes.get(key)?.health : undefined;
+    },
+    async refreshManagedSessionHealth(sessionId) {
+      const key = managedSessionScopeKeys.get(sessionId);
+      const scope = key ? managedSessionScopes.get(key) : undefined;
+      if (!scope) return undefined;
+      try {
+        await scope.refresh();
+      } catch {
+        setManagedScopeHealth(scope, 'degraded');
+      }
+      return scope.health;
+    },
+    releaseManagedSession,
+    subscribeManagedSessionHealth(listener) {
+      managedSessionHealthListeners.add(listener);
+      return () => managedSessionHealthListeners.delete(listener);
     },
   };
 }

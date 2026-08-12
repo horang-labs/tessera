@@ -653,6 +653,7 @@ export const ko: I18nMessages = {
     currentBranchLabel: '현재',
     presentationScopeHint: '표시 범위일 뿐이며 브랜치가 바뀌어도 메시지를 보낼 수 있습니다.',
     worktreeDeleted: '워크트리 삭제됨',
+    integrationDegraded: '통합 상태 저하',
     askUserTitle: '입력이 필요합니다',
     askUserKeyboardHint: '↑↓: 이동 · Space: 선택 · Enter: 제출 · Esc: 거절',
     promptDensityDecrease: '더 작게 보기',

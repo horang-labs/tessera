@@ -71,6 +71,8 @@ export interface ProviderLifecycleResult {
   consent?: ProviderLifecycleConsent;
   installedVersion?: string;
   currentVersion?: string;
+  /** Internal identity for one Authoritative Provider Home; never expose in UI/CLI DTOs. */
+  scopeId?: string;
   message?: string;
   guidance?: {
     minimumVersion: string;

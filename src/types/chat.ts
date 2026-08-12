@@ -194,6 +194,8 @@ export interface UnifiedSession {
   isRunning: boolean;
   /** Session status (only meaningful when isRunning=true) */
   status: SessionStatus;
+  /** Required provider integration health for the currently running Managed Session. */
+  integrationHealth?: 'healthy' | 'degraded';
   /** Last modified timestamp (JSONL file mtime) */
   lastModified: string;
   /** Created timestamp */

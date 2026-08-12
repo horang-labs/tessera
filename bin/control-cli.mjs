@@ -1423,6 +1423,8 @@ function parseSessionSnapshot(value) {
     || !validRuntimeState
     || !(value.stateAt === null || (Number.isFinite(value.stateAt) && value.stateAt >= 0))
     || !(value.lifecyclePreview === undefined || typeof value.lifecyclePreview === 'string')
+    || !(value.integrationHealth === undefined
+      || ['healthy', 'degraded'].includes(value.integrationHealth))
   ) return null;
   return {
     screen: value.screen,
@@ -1434,6 +1436,7 @@ function parseSessionSnapshot(value) {
     runtimeState: value.runtimeState,
     stateAt: value.stateAt,
     ...(value.lifecyclePreview === undefined ? {} : { lifecyclePreview: value.lifecyclePreview }),
+    ...(value.integrationHealth === undefined ? {} : { integrationHealth: value.integrationHealth }),
   };
 }
 
@@ -1545,7 +1548,7 @@ function writeHumanSuccess(kind, data) {
     || kind === 'session-stop'
   ) {
     process.stdout.write(
-      `${data.runtimeState}\t${data.terminalId ?? ''}\t${data.cols ?? ''}x${data.rows ?? ''}\tseq ${data.outputSequence}\n${data.screen}${data.screen ? '\n' : ''}`,
+      `${data.runtimeState}\t${data.terminalId ?? ''}\t${data.cols ?? ''}x${data.rows ?? ''}\tseq ${data.outputSequence}${data.integrationHealth === 'degraded' ? '\tintegration degraded' : ''}\n${data.screen}${data.screen ? '\n' : ''}`,
     );
   }
 }

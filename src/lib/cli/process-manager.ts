@@ -885,6 +885,10 @@ export class ProcessManager {
     this.healthCheckInterval = setInterval(() => {
       this.performHealthCheck();
     }, 5000); // 5s interval
+    // The server's listeners own process lifetime. Keeping this maintenance
+    // timer referenced strands short-lived consumers that import the singleton
+    // (for example Control observers and focused test processes).
+    this.healthCheckInterval.unref();
   }
 
   /**

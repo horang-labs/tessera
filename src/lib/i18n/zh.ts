@@ -651,6 +651,7 @@ export const zh: I18nMessages = {
     currentBranchLabel: '当前',
     presentationScopeHint: '仅用于显示范围；切换分支后仍可发送消息。',
     worktreeDeleted: '工作树已删除',
+    integrationDegraded: '集成状态下降',
     askUserTitle: '需要你的输入',
     askUserKeyboardHint: '↑↓: 移动 · Space: 选择 · Enter: 提交 · Esc: 拒绝',
     promptDensityDecrease: '缩小面板',

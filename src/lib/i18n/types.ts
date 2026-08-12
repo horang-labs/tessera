@@ -628,6 +628,7 @@ export interface I18nMessages {
     currentBranchLabel: string;
     presentationScopeHint: string;
     worktreeDeleted: string;
+    integrationDegraded: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
     promptDensityDecrease: string;

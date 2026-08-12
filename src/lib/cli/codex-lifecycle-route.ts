@@ -3,6 +3,7 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import type { CodexLifecycleOperation } from './codex-lifecycle-policy';
 import { ProviderIntegrationEnvironmentError } from './provider-integration';
 import type { ProviderIntegrationLaunchDecision } from './provider-integration';
+import { parseCodexLifecycleMutation } from './codex-lifecycle-operations';
 
 export type CodexLifecycleRouteManager = (
   userId: string,
@@ -43,17 +44,11 @@ export function createCodexLifecycleRoute(manager: CodexLifecycleRouteManager) {
       } catch {
         return NextResponse.json({ error: 'A JSON lifecycle operation is required.' }, { status: 400 });
       }
-      const operation = body.operation;
-      if (!['install', 'update', 'remove'].includes(String(operation))) {
-        return NextResponse.json({ error: 'Lifecycle operation must be install, update, or remove.' }, { status: 400 });
+      const parsed = parseCodexLifecycleMutation(body);
+      if ('error' in parsed) {
+        return NextResponse.json({ error: parsed.error }, { status: 400 });
       }
-      if (operation === 'install' && body.consent !== 'granted') {
-        return NextResponse.json({ error: 'Explicit Codex lifecycle hook consent is required.' }, { status: 400 });
-      }
-      if (operation !== 'install' && body.consent !== undefined) {
-        return NextResponse.json({ error: 'Consent is accepted only for lifecycle installation.' }, { status: 400 });
-      }
-      return respond(auth.userId, operation as CodexLifecycleOperation);
+      return respond(auth.userId, parsed.operation);
     },
   };
 }

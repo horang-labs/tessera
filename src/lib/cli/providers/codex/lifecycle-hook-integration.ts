@@ -93,12 +93,13 @@ export interface CodexLifecycleDependencies {
   ) => Promise<unknown>;
   stateDirectory?: string;
   readTesseraVersion?: () => string;
+  buildHookSettings?: typeof buildCodexHookSettings;
 }
 
 export type CodexLifecycleResult = ProviderLifecycleResult;
 
 interface InspectedHookDocument {
-  state: 'absent' | 'installed' | 'conflict';
+  state: 'absent' | 'installed' | 'stale' | 'conflict';
   filePath: string;
   document?: HookDocument;
   originalText?: string;
@@ -117,6 +118,7 @@ interface CodexHookLedgerEntry {
   home: string;
   consent: 'granted' | 'revoked';
   managedVersion?: string;
+  managedDefinition?: Partial<Record<ManagedEvent, HookGroup>>;
 }
 
 interface CodexHookLedger {
@@ -180,8 +182,22 @@ function resolveHookCommandStyle(environment: CliEnvironment): HookCommandStyle 
   return 'posix';
 }
 
-function desiredGroup(style: HookCommandStyle, event: ManagedEvent): HookGroup {
-  return buildCodexHookSettings(style).hooks[event][0] as unknown as HookGroup;
+function desiredGroup(
+  buildHookSettings: typeof buildCodexHookSettings,
+  style: HookCommandStyle,
+  event: ManagedEvent,
+): HookGroup {
+  return buildHookSettings(style).hooks[event][0] as unknown as HookGroup;
+}
+
+function desiredDefinition(
+  buildHookSettings: typeof buildCodexHookSettings,
+  style: HookCommandStyle,
+): Record<ManagedEvent, HookGroup> {
+  return Object.fromEntries(MANAGED_EVENTS.map((event) => [
+    event,
+    desiredGroup(buildHookSettings, style, event),
+  ])) as Record<ManagedEvent, HookGroup>;
 }
 
 function groupIsExact(group: unknown, expected: HookGroup): boolean {
@@ -207,7 +223,12 @@ async function resolveHookFilePath(hooksPath: string): Promise<string> {
   }
 }
 
-async function inspectHookDocument(home: string, style: HookCommandStyle): Promise<InspectedHookDocument> {
+async function inspectHookDocument(
+  home: string,
+  style: HookCommandStyle,
+  buildHookSettings: typeof buildCodexHookSettings,
+  previousDefinition?: Partial<Record<ManagedEvent, HookGroup>>,
+): Promise<InspectedHookDocument> {
   const configuredPath = path.join(home, 'hooks.json');
   let filePath: string;
   try {
@@ -216,7 +237,7 @@ async function inspectHookDocument(home: string, style: HookCommandStyle): Promi
     return {
       state: 'conflict',
       filePath: configuredPath,
-      command: String(desiredGroup(style, 'SessionStart').hooks),
+      command: String(desiredGroup(buildHookSettings, style, 'SessionStart').hooks),
       message: `Codex hooks.json cannot be resolved safely: ${(error as Error).message}`,
     };
   }
@@ -235,7 +256,7 @@ async function inspectHookDocument(home: string, style: HookCommandStyle): Promi
       return {
         state: 'conflict',
         filePath,
-        command: String(desiredGroup(style, 'SessionStart').hooks),
+        command: String(desiredGroup(buildHookSettings, style, 'SessionStart').hooks),
         message: `Codex hooks.json cannot be read: ${(error as Error).message}`,
       };
     }
@@ -253,7 +274,7 @@ async function inspectHookDocument(home: string, style: HookCommandStyle): Promi
         filePath,
         originalText,
         mode,
-        command: String(desiredGroup(style, 'SessionStart').hooks),
+        command: String(desiredGroup(buildHookSettings, style, 'SessionStart').hooks),
         message: `Codex hooks.json is not valid JSON: ${(error as Error).message}`,
       };
     }
@@ -266,16 +287,17 @@ async function inspectHookDocument(home: string, style: HookCommandStyle): Promi
       document,
       originalText,
       mode,
-      command: String(desiredGroup(style, 'SessionStart').hooks),
+      command: String(desiredGroup(buildHookSettings, style, 'SessionStart').hooks),
       message: 'Codex hooks.json has a non-object hooks field.',
     };
   }
 
   const hooks = (document.hooks ?? {}) as Record<string, unknown>;
   let installedEvents = 0;
+  let staleEvents = 0;
   let managedCommand = '';
   for (const event of MANAGED_EVENTS) {
-    const expected = desiredGroup(style, event);
+    const expected = desiredGroup(buildHookSettings, style, event);
     const handler = (expected.hooks as HookHandler[])[0];
     managedCommand = typeof handler.command === 'string' ? handler.command : managedCommand;
     const groups = hooks[event];
@@ -287,24 +309,47 @@ async function inspectHookDocument(home: string, style: HookCommandStyle): Promi
     }
     const tesseraGroups = (groups ?? []).filter(groupLooksTesseraOwned);
     const exactGroups = (groups ?? []).filter((group) => groupIsExact(group, expected));
-    if (tesseraGroups.length !== exactGroups.length || exactGroups.length > 1) {
+    const previous = previousDefinition?.[event];
+    const previousGroups = previous
+      ? (groups ?? []).filter((group) => groupIsExact(group, previous))
+      : [];
+    if (
+      tesseraGroups.length > 1
+      || (tesseraGroups.length === 1 && exactGroups.length === 0 && previousGroups.length === 0)
+    ) {
       return {
         state: 'conflict', filePath, document, originalText, mode, command: managedCommand,
         message: `The Tessera ${event} hook differs from the managed definition.`,
       };
     }
     if (exactGroups.length === 1) installedEvents += 1;
+    else if (previousGroups.length === 1) staleEvents += 1;
   }
 
-  if (installedEvents !== 0 && installedEvents !== MANAGED_EVENTS.length) {
+  if (
+    installedEvents + staleEvents !== 0
+    && installedEvents + staleEvents !== MANAGED_EVENTS.length
+  ) {
     return {
       state: 'conflict', filePath, document, originalText, mode, command: managedCommand,
       message: 'Only part of the Tessera lifecycle hook is installed.',
     };
   }
+  if (installedEvents > 0 && staleEvents > 0) {
+    return {
+      state: 'conflict', filePath, document, originalText, mode, command: managedCommand,
+      message: 'The Tessera lifecycle hook mixes current and previously managed definitions.',
+    };
+  }
 
   return {
-    state: installedEvents === MANAGED_EVENTS.length ? 'installed' : 'absent',
+    state: installedEvents === MANAGED_EVENTS.length
+      ? 'installed'
+      : staleEvents === MANAGED_EVENTS.length
+        ? 'stale'
+        : installedEvents + staleEvents === 0
+          ? 'absent'
+          : 'conflict',
     filePath,
     document,
     originalText,
@@ -316,6 +361,7 @@ async function inspectHookDocument(home: string, style: HookCommandStyle): Promi
 async function writeHookDocument(
   snapshot: InspectedHookDocument,
   style: HookCommandStyle,
+  buildHookSettings: typeof buildCodexHookSettings,
   operation: 'install' | 'update' | 'remove' = 'install',
 ): Promise<void> {
   if (!snapshot.document || snapshot.originalText === undefined || snapshot.mode === undefined) {
@@ -337,7 +383,7 @@ async function writeHookDocument(
     const groups = Array.isArray(hooks[event])
       ? hooks[event].filter((group) => !groupLooksTesseraOwned(group))
       : [];
-    if (operation !== 'remove') groups.push(desiredGroup(style, event));
+    if (operation !== 'remove') groups.push(desiredGroup(buildHookSettings, style, event));
     hooks[event] = groups;
   }
 
@@ -378,6 +424,7 @@ async function readLedger(stateDirectory: string): Promise<CodexHookLedger> {
         || !entry.home
         || !['granted', 'revoked'].includes(String(entry.consent))
         || !(entry.managedVersion === undefined || typeof entry.managedVersion === 'string')
+        || !(entry.managedDefinition === undefined || isRecord(entry.managedDefinition))
       ))) {
         throw new Error(`Codex hook lifecycle state for ${environment} is invalid.`);
       }
@@ -422,7 +469,11 @@ async function updateLedgerEntry(
   stateDirectory: string,
   environment: CliEnvironment,
   home: string,
-  patch: { consent: 'granted' | 'revoked'; managedVersion?: string | null },
+  patch: {
+    consent: 'granted' | 'revoked';
+    managedVersion?: string | null;
+    managedDefinition?: Partial<Record<ManagedEvent, HookGroup>> | null;
+  },
 ): Promise<void> {
   const ledger = await readLedger(stateDirectory);
   const entries = ledger.environments[environment] ?? [];
@@ -434,12 +485,20 @@ async function updateLedgerEntry(
     } else if (patch.managedVersion !== undefined) {
       entry.managedVersion = patch.managedVersion;
     }
+    if (patch.managedDefinition === null) {
+      delete entry.managedDefinition;
+    } else if (patch.managedDefinition !== undefined) {
+      entry.managedDefinition = patch.managedDefinition;
+    }
   } else {
     entries.push({
       home,
       consent: patch.consent,
       ...(typeof patch.managedVersion === 'string'
         ? { managedVersion: patch.managedVersion }
+        : {}),
+      ...(patch.managedDefinition
+        ? { managedDefinition: patch.managedDefinition }
         : {}),
     });
     ledger.environments[environment] = entries;
@@ -503,6 +562,7 @@ export function createCodexLifecycleHookIntegration(
     ?? getTesseraDataPath('provider-integrations', 'codex');
   const readTesseraVersion = dependencies.readTesseraVersion
     ?? (() => getServerHostInfo().appVersion);
+  const buildHookSettings = dependencies.buildHookSettings ?? buildCodexHookSettings;
   const hookCwds = (context: CodexLifecycleRequestContext) => [
     normalizeCwdForCliEnvironment(
       context.workDir?.trim() || process.cwd(),
@@ -522,6 +582,7 @@ export function createCodexLifecycleHookIntegration(
     result: CodexLifecycleResult,
   ): CodexLifecycleResult => ({
     ...result,
+    scopeId: scope.home,
     consent: scope.entry?.consent ?? 'not-granted',
     ...(scope.entry?.managedVersion
       ? { installedVersion: scope.entry.managedVersion }
@@ -593,7 +654,12 @@ export function createCodexLifecycleHookIntegration(
   async function inspect(context: CodexLifecycleRequestContext): Promise<CodexLifecycleResult> {
     const resolved = await resolveScope(context);
     if ('state' in resolved) return resolved;
-    const document = await inspectHookDocument(resolved.home, resolved.style);
+    const document = await inspectHookDocument(
+      resolved.home,
+      resolved.style,
+      buildHookSettings,
+      resolved.entry?.managedDefinition,
+    );
     if (document.state === 'conflict') {
       return lifecycleResult(resolved, {
         state: 'conflict',
@@ -619,6 +685,9 @@ export function createCodexLifecycleHookIntegration(
     }
     const ready = await preflight(context, resolved);
     if ('state' in ready) return ready;
+    if (document.state === 'stale') {
+      return lifecycleResult(resolved, { state: 'stale', trust: 'unchecked' });
+    }
     const metadata = managedMetadata(ready.hooksResponse, document.command);
     if (!metadata) {
       return lifecycleResult(resolved, {
@@ -717,12 +786,14 @@ export function createCodexLifecycleHookIntegration(
       await updateLedgerEntry(stateDirectory, context.environment, scope.home, {
         consent: 'granted',
         managedVersion: scope.currentVersion,
+        managedDefinition: desiredDefinition(buildHookSettings, scope.style),
       });
     } catch (error) {
       return {
         state: 'unavailable',
         trust: 'trusted',
         consent: 'granted',
+        scopeId: scope.home,
         currentVersion: scope.currentVersion,
         message: `Codex hook consent state could not be recorded: ${(error as Error).message}`,
       };
@@ -731,6 +802,7 @@ export function createCodexLifecycleHookIntegration(
       state: 'installed',
       trust: 'trusted',
       consent: 'granted',
+      scopeId: scope.home,
       installedVersion: scope.currentVersion,
       currentVersion: scope.currentVersion,
     };
@@ -750,7 +822,12 @@ export function createCodexLifecycleHookIntegration(
       });
     }
 
-    let document = await inspectHookDocument(resolved.home, resolved.style);
+    let document = await inspectHookDocument(
+      resolved.home,
+      resolved.style,
+      buildHookSettings,
+      resolved.entry?.managedDefinition,
+    );
     let materialized = false;
     if (document.state === 'conflict') {
       const mayResolve = operation !== 'maintain'
@@ -770,6 +847,9 @@ export function createCodexLifecycleHookIntegration(
           ...(document.state === 'installed' && resolved.entry?.managedVersion
             ? { managedVersion: resolved.entry.managedVersion }
             : { managedVersion: null }),
+          ...(document.state === 'installed' && resolved.entry?.managedDefinition
+            ? { managedDefinition: resolved.entry.managedDefinition }
+            : { managedDefinition: null }),
         });
       } catch (error) {
         return lifecycleResult(resolved, {
@@ -783,6 +863,9 @@ export function createCodexLifecycleHookIntegration(
         consent: 'granted',
         ...(document.state === 'installed' && resolved.entry?.managedVersion
           ? { managedVersion: resolved.entry.managedVersion }
+          : {}),
+        ...(document.state === 'installed' && resolved.entry?.managedDefinition
+          ? { managedDefinition: resolved.entry.managedDefinition }
           : {}),
       };
     }
@@ -805,6 +888,7 @@ export function createCodexLifecycleHookIntegration(
         await writeHookDocument(
           document,
           resolved.style,
+          buildHookSettings,
           document.state === 'conflict' ? 'update' : 'install',
         );
         materialized = true;
@@ -813,7 +897,12 @@ export function createCodexLifecycleHookIntegration(
           state: 'conflict', trust: 'unavailable', message: (error as Error).message,
         });
       }
-      document = await inspectHookDocument(resolved.home, resolved.style);
+      document = await inspectHookDocument(
+        resolved.home,
+        resolved.style,
+        buildHookSettings,
+        resolved.entry?.managedDefinition,
+      );
       if (document.state !== 'installed') {
         return lifecycleResult(resolved, {
           state: 'conflict',
@@ -837,13 +926,18 @@ export function createCodexLifecycleHookIntegration(
       && (operation === 'update' || resolved.entry?.managedVersion !== resolved.currentVersion)
     ) {
       try {
-        await writeHookDocument(document, resolved.style, 'update');
+        await writeHookDocument(document, resolved.style, buildHookSettings, 'update');
       } catch (error) {
         return lifecycleResult(resolved, {
           state: 'conflict', trust: 'unavailable', message: (error as Error).message,
         });
       }
-      document = await inspectHookDocument(resolved.home, resolved.style);
+      document = await inspectHookDocument(
+        resolved.home,
+        resolved.style,
+        buildHookSettings,
+        resolved.entry?.managedDefinition,
+      );
       if (document.state !== 'installed') {
         return lifecycleResult(resolved, {
           state: 'conflict',
@@ -859,9 +953,14 @@ export function createCodexLifecycleHookIntegration(
   async function remove(context: CodexLifecycleRequestContext): Promise<CodexLifecycleResult> {
     const resolved = await resolveScope(context);
     if ('state' in resolved) return resolved;
-    const document = await inspectHookDocument(resolved.home, resolved.style);
+    const document = await inspectHookDocument(
+      resolved.home,
+      resolved.style,
+      buildHookSettings,
+      resolved.entry?.managedDefinition,
+    );
     const knownManagedHome = resolved.entry !== undefined;
-    const removable = document.state === 'installed'
+    const removable = document.state === 'installed' || document.state === 'stale'
       || (document.state === 'conflict'
         && knownManagedHome
         && document.document !== undefined
@@ -873,7 +972,7 @@ export function createCodexLifecycleHookIntegration(
     }
     if (removable) {
       try {
-        await writeHookDocument(document, resolved.style, 'remove');
+        await writeHookDocument(document, resolved.style, buildHookSettings, 'remove');
       } catch (error) {
         return lifecycleResult(resolved, {
           state: 'conflict', trust: 'unavailable', message: (error as Error).message,
@@ -884,6 +983,7 @@ export function createCodexLifecycleHookIntegration(
       await updateLedgerEntry(stateDirectory, context.environment, resolved.home, {
         consent: 'revoked',
         managedVersion: null,
+        managedDefinition: null,
       });
     } catch (error) {
       return lifecycleResult(resolved, {
@@ -896,6 +996,7 @@ export function createCodexLifecycleHookIntegration(
       state: 'absent',
       trust: 'unchecked',
       consent: 'revoked',
+      scopeId: resolved.home,
       currentVersion: resolved.currentVersion,
     };
   }

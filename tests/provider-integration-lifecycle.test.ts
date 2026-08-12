@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import type { CliProvider } from '@/lib/cli/providers/types';
 import { createCodexLifecycleHookIntegration } from '@/lib/cli/providers/codex/lifecycle-hook-integration';
+import { buildCodexHookSettings } from '@/lib/terminal/codex-hook-settings';
 
 const CODEX_EVENTS = [
   'sessionStart',
@@ -646,7 +647,8 @@ test('consented lifecycle refreshes before launch, degrades on conflict, and rev
   const trustWritesBeforeLaunch = fakeCodex.calls.filter(
     (call) => call.method === 'config/batchWrite',
   ).length;
-  const launched = await integration.resolveLaunch(request);
+  const managedSessionId = 'running-codex-session';
+  const launched = await integration.resolveLaunch({ ...request, managedSessionId });
   assert.equal(launched.lifecycle.state, 'installed');
   assert.equal(launched.lifecycle.installedVersion, '1.1.0');
   assert.equal(launched.health.state, 'healthy');
@@ -661,6 +663,8 @@ test('consented lifecycle refreshes before launch, degrades on conflict, and rev
   fs.writeFileSync(path.join(home, 'hooks.json'), `${JSON.stringify(document, null, 2)}\n`);
   const modifiedText = fs.readFileSync(path.join(home, 'hooks.json'), 'utf8');
 
+  assert.equal(await integration.refreshManagedSessionHealth(managedSessionId), 'degraded');
+  assert.equal(integration.getManagedSessionHealth(managedSessionId), 'degraded');
   const degraded = await integration.inspectLifecycle(request);
   assert.equal(degraded.lifecycle.state, 'conflict');
   assert.equal(degraded.lifecycle.consent, 'granted');
@@ -695,6 +699,142 @@ test('consented lifecycle refreshes before launch, degrades on conflict, and rev
   );
   assert.deepEqual(readHookDocument(home).hooks.Stop, [userStopHook]);
   await assert.rejects(integration.resolveLaunch(request), ProviderIntegrationLaunchBlockedError);
+  assert.equal(integration.getManagedSessionHealth(managedSessionId), 'degraded');
+  integration.releaseManagedSession(managedSessionId);
+  assert.equal(integration.getManagedSessionHealth(managedSessionId), undefined);
+});
+
+test('running Session health remains independent across Agent Environments', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-health-scopes-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const nativeHome = path.join(root, 'native-home');
+  const wslHome = path.join(root, 'wsl-home');
+  fs.mkdirSync(nativeHome, { recursive: true });
+  fs.mkdirSync(wslHome, { recursive: true });
+  const nativeApi = createFakeCodexApi(nativeHome);
+  const wslApi = createFakeCodexApi(wslHome);
+  let activeEnvironment: 'native' | 'wsl' = 'native';
+
+  const { createProviderIntegration } = await import('@/lib/cli/provider-integration');
+  const integration = createProviderIntegration({
+    resolveAgentEnvironment: async () => activeEnvironment,
+    healthRefreshIntervalMs: 0,
+    lifecycle: createCodexLifecycleHookIntegration({
+      resolveProviderHome: async (environment) => (
+        environment === 'native' ? nativeHome : wslHome
+      ),
+      readVersion: async () => '0.146.0',
+      request: async (context, method, params) => (
+        context.providerHomeFilesystemPath === nativeHome
+          ? nativeApi.request(context, method, params)
+          : wslApi.request(context, method, params)
+      ),
+      stateDirectory: path.join(root, 'state'),
+      readTesseraVersion: () => '1.0.0',
+    }),
+  });
+  const request = {
+    provider: {
+      ...codexProvider,
+      getProviderIntegrationRequirements: () => ({
+        lifecycle: 'required' as const,
+        skill: 'not-applicable' as const,
+        launchEnvironment: 'not-applicable' as const,
+      }),
+    },
+    agentEnvironmentOwner: { kind: 'user' as const, userId: 'scope-owner' },
+    workDir: root,
+  };
+  const changes: Array<{ sessionId: string; integrationHealth: string | undefined }> = [];
+  const unsubscribe = integration.subscribeManagedSessionHealth((change) => changes.push(change));
+  t.after(unsubscribe);
+
+  await integration.installLifecycle({ ...request, consent: 'granted' });
+  await integration.resolveLaunch({ ...request, managedSessionId: 'native-session' });
+  activeEnvironment = 'wsl';
+  await integration.installLifecycle({ ...request, consent: 'granted' });
+  await integration.resolveLaunch({ ...request, managedSessionId: 'wsl-session' });
+
+  const nativeDocument = readHookDocument(nativeHome);
+  nativeDocument.hooks.SessionStart.at(-1).hooks[0].timeout = 99;
+  fs.writeFileSync(
+    path.join(nativeHome, 'hooks.json'),
+    `${JSON.stringify(nativeDocument, null, 2)}\n`,
+  );
+  assert.equal(await integration.refreshManagedSessionHealth('native-session'), 'degraded');
+  assert.equal(integration.getManagedSessionHealth('wsl-session'), 'healthy');
+  assert.equal(
+    changes.some((change) => change.sessionId === 'native-session'
+      && change.integrationHealth === 'degraded'),
+    true,
+  );
+  assert.equal(
+    changes.some((change) => change.sessionId === 'wsl-session'
+      && change.integrationHealth === 'degraded'),
+    false,
+  );
+  integration.releaseManagedSession('native-session');
+  integration.releaseManagedSession('wsl-session');
+});
+
+test('a Tessera upgrade refreshes the previously managed hook definition before launch', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-definition-refresh-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'codex-home');
+  fs.mkdirSync(home, { recursive: true });
+  const fakeCodex = createFakeCodexApi(home);
+  const olderHookSettings: typeof buildCodexHookSettings = (style) => {
+    const settings = structuredClone(buildCodexHookSettings(style));
+    for (const groups of Object.values(settings.hooks)) {
+      groups[0].hooks[0].timeout = 4;
+    }
+    return settings;
+  };
+  const lifecycleOptions = {
+    resolveProviderHome: async () => home,
+    readVersion: async () => '0.146.0',
+    request: fakeCodex.request,
+    stateDirectory: path.join(root, 'state'),
+  };
+  const { createProviderIntegration } = await import('@/lib/cli/provider-integration');
+  const request = {
+    provider: {
+      ...codexProvider,
+      getProviderIntegrationRequirements: () => ({
+        lifecycle: 'required' as const,
+        skill: 'not-applicable' as const,
+        launchEnvironment: 'not-applicable' as const,
+      }),
+    },
+    agentEnvironmentOwner: { kind: 'user' as const, userId: 'upgrade-owner' },
+    workDir: root,
+  };
+  const oldIntegration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'native',
+    lifecycle: createCodexLifecycleHookIntegration({
+      ...lifecycleOptions,
+      readTesseraVersion: () => '1.0.0',
+      buildHookSettings: olderHookSettings,
+    }),
+  });
+  assert.equal(
+    (await oldIntegration.installLifecycle({ ...request, consent: 'granted' })).health.state,
+    'healthy',
+  );
+  assert.equal(readHookDocument(home).hooks.SessionStart.at(-1).hooks[0].timeout, 4);
+
+  const currentIntegration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'native',
+    lifecycle: createCodexLifecycleHookIntegration({
+      ...lifecycleOptions,
+      readTesseraVersion: () => '2.0.0',
+    }),
+  });
+  assert.equal((await currentIntegration.inspectLifecycle(request)).lifecycle.state, 'stale');
+  const launched = await currentIntegration.resolveLaunch(request);
+  assert.equal(launched.health.state, 'healthy');
+  assert.equal(launched.lifecycle.installedVersion, '2.0.0');
+  assert.notEqual(readHookDocument(home).hooks.SessionStart.at(-1).hooks[0].timeout, 4);
 });
 
 function groupLooksTesseraOwnedForTest(group: unknown): boolean {

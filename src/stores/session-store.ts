@@ -91,6 +91,10 @@ export interface SessionState {
   updateSessionTitle: (sessionId: string, title: string, hasCustomTitle?: boolean) => void;
   touchSessionActivity: (sessionId: string, touchedAt?: string) => void;
   updateSessionStatus: (sessionId: string, status: SessionStatus) => void;
+  updateSessionIntegrationHealth: (
+    sessionId: string,
+    integrationHealth: UnifiedSession['integrationHealth'],
+  ) => void;
   markSessionReadOnly: (sessionId: string, isReadOnly: boolean) => void;
   markSessionRunning: (
     sessionId: string,
@@ -181,6 +185,7 @@ function mapApiSessionToUnified(
     originProjectId: s.originProjectId,
     isRunning: s.isRunning,
     status: s.status as SessionStatus,
+    integrationHealth: s.integrationHealth ?? undefined,
     lastModified: s.lastModified,
     createdAt: s.createdAt,
     tesseraSessionId: s.isRunning ? s.id : undefined,
@@ -964,6 +969,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             ),
           };
         }),
+        retainedSessions: updateRetainedSession(state.retainedSessions, sessionId, update),
+      };
+    }),
+
+  updateSessionIntegrationHealth: (sessionId, integrationHealth) =>
+    set((state) => {
+      const update = (session: UnifiedSession): UnifiedSession => {
+        if (integrationHealth) return { ...session, integrationHealth };
+        const { integrationHealth: _integrationHealth, ...withoutIntegrationHealth } = session;
+        return withoutIntegrationHealth;
+      };
+      return {
+        projects: state.projects.map((project) => ({
+          ...project,
+          sessions: project.sessions.map((session) => (
+            session.id === sessionId ? update(session) : session
+          )),
+        })),
         retainedSessions: updateRetainedSession(state.retainedSessions, sessionId, update),
       };
     }),

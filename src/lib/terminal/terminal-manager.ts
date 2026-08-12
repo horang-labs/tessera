@@ -248,6 +248,7 @@ export interface TerminalSessionSnapshot {
   runtimeState: TerminalSessionRuntimeState;
   stateAt: number | null;
   lifecyclePreview?: string;
+  integrationHealth?: 'healthy' | 'degraded';
 }
 
 export type TerminalSessionWaitCondition =

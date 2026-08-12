@@ -5,6 +5,7 @@ import { CheckCircle2, CircleAlert, RefreshCw, ShieldCheck, Trash2 } from 'lucid
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import type { ProviderIntegrationLaunchDecision } from '@/lib/cli/provider-integration';
+import { getCodexLifecycleActions } from '@/lib/cli/codex-lifecycle-view-policy';
 
 const ENDPOINT = '/api/provider-integrations/codex/lifecycle';
 
@@ -69,8 +70,7 @@ export default function CodexLifecycleSettings() {
 
   const lifecycle = decision?.lifecycle;
   const isHealthy = decision?.health.state === 'healthy';
-  const hasConsent = lifecycle?.consent === 'granted';
-  const canUpdate = hasConsent && lifecycle?.state !== 'absent';
+  const { canInstall, canUpdate, canRemove } = getCodexLifecycleActions(decision);
 
   return (
     <div data-testid="codex-lifecycle-settings">
@@ -148,7 +148,7 @@ export default function CodexLifecycleSettings() {
       ) : null}
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        {!hasConsent ? (
+        {canInstall ? (
           <>
             <label className="mr-2 flex min-w-0 items-start gap-2 text-xs leading-5 text-(--text-secondary)">
               <input
@@ -170,7 +170,7 @@ export default function CodexLifecycleSettings() {
                 : t('settings.codexLifecycle.install')}
             </button>
           </>
-        ) : (
+        ) : canRemove ? (
           <>
             <button
               type="button"
@@ -219,7 +219,7 @@ export default function CodexLifecycleSettings() {
               </button>
             )}
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );

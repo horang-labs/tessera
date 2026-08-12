@@ -651,6 +651,7 @@ export const en: I18nMessages = {
     currentBranchLabel: 'Current',
     presentationScopeHint: 'Presentation scope only; sending remains available after branch changes.',
     worktreeDeleted: 'Worktree deleted',
+    integrationDegraded: 'Integration degraded',
     askUserTitle: 'Input needed',
     askUserKeyboardHint: '↑↓: Navigate · Space: Select · Enter: Submit · Esc: Decline',
     promptDensityDecrease: 'Make panel smaller',

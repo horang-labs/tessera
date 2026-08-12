@@ -3,8 +3,12 @@ import {
   type ProviderIntegrationLaunchDecision,
 } from './provider-integration';
 import { codexAdapter } from './providers/codex/adapter';
+import {
+  dispatchCodexLifecycleOperation,
+  type CodexLifecycleOperation,
+} from './codex-lifecycle-operations';
 
-export type CodexLifecycleOperation = 'status' | 'install' | 'update' | 'remove';
+export type { CodexLifecycleOperation } from './codex-lifecycle-operations';
 
 /** Shared user-global policy used by both the settings GUI and Control CLI. */
 export async function manageCodexLifecycleForUser(
@@ -16,14 +20,10 @@ export async function manageCodexLifecycleForUser(
     agentEnvironmentOwner: { kind: 'user' as const, userId },
     workDir: null,
   };
-  switch (operation) {
-    case 'status':
-      return providerIntegration.inspectLifecycle(request);
-    case 'install':
-      return providerIntegration.installLifecycle({ ...request, consent: 'granted' });
-    case 'update':
-      return providerIntegration.updateLifecycle(request);
-    case 'remove':
-      return providerIntegration.removeLifecycle(request);
-  }
+  return dispatchCodexLifecycleOperation(operation, {
+    status: () => providerIntegration.inspectLifecycle(request),
+    install: () => providerIntegration.installLifecycle({ ...request, consent: 'granted' }),
+    update: () => providerIntegration.updateLifecycle(request),
+    remove: () => providerIntegration.removeLifecycle(request),
+  });
 }

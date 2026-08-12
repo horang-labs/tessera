@@ -11,6 +11,7 @@ import {
   GitBranch,
   Search,
   SquareTerminal,
+  TriangleAlert,
 } from 'lucide-react';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { useSessionStore } from '@/stores/session-store';
@@ -354,6 +355,17 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                 labelClassName="max-sm:hidden"
                 fullLabel={!session.provider || session.provider === 'claude-code'}
               />
+
+              {session.integrationHealth === 'degraded' ? (
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/12 px-1.5 py-1 text-[10px] font-medium text-amber-800 dark:text-amber-300"
+                  title={t('chat.integrationDegraded')}
+                  data-testid="provider-integration-degraded"
+                >
+                  <TriangleAlert className="h-3 w-3" aria-hidden="true" />
+                  <span className="max-sm:hidden">{t('chat.integrationDegraded')}</span>
+                </span>
+              ) : null}
 
               <span className="flex min-w-0 shrink items-center gap-1 max-sm:flex-1">
                 <h2
