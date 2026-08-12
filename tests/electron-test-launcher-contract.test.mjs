@@ -15,6 +15,10 @@ const stopSource = fs.readFileSync(
   new URL('../scripts/stop-electron-test-session.ps1', import.meta.url),
   'utf8',
 );
+const electronMainSource = fs.readFileSync(
+  new URL('../electron/main.ts', import.meta.url),
+  'utf8',
+);
 const windowsPowerShellPath = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
 const canRunWindowsPowerShell = Boolean(
   process.env.WSL_DISTRO_NAME
@@ -168,7 +172,6 @@ test('isolated Electron launcher fail-closes current and future agent namespaces
     /finally \{[\s\S]*SetEnvironmentVariable\(\$name, \$savedEnvironment\[\$name\], 'Process'\)/,
   );
 });
-
 test('isolated Electron launcher assigns a distinct packaged server port', () => {
   assert.match(launcherSource, /\[int\]\$ServerBasePort = 32124/);
   assert.match(launcherSource, /Find-AvailableTcpPort -StartPort \(\$ServerBasePort \+ \$offset\)/);
@@ -315,6 +318,7 @@ test('stopping without data removal preserves restart authority until final clea
   assert.match(launcherSource, /\$restartInstance\.wslStateOwnerToken -ne \$ownerToken/);
   assert.match(launcherSource, /\$restartInstance\.wslFixtureOwnerToken -ne \$ownerToken/);
   assert.match(launcherSource, /Restart must reuse the exact retained Electron test instance set/);
+  assert.match(launcherSource, /\$existingManifest\.portableArtifact -eq \$PortableArtifact/);
 });
 
 test('PowerShell isolation policies expand to flat environment-name sets', (t) => {
@@ -351,4 +355,25 @@ test('PowerShell isolation policies expand to flat environment-name sets', (t) =
     assert.ok(policies.scrub.includes(authorityName));
     assert.ok(policies.blocked.includes(authorityName));
   }
+});
+
+test('owned Downloads artifacts can be permanently removed without the Linux trash', () => {
+  assert.match(launcherSource, /portableArtifact = \$PortableArtifactPath/);
+  assert.match(stopSource, /\[switch\]\$RemoveBuildArtifacts/);
+  assert.match(stopSource, /if \(\$RemoveBuildArtifacts -and -not \$RemoveData\)/);
+  assert.match(stopSource, /\$manifest\.portableArtifact/);
+  assert.match(stopSource, /GetFolderPath\('UserProfile'\)/);
+  assert.match(stopSource, /Test-PathWithinRoot -Path \$appDirectory -Root \$downloads/);
+  assert.match(stopSource, /Refusing to remove a nested build directory/);
+  assert.match(stopSource, /Remove-PathWithRetry -Path \$buildArtifactPaths\.AppDirectory/);
+  assert.match(stopSource, /Remove-PathWithRetry -Path \$buildArtifactPaths\.PortableArtifact/);
+  assert.doesNotMatch(stopSource, /gio\s+trash/i);
+});
+
+test('test window titles stay identifiable after renderer page-title updates', () => {
+  assert.match(electronMainSource, /resolveElectronWindowTitle\('Tessera', electronTestInstance\)/);
+  assert.match(electronMainSource, /resolveElectronWindowTitle\('Tessera Board', electronTestInstance\)/);
+  assert.match(electronMainSource, /webContents\.on\('page-title-updated'/);
+  assert.match(electronMainSource, /event\.preventDefault\(\)/);
+  assert.match(electronMainSource, /win\.setTitle\(title\)/);
 });

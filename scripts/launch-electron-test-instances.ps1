@@ -4,6 +4,9 @@ param(
   [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
   [string]$Executable,
 
+  [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
+  [string]$PortableArtifact,
+
   [ValidateRange(1, 5)]
   [int]$Count = 1,
 
@@ -207,6 +210,7 @@ function Write-SessionManifest {
     [Parameter(Mandatory = $true)][string]$Path,
     [Parameter(Mandatory = $true)][string]$Id,
     [Parameter(Mandatory = $true)][string]$ExecutablePath,
+    [string]$PortableArtifactPath,
     [Parameter(Mandatory = $true)][array]$Instances
   )
 
@@ -216,6 +220,7 @@ function Write-SessionManifest {
     schemaVersion = 3
     sessionId = $Id
     executable = $ExecutablePath
+    portableArtifact = $PortableArtifactPath
     updatedAt = [DateTime]::UtcNow.ToString('o')
     instances = @($Instances)
   }
@@ -353,7 +358,8 @@ if (-not $PrepareOnly -and (Test-Path -LiteralPath $sessionManifestPath -PathTyp
   if (
     $existingManifest.schemaVersion -eq 3 -and
     $existingManifest.sessionId -eq $SessionId -and
-    $existingManifest.executable -eq $Executable
+    $existingManifest.executable -eq $Executable -and
+    $existingManifest.portableArtifact -eq $PortableArtifact
   ) {
     # A stop without -RemoveData deliberately retains the manifest and ownership
     # token so the same isolated app/data namespace can be restarted safely.
@@ -547,6 +553,7 @@ try {
         -Path $sessionManifestPath `
         -Id $SessionId `
         -ExecutablePath $Executable `
+        -PortableArtifactPath $PortableArtifact `
         -Instances $results
       $process = Start-Process `
         -FilePath $Executable `
@@ -560,6 +567,7 @@ try {
         -Path $sessionManifestPath `
         -Id $SessionId `
         -ExecutablePath $Executable `
+        -PortableArtifactPath $PortableArtifact `
         -Instances $results
 
       $cdp = Wait-CdpEndpoint -Port $cdpPort
@@ -573,6 +581,7 @@ try {
         -Path $sessionManifestPath `
         -Id $SessionId `
         -ExecutablePath $Executable `
+        -PortableArtifactPath $PortableArtifact `
         -Instances $results
     }
   }
