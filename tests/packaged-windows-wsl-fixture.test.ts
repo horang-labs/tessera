@@ -10,6 +10,7 @@ const fixtureSource = path.join(
   'tests/fixtures/packaged-windows-wsl',
 );
 const packagedRunner = path.join(fixtureSource, 'run-acceptance.sh');
+const integrityChecker = path.join(fixtureSource, 'integrity-check.py');
 const canRunWslFixture = process.platform === 'linux'
   && /^\/home\/[A-Za-z0-9._-]+$/.test(os.homedir())
   && fs.existsSync('/bin/sh')
@@ -60,6 +61,64 @@ function fixtureProcessEnvironment(): NodeJS.ProcessEnv {
     XDG_CONFIG_HOME: path.join(fixtureRoot, 'xdg-config'),
     XDG_DATA_HOME: path.join(fixtureRoot, 'xdg-data'),
   };
+}
+
+function writeFixtureFile(root: string, relativePath: string, contents: string): void {
+  const target = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, contents);
+}
+
+function createIntegrityFixture(root: string): { agentHome: string; nativeHome: string } {
+  const agentHome = path.join(root, 'agent-home');
+  const nativeHome = path.join(root, 'native-home');
+  for (const [relativePath, contents] of [
+    ['.tessera/tessera-dev.db', 'development database\n'],
+    ['.tessera/tessera.db', 'production database\n'],
+    ['.codex/auth.json', '{"credential":"synthetic"}\n'],
+    ['.codex/config.toml', [
+      'model = "gpt-5.6-sol"',
+      '',
+      '[marketplaces.claude-plugins-official]',
+      'last_updated = "2026-08-12T00:00:00Z"',
+      'last_revision = "1111111111111111111111111111111111111111"',
+      'source_type = "git"',
+      'source = "https://example.invalid/plugins.git"',
+      '',
+    ].join('\n')],
+    ['.codex/hooks.json', '{"hooks":{"SessionStart":["user-hook"]}}\n'],
+    ['.claude/.credentials.json', '{"credential":"synthetic"}\n'],
+    ['.claude/settings.json', '{"hooks":{"SessionStart":["user-hook"]}}\n'],
+    ['.local/share/opencode/auth.json', '{"credential":"synthetic"}\n'],
+    ['.codex/skills/tessera-cli/SKILL.md', 'real WSL Codex skill\n'],
+    ['.claude/skills/tessera-cli/SKILL.md', 'real WSL Claude skill\n'],
+    ['.config/opencode/skills/tessera-cli/SKILL.md', 'real WSL OpenCode skill\n'],
+  ] as const) {
+    writeFixtureFile(agentHome, relativePath, contents);
+  }
+  for (const relativePath of [
+    '.codex/skills/tessera-cli/SKILL.md',
+    '.claude/skills/tessera-cli/SKILL.md',
+    '.config/opencode/skills/tessera-cli/SKILL.md',
+  ]) {
+    writeFixtureFile(nativeHome, relativePath, `real native skill: ${relativePath}\n`);
+  }
+  return { agentHome, nativeHome };
+}
+
+function runIntegrityChecker(
+  command: 'snapshot' | 'verify',
+  root: string,
+  agentHome: string,
+  nativeHome: string,
+) {
+  return spawnSync('/usr/bin/python3', [
+    integrityChecker,
+    command,
+    '--agent-home', agentHome,
+    '--native-home', nativeHome,
+    '--snapshot', path.join(root, 'integrity-snapshot.json'),
+  ], { encoding: 'utf8' });
 }
 
 function appServerRequest(
@@ -155,6 +214,116 @@ fixtureTest('fixture user hook runs while the Tessera hook is an external no-op'
   assert.equal(fs.existsSync(path.join(fixtureRoot, 'evidence/tessera-external.log')), false);
 });
 
+fixtureTest('integrity evidence permits concurrent Codex marketplace metadata refreshes', () => {
+  const root = path.join(fixtureRoot, 'integrity-benign-metadata');
+  const { agentHome, nativeHome } = createIntegrityFixture(root);
+  const before = runIntegrityChecker('snapshot', root, agentHome, nativeHome);
+  assert.equal(before.status, 0, before.stderr);
+
+  const configPath = path.join(agentHome, '.codex/config.toml');
+  const refreshed = fs.readFileSync(configPath, 'utf8')
+    .replace('2026-08-12T00:00:00Z', '2026-08-12T01:02:03Z')
+    .replace('1111111111111111111111111111111111111111', '2222222222222222222222222222222222222222');
+  fs.writeFileSync(configPath, refreshed);
+
+  const verified = runIntegrityChecker('verify', root, agentHome, nativeHome);
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.match(verified.stdout, /Integrity invariants preserved/);
+});
+
+fixtureTest('integrity evidence names every protected artifact class that changes', () => {
+  const cases = [
+    {
+      name: 'source database',
+      invariant: 'source database ~/.tessera/tessera-dev.db',
+      mutate: (agentHome: string) => fs.appendFileSync(
+        path.join(agentHome, '.tessera/tessera-dev.db'),
+        'unauthorized\n',
+      ),
+    },
+    {
+      name: 'source database WAL',
+      invariant: 'source database ~/.tessera/tessera-dev.db-wal',
+      mutate: (agentHome: string) => fs.writeFileSync(
+        path.join(agentHome, '.tessera/tessera-dev.db-wal'),
+        'unauthorized WAL\n',
+      ),
+    },
+    {
+      name: 'source database shared memory',
+      invariant: 'source database ~/.tessera/tessera.db-shm',
+      mutate: (agentHome: string) => fs.writeFileSync(
+        path.join(agentHome, '.tessera/tessera.db-shm'),
+        'unauthorized shared memory\n',
+      ),
+    },
+    {
+      name: 'provider credential',
+      invariant: 'provider credential ~/.codex/auth.json',
+      mutate: (agentHome: string) => fs.appendFileSync(
+        path.join(agentHome, '.codex/auth.json'),
+        'unauthorized\n',
+      ),
+    },
+    {
+      name: 'user hook',
+      invariant: 'user hook ~/.codex/hooks.json',
+      mutate: (agentHome: string) => fs.appendFileSync(
+        path.join(agentHome, '.codex/hooks.json'),
+        'unauthorized\n',
+      ),
+    },
+    {
+      name: 'protected provider configuration',
+      invariant: 'provider configuration ~/.codex/config.toml',
+      mutate: (agentHome: string) => fs.writeFileSync(
+        path.join(agentHome, '.codex/config.toml'),
+        'model = "unauthorized"\n',
+      ),
+    },
+    {
+      name: 'provider configuration comment',
+      invariant: 'provider configuration ~/.codex/config.toml',
+      mutate: (agentHome: string) => fs.appendFileSync(
+        path.join(agentHome, '.codex/config.toml'),
+        '# unauthorized comment change\n',
+      ),
+    },
+    {
+      name: 'native provider skill',
+      invariant: 'native provider skill ~/.codex/skills/tessera-cli',
+      mutate: (_agentHome: string, nativeHome: string) => fs.appendFileSync(
+        path.join(nativeHome, '.codex/skills/tessera-cli/SKILL.md'),
+        'unauthorized\n',
+      ),
+    },
+    {
+      name: 'real WSL provider skill',
+      invariant: 'real WSL provider skill ~/.codex/skills/tessera-cli',
+      mutate: (agentHome: string) => fs.appendFileSync(
+        path.join(agentHome, '.codex/skills/tessera-cli/SKILL.md'),
+        'unauthorized\n',
+      ),
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    const root = path.join(fixtureRoot, `integrity-unauthorized-${fixtureCase.name.replaceAll(' ', '-')}`);
+    const { agentHome, nativeHome } = createIntegrityFixture(root);
+    const before = runIntegrityChecker('snapshot', root, agentHome, nativeHome);
+    assert.equal(before.status, 0, `${fixtureCase.name}: ${before.stderr}`);
+    fixtureCase.mutate(agentHome, nativeHome);
+
+    const verified = runIntegrityChecker('verify', root, agentHome, nativeHome);
+    assert.notEqual(verified.status, 0, fixtureCase.name);
+    assert.match(
+      verified.stderr,
+      new RegExp(`Integrity invariant changed: ${fixtureCase.invariant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+      fixtureCase.name,
+    );
+  }
+});
+
 fixtureTest('packaged runner composes every production-topology acceptance seam', () => {
   const help = execFileSync('bash', [packagedRunner, '--help'], { encoding: 'utf8' });
   assert.match(help, /packaged Windows Electron parent\/backend with\s+a WSL provider fixture/);
@@ -179,7 +348,16 @@ fixtureTest('packaged runner composes every production-topology acceptance seam'
     assert.match(source, new RegExp(seam.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.match(source, /\[\[ \$before_installed == "\$after_installed" \]\]/);
-  assert.match(source, /\[\[ \$before_hashes == "\$after_hashes" \]\]/);
+  assert.match(source, /integrity-check\.py/);
+  assert.match(source, /"\$integrity_checker" snapshot/);
+  assert.match(source, /"\$integrity_checker" verify/);
+  assert.match(source, /Integrity invariant changed: protected evidence snapshot/);
+  assert.doesNotMatch(source, /source_hashes/);
+  assert.ok(
+    source.lastIndexOf('"$integrity_checker" verify')
+      > source.lastIndexOf('-SessionId "$session_id" -TestRoot "$test_root_windows" -RemoveData'),
+    'protected integrity must be verified after the packaged runtime finishes shutdown cleanup',
+  );
   assert.match(source, /NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug npm run electron:prebuild/);
   assert.match(source, /-c\.extraMetadata\.tesseraLogLevel=debug/);
   assert.match(source, /asar\.extractFile\(asarPath, 'package\.json'\)/);
