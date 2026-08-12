@@ -1,9 +1,6 @@
 import { i18n } from '@/lib/i18n';
 import { useNotificationStore } from '@/stores/notification-store';
-import type {
-  ProviderSkillId,
-} from './provider-skill-management';
-import { isProviderSkillId } from './provider-skill-management';
+import { isProviderSkillId, type ProviderSkillId } from './provider-skill-id';
 import type { ProviderSkillIntegrationResult } from './provider-integration';
 import { inspectProviderSkills, mutateProviderSkill } from './provider-skill-client';
 import { PROVIDER_SKILL_DISPLAY_NAMES } from './provider-skill-view-policy';
@@ -112,10 +109,6 @@ const providerSkillOnboarding = createProviderSkillOnboarding({
     );
   },
 });
-
-export function offerProviderSkillOnboarding(providerId: string): void {
-  void providerSkillOnboarding.offer(providerId).catch(() => undefined);
-}
 
 export function notifyProviderSessionStarted(
   providerId: string,

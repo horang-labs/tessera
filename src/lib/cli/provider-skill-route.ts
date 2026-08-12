@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import {
-  isProviderSkillId,
   PROVIDER_SKILL_IDS,
   type ProviderSkillId,
 } from './provider-skill-management';
+import { isProviderSkillId } from './provider-skill-id';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type { ProviderSkillIntegrationResult } from './provider-integration';
 import type { ProviderSkillGuiRequest } from './provider-skill-policy';

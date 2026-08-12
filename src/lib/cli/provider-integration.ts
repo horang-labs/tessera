@@ -12,14 +12,13 @@ import type {
 import {
   createProviderSkillManager,
   detectSupportedProviderSkills,
-  isProviderSkillId,
   resolveOwnedProviderSkillHome,
-  type ProviderSkillId,
   type ProviderSkillManagementRequest,
   type ProviderSkillManagementResult,
   type ProviderSkillManagerOptions,
   type ProviderSkillStatus,
 } from './provider-skill-management';
+import { isProviderSkillId, type ProviderSkillId } from './provider-skill-id';
 
 export type {
   ProviderSkillId,

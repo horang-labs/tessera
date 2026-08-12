@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import providerSkillManifest from '../../../bin/provider-skill-ids.json';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
@@ -11,15 +10,9 @@ import {
   TESSERA_CONTROL_SKILL_NAME,
   type BundledTesseraControlSkillFile,
 } from '@/lib/terminal/tessera-control-skill';
+import { PROVIDER_SKILL_IDS, type ProviderSkillId } from './provider-skill-id';
 
-export type ProviderSkillId = keyof typeof providerSkillManifest;
-export const PROVIDER_SKILL_IDS: readonly ProviderSkillId[] = Object.keys(
-  providerSkillManifest,
-) as ProviderSkillId[];
-
-export function isProviderSkillId(providerId: string): providerId is ProviderSkillId {
-  return (PROVIDER_SKILL_IDS as readonly string[]).includes(providerId);
-}
+export { PROVIDER_SKILL_IDS, type ProviderSkillId } from './provider-skill-id';
 export type ProviderSkillOperation = 'install' | 'status' | 'update' | 'remove';
 
 export interface ProviderSkillStatus {
