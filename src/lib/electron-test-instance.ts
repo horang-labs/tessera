@@ -104,6 +104,15 @@ export function resolveElectronServerPort(
   return port;
 }
 
+export function resolveElectronWindowTitle(
+  baseTitle: string,
+  testInstance: ElectronTestInstanceConfig | null,
+): string {
+  return testInstance
+    ? `${baseTitle} [TEST · ${testInstance.instanceId}]`
+    : baseTitle;
+}
+
 export function getWslGuestTesseraStateRoot(
   env: NodeJS.ProcessEnv = process.env,
 ): string {

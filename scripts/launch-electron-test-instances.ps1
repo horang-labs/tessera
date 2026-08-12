@@ -4,6 +4,9 @@ param(
   [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
   [string]$Executable,
 
+  [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
+  [string]$PortableArtifact,
+
   [ValidateRange(1, 5)]
   [int]$Count = 1,
 
@@ -207,6 +210,7 @@ function Write-SessionManifest {
     [Parameter(Mandatory = $true)][string]$Path,
     [Parameter(Mandatory = $true)][string]$Id,
     [Parameter(Mandatory = $true)][string]$ExecutablePath,
+    [string]$PortableArtifactPath,
     [Parameter(Mandatory = $true)][array]$Instances
   )
 
@@ -216,6 +220,7 @@ function Write-SessionManifest {
     schemaVersion = 2
     sessionId = $Id
     executable = $ExecutablePath
+    portableArtifact = $PortableArtifactPath
     updatedAt = [DateTime]::UtcNow.ToString('o')
     instances = @($Instances)
   }
@@ -363,6 +368,7 @@ try {
         -Path $sessionManifestPath `
         -Id $SessionId `
         -ExecutablePath $Executable `
+        -PortableArtifactPath $PortableArtifact `
         -Instances $results
 
       $cdp = Wait-CdpEndpoint -Port $cdpPort
@@ -376,6 +382,7 @@ try {
         -Path $sessionManifestPath `
         -Id $SessionId `
         -ExecutablePath $Executable `
+        -PortableArtifactPath $PortableArtifact `
         -Instances $results
     }
   }
