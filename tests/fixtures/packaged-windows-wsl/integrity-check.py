@@ -9,13 +9,11 @@ configuration values remain protected.
 from __future__ import annotations
 
 import argparse
-import copy
-import datetime
 import hashlib
 import json
-import math
 import os
 import pathlib
+import re
 import sys
 import tempfile
 import tomllib
@@ -24,7 +22,6 @@ from typing import Any, Callable
 
 
 SNAPSHOT_VERSION = 1
-MARKETPLACE_REFRESH_FIELDS = frozenset({"last_updated", "last_revision"})
 
 
 @dataclass(frozen=True)
@@ -48,19 +45,33 @@ def _file_evidence(path: pathlib.Path) -> dict[str, str]:
     return {"state": "file", "sha256": _sha256(path.read_bytes())}
 
 
-def _canonical_toml_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _canonical_toml_value(value[key])
-            for key in sorted(value)
-        }
-    if isinstance(value, list):
-        return [_canonical_toml_value(item) for item in value]
-    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
-        return {"toml_type": type(value).__name__, "value": value.isoformat()}
-    if isinstance(value, float) and not math.isfinite(value):
-        return {"toml_type": "float", "value": repr(value)}
-    return value
+_TABLE_HEADER = re.compile(r"^[ \t]*\[\[?")
+_MARKETPLACE_TABLE = re.compile(
+    r"^[ \t]*\[[ \t]*(?:marketplaces|\"marketplaces\"|'marketplaces')[ \t]*\.",
+)
+_MARKETPLACE_REFRESH_ASSIGNMENT = re.compile(
+    r"^(?P<prefix>[ \t]*(?:last_updated|last_revision)[ \t]*=[ \t]*)"
+    r"(?P<value>\"(?:\\.|[^\"\\])*\"|'[^']*')"
+    r"(?P<suffix>[ \t]*(?:#.*)?(?:\r?\n)?$)",
+)
+
+
+def _protected_codex_config(config_text: str) -> str:
+    protected_lines: list[str] = []
+    in_marketplace = False
+    for line in config_text.splitlines(keepends=True):
+        if _TABLE_HEADER.match(line):
+            in_marketplace = _MARKETPLACE_TABLE.match(line) is not None
+        if in_marketplace:
+            assignment = _MARKETPLACE_REFRESH_ASSIGNMENT.match(line)
+            if assignment:
+                line = (
+                    assignment.group("prefix")
+                    + '"<provider-refresh-metadata>"'
+                    + assignment.group("suffix")
+                )
+        protected_lines.append(line)
+    return "".join(protected_lines)
 
 
 def _codex_config_evidence(path: pathlib.Path) -> dict[str, str]:
@@ -69,25 +80,13 @@ def _codex_config_evidence(path: pathlib.Path) -> dict[str, str]:
     if not path.is_file():
         return {"state": "unexpected-type"}
     try:
-        config = tomllib.loads(path.read_text(encoding="utf-8"))
+        config_text = path.read_text(encoding="utf-8")
+        tomllib.loads(config_text)
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         raise RuntimeError(f"cannot parse protected Codex configuration {path}: {error}") from error
 
-    protected = copy.deepcopy(config)
-    marketplaces = protected.get("marketplaces")
-    if isinstance(marketplaces, dict):
-        for marketplace in marketplaces.values():
-            if isinstance(marketplace, dict):
-                for field in MARKETPLACE_REFRESH_FIELDS:
-                    marketplace.pop(field, None)
-
-    canonical = json.dumps(
-        _canonical_toml_value(protected),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return {"state": "toml", "protected_sha256": _sha256(canonical)}
+    protected = _protected_codex_config(config_text).encode("utf-8")
+    return {"state": "toml", "protected_sha256": _sha256(protected)}
 
 
 def _directory_evidence(path: pathlib.Path) -> dict[str, str]:
@@ -124,7 +123,13 @@ def _directory_evidence(path: pathlib.Path) -> dict[str, str]:
 
 ARTIFACTS = (
     Artifact("database-development", "source database ~/.tessera/tessera-dev.db", "agent", ".tessera/tessera-dev.db", _file_evidence),
+    Artifact("database-development-wal", "source database ~/.tessera/tessera-dev.db-wal", "agent", ".tessera/tessera-dev.db-wal", _file_evidence),
+    Artifact("database-development-shm", "source database ~/.tessera/tessera-dev.db-shm", "agent", ".tessera/tessera-dev.db-shm", _file_evidence),
+    Artifact("database-development-journal", "source database ~/.tessera/tessera-dev.db-journal", "agent", ".tessera/tessera-dev.db-journal", _file_evidence),
     Artifact("database-production", "source database ~/.tessera/tessera.db", "agent", ".tessera/tessera.db", _file_evidence),
+    Artifact("database-production-wal", "source database ~/.tessera/tessera.db-wal", "agent", ".tessera/tessera.db-wal", _file_evidence),
+    Artifact("database-production-shm", "source database ~/.tessera/tessera.db-shm", "agent", ".tessera/tessera.db-shm", _file_evidence),
+    Artifact("database-production-journal", "source database ~/.tessera/tessera.db-journal", "agent", ".tessera/tessera.db-journal", _file_evidence),
     Artifact("codex-credential", "provider credential ~/.codex/auth.json", "agent", ".codex/auth.json", _file_evidence),
     Artifact("codex-config", "provider configuration ~/.codex/config.toml", "agent", ".codex/config.toml", _codex_config_evidence),
     Artifact("codex-hooks", "user hook ~/.codex/hooks.json", "agent", ".codex/hooks.json", _file_evidence),

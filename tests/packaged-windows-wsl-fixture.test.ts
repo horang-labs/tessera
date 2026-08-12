@@ -242,6 +242,22 @@ fixtureTest('integrity evidence names every protected artifact class that change
       ),
     },
     {
+      name: 'source database WAL',
+      invariant: 'source database ~/.tessera/tessera-dev.db-wal',
+      mutate: (agentHome: string) => fs.writeFileSync(
+        path.join(agentHome, '.tessera/tessera-dev.db-wal'),
+        'unauthorized WAL\n',
+      ),
+    },
+    {
+      name: 'source database shared memory',
+      invariant: 'source database ~/.tessera/tessera.db-shm',
+      mutate: (agentHome: string) => fs.writeFileSync(
+        path.join(agentHome, '.tessera/tessera.db-shm'),
+        'unauthorized shared memory\n',
+      ),
+    },
+    {
       name: 'provider credential',
       invariant: 'provider credential ~/.codex/auth.json',
       mutate: (agentHome: string) => fs.appendFileSync(
@@ -263,6 +279,14 @@ fixtureTest('integrity evidence names every protected artifact class that change
       mutate: (agentHome: string) => fs.writeFileSync(
         path.join(agentHome, '.codex/config.toml'),
         'model = "unauthorized"\n',
+      ),
+    },
+    {
+      name: 'provider configuration comment',
+      invariant: 'provider configuration ~/.codex/config.toml',
+      mutate: (agentHome: string) => fs.appendFileSync(
+        path.join(agentHome, '.codex/config.toml'),
+        '# unauthorized comment change\n',
       ),
     },
     {
@@ -329,6 +353,11 @@ fixtureTest('packaged runner composes every production-topology acceptance seam'
   assert.match(source, /"\$integrity_checker" verify/);
   assert.match(source, /Integrity invariant changed: protected evidence snapshot/);
   assert.doesNotMatch(source, /source_hashes/);
+  assert.ok(
+    source.lastIndexOf('"$integrity_checker" verify')
+      > source.lastIndexOf('-SessionId "$session_id" -TestRoot "$test_root_windows" -RemoveData'),
+    'protected integrity must be verified after the packaged runtime finishes shutdown cleanup',
+  );
   assert.match(source, /NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug npm run electron:prebuild/);
   assert.match(source, /-c\.extraMetadata\.tesseraLogLevel=debug/);
   assert.match(source, /asar\.extractFile\(asarPath, 'package\.json'\)/);

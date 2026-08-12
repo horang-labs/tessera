@@ -387,6 +387,10 @@ for skill in (
     assert not skill.exists(), skill
 PY
 
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$stopper")" \
+  -SessionId "$session_id" -TestRoot "$test_root_windows" -RemoveData >/dev/null
+launched=0
+owned_session=0
 [[ $(sha256sum "$integrity_snapshot" | awk '{print $1}') == "$integrity_snapshot_sha256" ]] || {
   printf 'Integrity invariant changed: protected evidence snapshot\n' >&2
   exit 20
@@ -394,11 +398,6 @@ PY
 python3 "$integrity_checker" verify \
   --agent-home "$agent_home" --native-home "$native_home" --snapshot "$integrity_snapshot" \
   || exit 20
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$stopper")" \
-  -SessionId "$session_id" -TestRoot "$test_root_windows" -RemoveData >/dev/null
-launched=0
-owned_session=0
 remove_owned_test_root
 [[ ! -e $fixture_root ]] || { printf 'Fixture cleanup incomplete\n' >&2; exit 22; }
 [[ ! -e $wsl_state_root ]] || { printf 'WSL state cleanup incomplete\n' >&2; exit 23; }
