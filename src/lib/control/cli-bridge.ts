@@ -37,6 +37,20 @@ export interface WslExecutableStore {
   remove(commandPath: string): Promise<void>;
 }
 
+interface WslExecutableCommandOptions {
+  encoding: 'utf8';
+  timeout: number;
+  windowsHide: true;
+}
+
+export interface DefaultWslExecutableStoreOptions {
+  runWslCommand?: (
+    executable: string,
+    args: readonly string[],
+    options: WslExecutableCommandOptions,
+  ) => Promise<{ stdout: string }>;
+}
+
 export interface ControlCliBridgeFactoryOptions {
   authority: ControlAuthorityRegistry;
   runtimeId: string;
@@ -423,34 +437,84 @@ function buildWslLauncher(hostBridgePath: string): string {
   ].join('\n');
 }
 
-function createDefaultWslExecutableStore(): WslExecutableStore {
+export function createDefaultWslExecutableStore(
+  options: DefaultWslExecutableStoreOptions = {},
+): WslExecutableStore {
+  const runWslCommand = options.runWslCommand ?? (async (executable, args, commandOptions) => {
+    const { stdout } = await execFileAsync(executable, [...args], commandOptions);
+    return { stdout };
+  });
+  const removeOwnedArtifact = async (ownershipId: string): Promise<void> => {
+    const script = [
+      'set -eu',
+      'artifact_id=$1',
+      'base="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/tessera/control-bridges"',
+      'rm -rf -- "$base/bridge.$artifact_id"',
+    ].join('; ');
+    await runWslCommand(
+      'wsl.exe',
+      ['-e', 'sh', '-c', script, 'sh', ownershipId],
+      { encoding: 'utf8', timeout: 30_000, windowsHide: true },
+    );
+  };
   return {
     async create(contents): Promise<string> {
       const encoded = Buffer.from(contents, 'utf8').toString('base64');
+      const ownershipId = randomUUID();
       const script = [
         'set -eu',
+        'artifact_id=$1',
         'base="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/tessera/control-bridges"',
         'mkdir -p "$base"',
         'chmod 700 "$base"',
-        'bridge_dir=$(mktemp -d "$base/bridge.XXXXXX")',
-        `printf %s ${quotePosix(encoded)} | base64 -d > "$bridge_dir/tessera"`,
-        'chmod 700 "$bridge_dir/tessera"',
+        'bridge_dir="$base/bridge.$artifact_id"',
+        'mkdir -p "$bridge_dir"',
+        'chmod 700 "$bridge_dir"',
+        'temp_path="$bridge_dir/tessera.tmp.$$"',
+        'trap \'rm -f -- "$temp_path"\' EXIT HUP INT TERM',
+        `printf %s ${quotePosix(encoded)} | base64 -d > "$temp_path"`,
+        'chmod 700 "$temp_path"',
+        'mv -f -- "$temp_path" "$bridge_dir/tessera"',
+        'trap - EXIT HUP INT TERM',
         'printf %s "$bridge_dir/tessera"',
       ].join('; ');
-      const { stdout } = await execFileAsync(
-        'wsl.exe',
-        ['-e', 'sh', '-c', script],
-        { encoding: 'utf8', timeout: 10_000, windowsHide: true },
-      );
-      const commandPath = stdout.trim();
-      if (!commandPath.startsWith('/')) {
-        throw new Error('The WSL Control CLI bridge path is unavailable.');
+      let lastError: unknown;
+      let attempts = 0;
+      for (const timeout of [10_000, 30_000]) {
+        attempts += 1;
+        try {
+          const { stdout } = await runWslCommand(
+            'wsl.exe',
+            ['-e', 'sh', '-c', script, 'sh', ownershipId],
+            { encoding: 'utf8', timeout, windowsHide: true },
+          );
+          const commandPath = stdout.trim();
+          if (!commandPath.startsWith('/')) {
+            throw new Error('The WSL Control CLI bridge path is unavailable.');
+          }
+          return commandPath;
+        } catch (error) {
+          lastError = error;
+          if (!isTransientWslBridgeFailure(error)) break;
+        }
       }
-      return commandPath;
+      const failure = new Error(
+        `Unable to create the WSL Control CLI bridge after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}: ${describeWslBridgeFailure(lastError)}. Check that WSL is running and its filesystem is writable, then retry.`,
+        { cause: lastError },
+      );
+      try {
+        await removeOwnedArtifact(ownershipId);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [failure, cleanupError],
+          `${failure.message} Cleanup of the owned WSL bridge artifact also failed: ${describeWslBridgeFailure(cleanupError)}.`,
+        );
+      }
+      throw failure;
     },
 
     async remove(commandPath): Promise<void> {
-      await execFileAsync(
+      await runWslCommand(
         'wsl.exe',
         [
           '-e', 'sh', '-c',
@@ -461,6 +525,35 @@ function createDefaultWslExecutableStore(): WslExecutableStore {
       );
     },
   };
+}
+
+function isTransientWslBridgeFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const commandError = error as Error & {
+    code?: string | number | null;
+    killed?: boolean;
+  };
+  if (commandError.killed || /timed?\s*out/i.test(commandError.message)) return true;
+  if (
+    typeof commandError.code === 'string'
+    && ['EAGAIN', 'EBUSY', 'ENOMEM', 'ETIMEDOUT'].includes(commandError.code)
+  ) {
+    return true;
+  }
+  return typeof commandError.code === 'number'
+    && (commandError.code < 0 || commandError.code >= 0xC000_0000);
+}
+
+function describeWslBridgeFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const commandError = error as Error & { code?: string | number | null; killed?: boolean };
+  if (commandError.killed || /timed?\s*out/i.test(commandError.message)) {
+    return 'wsl.exe did not complete before the launch timeout';
+  }
+  if (commandError.code !== undefined && commandError.code !== null) {
+    return `wsl.exe failed with ${String(commandError.code)}`;
+  }
+  return error.message.split('\n', 1)[0] || 'wsl.exe failed without an error message';
 }
 
 function quotePosix(value: string): string {
