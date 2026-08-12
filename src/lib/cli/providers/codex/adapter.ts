@@ -370,6 +370,10 @@ export class CodexAdapter implements CliProvider {
     return true;
   }
 
+  prefersPersistedLaunchOptionsForFreshSession(): boolean {
+    return true;
+  }
+
   getLifecycleIntegration(): ProviderLifecycleIntegration {
     return this._createLifecycleIntegration();
   }

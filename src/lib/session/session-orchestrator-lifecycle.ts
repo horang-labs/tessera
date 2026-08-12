@@ -197,9 +197,9 @@ export async function resumeSessionWithLifecycle({
   // so the persisted creator choices must win field-by-field while those defaults
   // fill only values the creator omitted. Once provider history exists, explicit
   // resume options retain their established precedence.
-  const preferPersistedLaunchOptions = providerId === 'codex'
-    && !useResume
-    && hasTesseraHistory === false;
+  const preferPersistedLaunchOptions = !useResume
+    && hasTesseraHistory === false
+    && provider.prefersPersistedLaunchOptionsForFreshSession?.() === true;
   const optionsWithPersisted: SessionResumeOptions = {
     ...options,
     model: preferPersistedLaunchOptions
