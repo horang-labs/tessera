@@ -72,7 +72,7 @@ test('live replay events mark background popout cards as processing', () => {
   assert.match(clientMessageHandlersSource, /function replayEventsIndicateActiveTurn/);
   assert.match(clientMessageHandlersSource, /case 'replay_events':[\s\S]*if \(shouldStartTurnFromReplayEvents\(sessionStore, msg\.sessionId, msg\.events\)\) \{\s*startTurnInFlight\(msg\.sessionId\);/);
   assert.match(clientMessageHandlersSource, /function shouldStartTurnFromReplayEvents/);
-  assert.match(clientMessageHandlersSource, /\(session\?\.unreadCount \?\? 0\) > 0/);
+  assert.match(clientMessageHandlersSource, /projectViewWorkspaceState\.isSessionUnread\(sessionId\)/);
   assert.match(clientMessageHandlersSource, /event\.hookEvent === 'waiting_for_task' \|\| event\.progressType === 'waiting_for_task'/);
   assert.match(clientMessageHandlersSource, /case 'tool_call':\s*return event\.status === 'running';/);
   assert.match(clientMessageHandlersSource, /case 'interactive_prompt_response':\s*return true;/);
@@ -82,12 +82,11 @@ test('mark-as-read broadcasts clear unread state to board popouts', () => {
   assert.match(clientMessageHandlersSource, /case 'unread_cleared':\s*sessionStore\.clearUnreadCount\(msg\.sessionId\);\s*useNotificationStore\.getState\(\)\.markSessionAsRead\(msg\.sessionId\);/);
   assert.match(panelWrapperSource, /projectViewWorkspaceState\.markSessionRead\(sessionId\);/);
   assert.match(panelWrapperSource, /!hasSessionUnread/);
-  assert.match(sessionClickHandlersSource, /\(session\.unreadCount \?\? 0\) > 0/);
-  assert.match(sessionClickHandlersSource, /wsClient\.sendMarkAsRead\(session\.id\);/);
-  assert.match(notificationCenterSource, /wsClient\.sendMarkAsRead\(sessionId\);/);
+  assert.match(sessionClickHandlersSource, /projectViewWorkspaceState\.markSessionRead\(session\.id\);/);
+  assert.match(notificationCenterSource, /projectViewWorkspaceState\.markSessionRead\(sessionId\);/);
   assert.match(notificationCenterSource, /function handleMarkAllAsRead|const handleMarkAllAsRead =/);
-  assert.match(toastContainerSource, /wsClient\.sendMarkAsRead\(sessionId\);/);
-  assert.match(toastNotificationSource, /wsClient\.sendMarkAsRead\(notification\.sessionId\);/);
+  assert.match(toastContainerSource, /projectViewWorkspaceState\.markSessionRead\(sessionId\);/);
+  assert.match(toastNotificationSource, /projectViewWorkspaceState\.markSessionRead\(notification\.sessionId\);/);
 });
 
 test('interactive prompt responses clear waiting state in every window', () => {

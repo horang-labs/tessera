@@ -8,6 +8,10 @@ import {
   useTerminalSessionStore,
 } from '@/stores/terminal-session-store';
 import { useSessionStore } from '@/stores/session-store';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { resolveIsTerminalSession } from './use-session-processing';
 import type { UnifiedSession } from '@/types/chat';
 
@@ -23,12 +27,8 @@ export function useIsSessionAwaitingUser(
   sessionId: string,
   fallbackKind?: UnifiedSession['kind'],
 ): boolean {
-  const isTerminal = useSessionStore(
-    (state) => resolveIsTerminalSession(
-      state.getSession(sessionId)?.kind,
-      fallbackKind,
-    ),
-  );
+  const session = useProjectViewSession(sessionId);
+  const isTerminal = resolveIsTerminalSession(session?.kind, fallbackKind);
   const guiAwaiting = useChatStore(
     useCallback(
       (state) => !isTerminal && isAwaitingUserPrompt(state, sessionId),
@@ -60,15 +60,14 @@ export function useAnySessionAwaitingUser(
     [targets],
   );
 
-  const terminalIdsKey = useSessionStore(useCallback(
-    (state) => ids
-      .filter((sessionId) => resolveIsTerminalSession(
-        state.getSession(sessionId)?.kind,
-        fallbackKinds.get(sessionId),
-      ))
-      .join(','),
-    [fallbackKinds, ids],
-  ));
+  const resolvedSessions = useProjectViewSessions(ids);
+  const kindsById = new Map(resolvedSessions.map((session) => [session.id, session.kind]));
+  const terminalIdsKey = ids
+    .filter((sessionId) => resolveIsTerminalSession(
+      kindsById.get(sessionId),
+      fallbackKinds.get(sessionId),
+    ))
+    .join(',');
   const terminalIds = useMemo(
     () => terminalIdsKey ? terminalIdsKey.split(',') : [],
     [terminalIdsKey],

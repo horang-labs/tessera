@@ -6,6 +6,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useTabStore } from '@/stores/tab-store';
 import { TAB_STORE_KEY } from '@/types/tab';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, 'window', {
@@ -122,7 +123,7 @@ test('reload restores each tab through its selected Project projection', () => {
   assert.equal(useTabStore.getState().activeTabId, tabC);
   assert.equal(useTabStore.getState().tabs[0].projectDir, 'project-c');
   assert.equal(
-    useSessionStore.getState().getSession(sharedSession.id, 'project-c')?.projectDir,
+    projectViewWorkspaceState.resolveSession(sharedSession.id, 'project-c')?.projectDir,
     'project-c',
   );
 
@@ -145,7 +146,7 @@ test('an explicit Project lookup never leaks another Project Collection placemen
     ],
   });
 
-  const sessionInC = useSessionStore.getState().getSession(sharedSession.id, 'project-c');
+  const sessionInC = projectViewWorkspaceState.resolveSession(sharedSession.id, 'project-c');
   assert.equal(sessionInC?.projectDir, 'project-c');
   assert.equal(sessionInC?.collectionId, undefined);
   assert.equal(sessionInC?.originProjectId, 'project-a');
@@ -166,15 +167,15 @@ test('a retained Session projection keeps a stable selector reference', () => {
     retainedSessions: { [retained.id]: retained },
   });
 
-  const first = useSessionStore.getState().getSession(retained.id, 'project-c');
-  const second = useSessionStore.getState().getSession(retained.id, 'project-c');
+  const first = projectViewWorkspaceState.resolveSession(retained.id, 'project-c');
+  const second = projectViewWorkspaceState.resolveSession(retained.id, 'project-c');
   assert.strictEqual(second, first);
   assert.equal(first?.projectDir, 'project-c');
   assert.equal(first?.collectionId, undefined);
 
   const updated = { ...retained, title: 'Updated conversation' };
   useSessionStore.setState({ retainedSessions: { [updated.id]: updated } });
-  const afterUpdate = useSessionStore.getState().getSession(updated.id, 'project-c');
+  const afterUpdate = projectViewWorkspaceState.resolveSession(updated.id, 'project-c');
   assert.notStrictEqual(afterUpdate, first);
   assert.equal(afterUpdate?.title, 'Updated conversation');
 });

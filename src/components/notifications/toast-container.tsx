@@ -7,19 +7,18 @@ import { useNotificationStore, type ActionToast } from '@/stores/notification-st
 import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
-import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { ToastNotification, TOAST_DISMISS_TOUCH_TARGET } from './toast-notification';
 import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
-import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { switchToSessionProject } from '@/lib/session/switch-session-project';
 import { getSessionOriginProjectId } from '@/lib/projects/origin-project-representation';
 import { ANCHORED_VIEWPORT_MARGIN } from '@/lib/ui/anchored-viewport';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const MAX_VISIBLE_TOASTS = 5;
 const ACTION_TOAST_DURATION = 3000;
@@ -103,7 +102,6 @@ export function ToastContainer() {
   const markAsRead = useNotificationStore((s) => s.markAsRead);
   const actionToasts = useNotificationStore((s) => s.toasts);
   const dismissActionToast = useNotificationStore((s) => s.dismissActionToast);
-  const clearUnreadCount = useSessionStore((s) => s.clearUnreadCount);
   const { materializeSession, viewSession } = useSessionNavigation();
 
   const visibleNotifications = notifications
@@ -120,8 +118,7 @@ export function ToastContainer() {
       return;
     }
 
-    clearUnreadCount(sessionId);
-    wsClient.sendMarkAsRead(sessionId);
+    projectViewWorkspaceState.markSessionRead(sessionId);
 
     // Notified session may live in another project — bring that project into scope first,
     // otherwise it opens in a tab belonging to the project currently on screen.

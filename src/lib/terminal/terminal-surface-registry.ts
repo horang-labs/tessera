@@ -6,6 +6,7 @@ import { wsClient } from '@/lib/ws/client';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { useSessionStore } from '@/stores/session-store';
 import { useNotificationStore } from '@/stores/notification-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import {
   setPendingTerminalLaunch,
   takePendingTerminalLaunch,
@@ -372,11 +373,11 @@ export class TerminalSurface {
       this.handleServerMessage(message);
     });
     this.sessionWasPresent = Boolean(
-      options.sessionId && useSessionStore.getState().getSession(options.sessionId),
+      options.sessionId && projectViewWorkspaceState.resolveSession(options.sessionId),
     );
     this.unsubscribeSessionStore = options.sessionId
       ? useSessionStore.subscribe((state) => {
-          const present = Boolean(state.getSession(options.sessionId!));
+          const present = Boolean(projectViewWorkspaceState.resolveSession(options.sessionId!));
           if (this.sessionWasPresent && !present) {
             // The REST/WS session-close path owns PTY termination. This only
             // releases the renderer surface and its subscriber.

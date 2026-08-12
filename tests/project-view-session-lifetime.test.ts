@@ -10,6 +10,7 @@ import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTabStore } from '@/stores/tab-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const SESSION_ID = 'project-view-lifetime-session';
 
@@ -105,7 +106,7 @@ test('Project refresh retains a Session referenced by an inactive tab snapshot',
   openThenSnapshot(session());
   await refreshWithoutSession(t);
 
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.title, 'Retained conversation');
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.title, 'Retained conversation');
   useTabStore.getState().switchProject('project-a');
   assert.ok(useTabStore.getState().findSessionLocation(SESSION_ID));
 });
@@ -121,11 +122,11 @@ test('retention lasts until tab snapshots and Peek both release the Session', as
   useTabStore.getState().closeTab(location.tabId);
   useTabStore.getState().switchProject('project-c');
   await useSessionStore.getState().loadProjects();
-  assert.ok(useSessionStore.getState().getSession(SESSION_ID));
+  assert.ok(projectViewWorkspaceState.resolveSession(SESSION_ID));
 
   assert.equal(useBoardStore.getState().closeSessionPeek(), true);
   await useSessionStore.getState().loadProjects();
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID), undefined);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID), undefined);
 });
 
 test('a stale saved copy of a materialized tab does not extend retention', async (t) => {
@@ -137,7 +138,7 @@ test('a stale saved copy of a materialized tab does not extend retention', async
 
   await refreshWithoutSession(t);
 
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID), undefined);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID), undefined);
 });
 
 test('a snapshotted file tab retains and retires with its source Session', async (t) => {
@@ -151,7 +152,7 @@ test('a snapshotted file tab retains and retires with its source Session', async
   useTabStore.getState().createTabWithSession(fileSessionId);
   useTabStore.getState().switchProject('project-c');
   await refreshWithoutSession(t);
-  assert.ok(useSessionStore.getState().getSession(SESSION_ID));
+  assert.ok(projectViewWorkspaceState.resolveSession(SESSION_ID));
 
   useSessionStore.getState().removeSession(SESSION_ID);
 

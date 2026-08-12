@@ -54,6 +54,7 @@ import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { buildTaskChildSession } from '@/lib/session/task-child-session';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { useProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
 
 /**
  * KanbanBoard -- collection-based kanban with Chat column + Workflow columns.
@@ -769,7 +770,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const [sessionToDelete, setSessionToDelete] = useState<UnifiedSession | null>(null);
   const [taskToDelete, setTaskToDelete] = useState<TaskEntity | null>(null);
   const handleCardDelete = useCallback((taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
+    const session = projectViewWorkspaceState.resolveSession(taskId);
     if (session) setSessionToDelete(session);
   }, []);
 
@@ -800,8 +801,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
 
   const handleCardStopProcess = useCallback((taskId: string) => {
     wsClient.stopSession(taskId);
-    useSessionStore.getState().clearUnreadCount(taskId);
-    wsClient.sendMarkAsRead(taskId);
+    projectViewWorkspaceState.markSessionRead(taskId);
   }, []);
 
   // Card click handler
@@ -952,11 +952,13 @@ export const KanbanBoard = memo(function KanbanBoard() {
   const handleTaskStopProcess = useCallback(() => {
     if (!taskMenuAnchor) return;
     for (const s of taskMenuAnchor.task.sessions) {
-      const liveSession = useSessionStore.getState().getSession(s.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        s.id,
+        taskMenuAnchor.task.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? s).canStop) {
         wsClient.stopSession(s.id);
-        useSessionStore.getState().clearUnreadCount(s.id);
-        wsClient.sendMarkAsRead(s.id);
+        projectViewWorkspaceState.markSessionRead(s.id);
       }
     }
     setTaskMenuAnchor(null);
@@ -980,8 +982,15 @@ export const KanbanBoard = memo(function KanbanBoard() {
     setTaskMenuAnchor(null);
   }, [taskMenuAnchor]);
 
+  const taskMenuSessions = useProjectViewSessions(
+    taskMenuAnchor?.task.sessions.map((session) => session.id) ?? [],
+    taskMenuAnchor?.task.projectViewId,
+  );
+  const taskMenuSessionsById = new Map(
+    taskMenuSessions.map((session) => [session.id, session]),
+  );
   const taskMenuIsRunning = taskMenuAnchor?.task.sessions.some((session) => {
-    const liveSession = useSessionStore.getState().getSession(session.id);
+    const liveSession = taskMenuSessionsById.get(session.id);
     return resolveSessionRuntimePresentation(liveSession ?? session).canStop;
   }) ?? false;
   const handleTaskRename = useCallback(async (taskId: string, newTitle: string) => {

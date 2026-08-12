@@ -22,6 +22,7 @@ import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
@@ -162,7 +163,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     const sessionId = peekSessionId ?? panels[activePanelId]?.sessionId;
     if (!sessionId) return;
 
-    const session = useSessionStore.getState().getSession(sessionId);
+    const session = projectViewWorkspaceState.resolveSession(sessionId);
     if (session?.kind !== 'terminal' || !supportsTerminalChatView(session.provider)) return;
 
     const viewModeStore = useTerminalViewModeStore.getState();

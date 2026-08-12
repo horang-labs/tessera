@@ -18,6 +18,7 @@ import { useTaskStore } from '@/stores/task-store';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/stores/panel-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useIsSessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
@@ -61,9 +62,7 @@ interface HeaderProps {
 export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search }: HeaderProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
-  const session = useSessionStore((state) =>
-    state.getSession(sessionId, projectViewDir)
-  );
+  const session = useProjectViewSession(sessionId, projectViewDir);
   const liveWorktreeBranch = useSessionStore((state) => {
     if (!session?.worktreeId) return null;
     return state.projects

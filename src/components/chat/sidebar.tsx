@@ -57,6 +57,7 @@ import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { useCanonicalProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -282,7 +283,6 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 export function Sidebar() {
   const { t } = useI18n();
   const projects = useSessionStore((state) => state.projects);
-  useSessionStore((state) => state.retainedSessions);
   const dismissBranchRenameWarning = useSessionStore(
     (state) => state.dismissBranchRenameWarning,
   );
@@ -417,7 +417,7 @@ export function Sidebar() {
   const [sessionToDelete, setSessionToDelete] = useState<UnifiedSession | null>(null);
 
   const handleTaskDelete = useCallback((taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
+    const session = projectViewWorkspaceState.resolveSession(taskId);
     if (session) setSessionToDelete(session);
   }, []);
 
@@ -428,7 +428,7 @@ export function Sidebar() {
   }, [sessionToDelete, deleteSession]);
 
   const handleTaskOpenInNewTab = useCallback(async (taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
+    const session = projectViewWorkspaceState.resolveSession(taskId);
     if (!session) return;
     useTabStore.getState().createTabWithSession(taskId);
     await viewSession(session);
@@ -462,8 +462,7 @@ export function Sidebar() {
   const [isInitialized, setIsInitialized] = useState(false);
   const handleTaskStopProcess = useCallback((taskId: string) => {
     wsClient.stopSession(taskId);
-    useSessionStore.getState().clearUnreadCount(taskId);
-    wsClient.sendMarkAsRead(taskId);
+    projectViewWorkspaceState.markSessionRead(taskId);
   }, []);
 
   const prevActivePanelIdRef = useRef<string | null>(null);
@@ -516,7 +515,7 @@ export function Sidebar() {
 
     const activeId = useSessionStore.getState().activeSessionId;
     if (activeId) {
-      const session = useSessionStore.getState().getSession(activeId);
+      const session = projectViewWorkspaceState.resolveSession(activeId);
       if (session) {
         viewSession(session).catch((err) => {
           logger.error('Failed to load active session', {
@@ -568,7 +567,7 @@ export function Sidebar() {
     [projects],
   );
 
-  const canonicalSessions = projectViewWorkspaceState.getCanonicalSessions();
+  const canonicalSessions = useCanonicalProjectViewSessions();
   const allProjectsRunningSessionIds = projectViewWorkspaceState
     .getCanonicalRunningSessions()
     .map((session) => session.id);
@@ -610,11 +609,9 @@ export function Sidebar() {
       return;
     }
 
-    const sessionStore = useSessionStore.getState();
     for (const sessionId of runningSessionIds) {
       wsClient.stopSession(sessionId);
-      sessionStore.clearUnreadCount(sessionId);
-      wsClient.sendMarkAsRead(sessionId);
+      projectViewWorkspaceState.markSessionRead(sessionId);
     }
   }, [isAllMode, runningSessionIds]);
 

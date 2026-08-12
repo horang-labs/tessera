@@ -2,8 +2,8 @@
 
 import { useCallback } from 'react';
 import { useNotificationStore } from '@/stores/notification-store';
-import { useSessionStore } from '@/stores/session-store';
-import { useTaskStore } from '@/stores/task-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { useProjectViewSessions } from './use-project-view-workspace-state';
 
 function splitSessionIds(sessionIdsKey: string): string[] {
   return sessionIdsKey ? sessionIdsKey.split('\0') : [];
@@ -24,28 +24,7 @@ export function useAnyProjectViewSessionUnread(
 ): boolean {
   const sessionIdsKey = Array.from(new Set(sessionIds)).sort().join('\0');
 
-  const hasCanonicalUnread = useSessionStore(
-    useCallback(
-      (state) => splitSessionIds(sessionIdsKey).some((sessionId) => (
-        sessionId !== excludeSessionId
-        && (state.getSession(sessionId)?.unreadCount ?? 0) > 0
-      )),
-      [excludeSessionId, sessionIdsKey],
-    ),
-  );
-  const hasTaskSummaryUnread = useTaskStore(
-    useCallback(
-      (state) => splitSessionIds(sessionIdsKey).some((sessionId) => (
-        sessionId !== excludeSessionId
-        && [state.tasks, ...Object.values(state.tasksByProject)].some((tasks) =>
-          tasks.some((task) => task.sessions.some(
-            (session) => session.id === sessionId && (session.unreadCount ?? 0) > 0,
-          )),
-        )
-      )),
-      [excludeSessionId, sessionIdsKey],
-    ),
-  );
+  useProjectViewSessions(splitSessionIds(sessionIdsKey));
   const hasUnreadNotification = useNotificationStore(
     useCallback(
       (state) => splitSessionIds(sessionIdsKey).some((sessionId) => (
@@ -58,9 +37,13 @@ export function useAnyProjectViewSessionUnread(
     ),
   );
 
+  const hasCanonicalUnread = splitSessionIds(sessionIdsKey).some((sessionId) => (
+    sessionId !== excludeSessionId
+    && projectViewWorkspaceState.isSessionUnread(sessionId)
+  ));
   return selectProjectViewSessionUnreadState({
     canonicalUnread: hasCanonicalUnread,
-    taskSummaryUnread: hasTaskSummaryUnread,
+    taskSummaryUnread: false,
     notificationUnread: hasUnreadNotification,
   });
 }

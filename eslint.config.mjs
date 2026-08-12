@@ -91,6 +91,29 @@ const config = [
       ],
     },
   },
+  {
+    // Canonical Session state spans direct Project pages, retained open
+    // Sessions, and Worktree Task summaries. UI code must subscribe through
+    // the Project View workspace-state hooks instead of reading one backing
+    // store and accidentally creating another truth.
+    files: ["src/components/**/*.ts", "src/components/**/*.tsx", "src/hooks/**/*.ts", "src/hooks/**/*.tsx"],
+    ignores: ["src/hooks/use-project-view-workspace-state.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[property.name='getSession']",
+          message:
+            "UI Session resolution must use useProjectViewSession/useProjectViewSessions or projectViewWorkspaceState, not session-store.getSession().",
+        },
+        {
+          selector: "MemberExpression[property.name='retainedSessions']",
+          message:
+            "UI code must subscribe through Project View workspace-state hooks instead of reading retainedSessions directly.",
+        },
+      ],
+    },
+  },
 ];
 
 export default config;

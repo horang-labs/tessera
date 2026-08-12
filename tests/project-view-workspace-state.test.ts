@@ -116,6 +116,49 @@ test('canonical resolution deduplicates direct, retained, and task-summary ident
   );
 });
 
+test('Project appearance lists direct, retained, and Task-only Sessions once through canonical resolution', () => {
+  const direct = session({
+    id: 'direct-c',
+    projectDir: 'project-c',
+    originProjectId: 'project-c',
+  });
+  const retained = session({ id: 'retained-c', projectDir: 'project-c' });
+  const summary = taskSession('summary-c');
+  const workspace = createProjectViewWorkspaceState({
+    getProjects: () => [project('project-c', [direct])],
+    getRetainedSessions: () => ({ [retained.id]: retained }),
+    getTasksByProject: () => ({
+      'project-c': [task('project-c', 'collection-c', summary)],
+    }),
+    getCollectionsByProject: () => ({
+      'project-c': [collection('collection-c', 'project-c')],
+    }),
+    replaceProjects: () => {},
+    replaceRetainedSessions: () => {},
+    replaceTasksByProject: () => {},
+    materializeSession: () => {},
+    hasUnreadNotification: () => false,
+    clearSessionUnread: () => {},
+    clearTaskSessionUnread: () => {},
+    markNotificationsRead: () => {},
+    acknowledgeSessionRead: () => {},
+    stopSession: () => {},
+    getOpenSurfaceSessionIds: () => [],
+  });
+
+  assert.deepEqual(
+    workspace.getProjectViewSessions('project-c').map((item) => [
+      item.id,
+      item.projectDir,
+    ]),
+    [
+      ['direct-c', 'project-c'],
+      ['retained-c', 'project-c'],
+      ['summary-c', 'project-c'],
+    ],
+  );
+});
+
 test('Project-scoped DnD resolution selects the visible Task appearance when origin loaded first', () => {
   const sharedChild = taskSession('shared-session');
   const taskInA = { ...task('project-a', 'collection-a', sharedChild), id: 'shared-task' };

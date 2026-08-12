@@ -25,6 +25,10 @@ import {
   useAnyProjectViewSessionUnread,
   useProjectViewSessionUnread,
 } from '@/hooks/use-project-view-session-unread';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { cn } from '@/lib/utils';
@@ -68,6 +72,7 @@ import {
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { getLinkedWorktreeDensity, toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
@@ -521,7 +526,7 @@ function SubSessionRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
-  const liveSession = useSessionStore((state) => state.getSession(sess.id));
+  const liveSession = useProjectViewSession(sess.id, task.projectViewId);
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? sess.kind,
     isRunning: liveSession?.isRunning ?? sess.isRunning,
@@ -823,15 +828,17 @@ export function TaskItemRow({
     getSidebarActionSurface({ isActive: isTaskActive, isSelected }),
   );
   const taskSessionIds = task.sessions.map((session) => session.id);
-  const hasVisibleRuntimeSession = useSessionStore((state) =>
-    taskSessionIds.some((id) => {
-      const snapshot = task.sessions.find((session) => session.id === id);
-      const session = state.getSession(id) ?? snapshot;
-      return session
-        ? resolveSessionRuntimePresentation(session).showRunning
-        : false;
-    }),
+  const resolvedTaskSessions = useProjectViewSessions(taskSessionIds, task.projectViewId);
+  const resolvedTaskSessionsById = new Map(
+    resolvedTaskSessions.map((session) => [session.id, session]),
   );
+  const hasVisibleRuntimeSession = taskSessionIds.some((id) => {
+    const snapshot = task.sessions.find((session) => session.id === id);
+    const session = resolvedTaskSessionsById.get(id) ?? snapshot;
+    return session
+      ? resolveSessionRuntimePresentation(session).showRunning
+      : false;
+  });
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
@@ -888,12 +895,15 @@ export function TaskItemRow({
     event.preventDefault();
 
     for (const session of task.sessions) {
-      const liveSession = useSessionStore.getState().getSession(session.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        task.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onStopProcess?.(session.id);
       }
     }
-  }, [onStopProcess, task.sessions]);
+  }, [onStopProcess, task.projectViewId, task.sessions]);
 
   const handleDragStart = useCallback((event: React.DragEvent) => {
     if (disableDnd) {
@@ -1326,7 +1336,7 @@ export function ChatItemRow({
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
-  const liveSession = useSessionStore((state) => state.getSession(session.id));
+  const liveSession = useProjectViewSession(session.id);
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? session.kind,

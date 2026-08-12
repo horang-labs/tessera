@@ -8,6 +8,10 @@ import {
   useTerminalSessionStore,
 } from '@/stores/terminal-session-store';
 import { selectHasRunningWorkflow, useSessionStore } from '@/stores/session-store';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import type { UnifiedSession } from '@/types/chat';
 
 interface SessionProcessingSources {
@@ -45,12 +49,8 @@ export function useIsSessionProcessing(
   sessionId: string,
   fallbackKind?: UnifiedSession['kind'],
 ): boolean {
-  const isTerminal = useSessionStore(
-    (state) => resolveIsTerminalSession(
-      state.getSession(sessionId)?.kind,
-      fallbackKind,
-    ),
-  );
+  const session = useProjectViewSession(sessionId);
+  const isTerminal = resolveIsTerminalSession(session?.kind, fallbackKind);
   const guiTurnInFlight = useChatStore(selectIsTurnInFlight(sessionId));
   const guiWorkflowRunning = useSessionStore(selectHasRunningWorkflow(sessionId));
   const terminalTurnProcessing = useTerminalSessionStore(
@@ -100,15 +100,14 @@ export function useSessionProcessingSummary(
     [targets],
   );
 
-  const terminalIdsKey = useSessionStore(useCallback(
-    (state) => ids
-      .filter((sessionId) => resolveIsTerminalSession(
-        state.getSession(sessionId)?.kind,
-        fallbackKinds.get(sessionId),
-      ))
-      .join(','),
-    [fallbackKinds, ids],
-  ));
+  const resolvedSessions = useProjectViewSessions(ids);
+  const kindsById = new Map(resolvedSessions.map((session) => [session.id, session.kind]));
+  const terminalIdsKey = ids
+    .filter((sessionId) => resolveIsTerminalSession(
+      kindsById.get(sessionId),
+      fallbackKinds.get(sessionId),
+    ))
+    .join(',');
   const terminalIds = useMemo(
     () => terminalIdsKey ? terminalIdsKey.split(',') : [],
     [terminalIdsKey],

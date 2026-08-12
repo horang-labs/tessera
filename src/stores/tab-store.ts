@@ -18,6 +18,7 @@ import { PANEL_LAYOUT_STORAGE_KEY } from '@/types/panel';
 import type { PersistedPanelLayout, PanelNode, TabPanelData } from '@/types/panel';
 import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { getSpecialSessionSourceSessionId, isSpecialSession } from '@/lib/constants/special-sessions';
 import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
@@ -147,7 +148,8 @@ function inferPersistedTabProjectDir(t: PersistedTab, fallbackProjectDir: string
   const activeSessionId = t.snapshot?.panels?.[t.snapshot.activePanelId]?.sessionId ?? null;
   const sourceSessionId = activeSessionId ? getSpecialSessionSourceSessionId(activeSessionId) : null;
   if (sourceSessionId) {
-    return useSessionStore.getState().getSession(sourceSessionId)?.projectDir ?? fallbackProjectDir;
+    return useSessionStore.getState().getMaterializedSession(sourceSessionId)?.projectDir
+      ?? fallbackProjectDir;
   }
   if (activeSessionId && isSpecialSession(activeSessionId)) return null;
   return fallbackProjectDir;
@@ -156,12 +158,16 @@ function inferPersistedTabProjectDir(t: PersistedTab, fallbackProjectDir: string
 function inferTabProjectDir(initialSessionId: string | null | undefined, currentProjectDir: string | null): string | null {
   const sourceSessionId = initialSessionId ? getSpecialSessionSourceSessionId(initialSessionId) : null;
   if (sourceSessionId) {
-    return useSessionStore.getState().getSession(sourceSessionId, currentProjectDir)?.projectDir ?? null;
+    return projectViewWorkspaceState.resolveSession(sourceSessionId, currentProjectDir ?? undefined)
+      ?.projectDir ?? null;
   }
   if (initialSessionId && isSpecialSession(initialSessionId)) return null;
 
   if (initialSessionId) {
-    const session = useSessionStore.getState().getSession(initialSessionId, currentProjectDir);
+    const session = projectViewWorkspaceState.resolveSession(
+      initialSessionId,
+      currentProjectDir ?? undefined,
+    );
     if (session?.projectDir) return session.projectDir;
   }
 

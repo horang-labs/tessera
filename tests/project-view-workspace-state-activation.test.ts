@@ -107,7 +107,7 @@ test('activating a retained Session clears canonical and notification unread wit
   });
 
   assert.equal(activateSessionPanel(retainedSession.id), true);
-  assert.equal(useSessionStore.getState().getSession(retainedSession.id)?.unreadCount, 0);
+  assert.equal(projectViewWorkspaceState.resolveSession(retainedSession.id)?.unreadCount, 0);
   assert.equal(useNotificationStore.getState().notifications[0]?.read, true);
   assert.deepEqual(
     Object.values(useTaskStore.getState().tasksByProject)

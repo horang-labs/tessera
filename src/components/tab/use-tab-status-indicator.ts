@@ -2,10 +2,10 @@
 
 import { useCallback } from 'react';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
-import { useSessionStore } from '@/stores/session-store';
 import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
 import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
+import { useProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
 import { useI18n } from '@/lib/i18n';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import type { Tab } from '@/types/tab';
@@ -60,17 +60,9 @@ export function useTabStatusIndicator(tab: Tab, isActive: boolean) {
 
   const isAwaitingUser = useAnySessionAwaitingUser(sessionIdList);
 
-  const isRunning = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return panelSessionIds.split(',').some((id) => {
-          const s = state.getSession(id);
-          return s ? resolveSessionRuntimePresentation(s).showRunning : false;
-        });
-      },
-      [panelSessionIds],
-    ),
+  const resolvedPanelSessions = useProjectViewSessions(sessionIdList);
+  const isRunning = resolvedPanelSessions.some(
+    (session) => resolveSessionRuntimePresentation(session).showRunning,
   );
 
   const hasUnread = useAnyProjectViewSessionUnread(sessionIdList);

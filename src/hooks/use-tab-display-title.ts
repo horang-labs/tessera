@@ -3,7 +3,7 @@
 import { useCallback } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { usePanelStore } from '@/stores/panel-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { isSpecialSession } from '@/lib/constants/special-sessions';
 import { resolveTabDisplayTitle } from '@/lib/tab/tab-display-title';
 import type { Tab } from '@/types/tab';
@@ -25,14 +25,10 @@ export function useTabDisplayTitle(tab: Tab): string {
   const activePanelSessionId = activePanel?.sessionId ?? null;
   const activePanelTerminalId = activePanel?.terminalId ?? null;
 
-  const session = useSessionStore(
-    useCallback(
-      (state) =>
-        activePanelSessionId && !isSpecialSession(activePanelSessionId)
-          ? state.getSession(activePanelSessionId)
-          : undefined,
-      [activePanelSessionId],
-    ),
+  const session = useProjectViewSession(
+    activePanelSessionId && !isSpecialSession(activePanelSessionId)
+      ? activePanelSessionId
+      : null,
   );
 
   return resolveTabDisplayTitle({

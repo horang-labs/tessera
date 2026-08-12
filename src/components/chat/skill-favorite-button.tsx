@@ -6,7 +6,7 @@ import { Star, X, Search, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useCommandStore } from '@/stores/command-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { isHiddenSlashCommandName } from '@/lib/chat/hidden-slash-commands';
 import type { SkillInfo } from '@/hooks/use-skill-picker';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
@@ -46,7 +46,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
   const updateSettings = useSettingsStore((s) => s.updateSettings);
 
   const storeSkills = useCommandStore((s) => sessionId ? s.commands[sessionId] : undefined) ?? EMPTY_COMMANDS;
-  const providerId = useSessionStore((s) => sessionId ? (s.getSession(sessionId)?.provider?.trim() ?? null) : null);
+  const providerId = useProjectViewSession(sessionId)?.provider?.trim() ?? null;
   // 피커에서 숨긴 명령은 즐겨찾기 추가 목록에서도 빼야 한다 — 여기로 들어오면 숨김이 무의미해진다.
   const allSkills = useMemo(
     () => storeSkills.filter((skill) => !isHiddenSlashCommandName(skill.name, providerId)),
