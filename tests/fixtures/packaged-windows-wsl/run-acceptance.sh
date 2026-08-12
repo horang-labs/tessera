@@ -170,8 +170,9 @@ build_and_launch() {
   [[ ! -e $package_candidate ]] || { printf 'Owned package output already exists: %s\n' "$package_candidate" >&2; return 5; }
   mkdir "$package_candidate"
   package_output=$package_candidate
-  npm run electron:prebuild
+  NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug npm run electron:prebuild
   npx electron-builder --win portable --x64 --publish never \
+    -c.extraMetadata.tesseraLogLevel=debug \
     --config.directories.output="$package_output" \
     --config.compression=store
   local artifact_source app_source windows_home downloads output_name output_dir_name
@@ -179,6 +180,18 @@ build_and_launch() {
   app_source="$package_output/win-unpacked"
   [[ -f $artifact_source && -f $app_source/Tessera.exe ]] || {
     printf 'Packaged Windows outputs are incomplete\n' >&2
+    return 5
+  }
+  local packaged_log_level
+  packaged_log_level=$(node - "$app_source/resources/app.asar" <<'NODE'
+const asar = require('@electron/asar');
+const [asarPath] = process.argv.slice(2);
+const manifest = JSON.parse(asar.extractFile(asarPath, 'package.json').toString('utf8'));
+process.stdout.write(typeof manifest.tesseraLogLevel === 'string' ? manifest.tesseraLogLevel : '');
+NODE
+  )
+  [[ $packaged_log_level == debug ]] || {
+    printf 'Packaged metadata did not bake in debug logging\n' >&2
     return 5
   }
   windows_home=$(powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("UserProfile")' | tr -d '\r')
@@ -208,6 +221,7 @@ build_and_launch() {
   printf 'APP_DIR_WINDOWS=%s\n' "$(wslpath -w "$app_dir_wsl")"
   printf 'LAUNCH_EXECUTABLE_WINDOWS=%s\n' "$executable_windows"
   printf 'LAUNCH_EXECUTABLE_SHA256=%s\n' "$(sha256sum "$app_dir_wsl/Tessera.exe" | awk '{print $1}')"
+  printf 'PACKAGED_LOG_LEVEL=%s\n' "$packaged_log_level"
   printf 'INSTANCES_JSON_BEGIN\n%s\nINSTANCES_JSON_END\n' "$instances"
 }
 
@@ -242,6 +256,8 @@ app_dir_windows=$(sed -n 's/^APP_DIR_WINDOWS=//p' "$build_output")
 app_dir_wsl=$(wslpath -u "$app_dir_windows")
 executable_windows=$(sed -n 's/^LAUNCH_EXECUTABLE_WINDOWS=//p' "$build_output")
 launch_executable_sha256=$(sed -n 's/^LAUNCH_EXECUTABLE_SHA256=//p' "$build_output")
+packaged_log_level=$(sed -n 's/^PACKAGED_LOG_LEVEL=//p' "$build_output")
+[[ $packaged_log_level == debug ]] || { printf 'Acceptance did not launch a debug package\n' >&2; exit 30; }
 instances_json="$fixture_root/evidence/instances-initial.json"
 sed -n '/^INSTANCES_JSON_BEGIN$/,/^INSTANCES_JSON_END$/p' "$build_output" | sed '1d;$d' >"$instances_json"
 [[ -s $instances_json ]] || { printf 'Launcher did not return an owned instance manifest\n' >&2; exit 8; }
@@ -452,5 +468,5 @@ fi
 final_cleanup=1
 trap - EXIT
 
-printf '{"issue":349,"packagedTopology":"windows-electron/windows-backend/wsl-agent","sessionId":"%s","serverPort":%s,"artifactSha256":"%s","launchExecutableSha256":"%s","assertionsPassed":true,"cleanupComplete":true}\n' \
-  "$session_id" "$server_port" "$artifact_sha256" "$launch_executable_sha256"
+printf '{"issue":349,"packagedTopology":"windows-electron/windows-backend/wsl-agent","build":"debug","packagedLogLevel":"%s","sessionId":"%s","serverPort":%s,"artifactSha256":"%s","launchExecutableSha256":"%s","assertionsPassed":true,"cleanupComplete":true}\n' \
+  "$packaged_log_level" "$session_id" "$server_port" "$artifact_sha256" "$launch_executable_sha256"

@@ -180,4 +180,9 @@ fixtureTest('packaged runner composes every production-topology acceptance seam'
   }
   assert.match(source, /\[\[ \$before_installed == "\$after_installed" \]\]/);
   assert.match(source, /\[\[ \$before_hashes == "\$after_hashes" \]\]/);
+  assert.match(source, /NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug npm run electron:prebuild/);
+  assert.match(source, /-c\.extraMetadata\.tesseraLogLevel=debug/);
+  assert.match(source, /asar\.extractFile\(asarPath, 'package\.json'\)/);
+  assert.match(source, /\[\[ \$packaged_log_level == debug \]\]/);
+  assert.match(source, /"packagedLogLevel":"%s"/);
 });
