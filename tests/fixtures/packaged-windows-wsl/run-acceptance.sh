@@ -38,9 +38,10 @@ repo=$(realpath "$repo")
 driver="$repo/tests/fixtures/packaged-windows-wsl/drive-electron.cjs"
 setup="$repo/tests/fixtures/packaged-windows-wsl/setup.sh"
 integrity_checker="$repo/tests/fixtures/packaged-windows-wsl/integrity-check.py"
+runner_evidence_manager="$repo/tests/fixtures/packaged-windows-wsl/runner-evidence.sh"
 launcher="$repo/scripts/launch-electron-test-instances.ps1"
 stopper="$repo/scripts/stop-electron-test-session.ps1"
-for required in "$driver" "$setup" "$integrity_checker" "$launcher" "$stopper"; do
+for required in "$driver" "$setup" "$integrity_checker" "$runner_evidence_manager" "$launcher" "$stopper"; do
   [[ -f $required ]] || { printf 'Missing acceptance dependency: %s\n' "$required" >&2; exit 4; }
 done
 
@@ -53,6 +54,16 @@ package_output=
 test_root_windows=
 test_root_owner_token=
 test_root_owned=0
+runner_evidence_root=
+
+remove_runner_evidence_root() {
+  [[ -n $runner_evidence_root ]] || return 0
+  local removal_status=0
+  "$runner_evidence_manager" remove "$agent_home" "$session_id" \
+    "$test_root_owner_token" "$runner_evidence_root" || removal_status=$?
+  ((removal_status == 0)) || return "$removal_status"
+  runner_evidence_root=
+}
 
 remove_owned_test_root() {
   ((test_root_owned)) || return 0
@@ -66,6 +77,7 @@ remove_owned_test_root() {
 cleanup() {
   local exit_code=$?
   local session_cleanup_ok=1
+  local runner_evidence_cleanup_ok=1
   if ((owned_session)) && ((final_cleanup == 0)); then
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$stopper")" \
       -SessionId "$session_id" -TestRoot "$test_root_windows" -RemoveData >/dev/null 2>&1 || session_cleanup_ok=0
@@ -73,6 +85,7 @@ cleanup() {
   if ((session_cleanup_ok)); then
     remove_owned_test_root >/dev/null 2>&1 || true
   fi
+  remove_runner_evidence_root >/dev/null 2>&1 || runner_evidence_cleanup_ok=0
   for owned_download in "$artifact_wsl" "$app_dir_wsl"; do
     if [[ -n $owned_download && -e $owned_download ]]; then
       gio trash "$owned_download" >/dev/null 2>&1 || true
@@ -83,6 +96,10 @@ cleanup() {
   fi
   if [[ -n $package_output && -e $package_output ]]; then
     gio trash "$package_output" >/dev/null 2>&1 || true
+  fi
+  if ((runner_evidence_cleanup_ok == 0)); then
+    printf 'Runner evidence cleanup incomplete\n' >&2
+    ((exit_code != 0)) || exit_code=29
   fi
   exit "$exit_code"
 }
@@ -180,6 +197,8 @@ sh "$setup" "$fixture_root" >/dev/null
 chmod 700 "$fixture_root"
 test_root_windows=$(powershell.exe -NoProfile -Command "Join-Path \$env:LOCALAPPDATA 'TesseraAcceptance\\$session_id'" | tr -d '\r')
 test_root_owner_token=$(powershell.exe -NoProfile -Command '[Guid]::NewGuid().ToString("N")' | tr -d '\r')
+runner_evidence_root=$("$runner_evidence_manager" create \
+  "$agent_home" "$session_id" "$test_root_owner_token")
 if ! TEST_ROOT_WINDOWS="$test_root_windows" TEST_ROOT_OWNER_TOKEN="$test_root_owner_token" \
   WSLENV="TEST_ROOT_WINDOWS:TEST_ROOT_OWNER_TOKEN:${WSLENV:-}" \
   powershell.exe -NoProfile -Command \
@@ -191,7 +210,7 @@ test_root_owned=1
 before_installed=$(installed_snapshot)
 native_home_windows=$(powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("UserProfile")' | tr -d '\r')
 native_home=$(wslpath -u "$native_home_windows")
-integrity_snapshot="$fixture_root/evidence/protected-integrity-before.json"
+integrity_snapshot="$runner_evidence_root/protected-integrity-before.json"
 python3 "$integrity_checker" snapshot \
   --agent-home "$agent_home" --native-home "$native_home" --snapshot "$integrity_snapshot"
 integrity_snapshot_sha256=$(sha256sum "$integrity_snapshot" | awk '{print $1}')
@@ -398,6 +417,7 @@ owned_session=0
 python3 "$integrity_checker" verify \
   --agent-home "$agent_home" --native-home "$native_home" --snapshot "$integrity_snapshot" \
   || exit 20
+remove_runner_evidence_root
 remove_owned_test_root
 [[ ! -e $fixture_root ]] || { printf 'Fixture cleanup incomplete\n' >&2; exit 22; }
 [[ ! -e $wsl_state_root ]] || { printf 'WSL state cleanup incomplete\n' >&2; exit 23; }

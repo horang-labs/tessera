@@ -11,6 +11,7 @@ const fixtureSource = path.join(
 );
 const packagedRunner = path.join(fixtureSource, 'run-acceptance.sh');
 const integrityChecker = path.join(fixtureSource, 'integrity-check.py');
+const runnerEvidenceManager = path.join(fixtureSource, 'runner-evidence.sh');
 const canRunWslFixture = process.platform === 'linux'
   && /^\/home\/[A-Za-z0-9._-]+$/.test(os.homedir())
   && fs.existsSync('/bin/sh')
@@ -119,6 +120,35 @@ function runIntegrityChecker(
     '--native-home', nativeHome,
     '--snapshot', path.join(root, 'integrity-snapshot.json'),
   ], { encoding: 'utf8' });
+}
+
+function packagedIntegritySnapshotPath(
+  providerFixtureRoot: string,
+  runnerEvidenceRoot: string,
+): string {
+  const source = fs.readFileSync(packagedRunner, 'utf8');
+  const assignment = source.match(/^integrity_snapshot=.*$/m)?.[0];
+  assert.ok(assignment, 'packaged runner must assign its protected integrity snapshot');
+  const result = spawnSync('bash', [
+    '-c',
+    `set -u
+fixture_root=$1
+runner_evidence_root=$2
+${assignment}
+printf '%s' "$integrity_snapshot"`,
+    'packaged-integrity-path',
+    providerFixtureRoot,
+    runnerEvidenceRoot,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout;
+}
+
+function packagedRunnerFunction(name: string): string {
+  const source = fs.readFileSync(packagedRunner, 'utf8');
+  const declaration = source.match(new RegExp(`${name}\\(\\) \\{\\n[\\s\\S]*?\\n\\}`))?.[0];
+  assert.ok(declaration, `packaged runner must define ${name}`);
+  return declaration;
 }
 
 function appServerRequest(
@@ -324,6 +354,122 @@ fixtureTest('integrity evidence names every protected artifact class that change
   }
 });
 
+fixtureTest('protected integrity evidence survives provider cleanup until verification', () => {
+  const providerFixtureRoot = path.join(fixtureRoot, 'cleanup-seam-provider');
+  const protectedRoot = path.join(fixtureRoot, 'cleanup-seam-protected');
+  const evidenceSessionId = `unit-evidence-${process.pid}-${Date.now()}`;
+  const evidenceOwnerToken = 'a'.repeat(32);
+  const runnerEvidenceRoot = execFileSync('bash', [
+    runnerEvidenceManager,
+    'create',
+    os.homedir(),
+    evidenceSessionId,
+    evidenceOwnerToken,
+  ], { encoding: 'utf8' }).trim();
+  const { agentHome, nativeHome } = createIntegrityFixture(protectedRoot);
+  fs.mkdirSync(path.join(providerFixtureRoot, 'evidence'), { recursive: true });
+
+  try {
+    const integritySnapshot = packagedIntegritySnapshotPath(
+      providerFixtureRoot,
+      runnerEvidenceRoot,
+    );
+    const before = spawnSync('/usr/bin/python3', [
+      integrityChecker,
+      'snapshot',
+      '--agent-home', agentHome,
+      '--native-home', nativeHome,
+      '--snapshot', integritySnapshot,
+    ], { encoding: 'utf8' });
+    assert.equal(before.status, 0, before.stderr);
+
+    fs.rmSync(providerFixtureRoot, { recursive: true, force: true });
+
+    assert.ok(
+      fs.existsSync(integritySnapshot),
+      'runner-owned integrity snapshot must survive launcher-owned provider cleanup',
+    );
+    const verified = spawnSync('/usr/bin/python3', [
+      integrityChecker,
+      'verify',
+      '--agent-home', agentHome,
+      '--native-home', nativeHome,
+      '--snapshot', integritySnapshot,
+    ], { encoding: 'utf8' });
+    assert.equal(verified.status, 0, verified.stderr);
+  } finally {
+    execFileSync('bash', [
+      runnerEvidenceManager,
+      'remove',
+      os.homedir(),
+      evidenceSessionId,
+      evidenceOwnerToken,
+      runnerEvidenceRoot,
+    ]);
+  }
+  assert.equal(fs.existsSync(runnerEvidenceRoot), false);
+});
+
+fixtureTest('runner-owned evidence cleanup runs when the runner fails', () => {
+  const evidenceSessionId = `unit-failure-${process.pid}-${Date.now()}`;
+  const evidenceOwnerToken = 'b'.repeat(32);
+  const evidencePathRecord = path.join(fixtureRoot, `${evidenceSessionId}.txt`);
+  const result = spawnSync('bash', [
+    '-c',
+    `set -u
+agent_home=$1
+runner_evidence_manager=$2
+session_id=$3
+test_root_owner_token=$4
+runner_evidence_root=$("$runner_evidence_manager" create "$agent_home" "$session_id" "$test_root_owner_token")
+printf '%s' "$runner_evidence_root" >"$5"
+owned_session=0
+final_cleanup=0
+test_root_owned=0
+test_root_windows=
+artifact_wsl=
+app_dir_wsl=
+fixture_root=$6/nonexistent-provider-fixture
+package_output=
+remove_owned_test_root() { :; }
+${packagedRunnerFunction('remove_runner_evidence_root')}
+${packagedRunnerFunction('cleanup')}
+trap cleanup EXIT
+exit 19`,
+    'runner-evidence-failure',
+    os.homedir(),
+    runnerEvidenceManager,
+    evidenceSessionId,
+    evidenceOwnerToken,
+    evidencePathRecord,
+    fixtureRoot,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 19, result.stderr);
+  assert.equal(fs.existsSync(fs.readFileSync(evidencePathRecord, 'utf8')), false);
+});
+
+fixtureTest('runner evidence removal preserves manager failures in cleanup OR-lists', () => {
+  const evidenceRoot = path.join(fixtureRoot, 'removal-failure-evidence');
+  const result = spawnSync('bash', [
+    '-c',
+    `set -u
+agent_home=$1
+session_id=removal-failure
+test_root_owner_token=${'c'.repeat(32)}
+runner_evidence_manager=/bin/false
+runner_evidence_root=$2
+${packagedRunnerFunction('remove_runner_evidence_root')}
+removal_status=0
+remove_runner_evidence_root || removal_status=$?
+printf '%s\\n%s' "$removal_status" "$runner_evidence_root"`,
+    'runner-evidence-removal-failure',
+    os.homedir(),
+    evidenceRoot,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.split('\n'), ['1', evidenceRoot]);
+});
+
 fixtureTest('packaged runner composes every production-topology acceptance seam', () => {
   const help = execFileSync('bash', [packagedRunner, '--help'], { encoding: 'utf8' });
   assert.match(help, /packaged Windows Electron parent\/backend with\s+a WSL provider fixture/);
@@ -343,6 +489,8 @@ fixtureTest('packaged runner composes every production-topology acceptance seam'
     '-RemoveData',
     'New-Item -ItemType Directory -Path $root -ErrorAction Stop',
     'remove_owned_test_root',
+    'remove_runner_evidence_root',
+    'runner-evidence.sh',
     'cleanupComplete',
   ]) {
     assert.match(source, new RegExp(seam.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
