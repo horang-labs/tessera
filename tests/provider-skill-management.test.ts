@@ -187,6 +187,7 @@ test('changing Agent Environments requires fresh consent and leaves the prior in
       state: 'absent',
       consent: 'not-granted',
       ownership: 'none',
+      policy: { onboarding: 'offer', canInstall: true, canUpdate: false, canRemove: false },
     }]);
     assert.equal(
       fs.existsSync(path.join(harness.homes['native:codex'], 'skills', 'tessera-cli')),
@@ -301,6 +302,7 @@ test('remove deletes only the Tessera-owned skill and revokes automatic manageme
       state: 'absent',
       consent: 'revoked',
       ownership: 'none',
+      policy: { onboarding: 'none', canInstall: true, canUpdate: false, canRemove: false },
     }]);
     assert.equal(
       fs.existsSync(path.join(harness.homes['native:claude-code'], 'skills', 'tessera-cli')),
@@ -346,6 +348,7 @@ test('external modification stops automatic management and is reported without o
       state: 'conflict',
       consent: 'granted',
       ownership: 'tessera',
+      policy: { onboarding: 'none', canInstall: false, canUpdate: false, canRemove: false },
     }]);
 
     const update = await harness.integration.manageSkills({
@@ -356,6 +359,49 @@ test('external modification stops automatic management and is reported without o
     assert.equal(update.success, false);
     assert.equal(update.error?.code, 'PROVIDER_SKILL_CONFLICT');
     assert.match(fs.readFileSync(skillPath, 'utf8'), /external edit/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('external deletion stops automatic management instead of recreating a consented skill', async () => {
+  const harness = createHarness();
+  const skillDir = path.join(harness.homes['native:codex'], 'skills', 'tessera-cli');
+  try {
+    await harness.integration.manageSkills({
+      operation: 'install',
+      agentEnvironmentOwner: { kind: 'user', userId: 'deleted-user' },
+      providerIds: ['codex'],
+    });
+    fs.rmSync(skillDir, { recursive: true });
+
+    const launch = await harness.createIntegration().resolveLaunch({
+      provider: skillOnlyProvider('codex'),
+      agentEnvironmentOwner: { kind: 'user', userId: 'deleted-user' },
+    });
+
+    assert.deepEqual(launch.skill, {
+      requirement: 'optional',
+      state: 'conflict',
+      consent: 'granted',
+      trust: 'not-required',
+    });
+    assert.equal(launch.providerHome.agentEnvironment, 'native');
+    assert.equal(fs.existsSync(skillDir), false);
+
+    const status = await harness.integration.manageSkills({
+      operation: 'status',
+      agentEnvironmentOwner: { kind: 'user', userId: 'deleted-user' },
+      providerIds: ['codex'],
+    });
+    assert.deepEqual(status.providers, [{
+      providerId: 'codex',
+      detected: true,
+      state: 'conflict',
+      consent: 'granted',
+      ownership: 'tessera',
+      policy: { onboarding: 'none', canInstall: false, canUpdate: false, canRemove: false },
+    }]);
   } finally {
     harness.cleanup();
   }
@@ -605,6 +651,7 @@ test('status survives a Provider Integration restart as user-global environment 
         state: 'ready',
         consent: 'granted',
         ownership: 'tessera',
+        policy: { onboarding: 'none', canInstall: false, canUpdate: true, canRemove: true },
       },
       {
         providerId: 'codex',
@@ -612,6 +659,7 @@ test('status survives a Provider Integration restart as user-global environment 
         state: 'absent',
         consent: 'not-granted',
         ownership: 'none',
+        policy: { onboarding: 'offer', canInstall: true, canUpdate: false, canRemove: false },
       },
       {
         providerId: 'opencode',
@@ -619,6 +667,7 @@ test('status survives a Provider Integration restart as user-global environment 
         state: 'ready',
         consent: 'granted',
         ownership: 'tessera',
+        policy: { onboarding: 'none', canInstall: false, canUpdate: true, canRemove: true },
       },
     ]);
   } finally {
@@ -649,6 +698,69 @@ test('an explicit provider selection preserves unselected providers', async () =
       fs.existsSync(path.join(harness.homes['native:opencode'], 'skills', 'tessera-cli')),
       false,
     );
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('Provider Integration rejects consent when the displayed Agent Environment changed', async () => {
+  const harness = createHarness();
+  let resolvedHomes = 0;
+  try {
+    const integration = createProviderIntegration({
+      resolveAgentEnvironment: async () => 'wsl',
+      detectSkillProviders: async () => ['codex'],
+      resolveProviderSkillHome: async () => {
+        resolvedHomes += 1;
+        return harness.homes['wsl:codex'];
+      },
+      providerSkillStateDirectory: path.join(harness.root, 'environment-race-state'),
+      readProviderSkillFiles: () => [{ relativePath: 'SKILL.md', content: TEST_SKILL }],
+    });
+
+    const result = await integration.manageSkills({
+      operation: 'install',
+      agentEnvironmentOwner: { kind: 'user', userId: 'environment-race-user' },
+      providerIds: ['codex'],
+      expectedAgentEnvironment: 'native',
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.agentEnvironment, 'wsl');
+    assert.equal(result.error?.code, 'PROVIDER_SKILL_ENVIRONMENT_CHANGED');
+    assert.equal(resolvedHomes, 0);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('Provider Integration status isolates an unavailable provider from healthy provider states', async () => {
+  const harness = createHarness();
+  try {
+    const integration = createProviderIntegration({
+      resolveAgentEnvironment: async () => 'native',
+      detectSkillProviders: async () => PROVIDERS,
+      resolveProviderSkillHome: async (providerId, environment) => {
+        if (providerId === 'codex') throw new Error('Codex home unavailable');
+        return harness.homes[`${environment}:${providerId}`];
+      },
+      providerSkillStateDirectory: path.join(harness.root, 'isolated-status-state'),
+      readProviderSkillFiles: () => [{ relativePath: 'SKILL.md', content: TEST_SKILL }],
+    });
+
+    const result = await integration.manageSkills({
+      operation: 'status',
+      agentEnvironmentOwner: { kind: 'user', userId: 'isolated-status-user' },
+      providerIds: PROVIDERS,
+    });
+
+    assert.equal(result.success, true);
+    assert.deepEqual(result.providers.map(({ providerId, state }) => ({ providerId, state })), [
+      { providerId: 'claude-code', state: 'absent' },
+      { providerId: 'codex', state: 'unavailable' },
+      { providerId: 'opencode', state: 'absent' },
+    ]);
+    assert.equal(result.providers[1]?.policy.canInstall, false);
   } finally {
     harness.cleanup();
   }

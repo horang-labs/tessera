@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import providerSkillManifest from '../../../bin/provider-skill-ids.json';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
@@ -11,11 +10,9 @@ import {
   TESSERA_CONTROL_SKILL_NAME,
   type BundledTesseraControlSkillFile,
 } from '@/lib/terminal/tessera-control-skill';
+import { PROVIDER_SKILL_IDS, type ProviderSkillId } from './provider-skill-id';
 
-export type ProviderSkillId = keyof typeof providerSkillManifest;
-export const PROVIDER_SKILL_IDS: readonly ProviderSkillId[] = Object.keys(
-  providerSkillManifest,
-) as ProviderSkillId[];
+export { PROVIDER_SKILL_IDS, type ProviderSkillId } from './provider-skill-id';
 export type ProviderSkillOperation = 'install' | 'status' | 'update' | 'remove';
 
 export interface ProviderSkillStatus {
@@ -36,6 +33,7 @@ export interface ProviderSkillManagementResult {
       | 'PROVIDER_SKILL_CONFLICT'
       | 'PROVIDER_SKILL_CONSENT_REQUIRED'
       | 'PROVIDER_SKILL_NO_PROVIDERS'
+      | 'PROVIDER_SKILL_ENVIRONMENT_CHANGED'
       | 'PROVIDER_SKILL_TRANSACTION_FAILED';
     message: string;
   };
@@ -47,6 +45,7 @@ export interface ProviderSkillManagementRequest {
     | { kind: 'user'; userId: string }
     | { kind: 'server-default' };
   providerIds?: ProviderSkillId[];
+  expectedAgentEnvironment?: AgentEnvironment;
 }
 
 export interface ProviderSkillCleanupArtifact {
@@ -315,6 +314,22 @@ export function createProviderSkillManager(
           ? await options.resolveAgentEnvironment(request.agentEnvironmentOwner.userId)
           : await options.resolveDefaultEnvironment()
       );
+      if (
+        request.expectedAgentEnvironment
+        && request.expectedAgentEnvironment !== environment
+      ) {
+        return {
+          success: false,
+          operation: request.operation,
+          agentEnvironment: environment,
+          providers: [],
+          error: {
+            code: 'PROVIDER_SKILL_ENVIRONMENT_CHANGED',
+            message: 'The Agent Environment changed after this provider skill action was offered. '
+              + 'Refresh the integration state and consent again for the current environment.',
+          },
+        };
+      }
       const userId = request.agentEnvironmentOwner.kind === 'user'
         ? request.agentEnvironmentOwner.userId
         : 'server-default';
@@ -344,21 +359,47 @@ export function createProviderSkillManager(
       const inspected: InspectedProviderSkill[] = [];
       try {
         for (const providerId of selected) {
-          const providerHome = await options.resolveProviderSkillHome(providerId, environment);
-          const targetDir = path.join(providerHome, 'skills', TESSERA_CONTROL_SKILL_NAME);
-          const consent = ledger.environments[environment]?.[providerId]?.consent
-            ?? 'not-granted';
+          const ledgerEntry = ledger.environments[environment]?.[providerId];
+          const consent = ledgerEntry?.consent ?? 'not-granted';
           const isDetected = detected.includes(providerId);
-          inspected.push({
-            providerId,
-            detected: isDetected,
-            providerHome,
-            targetDir,
-            status: {
-              ...await inspectProviderSkill(providerId, targetDir, digest, consent),
+          try {
+            const providerHome = await options.resolveProviderSkillHome(providerId, environment);
+            const targetDir = path.join(providerHome, 'skills', TESSERA_CONTROL_SKILL_NAME);
+            // An absent artifact is an external-deletion conflict only when Tessera
+            // previously installed into this exact home. A newly authoritative home,
+            // and a pre-home-ledger installation, must remain installable while the
+            // original consent and cleanup uncertainty are preserved in the ledger.
+            const inspectionConsent = consent === 'granted'
+              && !ledgerEntry?.knownHomes?.includes(providerHome)
+              ? 'not-granted'
+              : consent;
+            inspected.push({
+              providerId,
               detected: isDetected,
-            },
-          });
+              providerHome,
+              targetDir,
+              status: {
+                ...await inspectProviderSkill(providerId, targetDir, digest, inspectionConsent),
+                detected: isDetected,
+                consent,
+              },
+            });
+          } catch (error) {
+            if (request.operation !== 'status') throw error;
+            inspected.push({
+              providerId,
+              detected: isDetected,
+              providerHome: '',
+              targetDir: '',
+              status: {
+                providerId,
+                detected: isDetected,
+                state: 'unavailable',
+                consent,
+                ownership: 'unknown',
+              },
+            });
+          }
         }
 
         if (request.operation === 'status') {
@@ -582,6 +623,9 @@ async function inspectProviderSkill(
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (consent === 'granted') {
+        return { providerId, detected: false, state: 'conflict', consent, ownership: 'tessera' };
+      }
       return { providerId, detected: false, state: 'absent', consent, ownership: 'none' };
     }
     throw error;

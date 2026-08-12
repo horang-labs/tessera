@@ -32,6 +32,7 @@ import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
 import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
+import { notifyProviderSessionStarted } from '@/lib/cli/provider-skill-onboarding';
 
 interface TerminalPanelProps {
   panelId: string;
@@ -51,6 +52,7 @@ interface TerminalPanelProps {
   /** Optional overlay shown until the terminal surface reports that it is running. */
   startupOverlay?: ReactNode;
   launch?: { providerId: string; sessionId: string };
+  offerSkillOnboarding?: boolean;
   /**
    * The panel's own title bar — drag handle, path, close button.
    *
@@ -91,6 +93,7 @@ export function TerminalPanel({
   detachOnUnmount = false,
   startupOverlay,
   launch,
+  offerSkillOnboarding = false,
   showHeader = true,
 }: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
@@ -107,6 +110,7 @@ export function TerminalPanel({
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const sessionOwned = runtimeOwnership !== 'standalone';
+  const launchProviderId = launch?.providerId;
   const previewOwnsRuntimeRef = useRef(runtimeOwnership === 'session-preview');
   const handleTerminalInput = useCallback(() => {
     if (runtimeOwnership === 'standalone' || runtimeOwnership === 'session-peek') return;
@@ -276,10 +280,16 @@ export function TerminalPanel({
 
   useEffect(() => {
     if (connectionStatus !== 'connected' || !isTabActive) return;
-    void surface.ensureConnected().then((connected) => {
-      if (connected && isPanelActive) surface.activate();
-    });
-  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, surface]);
+    const connect = () => {
+      void surface.ensureConnected().then((connected) => {
+        if (launchProviderId) {
+          notifyProviderSessionStarted(launchProviderId, !offerSkillOnboarding, connected);
+        }
+        if (connected && isPanelActive) surface.activate();
+      });
+    };
+    connect();
+  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, offerSkillOnboarding, launchProviderId, surface]);
 
   const canRestart = status === 'exited' || status === 'error';
   const handleThemeRestart = useCallback(() => {

@@ -22,6 +22,7 @@ import WorktreeSettings from './worktree-settings';
 import CliStatusList from './cli-status-list';
 import CliDiagnosticsPanel from './cli-diagnostics-panel';
 import CodexLifecycleSettings from './codex-lifecycle-settings';
+import ProviderSkillSettings from './provider-skill-settings';
 import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 import AgentExecutionModeSettings from './agent-execution-mode-settings';
@@ -221,6 +222,9 @@ export default function SettingsPanel() {
             </SettingsCard>
             <SettingsCard testId="settings-section-development-codex-lifecycle">
               <CodexLifecycleSettings />
+            </SettingsCard>
+            <SettingsCard testId="settings-section-development-provider-skills">
+              <ProviderSkillSettings />
             </SettingsCard>
             <SettingsCard testId="settings-section-development-worktrees">
               <WorktreeSettings />
