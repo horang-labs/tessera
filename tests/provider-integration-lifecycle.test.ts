@@ -276,6 +276,7 @@ test('bridged WSL install and removal restore the user hook document without lif
         matcher: 'prompt',
         hooks: [{ type: 'command', command: '/usr/local/bin/user-prompt-hook' }],
       }],
+      PreToolUse: [],
     },
   };
   fs.writeFileSync(
@@ -327,6 +328,59 @@ test('bridged WSL install and removal restore the user hook document without lif
   assert.equal(removed.health.state, 'blocked');
   assert.deepEqual(readHookDocument(wslHome), userHookDocument);
   assert.equal(fs.readFileSync(path.join(nativeHome, 'hooks.json'), 'utf8'), '{"native":"must-stay-untouched"}\n');
+});
+
+test('legacy empty lifecycle residue is conflicted instead of reported absent or removed', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-lifecycle-residue-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'codex-home');
+  const stateDirectory = path.join(root, 'state');
+  fs.mkdirSync(home, { recursive: true });
+  fs.mkdirSync(stateDirectory, { recursive: true });
+  const residueDocument = {
+    hooks: {
+      SessionStart: [{ hooks: [{ type: 'command', command: '/opt/user/session-start' }] }],
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/opt/user/prompt-submit' }] }],
+      PreToolUse: [],
+      PermissionRequest: [],
+      PostToolUse: [],
+      Stop: [],
+    },
+  };
+  const residueText = `${JSON.stringify(residueDocument, null, 2)}\n`;
+  fs.writeFileSync(path.join(home, 'hooks.json'), residueText);
+  fs.writeFileSync(path.join(stateDirectory, 'lifecycle.json'), `${JSON.stringify({
+    version: 1,
+    environments: {
+      wsl: [{ home, consent: 'revoked' }],
+    },
+  }, null, 2)}\n`);
+
+  const { createProviderIntegration } = await import('@/lib/cli/provider-integration');
+  const integration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'wsl',
+    lifecycle: createCodexLifecycleHookIntegration({
+      resolveProviderHome: async () => home,
+      readVersion: async () => '0.146.0',
+      request: async () => {
+        throw new Error('residue inspection must not reach the Codex API');
+      },
+      stateDirectory,
+    }),
+  });
+  const request = {
+    provider: codexProvider,
+    agentEnvironmentOwner: { kind: 'user' as const, userId: 'legacy-residue-owner' },
+    workDir: root,
+  };
+
+  const inspected = await integration.inspectLifecycle(request);
+  assert.equal(inspected.lifecycle.state, 'conflict');
+  assert.equal(inspected.lifecycle.consent, 'revoked');
+
+  const removed = await integration.removeLifecycle(request);
+  assert.equal(removed.lifecycle.state, 'conflict');
+  assert.equal(fs.readFileSync(path.join(home, 'hooks.json'), 'utf8'), residueText);
 });
 
 test('unsupported Codex fails closed with minimum-version guidance and never attempts trust mutation', async (t) => {

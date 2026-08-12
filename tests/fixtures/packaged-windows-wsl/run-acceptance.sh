@@ -397,8 +397,11 @@ import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 hooks = json.loads((root / "codex-home/hooks.json").read_text())
 session_hooks = hooks["hooks"]["SessionStart"]
+prompt_hooks = hooks["hooks"]["UserPromptSubmit"]
 assert len(session_hooks) == 1
+assert len(prompt_hooks) == 1
 assert "user-hook.log" in session_hooks[0]["hooks"][0]["command"]
+assert "user-hook.log" in prompt_hooks[0]["hooks"][0]["command"]
 assert set(hooks["hooks"]) == {"SessionStart", "UserPromptSubmit"}, hooks["hooks"]
 assert "__tessera" not in json.dumps(hooks)
 for skill in (

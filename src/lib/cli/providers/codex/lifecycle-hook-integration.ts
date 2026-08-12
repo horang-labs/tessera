@@ -106,6 +106,7 @@ interface InspectedHookDocument {
   mode?: number;
   command: string;
   message?: string;
+  removalBlocked?: boolean;
 }
 
 interface ManagedHookMetadata {
@@ -119,6 +120,7 @@ interface CodexHookLedgerEntry {
   consent: 'granted' | 'revoked';
   managedVersion?: string;
   managedDefinition?: Partial<Record<ManagedEvent, HookGroup>>;
+  preexistingEventKeys?: ManagedEvent[];
 }
 
 interface CodexHookLedger {
@@ -213,6 +215,11 @@ function groupLooksTesseraOwned(group: unknown): boolean {
   });
 }
 
+function managedEventKeysPresent(document: HookDocument | undefined): ManagedEvent[] {
+  const hooks = isRecord(document?.hooks) ? document.hooks : {};
+  return MANAGED_EVENTS.filter((event) => Object.hasOwn(hooks, event));
+}
+
 async function resolveHookFilePath(hooksPath: string): Promise<string> {
   try {
     const stat = await fs.lstat(hooksPath);
@@ -227,7 +234,7 @@ async function inspectHookDocument(
   home: string,
   style: HookCommandStyle,
   buildHookSettings: typeof buildCodexHookSettings,
-  previousDefinition?: Partial<Record<ManagedEvent, HookGroup>>,
+  ledgerEntry?: CodexHookLedgerEntry,
 ): Promise<InspectedHookDocument> {
   const configuredPath = path.join(home, 'hooks.json');
   let filePath: string;
@@ -309,7 +316,7 @@ async function inspectHookDocument(
     }
     const tesseraGroups = (groups ?? []).filter(groupLooksTesseraOwned);
     const exactGroups = (groups ?? []).filter((group) => groupIsExact(group, expected));
-    const previous = previousDefinition?.[event];
+    const previous = ledgerEntry?.managedDefinition?.[event];
     const previousGroups = previous
       ? (groups ?? []).filter((group) => groupIsExact(group, previous))
       : [];
@@ -342,6 +349,25 @@ async function inspectHookDocument(
     };
   }
 
+  const preexistingEventKeys = new Set(ledgerEntry?.preexistingEventKeys ?? []);
+  const emptyManagedResidue = ledgerEntry !== undefined && MANAGED_EVENTS.some((event) => (
+    Array.isArray(hooks[event])
+    && hooks[event].length === 0
+    && !preexistingEventKeys.has(event)
+  ));
+  if (installedEvents + staleEvents === 0 && emptyManagedResidue) {
+    return {
+      state: 'conflict',
+      filePath,
+      document,
+      originalText,
+      mode,
+      command: managedCommand,
+      message: 'Empty Tessera lifecycle hook event keys remain without ownership evidence.',
+      removalBlocked: true,
+    };
+  }
+
   return {
     state: installedEvents === MANAGED_EVENTS.length
       ? 'installed'
@@ -363,6 +389,7 @@ async function writeHookDocument(
   style: HookCommandStyle,
   buildHookSettings: typeof buildCodexHookSettings,
   operation: 'install' | 'update' | 'remove' = 'install',
+  preexistingEventKeys: readonly ManagedEvent[] = [],
 ): Promise<void> {
   if (!snapshot.document || snapshot.originalText === undefined || snapshot.mode === undefined) {
     throw new Error('The Codex hook document is not writable.');
@@ -378,13 +405,16 @@ async function writeHookDocument(
 
   const nextDocument = structuredClone(snapshot.document);
   const hooks = isRecord(nextDocument.hooks) ? nextDocument.hooks : {};
+  const preservedEmptyEvents = new Set(preexistingEventKeys);
   nextDocument.hooks = hooks;
   for (const event of MANAGED_EVENTS) {
     const groups = Array.isArray(hooks[event])
       ? hooks[event].filter((group) => !groupLooksTesseraOwned(group))
       : [];
     if (operation !== 'remove') groups.push(desiredGroup(buildHookSettings, style, event));
-    if (operation === 'remove' && groups.length === 0) delete hooks[event];
+    if (operation === 'remove' && groups.length === 0 && !preservedEmptyEvents.has(event)) {
+      delete hooks[event];
+    }
     else hooks[event] = groups;
   }
 
@@ -426,6 +456,10 @@ async function readLedger(stateDirectory: string): Promise<CodexHookLedger> {
         || !['granted', 'revoked'].includes(String(entry.consent))
         || !(entry.managedVersion === undefined || typeof entry.managedVersion === 'string')
         || !(entry.managedDefinition === undefined || isRecord(entry.managedDefinition))
+        || !(entry.preexistingEventKeys === undefined || (
+          Array.isArray(entry.preexistingEventKeys)
+          && entry.preexistingEventKeys.every((event) => MANAGED_EVENTS.includes(event as ManagedEvent))
+        ))
       ))) {
         throw new Error(`Codex hook lifecycle state for ${environment} is invalid.`);
       }
@@ -474,6 +508,7 @@ async function updateLedgerEntry(
     consent: 'granted' | 'revoked';
     managedVersion?: string | null;
     managedDefinition?: Partial<Record<ManagedEvent, HookGroup>> | null;
+    preexistingEventKeys?: ManagedEvent[];
   },
 ): Promise<void> {
   const ledger = await readLedger(stateDirectory);
@@ -491,6 +526,9 @@ async function updateLedgerEntry(
     } else if (patch.managedDefinition !== undefined) {
       entry.managedDefinition = patch.managedDefinition;
     }
+    if (patch.preexistingEventKeys !== undefined) {
+      entry.preexistingEventKeys = patch.preexistingEventKeys;
+    }
   } else {
     entries.push({
       home,
@@ -500,6 +538,9 @@ async function updateLedgerEntry(
         : {}),
       ...(patch.managedDefinition
         ? { managedDefinition: patch.managedDefinition }
+        : {}),
+      ...(patch.preexistingEventKeys
+        ? { preexistingEventKeys: patch.preexistingEventKeys }
         : {}),
     });
     ledger.environments[environment] = entries;
@@ -659,7 +700,7 @@ export function createCodexLifecycleHookIntegration(
       resolved.home,
       resolved.style,
       buildHookSettings,
-      resolved.entry?.managedDefinition,
+      resolved.entry,
     );
     if (document.state === 'conflict') {
       return lifecycleResult(resolved, {
@@ -827,7 +868,7 @@ export function createCodexLifecycleHookIntegration(
       resolved.home,
       resolved.style,
       buildHookSettings,
-      resolved.entry?.managedDefinition,
+      resolved.entry,
     );
     let materialized = false;
     if (document.state === 'conflict') {
@@ -842,6 +883,9 @@ export function createCodexLifecycleHookIntegration(
       }
     }
     if (operation === 'install') {
+      const preexistingEventKeys = document.state === 'absent'
+        ? managedEventKeysPresent(document.document)
+        : resolved.entry?.preexistingEventKeys;
       try {
         await updateLedgerEntry(stateDirectory, context.environment, resolved.home, {
           consent: 'granted',
@@ -851,6 +895,7 @@ export function createCodexLifecycleHookIntegration(
           ...(document.state === 'installed' && resolved.entry?.managedDefinition
             ? { managedDefinition: resolved.entry.managedDefinition }
             : { managedDefinition: null }),
+          ...(preexistingEventKeys ? { preexistingEventKeys } : {}),
         });
       } catch (error) {
         return lifecycleResult(resolved, {
@@ -868,6 +913,7 @@ export function createCodexLifecycleHookIntegration(
         ...(document.state === 'installed' && resolved.entry?.managedDefinition
           ? { managedDefinition: resolved.entry.managedDefinition }
           : {}),
+        ...(preexistingEventKeys ? { preexistingEventKeys } : {}),
       };
     }
     const ready = await preflight(context, resolved);
@@ -902,7 +948,7 @@ export function createCodexLifecycleHookIntegration(
         resolved.home,
         resolved.style,
         buildHookSettings,
-        resolved.entry?.managedDefinition,
+        resolved.entry,
       );
       if (document.state !== 'installed') {
         return lifecycleResult(resolved, {
@@ -937,7 +983,7 @@ export function createCodexLifecycleHookIntegration(
         resolved.home,
         resolved.style,
         buildHookSettings,
-        resolved.entry?.managedDefinition,
+        resolved.entry,
       );
       if (document.state !== 'installed') {
         return lifecycleResult(resolved, {
@@ -958,12 +1004,13 @@ export function createCodexLifecycleHookIntegration(
       resolved.home,
       resolved.style,
       buildHookSettings,
-      resolved.entry?.managedDefinition,
+      resolved.entry,
     );
     const knownManagedHome = resolved.entry !== undefined;
     const removable = document.state === 'installed' || document.state === 'stale'
       || (document.state === 'conflict'
         && knownManagedHome
+        && document.removalBlocked !== true
         && document.document !== undefined
         && document.originalText !== undefined);
     if (document.state === 'conflict' && !removable) {
@@ -973,10 +1020,29 @@ export function createCodexLifecycleHookIntegration(
     }
     if (removable) {
       try {
-        await writeHookDocument(document, resolved.style, buildHookSettings, 'remove');
+        await writeHookDocument(
+          document,
+          resolved.style,
+          buildHookSettings,
+          'remove',
+          resolved.entry?.preexistingEventKeys,
+        );
       } catch (error) {
         return lifecycleResult(resolved, {
           state: 'conflict', trust: 'unavailable', message: (error as Error).message,
+        });
+      }
+      const verified = await inspectHookDocument(
+        resolved.home,
+        resolved.style,
+        buildHookSettings,
+        resolved.entry,
+      );
+      if (verified.state !== 'absent') {
+        return lifecycleResult(resolved, {
+          state: 'conflict',
+          trust: 'unavailable',
+          message: verified.message ?? 'The Tessera lifecycle hook remained after removal.',
         });
       }
     }
@@ -1031,7 +1097,7 @@ export function createCodexLifecycleHookIntegration(
             entry.home,
             resolveHookCommandStyle(environment),
             buildHookSettings,
-            entry.managedDefinition,
+            entry,
           );
           if (document.state === 'absent') {
             artifacts.push({ environment, providerHome: entry.home, state: 'absent' });
@@ -1047,12 +1113,18 @@ export function createCodexLifecycleHookIntegration(
             });
             continue;
           }
-          await writeHookDocument(document, resolveHookCommandStyle(environment), buildHookSettings, 'remove');
+          await writeHookDocument(
+            document,
+            resolveHookCommandStyle(environment),
+            buildHookSettings,
+            'remove',
+            entry.preexistingEventKeys,
+          );
           const verified = await inspectHookDocument(
             entry.home,
             resolveHookCommandStyle(environment),
             buildHookSettings,
-            entry.managedDefinition,
+            entry,
           );
           if (verified.state !== 'absent') {
             artifacts.push({
