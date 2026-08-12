@@ -419,6 +419,7 @@ test('semantic Session prompts use one bracketed paste, synthesize running, and 
 test('terminal chat delivery follows a resumed runtime generation and submits exactly once', async () => {
   const spawned: FakePty[] = [];
   const delivered: ServerTransportMessage[] = [];
+  let reportConflict!: (message: string) => void;
   const manager = new TerminalManager(
     (_connectionId, message) => delivered.push(message),
     async () => createFactory(spawned),
@@ -426,10 +427,21 @@ test('terminal chat delivery follows a resumed runtime generation and submits ex
     { semanticPromptSubmitDelayMs: 5 },
   );
 
-  await manager.create(createOptions());
-  await manager.close('terminal-a', 'user-a');
+  await manager.create(createOptions({
+    runtimeGuard: {
+      start: async (onConflict) => {
+        reportConflict = onConflict;
+        return () => undefined;
+      },
+    },
+  }));
+  reportConflict('Provider conversation opened elsewhere.');
+  assert.ok(delivered.some((message) => (
+    message.type === 'terminal_error'
+    && message.message === 'Provider conversation opened elsewhere.'
+  )));
   // The ownership-conflict window has no managed runtime, so chat delivery
-  // must fail without writing to the stopped generation.
+  // fails without writing to the rejected generation.
   assert.equal(
     await manager.submitSessionChatInput('session-a', 'user-a', 'blocked while external'),
     false,
@@ -442,7 +454,7 @@ test('terminal chat delivery follows a resumed runtime generation and submits ex
   );
   assert.deepEqual(spawned[0].writes, []);
   assert.deepEqual(spawned[1].writes, [
-    '\x15',
+    '\x15'.repeat(79) + '\x0b'.repeat(79),
     '\x1b[200~post-resume prompt\x1b[201~',
     '\r',
   ]);
@@ -476,7 +488,7 @@ test('terminal chat never sends Enter to a replacement runtime generation', asyn
 
   assert.equal(await submitted, false);
   assert.deepEqual(spawned[0].writes, [
-    '\x15',
+    '\x15'.repeat(79) + '\x0b'.repeat(79),
     '\x1b[200~one generation only\x1b[201~',
   ]);
   assert.deepEqual(spawned[1].writes, []);

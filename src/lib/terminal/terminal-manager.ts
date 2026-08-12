@@ -68,8 +68,16 @@ const MAX_SESSION_SCREEN_CHARS = 64_000;
 const MAX_SESSION_LIFECYCLE_PREVIEW_CHARS = 2_000;
 const MAX_TERMINAL_COLS = 1_000;
 const MAX_TERMINAL_ROWS = 500;
-/** Ctrl+U: clear one unsubmitted logical line before a chat-overlay paste. */
-const TERMINAL_CHAT_CLEAR_INPUT = '\x15';
+/**
+ * Clear a bounded multiline TUI draft from any cursor position. Codex needs
+ * 2N-1 Ctrl+U joins for N logical lines; Ctrl+K removes any suffix after the
+ * cursor. Overshooting an empty prompt is harmless, while undershooting glues
+ * stale draft text to the next chat message.
+ */
+const TERMINAL_CHAT_CLEAR_MAX_LINES = 40;
+const TERMINAL_CHAT_CLEAR_REPETITIONS = 2 * TERMINAL_CHAT_CLEAR_MAX_LINES - 1;
+const TERMINAL_CHAT_CLEAR_INPUT = '\x15'.repeat(TERMINAL_CHAT_CLEAR_REPETITIONS)
+  + '\x0b'.repeat(TERMINAL_CHAT_CLEAR_REPETITIONS);
 // 슬래시 fallback 프리필 타이밍 휴리스틱 (PTY 실측 기반)
 const PREFILL_IDLE_MS = 700; // 마지막 출력 후 이만큼 조용하면 ready로 간주
 const PREFILL_MIN_OUTPUT_CHARS = 600; // claude 기동 화면이 충분히 그려졌다는 최소 기준
