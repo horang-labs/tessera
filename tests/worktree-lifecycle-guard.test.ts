@@ -119,6 +119,48 @@ test('active Worktree deletion archives and preserves its canonical records', as
   assert.ok(worktrees.getWorktree(worktreeId));
 });
 
+test('archived Worktree deletion is excluded while a child Session is handed off', async () => {
+  const [archive, projects, sessions, tasks, handoff] = await Promise.all([
+    import('@/lib/archive/archive-service'),
+    import('@/lib/db/projects'),
+    import('@/lib/db/sessions'),
+    import('@/lib/db/tasks'),
+    import('@/lib/terminal/terminal-handoff-lock'),
+  ]);
+  const { rootPath, linkedPath, branch } = createLinkedCheckout('handoff');
+  projects.registerProject('handoff-origin', rootPath, 'Handoff Origin');
+  const worktreeId = tasks.createTask({
+    id: 'handoff-task',
+    projectId: 'handoff-origin',
+    title: 'Handoff Worktree',
+    worktreeBranch: branch,
+    worktreePath: linkedPath,
+  });
+  sessions.createSession('handoff-session', 'handoff-origin', 'Handoff session', 'codex', {
+    taskId: 'handoff-task',
+    workDir: linkedPath,
+  });
+  tasks.setTaskArchived('handoff-task', true);
+
+  assert.equal(handoff.acquireTerminalHandoffLock({
+    sessionId: 'handoff-session',
+    terminalId: 'handoff-terminal',
+    userId: 'handoff-user',
+  }), true);
+  try {
+    await assert.rejects(
+      archive.removeArchivedWorktreeById(worktreeId),
+      handoff.TerminalHandoffConflictError,
+    );
+    assert.equal(fs.existsSync(linkedPath), true);
+  } finally {
+    handoff.releaseTerminalHandoffByTerminal('handoff-user', 'handoff-terminal');
+  }
+
+  await archive.removeArchivedWorktreeById(worktreeId);
+  assert.equal(fs.existsSync(linkedPath), false);
+});
+
 test('external Worktree absence is reported without deleting canonical records', async () => {
   const [archive, projects, sessions, tasks, worktrees] = await Promise.all([
     import('@/lib/archive/archive-service'),

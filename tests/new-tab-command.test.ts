@@ -4,6 +4,7 @@ import test from 'node:test';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
 import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 
 test('the shared New Tab command reuses the active pristine tab', () => {
   useTabStore.setState({
@@ -22,8 +23,10 @@ test('the shared New Tab command reuses the active pristine tab', () => {
       },
     },
   });
+  useWorkspacePeekStore.getState().openWorktree('worktree-1', 'project-1');
 
   assert.equal(openSingletonNewTab(), 'empty-tab');
   assert.equal(openSingletonNewTab(), 'empty-tab');
   assert.equal(useTabStore.getState().tabs.length, 1);
+  assert.equal(useWorkspacePeekStore.getState().target, null);
 });

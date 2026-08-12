@@ -307,7 +307,6 @@ export const TabBar = memo(function TabBar() {
   // ---------------------------------------------------------------------------
 
   const handleAddTab = useCallback(function handleAddTab() {
-    useWorkspacePeekStore.getState().close();
     openSingletonNewTab();
   }, []);
 

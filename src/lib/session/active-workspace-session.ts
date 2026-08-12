@@ -2,6 +2,7 @@ import {
   getSpecialSessionSourceSessionId,
   isSpecialSession,
 } from '@/lib/constants/special-sessions';
+import { isOptimisticSessionId } from '@/lib/session/session-id';
 
 export function getWorkspaceSourceSessionId(
   sessionId: string | null | undefined,
@@ -29,7 +30,7 @@ export function resolveCanonicalGitTargetSessionId({
   activeSessionId: string | null | undefined;
   peekWorktreeId: string | null | undefined;
 }): string | null {
-  if (peekWorktreeId || activeSessionId?.startsWith('temp-')) return null;
+  if (peekWorktreeId || isOptimisticSessionId(activeSessionId)) return null;
   return activeSessionId ?? null;
 }
 

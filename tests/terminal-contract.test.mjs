@@ -370,9 +370,6 @@ test('resume, delete, archive, restore, and worktree cleanup hold atomic handoff
   assert.match(sessionArchiveSource, /withExclusiveTesseraSessionOperation\(sessionId/);
   assert.match(archiveServiceSource, /withExclusiveTesseraSessionOperation\(sessionId/);
   assert.match(archiveServiceSource, /withExclusiveTesseraSessionOperations\(task\.sessions\.map/);
-  // Worktree cleanup resolves the live membership first; the lock seam itself
-  // is exercised behaviorally in terminal-handoff-lock.test.ts.
-  assert.match(archiveServiceSource, /beginTesseraSessionOperations\(sessionIds\)/);
   assert.match(archiveServiceSource, /endTesseraSessionOperations\(acquired\)/);
   assert.match(sessionArchiveRouteSource, /isTerminalHandoffConflictError/);
   assert.match(sessionArchiveRouteSource, /\? 409/);
