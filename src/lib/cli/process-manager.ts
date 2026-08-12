@@ -885,6 +885,10 @@ export class ProcessManager {
     this.healthCheckInterval = setInterval(() => {
       this.performHealthCheck();
     }, 5000); // 5s interval
+    // Importing the singleton must not own a short-lived command or test
+    // process. Long-running servers are already kept alive by their listeners;
+    // while they are alive this interval continues to run normally.
+    this.healthCheckInterval.unref();
   }
 
   /**

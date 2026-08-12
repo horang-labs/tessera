@@ -196,18 +196,11 @@ test('a composite target keeps its Session capabilities', () => {
   });
 });
 
-test('ChatLayout drops non-canonical Session targets during Worktree Peek and optimistic creation', () => {
-  assert.match(
-    chatLayoutSource,
-    /const activeGitTargetSessionId = peekWorktreeId \|\| activeGitSessionId\?\.startsWith\('temp-'\)\s*\? null\s*:\s*activeGitSessionId;/,
-  );
+test('ChatLayout routes both Git surfaces through the canonical target resolver', () => {
+  assert.match(chatLayoutSource, /resolveCanonicalGitTargetSessionId\(\{/);
   assert.equal(
     (chatLayoutSource.match(/sessionId=\{activeGitTargetSessionId\}/g) ?? []).length,
     2,
-  );
-  assert.match(
-    chatLayoutSource,
-    /state\.getSession\(selectedBoardSessionId, selectedProjectDir\)\?\.worktreeId/,
   );
 });
 
