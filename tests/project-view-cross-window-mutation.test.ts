@@ -3,8 +3,12 @@ import test from 'node:test';
 import { handleIncomingServerMessage } from '@/lib/ws/client-message-handlers';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
+import { useBoardStore } from '@/stores/board-store';
+import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
+import { useTabStore } from '@/stores/tab-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
 
@@ -110,8 +114,141 @@ async function waitFor(check: () => boolean): Promise<void> {
 
 test.afterEach(() => {
   globalThis.fetch = originalFetch;
+  useBoardStore.setState(useBoardStore.getInitialState(), true);
+  usePanelStore.setState(usePanelStore.getInitialState(), true);
   useTaskStore.setState(useTaskStore.getInitialState(), true);
   useSessionStore.setState(useSessionStore.getInitialState(), true);
+  useTabStore.setState(useTabStore.getInitialState(), true);
+});
+
+test('initial Project hydration restores a saved active Session before fallback', async (t) => {
+  const savedSessionId = 'saved-session';
+  const storage = new Map([['activeSessionId', savedSessionId]]);
+  const originalSessionStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    },
+  });
+  t.after(() => {
+    if (originalSessionStorage) {
+      Object.defineProperty(globalThis, 'sessionStorage', originalSessionStorage);
+    } else {
+      Reflect.deleteProperty(globalThis, 'sessionStorage');
+    }
+  });
+
+  globalThis.fetch = async () => Response.json({
+    projects: [
+      project('project-c'),
+      {
+        ...project('saved-project', [{
+          ...sessionAppearance('saved-project'),
+          id: savedSessionId,
+        }]),
+        isCurrent: false,
+      },
+    ],
+  });
+
+  await useSessionStore.getState().loadProjects();
+
+  assert.equal(useSessionStore.getState().activeSessionId, savedSessionId);
+  assert.equal(useSessionStore.getState().didHydrateActiveSession, true);
+});
+
+test('a passive Task reload preserves a manually selected board-only Project', async (t) => {
+  const oldProjectId = 'project-c';
+  const fixtureProjectId = 'fixture-project';
+  let projectLoads = 0;
+
+  useSessionStore.setState(useSessionStore.getInitialState(), true);
+  useTaskStore.setState(useTaskStore.getInitialState(), true);
+  useBoardStore.setState({
+    ...useBoardStore.getInitialState(),
+    selectedProjectDir: oldProjectId,
+    peekFileDirty: false,
+  }, true);
+  useTabStore.setState({
+    ...useTabStore.getInitialState(),
+    tabs: [{ id: 'bootstrap-tab', projectDir: null, title: null, isPreview: false }],
+    activeTabId: 'bootstrap-tab',
+    lruTabIds: ['bootstrap-tab'],
+    projectTabStates: {},
+    globalTabState: null,
+    currentProjectDir: null,
+  }, true);
+  usePanelStore.setState({
+    ...usePanelStore.getInitialState(),
+    activeTabId: 'bootstrap-tab',
+    tabPanels: {
+      'bootstrap-tab': {
+        layout: { type: 'leaf', panelId: 'bootstrap-panel' },
+        panels: { 'bootstrap-panel': { id: 'bootstrap-panel', sessionId: null } },
+        activePanelId: 'bootstrap-panel',
+      },
+    },
+  }, true);
+
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input), 'http://localhost');
+    if (url.pathname === '/api/tasks') {
+      return Response.json({ tasks: [] });
+    }
+    projectLoads += 1;
+    return Response.json({
+      projects: [
+        {
+          ...project(oldProjectId),
+          displayName: projectLoads === 1 ? 'Old project' : 'Reloaded old project',
+        },
+        { ...project(fixtureProjectId, []), isCurrent: false },
+      ],
+    });
+  };
+
+  await useSessionStore.getState().loadProjects();
+  assert.equal(useSessionStore.getState().activeSessionId, 'session-c');
+
+  useTabStore.getState().switchProject(oldProjectId);
+  useTabStore.getState().createTabWithSession('session-c');
+  useBoardStore.getState().setSelectedProjectDir(fixtureProjectId);
+  useTabStore.getState().switchProject(fixtureProjectId);
+  useSessionStore.getState().setActiveSession(null);
+  assert.equal(useSessionStore.getState().activeSessionId, null);
+
+  const unsubscribe = useSessionStore.subscribe((state, previousState) => {
+    if (state.activeSessionId && state.activeSessionId !== previousState.activeSessionId) {
+      reconcileActiveSessionSurface(state.activeSessionId);
+    }
+  });
+  t.after(unsubscribe);
+
+  receive({
+    type: 'task_mutated',
+    kind: 'updated',
+    projectId: fixtureProjectId,
+    affectedProjectIds: [fixtureProjectId],
+    taskId: 'fixture-task',
+    title: 'Renamed fixture task',
+  } as ServerTransportMessage);
+
+  await waitFor(() => (
+    useSessionStore.getState().projects[0]?.displayName === 'Reloaded old project'
+  ));
+
+  assert.deepEqual({
+    activeSessionId: useSessionStore.getState().activeSessionId,
+    didHydrateActiveSession: useSessionStore.getState().didHydrateActiveSession,
+    selectedProjectDir: useBoardStore.getState().selectedProjectDir,
+  }, {
+    activeSessionId: null,
+    didHydrateActiveSession: true,
+    selectedProjectDir: fixtureProjectId,
+  });
 });
 
 test('a Task mutation from another window refreshes its A and C appearances', async () => {

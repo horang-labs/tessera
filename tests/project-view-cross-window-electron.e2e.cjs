@@ -135,6 +135,12 @@ async function main() {
       const texts = await page.locator(`[data-session-id="${fixture.sessionId}"]`).allTextContents();
       return texts.length > 0 && texts.every((text) => text.includes(title));
     }, { timeout: 20_000 }).toBe(true);
+    const expectSourceProjectStable = async () => {
+      await expect(source.getByTestId(`project-strip-${fixture.ownerProjectId}`))
+        .toHaveClass(/opacity-100/);
+      await expect(source.locator(`[data-task-id="${fixture.taskId}"]`)).toBeVisible();
+    };
+    await expectSourceProjectStable();
     assert.deepEqual(await mutate({ workflowStatus: 'in_progress' }), { ok: true, status: 200 });
     await expect(source.locator(
       `[data-status="in_progress"] [data-task-id="${fixture.taskId}"]`,
@@ -142,13 +148,14 @@ async function main() {
     await expect(receiver.locator(
       `[data-status="in_progress"] [data-session-id="${fixture.sessionId}"]`,
     )).toBeVisible({ timeout: 20_000 });
-    await expect(source.getByTestId(`project-strip-${fixture.ownerProjectId}`)).toHaveClass(/opacity-100/);
+    await expectSourceProjectStable();
     await expect(receiver.getByTestId(`project-strip-${fixture.alternateProjectId}`)).toHaveClass(/opacity-100/);
     const originalTitle = 'Issue 332 cross-window runtime fixture';
     const nextTitle = `Issue 332 converged ${fixture.taskId.slice(-6)}`;
     assert.deepEqual(await mutate({ title: nextTitle }), { ok: true, status: 200 });
     await expect(source.locator(`[data-task-id="${fixture.taskId}"]`))
       .toContainText(nextTitle, { timeout: 20_000 });
+    await expectSourceProjectStable();
     await expectEveryTitle(receiver, nextTitle);
     const screenshots = {
       source: path.join(screenshotDir, 'issue-332-source.png'),
@@ -159,11 +166,13 @@ async function main() {
     assert.deepEqual(await mutate({ title: originalTitle }), { ok: true, status: 200 });
     await expect(source.locator(`[data-task-id="${fixture.taskId}"]`))
       .toContainText(originalTitle, { timeout: 20_000 });
+    await expectSourceProjectStable();
     await expectEveryTitle(receiver, originalTitle);
     assert.deepEqual(await mutate({ workflowStatus: 'todo' }), { ok: true, status: 200 });
     await expect(source.locator(
       `[data-status="todo"] [data-task-id="${fixture.taskId}"]`,
     )).toBeVisible({ timeout: 20_000 });
+    await expectSourceProjectStable();
     await expect(receiver.locator(
       `[data-status="todo"] [data-session-id="${fixture.sessionId}"]`,
     )).toBeVisible({ timeout: 20_000 });
@@ -171,6 +180,7 @@ async function main() {
       ...fixture,
       workflowTransition: 'todo -> in_progress -> todo',
       titleTransition: `${originalTitle} -> ${nextTitle} -> ${originalTitle}`,
+      sourceProjectStableAcrossMutations: true,
       screenshots,
     }, null, 2)}\n`);
   } finally {
