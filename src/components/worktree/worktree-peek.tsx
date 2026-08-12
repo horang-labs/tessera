@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
 import { WorktreeOverview } from '@/components/worktree/worktree-overview';
 import { usePanelStore } from '@/stores/panel-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import { useTabStore } from '@/stores/tab-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
@@ -28,13 +28,13 @@ function beginProjectWorktreeCreation(
 export function WorktreePeek() {
   const target = useWorkspacePeekStore((state) => state.target);
   const close = useWorkspacePeekStore((state) => state.close);
-  const project = useSessionStore((state) => {
-    if (!target) return null;
-    return state.projects.find((candidate) =>
+  const projects = useLoadedProjectViews();
+  const project = target
+    ? projects.find((candidate) =>
       candidate.encodedDir === target.projectDir
       && candidate.projectWorktree?.id === target.worktreeId
-    ) ?? null;
-  });
+    ) ?? null
+    : null;
   const linkedWorktree = useTaskStore((state) => {
     if (!target) return null;
     return state.tasksByProject[target.projectDir]?.find(

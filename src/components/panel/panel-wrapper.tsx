@@ -154,7 +154,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     const ps = usePanelStore.getState();
     const panel = ps.tabPanels[ps.activeTabId]?.panels[panelId];
     return resolvePanelTerminalId(panel, (id) => (
-      useSessionStore.getState().getSession(id)?.kind === 'terminal'
+      projectViewWorkspaceState.resolveSession(id)?.kind === 'terminal'
     ));
   }, [panelId]);
 
@@ -323,7 +323,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       const referencedSessionId = e.dataTransfer.getData(SESSION_DRAG_MIME);
       const targetTerminalId = resolveInsertTargetTerminalId();
       if (referencedSessionId && targetTerminalId) {
-        const title = useSessionStore.getState().getSession(referencedSessionId)?.title
+        const title = projectViewWorkspaceState.resolveSession(referencedSessionId)?.title
           ?? referencedSessionId.slice(0, 8);
         // Unlike a path insert this needs a round trip (the session is exported
         // first), so the focus move waits for the text to actually land.
@@ -376,7 +376,9 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       const nextPanelStore = usePanelStore.getState();
       const nextTabData = nextPanelStore.tabPanels[nextPanelStore.activeTabId];
       const nextSessionId = nextTabData?.panels[graftedActivePanelId]?.sessionId ?? null;
-      const session = nextSessionId ? useSessionStore.getState().getSession(nextSessionId) : null;
+      const session = nextSessionId
+        ? projectViewWorkspaceState.resolveSession(nextSessionId)
+        : null;
       if (session) {
         viewSession(session, { forceReload: true });
       }
@@ -425,7 +427,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
         usePanelStore.getState().setActivePanelId(panelId);
         useTabStore.getState().pinTab(currentTabId);
 
-        const session = useSessionStore.getState().getSession(droppedSessionId);
+        const session = projectViewWorkspaceState.resolveSession(droppedSessionId);
         if (session) {
           viewSession(session, { forceReload: true });
         }
@@ -447,7 +449,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
         useTabStore.getState().pinTab(currentTabId);
       }
 
-      const session = useSessionStore.getState().getSession(droppedSessionId);
+      const session = projectViewWorkspaceState.resolveSession(droppedSessionId);
       if (session) {
         viewSession(session, { forceReload: true });
       }
@@ -470,7 +472,9 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
         useTabStore.getState().pinTab(currentTabId);
         const nextTabData = usePanelStore.getState().tabPanels[currentTabId];
         const movedSessionId = nextTabData?.panels[movedPanelId]?.sessionId ?? null;
-        const session = movedSessionId ? useSessionStore.getState().getSession(movedSessionId) : null;
+        const session = movedSessionId
+          ? projectViewWorkspaceState.resolveSession(movedSessionId)
+          : null;
         if (session) {
           viewSession(session, { forceReload: true });
         }
@@ -519,7 +523,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     }
 
     // Load session history
-    const session = useSessionStore.getState().getSession(droppedSessionId);
+    const session = projectViewWorkspaceState.resolveSession(droppedSessionId);
     if (session) {
       viewSession(session, { forceReload: true });
     }

@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useState, useCallback, useRef } from 'react';
+import { memo, useState, useCallback, useMemo, useRef } from 'react';
 import type React from 'react';
 import { GitBranch, MessageSquare, Plus, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -22,6 +22,10 @@ import {
   useAnyProjectViewSessionUnread,
   useProjectViewSessionUnread,
 } from '@/hooks/use-project-view-session-unread';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
@@ -52,6 +56,7 @@ import {
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 // --- Helpers ---
 
@@ -593,7 +598,6 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<DOMRect | null>(null);
-  const liveProjects = useSessionStore((state) => state.projects);
   const sessionCount = task.sessions.length;
   const isMultiSession = sessionCount > 1;
   const expanded = isMultiSession;
@@ -628,22 +632,25 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
 
   // Live status from session store (same pattern as list view TaskItemRow)
   const taskSessionIds = task.sessions.map((s) => s.id);
-  const getLiveSession = useCallback((taskSession: TaskSession): UnifiedSession => {
-    for (const project of liveProjects) {
-      const session = project.sessions.find((s) => s.id === taskSession.id);
-      if (session) return toLinkedWorktreeSession(task, taskSession, session);
-    }
-    return toLinkedWorktreeSession(task, taskSession);
-  }, [liveProjects, task]);
-  const hasVisibleRuntimeSession = useSessionStore((state) =>
-    taskSessionIds.some((id) => {
-      const snapshot = task.sessions.find((session) => session.id === id);
-      const session = state.getSession(id) ?? snapshot;
-      return session
-        ? resolveSessionRuntimePresentation(session).showRunning
-        : false;
-    })
+  const resolvedTaskSessions = useProjectViewSessions(taskSessionIds, task.projectViewId);
+  const resolvedTaskSessionsById = useMemo(
+    () => new Map(resolvedTaskSessions.map((session) => [session.id, session])),
+    [resolvedTaskSessions],
   );
+  const getLiveSession = useCallback((taskSession: TaskSession): UnifiedSession => {
+    return toLinkedWorktreeSession(
+      task,
+      taskSession,
+      resolvedTaskSessionsById.get(taskSession.id),
+    );
+  }, [resolvedTaskSessionsById, task]);
+  const hasVisibleRuntimeSession = taskSessionIds.some((id) => {
+    const snapshot = task.sessions.find((session) => session.id === id);
+    const session = resolvedTaskSessionsById.get(id) ?? snapshot;
+    return session
+      ? resolveSessionRuntimePresentation(session).showRunning
+      : false;
+  });
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
@@ -736,12 +743,15 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
     e.preventDefault();
 
     for (const session of task.sessions) {
-      const liveSession = useSessionStore.getState().getSession(session.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        task.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onSessionStopProcess?.(session.id);
       }
     }
-  }, [onSessionStopProcess, task.sessions]);
+  }, [onSessionStopProcess, task.projectViewId, task.sessions]);
   const {
     inputRef: renameInputRef,
     isRenaming,
@@ -1221,7 +1231,7 @@ function KanbanSubSessionItem({
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
-  const liveSession = useSessionStore((state) => state.getSession(session.id));
+  const liveSession = useProjectViewSession(session.id);
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(session.id));
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
   const runtimePresentation = resolveSessionRuntimePresentation({

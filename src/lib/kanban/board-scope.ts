@@ -69,9 +69,14 @@ export function selectKanbanProjectionItems(
   data: Pick<KanbanScopeData, 'sessions' | 'tasks'>,
   collectionId: string | null,
 ) {
+  const taskSessionIds = new Set(
+    data.tasks.flatMap((task) => task.sessions.map((session) => session.id)),
+  );
   return {
     chats: data.sessions.filter((session) =>
-      !session.archived && (!collectionId || session.collectionId === collectionId)
+      !session.archived
+      && !taskSessionIds.has(session.id)
+      && (!collectionId || session.collectionId === collectionId)
     ),
     tasks: filterKanbanTasksByCollection(data.tasks, collectionId),
   };

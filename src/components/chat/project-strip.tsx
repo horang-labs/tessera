@@ -20,9 +20,13 @@ import SettingsButton from '@/components/settings/settings-button';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useI18n } from '@/lib/i18n';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
-import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { ProviderUsageRail } from './provider-usage-rail';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import {
+  useLoadedProjectViews,
+  useOriginProjectRepresentation,
+} from '@/hooks/use-project-view-workspace-state';
+import { countOriginProjectRunningSessions } from '@/lib/projects/origin-project-representation';
 
 interface ProjectStripProps {
   onAddProject: () => void;
@@ -40,7 +44,8 @@ export function ProjectStrip({
   hideManagementActions = false,
 }: ProjectStripProps) {
   const { t } = useI18n();
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
+  const originRepresentation = useOriginProjectRepresentation();
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const setSelectedProjectDir = useBoardStore((state) => state.setSelectedProjectDir);
   const electronPlatform = useElectronPlatform();
@@ -98,14 +103,12 @@ export function ProjectStrip({
   // Per-project running session count for badges
   const runningCounts = useMemo(() => {
     const map = new Map<string, number>();
-    for (const p of projects) {
-      const count = p.sessions.filter((session) =>
-        resolveSessionRuntimePresentation(session).showRunning
-      ).length;
-      if (count > 0) map.set(p.encodedDir, count);
+    for (const projectView of originRepresentation.projects) {
+      const count = countOriginProjectRunningSessions(projectView);
+      if (count > 0) map.set(projectView.encodedDir, count);
     }
     return map;
-  }, [projects]);
+  }, [originRepresentation]);
 
   const isAllMode = selectedProjectDir === ALL_PROJECTS_SENTINEL;
 

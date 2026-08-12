@@ -21,6 +21,7 @@ import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import type { EnhancedMessage } from '@/types/chat';
 import { restoreSessionReplay } from './restore-session-replay';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const REFRESH_DEBOUNCE_MS = 300;
 /** Mirrors INITIAL_PAGE_SIZE in use-session-navigation. */
@@ -143,7 +144,7 @@ function isLiveTerminalChatView(sessionId: string): boolean {
   if (useTerminalViewModeStore.getState().modeBySession[sessionId] !== 'chat') {
     return false;
   }
-  const session = useSessionStore.getState().getSession(sessionId);
+  const session = projectViewWorkspaceState.resolveSession(sessionId);
   return !!session
     && session.kind === 'terminal'
     && supportsTerminalChatView(session.provider);
@@ -181,7 +182,7 @@ async function refreshTerminalChat(sessionId: string): Promise<void> {
       ...result,
       messages: mergePendingMessages(sessionId, result.messages ?? []),
     });
-    const session = useSessionStore.getState().getSession(sessionId);
+    const session = projectViewWorkspaceState.resolveSession(sessionId);
     if (result.pagination && session) {
       useChatStore.getState().setReadOnlyPagination(sessionId, {
         projectDir: session.projectDir,

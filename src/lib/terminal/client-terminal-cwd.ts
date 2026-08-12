@@ -1,5 +1,5 @@
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
-import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 export function getInitialTerminalCwd(
   sessionId?: string | null,
@@ -7,7 +7,7 @@ export function getInitialTerminalCwd(
 ): string | null {
   const selectionSessionId = getSessionSelectionId(sessionId ?? null);
   if (selectionSessionId) {
-    return useSessionStore.getState().getSession(selectionSessionId)?.workDir ?? null;
+    return projectViewWorkspaceState.resolveSession(selectionSessionId)?.workDir ?? null;
   }
 
   return explicitCwd?.trim() || null;

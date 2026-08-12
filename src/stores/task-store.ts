@@ -440,7 +440,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       ? existingTask.sessions[0].id
       : null;
     const previousLinkedSession = linkedSessionId
-      ? useSessionStore.getState().getSession(linkedSessionId)
+      ? projectViewWorkspaceState.resolveSession(linkedSessionId, projectViewId)
       : undefined;
 
     const taskOnlyPatch = { ...patch };

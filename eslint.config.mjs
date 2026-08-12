@@ -91,6 +91,68 @@ const config = [
       ],
     },
   },
+  {
+    // Canonical Session state spans direct Project pages, retained open
+    // Sessions, and Worktree Task summaries. UI code must subscribe through
+    // the Project View workspace-state hooks instead of reading one backing
+    // store and accidentally creating another truth.
+    files: ["src/components/**/*.ts", "src/components/**/*.tsx", "src/hooks/**/*.ts", "src/hooks/**/*.tsx"],
+    ignores: ["src/hooks/use-project-view-workspace-state.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[property.name='getSession']",
+          message:
+            "UI Session resolution must use useProjectViewSession/useProjectViewSessions or projectViewWorkspaceState, not session-store.getSession().",
+        },
+        {
+          selector: "MemberExpression[property.name='getMaterializedSession']",
+          message:
+            "UI Session resolution must use the Project View workspace-state contract; the legacy materialized-session compatibility path has been removed.",
+        },
+        {
+          selector: "MemberExpression[property.name='retainedSessions']",
+          message:
+            "UI code must subscribe through Project View workspace-state hooks instead of reading retainedSessions directly.",
+        },
+        {
+          selector: "MemberExpression[object.name=/^(project|projectView|p)$/][property.name='sessions']",
+          message:
+            "UI code must consume a Project View or origin representation instead of reconstructing Session truth from project.sessions.",
+        },
+        {
+          selector: "CallExpression[callee.name='useSessionStore'] ArrowFunctionExpression MemberExpression[property.name='projects']",
+          message:
+            "UI code must read loaded Projects through useLoadedProjectViews so Session-bearing Project state stays behind the workspace boundary.",
+        },
+        {
+          selector: "MemberExpression[object.type='CallExpression'][object.callee.object.name='useSessionStore'][object.callee.property.name='getState'][property.name='projects']",
+          message:
+            "Imperative UI code must read loaded Projects through projectViewWorkspaceState.getLoadedProjectViews().",
+        },
+      ],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/lib/kanban/board-scope",
+              importNames: ["collectKanbanScopeData"],
+              message:
+                "UI Kanban consumers must use Project View workspace-state representations, not rebuild them from backing stores.",
+            },
+            {
+              name: "@/lib/projects/origin-project-representation",
+              importNames: ["buildOriginProjectRepresentation"],
+              message:
+                "UI global consumers must use useOriginProjectRepresentation/projectViewWorkspaceState.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];
 
 export default config;

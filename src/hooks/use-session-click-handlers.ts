@@ -1,10 +1,8 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import type React from 'react';
 import { useSessionStore } from '@/stores/session-store';
-import { useNotificationStore } from '@/stores/notification-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTabStore } from '@/stores/tab-store';
-import { wsClient } from '@/lib/ws/client';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
@@ -12,6 +10,7 @@ import { resolveSessionTabOpenMode } from '@/lib/terminal/terminal-preview-polic
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import type { UnifiedSession } from '@/types/chat';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 interface PopoutElectronApi {
   isElectron?: boolean;
@@ -54,15 +53,6 @@ export function useSessionClickHandlers(options?: {
 } {
   const orderedIds = options?.orderedIds;
   const onOpenSession = options?.onOpenSession;
-  // Reactive subscriptions
-  const clearUnreadCount = useSessionStore((state) => state.clearUnreadCount);
-  const notifications = useNotificationStore((state) => state.notifications);
-  // Derived from reactive subscription — plain const, recomputed each render
-  const unreadSessionIds = useMemo(
-    () => new Set(notifications.filter((n) => !n.read).map((n) => n.sessionId)),
-    [notifications],
-  );
-
   const { materializeSession, viewSession } = useSessionNavigation();
 
   // Handle session click — multi-tab aware rewrite (BR-SIDEBAR-009, BR-SIDEBAR-001 through BR-SIDEBAR-007)
@@ -110,11 +100,7 @@ export function useSessionClickHandlers(options?: {
       const navigableSession = await materializeSession(session.id, session.projectDir) ?? session;
 
       // 1. Clear unread count (BR-SIDEBAR-008: only for normal click paths)
-      if (unreadSessionIds.has(session.id) || (session.unreadCount ?? 0) > 0) {
-        clearUnreadCount(session.id);
-        useNotificationStore.getState().markSessionAsRead(session.id);
-        wsClient.sendMarkAsRead(session.id);
-      }
+      projectViewWorkspaceState.markSessionRead(session.id);
 
       // When inside the popout board window, forward to main window
       // so the task opens there, then return without local navigation.
@@ -156,7 +142,7 @@ export function useSessionClickHandlers(options?: {
       }
       await viewSession(navigableSession);
     },
-    [unreadSessionIds, clearUnreadCount, materializeSession, viewSession, orderedIds, onOpenSession]
+    [materializeSession, viewSession, orderedIds, onOpenSession]
   );
 
   // Handle session double-click — always opens as pinned tab

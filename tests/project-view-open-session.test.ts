@@ -4,6 +4,7 @@ import { usePanelStore } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const scopedSession: UnifiedSession = {
   id: 'open-main-session',
@@ -69,8 +70,8 @@ test('a branch refresh hides a Session from projection but retains an open tab t
   await useSessionStore.getState().loadProjects();
 
   assert.deepEqual(useSessionStore.getState().projects[0].sessions, []);
-  assert.equal(useSessionStore.getState().getSession(scopedSession.id)?.title, 'Still sendable');
-  assert.equal(useSessionStore.getState().getSession(scopedSession.id)?.isReadOnly, undefined);
+  assert.equal(projectViewWorkspaceState.resolveSession(scopedSession.id)?.title, 'Still sendable');
+  assert.equal(projectViewWorkspaceState.resolveSession(scopedSession.id)?.isReadOnly, undefined);
 
   useSessionStore.getState().updateSessionTitle(scopedSession.id, 'Renamed while hidden');
   useSessionStore.getState().markSessionRunning(scopedSession.id, scopedSession.id);
@@ -83,7 +84,7 @@ test('a branch refresh hides a Session from projection but retains an open tab t
     deletedFiles: 0,
     computedAt: '2026-08-09T01:00:00.000Z',
   });
-  const updated = useSessionStore.getState().getSession(scopedSession.id);
+  const updated = projectViewWorkspaceState.resolveSession(scopedSession.id);
   assert.equal(updated?.title, 'Renamed while hidden');
   assert.equal(updated?.isRunning, true);
   assert.equal(updated?.status, 'running');

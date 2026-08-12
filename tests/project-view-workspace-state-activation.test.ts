@@ -107,7 +107,7 @@ test('activating a retained Session clears canonical and notification unread wit
   });
 
   assert.equal(activateSessionPanel(retainedSession.id), true);
-  assert.equal(useSessionStore.getState().getSession(retainedSession.id)?.unreadCount, 0);
+  assert.equal(projectViewWorkspaceState.resolveSession(retainedSession.id)?.unreadCount, 0);
   assert.equal(useNotificationStore.getState().notifications[0]?.read, true);
   assert.deepEqual(
     Object.values(useTaskStore.getState().tasksByProject)
@@ -237,7 +237,7 @@ test('a linked Task Session with a direct origin stays resolvable and targets it
     'wt-linked',
   );
   assert.equal(
-    useSessionStore.getState().getMaterializedSession('session-linked')?.worktreeId,
+    projectViewWorkspaceState.resolveSession('session-linked', 'project-c')?.worktreeId,
     'wt-linked',
   );
   useBoardStore.getState().openSessionPeek('session-linked');

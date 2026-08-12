@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useSessionStore } from '@/stores/session-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useWebSocket } from '@/hooks/use-websocket';
@@ -44,7 +45,7 @@ export function BoardPopoutLayout() {
   const isWindowsElectron = electronPlatform === 'win32';
   const isLinuxElectron = electronPlatform === 'linux';
   const isElectronTitlebar = isMacElectron || isWindowsElectron || isLinuxElectron;
-  const projects = useSessionStore((s) => s.projects);
+  const projects = useLoadedProjectViews();
   const loadSettings = useSettingsStore((state) => state.load);
   const [projectsLoaded, setProjectsLoaded] = useState(projects.length > 0);
   const hydrationRef = useRef<PopoutHydrationParams>({ projectDir: null, collectionFilter: null });

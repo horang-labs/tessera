@@ -10,7 +10,7 @@ import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useEffectiveViewMode } from '@/hooks/use-effective-view-mode';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useBoardStore } from '@/stores/board-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import { useGitStore } from '@/stores/git-store';
 import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
@@ -42,7 +42,7 @@ export const AppHeader = memo(function AppHeader() {
   // The list is what a phone renders, so the header's board chrome goes with it.
   const viewMode = useEffectiveViewMode();
   const isKanbanPeekMode = viewMode === 'board' && kanbanSessionOpenMode === 'peek';
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const selectedProject = projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
   const isAllProjects = selectedProjectDir === ALL_PROJECTS_SENTINEL;
   const projectDisplayName = isAllProjects

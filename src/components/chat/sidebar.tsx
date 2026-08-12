@@ -47,7 +47,10 @@ import {
   findSidebarProject,
   selectSidebarProjectTasks,
 } from './sidebar-utils';
-import { buildRecentWorkItems } from '@/lib/chat/recent-work';
+import {
+  buildProjectViewRecentWorkItems,
+  buildRecentWorkItems,
+} from '@/lib/chat/recent-work';
 import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
@@ -57,6 +60,12 @@ import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import {
+  useLoadedProjectViews,
+  useOriginProjectRepresentation,
+  useProjectViewRepresentation,
+} from '@/hooks/use-project-view-workspace-state';
+import { getOriginProjectOrderedSessionIds } from '@/lib/projects/origin-project-representation';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -281,8 +290,7 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 
 export function Sidebar() {
   const { t } = useI18n();
-  const projects = useSessionStore((state) => state.projects);
-  useSessionStore((state) => state.retainedSessions);
+  const projects = useLoadedProjectViews();
   const dismissBranchRenameWarning = useSessionStore(
     (state) => state.dismissBranchRenameWarning,
   );
@@ -310,6 +318,7 @@ export function Sidebar() {
 
   // Board store — status group collapse state
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const isAllMode = selectedProjectDir === ALL_PROJECTS_SENTINEL;
   const collapsedCollections = useBoardStore((state) => state.collapsedCollections ?? {});
   const toggleCollectionCollapse = useBoardStore((state) => state.toggleCollectionCollapse ?? (() => {}));
   const setCollectionCollapsed = useBoardStore((state) => state.setCollectionCollapsed ?? (() => {}));
@@ -331,7 +340,6 @@ export function Sidebar() {
   const tasks = useTaskStore((state) =>
     selectSidebarProjectTasks(state, selectedProjectDir)
   );
-  const tasksByProject = useTaskStore((state) => state.tasksByProject);
   const loadedTaskProjects = useTaskStore((state) => state.loadedProjects);
   const loadingTaskProjects = useTaskStore((state) => state.loadingProjectIds);
   const allProjectsTaskLoadAttemptsRef = useRef(new Set<string>());
@@ -417,7 +425,7 @@ export function Sidebar() {
   const [sessionToDelete, setSessionToDelete] = useState<UnifiedSession | null>(null);
 
   const handleTaskDelete = useCallback((taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
+    const session = projectViewWorkspaceState.resolveSession(taskId);
     if (session) setSessionToDelete(session);
   }, []);
 
@@ -428,7 +436,7 @@ export function Sidebar() {
   }, [sessionToDelete, deleteSession]);
 
   const handleTaskOpenInNewTab = useCallback(async (taskId: string) => {
-    const session = useSessionStore.getState().getSession(taskId);
+    const session = projectViewWorkspaceState.resolveSession(taskId);
     if (!session) return;
     useTabStore.getState().createTabWithSession(taskId);
     await viewSession(session);
@@ -462,8 +470,7 @@ export function Sidebar() {
   const [isInitialized, setIsInitialized] = useState(false);
   const handleTaskStopProcess = useCallback((taskId: string) => {
     wsClient.stopSession(taskId);
-    useSessionStore.getState().clearUnreadCount(taskId);
-    wsClient.sendMarkAsRead(taskId);
+    projectViewWorkspaceState.markSessionRead(taskId);
   }, []);
 
   const prevActivePanelIdRef = useRef<string | null>(null);
@@ -516,7 +523,7 @@ export function Sidebar() {
 
     const activeId = useSessionStore.getState().activeSessionId;
     if (activeId) {
-      const session = useSessionStore.getState().getSession(activeId);
+      const session = projectViewWorkspaceState.resolveSession(activeId);
       if (session) {
         viewSession(session).catch((err) => {
           logger.error('Failed to load active session', {
@@ -534,6 +541,9 @@ export function Sidebar() {
   const selectedProject = useMemo(() => {
     return findSidebarProject(projects, selectedProjectDir);
   }, [projects, selectedProjectDir]);
+  const selectedProjectRepresentation = useProjectViewRepresentation(
+    isAllMode ? null : selectedProjectDir,
+  );
 
   const handleProjectWorktreeSelect = useCallback(() => {
     const projectWorktree = selectedProject?.projectWorktree;
@@ -561,14 +571,16 @@ export function Sidebar() {
     },
     [setStoredRunningFilterActive],
   );
-  const isAllMode = selectedProjectDir === ALL_PROJECTS_SENTINEL;
-
   const allProjectSectionIds = useMemo(
     () => projects.map((project) => project.encodedDir),
     [projects],
   );
 
-  const canonicalSessions = projectViewWorkspaceState.getCanonicalSessions();
+  const originRepresentation = useOriginProjectRepresentation();
+  const allProjectsOrderedSessionIds = useMemo(
+    () => getOriginProjectOrderedSessionIds(originRepresentation),
+    [originRepresentation],
+  );
   const allProjectsRunningSessionIds = projectViewWorkspaceState
     .getCanonicalRunningSessions()
     .map((session) => session.id);
@@ -610,42 +622,40 @@ export function Sidebar() {
       return;
     }
 
-    const sessionStore = useSessionStore.getState();
     for (const sessionId of runningSessionIds) {
       wsClient.stopSession(sessionId);
-      sessionStore.clearUnreadCount(sessionId);
-      wsClient.sendMarkAsRead(sessionId);
+      projectViewWorkspaceState.markSessionRead(sessionId);
     }
   }, [isAllMode, runningSessionIds]);
 
   const orderedIds = useMemo(() => {
     return buildSidebarOrderedSessionIds({
       selectedProjectDir,
-      projects,
+      allProjectsSessionIds: allProjectsOrderedSessionIds,
       selectedProject,
       collectionGroups: visibleCollectionGroups,
     });
-  }, [projects, selectedProject, selectedProjectDir, visibleCollectionGroups]);
+  }, [allProjectsOrderedSessionIds, selectedProject, selectedProjectDir, visibleCollectionGroups]);
 
   const showRecentWork = useSettingsStore((state) => state.settings.showRecentWork);
 
   const recentWorkItems = useMemo(() => {
     if (!showRecentWork) return [];
-
-    const scopedProjects = isAllMode
-      ? projects
-      : selectedProject
-        ? [selectedProject]
-        : [];
+    if (!isAllMode) {
+      return buildProjectViewRecentWorkItems(selectedProjectRepresentation, 8);
+    }
 
     return buildRecentWorkItems({
-      projects: scopedProjects,
-      tasksByProject,
-      canonicalSessions: isAllMode ? canonicalSessions : undefined,
+      projects: originRepresentation.projects,
+      tasksByProject: originRepresentation.tasksByProject,
       limit: 8,
-      originOnly: isAllMode,
     });
-  }, [canonicalSessions, isAllMode, projects, selectedProject, showRecentWork, tasksByProject]);
+  }, [
+    isAllMode,
+    originRepresentation,
+    selectedProjectRepresentation,
+    showRecentWork,
+  ]);
 
   const recentWorkOrderedIds = useMemo(
     () => buildRecentWorkOrderedSessionIds(recentWorkItems),

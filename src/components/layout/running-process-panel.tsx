@@ -4,7 +4,6 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useSessionStore } from '@/stores/session-store';
 import { selectIsTurnInFlight, useChatStore } from '@/stores/chat-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useTabStore } from '@/stores/tab-store';
@@ -13,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
-import { useTaskStore } from '@/stores/task-store';
+import { useCanonicalRunningProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
 
 interface RunningProcessPanelProps {
   /** Dropdown open direction: 'down' (header) or 'right' (vertical strip) */
@@ -31,11 +30,7 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Get all running sessions across all projects
-  useSessionStore((state) => state.projects);
-  useSessionStore((state) => state.retainedSessions);
-  useTaskStore((state) => state.tasksByProject);
-  const runningSessions = projectViewWorkspaceState.getCanonicalRunningSessions();
+  const runningSessions = useCanonicalRunningProjectViewSessions();
 
   const runningCount = runningSessions.length;
 

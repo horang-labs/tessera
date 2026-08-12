@@ -11,6 +11,7 @@ import { useTaskStore } from '@/stores/task-store';
 import { toast } from '@/stores/notification-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import type { useI18n } from '@/lib/i18n';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 type Translate = ReturnType<typeof useI18n>['t'];
 
@@ -19,7 +20,7 @@ export async function requestSessionRename(
   newTitle: string,
   t: Translate,
 ): Promise<void> {
-  const session = useSessionStore.getState().getSession(sessionId);
+  const session = projectViewWorkspaceState.resolveSession(sessionId);
   const oldTitle = session?.title;
   const oldHasCustomTitle = session?.hasCustomTitle;
   const linkedTask = useTaskStore.getState().getTaskBySessionId(sessionId);

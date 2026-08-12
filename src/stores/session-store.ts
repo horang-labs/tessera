@@ -28,32 +28,19 @@ import {
   resolveSessionRuntimeLiveness,
   type SessionRuntimeLiveness,
 } from '@/lib/session/session-runtime-liveness';
+import { resolveStoredSessionAppearance } from '@/lib/projects/stored-session-resolution';
 
-const projectedSessionCache = new WeakMap<
-  UnifiedSession,
-  Map<string, UnifiedSession>
->();
-
-/**
- * Zustand selectors must return the same reference while their source state is
- * unchanged. React 19 treats a freshly allocated fallback on every snapshot as
- * an endlessly changing external store and eventually throws error #185.
- */
-function projectSessionIntoView(
-  session: UnifiedSession,
-  projectDir: string,
-): UnifiedSession {
-  let projections = projectedSessionCache.get(session);
-  if (!projections) {
-    projections = new Map();
-    projectedSessionCache.set(session, projections);
-  }
-  const cached = projections.get(projectDir);
-  if (cached) return cached;
-
-  const projected = { ...session, projectDir, collectionId: undefined };
-  projections.set(projectDir, projected);
-  return projected;
+function findStoredSession(
+  state: Pick<SessionState, 'projects' | 'retainedSessions'>,
+  sessionId: string,
+  projectDir?: string | null,
+): UnifiedSession | undefined {
+  return resolveStoredSessionAppearance(
+    state.projects,
+    state.retainedSessions,
+    sessionId,
+    projectDir,
+  );
 }
 
 
@@ -88,8 +75,6 @@ export interface SessionState {
   removeSession: (sessionId: string) => void;
   /** Retain a navigable Session without inserting it into a direct Project Session page. */
   retainSession: (session: UnifiedSession) => void;
-  /** Return the latest explicitly materialized appearance before its canonical fallback. */
-  getMaterializedSession: (sessionId: string) => UnifiedSession | undefined;
   upsertSession: (session: UnifiedSession) => void;
   removeProject: (encodedDir: string) => void;
   updateSessionTitle: (sessionId: string, title: string, hasCustomTitle?: boolean) => void;
@@ -116,7 +101,6 @@ export interface SessionState {
   ) => void;
   setCreatingSession: (sessionId: string | null) => void;
   setLoadingSession: (sessionId: string | null) => void;
-  getSession: (sessionId: string, projectDir?: string | null) => UnifiedSession | undefined;
 
   // Unread count actions (for FEAT-002)
   incrementUnreadCount: (sessionId: string) => void;
@@ -1022,7 +1006,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })),
 
   markSessionRunning: (sessionId, tesseraSessionId, runtimeConfig) => {
-    const providerId = get().getSession(sessionId)?.provider;
+    const providerId = findStoredSession(get(), sessionId)?.provider;
     if (providerId) {
       void captureTelemetryEvent('agent_session_started', {
         provider_id: providerId,
@@ -1202,40 +1186,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    */
   setLoadingSession: (sessionId) => set({ loadingSessionId: sessionId }),
 
-  getSession: (sessionId: string, projectDir?: string | null): UnifiedSession | undefined => {
-    const { projects, retainedSessions } = get();
-    if (projectDir) {
-      const projectedSession = projects
-        .find((project) => project.encodedDir === projectDir)
-        ?.sessions.find((session) => session.id === sessionId);
-      if (projectedSession) return projectedSession;
-
-      // An open tab can outlive pagination or a branch projection refresh. Use
-      // another appearance only as the canonical payload; never leak its local
-      // Project or Collection placement into the requested Project view.
-      const canonicalSession = projects
-        .flatMap((project) => project.sessions)
-        .find((session) => session.id === sessionId)
-        ?? retainedSessions[sessionId];
-      return canonicalSession
-        ? projectSessionIntoView(canonicalSession, projectDir)
-        : undefined;
-    }
-    for (const project of projects) {
-      const session = project.sessions.find((s) => s.id === sessionId);
-      if (session) return session;
-    }
-    return retainedSessions[sessionId];
-  },
-
-  getMaterializedSession: (sessionId: string): UnifiedSession | undefined => {
-    const state = get();
-    return state.retainedSessions[sessionId] ?? state.getSession(sessionId);
-  },
-
   // Unread count actions
   incrementUnreadCount: (sessionId) => {
-    const nextUnreadCount = (get().getSession(sessionId)?.unreadCount ?? 0) + 1;
+    const nextUnreadCount = (findStoredSession(get(), sessionId)?.unreadCount ?? 0) + 1;
     set((state) => ({
       // Notification handlers already decide whether the session is visibly
       // active. Re-checking the hidden tab's activeSessionId here breaks
@@ -1276,7 +1229,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // Task workflow actions
   updateLinkedTaskWorkflowStatus: (sessionId, workflowStatus, projectViewId) => {
-    const session = get().getSession(sessionId, projectViewId);
+    const session = findStoredSession(get(), sessionId, projectViewId);
     if (!session?.taskId || workflowStatus === 'chat') return;
 
     const nextWorkflowStatus = workflowStatus as NonNullable<UnifiedSession['workflowStatus']>;
@@ -1290,7 +1243,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   updateChatWorkflowStatus: (sessionId, workflowStatus, projectViewId) => {
-    const session = get().getSession(sessionId, projectViewId);
+    const session = findStoredSession(get(), sessionId, projectViewId);
     if (!session) return;
 
     if (session.taskId) {
@@ -1373,7 +1326,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   updateSessionCollection: (sessionId, collectionId, projectViewId) => {
-    const session = get().getSession(sessionId, projectViewId);
+    const session = findStoredSession(get(), sessionId, projectViewId);
     if (!session) return;
 
     if (session.taskId) {
@@ -1452,7 +1405,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   toggleArchive: (sessionId, archived) => {
-    const session = get().getSession(sessionId);
+    const session = findStoredSession(get(), sessionId);
     const archivedAt = archived ? new Date().toISOString() : undefined;
     const updateArchive = (target: UnifiedSession): UnifiedSession => ({
       ...target,

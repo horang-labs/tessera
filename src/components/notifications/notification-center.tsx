@@ -4,11 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle, AlertTriangle, Inbox } from 'lucide-react';
 import { toast, useNotificationStore } from '@/stores/notification-store';
-import { useSessionStore } from '@/stores/session-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
@@ -20,6 +18,8 @@ import {
   resolveAnchoredSideLeft,
 } from '@/lib/ui/anchored-viewport';
 import { getSessionOriginProjectId } from '@/lib/projects/origin-project-representation';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { useProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
 
 /** Kept in step with the panel's own `w-[320px]`, which the clamp has to measure against. */
 const NOTIFICATION_CENTER_WIDTH = 320;
@@ -65,7 +65,10 @@ function NotificationCenterContent({
   const dismissAll = useNotificationStore((state) => state.dismissAll);
   const markAllAsRead = useNotificationStore((state) => state.markAllAsRead);
   const markAsRead = useNotificationStore((state) => state.markAsRead);
-  const getSession = useSessionStore((state) => state.getSession);
+  const sessions = useProjectViewSessions(
+    notifications.map((notification) => notification.sessionId),
+  );
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   const { materializeSession, viewSession } = useSessionNavigation();
 
   useEffect(() => {
@@ -90,9 +93,8 @@ function NotificationCenterContent({
   }, [onClose, triggerRef]);
 
   const handleNotificationClick = async (notificationId: string, sessionId: string) => {
+    projectViewWorkspaceState.markSessionRead(sessionId);
     markAsRead(notificationId);
-    useSessionStore.getState().clearUnreadCount(sessionId);
-    wsClient.sendMarkAsRead(sessionId);
 
     const session = await materializeSession(sessionId);
     if (!session) {
@@ -144,8 +146,7 @@ function NotificationCenterContent({
     );
 
     for (const sessionId of unreadSessionIds) {
-      useSessionStore.getState().clearUnreadCount(sessionId);
-      wsClient.sendMarkAsRead(sessionId);
+      projectViewWorkspaceState.markSessionRead(sessionId);
     }
   };
 
@@ -219,7 +220,7 @@ function NotificationCenterContent({
         ) : (
           <div>
             {notifications.map((notification) => {
-              const session = getSession(notification.sessionId);
+              const session = sessionsById.get(notification.sessionId);
               const isCompleted = notification.type === 'completed';
               const relativeTime = formatRelativeTimeFromNow(notification.timestamp, now, t);
 

@@ -8,10 +8,12 @@ import {
   type GitPendingVerb,
 } from "@/stores/git-panel-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
 import { useGitStore } from "@/stores/git-store";
 import { useChatStore } from "@/stores/chat-store";
+import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace-state-client";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
@@ -265,9 +267,7 @@ export function useGitPanelController(
   const actionFailure = delivery?.actionFailure ?? null;
   const lastDiffStatsTokenRef = useRef<string | null>(null);
 
-  const sessionSnapshot = useSessionStore((state) =>
-    sessionId ? state.getSession(sessionId) : undefined,
-  );
+  const sessionSnapshot = useProjectViewSession(sessionId);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const taskSnapshot = useTaskStore((state) =>
     sessionId ? state.getTaskBySessionId(sessionId) : undefined,
@@ -760,7 +760,7 @@ export function useGitPanelController(
       const result = await revalidateGitConflictHandoff(
         panelData,
         () => ({
-          session: useSessionStore.getState().getSession(sessionId),
+          session: projectViewWorkspaceState.resolveSession(sessionId),
           connectionStatus: useChatStore.getState().connectionStatus,
         }),
         () => readGitPanelState(sessionId),

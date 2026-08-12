@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import type React from 'react';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { PROJECT_DND_MIME } from '@/lib/constants/project-strip';
 
 /**
@@ -64,7 +65,7 @@ export function useProjectStripDnd(): UseProjectStripDndReturn {
     const draggedDir = e.dataTransfer.getData(PROJECT_DND_MIME);
     if (!draggedDir) return;
 
-    const projects = useSessionStore.getState().projects;
+    const projects = projectViewWorkspaceState.getLoadedProjectViews();
     const fromIndex = projects.findIndex((p) => p.encodedDir === draggedDir);
     if (fromIndex === -1 || fromIndex === targetIndex) {
       useBoardStore.getState().setDraggingProject(null);

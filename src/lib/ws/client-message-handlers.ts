@@ -118,7 +118,7 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'session_stopped': {
-      const stoppedSession = sessionStore.getSession(msg.sessionId);
+      const stoppedSession = projectViewWorkspaceState.resolveSession(msg.sessionId);
       const stoppedKind = stoppedSession?.kind
         ?? useTaskStore.getState().getTaskBySessionId(msg.sessionId)?.sessions
           .find((session) => session.id === msg.sessionId)?.kind;
@@ -251,21 +251,17 @@ export function handleIncomingServerMessage({
           useTerminalSessionStore.getState().markRuntimeStopped(sessionId);
         }
       }
-      const terminalSnapshotCandidates = new Map(
-        [
-          ...sessionStore.projects.flatMap((project) => project.sessions),
-          ...Object.values(sessionStore.retainedSessions),
-        ].map((session) => [session.id, session]),
-      );
-      for (const session of terminalSnapshotCandidates.values()) {
+      for (const session of projectViewWorkspaceState.getCanonicalSessions()) {
         // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
         // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
         if (session.id.startsWith('temp-')) continue;
-        if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
-          useTerminalSessionStore.getState().markRuntimeStopped(session.id);
-          if (isPendingTerminalReboundSource(session.id)) continue;
-          retireStoppedTerminalSessionSurface(session.id);
-        }
+        if (session.kind !== 'terminal') continue;
+        const isActive = activeTerminalIds.has(session.id);
+        useTaskStore.getState().setLinkedSessionRunning(session.id, isActive);
+        if (isActive) continue;
+        useTerminalSessionStore.getState().markRuntimeStopped(session.id);
+        if (isPendingTerminalReboundSource(session.id)) continue;
+        retireStoppedTerminalSessionSurface(session.id);
       }
       return { wasReconnect };
     }
@@ -535,7 +531,7 @@ function tryApplyPendingTerminalRebound(terminalId: string): boolean {
     return true;
   }
   const sessionStore = useSessionStore.getState();
-  if (!sessionStore.getSession(pending.destinationSessionId)) return false;
+  if (!projectViewWorkspaceState.resolveSession(pending.destinationSessionId)) return false;
 
   useTabStore.getState().rebindSessionSurface(
     [...pending.sourceSessionIds],
@@ -558,7 +554,7 @@ function cancelPendingTerminalReboundsForDestination(sessionId: string): void {
 }
 
 function retireStoppedTerminalSessionSurface(sessionId: string): void {
-  const session = useSessionStore.getState().getSession(sessionId);
+  const session = projectViewWorkspaceState.resolveSession(sessionId);
   if (session?.kind !== 'terminal' || session.archived) return;
   retireProjectViewSessionSurfaces(sessionId);
 }
@@ -611,8 +607,7 @@ function shouldStartTurnFromReplayEvents(
   // A completed background session may receive a late replay chunk after the
   // completion notification. Keep the unread notification as the visible state
   // until the user opens or marks the session as read.
-  const session = sessionStore.getSession(sessionId);
-  if ((session?.unreadCount ?? 0) > 0) {
+  if (projectViewWorkspaceState.isSessionUnread(sessionId)) {
     return false;
   }
 
@@ -623,10 +618,7 @@ function addCreatedSession(
   msg: Extract<ServerTransportMessage, { type: 'session_created' }>,
   sessionStore: ReturnType<typeof useSessionStore.getState>,
 ): void {
-  const totalSessions = sessionStore.projects.reduce(
-    (sum, project) => sum + project.sessions.length,
-    0,
-  );
+  const totalSessions = projectViewWorkspaceState.getCanonicalSessions().length;
   // Session exists in DB but has no backing runtime yet. GUI sessions start on
   // first input; PTY sessions start when their terminal view is first opened.
   sessionStore.addSession({

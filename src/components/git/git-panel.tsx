@@ -9,6 +9,7 @@ import {
   useWorktreeScriptsAvailable,
 } from "@/components/scripts/worktree-scripts-panel";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
+import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { useSessionStore } from "@/stores/session-store";
@@ -107,9 +108,7 @@ export function GitPanel({
     enabled: isPhoneViewport && Boolean(onClose),
   });
 
-  const sessionProvider = useSessionStore((state) =>
-    sessionId ? state.getSession(sessionId)?.provider?.trim() ?? null : null,
-  );
+  const sessionProvider = useProjectViewSession(sessionId)?.provider?.trim() ?? null;
   const showMemoryTab = supportsMemoryPanel(sessionProvider);
   const showScriptsTab = useWorktreeScriptsAvailable(sessionId);
   const fileTarget = useMemo(

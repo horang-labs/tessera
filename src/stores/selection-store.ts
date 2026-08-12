@@ -3,6 +3,7 @@ import { useSessionStore } from './session-store';
 import { useTaskStore } from './task-store';
 import { toast } from './notification-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 interface SelectionState {
   /** Set of selected session IDs */
@@ -91,7 +92,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     const sessionStore = useSessionStore.getState();
     const taskAnchors = new Set<string>();
     for (const id of selectedIds) {
-      const session = sessionStore.getSession(id);
+      const session = projectViewWorkspaceState.resolveSession(id);
       if (!session?.taskId) continue;
       if (taskAnchors.has(session.taskId)) continue;
       taskAnchors.add(session.taskId);
@@ -109,7 +110,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     const taskIds = new Set<string>();
     const chatIds: string[] = [];
     for (const id of selectedIds) {
-      const session = sessionStore.getSession(id);
+      const session = projectViewWorkspaceState.resolveSession(id);
       if (session?.taskId) {
         taskIds.add(session.taskId);
       } else {
