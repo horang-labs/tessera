@@ -37,9 +37,10 @@ repo=$(realpath "$repo")
 
 driver="$repo/tests/fixtures/packaged-windows-wsl/drive-electron.cjs"
 setup="$repo/tests/fixtures/packaged-windows-wsl/setup.sh"
+integrity_checker="$repo/tests/fixtures/packaged-windows-wsl/integrity-check.py"
 launcher="$repo/scripts/launch-electron-test-instances.ps1"
 stopper="$repo/scripts/stop-electron-test-session.ps1"
-for required in "$driver" "$setup" "$launcher" "$stopper"; do
+for required in "$driver" "$setup" "$integrity_checker" "$launcher" "$stopper"; do
   [[ -f $required ]] || { printf 'Missing acceptance dependency: %s\n' "$required" >&2; exit 4; }
 done
 
@@ -91,56 +92,6 @@ installed_snapshot() {
   powershell.exe -NoProfile -Command \
     '$all = @(Get-CimInstance Win32_Process); $servers = @($all | Where-Object { $_.Name -eq "Tessera.exe" -and $_.CommandLine -match "server-child" -and $_.CommandLine -notmatch "TesseraTestInstances|electron-dev" }); $ids = @($servers.ProcessId) + @($servers.ParentProcessId); $p = $all | Where-Object { $_.ProcessId -in $ids } | Sort-Object ProcessId | Select-Object ProcessId,ParentProcessId; $l = Get-NetTCPConnection -State Listen -LocalPort 32123 -ErrorAction SilentlyContinue | Sort-Object LocalAddress | Select-Object LocalAddress,LocalPort,OwningProcess; [ordered]@{processes=@($p);listeners=@($l)} | ConvertTo-Json -Compress -Depth 4' \
     | tr -d '\r'
-}
-
-source_hashes() {
-  local source_path
-  for source_path in \
-    "$agent_home/.tessera/tessera-dev.db" \
-    "$agent_home/.tessera/tessera.db" \
-    "$agent_home/.codex/auth.json" \
-    "$agent_home/.codex/config.toml" \
-    "$agent_home/.codex/hooks.json" \
-    "$agent_home/.claude/.credentials.json" \
-    "$agent_home/.claude/settings.json" \
-    "$agent_home/.local/share/opencode/auth.json"; do
-    if [[ -f $source_path ]]; then
-      sha256sum "$source_path"
-    else
-      printf 'absent  %s\n' "$source_path"
-    fi
-  done
-}
-
-native_skill_snapshot() {
-  local windows_home
-  windows_home=$(powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("UserProfile")' | tr -d '\r')
-  local windows_home_wsl
-  windows_home_wsl=$(wslpath -u "$windows_home")
-  for root in \
-    "$windows_home_wsl/.codex/skills/tessera-cli" \
-    "$windows_home_wsl/.claude/skills/tessera-cli" \
-    "$windows_home_wsl/.config/opencode/skills/tessera-cli"; do
-    if [[ -d $root ]]; then
-      find "$root" -type f -print0 | sort -z | xargs -0 -r sha256sum
-    else
-      printf 'absent  %s\n' "$root"
-    fi
-  done
-}
-
-wsl_skill_snapshot() {
-  local root
-  for root in \
-    "$agent_home/.codex/skills/tessera-cli" \
-    "$agent_home/.claude/skills/tessera-cli" \
-    "$agent_home/.config/opencode/skills/tessera-cli"; do
-    if [[ -d $root ]]; then
-      find "$root" -type f -print0 | sort -z | xargs -0 -r sha256sum
-    else
-      printf 'absent  %s\n' "$root"
-    fi
-  done
 }
 
 run_driver() {
@@ -238,9 +189,12 @@ if ! TEST_ROOT_WINDOWS="$test_root_windows" TEST_ROOT_OWNER_TOKEN="$test_root_ow
 fi
 test_root_owned=1
 before_installed=$(installed_snapshot)
-before_hashes=$(source_hashes)
-before_native_skills=$(native_skill_snapshot)
-before_wsl_skills=$(wsl_skill_snapshot)
+native_home_windows=$(powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("UserProfile")' | tr -d '\r')
+native_home=$(wslpath -u "$native_home_windows")
+integrity_snapshot="$fixture_root/evidence/protected-integrity-before.json"
+python3 "$integrity_checker" snapshot \
+  --agent-home "$agent_home" --native-home "$native_home" --snapshot "$integrity_snapshot"
+integrity_snapshot_sha256=$(sha256sum "$integrity_snapshot" | awk '{print $1}')
 
 unset TESSERA_DEV_PORT ELECTRON_RUN_AS_NODE CODEX_HOME TESSERA_CODEX_HOME \
   TESSERA_CLI_COMMAND TESSERA_PROJECT_ID TESSERA_WORKTREE_ID TESSERA_SESSION_ID \
@@ -433,12 +387,13 @@ for skill in (
     assert not skill.exists(), skill
 PY
 
-after_hashes=$(source_hashes)
-after_native_skills=$(native_skill_snapshot)
-after_wsl_skills=$(wsl_skill_snapshot)
-[[ $before_hashes == "$after_hashes" ]] || { printf 'Source data/provider hashes changed\n' >&2; exit 20; }
-[[ $before_native_skills == "$after_native_skills" ]] || { printf 'Native provider skills changed\n' >&2; exit 21; }
-[[ $before_wsl_skills == "$after_wsl_skills" ]] || { printf 'Real WSL provider skills changed\n' >&2; exit 29; }
+[[ $(sha256sum "$integrity_snapshot" | awk '{print $1}') == "$integrity_snapshot_sha256" ]] || {
+  printf 'Integrity invariant changed: protected evidence snapshot\n' >&2
+  exit 20
+}
+python3 "$integrity_checker" verify \
+  --agent-home "$agent_home" --native-home "$native_home" --snapshot "$integrity_snapshot" \
+  || exit 20
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$stopper")" \
   -SessionId "$session_id" -TestRoot "$test_root_windows" -RemoveData >/dev/null
