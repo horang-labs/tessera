@@ -522,7 +522,10 @@ test('terminal panels expose a panel drag handle', () => {
 });
 
 test('terminal panels offer only safe restarts for unsupported live theme changes', () => {
-  assert.match(terminalPanelSource, /themeRestartRequired \|\| \(sessionOwned && status !== 'running'\)/);
+  assert.match(
+    terminalPanelSource,
+    /themeRestartRequired \|\| \(sessionOwned && status !== 'running' && status !== 'blocked'\)/,
+  );
   assert.match(terminalPanelSource, /terminal-session-status-banner/);
   assert.match(terminalPanelSource, /terminal-session-restart-banner/);
   assert.match(terminalPanelSource, /terminal-theme-restart-banner/);
