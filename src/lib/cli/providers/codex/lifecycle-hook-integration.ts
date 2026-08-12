@@ -384,7 +384,8 @@ async function writeHookDocument(
       ? hooks[event].filter((group) => !groupLooksTesseraOwned(group))
       : [];
     if (operation !== 'remove') groups.push(desiredGroup(buildHookSettings, style, event));
-    hooks[event] = groups;
+    if (operation === 'remove' && groups.length === 0) delete hooks[event];
+    else hooks[event] = groups;
   }
 
   await fs.mkdir(path.dirname(snapshot.filePath), { recursive: true, mode: 0o700 });

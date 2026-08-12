@@ -257,7 +257,7 @@ test('native lifecycle install requires explicit consent, preserves user hooks, 
   assert.equal(disabled.health.state, 'blocked');
 });
 
-test('bridged WSL ownership mutates only the WSL Authoritative Provider Home', async (t) => {
+test('bridged WSL install and removal restore the user hook document without lifecycle residue', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-lifecycle-wsl-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const nativeHome = path.join(root, 'native-codex-home');
@@ -265,6 +265,23 @@ test('bridged WSL ownership mutates only the WSL Authoritative Provider Home', a
   fs.mkdirSync(nativeHome, { recursive: true });
   fs.mkdirSync(wslHome, { recursive: true });
   fs.writeFileSync(path.join(nativeHome, 'hooks.json'), '{"native":"must-stay-untouched"}\n');
+  const userHookDocument = {
+    description: 'user-owned hook document',
+    hooks: {
+      SessionStart: [{
+        matcher: 'startup',
+        hooks: [{ type: 'command', command: '/usr/local/bin/user-session-hook' }],
+      }],
+      UserPromptSubmit: [{
+        matcher: 'prompt',
+        hooks: [{ type: 'command', command: '/usr/local/bin/user-prompt-hook' }],
+      }],
+    },
+  };
+  fs.writeFileSync(
+    path.join(wslHome, 'hooks.json'),
+    `${JSON.stringify(userHookDocument, null, 2)}\n`,
+  );
 
   const fakeCodex = createFakeCodexApi(wslHome);
   const resolvedEnvironments: string[] = [];
@@ -286,21 +303,30 @@ test('bridged WSL ownership mutates only the WSL Authoritative Provider Home', a
     }),
   });
 
-  const result = await integration.installLifecycle({
+  const request = {
     provider: codexProvider,
-    agentEnvironmentOwner: { kind: 'user', userId: 'wsl-owner' },
+    agentEnvironmentOwner: { kind: 'user' as const, userId: 'wsl-owner' },
     workDir: path.join(root, 'workspace'),
-    consent: 'granted',
-  });
+  };
+  const result = await integration.installLifecycle({ ...request, consent: 'granted' });
 
   assert.equal(result.providerHome.agentEnvironment, 'wsl');
   assert.equal(result.lifecycle.state, 'installed');
   assert.equal(result.lifecycle.trust, 'trusted');
   assert.deepEqual(resolvedEnvironments, ['wsl']);
   assert.equal(fs.readFileSync(path.join(nativeHome, 'hooks.json'), 'utf8'), '{"native":"must-stay-untouched"}\n');
-  assert.equal(fs.existsSync(path.join(wslHome, 'hooks.json')), true);
+  assert.equal(readHookDocument(wslHome).hooks.SessionStart.length, 2);
+  assert.equal(readHookDocument(wslHome).hooks.UserPromptSubmit.length, 2);
   assert.equal(fakeCodex.calls.every((call) => call.environment === 'wsl'), true);
   assert.equal(fakeCodex.calls.every((call) => call.providerHomeFilesystemPath === wslHome), true);
+
+  const removed = await integration.removeLifecycle(request);
+
+  assert.equal(removed.lifecycle.state, 'absent');
+  assert.equal(removed.lifecycle.consent, 'revoked');
+  assert.equal(removed.health.state, 'blocked');
+  assert.deepEqual(readHookDocument(wslHome), userHookDocument);
+  assert.equal(fs.readFileSync(path.join(nativeHome, 'hooks.json'), 'utf8'), '{"native":"must-stay-untouched"}\n');
 });
 
 test('unsupported Codex fails closed with minimum-version guidance and never attempts trust mutation', async (t) => {

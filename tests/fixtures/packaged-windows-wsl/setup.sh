@@ -49,7 +49,8 @@ user_command = (
 )
 hooks = {
     "hooks": {
-        "SessionStart": [{"hooks": [{"type": "command", "timeout": 10, "command": user_command}]}]
+        "SessionStart": [{"hooks": [{"type": "command", "timeout": 10, "command": user_command}]}],
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "timeout": 10, "command": user_command}]}],
     }
 }
 (codex_home / "hooks.json").write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
