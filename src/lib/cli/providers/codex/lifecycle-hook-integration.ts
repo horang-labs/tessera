@@ -1001,11 +1001,87 @@ export function createCodexLifecycleHookIntegration(
     };
   }
 
+  async function cleanupKnownArtifacts() {
+    let ledger: CodexHookLedger;
+    try {
+      ledger = await readLedger(stateDirectory);
+    } catch (error) {
+      return {
+        artifacts: [],
+        discoveryErrors: [
+          `Known Codex lifecycle homes could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        ],
+      };
+    }
+
+    const artifacts: Array<{
+      environment: CliEnvironment;
+      providerHome: string;
+      state: 'removed' | 'absent' | 'conflict' | 'failed';
+      message?: string;
+    }> = [];
+    for (const environment of ['native', 'wsl'] as const) {
+      const seenHomes = new Set<string>();
+      for (const entry of ledger.environments[environment] ?? []) {
+        if (seenHomes.has(entry.home)) continue;
+        seenHomes.add(entry.home);
+        try {
+          const document = await inspectHookDocument(
+            entry.home,
+            resolveHookCommandStyle(environment),
+            buildHookSettings,
+            entry.managedDefinition,
+          );
+          if (document.state === 'absent') {
+            artifacts.push({ environment, providerHome: entry.home, state: 'absent' });
+            continue;
+          }
+          if (document.state === 'conflict') {
+            artifacts.push({
+              environment,
+              providerHome: entry.home,
+              state: 'conflict',
+              message: document.message
+                ?? 'The known Tessera lifecycle hook conflicts with the managed definition.',
+            });
+            continue;
+          }
+          await writeHookDocument(document, resolveHookCommandStyle(environment), buildHookSettings, 'remove');
+          const verified = await inspectHookDocument(
+            entry.home,
+            resolveHookCommandStyle(environment),
+            buildHookSettings,
+            entry.managedDefinition,
+          );
+          if (verified.state !== 'absent') {
+            artifacts.push({
+              environment,
+              providerHome: entry.home,
+              state: 'failed',
+              message: 'The Tessera lifecycle hook remained after cleanup.',
+            });
+            continue;
+          }
+          artifacts.push({ environment, providerHome: entry.home, state: 'removed' });
+        } catch (error) {
+          artifacts.push({
+            environment,
+            providerHome: entry.home,
+            state: 'failed',
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+    return { artifacts, discoveryErrors: [] };
+  }
+
   return {
     inspect: (context) => serializeLifecycleOperation(() => inspect(context)),
     install: (context) => serializeLifecycleOperation(() => installOrUpdate(context, 'install')),
     update: (context) => serializeLifecycleOperation(() => installOrUpdate(context, 'update')),
     maintain: (context) => serializeLifecycleOperation(() => installOrUpdate(context, 'maintain')),
     remove: (context) => serializeLifecycleOperation(() => remove(context)),
+    cleanupKnownArtifacts: () => serializeLifecycleOperation(cleanupKnownArtifacts),
   };
 }

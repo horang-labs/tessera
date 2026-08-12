@@ -10,6 +10,7 @@ import type {
   ProviderLifecycleIntegration,
   ProviderLifecycleResult,
 } from './providers/provider-contract';
+import { cliProviderRegistry } from './providers/registry';
 import {
   createProviderSkillManager,
   detectSupportedProviderSkills,
@@ -138,6 +139,35 @@ export interface ProviderHomeResolutionRequest {
   workDir?: string | null;
 }
 
+export interface ProviderIntegrationCleanupArtifact {
+  artifact: 'lifecycle-hook' | 'provider-skill';
+  providerId: string;
+  agentEnvironment: AgentEnvironment;
+  /** Cleanup-only location for actionable recovery; ordinary integration DTOs stay path-free. */
+  providerHome?: string;
+  state: 'removed' | 'absent' | 'conflict' | 'failed';
+  message?: string;
+  recovery?: string;
+}
+
+export interface ProviderIntegrationCleanupProblem {
+  artifact: 'lifecycle-hook' | 'provider-skill';
+  message: string;
+  recovery: string;
+}
+
+export interface ProviderIntegrationCleanupResult {
+  complete: boolean;
+  artifacts: ProviderIntegrationCleanupArtifact[];
+  problems: ProviderIntegrationCleanupProblem[];
+}
+
+interface ProviderLifecycleCleanupTarget {
+  providerId: string;
+  integration?: ProviderLifecycleIntegration;
+  discoveryError?: string;
+}
+
 export interface ProviderIntegration {
   resolveProviderHome(
     request: ProviderHomeResolutionRequest,
@@ -181,6 +211,8 @@ export interface ProviderIntegration {
     listener: (change: ManagedSessionIntegrationHealthChange) => void,
   ): () => void;
   manageSkills(request: ProviderSkillManagementRequest): Promise<ProviderSkillManagementResult>;
+  /** Cross-lifecycle cleanup used only by the Tessera application-removal workflow. */
+  cleanupOwnedArtifacts(): Promise<ProviderIntegrationCleanupResult>;
 }
 
 interface ProviderIntegrationOptions extends Partial<Omit<
@@ -190,6 +222,7 @@ interface ProviderIntegrationOptions extends Partial<Omit<
   resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
   resolveDefaultEnvironment?: () => Promise<AgentEnvironment>;
   lifecycle?: ProviderLifecycleIntegration;
+  resolveLifecycleCleanupTargets?: () => ProviderLifecycleCleanupTarget[];
   healthRefreshIntervalMs?: number;
 }
 
@@ -276,6 +309,28 @@ export function createProviderIntegration(
       ? { renameProviderSkillPath: options.renameProviderSkillPath }
       : {}),
   });
+  const resolveLifecycleCleanupTargets: () => ProviderLifecycleCleanupTarget[] = (
+    options.resolveLifecycleCleanupTargets ?? (() => (
+      cliProviderRegistry.getProviderIds().flatMap((providerId): ProviderLifecycleCleanupTarget[] => {
+        try {
+          const provider = cliProviderRegistry.getProvider(providerId);
+          if (provider.getProviderIntegrationRequirements().lifecycle === 'not-applicable') return [];
+          const integration = provider.getLifecycleIntegration?.();
+          return [{
+            providerId,
+            ...(integration
+              ? { integration }
+              : { discoveryError: `${providerId} lifecycle cleanup is unavailable.` }),
+          }];
+        } catch (error) {
+          return [{
+            providerId,
+            discoveryError: error instanceof Error ? error.message : String(error),
+          }];
+        }
+      })
+    ))
+  );
   type ActiveHealth = 'healthy' | 'degraded';
   interface ManagedSessionScope {
     health: ActiveHealth;
@@ -487,6 +542,116 @@ export function createProviderIntegration(
         owner: 'agent-environment',
         agentEnvironment: request.agentEnvironment,
         identity: preparation.providerHomeIdentity,
+      };
+    },
+    async cleanupOwnedArtifacts() {
+      let lifecycleTargets: ReturnType<typeof resolveLifecycleCleanupTargets> = [];
+      const lifecycleTargetProblems: ProviderIntegrationCleanupProblem[] = [];
+      try {
+        lifecycleTargets = resolveLifecycleCleanupTargets();
+      } catch (error) {
+        lifecycleTargetProblems.push({
+          artifact: 'lifecycle-hook',
+          message: error instanceof Error ? error.message : String(error),
+          recovery: 'Restore provider registration and retry Tessera removal.',
+        });
+      }
+      const [lifecycleAttempts, skillAttempt] = await Promise.all([
+        Promise.all(lifecycleTargets.map(async ({ providerId, integration, discoveryError }) => {
+          if (discoveryError || !integration?.cleanupKnownArtifacts) {
+            return {
+              providerId,
+              result: {
+                artifacts: [],
+                discoveryErrors: [discoveryError ?? `${providerId} lifecycle cleanup is unavailable.`],
+              },
+            };
+          }
+          try {
+            return { providerId, result: await integration.cleanupKnownArtifacts() };
+          } catch (error) {
+            return {
+              providerId,
+              result: {
+                artifacts: [],
+                discoveryErrors: [error instanceof Error ? error.message : String(error)],
+              },
+            };
+          }
+        })),
+        skillManager.cleanupKnownArtifacts().then(
+          (value) => ({ status: 'fulfilled' as const, value }),
+          (reason: unknown) => ({ status: 'rejected' as const, reason }),
+        ),
+      ]);
+      const skillCleanup = skillAttempt.status === 'fulfilled'
+        ? skillAttempt.value
+        : {
+            artifacts: [],
+            discoveryProblems: [{
+              code: 'KNOWN_STATE_UNREADABLE' as const,
+              message: skillAttempt.reason instanceof Error
+                ? skillAttempt.reason.message
+                : String(skillAttempt.reason),
+            }],
+          };
+      const artifacts: ProviderIntegrationCleanupArtifact[] = [
+        ...lifecycleAttempts.flatMap(({ providerId, result }) => (
+          result.artifacts.map((artifact) => ({
+            artifact: 'lifecycle-hook' as const,
+            providerId,
+            agentEnvironment: artifact.environment,
+            providerHome: artifact.providerHome,
+            state: artifact.state,
+            ...(artifact.message ? { message: artifact.message } : {}),
+            ...(artifact.state === 'conflict' || artifact.state === 'failed'
+              ? {
+                  recovery: `Review the ${providerId} lifecycle hook in ${artifact.providerHome}, `
+                    + 'preserve user changes, resolve the reported problem, and retry Tessera removal.',
+                }
+              : {}),
+          }))
+        )),
+        ...skillCleanup.artifacts.map((artifact) => ({
+          artifact: 'provider-skill' as const,
+          providerId: artifact.providerId,
+          agentEnvironment: artifact.agentEnvironment,
+          ...(artifact.providerHome ? { providerHome: artifact.providerHome } : {}),
+          state: artifact.state,
+          ...(artifact.message ? { message: artifact.message } : {}),
+          ...(artifact.state === 'conflict' || artifact.state === 'failed'
+            ? {
+                recovery: `Review the ${artifact.providerId} tessera-cli skill${artifact.providerHome
+                  ? ` in ${artifact.providerHome}`
+                  : ' in this Agent Environment'}, `
+                  + 'preserve user changes, resolve the reported problem, and retry Tessera removal.',
+              }
+            : {}),
+        })),
+      ];
+      const problems: ProviderIntegrationCleanupProblem[] = [
+        ...lifecycleTargetProblems,
+        ...lifecycleAttempts.flatMap(({ providerId, result }) => (
+          result.discoveryErrors.map((message) => ({
+            artifact: 'lifecycle-hook' as const,
+            message,
+            recovery: `Restore readable Tessera ${providerId} lifecycle state and retry Tessera removal.`,
+          }))
+        )),
+        ...skillCleanup.discoveryProblems.map(({ code, message }) => ({
+          artifact: 'provider-skill' as const,
+          message,
+          recovery: code === 'LEGACY_HOMES_UNKNOWN'
+            ? 'Inspect every provider home previously selected in that Agent Environment, preserve '
+              + 'user-owned content, remove only a confirmed Tessera-owned skill, and retry Tessera removal.'
+            : 'Restore readable Tessera provider-skill state and retry Tessera removal.',
+        })),
+      ];
+      return {
+        complete: problems.length === 0
+          && artifacts.every(({ state }) => state === 'removed' || state === 'absent'),
+        artifacts,
+        problems,
       };
     },
     async resolveLaunch(request) {
