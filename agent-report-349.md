@@ -16,11 +16,15 @@ Completed the final packaged Windows-to-WSL acceptance ticket for spec #338 from
 - Added a durable, synthetic, secret-free packaged Windows Electron/Windows backend/WSL agent
   fixture and runner covering every #349 acceptance seam through the real renderer and terminal
   WebSocket path.
+- Made that runner equivalent to `electron:build:win:debug`: renderer debug diagnostics are baked
+  during prebuild and packaged main/server logging is stamped into application metadata.
 
 ## Commits
 
 - `1bf7c70` — `test: complete packaged Windows-to-WSL acceptance`
-- This report is committed separately from the product/test change, as requested.
+- `6b6ec8a` — `test: require debug packaged acceptance`
+- `e0744fe` and the follow-up documentation commit contain only this report, separately from both
+  product/test commits.
 
 No commit was pushed or merged, and no GitHub issue, PR, label, or comment was changed.
 
@@ -29,19 +33,25 @@ No commit was pushed or merged, and no GitHub issue, PR, label, or comment was c
 Final run:
 
 ```text
-sessionId: t349-final17-0812-1720
+sessionId: t349-debug-final-0812-1805
 topology: windows-electron/windows-backend/wsl-agent
+build: debug
+packagedLogLevel: debug
 serverPort: 32124
 TESSERA_DEV_PORT: unset
-artifactSha256: ef94890130d94c27f127008c9e855222417ac711d0ddeae821409a5a3f1cd05b
-launchExecutableSha256: 754aefd95a95bcbb512dd1a39e3e2ded66cb9d67e784c5bfa892c83778f791a4
+artifactSha256: 8b66e0245a6d3e20f89799ca85375534f87c7a2bb0a1d9912374e67e359fb6f7
+launchExecutableSha256: 0b03c89944480d52e184c929dd45b7bcce64d4c641a1af5d733c6c5c2b0f9a36
 assertionsPassed: true
 cleanupComplete: true
 ```
 
-The runner built a portable Windows artifact plus an unpacked Windows application, launched the
-unpacked `Tessera.exe`, verified the renderer reported `win32` with a WSL Agent Environment, and
-used the packaged Windows server child. It did not substitute a WSL development server.
+The runner set `NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug` only for `electron:prebuild`, passed
+`-c.extraMetadata.tesseraLogLevel=debug` to the isolated custom-output `electron-builder` command,
+then extracted `package.json` from `resources/app.asar` with `@electron/asar` and required
+`tesseraLogLevel === "debug"` before launch. It built a portable Windows artifact plus an unpacked
+Windows application, launched the unpacked `Tessera.exe`, verified the renderer reported `win32`
+with a WSL Agent Environment, and used the packaged Windows server child. It did not substitute a
+WSL development server.
 
 ### Acceptance seams exercised
 
@@ -131,7 +141,7 @@ TypeScript focused tests: 71 passed, 0 failed
 Electron launcher contracts: 8 passed, 0 failed
 Targeted terminal login-shell contract: 1 passed, 0 failed
 Focused total: 80 passed, 0 failed
-Packaged final acceptance: 1 passed, 0 failed
+Packaged debug acceptance: 1 passed, 0 failed
 ```
 
 Static/build gates:
@@ -141,7 +151,7 @@ Static/build gates:
 - `npm run lint` — pass with 0 errors and the same 3 baseline warnings
 - `npm run electron:compile` — pass
 - `bash -n` / `node --check` / Python fixture compilation — pass
-- `graphify update .` after final changes — pass; 11,311 nodes / 29,510 edges. It emitted the
+- `graphify update .` after final changes — pass; 11,321 nodes / 29,519 edges. It emitted the
   existing zero-node warning for `provider-skill-ids.json`.
 
 Repository-wide suites:
@@ -187,10 +197,11 @@ Actionable Standards findings were resolved:
 The final code requires the PowerShell token to be GUID-N, then requires the WSL marker to be
 exactly 33 bytes, exactly one newline, exactly 32 hexadecimal characters, and exactly equal to
 the token before restart or cleanup. Executable regression tests cover every reported case, and
-the packaged final17 run exercised successful launch/restart/cleanup with this code.
+the packaged debug run exercised successful launch/restart/cleanup with this code.
 
-Final review results at `1bf7c70`:
+Final review results after `6b6ec8a`:
 
 - Standards: clean; no actionable findings.
-- Spec: clean; no actionable findings and all #349/#338 acceptance criteria covered.
-
+- Spec: the only finding was that this report still named the prior normal-build run; this
+  documentation update replaces it with the baked-debug metadata, hashes, topology, and cleanup
+  evidence above. The debug runner implementation itself was clean.
