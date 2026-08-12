@@ -94,13 +94,38 @@ function Stop-RecordedProcessTree {
   }
 }
 
+function Remove-OwnedWslFixture {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$OwnerToken,
+    [Parameter(Mandatory = $true)][string]$Distro
+  )
+
+  if ($Root -notmatch '^/home/[A-Za-z0-9._-]+/\.tessera/(?:test-fixtures|test-instances)/[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+    throw "Refusing to remove non-owned WSL fixture root: $Root"
+  }
+  if ($OwnerToken -notmatch '^[A-Fa-f0-9]{32}$') {
+    throw 'Refusing WSL cleanup without an exact GUID-N ownership token.'
+  }
+  # Keep the native-process argument on one line. PowerShell does not reliably
+  # preserve a multiline `sh -c` argv value when crossing wsl.exe, and WSL does
+  # not reliably consume piped PowerShell text as the `sh -s` program.
+  # Root and token are validated to a no-whitespace safe alphabet before this
+  # crosses the PowerShell 5.1 native-argv binder.
+  $script = 'set -eu; root=$1; token=$2; marker=$root/.tessera-owner; [ ${#token} -eq 32 ]; case $token in *[!A-Fa-f0-9]*) exit 46;; esac; [ -f $marker ]; [ $(wc -c < $marker) -eq 33 ]; [ $(wc -l < $marker) -eq 1 ]; IFS= read -r recorded < $marker; [ ${#recorded} -eq 32 ]; case $recorded in *[!A-Fa-f0-9]*) exit 47;; esac; case $recorded in $token) ;; *) exit 48;; esac; case $root in /home/*/.tessera/test-fixtures/*|/home/*/.tessera/test-instances/*) ;; *) exit 43 ;; esac; rm -rf -- $root'
+  & wsl.exe --distribution $Distro --exec sh -c $script tessera-fixture $Root $OwnerToken
+  if ($LASTEXITCODE -ne 0) {
+    throw "Refusing to remove non-owned WSL fixture root: $Root"
+  }
+}
+
 $manifestPath = Join-Path (Join-Path $TestRoot 'sessions') "$SessionId.json"
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
   throw "No launcher-owned Electron test session manifest exists: $SessionId ($manifestPath)"
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-if ($manifest.schemaVersion -ne 2 -or $manifest.sessionId -ne $SessionId) {
+if ($manifest.schemaVersion -notin @(2, 3) -or $manifest.sessionId -ne $SessionId) {
   throw "Session manifest identity mismatch: $manifestPath"
 }
 
@@ -152,13 +177,33 @@ foreach ($instance in @($manifest.instances)) {
     if (-not (Test-PathWithinRoot -Path $instance.instanceRoot -Root $TestRoot)) {
       throw "Refusing to remove data outside the test root: $($instance.instanceRoot)"
     }
+    if ($instance.wslStateRoot) {
+      if (-not $instance.wslStateOwnerToken -or -not $instance.wslDistro) {
+        throw "Refusing to remove non-owned WSL test state root: $($instance.wslStateRoot)"
+      }
+      Remove-OwnedWslFixture `
+        -Root ([string]$instance.wslStateRoot) `
+        -OwnerToken ([string]$instance.wslStateOwnerToken) `
+        -Distro ([string]$instance.wslDistro)
+    }
+    if ($instance.wslFixtureRoot) {
+      if (-not $instance.wslFixtureOwnerToken -or -not $instance.wslDistro) {
+        throw "Refusing to remove non-owned WSL fixture root: $($instance.wslFixtureRoot)"
+      }
+      Remove-OwnedWslFixture `
+        -Root ([string]$instance.wslFixtureRoot) `
+        -OwnerToken ([string]$instance.wslFixtureOwnerToken) `
+        -Distro ([string]$instance.wslDistro)
+    }
     if (Test-Path -LiteralPath $instance.instanceRoot) {
       Remove-TestRootWithRetry -Path $instance.instanceRoot
     }
   }
 }
 
-Remove-Item -LiteralPath $manifestPath -Force
+if ($RemoveData) {
+  Remove-Item -LiteralPath $manifestPath -Force
+}
 [pscustomobject]@{
   sessionId = $SessionId
   stoppedProcessIds = $stopped

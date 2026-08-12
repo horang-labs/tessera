@@ -143,6 +143,68 @@ test('WSL overlay create script tolerates a missing codex home', () => {
   }
 });
 
+test('WSL legacy overlay scripts use the resolved custom Codex home', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-custom-home-'));
+  const defaultCodexHome = path.join(home, '.codex');
+  const customCodexHome = path.join(home, 'login-shell-codex-home');
+  const rolloutRelative = path.join('sessions', '2026', '08', '12', 'rollout-custom.jsonl');
+  fs.mkdirSync(path.join(defaultCodexHome, 'sessions'), { recursive: true });
+  fs.mkdirSync(path.join(customCodexHome, 'sessions', '2026', '08', '12'), {
+    recursive: true,
+  });
+  fs.writeFileSync(path.join(defaultCodexHome, 'auth.json'), 'wrong default home\n');
+  fs.writeFileSync(path.join(customCodexHome, 'auth.json'), 'custom home\n');
+  fs.writeFileSync(path.join(customCodexHome, rolloutRelative), 'custom rollout\n');
+
+  try {
+    type CreateScript = (
+      terminalId: string,
+      hooksJsonB64: string,
+      accountHomeB64: string,
+    ) => string;
+    type AccountScript = (terminalId: string, accountHomeB64: string) => string;
+    const createScript = buildWslCodexOverlayCreateScript as unknown as CreateScript;
+    const cleanupScript = buildWslCodexOverlayCleanupScript as unknown as AccountScript;
+    const repairScript = buildWslCodexOverlayResumeRepairScript as unknown as (
+      transcriptPath: string,
+      accountHomeB64: string,
+    ) => string | undefined;
+    const accountHomeB64 = b64(customCodexHome);
+    const stdout = runScript(
+      createScript('terminal-custom-home', b64('{}'), accountHomeB64),
+      home,
+    );
+    const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
+    assert.ok(overlay);
+    assert.equal(readWslOverlayReport(stdout, 'TESSERA_SRC'), customCodexHome);
+    assert.equal(
+      fs.readlinkSync(path.join(overlay!, 'auth.json')),
+      path.join(customCodexHome, 'auth.json'),
+    );
+
+    runScript(cleanupScript('terminal-custom-home', accountHomeB64), home);
+    assert.equal(
+      fs.readlinkSync(path.join(overlay!, 'sessions')),
+      path.join(customCodexHome, 'sessions'),
+    );
+
+    const recordedRollout = path.join(
+      home,
+      '.tessera',
+      'codex-overlay',
+      'session-custom-parent',
+      rolloutRelative,
+    );
+    const repair = repairScript(recordedRollout, accountHomeB64);
+    assert.ok(repair);
+    runScript(repair!, home);
+    assert.equal(fs.readFileSync(recordedRollout, 'utf8'), 'custom rollout\n');
+    assert.equal(fs.readFileSync(path.join(defaultCodexHome, 'auth.json'), 'utf8'), 'wrong default home\n');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('WSL overlay cleanup keeps recorded rollout paths resumable', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-resume-'));
   const codexHome = path.join(home, '.codex');
@@ -240,7 +302,7 @@ test('WSL overlay paths are namespaced for parallel Electron test instances', ()
   const env = { TESSERA_ELECTRON_TEST_INSTANCE: 'test-5' };
   try {
     const stdout = runScript(
-      buildWslCodexOverlayCreateScript('same-terminal', b64('{}'), env),
+      buildWslCodexOverlayCreateScript('same-terminal', b64('{}'), undefined, env),
       home,
     );
     const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
@@ -259,7 +321,7 @@ test('WSL overlay paths are namespaced for parallel Electron test instances', ()
       home,
     );
     assert.equal(fs.existsSync(path.join(overlay!, 'config.toml')), true);
-    runScript(buildWslCodexOverlayCleanupScript('same-terminal', env), home);
+    runScript(buildWslCodexOverlayCleanupScript('same-terminal', undefined, env), home);
     assert.equal(fs.existsSync(overlay!), false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

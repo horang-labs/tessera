@@ -6,6 +6,8 @@ import {
   extractCodexOverlayTerminalId,
 } from '@/lib/codex-home';
 import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
+import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
+import { resolveCodexHomeForEnvironment } from '@/lib/cli/providers/codex/provider-home';
 import { buildCodexHookSettings } from './codex-hook-settings';
 import { appendTrustedHookState } from './codex-overlay';
 import {
@@ -99,17 +101,19 @@ function assertBase64(value: string, label: string): void {
 export function buildWslCodexOverlayCreateScript(
   terminalId: string,
   hooksJsonB64: string,
+  accountHomeB64?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   assertSafeTerminalId(terminalId);
   assertBase64(hooksJsonB64, 'hooks.json');
+  if (accountHomeB64 !== undefined) assertBase64(accountHomeB64, 'account home');
   const stateRoot = getWslGuestTesseraStateRoot(env);
   return [
     'set -eu',
     `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
-    // The Windows server may carry its own CODEX_HOME. In a bridged launch it
-    // cannot describe the WSL CLI account, so always resolve from guest HOME.
-    'src="$HOME/.codex"',
+    accountHomeB64 === undefined
+      ? 'src="$HOME/.codex"'
+      : `src="$(printf '%s' '${accountHomeB64}' | base64 -d)"`,
     // stale 재생성: 이전 런치 잔여 제거(심링크는 unlink만 → 타깃 무손상).
     'rm -rf "$overlay"',
     'mkdir -p "$overlay"',
@@ -219,14 +223,19 @@ export function buildWslCodexTrustPromotionScript(
 
 export function buildWslCodexOverlayCleanupScript(
   terminalId: string,
+  accountHomeB64?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   assertSafeTerminalId(terminalId);
+  if (accountHomeB64 !== undefined) assertBase64(accountHomeB64, 'account home');
   const stateRoot = getWslGuestTesseraStateRoot(env);
   return [
     'set -eu',
     `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
-    'sessions="$HOME/.codex/sessions"',
+    accountHomeB64 === undefined
+      ? 'account="$HOME/.codex"'
+      : `account="$(printf '%s' '${accountHomeB64}' | base64 -d)"`,
+    'sessions="$account/sessions"',
     'rm -rf "$overlay"',
     // Codex persists rollout_path through the overlay name. Keep the one live
     // account link that makes that absolute path resumable; settings and hooks
@@ -241,16 +250,21 @@ export function buildWslCodexOverlayCleanupScript(
 /** Recreates the sessions-only tombstone for sessions broken by older cleanup. */
 export function buildWslCodexOverlayResumeRepairScript(
   transcriptPath: string,
+  accountHomeB64?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   const terminalId = extractCodexOverlayTerminalId(transcriptPath);
   if (!terminalId) return undefined;
   assertSafeTerminalId(terminalId);
+  if (accountHomeB64 !== undefined) assertBase64(accountHomeB64, 'account home');
   const stateRoot = getWslGuestTesseraStateRoot(env);
   return [
     'set -eu',
     `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
-    'sessions="$HOME/.codex/sessions"',
+    accountHomeB64 === undefined
+      ? 'account="$HOME/.codex"'
+      : `account="$(printf '%s' '${accountHomeB64}' | base64 -d)"`,
+    'sessions="$account/sessions"',
     'target="$overlay/sessions"',
     'if [ -d "$sessions" ] && [ ! -e "$target" ] && [ ! -L "$target" ]; then',
     '  mkdir -p "$overlay"',
@@ -319,24 +333,33 @@ export async function createCodexOverlayInWsl(
   hookStyle: HookCommandStyle = 'posix',
 ): Promise<string> {
   assertSafeTerminalId(terminalId);
-  return chainGuestOp(terminalId, () => createOverlayScripts(terminalId, hookStyle));
+  const accountHome = await resolveWslCodexAccountHome();
+  return chainGuestOp(
+    terminalId,
+    () => createOverlayScripts(terminalId, hookStyle, accountHome),
+  );
 }
 
 async function createOverlayScripts(
   terminalId: string,
   hookStyle: HookCommandStyle,
+  accountHome: string,
 ): Promise<string> {
   const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksJson = JSON.stringify(hookSettings, null, 2) + '\n';
 
   const createdStdout = await runWslScript(
-    buildWslCodexOverlayCreateScript(terminalId, toBase64(hooksJson)),
+    buildWslCodexOverlayCreateScript(
+      terminalId,
+      toBase64(hooksJson),
+      toBase64(accountHome),
+    ),
     CREATE_TIMEOUT_MS,
   );
   const overlayPath = readWslOverlayReport(createdStdout, 'TESSERA_OVERLAY');
-  const accountHome = readWslOverlayReport(createdStdout, 'TESSERA_SRC');
+  const reportedAccountHome = readWslOverlayReport(createdStdout, 'TESSERA_SRC');
   const canonicalHooksPath = readWslOverlayReport(createdStdout, 'TESSERA_HOOKS_REAL');
-  if (!overlayPath || !accountHome || !canonicalHooksPath) {
+  if (!overlayPath || !reportedAccountHome || !canonicalHooksPath) {
     throw new Error('Codex WSL overlay script did not report the overlay paths');
   }
 
@@ -348,7 +371,7 @@ async function createOverlayScripts(
     buildWslCodexOverlayFinalizeScript(
       terminalId,
       toBase64(configToml),
-      toBase64(buildCodexOverlayMarkerJson(accountHome)),
+      toBase64(buildCodexOverlayMarkerJson(reportedAccountHome)),
       toBase64(serializeCodexTrustBaseline(rawConfigToml)),
     ),
     FINALIZE_TIMEOUT_MS,
@@ -356,10 +379,14 @@ async function createOverlayScripts(
 
   guestOverlayTerminals.set(terminalId, {
     overlayPath,
-    accountHome,
+    accountHome: reportedAccountHome,
     canonicalHooksPath,
   });
-  logger.debug({ terminalId, overlayPath, accountHome }, 'codex WSL overlay created');
+  logger.debug({
+    terminalId,
+    overlayPath,
+    accountHome: reportedAccountHome,
+  }, 'codex WSL overlay created');
   return overlayPath;
 }
 
@@ -368,7 +395,13 @@ export async function repairCodexOverlayResumePathInWsl(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const terminalId = extractCodexOverlayTerminalId(transcriptPath);
-  const script = buildWslCodexOverlayResumeRepairScript(transcriptPath, env);
+  if (!terminalId) return;
+  const accountHome = await resolveWslCodexAccountHome();
+  const script = buildWslCodexOverlayResumeRepairScript(
+    transcriptPath,
+    toBase64(accountHome),
+    env,
+  );
   if (!terminalId || !script) return;
   await chainGuestOp(terminalId, () => runWslScript(script, FINALIZE_TIMEOUT_MS));
 }
@@ -415,7 +448,10 @@ export function cleanupCodexOverlayInWsl(terminalId: string): void {
       } catch (err) {
         logger.warn({ err, terminalId }, 'codex WSL overlay trust promotion skipped');
       } finally {
-        await runWslScript(buildWslCodexOverlayCleanupScript(terminalId), FINALIZE_TIMEOUT_MS);
+        await runWslScript(
+          buildWslCodexOverlayCleanupScript(terminalId, toBase64(overlay.accountHome)),
+          FINALIZE_TIMEOUT_MS,
+        );
       }
     })
       .catch((err) => {
@@ -424,4 +460,9 @@ export function cleanupCodexOverlayInWsl(terminalId: string): void {
   } catch (err) {
     logger.debug({ err, terminalId }, 'codex WSL overlay cleanup skipped');
   }
+}
+
+async function resolveWslCodexAccountHome(): Promise<string> {
+  const filesystemPath = await resolveCodexHomeForEnvironment('wsl');
+  return formatPathForAgentDisplay(filesystemPath, 'wsl');
 }

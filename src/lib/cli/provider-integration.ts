@@ -1022,4 +1022,13 @@ function normalizeProviderSkillId(providerId: string): ProviderSkillId {
   throw new Error(`Provider ${providerId} does not support the tessera-cli skill.`);
 }
 
-export const providerIntegration = createProviderIntegration();
+// The WebSocket terminal host and Next route handlers can load this module through
+// separate webpack chunks in one packaged server process. Keep the managed-Session
+// health registry shared across those module boundaries.
+const PROVIDER_INTEGRATION_KEY = Symbol.for('tessera.providerIntegration');
+const providerIntegrationGlobal = globalThis as unknown as Record<
+  symbol,
+  ProviderIntegration | undefined
+>;
+export const providerIntegration = providerIntegrationGlobal[PROVIDER_INTEGRATION_KEY]
+  ?? (providerIntegrationGlobal[PROVIDER_INTEGRATION_KEY] = createProviderIntegration());

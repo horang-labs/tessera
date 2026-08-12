@@ -4,9 +4,9 @@ import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { resolveCodexAccountHome } from '@/lib/codex-home';
 import {
   isBridgedAgentEnvironment,
-  resolveAgentHomeFilesystemPath,
   type FilesystemBrowseEnvironment,
 } from '@/lib/filesystem/path-environment';
+import { resolveCodexHomeForEnvironment } from './provider-home';
 import { parseWslUncRoot } from '@/lib/workspace-files/wsl-inotify-bridge';
 import type {
   ProviderTerminalSessionObserver,
@@ -65,19 +65,21 @@ function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | fal
 
 /**
  * Where Codex records rollouts, as a path *this server* can open. Across a
- * bridge both `os.homedir()` and `CODEX_HOME` describe the server rather than
- * the CLI, so neither can name the file the agent actually wrote.
+ * bridge both `os.homedir()` and the server process's `CODEX_HOME` describe the
+ * wrong side. Provider-home discovery probes the CLI's login shell so a custom
+ * WSL `CODEX_HOME` is observed at the same root where Codex writes rollouts.
  */
 export async function resolveCodexSessionsDir(options: {
   environment: FilesystemBrowseEnvironment;
   /** Overrides the sessions root (tests). */
   sessionsDir?: string;
+  /** Overrides provider-home discovery (tests). */
+  resolveProviderHome?: typeof resolveCodexHomeForEnvironment;
 }): Promise<string> {
   if (options.sessionsDir) return options.sessionsDir;
   if (isBridgedAgentEnvironment(options.environment)) {
     return path.join(
-      await resolveAgentHomeFilesystemPath(options.environment),
-      '.codex',
+      await (options.resolveProviderHome ?? resolveCodexHomeForEnvironment)(options.environment),
       'sessions',
     );
   }

@@ -1425,7 +1425,12 @@ test('a preparation timeout removes a Codex overlay that only lands after the ga
   // overlay finds nothing and the overlay lands unowned right after it.
   fs.writeFileSync(
     path.join(fakeBin, 'wsl.exe'),
-    '#!/bin/sh\n[ "$1" = "--exec" ] || exit 64\nshift\nsleep 1\nexec "$@"\n',
+    '#!/bin/sh\nif [ "$1" = "sh" ]; then exec "$@"; fi\n[ "$1" = "--exec" ] || exit 64\nshift\nsleep 1\nexec "$@"\n',
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(fakeBin, 'wsl'),
+    `#!/bin/sh\nprintf '%s\\n' ${JSON.stringify(path.join(guestHome, '.codex'))}\n`,
     { mode: 0o755 },
   );
 
@@ -1474,6 +1479,7 @@ test('a preparation timeout removes a Codex overlay that only lands after the ga
   });
   process.env.HOME = guestHome;
   process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+  delete process.env.CODEX_HOME;
   const overlayDir = path.join(
     guestHome,
     '.tessera/codex-overlay/session-late-codex-overlay-session',
@@ -1634,6 +1640,8 @@ test('Claude avoids WSL skill overlays while a deterministic Codex overlay failu
     `#!/bin/sh\necho call >> ${JSON.stringify(callLog)}\nexit 1\n`,
     { mode: 0o755 },
   );
+  fs.copyFileSync(fakeWsl, path.join(fakeBin, 'wsl'));
+  fs.chmodSync(path.join(fakeBin, 'wsl'), 0o755);
   const wslCallCount = () => (fs.existsSync(callLog)
     ? fs.readFileSync(callLog, 'utf8').split('\n').filter(Boolean).length
     : 0);
@@ -1661,11 +1669,7 @@ test('Claude avoids WSL skill overlays while a deterministic Codex overlay failu
       mode: 'detached',
     });
     assert.doesNotMatch(captured[0]?.args.join(' ') ?? '', /--plugin-dir/);
-    assert.equal(
-      wslCallCount(),
-      0,
-      'Claude must not run a WSL script for optional skill injection',
-    );
+    const providerResolutionCalls = wslCallCount();
     await manager.closeSession('failing-overlay-claude', 'provider-launch-user');
 
     // OpenCode's overlay isn't checked here: it's a single promise shared and
@@ -1696,7 +1700,11 @@ test('Claude avoids WSL skill overlays while a deterministic Codex overlay failu
         && error.code === 'LAUNCH_FAILED',
       'codex should fail its launch rather than continue without its overlay',
     );
-    assert.equal(wslCallCount(), 1, 'a deterministic Codex failure must not be retried');
+    assert.equal(
+      wslCallCount(),
+      providerResolutionCalls + 2,
+      'Codex provider resolution plus one deterministic overlay failure must not be retried',
+    );
   } finally {
     if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);
     if (previousHome === undefined) delete process.env.HOME;

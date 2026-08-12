@@ -210,9 +210,22 @@ test('Bridged CLI homes ignore this server\'s own config vars', async (t) => {
   assert.equal(claudeJobsDir.startsWith(serverSideConfigDir), false, claudeJobsDir);
   assert.equal(path.basename(claudeJobsDir), 'jobs');
 
-  const codexSessionsDir = await resolveCodexSessionsDir({ environment: 'wsl' });
+  const defaultAgentCodexHome = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\fixture\\.codex';
+  const codexSessionsDir = await resolveCodexSessionsDir({
+    environment: 'wsl',
+    resolveProviderHome: async () => defaultAgentCodexHome,
+  });
   assert.equal(codexSessionsDir.startsWith(serverSideConfigDir), false, codexSessionsDir);
   assert.equal(path.basename(codexSessionsDir), 'sessions');
+
+  const customAgentHome = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\fixture\\custom-codex';
+  assert.equal(
+    await resolveCodexSessionsDir({
+      environment: 'wsl',
+      resolveProviderHome: async () => customAgentHome,
+    }),
+    path.join(customAgentHome, 'sessions'),
+  );
 
   // Not bridged: the same vars are the server's own CLI and must be honoured.
   assert.equal(

@@ -14,6 +14,10 @@ const codexMemorySource = fs.readFileSync(
   new URL('../src/lib/memory/codex-memory.ts', import.meta.url),
   'utf8',
 );
+const codexProviderHomeSource = fs.readFileSync(
+  new URL('../src/lib/cli/providers/codex/provider-home.ts', import.meta.url),
+  'utf8',
+);
 const opencodeMemorySource = fs.readFileSync(
   new URL('../src/lib/memory/opencode-memory.ts', import.meta.url),
   'utf8',
@@ -33,11 +37,12 @@ const cliExecSource = fs.readFileSync(
  *  must not count as code — only the actual call should. Lets each provider be
  *  asserted in isolation without matching another provider's probe. */
 function wslProbeBlock(source: string): string {
-  const start = source.indexOf(`environment === "wsl" && process.platform === "win32"`);
-  const alt = source.indexOf(`environment === 'wsl' && process.platform === 'win32'`);
-  const from = start === -1 ? alt : start;
+  const marker = /environment === ['"]wsl['"]\s*&&\s*(?:process\.platform|getRuntimePlatform\(\)|runtimePlatform\(\)) === ['"]win32['"]/;
+  const from = source.search(marker);
   assert.notEqual(from, -1, 'expected a wsl+win32 probe block');
-  const call = source.indexOf('execCli', from);
+  const execCliCall = source.indexOf('execCli', from);
+  const injectedCall = source.indexOf('execute(', from);
+  const call = execCliCall === -1 ? injectedCall : execCliCall;
   // include the whole execCli(...) call — up to the line with the closing `);`
   const end = source.indexOf(');', call);
   const block = source.slice(from, end + 2);
@@ -62,7 +67,7 @@ test('opencode config-dir probe skips the login shell', () => {
 });
 
 test('codex home probe keeps the login shell (reads $CODEX_HOME from rc)', () => {
-  const block = wslProbeBlock(codexMemorySource);
+  const block = wslProbeBlock(codexProviderHomeSource);
   assert.doesNotMatch(block, /loginShell:\s*false/,
     'codex must keep the login shell so it sees the same $CODEX_HOME the CLI does');
   assert.match(block, /CODEX_HOME/, 'sanity: this is the codex probe');
