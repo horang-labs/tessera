@@ -10,6 +10,10 @@ const stopSource = fs.readFileSync(
   new URL('../scripts/stop-electron-test-session.ps1', import.meta.url),
   'utf8',
 );
+const electronMainSource = fs.readFileSync(
+  new URL('../electron/main.ts', import.meta.url),
+  'utf8',
+);
 
 test('isolated Electron launcher assigns a distinct packaged server port', () => {
   assert.match(launcherSource, /\[int\]\$ServerBasePort = 32124/);
@@ -41,4 +45,24 @@ test('failed launches with no surviving process can still be cleaned by manifest
     stopSource,
     /\[AllowEmptyCollection\(\)\][\s\S]*\[AllowNull\(\)\][\s\S]*\[array\]\$ProcessIds/,
   );
+});
+
+test('owned Downloads artifacts can be permanently removed without the Linux trash', () => {
+  assert.match(launcherSource, /portableArtifact = \$PortableArtifactPath/);
+  assert.match(stopSource, /\[switch\]\$RemoveBuildArtifacts/);
+  assert.match(stopSource, /\$manifest\.portableArtifact/);
+  assert.match(stopSource, /GetFolderPath\('UserProfile'\)/);
+  assert.match(stopSource, /Test-PathWithinRoot -Path \$appDirectory -Root \$downloads/);
+  assert.match(stopSource, /Refusing to remove a nested build directory/);
+  assert.match(stopSource, /Remove-PathWithRetry -Path \$appDirectory/);
+  assert.match(stopSource, /Remove-PathWithRetry -Path \$portableArtifact/);
+  assert.doesNotMatch(stopSource, /gio\s+trash/i);
+});
+
+test('test window titles stay identifiable after renderer page-title updates', () => {
+  assert.match(electronMainSource, /resolveElectronWindowTitle\('Tessera', electronTestInstance\)/);
+  assert.match(electronMainSource, /resolveElectronWindowTitle\('Tessera Board', electronTestInstance\)/);
+  assert.match(electronMainSource, /webContents\.on\('page-title-updated'/);
+  assert.match(electronMainSource, /event\.preventDefault\(\)/);
+  assert.match(electronMainSource, /win\.setTitle\(title\)/);
 });
