@@ -505,6 +505,10 @@ async function discoverKnownProviderSkillScopes(stateDirectory: string): Promise
               JSON.stringify([agentEnvironment, providerId]),
               { agentEnvironment, providerId },
             );
+            errors.push(
+              `Legacy ${providerId} skill state for ${agentEnvironment} does not record its provider home; `
+              + 'earlier installations cannot be verified automatically.',
+            );
           }
         }
       }

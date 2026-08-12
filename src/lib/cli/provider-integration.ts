@@ -9,7 +9,7 @@ import type {
   ProviderLifecycleIntegration,
   ProviderLifecycleResult,
 } from './providers/provider-contract';
-import { createCodexLifecycleHookIntegration } from './providers/codex/lifecycle-hook-integration';
+import { cliProviderRegistry } from './providers/registry';
 import {
   createProviderSkillManager,
   detectSupportedProviderSkills,
@@ -179,6 +179,10 @@ interface ProviderIntegrationOptions extends Partial<Omit<
   resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
   resolveDefaultEnvironment?: () => Promise<AgentEnvironment>;
   lifecycle?: ProviderLifecycleIntegration;
+  resolveLifecycleCleanupTargets?: () => Array<{
+    providerId: string;
+    integration: ProviderLifecycleIntegration;
+  }>;
   healthRefreshIntervalMs?: number;
 }
 
@@ -261,7 +265,14 @@ export function createProviderIntegration(
       ? { renameProviderSkillPath: options.renameProviderSkillPath }
       : {}),
   });
-  const cleanupLifecycle = options.lifecycle ?? createCodexLifecycleHookIntegration();
+  const resolveLifecycleCleanupTargets = options.resolveLifecycleCleanupTargets ?? (() => (
+    cliProviderRegistry.getProviderIds().flatMap((providerId) => {
+      const provider = cliProviderRegistry.getProvider(providerId);
+      if (provider.getProviderIntegrationRequirements().lifecycle === 'not-applicable') return [];
+      const integration = provider.getLifecycleIntegration?.();
+      return integration ? [{ providerId, integration }] : [];
+    })
+  ));
   type ActiveHealth = 'healthy' | 'degraded';
   interface ManagedSessionScope {
     health: ActiveHealth;
@@ -461,23 +472,45 @@ export function createProviderIntegration(
   return {
     manageSkills: (request) => skillManager.manage(request),
     async cleanupOwnedArtifacts() {
-      const [lifecycleAttempt, skillAttempt] = await Promise.allSettled([
-        cleanupLifecycle.cleanupKnownArtifacts
-          ? cleanupLifecycle.cleanupKnownArtifacts()
-          : Promise.resolve({
-              artifacts: [],
-              discoveryErrors: ['Codex lifecycle cleanup is unavailable.'],
-            }),
-        skillManager.cleanupKnownArtifacts(),
+      let lifecycleTargets: ReturnType<typeof resolveLifecycleCleanupTargets> = [];
+      const lifecycleTargetProblems: ProviderIntegrationCleanupProblem[] = [];
+      try {
+        lifecycleTargets = resolveLifecycleCleanupTargets();
+      } catch (error) {
+        lifecycleTargetProblems.push({
+          artifact: 'lifecycle-hook',
+          message: error instanceof Error ? error.message : String(error),
+          recovery: 'Restore provider registration and retry Tessera removal.',
+        });
+      }
+      const [lifecycleAttempts, skillAttempt] = await Promise.all([
+        Promise.all(lifecycleTargets.map(async ({ providerId, integration }) => {
+          if (!integration.cleanupKnownArtifacts) {
+            return {
+              providerId,
+              result: {
+                artifacts: [],
+                discoveryErrors: [`${providerId} lifecycle cleanup is unavailable.`],
+              },
+            };
+          }
+          try {
+            return { providerId, result: await integration.cleanupKnownArtifacts() };
+          } catch (error) {
+            return {
+              providerId,
+              result: {
+                artifacts: [],
+                discoveryErrors: [error instanceof Error ? error.message : String(error)],
+              },
+            };
+          }
+        })),
+        skillManager.cleanupKnownArtifacts().then(
+          (value) => ({ status: 'fulfilled' as const, value }),
+          (reason: unknown) => ({ status: 'rejected' as const, reason }),
+        ),
       ]);
-      const lifecycleCleanup = lifecycleAttempt.status === 'fulfilled'
-        ? lifecycleAttempt.value
-        : {
-            artifacts: [],
-            discoveryErrors: [lifecycleAttempt.reason instanceof Error
-              ? lifecycleAttempt.reason.message
-              : String(lifecycleAttempt.reason)],
-          };
       const skillCleanup = skillAttempt.status === 'fulfilled'
         ? skillAttempt.value
         : {
@@ -487,20 +520,22 @@ export function createProviderIntegration(
               : String(skillAttempt.reason)],
           };
       const artifacts: ProviderIntegrationCleanupArtifact[] = [
-        ...lifecycleCleanup.artifacts.map((artifact) => ({
-          artifact: 'lifecycle-hook' as const,
-          providerId: 'codex',
-          agentEnvironment: artifact.environment,
-          providerHome: artifact.providerHome,
-          state: artifact.state,
-          ...(artifact.message ? { message: artifact.message } : {}),
-          ...(artifact.state === 'conflict' || artifact.state === 'failed'
-            ? {
-                recovery: `Review the Codex lifecycle hook in ${artifact.providerHome}, preserve `
-                  + 'user changes, resolve the reported problem, and retry Tessera removal.',
-              }
-            : {}),
-        })),
+        ...lifecycleAttempts.flatMap(({ providerId, result }) => (
+          result.artifacts.map((artifact) => ({
+            artifact: 'lifecycle-hook' as const,
+            providerId,
+            agentEnvironment: artifact.environment,
+            providerHome: artifact.providerHome,
+            state: artifact.state,
+            ...(artifact.message ? { message: artifact.message } : {}),
+            ...(artifact.state === 'conflict' || artifact.state === 'failed'
+              ? {
+                  recovery: `Review the ${providerId} lifecycle hook in ${artifact.providerHome}, `
+                    + 'preserve user changes, resolve the reported problem, and retry Tessera removal.',
+                }
+              : {}),
+          }))
+        )),
         ...skillCleanup.artifacts.map((artifact) => ({
           artifact: 'provider-skill' as const,
           providerId: artifact.providerId,
@@ -519,15 +554,21 @@ export function createProviderIntegration(
         })),
       ];
       const problems: ProviderIntegrationCleanupProblem[] = [
-        ...lifecycleCleanup.discoveryErrors.map((message) => ({
-          artifact: 'lifecycle-hook' as const,
-          message,
-          recovery: 'Restore readable Tessera Codex lifecycle state and retry Tessera removal.',
-        })),
+        ...lifecycleTargetProblems,
+        ...lifecycleAttempts.flatMap(({ providerId, result }) => (
+          result.discoveryErrors.map((message) => ({
+            artifact: 'lifecycle-hook' as const,
+            message,
+            recovery: `Restore readable Tessera ${providerId} lifecycle state and retry Tessera removal.`,
+          }))
+        )),
         ...skillCleanup.discoveryErrors.map((message) => ({
           artifact: 'provider-skill' as const,
           message,
-          recovery: 'Restore readable Tessera provider-skill state and retry Tessera removal.',
+          recovery: message.startsWith('Legacy ')
+            ? 'Inspect every provider home previously selected in that Agent Environment, preserve '
+              + 'user-owned content, remove only a confirmed Tessera-owned skill, and retry Tessera removal.'
+            : 'Restore readable Tessera provider-skill state and retry Tessera removal.',
         })),
       ];
       return {

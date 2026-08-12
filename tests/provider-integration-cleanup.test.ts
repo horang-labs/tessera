@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -134,6 +135,16 @@ function createHarness() {
       stateDirectory: path.join(root, 'state', 'provider-integrations', 'codex'),
       readTesseraVersion: () => '1.0.0',
     }),
+    resolveLifecycleCleanupTargets: () => [{
+      providerId: 'codex',
+      integration: createCodexLifecycleHookIntegration({
+        resolveProviderHome: async (environment) => lifecycleHomes[environment],
+        readVersion: async () => '0.146.0',
+        request: createFakeCodexRequest(lifecycleHomes),
+        stateDirectory: path.join(root, 'state', 'provider-integrations', 'codex'),
+        readTesseraVersion: () => '1.0.0',
+      }),
+    }],
   });
 
   return {
@@ -399,6 +410,16 @@ test('application cleanup removes artifacts left in earlier provider homes withi
       stateDirectory: path.join(root, 'state', 'provider-integrations', 'codex'),
       readTesseraVersion: () => '1.0.0',
     }),
+    resolveLifecycleCleanupTargets: () => [{
+      providerId: 'codex',
+      integration: createCodexLifecycleHookIntegration({
+        resolveProviderHome: async () => lifecycleHome,
+        readVersion: async () => '0.146.0',
+        request: createFakeCodexRequest({ native: lifecycleHomes[0], wsl: lifecycleHomes[0] }),
+        stateDirectory: path.join(root, 'state', 'provider-integrations', 'codex'),
+        readTesseraVersion: () => '1.0.0',
+      }),
+    }],
   });
   const lifecycleRequest = {
     provider: codexProvider,
@@ -451,6 +472,20 @@ test('one artifact-family failure does not prevent cleanup of other known artifa
         throw new Error('injected lifecycle discovery failure');
       },
     },
+    resolveLifecycleCleanupTargets: () => [{
+      providerId: 'codex',
+      integration: {
+        async inspect() {
+          return { state: 'absent', trust: 'unchecked' };
+        },
+        async install() {
+          return { state: 'installed', trust: 'trusted' };
+        },
+        async cleanupKnownArtifacts() {
+          throw new Error('injected lifecycle discovery failure');
+        },
+      },
+    }],
   });
   await integration.manageSkills({
     operation: 'install',
@@ -469,4 +504,47 @@ test('one artifact-family failure does not prevent cleanup of other known artifa
   assert.equal(result.problems.length, 1);
   assert.equal(result.problems[0].artifact, 'lifecycle-hook');
   assert.match(result.problems[0].message, /injected lifecycle discovery failure/);
+});
+
+test('legacy skill state never reports cleanup complete when an earlier provider home is unknowable', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-cleanup-legacy-skill-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const currentHome = path.join(root, 'current-codex-home');
+  const previousHome = path.join(root, 'previous-codex-home');
+  const stateDirectory = path.join(root, 'state', 'provider-skills');
+  fs.mkdirSync(path.join(currentHome, 'skills'), { recursive: true });
+  fs.mkdirSync(path.join(previousHome, 'skills', 'tessera-cli'), { recursive: true });
+  fs.writeFileSync(
+    path.join(previousHome, 'skills', 'tessera-cli', 'SKILL.md'),
+    'previous Tessera installation whose exact legacy digest is unavailable\n',
+  );
+  fs.mkdirSync(stateDirectory, { recursive: true });
+  const legacyUserKey = createHash('sha256').update('legacy-owner').digest('hex');
+  fs.writeFileSync(path.join(stateDirectory, `${legacyUserKey}.json`), `${JSON.stringify({
+    version: 1,
+    environments: { native: { codex: { consent: 'granted' } } },
+  }, null, 2)}\n`);
+  const integration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'native',
+    detectSkillProviders: async () => ['codex'],
+    resolveProviderSkillHome: async () => currentHome,
+    providerSkillStateDirectory: stateDirectory,
+    readProviderSkillFiles: () => [{ relativePath: 'SKILL.md', content: TEST_SKILL }],
+    resolveLifecycleCleanupTargets: () => [],
+  });
+
+  const result = await integration.cleanupOwnedArtifacts();
+
+  assert.equal(result.complete, false);
+  assert.deepEqual(result.artifacts.map(({ providerId, agentEnvironment, state }) => ({
+    providerId,
+    agentEnvironment,
+    state,
+  })), [{ providerId: 'codex', agentEnvironment: 'native', state: 'absent' }]);
+  assert.match(result.problems[0].message, /earlier installations cannot be verified/i);
+  assert.match(result.problems[0].recovery, /every provider home previously selected/i);
+  assert.equal(
+    fs.readFileSync(path.join(previousHome, 'skills', 'tessera-cli', 'SKILL.md'), 'utf8'),
+    'previous Tessera installation whose exact legacy digest is unavailable\n',
+  );
 });
