@@ -56,3 +56,57 @@ test('provider resume history refuses to merge a different conversation', () => 
     null,
   );
 });
+
+test('provider resume history compares provider-facing translations and stable tool identity', () => {
+  const canonical: SessionHistoryEvent[] = [
+    {
+      ...user('작업 폴더를 알려줘', '2026-08-12T00:00:00.000Z'),
+      messageId: 'translated-input',
+    },
+    {
+      v: 1,
+      type: 'message_translation',
+      timestamp: '2026-08-12T00:00:00.100Z',
+      targetMessageId: 'translated-input',
+      content: 'Tell me the working directory',
+      sourceLang: 'ko',
+      targetLang: 'en',
+      status: 'completed',
+    },
+    {
+      v: 1,
+      type: 'tool_call',
+      timestamp: '2026-08-12T00:00:01.000Z',
+      toolName: 'Bash',
+      toolParams: {
+        command: 'pwd',
+        cwd: '/workspace',
+        commandActions: [{ type: 'read', command: 'pwd' }],
+        processId: 'live-process-42',
+      },
+      status: 'completed',
+      output: '/workspace\nProcess exited with code 0',
+      toolUseId: 'call-42',
+    },
+  ];
+  const provider: SessionHistoryEvent[] = [
+    user('Tell me the working directory', '2026-08-12T00:00:00.000Z'),
+    {
+      v: 1,
+      type: 'tool_call',
+      timestamp: '2026-08-12T00:00:01.000Z',
+      toolName: 'Bash',
+      toolParams: { cwd: '/workspace', command: 'pwd' },
+      status: 'completed',
+      output: '/workspace',
+      toolUseId: 'call-42',
+    },
+    assistant('The working directory is /workspace.', '2026-08-12T00:00:02.000Z'),
+  ];
+
+  assert.deepEqual(
+    selectProviderResumeHistorySuffix(canonical, provider),
+    [provider[2]],
+    'display translations and live-only tool metadata must not hide an external suffix',
+  );
+});
