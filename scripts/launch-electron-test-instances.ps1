@@ -238,19 +238,40 @@ if (-not $PrepareOnly -and (Test-Path -LiteralPath $sessionManifestPath -PathTyp
   Remove-Item -LiteralPath $sessionManifestPath -Force
 }
 
-$environmentNames = @(
+$isolatedLaunchEnvironmentNames = [System.Collections.Generic.HashSet[string]]::new(
+  [StringComparer]::OrdinalIgnoreCase
+)
+foreach ($name in @(
   'TESSERA_ELECTRON_TEST_INSTANCE',
   'TESSERA_ELECTRON_TEST_ROOT',
   'TESSERA_ELECTRON_TEST_SERVER_PORT',
-  'WSL_DISTRO_NAME',
+  'WSL_DISTRO_NAME'
+)) {
+  $isolatedLaunchEnvironmentNames.Add($name) | Out-Null
+}
+
+$inheritedAgentEnvironmentNames = @(
+  [Environment]::GetEnvironmentVariables('Process').Keys |
+    ForEach-Object { [string]$_ } |
+    Where-Object {
+      -not $isolatedLaunchEnvironmentNames.Contains($_) -and (
+        $_ -like 'TESSERA_*' -or
+        $_ -like 'CODEX_*' -or
+        $_ -like 'CLAUDE_*' -or
+        $_ -eq 'CLAUDECODE' -or
+        $_ -like 'OPENCODE_*'
+      )
+    }
+)
+$clearedEnvironmentNames = @(
+  'WSLENV',
+  'XDG_DATA_HOME',
   'ELECTRON_RUN_AS_NODE',
-  'TESSERA_DEV_PORT',
-  'TESSERA_APP_ROOT',
-  'TESSERA_PRODUCTION_DB',
-  'TESSERA_ELECTRON_SERVER',
   'ELECTRON_CHILD',
   'NODE_ENV'
-)
+) + $inheritedAgentEnvironmentNames | Sort-Object -Unique
+$environmentNames = @($isolatedLaunchEnvironmentNames) + $clearedEnvironmentNames |
+  Sort-Object -Unique
 $savedEnvironment = @{}
 foreach ($name in $environmentNames) {
   $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -307,15 +328,7 @@ try {
     $env:TESSERA_ELECTRON_TEST_ROOT = $TestRoot
     $env:TESSERA_ELECTRON_TEST_SERVER_PORT = [string]$testServerPort
     $env:WSL_DISTRO_NAME = $WslDistro
-    foreach ($name in @(
-      'ELECTRON_RUN_AS_NODE',
-      'TESSERA_DEV_PORT',
-      'TESSERA_APP_ROOT',
-      'TESSERA_PRODUCTION_DB',
-      'TESSERA_ELECTRON_SERVER',
-      'ELECTRON_CHILD',
-      'NODE_ENV'
-    )) {
+    foreach ($name in $clearedEnvironmentNames) {
       Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
     }
 
