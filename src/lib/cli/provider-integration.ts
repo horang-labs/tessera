@@ -130,6 +130,10 @@ export interface ProviderIntegration {
   updateLifecycle(
     request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
+  /**
+   * Removes the artifact from the currently resolved Authoritative Provider Home.
+   * Application-uninstall cleanup across every known home is a separate workflow.
+   */
   removeLifecycle(
     request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
@@ -295,9 +299,7 @@ export function createProviderIntegration(
         && result.consent !== 'revoked'
         && result.consent !== 'not-granted'
         ? 'healthy'
-        : result.consent === 'granted' && result.state !== 'absent'
-          ? 'degraded'
-          : 'blocked',
+        : 'blocked',
     },
     ...(result.guidance ? { guidance: result.guidance } : {}),
   });

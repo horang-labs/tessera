@@ -9,7 +9,7 @@ import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
-import { providerIntegration } from '@/lib/cli/provider-integration';
+import { withManagedSessionIntegrationHealth } from '@/lib/session/managed-session-integration-health';
 import {
   getProjectViewSessions,
   getProjectViewSessionsByStatus,
@@ -77,16 +77,14 @@ export async function GET(
       ? getProjectViewSessionsByStatus(encodedDir, statusGroup, { limit, cursor })
       : getProjectViewSessions(encodedDir, { limit, cursor });
 
-    const mapped = result.sessions.map((row) => {
-      const integrationHealth = providerIntegration.getManagedSessionHealth(row.id);
-      return {
+    const mapped = result.sessions.map((row) => (
+      withManagedSessionIntegrationHealth({
         ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
         projectDir: encodedDir,
         lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
         ...(runtimeConfigs.get(row.id) ?? {}),
-        ...(integrationHealth ? { integrationHealth } : {}),
-      };
-    });
+      })
+    ));
     // Diff badge shows for any session whose work dir is a git worktree —
     // standalone chats included, not just worktree-branch-bound sessions. A
     // chat created inside a worktree directory has a workDir but no

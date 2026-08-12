@@ -334,7 +334,7 @@ test('unsupported Codex fails closed with minimum-version guidance and never att
   assert.equal(result.lifecycle.state, 'unavailable');
   assert.equal(result.lifecycle.trust, 'unavailable');
   assert.equal(result.lifecycle.consent, 'granted');
-  assert.equal(result.health.state, 'degraded');
+  assert.equal(result.health.state, 'blocked');
   assert.equal(result.guidance?.minimumVersion, '0.146.0');
   assert.equal(result.guidance?.updateCommand, 'codex update');
   assert.match(result.guidance?.message ?? '', /0\.146\.0/);
@@ -347,7 +347,7 @@ test('unsupported Codex fails closed with minimum-version guidance and never att
     workDir: root,
   });
   assert.equal(persistedConsent.lifecycle.consent, 'granted');
-  assert.equal(persistedConsent.health.state, 'degraded');
+  assert.equal(persistedConsent.health.state, 'blocked');
   assert.equal(persistedConsent.guidance?.minimumVersion, '0.146.0');
 });
 
@@ -416,7 +416,7 @@ test('ordinary trust failures block without false Codex upgrade guidance', async
 
   assert.equal(result.lifecycle.state, 'installed');
   assert.equal(result.lifecycle.trust, 'untrusted');
-  assert.equal(result.health.state, 'degraded');
+  assert.equal(result.health.state, 'blocked');
   assert.equal(result.guidance, undefined);
   assert.match(result.lifecycle.message ?? '', /permission denied/);
 });
@@ -642,7 +642,7 @@ test('consented lifecycle refreshes before launch, degrades on conflict, and rev
   assert.equal(stale.lifecycle.consent, 'granted');
   assert.equal(stale.lifecycle.installedVersion, '1.0.0');
   assert.equal(stale.lifecycle.currentVersion, '1.1.0');
-  assert.equal(stale.health.state, 'degraded');
+  assert.equal(stale.health.state, 'blocked');
 
   const trustWritesBeforeLaunch = fakeCodex.calls.filter(
     (call) => call.method === 'config/batchWrite',
@@ -668,7 +668,7 @@ test('consented lifecycle refreshes before launch, degrades on conflict, and rev
   const degraded = await integration.inspectLifecycle(request);
   assert.equal(degraded.lifecycle.state, 'conflict');
   assert.equal(degraded.lifecycle.consent, 'granted');
-  assert.equal(degraded.health.state, 'degraded');
+  assert.equal(degraded.health.state, 'blocked');
   assert.equal(fs.readFileSync(path.join(home, 'hooks.json'), 'utf8'), modifiedText);
   await assert.rejects(integration.resolveLaunch(request), ProviderIntegrationLaunchBlockedError);
 

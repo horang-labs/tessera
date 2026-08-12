@@ -86,7 +86,10 @@ export interface ProviderLifecycleIntegration {
   install(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
   /** Refreshes a consented artifact, including explicit conflict resolution. */
   update?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
-  /** Removes the managed artifact and revokes automatic management consent. */
+  /**
+   * Removes the managed artifact from this Authoritative Provider Home and revokes
+   * automatic management consent for that home. This is not an all-home uninstall.
+   */
   remove?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
   /** Refreshes a consented artifact before launch without resolving conflicts. */
   maintain?(context: ProviderLifecycleContext): Promise<ProviderLifecycleResult>;
