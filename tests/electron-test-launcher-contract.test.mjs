@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const launcherSource = fs.readFileSync(
@@ -19,28 +20,54 @@ const canRunWindowsPowerShell = Boolean(
   process.env.WSL_DISTRO_NAME
   && fs.existsSync(windowsPowerShellPath),
 );
+const execFileAsync = promisify(execFile);
 
-function runLaunchEnvironmentHarness(mode) {
+function launchEnvironmentHarnessArguments(mode) {
   const harnessPath = fileURLToPath(
     new URL('./fixtures/electron-launch-environment-harness.ps1', import.meta.url),
   );
   const launcherPath = fileURLToPath(
     new URL('../scripts/launch-electron-test-instances.ps1', import.meta.url),
   );
+  const stopperPath = fileURLToPath(
+    new URL('../scripts/stop-electron-test-session.ps1', import.meta.url),
+  );
   const toWindowsPath = (value) => execFileSync('wslpath', ['-w', value], {
     encoding: 'utf8',
   }).trim();
-  const stdout = execFileSync(windowsPowerShellPath, [
+  return [
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-File', toWindowsPath(harnessPath),
     '-Launcher', toWindowsPath(launcherPath),
+    '-Stopper', toWindowsPath(stopperPath),
     '-Mode', mode,
-  ], {
+  ];
+}
+
+function runLaunchEnvironmentHarness(mode) {
+  const stdout = execFileSync(windowsPowerShellPath, launchEnvironmentHarnessArguments(mode), {
     encoding: 'utf8',
     timeout: 30_000,
   });
   return JSON.parse(stdout);
+}
+
+async function runLaunchEnvironmentHarnessAsync(mode) {
+  const { stdout } = await execFileAsync(
+    windowsPowerShellPath,
+    launchEnvironmentHarnessArguments(mode),
+    { encoding: 'utf8', timeout: 30_000 },
+  );
+  return JSON.parse(stdout);
+}
+
+function assertHarnessCleanup(result) {
+  assert.equal(result.cleanupError, null);
+  assert.equal(result.remainingWslStateRoots.length, 0);
+  for (const root of result.wslStateRoots) {
+    assert.equal(fs.existsSync(root), false, `launcher-owned WSL state remained: ${root}`);
+  }
 }
 
 function expectedRestoredEnvironment(result) {
@@ -65,16 +92,21 @@ test('isolated Electron child launches cannot inherit caller agent-session state
   const result = runLaunchEnvironmentHarness('Success');
 
   assert.equal(result.launchError, null);
+  assert.match(result.sessionId, /^env-contract-t355-/);
   assert.equal(result.launches.length, 2);
   for (const [index, launch] of result.launches.entries()) {
     assertHostileEnvironmentCleared(result, launch, `into launch ${index + 1}`);
-    assert.equal(launch.environment.TESSERA_ELECTRON_TEST_INSTANCE, `env-contract-${index + 1}`);
+    assert.equal(
+      launch.environment.TESSERA_ELECTRON_TEST_INSTANCE,
+      `${result.sessionId}-${index + 1}`,
+    );
     assert.equal(launch.environment.TESSERA_ELECTRON_TEST_ROOT.endsWith('tessera-launch-env-'), false);
     assert.match(launch.environment.TESSERA_ELECTRON_TEST_ROOT, /tessera-launch-env-[a-f0-9]{32}$/);
     assert.match(launch.environment.TESSERA_ELECTRON_TEST_SERVER_PORT, /^\d+$/);
     assert.equal(launch.environment.WSL_DISTRO_NAME, 'Ubuntu-24.04');
   }
   assert.deepEqual(result.restoredEnvironment, expectedRestoredEnvironment(result));
+  assertHarnessCleanup(result);
 });
 
 test('isolated Electron launcher restores caller environment when child launch fails', {
@@ -86,6 +118,35 @@ test('isolated Electron launcher restores caller environment when child launch f
   assert.equal(result.launches.length, 1);
   assertHostileEnvironmentCleared(result, result.launches[0], 'before failure');
   assert.deepEqual(result.restoredEnvironment, expectedRestoredEnvironment(result));
+  assertHarnessCleanup(result);
+});
+
+test('launcher cleanup fails closed without changing a mismatched WSL owner marker', {
+  skip: !canRunWindowsPowerShell,
+}, () => {
+  const result = runLaunchEnvironmentHarness('MismatchedOwner');
+
+  assert.match(result.cleanupError, /Refusing to remove non-owned WSL fixture root/);
+  assert.equal(result.mismatchedMarkerPreserved, true);
+  assert.equal(result.finalCleanupError, null);
+  assert.equal(result.remainingWslStateRoots.length, 0);
+  for (const root of result.wslStateRoots) {
+    assert.equal(fs.existsSync(root), false, `restored owner cleanup left WSL state: ${root}`);
+  }
+});
+
+test('parallel launcher contract harnesses use collision-free owned namespaces', {
+  skip: !canRunWindowsPowerShell,
+}, async () => {
+  const results = await Promise.all([
+    runLaunchEnvironmentHarnessAsync('Success'),
+    runLaunchEnvironmentHarnessAsync('Success'),
+  ]);
+
+  assert.notEqual(results[0].sessionId, results[1].sessionId);
+  for (const result of results) {
+    assertHarnessCleanup(result);
+  }
 });
 
 test('isolated Electron launcher fail-closes current and future agent namespaces', () => {
