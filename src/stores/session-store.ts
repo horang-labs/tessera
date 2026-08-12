@@ -48,6 +48,8 @@ export interface SessionState {
   // Core state - NEW (project-grouped)
   projects: ProjectGroup[];
   activeSessionId: string | null;
+  /** True after the first successful Project load attempts saved/fallback restoration. */
+  didHydrateActiveSession: boolean;
   /** Project containing the most recently activated real conversation. */
   lastActiveProjectDir: string | null;
   runtimeLiveness: SessionRuntimeLiveness;
@@ -403,6 +405,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   projects: [],
   activeSessionId: null,
+  didHydrateActiveSession: false,
   lastActiveProjectDir: null,
   runtimeLiveness: createSessionRuntimeLiveness(),
   retainedSessions: {},
@@ -497,37 +500,43 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         useChatStore.getState().setTurnsInFlight(generatingSessionIds);
       }
 
-      // Restore previously active session from sessionStorage, or auto-activate
-      let autoActiveId: string | null = null;
-      try {
-        const savedId = sessionStorage.getItem('activeSessionId');
-        // Verify saved session still exists in loaded projects
-        if (savedId) {
-          const exists = loadedProjects.some((p) =>
-            p.sessions.some((s) => s.id === savedId)
+      if (!get().didHydrateActiveSession) {
+        // Restore previously active session from sessionStorage, or auto-activate.
+        // This is startup hydration, not a general Project reload behavior: after
+        // it completes, null is a deliberate board-only selection that passive
+        // mutation refreshes must preserve.
+        let autoActiveId: string | null = null;
+        try {
+          const savedId = sessionStorage.getItem('activeSessionId');
+          // Verify saved session still exists in loaded projects
+          if (savedId) {
+            const exists = loadedProjects.some((p) =>
+              p.sessions.some((s) => s.id === savedId)
+            );
+            if (exists) autoActiveId = savedId;
+          }
+        } catch {
+          // Ignore storage errors
+        }
+
+        // Fallback: prefer the last conversation project, then the current project.
+        if (!autoActiveId) {
+          const lastActiveProject = loadedProjects.find(
+            (project) => project.encodedDir === lastActiveProjectDir,
           );
-          if (exists) autoActiveId = savedId;
+          const currentProject = loadedProjects.find((project) => project.isCurrent);
+          const fallbackProject = [lastActiveProject, currentProject, ...loadedProjects]
+            .find((project) => project && project.sessions.length > 0);
+          if (fallbackProject) {
+            const runningSession = fallbackProject.sessions.find((session) => session.isRunning);
+            autoActiveId = runningSession?.id ?? fallbackProject.sessions[0].id;
+          }
         }
-      } catch {
-        // Ignore storage errors
-      }
 
-      // Fallback: prefer the last conversation project, then the current project.
-      if (!autoActiveId) {
-        const lastActiveProject = loadedProjects.find(
-          (project) => project.encodedDir === lastActiveProjectDir,
-        );
-        const currentProject = loadedProjects.find((project) => project.isCurrent);
-        const fallbackProject = [lastActiveProject, currentProject, ...loadedProjects]
-          .find((project) => project && project.sessions.length > 0);
-        if (fallbackProject) {
-          const runningSession = fallbackProject.sessions.find((session) => session.isRunning);
-          autoActiveId = runningSession?.id ?? fallbackProject.sessions[0].id;
+        if (autoActiveId && !get().activeSessionId) {
+          get().setActiveSession(autoActiveId);
         }
-      }
-
-      if (autoActiveId && !get().activeSessionId) {
-        get().setActiveSession(autoActiveId);
+        set({ didHydrateActiveSession: true });
       }
     } catch (err) {
       console.error('Failed to load projects:', err);
