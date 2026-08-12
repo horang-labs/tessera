@@ -137,6 +137,12 @@ export interface ProviderIntegrationCleanupResult {
   problems: ProviderIntegrationCleanupProblem[];
 }
 
+interface ProviderLifecycleCleanupTarget {
+  providerId: string;
+  integration?: ProviderLifecycleIntegration;
+  discoveryError?: string;
+}
+
 export interface ProviderIntegration {
   resolveLaunch(
     request: ProviderIntegrationLaunchRequest,
@@ -179,10 +185,7 @@ interface ProviderIntegrationOptions extends Partial<Omit<
   resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
   resolveDefaultEnvironment?: () => Promise<AgentEnvironment>;
   lifecycle?: ProviderLifecycleIntegration;
-  resolveLifecycleCleanupTargets?: () => Array<{
-    providerId: string;
-    integration: ProviderLifecycleIntegration;
-  }>;
+  resolveLifecycleCleanupTargets?: () => ProviderLifecycleCleanupTarget[];
   healthRefreshIntervalMs?: number;
 }
 
@@ -265,14 +268,28 @@ export function createProviderIntegration(
       ? { renameProviderSkillPath: options.renameProviderSkillPath }
       : {}),
   });
-  const resolveLifecycleCleanupTargets = options.resolveLifecycleCleanupTargets ?? (() => (
-    cliProviderRegistry.getProviderIds().flatMap((providerId) => {
-      const provider = cliProviderRegistry.getProvider(providerId);
-      if (provider.getProviderIntegrationRequirements().lifecycle === 'not-applicable') return [];
-      const integration = provider.getLifecycleIntegration?.();
-      return integration ? [{ providerId, integration }] : [];
-    })
-  ));
+  const resolveLifecycleCleanupTargets: () => ProviderLifecycleCleanupTarget[] = (
+    options.resolveLifecycleCleanupTargets ?? (() => (
+      cliProviderRegistry.getProviderIds().flatMap((providerId): ProviderLifecycleCleanupTarget[] => {
+        try {
+          const provider = cliProviderRegistry.getProvider(providerId);
+          if (provider.getProviderIntegrationRequirements().lifecycle === 'not-applicable') return [];
+          const integration = provider.getLifecycleIntegration?.();
+          return [{
+            providerId,
+            ...(integration
+              ? { integration }
+              : { discoveryError: `${providerId} lifecycle cleanup is unavailable.` }),
+          }];
+        } catch (error) {
+          return [{
+            providerId,
+            discoveryError: error instanceof Error ? error.message : String(error),
+          }];
+        }
+      })
+    ))
+  );
   type ActiveHealth = 'healthy' | 'degraded';
   interface ManagedSessionScope {
     health: ActiveHealth;
@@ -484,13 +501,13 @@ export function createProviderIntegration(
         });
       }
       const [lifecycleAttempts, skillAttempt] = await Promise.all([
-        Promise.all(lifecycleTargets.map(async ({ providerId, integration }) => {
-          if (!integration.cleanupKnownArtifacts) {
+        Promise.all(lifecycleTargets.map(async ({ providerId, integration, discoveryError }) => {
+          if (discoveryError || !integration?.cleanupKnownArtifacts) {
             return {
               providerId,
               result: {
                 artifacts: [],
-                discoveryErrors: [`${providerId} lifecycle cleanup is unavailable.`],
+                discoveryErrors: [discoveryError ?? `${providerId} lifecycle cleanup is unavailable.`],
               },
             };
           }
@@ -515,9 +532,12 @@ export function createProviderIntegration(
         ? skillAttempt.value
         : {
             artifacts: [],
-            discoveryErrors: [skillAttempt.reason instanceof Error
-              ? skillAttempt.reason.message
-              : String(skillAttempt.reason)],
+            discoveryProblems: [{
+              code: 'KNOWN_STATE_UNREADABLE' as const,
+              message: skillAttempt.reason instanceof Error
+                ? skillAttempt.reason.message
+                : String(skillAttempt.reason),
+            }],
           };
       const artifacts: ProviderIntegrationCleanupArtifact[] = [
         ...lifecycleAttempts.flatMap(({ providerId, result }) => (
@@ -562,10 +582,10 @@ export function createProviderIntegration(
             recovery: `Restore readable Tessera ${providerId} lifecycle state and retry Tessera removal.`,
           }))
         )),
-        ...skillCleanup.discoveryErrors.map((message) => ({
+        ...skillCleanup.discoveryProblems.map(({ code, message }) => ({
           artifact: 'provider-skill' as const,
           message,
-          recovery: message.startsWith('Legacy ')
+          recovery: code === 'LEGACY_HOMES_UNKNOWN'
             ? 'Inspect every provider home previously selected in that Agent Environment, preserve '
               + 'user-owned content, remove only a confirmed Tessera-owned skill, and retry Tessera removal.'
             : 'Restore readable Tessera provider-skill state and retry Tessera removal.',

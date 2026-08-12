@@ -59,7 +59,10 @@ export interface ProviderSkillCleanupArtifact {
 
 export interface ProviderSkillCleanupResult {
   artifacts: ProviderSkillCleanupArtifact[];
-  discoveryErrors: string[];
+  discoveryProblems: Array<{
+    code: 'KNOWN_STATE_UNREADABLE' | 'LEGACY_HOMES_UNKNOWN';
+    message: string;
+  }>;
 }
 
 export interface ProviderSkillManagerOptions {
@@ -82,6 +85,8 @@ interface ProviderLedgerEntry {
   consent: 'granted' | 'revoked';
   /** Provider homes where Tessera has installed this artifact over time. */
   knownHomes?: string[];
+  /** A pre-home-ledger installation may still exist at an unrecorded earlier home. */
+  unknownEarlierHomes?: true;
 }
 
 interface ProviderSkillLedger {
@@ -298,7 +303,7 @@ export function createProviderSkillManager(
       }
     }
 
-    return { artifacts, discoveryErrors: discovered.errors };
+    return { artifacts, discoveryProblems: discovered.problems };
   }
 
   async function manageResolved(
@@ -405,6 +410,9 @@ export function createProviderSkillManager(
             ledger.environments[environment]![provider.providerId] = {
               consent: 'granted',
               knownHomes: [...new Set([...(existing?.knownHomes ?? []), provider.providerHome])],
+              ...(existing && (existing.unknownEarlierHomes || !existing.knownHomes)
+                ? { unknownEarlierHomes: true as const }
+                : {}),
             };
           }
         } else if (request.operation === 'remove') {
@@ -414,6 +422,7 @@ export function createProviderSkillManager(
             ledger.environments[environment]![providerId] = {
               consent: 'revoked',
               ...(existing?.knownHomes ? { knownHomes: existing.knownHomes } : {}),
+              ...(existing?.unknownEarlierHomes ? { unknownEarlierHomes: true as const } : {}),
             };
           }
         }
@@ -464,16 +473,19 @@ async function discoverKnownProviderSkillScopes(stateDirectory: string): Promise
     providerId: ProviderSkillId;
     knownHome?: string;
   }>;
-  errors: string[];
+  problems: ProviderSkillCleanupResult['discoveryProblems'];
 }> {
   let entries: import('node:fs').Dirent[];
   try {
     entries = await fs.readdir(stateDirectory, { withFileTypes: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { scopes: [], errors: [] };
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { scopes: [], problems: [] };
     return {
       scopes: [],
-      errors: [`Known provider skill state could not be listed: ${error instanceof Error ? error.message : String(error)}`],
+      problems: [{
+        code: 'KNOWN_STATE_UNREADABLE',
+        message: `Known provider skill state could not be listed: ${error instanceof Error ? error.message : String(error)}`,
+      }],
     };
   }
 
@@ -482,7 +494,7 @@ async function discoverKnownProviderSkillScopes(stateDirectory: string): Promise
     providerId: ProviderSkillId;
     knownHome?: string;
   }>();
-  const errors: string[] = [];
+  const problems: ProviderSkillCleanupResult['discoveryProblems'] = [];
   for (const entry of entries.filter((candidate) => candidate.isFile() && candidate.name.endsWith('.json'))) {
     try {
       const parsed = JSON.parse(await fs.readFile(path.join(stateDirectory, entry.name), 'utf8')) as unknown;
@@ -505,17 +517,21 @@ async function discoverKnownProviderSkillScopes(stateDirectory: string): Promise
               JSON.stringify([agentEnvironment, providerId]),
               { agentEnvironment, providerId },
             );
-            errors.push(
-              `Legacy ${providerId} skill state for ${agentEnvironment} does not record its provider home; `
-              + 'earlier installations cannot be verified automatically.',
-            );
+          }
+          if (ledgerEntry.unknownEarlierHomes || !ledgerEntry.knownHomes) {
+            problems.push({
+              code: 'LEGACY_HOMES_UNKNOWN',
+              message: `Legacy ${providerId} skill state for ${agentEnvironment} does not record every `
+                + 'previous provider home; earlier installations cannot be verified automatically.',
+            });
           }
         }
       }
     } catch (error) {
-      errors.push(
-        `Known provider skill state ${entry.name} could not be read: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      problems.push({
+        code: 'KNOWN_STATE_UNREADABLE',
+        message: `Known provider skill state ${entry.name} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      });
     }
   }
 
@@ -525,7 +541,7 @@ async function discoverKnownProviderSkillScopes(stateDirectory: string): Promise
       || PROVIDER_SKILL_IDS.indexOf(left.providerId) - PROVIDER_SKILL_IDS.indexOf(right.providerId)
       || (left.knownHome ?? '').localeCompare(right.knownHome ?? '')
     )),
-    errors,
+    problems,
   };
 }
 
@@ -547,6 +563,7 @@ function isProviderSkillLedger(value: unknown): value is ProviderSkillLedger {
         && (!Array.isArray(entry.knownHomes)
           || entry.knownHomes.some((home) => typeof home !== 'string' || !home))
       ) return false;
+      if (entry.unknownEarlierHomes !== undefined && entry.unknownEarlierHomes !== true) return false;
     }
   }
   return true;

@@ -473,6 +473,9 @@ test('one artifact-family failure does not prevent cleanup of other known artifa
       },
     },
     resolveLifecycleCleanupTargets: () => [{
+      providerId: 'broken-provider',
+      discoveryError: 'injected lifecycle discovery failure',
+    }, {
       providerId: 'codex',
       integration: {
         async inspect() {
@@ -482,7 +485,14 @@ test('one artifact-family failure does not prevent cleanup of other known artifa
           return { state: 'installed', trust: 'trusted' };
         },
         async cleanupKnownArtifacts() {
-          throw new Error('injected lifecycle discovery failure');
+          return {
+            artifacts: [{
+              environment: 'native' as const,
+              providerHome: path.join(root, 'codex-home'),
+              state: 'absent' as const,
+            }],
+            discoveryErrors: [],
+          };
         },
       },
     }],
@@ -499,6 +509,7 @@ test('one artifact-family failure does not prevent cleanup of other known artifa
   assert.equal(result.complete, false);
   assert.equal(fs.existsSync(target), false);
   assert.deepEqual(result.artifacts.map(({ artifact, state }) => ({ artifact, state })), [
+    { artifact: 'lifecycle-hook', state: 'absent' },
     { artifact: 'provider-skill', state: 'removed' },
   ]);
   assert.equal(result.problems.length, 1);
@@ -506,7 +517,7 @@ test('one artifact-family failure does not prevent cleanup of other known artifa
   assert.match(result.problems[0].message, /injected lifecycle discovery failure/);
 });
 
-test('legacy skill state never reports cleanup complete when an earlier provider home is unknowable', async (t) => {
+test('legacy skill uncertainty survives update and keeps cleanup incomplete', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-cleanup-legacy-skill-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const currentHome = path.join(root, 'current-codex-home');
@@ -533,6 +544,13 @@ test('legacy skill state never reports cleanup complete when an earlier provider
     resolveLifecycleCleanupTargets: () => [],
   });
 
+  const updated = await integration.manageSkills({
+    operation: 'update',
+    providerIds: ['codex'],
+    agentEnvironmentOwner: { kind: 'user', userId: 'legacy-owner' },
+  });
+  assert.equal(updated.success, true);
+
   const result = await integration.cleanupOwnedArtifacts();
 
   assert.equal(result.complete, false);
@@ -540,7 +558,7 @@ test('legacy skill state never reports cleanup complete when an earlier provider
     providerId,
     agentEnvironment,
     state,
-  })), [{ providerId: 'codex', agentEnvironment: 'native', state: 'absent' }]);
+  })), [{ providerId: 'codex', agentEnvironment: 'native', state: 'removed' }]);
   assert.match(result.problems[0].message, /earlier installations cannot be verified/i);
   assert.match(result.problems[0].recovery, /every provider home previously selected/i);
   assert.equal(
