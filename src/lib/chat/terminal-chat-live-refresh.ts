@@ -19,9 +19,10 @@ import { useChatStore } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
-import type { EnhancedMessage } from '@/types/chat';
+import type { EnhancedMessage, TextMessage } from '@/types/chat';
 import { restoreSessionReplay } from './restore-session-replay';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { v4 as uuidv4 } from 'uuid';
 
 const REFRESH_DEBOUNCE_MS = 300;
 /** Mirrors INITIAL_PAGE_SIZE in use-session-navigation. */
@@ -43,7 +44,9 @@ const restaleWhileInFlight = new Set<string>();
  * vanish until the turn ends. These are re-appended after every refresh and
  * dropped as soon as the transcript actually contains them.
  */
-const pendingSends = new Map<string, EnhancedMessage[]>();
+const pendingSends = new Map<string, TextMessage[]>();
+/** Failed optimistic sends remain visible across transcript refreshes. */
+const failedSends = new Map<string, TextMessage[]>();
 
 /** Stops a send from lingering forever if its turn never lands in the transcript. */
 const PENDING_SEND_TTL_MS = 10 * 60_000;
@@ -96,13 +99,14 @@ export function reconcilePendingTerminalChatMessages(
  * The chat view has no stream of its own, so without this the send appears to
  * do nothing until the agent finishes its turn.
  */
-export function registerPendingTerminalChatMessage(sessionId: string, text: string): void {
-  const message: EnhancedMessage = {
-    id: `terminal-chat-pending-${Date.now()}`,
+export function registerPendingTerminalChatMessage(sessionId: string, text: string): string {
+  const message: TextMessage = {
+    id: `terminal-chat-pending-${uuidv4()}`,
     type: 'text',
     role: 'user',
     content: text,
     timestamp: new Date().toISOString(),
+    deliveryStatus: 'pending',
   };
 
   const queue = pendingSends.get(sessionId) ?? [];
@@ -111,12 +115,36 @@ export function registerPendingTerminalChatMessage(sessionId: string, text: stri
   useChatStore.getState().addMessage(sessionId, message);
 
   setTimeout(() => {
-    const current = pendingSends.get(sessionId);
-    if (!current) return;
-    const remaining = current.filter((entry) => entry !== message);
-    if (remaining.length) pendingSends.set(sessionId, remaining);
-    else pendingSends.delete(sessionId);
+    failPendingTerminalChatMessage(sessionId, message.id);
   }, PENDING_SEND_TTL_MS).unref?.();
+
+  return message.id;
+}
+
+/** Marks an optimistic prompt as not delivered and stops replaying it as pending. */
+export function failPendingTerminalChatMessage(sessionId: string, messageId: string): boolean {
+  const current = pendingSends.get(sessionId);
+  const failedMessage = current?.find((message) => message.id === messageId);
+  if (!current || !failedMessage) return false;
+
+  const remaining = current.filter((message) => message.id !== messageId);
+  if (remaining.length) pendingSends.set(sessionId, remaining);
+  else pendingSends.delete(sessionId);
+
+  const failedQueue = failedSends.get(sessionId) ?? [];
+  failedQueue.push({ ...failedMessage, deliveryStatus: 'failed' });
+  failedSends.set(sessionId, failedQueue);
+
+  const messages = useChatStore.getState().messages.get(sessionId) ?? [];
+  useChatStore.getState().replaceMessages(
+    sessionId,
+    messages.map((message) => (
+      message.id === messageId && message.type === 'text'
+        ? { ...message, deliveryStatus: 'failed' as const }
+        : message
+    )),
+  );
+  return true;
 }
 
 /**
@@ -124,19 +152,30 @@ export function registerPendingTerminalChatMessage(sessionId: string, text: stri
  * is dropped once reconciliation finds its canonical user turn in the server's
  * list.
  */
-function mergePendingMessages(
+export function mergeTerminalChatOptimisticMessages(
   sessionId: string,
   serverMessages: EnhancedMessage[],
 ): EnhancedMessage[] {
-  const queue = pendingSends.get(sessionId);
-  if (!queue?.length) return serverMessages;
+  const queue = [
+    ...(pendingSends.get(sessionId) ?? []),
+    ...(failedSends.get(sessionId) ?? []),
+  ].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+  if (!queue.length) return serverMessages;
 
-  const stillPending = reconcilePendingTerminalChatMessages(queue, serverMessages);
+  const unmatched = reconcilePendingTerminalChatMessages(queue, serverMessages);
+  const stillPending = unmatched.filter(
+    (message): message is TextMessage => message.type === 'text' && message.deliveryStatus !== 'failed',
+  );
+  const stillFailed = unmatched.filter(
+    (message): message is TextMessage => message.type === 'text' && message.deliveryStatus === 'failed',
+  );
 
   if (stillPending.length) pendingSends.set(sessionId, stillPending);
   else pendingSends.delete(sessionId);
+  if (stillFailed.length) failedSends.set(sessionId, stillFailed);
+  else failedSends.delete(sessionId);
 
-  return stillPending.length ? [...serverMessages, ...stillPending] : serverMessages;
+  return unmatched.length ? [...serverMessages, ...unmatched] : serverMessages;
 }
 
 /** True only while this session is actually being shown as a read-only chat. */
@@ -180,7 +219,7 @@ async function refreshTerminalChat(sessionId: string): Promise<void> {
 
     restoreSessionReplay(sessionId, {
       ...result,
-      messages: mergePendingMessages(sessionId, result.messages ?? []),
+      messages: mergeTerminalChatOptimisticMessages(sessionId, result.messages ?? []),
     });
     const session = projectViewWorkspaceState.resolveSession(sessionId);
     if (result.pagination && session) {

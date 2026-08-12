@@ -24,6 +24,12 @@ import { applyOptimisticUserMessage, buildClientRequest } from './client-transpo
 import { getClientId } from './client-id';
 
 type ServerMessageListener = (msg: ServerTransportMessage) => void;
+type PendingTerminalChatInput = {
+  resolve: (accepted: boolean) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+const TERMINAL_CHAT_INPUT_TIMEOUT_MS = 10_000;
 
 export class WebSocketClient {
   readonly clientId: string = getClientId();
@@ -40,6 +46,7 @@ export class WebSocketClient {
   private wasReconnect = false;
   private connectionGeneration = 0;
   private readonly pendingTerminalCloses = new Set<string>();
+  private readonly pendingTerminalChatInputs = new Map<string, PendingTerminalChatInput>();
   private readonly pendingPreviewReleases = new Map<string, {
     terminalId: string;
     sessionId?: string | null;
@@ -126,6 +133,14 @@ export class WebSocketClient {
   }
 
   private handleMessage(msg: ServerTransportMessage) {
+    if (msg.type === 'terminal_chat_input_result') {
+      const pending = this.pendingTerminalChatInputs.get(msg.requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingTerminalChatInputs.delete(msg.requestId);
+        pending.resolve(msg.written);
+      }
+    }
     const result = handleIncomingServerMessage({
       msg,
       providersListCallbacks: this.providersListCallbacks,
@@ -411,6 +426,29 @@ export class WebSocketClient {
     return this.sendRequest('terminal_input', { terminalId, surfaceId, data });
   }
 
+  submitTerminalChatInput(
+    sessionId: string,
+    text: string,
+  ): { submitted: Promise<boolean> } | null {
+    if (this.ws?.readyState !== WebSocket.OPEN) return null;
+
+    const message = buildClientRequest('terminal_chat_input', { sessionId, text });
+    let resolveSubmitted!: (accepted: boolean) => void;
+    const submitted = new Promise<boolean>((resolve) => {
+      resolveSubmitted = resolve;
+    });
+    const timer = setTimeout(() => {
+      this.pendingTerminalChatInputs.delete(message.requestId);
+      resolveSubmitted(false);
+    }, TERMINAL_CHAT_INPUT_TIMEOUT_MS);
+    this.pendingTerminalChatInputs.set(message.requestId, {
+      resolve: resolveSubmitted,
+      timer,
+    });
+    this.send(message);
+    return { submitted };
+  }
+
   setTerminalAppearance(
     terminalId: string,
     surfaceId: string,
@@ -516,6 +554,12 @@ export class WebSocketClient {
       callback(null);
     }
     this.cliStatusCallbacks.clear();
+
+    for (const pending of this.pendingTerminalChatInputs.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(false);
+    }
+    this.pendingTerminalChatInputs.clear();
   }
 
   /**

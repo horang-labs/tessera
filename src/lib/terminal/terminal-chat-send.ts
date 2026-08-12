@@ -1,14 +1,11 @@
 /**
  * Sends a message typed in the read-only chat overlay to the PTY underneath.
  *
- * There is no API into a running TUI — the only way in is the keyboard. So a
- * "send" is literally: paste the text, wait, press Enter. Orca does the same
- * (native-chat-runtime-send.ts), and the two rules below are the ones that
- * matter:
+ * There is no provider API into a running TUI — the only way in is the PTY.
+ * The server captures the managed runtime for this Session, writes one
+ * bracketed paste, then sends Enter only if that exact runtime is still current.
  *
- *  - Paste, don't type. xterm wraps the payload in bracketed paste when the TUI
- *    asked for it, so a multi-line message stays one message instead of one
- *    submit per newline.
+ *  - Paste, don't type. Bracketed paste keeps a multi-line message together.
  *  - Delay the Enter. The TUI needs time to receive and render the pasted body;
  *    an Enter that arrives too early submits a truncated prompt.
  *
@@ -16,9 +13,9 @@
  * handling and per-agent quirks — those belong in the terminal.
  */
 
+import { wsClient } from '@/lib/ws/client';
 import {
   getSessionTerminalId,
-  pasteInputToTerminal,
   sendInputToTerminal,
   terminalSupportsEscapeInterrupt,
 } from './terminal-surface-registry';
@@ -29,15 +26,9 @@ import {
 
 export { normalizeSemanticPrompt as normalizeTerminalChatText } from './session-control-input';
 
-/** Matches Orca's NATIVE_CHAT_SUBMIT_DELAY_MS — enough for a TUI to render the paste. */
-export const TERMINAL_CHAT_SUBMIT_DELAY_MS = 500;
-
-/** Carriage return: what Enter actually puts on the wire. */
-const SUBMIT_SEQUENCE = '\r';
-
 export interface TerminalChatSendHandle {
-  /** Cancels the pending Enter. The pasted body stays in the TUI's input. */
-  cancel: () => void;
+  /** Whether the server submitted Enter to the same runtime that received the paste. */
+  submitted: Promise<boolean>;
 }
 
 /**
@@ -45,9 +36,9 @@ export interface TerminalChatSendHandle {
  * newline would submit before the delayed Enter is even sent.
  */
 /**
- * Pastes `text` into the session's PTY and presses Enter after a short delay.
- * Returns null when no live terminal surface accepted the paste — the caller
- * should surface that rather than pretend the message was sent.
+ * Asks the server to paste `text` into the managed Session PTY and submit it.
+ * Returns null when the transport is disconnected; the acknowledgement later
+ * reports whether the complete submission was written to that exact runtime.
  */
 export function sendTerminalChatMessage(
   sessionId: string,
@@ -56,14 +47,7 @@ export function sendTerminalChatMessage(
   const body = normalizeSemanticPrompt(text);
   if (!body.trim()) return null;
 
-  const terminalId = getSessionTerminalId(sessionId);
-  if (!pasteInputToTerminal(terminalId, body)) return null;
-
-  const timer = setTimeout(() => {
-    sendInputToTerminal(terminalId, SUBMIT_SEQUENCE);
-  }, TERMINAL_CHAT_SUBMIT_DELAY_MS);
-
-  return { cancel: () => clearTimeout(timer) };
+  return wsClient.submitTerminalChatInput(sessionId, body);
 }
 
 /** Sends the provider-native interrupt gesture to the live PTY behind chat view. */

@@ -14,7 +14,10 @@ import {
 } from '@/stores/terminal-session-store';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { sendTerminalChatMessage } from '@/lib/terminal/terminal-chat-send';
-import { registerPendingTerminalChatMessage } from '@/lib/chat/terminal-chat-live-refresh';
+import {
+  failPendingTerminalChatMessage,
+  registerPendingTerminalChatMessage,
+} from '@/lib/chat/terminal-chat-live-refresh';
 import {
   resolveComposerArrowScroll,
   scrollSessionMessages,
@@ -96,7 +99,12 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     // 낙관적 표시. 에이전트는 턴이 끝나야 transcript를 flush하므로(codex 실측 ~35초)
     // 그 전에 도는 갱신이 서버의 옛 목록으로 화면을 덮어쓴다. 등록해 두면 갱신 때마다
     // 다시 붙었다가, 실제 기록에 나타나는 순간 빠진다.
-    registerPendingTerminalChatMessage(sessionId, text);
+    const pendingMessageId = registerPendingTerminalChatMessage(sessionId, text);
+    void handle.submitted.then((submitted) => {
+      if (submitted) return;
+      failPendingTerminalChatMessage(sessionId, pendingMessageId);
+      toast.error(t('chat.terminalSendFailed'));
+    });
 
     setValue('');
     requestAnimationFrame(() => textareaRef.current?.focus());
