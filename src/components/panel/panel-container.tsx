@@ -14,9 +14,9 @@ import { WorkspaceFileTab } from '@/components/workspace/workspace-file-tab';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
 import { TerminalPanel } from '@/components/terminal/terminal-panel';
 import { WorktreeOverview } from '@/components/worktree/worktree-overview';
-import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useTabStore } from '@/stores/tab-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import {
   parseMemoryFileSessionId,
   parseWorktreeFileSessionId,
@@ -51,15 +51,16 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
   const tabProjectDir = useTabStore(
     (state) => state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null,
   );
-  const worktree = useSessionStore((state) => {
+  const loadedProjects = useLoadedProjectViews();
+  const worktree = (() => {
     if (!worktreeId) return null;
     const projects = tabProjectDir
-      ? state.projects.filter(
+      ? loadedProjects.filter(
           (project) => project.encodedDir === tabProjectDir || project.decodedPath === tabProjectDir,
         )
-      : state.projects;
+      : loadedProjects;
     return projects.find((project) => project.projectWorktree?.id === worktreeId)?.projectWorktree ?? null;
-  });
+  })();
   const linkedWorktree = useTaskStore((state) => {
     if (!worktreeId) return null;
     if (tabProjectDir) {

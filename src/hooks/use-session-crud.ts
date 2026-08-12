@@ -22,6 +22,7 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 interface SessionCreateOptions {
   workDir?: string;
@@ -193,7 +194,7 @@ export function useSessionCrud() {
         const result = await response.json();
 
         const projectDir = options.parentProjectId || result.projectDir || '';
-        const projectExisted = sessionStore.projects.some(
+        const projectExisted = projectViewWorkspaceState.getLoadedProjectViews().some(
           (p) => p.encodedDir === projectDir || p.decodedPath === projectDir
         );
 

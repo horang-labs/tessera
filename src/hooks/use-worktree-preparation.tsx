@@ -9,6 +9,7 @@ import logger from '@/lib/logger';
 import { canRerunPreparation } from '@/lib/projects/preparation-status-policy';
 import { toast } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import type { TaskEntity } from '@/types/task-entity';
 
 /**
@@ -32,11 +33,10 @@ export function canPrepareTask(
  * worse than leaving it out.
  */
 export function useProjectHasPreparationScript(projectId: string | undefined): boolean {
-  return useSessionStore((state) =>
-    Boolean(projectId && state.projects.find(
-      (project) => project.encodedDir === projectId,
-    )?.hasPreparationScript),
-  );
+  const projects = useLoadedProjectViews();
+  return Boolean(projectId && projects.find(
+    (project) => project.encodedDir === projectId,
+  )?.hasPreparationScript);
 }
 
 /**

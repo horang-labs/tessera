@@ -15,7 +15,10 @@ import { AgentMessageGroup } from './agent-message-group';
 import { useShowWaitingIndicator } from '@/hooks/use-show-waiting-indicator';
 import { useVirtualMessageList } from '@/hooks/use-virtual-message-list';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 import { useI18n } from '@/lib/i18n';
 import {
   applyProviderSessionRuntimeOverrides,
@@ -147,7 +150,7 @@ function MessageListSessionView({
   const forkAnchorRef = useRef<HTMLElement | null>(null);
   const messagesRef = useRef(messages);
   const session = useProjectViewSession(sessionId, projectViewDir);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const providerId = session?.provider;
   const { sendMessage } = useWebSocket();
   const showWaitingIndicator =

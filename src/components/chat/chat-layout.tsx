@@ -11,7 +11,10 @@ import {
 import { useBoardStore } from "@/stores/board-store";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useCrossWindowUiSync } from "@/hooks/use-cross-window-ui-sync";
-import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from "@/hooks/use-project-view-workspace-state";
 import { useResize } from "@/hooks/use-resize";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -175,7 +178,7 @@ export function ChatLayout() {
     (state) => state.setSidebarCollapsed,
   );
   const setSidebarWidth = useSettingsStore((state) => state.setSidebarWidth);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const gitPanelWidth = useGitStore((state) => state.panelWidth);
   const setGitPanelWidth = useGitStore((state) => state.setPanelWidth);

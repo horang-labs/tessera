@@ -66,6 +66,8 @@ export interface ProjectViewWorkspaceStateDependencies {
 }
 
 export interface ProjectViewWorkspaceState {
+  /** Loaded Project metadata exposed through the workspace boundary. */
+  getLoadedProjectViews: () => readonly ProjectGroup[];
   /** Resolve one canonical Session, or its appearance in an explicit Project View. */
   resolveSession: (sessionId: string, projectViewId?: string) => UnifiedSession | undefined;
   /** Return every Session appearance currently represented in one Project View. */
@@ -840,6 +842,7 @@ export function createProjectViewWorkspaceState(
   };
 
   return {
+    getLoadedProjectViews: dependencies.getProjects,
     resolveSession,
     getProjectViewSessions,
     getProjectViewRepresentation,

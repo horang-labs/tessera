@@ -26,6 +26,26 @@ export function originProjectContainsRunningSession(
   ));
 }
 
+/** Count canonical running Sessions already assigned to one origin representation. */
+export function countOriginProjectRunningSessions(project: ProjectGroup): number {
+  return project.sessions.filter((session) =>
+    !session.archived && resolveSessionRuntimePresentation(session).showRunning
+  ).length;
+}
+
+/** Preserve Project strip/sidebar ordering without exposing backing Session scans to UI code. */
+export function getOriginProjectOrderedSessionIds(
+  representation: ReturnType<typeof buildOriginProjectRepresentation>,
+): string[] {
+  return representation.projects.flatMap((project) =>
+    project.sessions
+      .filter((session) => !session.archived)
+      .slice()
+      .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+      .map((session) => session.id),
+  );
+}
+
 /**
  * Global aggregate surfaces deliberately use the persisted origin Project as
  * the one representative location. Alternate Project View appearances are

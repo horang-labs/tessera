@@ -117,9 +117,19 @@ const config = [
             "UI code must subscribe through Project View workspace-state hooks instead of reading retainedSessions directly.",
         },
         {
-          selector: "MemberExpression[object.name='project'][property.name='sessions']",
+          selector: "MemberExpression[object.name=/^(project|projectView|p)$/][property.name='sessions']",
           message:
             "UI code must consume a Project View or origin representation instead of reconstructing Session truth from project.sessions.",
+        },
+        {
+          selector: "CallExpression[callee.name='useSessionStore'] ArrowFunctionExpression MemberExpression[property.name='projects']",
+          message:
+            "UI code must read loaded Projects through useLoadedProjectViews so Session-bearing Project state stays behind the workspace boundary.",
+        },
+        {
+          selector: "MemberExpression[object.type='CallExpression'][object.callee.object.name='useSessionStore'][object.callee.property.name='getState'][property.name='projects']",
+          message:
+            "Imperative UI code must read loaded Projects through projectViewWorkspaceState.getLoadedProjectViews().",
         },
       ],
       "no-restricted-imports": [

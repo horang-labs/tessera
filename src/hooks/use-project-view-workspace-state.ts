@@ -7,7 +7,7 @@ import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace
 import { useCollectionStore } from '@/stores/collection-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
-import type { UnifiedSession } from '@/types/chat';
+import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 
 /**
  * Subscribe React consumers to every backing store owned by the workspace-state
@@ -19,6 +19,11 @@ function useProjectViewWorkspaceStateSubscription(): void {
   useSessionStore((state) => state.retainedSessions);
   useTaskStore((state) => state.tasksByProject);
   useCollectionStore((state) => state.collectionsByProject);
+}
+
+export function useLoadedProjectViews(): readonly ProjectGroup[] {
+  useProjectViewWorkspaceStateSubscription();
+  return projectViewWorkspaceState.getLoadedProjectViews();
 }
 
 export function useProjectViewSession(

@@ -21,7 +21,7 @@ export function selectSidebarProjectTasks(
 }
 
 export function findSidebarProject(
-  projects: ProjectGroup[],
+  projects: readonly ProjectGroup[],
   selectedProjectDir: string | null,
 ): ProjectGroup | null {
   if (!selectedProjectDir) return null;

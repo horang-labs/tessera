@@ -47,7 +47,10 @@ import {
   findSidebarProject,
   selectSidebarProjectTasks,
 } from './sidebar-utils';
-import { buildRecentWorkItems } from '@/lib/chat/recent-work';
+import {
+  buildProjectViewRecentWorkItems,
+  buildRecentWorkItems,
+} from '@/lib/chat/recent-work';
 import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
@@ -58,9 +61,11 @@ import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import {
+  useLoadedProjectViews,
   useOriginProjectRepresentation,
   useProjectViewRepresentation,
 } from '@/hooks/use-project-view-workspace-state';
+import { getOriginProjectOrderedSessionIds } from '@/lib/projects/origin-project-representation';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -285,7 +290,7 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 
 export function Sidebar() {
   const { t } = useI18n();
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const dismissBranchRenameWarning = useSessionStore(
     (state) => state.dismissBranchRenameWarning,
   );
@@ -573,13 +578,7 @@ export function Sidebar() {
 
   const originRepresentation = useOriginProjectRepresentation();
   const allProjectsOrderedSessionIds = useMemo(
-    () => originRepresentation.projects.flatMap((projectView) =>
-      projectView.sessions
-        .filter((session) => !session.archived)
-        .slice()
-        .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
-        .map((session) => session.id),
-    ),
+    () => getOriginProjectOrderedSessionIds(originRepresentation),
     [originRepresentation],
   );
   const allProjectsRunningSessionIds = projectViewWorkspaceState
@@ -642,23 +641,13 @@ export function Sidebar() {
 
   const recentWorkItems = useMemo(() => {
     if (!showRecentWork) return [];
-
-    const scopedProjects = isAllMode
-      ? originRepresentation.projects
-      : selectedProjectRepresentation
-        ? [selectedProjectRepresentation.project]
-        : [];
-    const scopedTasksByProject = isAllMode
-      ? originRepresentation.tasksByProject
-      : selectedProjectRepresentation
-        ? {
-            [selectedProjectRepresentation.project.encodedDir]: selectedProjectRepresentation.tasks,
-          }
-        : {};
+    if (!isAllMode) {
+      return buildProjectViewRecentWorkItems(selectedProjectRepresentation, 8);
+    }
 
     return buildRecentWorkItems({
-      projects: scopedProjects,
-      tasksByProject: scopedTasksByProject,
+      projects: originRepresentation.projects,
+      tasksByProject: originRepresentation.tasksByProject,
       limit: 8,
     });
   }, [

@@ -21,7 +21,10 @@ import { requestSessionArchive } from '@/lib/session/session-archive-client';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSessionResume } from '@/hooks/use-session-resume';
-import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSkillPicker, type SkillInfo } from '@/hooks/use-skill-picker';
 import { SkillPicker } from '@/components/chat/skill-picker';
@@ -248,7 +251,7 @@ export function MessageInput({
   const addMessage = useChatStore((state) => state.addMessage);
   const session = useProjectViewSession(sessionId, projectViewDir);
   const updateSessionRuntimeConfig = useSessionStore((state) => state.updateSessionRuntimeConfig);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const sessionStatus = session && 'status' in session ? session.status : 'running';
   const sessionProviderId = session?.provider?.trim() ?? '';
   const sessionCollectionId = session?.collectionId ?? null;

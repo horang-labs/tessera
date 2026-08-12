@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createProjectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state';
-import { originProjectContainsRunningSession } from '@/lib/projects/origin-project-representation';
+import {
+  countOriginProjectRunningSessions,
+  originProjectContainsRunningSession,
+} from '@/lib/projects/origin-project-representation';
+import { buildProjectViewRecentWorkItems } from '@/lib/chat/recent-work';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
@@ -170,6 +174,9 @@ test('Project appearance lists direct, retained, and Task-only Sessions once thr
   const representation = workspace.getProjectViewRepresentation('project-c');
   assert.equal(representation?.tasks[0]?.sessions[0]?.title, 'Live summary Session');
   assert.equal(representation?.tasks[0]?.sessions[0]?.isRunning, true);
+  const recentItems = buildProjectViewRecentWorkItems(representation);
+  assert.equal(recentItems.find((item) => item.id === 'task-project-c')?.session.title, 'Live summary Session');
+  assert.equal(recentItems.find((item) => item.id === 'task-project-c')?.isRunning, true);
 });
 
 test('Project-scoped DnD resolution selects the visible Task appearance when origin loaded first', () => {
@@ -338,6 +345,12 @@ test('global running actions deduplicate direct, retained, and linked Task Sessi
       ['project-a', ['direct-running', 'retained-running', 'linked-running']],
       ['project-c', []],
     ],
+  );
+  assert.equal(
+    countOriginProjectRunningSessions(
+      workspace.getOriginProjectRepresentation().projects[0],
+    ),
+    3,
   );
 
   assert.deepEqual(workspace.stopAllRunningSessions(), [

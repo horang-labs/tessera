@@ -33,7 +33,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
 import { resolveLastActiveProjectDir } from '@/lib/session/last-active-project';
-import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 
 interface EmptyPanelStateProps {
   panelId: string;
@@ -118,7 +121,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const { createSession, isCreating } = useSessionCrud();
   const { createWorktreeSession } = useWorktreeSession();
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   const lastActiveProjectDir = useSessionStore((state) => state.lastActiveProjectDir);
   const [allProjectsProjectOverride, setAllProjectsProjectOverride] = useState<
